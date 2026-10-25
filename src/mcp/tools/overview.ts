@@ -11,7 +11,7 @@ import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import type { ImpactDiffResult } from "../../core/impact-diff.js";
 import { AnalysisCancelledError, describeRun, type LoadedAnalysis } from "../store.js";
-import type { PatternInfo, ProjectAnalysis, ProjectDependency } from "../../types/analysis.js";
+import type { FileChurnInfo, PatternInfo, ProjectAnalysis, ProjectDependency, RefactorPressureInfo } from "../../types/analysis.js";
 import {
   ago,
   bulletList,
@@ -755,6 +755,43 @@ async function whatChanged(analysisDir: string, since: number): Promise<string> 
   return `${parts.join("; ")}. clarifydoc_impact gives the detail.`;
 }
 
+/** Below these, the share is noise and the line stays out. */
+const FIX_LINE_MIN_FILES = 25;
+const FIX_LINE_TOP = 10;
+const FIX_LINE_DAYS = 182;
+
+/**
+ * Whether the files the refactor-pressure ranking puts first are where fixes land: of its top ten,
+ * how many had a fix commit in the last six months of history, against the share of all code files
+ * with history that did. In-sample — fix history is one of the score's inputs — so it says the
+ * ranking agrees with recent fixes, not that it predicts the next ones. Null with no git history,
+ * too few files, or no fixes at all.
+ */
+export function pressureFixLine(summary: {
+  fileChurn?: ReadonlyArray<Pick<FileChurnInfo, "file" | "lastTouched" | "lastFix">>;
+  refactorPressure?: ReadonlyArray<Pick<RefactorPressureInfo, "filePath" | "score">>;
+  complexity?: ReadonlyArray<{ filePath: string }>;
+}): string | null {
+  const churn = summary.fileChurn ?? [];
+  const rows = summary.refactorPressure ?? [];
+  // Fixes are counted for code only: the base rate is over code files, where there is a list of them.
+  const code = summary.complexity?.length ? new Set(summary.complexity.map((c) => c.filePath)) : null;
+  const scoped = code ? churn.filter((c) => code.has(c.file)) : churn;
+  if (scoped.length < FIX_LINE_MIN_FILES || rows.length < FIX_LINE_TOP) return null;
+  const head = Math.max(...scoped.map((c) => Date.parse(c.lastTouched)).filter(Number.isFinite));
+  if (!Number.isFinite(head)) return null;
+  const since = head - FIX_LINE_DAYS * 86_400_000;
+  const fixed = new Set(scoped.filter((c) => c.lastFix && Date.parse(c.lastFix) >= since).map((c) => c.file));
+  if (fixed.size === 0) return null;
+  const top = [...rows].sort((a, b) => b.score - a.score || byOrdinal(a.filePath, b.filePath)).slice(0, FIX_LINE_TOP);
+  const hits = top.filter((r) => fixed.has(r.filePath)).length;
+  const base = fixed.size / scoped.length;
+  return (
+    `fixes: ${hits} of the ${top.length} highest refactor-pressure files had a fix in the last 6 months of history, ` +
+    `against ${(base * 100).toFixed(1)}% of the ${scoped.length} files with history (in-sample: fixes feed the score)`
+  );
+}
+
 export function healthTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_health",
@@ -806,8 +843,10 @@ export function healthTool(ctx: ToolContext): McpTool {
         const lines: string[] = [
           `# Health — ${projectName(summary)}`,
           health ? `score: ${health.score}/100 (grade ${health.grade})` : "score: not computed",
-          "",
         ];
+        const fixLine = pressureFixLine(summary);
+        if (fixLine) lines.push(fixLine);
+        lines.push("");
         if (health?.penalties?.length) {
           lines.push("## What costs points", ...bulletList(health.penalties, 12, (p) => `−${p.points} ${p.reason}`), "");
         }
