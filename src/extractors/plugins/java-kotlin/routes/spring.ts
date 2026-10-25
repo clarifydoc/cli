@@ -295,8 +295,9 @@ function walkForJavaKotlinRoutes(
   suppress: boolean,
   classGuards: readonly GuardAttr[],
 ) {
-  // Check for class-level @RequestMapping to capture prefix
-  if (node.type === "class_declaration" || node.type === "class_definition") {
+  // Check for class-level @RequestMapping to capture prefix. A Java interface is its own node type:
+  // its prefix applies to the controllers implementing it, and a `@FeignClient` one is outbound.
+  if (node.type === "class_declaration" || node.type === "class_definition" || node.type === "interface_declaration") {
     const prefix = extractClassRequestMappingPath(node);
     // @FeignClient methods are *outbound* HTTP calls, not inbound routes — skip them.
     const childSuppress = suppress || declarationHasAnnotation(node, "FeignClient");

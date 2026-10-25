@@ -212,6 +212,29 @@ interface Client {
     expect(routes).toHaveLength(0);
   });
 
+  it("Java @FeignClient interface methods are not inbound routes (AST path)", async () => {
+    const JAVA = `package x;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.*;
+@FeignClient(name = "clubs", path = "/league/clubs")
+public interface ClubClient {
+    @DeleteMapping("/{id}") void remove(@PathVariable("id") String id);
+}
+`;
+    expect(await routesOf(JAVA, "java")).toEqual([]);
+  });
+
+  it("a Java API interface's @RequestMapping prefixes its methods", async () => {
+    const JAVA = `package x;
+import org.springframework.web.bind.annotation.*;
+@RequestMapping("/api")
+public interface ClubApi {
+    @GetMapping("/clubs/{id}") String get(@PathVariable String id);
+}
+`;
+    expect(await routesOf(JAVA, "java")).toEqual(["GET /api/clubs/{id}"]);
+  });
+
   it("empty path @GetMapping(\"\") falls back to the class prefix", async () => {
     const JAVA = `package x;
 import org.springframework.web.bind.annotation.*;
