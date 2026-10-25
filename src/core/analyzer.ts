@@ -115,7 +115,7 @@ import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
-import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoutePath, pairContractTwins } from "./route-linker.js";
+import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoutePath, pairContractTwins, implementedContracts } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
 import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-values.js";
 import { applyRouteBases } from "./route-bases.js";
@@ -1276,6 +1276,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     servedBy: projectServesClosure(componentGraph, (f) => analysisByPath.get(f)?.projectId),
     contractTwins,
+    // A vendored copy of a contract (a client's own `.proto`) yields to the copy its service implements.
+    implementedContracts: implementedContracts(allRoutes, symbolLinks, isContractRoute, (f) => analysisByPath.get(f)?.projectId),
   });
   if (apiRouteLinks.length > 0) {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);

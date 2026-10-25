@@ -5,6 +5,7 @@ import {
   normalizeRoutePath,
   dedupeRoutes,
   pairContractTwins,
+  implementedContracts,
 } from "./route-linker.js";
 import type { CallInfo, DataSourceInfo, RouteInfo } from "../types/analysis.js";
 
@@ -668,6 +669,26 @@ describe("linkApiCallsToRoutes — code rows and their API-contract twins", () =
     const b = route("svcB/x.ts", "GET", "/api/x", "x");
     const spec = route("spec.json", "GET", "/api/x", "x");
     expect(pairContractTwins([a, b, spec], [], isContract).size).toBe(0);
+  });
+
+  it("leaves a client's vendored copy of a contract for the copy its service implements", () => {
+    const isProto = (r: { filePath: string }) => r.filePath.endsWith(".proto");
+    const path = "/league.fixtures.v1.FixtureService/GetFixture";
+    const vendored = { ...route("fans/proto/fixtures.proto", "POST", path, "GetFixture", 5), projectId: "fans" };
+    const served = { ...route("fixtures/proto/fixtures.proto", "POST", path, "GetFixture", 5), projectId: "fixtures" };
+    // The spec join ties BOTH copies to the one implementation, in the fixtures service.
+    const joins = [vendored, served].map((r) => ({
+      sourceFile: r.filePath, sourceLine: 5, targetFile: "fixtures/server/main.go", targetSymbol: "server.GetFixture", targetLine: 11, strategy: "spec-join",
+    }));
+    const projectOf = (f: string) => f.split("/")[0];
+    const implemented = implementedContracts([vendored, served], joins, isProto, projectOf);
+    expect([...implemented]).toEqual([served]);
+    const call = apiCall("fans/client/main.go", "POST", path, 12);
+    const [link] = linkApiCallsToRoutes([call], [vendored, served], { isContract: isProto, projectOf, implementedContracts: implemented });
+    expect(link).toMatchObject({ target: "fixtures/proto/fixtures.proto", confidence: "EXTRACTED" });
+    // Without an implementation anywhere, the caller's own copy stays the answer.
+    const [own] = linkApiCallsToRoutes([call], [vendored, served], { isContract: isProto, projectOf });
+    expect(own).toMatchObject({ target: "fans/proto/fixtures.proto" });
   });
 });
 
