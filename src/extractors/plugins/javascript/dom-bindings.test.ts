@@ -24,12 +24,12 @@ const FILES: Record<string, string> = {
 <script src="{{urlpath}}/static/admin.js"></script>
 <script src="{{urlpath}}/static/admin_clubs.js"></script>
 `,
-  "static/scripts/admin.js": `"use strict";
+  "static/assets/admin.js": `"use strict";
 function _post(url, msg) {
     return fetch(url, { method: "POST" }).then(() => alert(msg));
 }
 `,
-  "static/scripts/admin_clubs.js": `"use strict";
+  "static/assets/admin_clubs.js": `"use strict";
 
 function deleteClub(event) {
     const id = event.target.parentNode.dataset.clubId;

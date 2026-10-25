@@ -11,7 +11,7 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  * wrapper of fetch (real-repo FP: 15 admin calls, 0 api-calls).
  */
 const FILES: Record<string, string> = {
-  "static/scripts/admin.js": `"use strict";
+  "static/assets/admin.js": `"use strict";
 const BASE_URL = window.location.origin;
 
 function _fetch(method, url, successMsg, body) {
@@ -26,7 +26,7 @@ function _delete(url, successMsg) {
     return _fetch("DELETE", url, successMsg);
 }
 `,
-  "static/scripts/admin_clubs.js": `"use strict";
+  "static/assets/admin_clubs.js": `"use strict";
 
 function deleteClub(id) {
     _post(\`\${BASE_URL}/admin/clubs/\${id}/delete\`, "Club deleted");
@@ -55,7 +55,7 @@ describe("a wrapper of a wrapper of a request, in classic scripts", () => {
   });
 
   it("gives each page call its request", () => {
-    const calls = (summary.apiCalls ?? []).filter((c) => c.filePath === "static/scripts/admin_clubs.js").map((c) => `${c.name} ${c.target}`).sort();
+    const calls = (summary.apiCalls ?? []).filter((c) => c.filePath === "static/assets/admin_clubs.js").map((c) => `${c.name} ${c.target}`).sort();
     expect(calls).toEqual(["DELETE /admin/clubs/${id}/coach", "POST /admin/clubs/${id}/delete"]);
   });
 });
