@@ -22,6 +22,12 @@ export interface ManifestEntry {
   mtime: number;
   /** SHA-256 of file contents — definitive change check. */
   sha256: string;
+  /**
+   * Fingerprint of the configuration the file's imports were rewritten with
+   * (path aliases, workspace packages): the cached analysis is reused only
+   * while it is unchanged. Absent when no such configuration applies.
+   */
+  resolver?: string;
 }
 
 /**

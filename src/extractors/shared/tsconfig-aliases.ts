@@ -312,8 +312,42 @@ export function applySourceRoot(source: string, importerAbs: string, projectRoot
   return source;
 }
 
-/** Used by tests / fixture regeneration to reset the per-tsconfig cache. */
+/** `sourceRootStamp` by the package directory it reads, so sibling files share one. */
+const sourceRootStampCache = new Map<string, string>();
+
+/**
+ * What `applySourceRoot` reads for an importer, as a stable string: the nearest
+ * package directory with a `package.json`, relative to the project root, its
+ * declared dependency names and its `imports` map. Equal stamps mean the
+ * rewrite reads the same configuration (file existence aside).
+ */
+export function sourceRootStamp(importerAbs: string, projectRoot: string): string {
+  const root = resolve(projectRoot);
+  for (let dir = dirname(importerAbs); dir.startsWith(root); dir = dirname(dir)) {
+    const deps = packageDepsAt(dir);
+    if (deps) {
+      let hit = sourceRootStampCache.get(dir);
+      if (hit === undefined) {
+        let imports: unknown = null;
+        try {
+          imports = (JSON.parse(readFileSync(resolve(dir, "package.json"), "utf-8")) as { imports?: unknown }).imports ?? null;
+        } catch {
+          /* unreadable: the deps above came from the same read, so it was readable then */
+        }
+        hit = JSON.stringify([posix.relative(toPosix(root), toPosix(dir)), [...deps].sort(), imports]);
+        sourceRootStampCache.set(dir, hit);
+      }
+      return hit;
+    }
+    if (dir === root) break;
+  }
+  return "";
+}
+
+/** Reset every config read: each analysis run starts here, so a long-lived process sees an edited tsconfig. */
 export function clearTsconfigAliasCache(): void {
   tsconfigCache.clear();
+  dirAliasCache.clear();
   packageDepsCache.clear();
+  sourceRootStampCache.clear();
 }

@@ -16,6 +16,7 @@ import {
   classifyFile as classifyFileForCache,
   normalizeManifestKey,
   type Manifest,
+  type ManifestEntry,
 } from "./manifest.js";
 import {
   detectFrameworksAcrossRoots,
@@ -46,9 +47,10 @@ import {
 } from "./output-writer.js";
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload, loadReportSummary } from "./report-payload.js";
-import { analyzeFile, type FileTask, type FileResult } from "./file-analyzer.js";
+import { analyzeFile, importRewriteStamp, type FileTask, type FileResult } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
-import { loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
+import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
+import { clearWorkspacePackageCache } from "../extractors/shared/workspace-packages.js";
 import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } from "../extractors/shared/link-scoring.js";
 import {
   STRIP_SOURCE_EXTENSION_RE,
@@ -761,6 +763,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // unchanged files skip parsing and reuse their on-disk FileAnalysis JSON.
   progress.step(`Analyzing ${files.length} files...`);
   const outputOpts: OutputOptions = { outputDir, pretty: options.pretty };
+  // Config reads are memoized per process: a long-lived one (an MCP server, watch mode) re-reads them each run.
+  clearTsconfigAliasCache();
+  clearWorkspacePackageCache();
   const tsconfigAliases = loadTsconfigAliases(projectRoot);
   if (tsconfigAliases.size > 0 && verbose) {
     progress.detail(`  tsconfig aliases: ${[...tsconfigAliases.keys()].join(", ")}`);
@@ -830,7 +835,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       });
     }
   }
-  const newManifestEntries: Record<string, { mtime: number; sha256: string }> = {};
+  const newManifestEntries: Record<string, ManifestEntry> = {};
   let unchangedCount = 0;
   let reparsedCount = 0;
   // Files whose CONTENT changed since the previous manifest (changed + new).
@@ -873,12 +878,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const projectId = fileProjects[file.relativePath] ?? "root";
         const manifestKey = normalizeManifestKey(file.relativePath);
 
+        // The import-rewrite configuration the cached analysis was made with.
+        const resolver = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
+        const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
+
         if (options.incremental && prevManifest) {
           const prev = prevManifest.entries[manifestKey];
           const classification = await classifyFileForCache(file.absolutePath, prev);
-          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+          newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
           if (classification.state !== "unchanged") changedSinceLastRun.push(manifestKey);
-          if (classification.state === "unchanged") {
+          if (classification.state === "unchanged" && prev?.resolver === resolver) {
             const cached = await loadCachedFileResult(file, outputDir);
             if (cached) {
               unchangedCount++;
@@ -903,10 +912,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         if (options.incremental && !prevManifest) {
           // First-time incremental run: compute hash for manifest seed.
           const classification = await classifyFileForCache(file.absolutePath, undefined);
-          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+          newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
         } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
           const classification = await classifyFileForCache(file.absolutePath, undefined);
-          newManifestEntries[manifestKey] = { mtime: classification.mtime, sha256: classification.sha256 };
+          newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
         }
         reparsedCount++;
         return result;

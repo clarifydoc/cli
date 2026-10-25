@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "fs";
+import { createHash } from "crypto";
 import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
 import { computeRegexComplexity } from "./complexity-regex.js";
@@ -12,8 +13,8 @@ import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
-import { dirname } from "path";
-import { applyAliases, applySourceRoot, loadTsconfigAliasesForDir } from "../extractors/shared/tsconfig-aliases.js";
+import { dirname, relative } from "path";
+import { applyAliases, applySourceRoot, loadTsconfigAliasesForDir, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
@@ -159,6 +160,43 @@ function importedNameCalls(analysis: FileAnalysis): void {
   for (const fn of analysis.functions) promote(fn.calls);
   for (const cls of analysis.classes) for (const m of cls.methods) promote(m.calls);
   for (const r of analysis.routes) promote(r.calls);
+}
+
+/** Serialized alias maps and workspace package tables, by identity: files share the same few maps. */
+const stampParts = new WeakMap<object, string>();
+function stampOf(map: Map<string, string> | Map<string, { dir: string; entry: string }>, projectRoot: string): string {
+  let hit = stampParts.get(map);
+  if (hit === undefined) {
+    const rel = (p: string) => relative(projectRoot, p).split("\\").join("/");
+    hit = JSON.stringify([...map].map(([k, v]) => (typeof v === "string" ? [k, rel(v)] : [k, rel(v.dir), rel(v.entry)])));
+    stampParts.set(map, hit);
+  }
+  return hit;
+}
+
+/**
+ * A fingerprint of the configuration `analyzeFile` rewrites a file's imports
+ * with — the nearest tsconfig/jsconfig and bundler aliases (its `paths`,
+ * `baseUrl`, `extends` and `references`), the repository's workspace packages,
+ * and the nearest package.json's dependencies and `imports` — or undefined when
+ * none applies. The rewritten sources are stored in the cached analysis, so an
+ * incremental run reuses a file only while this is unchanged: an edited alias
+ * map moves the imports of files whose own bytes did not change.
+ */
+export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "relativePath" | "language">, projectRoot: string, tsconfigAliases: Map<string, string>): string | undefined {
+  const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
+  const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
+  const parts: string[] = [];
+  if (aliases.size > 0) parts.push(`a${stampOf(aliases, projectRoot)}`);
+  if (file.language === "typescript" || file.language === "javascript") {
+    const packages = loadWorkspacePackages(projectRoot);
+    if (packages.size > 0) parts.push(`w${stampOf(packages, projectRoot)}`);
+  }
+  if (extensionFamily(file.relativePath) === "script") {
+    const root = sourceRootStamp(file.absolutePath, projectRoot);
+    if (root) parts.push(`s${root}`);
+  }
+  return parts.length ? createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16) : undefined;
 }
 
 export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
