@@ -6,6 +6,7 @@ import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
 import { roleLine } from "../role.js";
 import { routeFactId } from "../../core/fact-ids.js";
+import { byOrdinal } from "../../core/ordinal.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
 type ToolText = (args: Record<string, unknown>) => Promise<string | null>;
@@ -186,7 +187,7 @@ export function relatedRoutes(summary: ProjectAnalysis, r: Row): string | null {
   const head = `It ${[...mine].map(([t, e]) => `${access(e)} ${t}`).join(", ")}.`;
   if (!others.size) return `${head} No other route reaches ${mine.size === 1 ? "that table" : "those tables"}.`;
   const writes = (o: { tables: Map<string, Set<string>> }) => [...o.tables.values()].some((e) => e.has("db-write"));
-  const ranked = [...others.values()].sort((a, b) => b.tables.size - a.tables.size || Number(writes(b)) - Number(writes(a)) || a.label.localeCompare(b.label));
+  const ranked = [...others.values()].sort((a, b) => b.tables.size - a.tables.size || Number(writes(b)) - Number(writes(a)) || byOrdinal(a.label, b.label));
   const lineOf = (o: { label: string; file: string }) => (summary.routeMap ?? []).find((x) => x.filePath === o.file && `${x.httpMethod ?? ""} ${x.path}`.trim() === o.label)?.line;
   const rows = ranked.slice(0, 10).map((o) => {
     const line = lineOf(o);
