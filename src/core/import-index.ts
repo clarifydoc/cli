@@ -406,10 +406,24 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
     namespaces.set(a.filePath, ns);
   }
 
+  const bySource = new Map<string, string | null>();
   return {
     localFor: (file, name) => local.get(file)?.get(name) ?? null,
     sourceFor: (file, name) => source.get(file)?.get(name) ?? null,
     namespacesFor: (file) => namespaces.get(file) ?? [],
+    fileForSource: (file, src) => {
+      const key = `${file}\0${src}`;
+      if (bySource.has(key)) return bySource.get(key)!;
+      const a = byPath.get(file);
+      const imp = a?.imports.find((i) => i.source === src);
+      let resolved: string | null = null;
+      if (a && imp) {
+        const ownResolver = manifestFor(a.language)?.resolveImport;
+        resolved = (ownResolver ? ownResolver(file, src, imp.specifiers[0], resolveCtx) : resolveImportSource(file, src, knownFiles, imp.specifiers[0])) ?? null;
+      }
+      bySource.set(key, resolved);
+      return resolved;
+    },
   };
 }
 

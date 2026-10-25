@@ -67,8 +67,10 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
   for (const a of analyses) {
     for (const r of a.routes ?? []) {
       if (!r.mount || r.kind !== "api") continue;
-      if (!r.handler || !BARE_IDENT.test(r.handler)) continue;
-      const target = importIndex.localFor(a.filePath, r.handler);
+      // A router loaded where it is mounted (`register(require("./clubs"), …)`) names its module, not a binding.
+      const target = r.mountModule
+        ? importIndex.fileForSource?.(a.filePath, r.mountModule) ?? null
+        : r.handler && BARE_IDENT.test(r.handler) ? importIndex.localFor(a.filePath, r.handler) : null;
       if (!target || target === a.filePath || !apiRouteFiles.has(target)) continue;
       (mountsByTarget.get(target) ?? mountsByTarget.set(target, []).get(target)!).push({
         mountingFile: a.filePath,

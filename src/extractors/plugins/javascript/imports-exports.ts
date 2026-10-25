@@ -126,12 +126,15 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
   // Set per extractImports() call (synchronous), consumed by collectImports.
   private mayHaveDynamicImport = true;
+  /** A plugin or router loaded inline where it is registered: `register(require("./clubs"))`, `use("/api", require("./api"))`. */
+  private mayRegisterRequire = false;
 
   /** Each static import's local bindings and the statement's text range, for the unused check. */
   private bindings: ImportBindings[] = [];
 
   extractImports(tree: Tree, sourceText: string, opts: { embedded?: boolean } = {}): ImportInfo[] {
     this.mayHaveDynamicImport = sourceText.includes("import(");
+    this.mayRegisterRequire = sourceText.includes("require(") && /\.(?:register|use)\s*\(/.test(sourceText);
     this.bindings = [];
     const imports = super.extractImports(tree, sourceText, opts);
     // Scripts it starts as processes (`fork("./worker.js")`): run, not loaded.
@@ -177,6 +180,31 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     // import edges to the lazily-loaded module. The substring gate skips the
     // walk for the common case of a file with no `import(` at all.
     if (this.mayHaveDynamicImport) this.collectDynamicImports(node, imports);
+    if (this.mayRegisterRequire) this.collectRegisteredRequires(node, imports);
+  }
+
+  /**
+   * `fastify.register(require("./clubs"), { prefix })`, `server.register({ plugin: require("./players") })`,
+   * `app.use("/api", require("./routes/api"))`: the module is loaded where it is registered, with no
+   * binding — an import with no specifiers, which the router mount pass resolves by its source.
+   */
+  private collectRegisteredRequires(node: Node, imports: ImportInfo[]): void {
+    if (node.type === "call_expression") {
+      const callee = node.childForFieldName("function");
+      const method = callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : undefined;
+      if (method === "register" || method === "use") {
+        const visit = (arg: Node, depth: number): void => {
+          const source = requiredSource(arg);
+          if (source !== null) {
+            imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: arg.startPosition.row + 1 });
+          } else if (depth < 2 && (arg.type === "object" || arg.type === "array")) {
+            for (const child of arg.namedChildren) visit(child.type === "pair" ? child.childForFieldName("value") ?? child : child, depth + 1);
+          }
+        };
+        for (const arg of node.childForFieldName("arguments")?.namedChildren ?? []) visit(arg, 0);
+      }
+    }
+    for (const child of node.namedChildren) this.collectRegisteredRequires(child, imports);
   }
 
   /** Recursively collect every dynamic `import("module")` call in the subtree. */
@@ -433,4 +461,11 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         return "variable";
     }
   }
+}
+
+/** `require("./x")` → `./x`; anything else → null. */
+export function requiredSource(node: Node): string | null {
+  if (node.type !== "call_expression" || node.childForFieldName("function")?.text !== "require") return null;
+  const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+  return args.length === 1 && args[0]!.type === "string" ? stripQuotes(args[0]!.text) : null;
 }

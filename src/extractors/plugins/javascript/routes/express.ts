@@ -5,6 +5,7 @@ import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, buildAuth, filterKind, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
 import { HTTP_METHODS, collectCallNames } from "../../../routes/base.js";
 import { scanRequestAccess } from "../request-access.js";
+import { requiredSource } from "../imports-exports.js";
 
 /**
  * Receivers whose `.get()/.post()/...` are NOT route definitions: HTTP clients
@@ -14,7 +15,7 @@ import { scanRequestAccess } from "../request-access.js";
  * Overlaps with the JS plugin's `apiCallRoots` by design — both describe
  * "this isn't an Express router" — but kept local to avoid a meta→plugin cycle.
  */
-const NON_ROUTER_RECEIVERS: ReadonlySet<string> = new Set([
+export const NON_ROUTER_RECEIVERS: ReadonlySet<string> = new Set([
   // jQuery / HTTP clients (outbound calls)
   "$", "jquery", "jq", "$http", "$ajax", "ajax",
   "axios", "fetch", "ky", "got", "superagent", "request", "http", "https",
@@ -35,7 +36,7 @@ export function isRoutePath(path: string): boolean {
 }
 
 /** The immediate object a member expression is called on, lowercased (e.g. `$.get` → "$"). */
-function receiverName(memberExpr: Node): string | null {
+export function receiverName(memberExpr: Node): string | null {
   const object = memberExpr.childForFieldName("object");
   if (!object) return null;
   if (object.type === "identifier") return object.text.toLowerCase();
@@ -132,7 +133,7 @@ function requestParamName(fn: Node): string | null {
 }
 
 /** An inline handler's parameter names, as the response reader needs them (`(req, res)`, `(c)`). */
-function handlerParamNames(fn: Node): ParamInfo[] {
+export function handlerParamNames(fn: Node): ParamInfo[] {
   const params = fn.childForFieldName("parameters");
   const single = fn.childForFieldName("parameter");
   const nodes = params ? params.namedChildren : single ? [single] : [];
@@ -152,7 +153,7 @@ const BODY_PARTS = new Set(["json", "form", "body"]);
  * celebrate's `celebrate({ [Segments.BODY]: schema })` and
  * express-joi-validation's `validator.body(schema)`.
  */
-function validatedBody(m: Node): string | null {
+export function validatedBody(m: Node): string | null {
   // Fastify: the route options `{ schema: { body: CreateUser } }`.
   if (m.type === "object") {
     for (const pair of m.namedChildren) {
@@ -194,7 +195,7 @@ function parsedBody(fn: Node): string | null {
  * whatever the body reads off the request object, then multer form fields.
  * All inferred — nothing in Express declares a binding.
  */
-function inlineHandlerParams(path: string, fn: Node, formFields: readonly string[]): RouteParamInfo[] {
+export function inlineHandlerParams(path: string, fn: Node, formFields: readonly string[]): RouteParamInfo[] {
   const params: RouteParamInfo[] = [];
   const seen = new Set<string>();
   const add = (p: RouteParamInfo): void => {
@@ -280,6 +281,11 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             // `wrap(getUsers)`, `catchAsync(ctrl.list)` — is the function it wraps.
             const wrapped = rest.length > 0 ? unwrapHandler(rest[rest.length - 1]!) : null;
             if (wrapped) rest[rest.length - 1] = wrapped;
+            // koa-router mounts a router by its middleware: `router.use("/clubs", clubs.routes())`.
+            const routerMiddleware = method === "use" && rest.length > 0 ? routerOfMiddleware(rest[rest.length - 1]!) : null;
+            if (routerMiddleware) rest[rest.length - 1] = routerMiddleware;
+            // A router loaded where it is mounted: `app.use("/api", require("./routes/api"))`.
+            const mountModule = method === "use" && rest.length > 0 ? requiredSource(rest[rest.length - 1]!) : null;
             const last = rest[rest.length - 1];
             const lastArgIsFn = !!last && FUNCTION_NODE_TYPES.has(last.type);
 
@@ -291,7 +297,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             let middlewareNodes: Node[] = [];
             if (lastArgIsFn) {
               middlewareNodes = rest.slice(0, -1);
-            } else if (last && (last.type === "identifier" || last.type === "member_expression")) {
+            } else if (last && (last.type === "identifier" || last.type === "member_expression" || mountModule !== null)) {
               handler = last.text;
               middlewareNodes = rest.slice(0, -1);
             }
@@ -347,6 +353,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 ...(responses ? { responses } : {}),
               };
               if (method === "use") route.mount = true;
+              if (mountModule !== null) route.mountModule = mountModule;
               routeMeta.set(route, { receiver, guards, params });
               routes.push(route);
             }
@@ -366,7 +373,8 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  * it is not a guard; the kinds that protect or shape a request (`rateLimit()`,
  * `cors()`, `csurf()`, a validator) are inherited as `filters` instead.
  */
-export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
+export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string): void {
+  if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
   composeLocalMounts(routes);
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
@@ -404,6 +412,52 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[]): void {
     if (auth) route.auth = auth;
     const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
+  }
+}
+
+/** `clubs.routes()` / `clubs.middleware()` — the router a koa-router mount hands on. */
+function routerOfMiddleware(node: Node): Node | null {
+  if (node.type !== "call_expression" || (node.childForFieldName("arguments")?.namedChildren.length ?? 0) > 0) return null;
+  const callee = node.childForFieldName("function");
+  if (callee?.type !== "member_expression") return null;
+  const prop = callee.childForFieldName("property")?.text;
+  const object = callee.childForFieldName("object");
+  return (prop === "routes" || prop === "middleware") && object?.type === "identifier" ? object : null;
+}
+
+/**
+ * A router declared with its own prefix — koa-router `new Router({ prefix: "/garages" })` or
+ * `router.prefix("/garages")` — serves every route registered on it under that prefix.
+ */
+function applyRouterPrefixes(root: Node, routes: RouteInfo[]): void {
+  const prefixes = new Map<string, string>();
+  const walk = (node: Node): void => {
+    if (node.type === "variable_declarator") {
+      const name = node.childForFieldName("name");
+      const value = node.childForFieldName("value");
+      const ctor = value?.type === "new_expression" ? value.childForFieldName("constructor") : value?.type === "call_expression" ? value.childForFieldName("function") : null;
+      const opts = value?.childForFieldName("arguments")?.namedChildren[0];
+      if (name?.type === "identifier" && ctor && /Router$/.test(ctor.text) && opts?.type === "object") {
+        for (const pair of opts.namedChildren) {
+          const v = pair.type === "pair" && pair.childForFieldName("key")?.text === "prefix" ? pair.childForFieldName("value") : null;
+          if (v?.type === "string" && isRoutePath(stripQuotes(v.text))) prefixes.set(name.text.toLowerCase(), stripQuotes(v.text));
+        }
+      }
+    } else if (node.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      const arg = node.childForFieldName("arguments")?.namedChildren;
+      if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "prefix" && fn.childForFieldName("object")?.type === "identifier" &&
+        arg?.length === 1 && arg[0]!.type === "string" && isRoutePath(stripQuotes(arg[0]!.text))) {
+        prefixes.set(fn.childForFieldName("object")!.text.toLowerCase(), stripQuotes(arg[0]!.text));
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+  if (prefixes.size === 0) return;
+  for (const r of routes) {
+    const prefix = prefixes.get(routeMeta.get(r)?.receiver ?? "");
+    if (prefix) r.path = joinPrefix(prefix, r.path);
   }
 }
 
@@ -502,7 +556,7 @@ function composeLocalMounts(routes: RouteInfo[]): void {
 }
 
 /** `"/api"` + `"/users"` → `"/api/users"`; `"/api"` + `"/"` → `"/api"`. */
-function joinPrefix(prefix: string, path: string): string {
+export function joinPrefix(prefix: string, path: string): string {
   if (!prefix) return path;
   const head = prefix.replace(/\/+$/, "");
   if (path === "/" || path === "") return head || "/";

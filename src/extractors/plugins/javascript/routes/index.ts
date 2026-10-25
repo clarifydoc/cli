@@ -12,6 +12,7 @@ import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-fi
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 import { extractGrpcJsServices } from "./grpc-server.js";
+import { applyPrefixScopes, collectPluginPrefixes, mayDeclareRouteObjects, mayRegisterPlugins, visitRouteObjects } from "./fastify-hapi.js";
 
 /**
  * JS/TS route extraction: one shared tree walk feeding every supported
@@ -24,6 +25,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
 
   extractRoutes(tree: Tree, sourceText: string, _filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     const express: RouteInfo[] = [];
+    const routeObjects: RouteInfo[] = [];
+    const maybeRouteObjects = mayDeclareRouteObjects(sourceText);
     const reactRouter: RouteInfo[] = [];
     const nestjs: RouteInfo[] = [];
     const vueRouter: RouteInfo[] = [];
@@ -36,6 +39,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
 
     const walk = (node: Node): void => {
       visitExpressRoute(node, express);
+      if (maybeRouteObjects) visitRouteObjects(node, routeObjects);
       visitReactRouterRoute(node, reactRouter, facts);
       visitNestjsRoute(node, nestjs, facts);
       visitVueRouterRoute(node, vueRouter, facts);
@@ -51,7 +55,14 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // Express guards declared once on the router (`router.use(requireAuth)`)
     // apply to every later route on it — a file-level fact the per-node
     // visitor cannot see, so it is written after the walk.
-    applyRouterLevelGuards(tree.rootNode, express);
+    applyRouterLevelGuards(tree.rootNode, express, sourceText);
+    // Fastify / hapi plugins registered under a prefix: inline ones prefix their routes here,
+    // imported ones become mounts for the project mount pass.
+    if (mayRegisterPlugins(sourceText)) {
+      const scopes = collectPluginPrefixes(tree.rootNode, routeObjects);
+      applyPrefixScopes(scopes, express);
+      applyPrefixScopes(scopes, routeObjects);
+    }
     // Route arrays another file may `.map` into <Route> (react-router-resolver.ts).
     if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
 
@@ -68,6 +79,6 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // grpc-js servers: the handlers `addService` registers per rpc.
     const grpc = extractGrpcJsServices(sourceText);
 
-    return [...express, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql, ...grpc];
+    return [...express, ...routeObjects, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql, ...grpc];
   },
 };

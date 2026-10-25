@@ -16,6 +16,8 @@ export interface ImportIndex {
   localFor(file: string, name: string): string | null;
   sourceFor(file: string, name: string): string | null;
   namespacesFor(file: string): string[];
+  /** The project file an import of `source` in `file` loads — any import of it, bound or not. */
+  fileForSource?(file: string, source: string): string | null;
 }
 
 /** A class as declared in one file. */

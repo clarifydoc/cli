@@ -1048,6 +1048,12 @@ export interface RouteInfo {
    */
   mount?: true;
   /**
+   * A mount whose router is loaded where it is mounted, with no binding
+   * (`register(require("./clubs"), { prefix })`): the module as written, which
+   * the mount pass resolves through the file's imports instead of `handler`.
+   */
+  mountModule?: string;
+  /**
    * The router variable or controller class the route is declared on, as
    * written (`router`, `SeriesController`). Lets a project-level pass apply a
    * prefix to one router's routes when a file declares several.
