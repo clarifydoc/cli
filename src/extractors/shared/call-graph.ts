@@ -427,6 +427,12 @@ export function classifyCalls(
    * `requests` for `requests.get`) and classes. See step 2d.
    */
   localSymbols?: ReadonlySet<string>,
+  /**
+   * Names the calling function binds itself — its parameters: `club.transfer()`
+   * in `function second(club)` is a call on what the caller hands in, never on
+   * a file-level `const club = useClub()` binding of another function.
+   */
+  ownBindings?: ReadonlySet<string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -479,7 +485,8 @@ export function classifyCalls(
       // A bare name this file defines as a function is that function — the
       // binding that made it is an identity wrapper (`const f = useCallback(() => …)`).
       const ownFunction = !call.name.includes(".") && localSymbols?.has(call.name);
-      const alias = ownFunction ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
+      const shadowed = ownBindings?.has(call.name.includes(".") ? root : call.name);
+      const alias = ownFunction || shadowed ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
       if (alias) {
         call.kind = "cross-file";
         call.target = typeof alias === "string" ? alias : alias.source;

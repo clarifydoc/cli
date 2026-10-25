@@ -421,12 +421,15 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       if (fn.name.includes(".")) localSymbols.add(fn.name.slice(0, fn.name.indexOf(".")));
     }
     for (const cls of analysis.classes) localSymbols.add(cls.name);
+    // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`).
+    const paramNames = (fn: FunctionInfo): Set<string> | undefined =>
+      variableAliases && fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn));
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols);
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method));
       }
     }
     for (const route of analysis.routes) {
