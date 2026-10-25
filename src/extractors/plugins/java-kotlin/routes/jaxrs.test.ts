@@ -214,3 +214,23 @@ public interface PersonRepository {
     ]);
   });
 });
+
+describe("JAX-RS @Consumes", () => {
+  it("records the media types a method accepts, the class's when the method states none", async () => {
+    const routes = await routesOf(`
+@Path("/v1")
+@Consumes(MediaType.APPLICATION_JSON)
+public class PlayerResource {
+  @POST @Path("/players")
+  public Player createPlayer(Player p) { return p; }
+
+  @POST @Path("/players")
+  @Consumes({MediaType.APPLICATION_FORM_URLENCODED, "text/plain"})
+  public List<Player> findPlayers(@FormParam("name") String name) { return null; }
+}`, "PlayerResource.java");
+    expect(routes.map((r) => [r.handler, r.consumes])).toEqual([
+      ["createPlayer", ["application/json"]],
+      ["findPlayers", ["application/x-www-form-urlencoded", "text/plain"]],
+    ]);
+  });
+});

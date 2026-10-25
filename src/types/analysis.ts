@@ -1054,6 +1054,11 @@ export interface RouteInfo {
    */
   mountModule?: string;
   /**
+   * The request media types the endpoint accepts, as declared (JAX-RS `@Consumes`): two methods on
+   * one method + path that differ only here are two endpoints.
+   */
+  consumes?: string[];
+  /**
    * The router variable or controller class the route is declared on, as
    * written (`router`, `SeriesController`). Lets a project-level pass apply a
    * prefix to one router's routes when a file declares several.

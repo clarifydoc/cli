@@ -245,6 +245,15 @@ describe("dedupeRoutes", () => {
   const call = (name: string): CallInfo => ({ name, kind: "internal", target: null, line: 1 });
   const withCalls = (r: RouteInfo & { filePath: string }, calls: CallInfo[]) => ({ ...r, calls });
 
+  it("keeps two methods on one path that differ only by the media type they accept", () => {
+    const create = { ...route("api/PlayerResource.java", "POST", "/v1/players", "createPlayer", 45), consumes: ["application/json"] };
+    const search = { ...route("api/PlayerResource.java", "POST", "/v1/players", "findPlayers", 109), consumes: ["application/x-www-form-urlencoded"] };
+    const spec = route("openapi.yaml", "POST", "/v1/players", "createPlayer", 3);
+    expect(dedupeRoutes([create, search, spec]).map((r) => r.handler)).toEqual(["createPlayer", "findPlayers"]);
+    // One declared type, or none: still one endpoint.
+    expect(dedupeRoutes([create, spec])).toHaveLength(1);
+  });
+
   it("collapses the Rails routes.rb + controller-convention duplicate, keeping the richer entry", () => {
     // routes.rb produces a code-less entry; the controller produces the real one.
     const fromRoutesRb = route("config/routes.rb", "GET", "/absences/vacation_days", "AbsencesController#vacation_days", 12);

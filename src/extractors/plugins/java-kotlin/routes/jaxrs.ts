@@ -68,6 +68,41 @@ function annotationsOf(decl: Node): Node[] {
   return out;
 }
 
+/** `MediaType` constants by name → the media type they stand for. */
+const MEDIA_TYPES: Record<string, string> = {
+  APPLICATION_JSON: "application/json",
+  APPLICATION_XML: "application/xml",
+  APPLICATION_FORM_URLENCODED: "application/x-www-form-urlencoded",
+  MULTIPART_FORM_DATA: "multipart/form-data",
+  APPLICATION_OCTET_STREAM: "application/octet-stream",
+  TEXT_PLAIN: "text/plain",
+  TEXT_XML: "text/xml",
+  TEXT_HTML: "text/html",
+  WILDCARD: "*/*",
+};
+
+/** `@Consumes(MediaType.APPLICATION_FORM_URLENCODED)`, `@Consumes({"a/b", C})`: the media types, sorted. */
+function consumedTypes(decl: Node): string[] | null {
+  const ann = annotationsOf(decl).find((a) => annotationSimpleName(a) === "Consumes");
+  const args = ann ? annotationArgsNode(ann) : null;
+  if (!args) return null;
+  const types = new Set<string>();
+  for (const m of args.text.matchAll(/"([^"]+)"|([A-Za-z_][\w.]*)/g)) {
+    if (m[1]) for (const t of m[1].split(",")) types.add(t.trim().toLowerCase());
+    else if (m[2] && !/^value$/.test(m[2])) {
+      const name = m[2].slice(m[2].lastIndexOf(".") + 1).replace(/_TYPE$/, "");
+      if (/^[A-Z][A-Z0-9_]*$/.test(name)) types.add(MEDIA_TYPES[name] ?? name);
+    }
+  }
+  return types.size > 0 ? [...types].sort() : null;
+}
+
+/** The nearest enclosing class's declaration node. */
+function enclosingClass(node: Node): Node | null {
+  for (let n = node.parent; n; n = n.parent) if (CLASS_TYPES.has(n.type)) return n;
+  return null;
+}
+
 /** Path argument of an annotation (`@Path("x")` / `@Get("/x")`), null if none. */
 function annotationPath(ann: Node): string | null {
   const args = annotationArgsNode(ann);
@@ -191,6 +226,9 @@ function emitMethodRoutes(
   const merged = mergePrefix(classPrefix, subPath ?? "/");
   const path = merged.startsWith("/") ? merged : "/" + merged;
   const handler = getNameFromNode(method);
+  // The method's `@Consumes`, else its class's.
+  const cls = enclosingClass(method);
+  const consumes = consumedTypes(method) ?? (cls ? consumedTypes(cls) : null);
   const route: RouteInfo = {
     path,
     httpMethod: verb,
@@ -202,6 +240,7 @@ function emitMethodRoutes(
     calls: body ? extractCalls(body, lang) : [],
     middleware: [],
     line: micronautLine || method.startPosition.row + 1,
+    ...(consumes ? { consumes } : {}),
     // No class `@Path`: a sub-resource, served under whatever mounts it — a locator the
     // resolver finds, or the framework (`/realms/{realm}/broker/{alias}/endpoint`).
     ...(flavor === "none" && !classPrefix ? { prefixUnresolved: JAXRS_SUB_RESOURCE } : {}),
