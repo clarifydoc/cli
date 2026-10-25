@@ -7,7 +7,8 @@ import { byOrdinal } from "./ordinal.js";
  * The service address book: every name a sub-project answers to at runtime,
  * from the facts that state it — a compose service or k8s workload matched to
  * the project, its other DNS names, the host ports compose publishes onto it,
- * and the URLs its own configuration says it listens on. A call's host
+ * the URLs its own configuration says it listens on, and the name it registers
+ * under in service discovery. A call's host
  * resolves to a project only through these.
  */
 export function buildServiceAddresses(
@@ -30,6 +31,8 @@ export function buildServiceAddresses(
   }
   for (const [project, values] of config) {
     for (const v of values) {
+      // The name service discovery knows it by, as its own main configuration states it.
+      if (v.serviceName && !v.test && !v.profile) add({ host: v.value.toLowerCase(), project, source: "name", file: v.file });
       if (!v.listen || v.test) continue;
       const a = parseAddress(v.value);
       if (!a || a.port === undefined) continue;

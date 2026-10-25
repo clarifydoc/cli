@@ -1561,9 +1561,11 @@ export interface DataSourceInfo {
 export interface CallBaseRef {
   /**
    * `env`: an environment variable · `config`: a configuration key ·
-   * `client`: the base a registered client carries · `literal`: written out.
+   * `client`: the base a registered client carries · `literal`: written out ·
+   * `service`: a name service discovery resolves (Spring `@FeignClient(name = "orders")`,
+   * `lb://orders`), which reaches only a project registered under it.
    */
-  kind: "env" | "config" | "client" | "literal";
+  kind: "env" | "config" | "client" | "literal" | "service";
   /**
    * `ORDERS_URL` · `Services:Orders` · a client as its registration names it
    * (`InventoryClient`, `name:legacy`) · `http://orders:8080`.
@@ -1666,7 +1668,7 @@ export interface CallOrigin {
    */
   confidence: Confidence;
   /** Each fact that led there, in order: client registration, env/config value, address. */
-  evidence: Array<{ step: "client" | "env" | "config" | "literal" | "fallback" | "address" | "proxy"; detail: string; file?: string; line?: number }>;
+  evidence: Array<{ step: "client" | "env" | "config" | "literal" | "fallback" | "address" | "proxy" | "service"; detail: string; file?: string; line?: number }>;
 }
 
 /**
@@ -1683,9 +1685,11 @@ export interface ServiceAddress {
    * `service`: a compose service / k8s workload name · `alias`: another DNS
    * name it answers to (k8s Service, `hostname`, network alias) · `port`: a
    * host port compose publishes onto it · `listen`: a URL its own
-   * configuration binds (launchSettings `applicationUrl`, Kestrel `Urls`).
+   * configuration binds (launchSettings `applicationUrl`, Kestrel `Urls`) ·
+   * `name`: the name its configuration registers it under in service discovery
+   * (Spring `spring.application.name`).
    */
-  source: "service" | "alias" | "port" | "listen";
+  source: "service" | "alias" | "port" | "listen" | "name";
   /** The manifest or config file stating it. */
   file: string;
 }

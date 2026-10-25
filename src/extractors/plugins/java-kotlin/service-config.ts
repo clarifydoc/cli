@@ -13,6 +13,9 @@ import { propertiesKeys, yamlKeys, type ConfigKey } from "../shared/config-keys.
 /** `application-test.yml`, `application-it.properties`: a test profile. */
 const TEST_PROFILE = /^(?:test\w*|it|integration\w*)$/i;
 
+/** Keys naming the app in service discovery (Spring Cloud, Eureka), by relaxed-binding form. */
+const SERVICE_NAME_KEYS = new Set(["spring.application.name", "eureka.instance.appname", "eureka.instance.virtualhostname"]);
+
 /** Keys that say where the app itself listens, not where it calls. */
 const LISTEN_KEY = /^server\.(?:address|port)$/i;
 
@@ -35,6 +38,7 @@ function entries(keys: ConfigKey[], path: string): ConfigEntry[] {
       ...(profile ? { profile } : {}),
       ...(profile && profile.split(/\s*[,|&]\s*/).some((p) => TEST_PROFILE.test(p.replace(/^!/, ""))) ? { test: true } : {}),
       ...(LISTEN_KEY.test(k.key) ? { listen: true } : {}),
+      ...(SERVICE_NAME_KEYS.has(k.key.toLowerCase().replace(/[-_]/g, "")) ? { serviceName: true } : {}),
     };
   });
 }

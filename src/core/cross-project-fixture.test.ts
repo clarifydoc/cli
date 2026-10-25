@@ -42,6 +42,12 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *                             invokes an operation of `com.shop.person.api.
  *                             PersonRepository`, which person-api declares
  *                             (@GET/@POST) and person-service implements.
+ *   billing ClubClient        a Feign client named only `league`: the name
+ *                             league registers under in discovery
+ *                             (`spring.application.name`), its routes served
+ *                             under `server.servlet.context-path: /league`.
+ *   billing SponsorBilling    a WebClient built on `http://league/league` —
+ *                             the same discovery name, then the uri.
  */
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microservices");
 
@@ -56,6 +62,8 @@ const EXPECTED = [
   { call: "web/src/api.ts:12", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
   { call: "billing/src/main/java/com/shop/billing/DriverLookup.java:11", route: "GET /v1/persons/{personId}", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:15" },
   { call: "billing/src/main/java/com/shop/billing/DriverLookup.java:16", route: "POST /v1/persons", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:19" },
+  { call: "billing/src/main/java/com/shop/billing/ClubClient.java:8", route: "GET /league/clubs/{id}", at: "league/src/main/java/com/shop/league/ClubController.java:9" },
+  { call: "billing/src/main/java/com/shop/billing/SponsorBilling.java:10", route: "POST /league/clubs/{id}/sponsors", at: "league/src/main/java/com/shop/league/ClubController.java:14" },
 ];
 
 let out: string | undefined;
@@ -92,6 +100,8 @@ describe("service-to-service links — hand-labelled fixture", () => {
     expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "fleet", host: "fleet" });
     expect(origin("cars/Clients/PaymentsClient.cs", 9)).toMatchObject({ host: "api.stripe.com", external: true });
     expect(origin("cars/Clients/PaymentsClient.cs", 9)).not.toHaveProperty("project");
+    // A discovery name: the project whose spring.application.name it is.
+    expect(origin("billing/src/main/java/com/shop/billing/ClubClient.java", 8)).toMatchObject({ project: "league", host: "league", confidence: "EXTRACTED" });
     // Two hops: the dev proxy to the gateway, the gateway's route to the service.
     expect(origin("web/src/api.ts", 12)).toMatchObject({ project: "fleet", host: "fleet", confidence: "EXTRACTED" });
     expect(origin("web/src/api.ts", 12)!.evidence.filter((e) => e.step === "proxy").map((e) => e.file)).toEqual([
@@ -103,6 +113,7 @@ describe("service-to-service links — hand-labelled fixture", () => {
   it("lifts the links to the services that depend on each other", () => {
     const deps = (summary.projectDependencies ?? []).map((d) => [d.from, d.to, d.kind, d.links, d.deployment?.via ?? null]);
     expect(deps).toEqual([
+      ["billing", "league", "http", 2, null],
       ["billing", "person-person-api", "http", 2, null],
       // docker-compose.yml: cars `Services__Fleet: http://fleet:8080`.
       ["cars", "fleet", "http", 2, "Services__Fleet"],

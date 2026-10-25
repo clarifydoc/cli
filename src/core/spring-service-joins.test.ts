@@ -77,6 +77,14 @@ public class ClubCalls {
   }
 }
 `,
+  "fans/src/main/java/com/example/fans/TransferClient.java": `package com.example.fans;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.*;
+@FeignClient("transfers")
+public interface TransferClient {
+  @GetMapping("/transfers/{id}") String get(@PathVariable("id") String id);
+}
+`,
   "fans/src/main/java/com/example/fans/Stand.java": `package com.example.fans;
 public class Stand {
   private ClubClient clubs;
@@ -116,6 +124,17 @@ describe("Spring services joined across a context path", () => {
   it("links a Feign call naming the context path to the route", () => {
     const links = (summary.apiRouteLinks ?? []).map((l) => `${l.source}:${l.sourceLine} ${l.method} ${l.routePath} -> ${l.target}`);
     expect(links).toContain("fans/src/main/java/com/example/fans/ClubClient.java:6 DELETE /league/clubs/{id} -> league/src/main/java/com/example/league/ClubController.java");
+  });
+
+  it("finds a Feign client's service by the name it registers under in discovery", () => {
+    const feign = summary.apiCalls.find((c) => c.filePath.endsWith("ClubClient.java"));
+    expect(feign?.origin).toMatchObject({ baseRef: { kind: "service", key: "league" }, host: "league", confidence: "EXTRACTED" });
+    expect(feign?.origin?.project).toBe(summary.subProjects!.find((p) => p.root === "league")!.id);
+    expect(feign?.origin?.evidence.find((e) => e.step === "address")?.detail).toMatch(/^league → .* \(name\)$/);
+    // A name no project here registers under is a service elsewhere, never a third party.
+    const other = summary.apiCalls.find((c) => c.filePath.endsWith("TransferClient.java"));
+    expect(other?.origin).toMatchObject({ host: "transfers", confidence: "INFERRED" });
+    expect(other?.origin?.external).toBeUndefined();
   });
 
   it("links WebClient, RestClient, HTTP-interface and Apache HttpClient calls through the league's address", () => {

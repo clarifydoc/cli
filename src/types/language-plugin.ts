@@ -163,6 +163,12 @@ export interface ConfigEntry {
   env?: boolean;
   /** A URL the project itself listens on (`applicationUrl`, Kestrel `Urls`), not one it calls. */
   listen?: boolean;
+  /**
+   * The name the project registers under in service discovery (Spring
+   * `spring.application.name`): other services reach it by that name. Kept
+   * though it is no URL.
+   */
+  serviceName?: boolean;
 }
 
 /**

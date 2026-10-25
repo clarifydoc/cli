@@ -87,6 +87,24 @@ public interface FleetClient {
     ]);
   });
 
+  it("says where a Feign client sends: its url, a url property, else its service name", async () => {
+    const baseOf = async (ann: string) => {
+      const SRC = `package x;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.*;
+${ann}
+public interface FleetClient {
+  @GetMapping("/items") Item items();
+}`;
+      return apiCalls(await sourcesOf(SRC, "java", "FleetClient.java"))[0]?.baseRef;
+    };
+    expect(await baseOf(`@FeignClient(name = "fleet")`)).toEqual({ kind: "service", key: "fleet" });
+    expect(await baseOf(`@FeignClient("fleet")`)).toEqual({ kind: "service", key: "fleet" });
+    expect(await baseOf(`@FeignClient(name = "fleet", url = "http://fleet:8080")`)).toEqual({ kind: "literal", key: "http://fleet:8080" });
+    expect(await baseOf(`@FeignClient(name = "fleet", url = "\${fleet.url:http://localhost:8081}")`)).toEqual({ kind: "config", key: "fleet.url", fallback: "http://localhost:8081" });
+    expect(await baseOf(`@FeignClient(name = "\${fleet.name}")`)).toBeUndefined();
+  });
+
   it("ignores mapping annotations in non-Feign files (those are inbound routes)", async () => {
     const SRC = `package x;
 import org.springframework.web.bind.annotation.*;

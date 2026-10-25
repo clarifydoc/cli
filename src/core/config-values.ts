@@ -88,6 +88,7 @@ export function readProjectConfig(
 ): Promise<Map<string, ProjectConfigValue[]>> {
   return readAtRoots(projectRoot, subProjects, sources, (spec, text, path, file) =>
     spec.parse(text, path).flatMap((entry) => {
+      if (entry.serviceName) return /^[A-Za-z][\w.-]*$/.test(entry.value) ? [{ ...entry, file }] : [];
       const value = urlValue(entry.value);
       return value ? [{ ...entry, value, file }] : [];
     }),

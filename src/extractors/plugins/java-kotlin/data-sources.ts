@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
-import type { DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { CallBaseRef, DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
 import { kotlinNameAndType } from "./functions-classes.js";
@@ -564,6 +564,23 @@ function joinExchange(base: string, path: string): string {
   return origin ? origin[1]! + joinUrl(origin[2]!, path).replace(/^\/$/, "") : joinUrl(base, path);
 }
 
+/**
+ * Where a `@FeignClient(…)` sends: `url = "http://…"` as written, `url = "${league.url}"` the property
+ * (its default kept as the fallback), else the service `name` / `value` / `serviceId` / positional name
+ * that discovery resolves. Null when none is written out.
+ */
+function feignBaseRef(args: string): CallBaseRef | null {
+  const url = /\burl\s*=\s*"([^"]+)"/.exec(args)?.[1];
+  if (url) {
+    if (/^https?:\/\//i.test(url)) return { kind: "literal", key: url };
+    const prop = /^\$\{([\w.-]+)(?::(.*))?\}$/.exec(url);
+    if (prop) return { kind: "config", key: prop[1]!, ...(prop[2] && /^https?:\/\//i.test(prop[2]) ? { fallback: prop[2] } : {}) };
+    return null;
+  }
+  const name = /\b(?:name|value|serviceId)\s*=\s*"([^"]+)"/.exec(args)?.[1] ?? /^\s*"([^"]+)"/.exec(args)?.[1];
+  return name && /^[A-Za-z][\w.-]*$/.test(name) ? { kind: "service", key: name } : null;
+}
+
 /** Join an optional client base path with a call path, with one leading `/`. */
 function joinUrl(base: string | null, path: string): string {
   const parts = [base ?? "", path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean);
@@ -590,6 +607,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isFeignFile = false;
   /** `@FeignClient(path = "/api/users")` prefix, prepended to method paths. */
   private feignBasePath: string | null = null;
+  /** Where a Feign client's calls go: its `url` (literal or a property), else the service `name` discovery resolves. */
+  private feignBase: CallBaseRef | null = null;
   /**
    * File references jOOQ (org.jooq import or generated-tables package). The
    * jOOQ table branch only runs here — its generic verbs otherwise misread
@@ -643,9 +662,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.configFields = prepass.configFields;
     const text = tree.rootNode.text;
     this.isFeignFile = text.includes("@FeignClient");
-    this.feignBasePath = this.isFeignFile
-      ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1]?.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null)
-      : null;
+    const feignArgs = this.isFeignFile ? (text.match(/@FeignClient\s*\(([^)]*)\)/)?.[1] ?? "") : "";
+    this.feignBasePath = this.isFeignFile ? (feignArgs.match(/path\s*=\s*"([^"]+)"/)?.[1] ?? null) : null;
+    this.feignBase = this.isFeignFile ? feignBaseRef(feignArgs) : null;
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
@@ -810,6 +829,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             name: feign[1]!.toUpperCase(),
             target: joinUrl(this.feignBasePath, pm?.[1] ?? pm?.[2] ?? ""),
             line: node.startPosition.row + 1,
+            ...(this.feignBase ? { baseRef: this.feignBase } : {}),
           }));
         }
       }

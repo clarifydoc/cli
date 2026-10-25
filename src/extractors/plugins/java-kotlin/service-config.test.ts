@@ -43,3 +43,13 @@ describe("Spring route base", () => {
     expect(baseOf({ "application.yml": "server.servlet.context-path: /a\n", "config/application.yml": "server.servlet.context-path: /b\n" })).toBeNull();
   });
 });
+
+describe("Spring service names", () => {
+  it("marks the name the app registers under in discovery, in YAML and properties", () => {
+    const names = entriesOf({
+      "src/main/resources/application.yml": "spring:\n  application:\n    name: league\n",
+      "src/main/resources/bootstrap.properties": "eureka.instance.appname=league-api\nleague.timeout=5\n",
+    }).filter((e) => e.serviceName).map((e) => e.value);
+    expect(names).toEqual(["league", "league-api"]);
+  });
+});

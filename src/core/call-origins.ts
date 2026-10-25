@@ -141,6 +141,7 @@ export function resolveCallOrigins(input: {
   /** Every value stated for the reference, as seen from the caller's project. */
   const valuesOf = (ref: CallBaseRef, project: string, language: string): Array<{ value: string; evidence: Evidence; fallback?: true }> => {
     if (ref.kind === "literal") return [{ value: ref.key, evidence: { step: "literal", detail: ref.key } }];
+    if (ref.kind === "service") return [{ value: `http://${ref.key}`, evidence: { step: "service", detail: ref.key } }];
     if (ref.kind === "client") return [];
     const envNames = ref.kind === "env" ? [ref.key] : (serviceConfigFor(language)?.envNamesFor?.(ref.key) ?? []);
     const out: Array<{ value: string; evidence: Evidence }> = [];
@@ -213,6 +214,8 @@ export function resolveCallOrigins(input: {
       return { baseRef: found.ref, host: hit.host, project, confidence: clean && !allFallback && !found.assumed ? "EXTRACTED" : "INFERRED", evidence };
     }
     if (projects.size > 1 || shared) return { baseRef: found.ref, confidence: "AMBIGUOUS", evidence };
+    // A discovery name no project here registers under: a service elsewhere, never a third party.
+    if (found.ref.kind === "service") return { baseRef: found.ref, host: found.ref.key.toLowerCase(), confidence: "INFERRED", evidence };
     if (outside.length > 0) {
       const hit = outside[0]!;
       // Another system's URL: whole and absolute, so it never joins a route here.
