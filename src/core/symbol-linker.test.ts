@@ -644,3 +644,26 @@ describe("symbol-linker — a route declared inside a class", () => {
     expect(target("/organizers/clubs")).toBe("PublicClubsController.get_all");
   });
 });
+
+describe("symbol-linker — a receiver call reaches a free function only through its module", () => {
+  const ts = (filePath: string, functions: any[], imports: Array<{ source: string; specifiers: string[]; isNamespace?: boolean }> = []): FileAnalysis =>
+    ({
+      ...file(filePath, "app", { functions }),
+      language: "typescript",
+      imports: imports.map((i) => ({ isDefault: false, isNamespace: false, isType: false, line: 1, ...i })),
+    } as unknown as FileAnalysis);
+  const target = ts("src/scoring/round.ts", [fn("round", []), fn("kickOff", [])]);
+
+  it("never links a builtin global, a parameter or a local's method to the project's free function (real-repo FP)", () => {
+    const caller = ts("src/scoring/table.ts", [fn("points", [call("Math.round"), call("clubs.kickOff")])], [{ source: "./round", specifiers: ["round"] }]);
+    expect(buildSymbolLinks([caller, target]).filter((l) => l.targetFile === "src/scoring/round.ts" && l.callName !== "round")).toEqual([]);
+  });
+
+  it("links a namespace import's or a dynamically imported module's function", () => {
+    const viaNamespace = ts("src/scoring/table.ts", [fn("points", [call("scoring.round")])], [{ source: "./round", specifiers: ["scoring"], isNamespace: true }]);
+    const viaDynamic = ts("src/scoring/live.ts", [fn("start", [call("mod.kickOff", 4)])], [{ source: "./round", specifiers: [] }]);
+    const links = buildSymbolLinks([viaNamespace, viaDynamic, target]);
+    expect(links.filter((l) => l.targetFile === "src/scoring/round.ts").map((l) => `${l.callName}->${l.targetSymbol}`).sort())
+      .toEqual(["mod.kickOff->kickOff", "scoring.round->round"]);
+  });
+});

@@ -1446,6 +1446,35 @@ function importsFile(analysis: FileAnalysis, file: string, ctx: LinkContext): bo
   return project !== undefined && projects.has(project);
 }
 
+/**
+ * Whether `head` names a module whose free functions `head.fn()` calls: a name
+ * an import binds (`import * as api from "./api"`, `import league.sql as sql`,
+ * `from . import fixtures as fx`) — to the target's own file, a package or
+ * barrel (`index`, `__init__`, `mod`) standing for it, or a sibling sub-project
+ * the file imports by package — or a file loaded at run time where it is used
+ * (`const heavy = await import("./post-edit.js")`). Never a builtin global, a
+ * parameter, a local, nor an external package.
+ */
+function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string, ctx: LinkContext): boolean {
+  for (const imp of analysis.imports) {
+    const resolved = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
+    if (imp.specifiers.length === 0) {
+      if (resolved === targetFile) return true;
+      continue;
+    }
+    const binds = imp.specifiers.some((spec) => spec === head || spec.startsWith(head + ".")) || (!!imp.aliases && head in imp.aliases);
+    if (!binds) continue;
+    if (!resolved) {
+      const project = ctx.projectOf.get(targetFile);
+      if (project !== undefined && importedProjectsOf(analysis, ctx).has(project)) return true;
+      continue;
+    }
+    if (resolved === targetFile) return true;
+    if (/(?:^|\/)(?:index\.[^/]+|__init__\.pyi?|mod\.rs)$/.test(resolved)) return true;
+  }
+  return false;
+}
+
 /** True when the analysis imports nothing the linker can see — by path or by package. */
 function importsNothing(analysis: FileAnalysis, ctx: LinkContext): boolean {
   return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0;
@@ -2771,7 +2800,11 @@ function resolveCallToDefinition(
           sameDir ||
           importsFile(analysis, entry.file, ctx) ||
           importedStemsOf(analysis, ctx).has(fileStem(entry.file));
-        if (!contradicted && (evidenced || importsNothing(analysis, ctx))) {
+        // A free function is reached through a receiver only when the receiver
+        // is its module: `Math.round`, `monkeypatch.setattr` or a `path` local's
+        // `read_bytes` never call the project's `round` / `setattr` / `read_bytes`.
+        const freeTargetVetoed = tgtClass === null && !moduleReceiver(analysis, head.replace(/\?$/, ""), entry.file, ctx);
+        if (!contradicted && !freeTargetVetoed && (evidenced || importsNothing(analysis, ctx))) {
           return mkLink(
             entry.file,
             entry.def.name,
