@@ -3,6 +3,8 @@ import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import {
   DJ_APP_NAME,
+  DJ_MODEL_VIEW,
+  type DjModelViewFact,
   DJ_ROOT_URLCONF,
   DJ_URLPATTERNS,
   DJ_VIEW_CLASS,
@@ -94,9 +96,16 @@ export const djangoUrlconfResolver: RouteResolver = {
     const appNames = new Map<string, string>();
     // DRF's DEFAULT_PERMISSION_CLASSES per sub-project — null where settings files disagree.
     const drfDefaults = new Map<string, string[] | null>();
+    /** `@register_model_view` registrations, by lowercased model name. */
+    const modelViews = new Map<string, Array<DjModelViewFact & { file: string; projectId: string }>>();
     let any = false;
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
+        if (f.kind === DJ_MODEL_VIEW) {
+          const fact = f.data as DjModelViewFact;
+          const model = fact.model.split(".").pop()!.toLowerCase();
+          (modelViews.get(model) ?? modelViews.set(model, []).get(model)!).push({ ...fact, file: a.filePath, projectId: a.projectId });
+        }
         if (f.kind === DJ_APP_NAME) appNames.set(a.filePath, (f.data as { name: string }).name);
         if (f.kind === DJ_URLPATTERNS && f.owner) {
           any = true;
@@ -214,15 +223,18 @@ export const djangoUrlconfResolver: RouteResolver = {
       return drfDefault(ctx.fileOf(file!)?.projectId ?? "");
     };
 
-    const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined, name?: string) => {
+    /** `viewFile`: where the view's name is in scope, when not the urlconf (a registry decorator's file). */
+    const emitView = (file: string, path: string, view: ViewRef, line: number, marker: string | undefined, name?: string, viewFile = file) => {
       const urlconf = ctx.fileOf(file);
       if (!urlconf) return;
-      const ref = view.kind === "class" ? ctx.classes.resolve(file, view.name) : null;
+      const ref = view.kind === "class" ? ctx.classes.resolve(viewFile, view.name) : null;
       const extra = { ...(marker ? { prefixUnresolved: marker } : {}), ...(name ? { name } : {}) };
       if (!ref) {
         // A function view, or a class we cannot see: a route at that path, any method.
-        const auth = view.kind === "func" ? funcAuth(file, view.name) : {};
-        emit({ analysis: urlconf, line }, { path, httpMethod: null, kind: "api", handler: view.name, ...auth, ...extra });
+        const auth = view.kind === "func" ? funcAuth(viewFile, view.name) : {};
+        const fn = viewFile !== file && view.kind === "func" ? ctx.fileOf(viewFile)?.functions.find((f) => f.name === view.name) : undefined;
+        const where = fn ? { analysis: ctx.fileOf(viewFile)!, line: fn.line } : { analysis: urlconf, line };
+        emit(where, { path, httpMethod: null, kind: "api", handler: view.name, ...auth, ...extra });
         return;
       }
       const auth = authOf(nearestFact(ref), ref);
@@ -239,7 +251,9 @@ export const djangoUrlconfResolver: RouteResolver = {
         const m = methodOf(ref, verb);
         if (!m) continue;
         const where = whereMethod(m);
-        if (where) emit(where, { path, httpMethod: verb.toUpperCase(), kind: "api", handler: `${m.owner.cls.name}.${verb}`, ...auth, ...extra });
+        // A verb the view inherits serves what the view's own body states (`queryset = Club.objects.all()`).
+        const owner = m.owner.cls !== ref.cls ? { owner: ref.cls.name } : {};
+        if (where) emit(where, { path, httpMethod: verb.toUpperCase(), kind: "api", handler: `${m.owner.cls.name}.${verb}`, ...owner, ...auth, ...extra });
         emitted = true;
       }
       if (emitted) return;
@@ -317,6 +331,36 @@ export const djangoUrlconfResolver: RouteResolver = {
       return imported && source ? { file: source, entry: imported } : null;
     };
 
+    /**
+     * The Django app a file belongs to: the nearest directory, from the file's up,
+     * holding the app's `apps.py` or `models` module.
+     */
+    const appOf = (file: string): string | null => {
+      const parts = file.split("/");
+      for (let i = parts.length - 1; i > 0; i--) {
+        const dir = parts.slice(0, i).join("/");
+        if (["apps.py", "models.py", "models/__init__.py"].some((n) => ctx.fileOf(`${dir}/${n}`))) return parts[i - 1]!;
+      }
+      return null;
+    };
+    /** A registration's app: its model's module's app, else the registering file's. */
+    const registrationApp = (reg: DjModelViewFact & { file: string }): string | null => {
+      const model = ctx.classes.resolve(reg.file, reg.model.split(".").pop()!);
+      return (model ? appOf(model.filePath) : null) ?? appOf(reg.file);
+    };
+    const mountModelViews = (file: string, path: string, line: number, t: { app: string; model: string; detail: boolean }, marker: string | undefined, ns: readonly string[]) => {
+      const project = ctx.fileOf(file)?.projectId;
+      for (const reg of modelViews.get(t.model) ?? []) {
+        if (reg.detail !== t.detail || reg.projectId !== project) continue;
+        const app = registrationApp(reg);
+        if (app !== null && app !== t.app) continue;
+        const segment = reg.path ? djangoRoute(`${reg.path}/`, false) : "";
+        const name = reg.name ? `${t.model}_${reg.name}` : t.model;
+        const view: ViewRef = { kind: reg.viewKind, name: reg.view };
+        emitView(file, joinDjango(path + segment), view, line, marker, [...ns, name].join(":"), reg.file);
+      }
+    };
+
     // `ns`: the namespaces the includes above put route names in (`dcim:device_add`).
     const walk = (file: string, entries: UrlEntry[], prefix: string, marker: string | undefined, depth: number, ns: readonly string[] = []) => {
       if (depth > 12) return;
@@ -355,6 +399,8 @@ export const djangoUrlconfResolver: RouteResolver = {
         } else if (t.kind === "router") {
           const r = routerIn(file, t.name);
           for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker);
+        } else if (t.kind === "model-views") {
+          mountModelViews(file, path, e.line, t, nextMarker, under(null));
         }
       }
     };

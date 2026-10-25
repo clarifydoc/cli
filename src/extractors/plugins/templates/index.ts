@@ -59,7 +59,9 @@ const NAMED_URL: Partial<Record<TemplateDialect, RegExp>> = {
   django: /\{%-?\s*url\s+(['"])([\w.:-]+)\1[^%]*%\}|\{\{-?\s*url_for\(\s*(['"])((?!static\3)[\w.:-]+)\3[^}]*\}\}/g,
 };
 const ROUTE_MARK = "/__route__/";
-const namedTarget = (target: string): string => (target.startsWith(ROUTE_MARK) ? `route:${target.slice(ROUTE_MARK.length).replace(/~/g, ":")}` : target);
+/** The marked name, without what the template appends after the tag (`{% url 'x' %}{% querystring %}`). */
+const namedTarget = (target: string): string =>
+  target.startsWith(ROUTE_MARK) ? `route:${/^[\w.~-]*/.exec(target.slice(ROUTE_MARK.length))![0].replace(/~/g, ":")}` : target;
 /** htmx requests an element sends: `hx-post="{% url 'clubs:add' %}"`, `hx-get="/clubs"`. */
 const HTMX_RE = /<([a-zA-Z][\w-]*)\b[^>]*?\bhx-(get|post|put|patch|delete)\s*=\s*["']([^"']*)["']/g;
 

@@ -47,11 +47,13 @@ describe("server templates", () => {
 {% include "clubs/_header.html" %}
 <form method="post" action="{% url 'clubs:edit' club.pk %}">{% csrf_token %}<button type="submit">Save</button></form>
 <a href="{% url 'clubs:list' %}?page=2">All clubs</a>
+<a href="{% url 'clubs:table' %}{% querystring sort='points' %}">Table</a>
 <button hx-delete="{% url 'clubs:delete' club.pk %}">Delete</button>`, "django");
     expect(a.subComponents.map((s) => s.name)).toEqual(["_header"]);
     expect(a.interactiveElements.filter((e) => e.request).map((e) => `${e.handler} ${e.request!.method} ${e.request!.target}`)).toEqual([
       "post_clubs_edit POST route:clubs:edit",
       "clubs_list GET route:clubs:list",
+      "clubs_table GET route:clubs:table",
       "delete_clubs_delete DELETE route:clubs:delete",
     ]);
     expect(a.dataSources).toEqual([]);

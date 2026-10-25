@@ -22,6 +22,27 @@ export const DJ_VIEW_CLASS = "dj:view-class";
 export const DRF_SETTINGS = "drf:settings";
 /** `app_name = "clubs"` in a urlconf: the namespace its route names sit in (`clubs:detail`). */
 export const DJ_APP_NAME = "dj:app-name";
+/**
+ * `@register_model_view(Club, "edit", path="edit", detail=True)` on a view: the
+ * view registers itself for a model in a project registry, and a urlconf's
+ * `include(get_model_urls("league", "club"))` mounts every view registered for
+ * that model (`detail` ones under the object's path, the rest under the list's).
+ * The registration names no app; the model's own module does.
+ */
+export const DJ_MODEL_VIEW = "dj:model-view";
+
+export interface DjModelViewFact {
+  /** The model as written (`Club`, `models.Club`). */
+  model: string;
+  /** The view's name suffix (`edit` → route name `club_edit`); "" names the route after the model. */
+  name: string;
+  /** The URL segment under the mount; defaults to `name`. */
+  path: string;
+  detail: boolean;
+  /** The view: a class or function name in this file. */
+  view: string;
+  viewKind: "class" | "func";
+}
 
 /** A view a urlconf entry names, as written. */
 export type ViewRef =
@@ -33,6 +54,8 @@ export type IncludeTarget = (
   | { kind: "list"; entries: UrlEntry[] }
   | { kind: "var"; name: string }
   | { kind: "router"; name: string }
+  /** `include(get_model_urls("league", "club", detail=False))`: the views registered for that model. */
+  | { kind: "model-views"; app: string; model: string; detail: boolean }
   | { kind: "external" }
 ) & {
   /** `include(…, namespace="x")`, or the app name of `include(([…], "x"))`. */
@@ -68,7 +91,7 @@ export interface DjViewClassFact {
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */
-export const DJANGO_GATE = /urlpatterns|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
+export const DJANGO_GATE = /urlpatterns|register_model_view|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
 
 const URL_FUNCS = new Set(["path", "re_path", "url"]);
 
@@ -81,6 +104,16 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
     if (stmt.type === "decorated_definition") {
       const def = stmt.childForFieldName("definition");
       if (def?.type === "class_definition") classFact(def, facts);
+      const view = def?.childForFieldName("name")?.text;
+      if (view && def) {
+        const viewKind = def.type === "class_definition" ? "class" : "func";
+        for (const d of stmt.namedChildren) {
+          if (d.type !== "decorator") continue;
+          const call = d.namedChild(0);
+          const reg = call ? modelViewRegistration(call) : null;
+          if (reg) facts.push({ kind: DJ_MODEL_VIEW, line: d.startPosition.row + 1, owner: view, data: { ...reg, view, viewKind } satisfies DjModelViewFact });
+        }
+      }
       continue;
     }
     if (stmt.type !== "expression_statement") continue;
@@ -116,6 +149,17 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
         facts.push({ kind: DJ_URLPATTERNS, line, owner: name, data: { entries } });
       }
       continue;
+    }
+
+    // `register_model_view(Club, "trace")(TraceView)`: the decorator applied by hand.
+    if (expr.type === "call") {
+      const inner = expr.childForFieldName("function");
+      const reg = inner ? modelViewRegistration(inner) : null;
+      const view = positional(expr)[0];
+      if (reg && view && (view.type === "identifier" || view.type === "attribute")) {
+        facts.push({ kind: DJ_MODEL_VIEW, line, owner: view.text, data: { ...reg, view: view.text, viewKind: "class" } satisfies DjModelViewFact });
+        continue;
+      }
     }
 
     // `router.register(r"tags", TagViewSet)` / `urlpatterns.append(path(…))`
@@ -224,6 +268,42 @@ function urlEntry(node: Node): UrlEntry | null {
   return view ? { t: "view", route, regex, line, view, ...(routeName ? { name: routeName } : {}) } : null;
 }
 
+/** `register_model_view(Club, "edit", path="x", detail=False)` → its literal arguments; null when the model or a value is not literal. */
+function modelViewRegistration(call: Node): Omit<DjModelViewFact, "view" | "viewKind"> | null {
+  if (call.type !== "call") return null;
+  const fn = call.childForFieldName("function");
+  const callee = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : fn?.text;
+  if (callee !== "register_model_view") return null;
+  const args = positional(call);
+  const model = args[0];
+  if (!model || (model.type !== "identifier" && model.type !== "attribute")) return null;
+  const arg = (i: number, kw: string): Node | null => keyword(call, kw) ?? args[i] ?? null;
+  const nameNode = arg(1, "name");
+  if (nameNode && nameNode.type !== "string") return null;
+  const name = nameNode ? pyString(nameNode.text) : "";
+  const pathNode = arg(2, "path");
+  if (pathNode && pathNode.type !== "string" && pathNode.type !== "none") return null;
+  const path = pathNode?.type === "string" ? pyString(pathNode.text) : name;
+  const detailNode = arg(3, "detail");
+  if (detailNode && detailNode.type !== "true" && detailNode.type !== "false") return null;
+  return { model: model.text, name, path, detail: detailNode?.type !== "false" };
+}
+
+/** `get_model_urls("league", "club", detail=False)` → the model-view mount it asks for. */
+function modelViewsMount(node: Node): Extract<IncludeTarget, { kind: "model-views" }> | null {
+  if (node.type !== "call") return null;
+  const fn = node.childForFieldName("function");
+  const callee = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : fn?.text;
+  if (callee !== "get_model_urls") return null;
+  const args = positional(node);
+  const app = keyword(node, "app_label") ?? args[0];
+  const model = keyword(node, "model_name") ?? args[1];
+  const detail = keyword(node, "detail") ?? args[2];
+  if (app?.type !== "string" || model?.type !== "string") return null;
+  if (detail && detail.type !== "true" && detail.type !== "false") return null;
+  return { kind: "model-views", app: pyString(app.text), model: pyString(model.text).toLowerCase(), detail: detail?.type !== "false" };
+}
+
 function includeTarget(node: Node): IncludeTarget | null {
   if (node.type !== "call") return null;
   const fn = node.childForFieldName("function");
@@ -244,6 +324,8 @@ function includeTarget(node: Node): IncludeTarget | null {
   const router = routerUrls(arg);
   if (router) return { kind: "router", name: router, ...ns };
   if (arg.type === "identifier") return { kind: "var", name: arg.text, ...ns };
+  const views = modelViewsMount(arg);
+  if (views) return { ...views, ...ns };
   return { kind: "external" };
 }
 

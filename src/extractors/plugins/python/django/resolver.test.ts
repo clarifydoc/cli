@@ -303,6 +303,114 @@ REST_FRAMEWORK = {
   });
 });
 
+describe("django-urlconf: a model-view registry (real-repo FP shape)", () => {
+  const LEAGUE = {
+    "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+    "config/urls.py": `
+from django.urls import include, path
+urlpatterns = [path("league/", include("league.urls"))]
+`,
+    "league/apps.py": `class LeagueConfig: pass\n`,
+    "league/models.py": `
+class Club:
+    pass
+
+class Match:
+    pass
+`,
+    "league/urls.py": `
+from django.urls import include, path
+from core.urls import get_model_urls
+from . import views
+
+app_name = "league"
+urlpatterns = [
+    path("clubs/", include(get_model_urls("league", "club", detail=False))),
+    path("clubs/<int:pk>/", include(get_model_urls("league", "club"))),
+]
+`,
+    "core/generic.py": `
+class ObjectView:
+    def get(self, request, pk):
+        return None
+
+class ObjectEditView:
+    def get(self, request, pk=None):
+        return None
+    def post(self, request, pk=None):
+        return None
+`,
+    "league/views.py": `
+from core.views import register_model_view
+from core.generic import ObjectView, ObjectEditView
+from .models import Club, Match
+
+@register_model_view(Club, "list", path="", detail=False)
+class ClubListView(ObjectView):
+    queryset = Club.objects.all()
+
+@register_model_view(Club)
+class ClubView(ObjectView):
+    queryset = Club.objects.all()
+
+@register_model_view(Club, "add", detail=False)
+@register_model_view(Club, "edit")
+class ClubEditView(ObjectEditView):
+    queryset = Club.objects.all()
+
+@register_model_view(Club, "bulk_import", path="import", detail=False)
+class ClubImportView(ObjectEditView):
+    pass
+
+@register_model_view(Match, "edit")
+class MatchEditView(ObjectEditView):
+    pass
+
+class TraceView(ObjectView):
+    pass
+
+register_model_view(Club, "trace")(TraceView)
+`,
+  };
+
+  it("mounts each registered view under the include for its model, named as the registry names it", async () => {
+    const out = await analyze(LEAGUE);
+    const routes = out.flatMap((a) => a.routes).filter((r) => r.kind === "api");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.name} ${r.handler} ${r.owner ?? "-"}`).sort()).toEqual([
+      "GET /league/clubs/ league:club_list ObjectView.get ClubListView",
+      "GET /league/clubs/add/ league:club_add ObjectEditView.get ClubEditView",
+      "GET /league/clubs/import/ league:club_bulk_import ObjectEditView.get ClubImportView",
+      "GET /league/clubs/{pk}/ league:club ObjectView.get ClubView",
+      "GET /league/clubs/{pk}/edit/ league:club_edit ObjectEditView.get ClubEditView",
+      "GET /league/clubs/{pk}/trace/ league:club_trace ObjectView.get TraceView",
+      "POST /league/clubs/add/ league:club_add ObjectEditView.post ClubEditView",
+      "POST /league/clubs/import/ league:club_bulk_import ObjectEditView.post ClubImportView",
+      "POST /league/clubs/{pk}/edit/ league:club_edit ObjectEditView.post ClubEditView",
+    ]);
+  });
+
+  it("keeps a registration to its model's app", async () => {
+    const out = await analyze({
+      ...LEAGUE,
+      "cup/apps.py": `class CupConfig: pass\n`,
+      "cup/models.py": `class Club:\n    pass\n`,
+      "cup/urls.py": `
+from django.urls import include, path
+from core.urls import get_model_urls
+app_name = "cup"
+urlpatterns = [path("clubs/<int:pk>/", include(get_model_urls("cup", "club")))]
+`,
+      "config/urls.py": `
+from django.urls import include, path
+urlpatterns = [path("league/", include("league.urls")), path("cup/", include("cup.urls"))]
+`,
+    });
+    const paths = out.flatMap((a) => a.routes).filter((r) => r.kind === "api").map((r) => r.path);
+    expect(paths.filter((p) => p.startsWith("/cup/"))).toEqual([]);
+    expect(paths).toContain("/league/clubs/{pk}/edit/");
+  });
+});
+
 describe("parseAction", () => {
   it("reads detail, methods and url_path, with DRF's defaults", () => {
     expect(parseAction('action(detail=True, methods=["get", "post"], url_path="notes")')).toEqual({
