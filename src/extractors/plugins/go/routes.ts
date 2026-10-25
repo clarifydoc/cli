@@ -70,7 +70,7 @@ const METHODS_RE = /\.\s*Methods\s*\(([^)]*)\)/;
 /** `api := r.Group(` — gin/echo/fiber group binding (chains compose). */
 const GROUP_RE = /(\w+)\s*:?=\s*(\w+)\.\s*Group\s*\(/;
 /** `s := r.PathPrefix("/api").Subrouter()` — gorilla subrouter binding. */
-const SUBROUTER_RE = /(\w+)\s*:?=\s*(\w+)\.\s*PathPrefix\s*\(\s*["'`]([^"'`]*)["'`]\s*\)\s*\.\s*Subrouter\s*\(/;
+const SUBROUTER_RE = /(\w+)\s*:?=\s*(\w+)\.\s*PathPrefix\s*\(\s*([^()]*?)\s*\)\s*\.\s*Subrouter\s*\(/;
 /** `r.Route("/api", func(r chi.Router) {` / `r.Group(func(r chi.Router) {` — chi nested blocks. */
 const CHI_BLOCK_RE = /(\w+)\.\s*(Route|Group)\s*\(/;
 /** A parameter typed as a router: `router *gin.RouterGroup`, `e *echo.Echo`, `r chi.Router`, `app *fiber.App`. */
@@ -118,6 +118,31 @@ const MOUNT_CALL_RE = /(\w+)\.\s*Mount\s*\(\s*["'`]([^"'`]*)["'`]\s*,\s*([A-Za-z
 const COMBO_RE = /(\w+)\.\s*Combo\s*\(/;
 /** gitea's `m.Methods("GET, POST", "/path", h)`: the verbs first. */
 const VERBS_FIRST_RE = /(\w+)\.\s*Methods\s*\(\s*["'`]/;
+/** gorilla's route builder: `r.Methods("GET").Path("/x").HandlerFunc(h)`, `r.Path("/x").Methods("POST").Handler(h)`. */
+const GORILLA_CHAIN_RE = /(\w+)\.\s*(?:Methods|Path)\s*\(/;
+/** A string constant: `const apiBase = "/league"`, or `apiBase = "/league"` inside a `const (…)` block. */
+const CONST_SINGLE_RE = /^\s*const\s+([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"([^"\\]*)"\s*(?:\/\/.*)?$/;
+const CONST_IN_BLOCK_RE = /^\s*([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"([^"\\]*)"\s*(?:\/\/.*)?$/;
+/** `apiBase + "/matches"`, `apiBase`: a path built on a string constant. */
+const CONST_PLUS_PATH_RE = /^([A-Za-z_]\w*)(?:\s*\+\s*["'`]([^"'`]*)["'`])?$/;
+
+/** The file's string constants by name; a name declared twice with different values is left out. */
+function stringConstants(lines: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const clash = new Set<string>();
+  let inBlock = false;
+  for (const line of lines) {
+    if (/^\s*const\s*\(\s*$/.test(line)) { inBlock = true; continue; }
+    if (inBlock && /^\s*\)/.test(line)) { inBlock = false; continue; }
+    const m = (inBlock ? CONST_IN_BLOCK_RE : CONST_SINGLE_RE).exec(line);
+    if (!m) continue;
+    if (out.has(m[1]!) && out.get(m[1]!) !== m[2]) clash.add(m[1]!);
+    out.set(m[1]!, m[2]!);
+  }
+  for (const c of clash) out.delete(c);
+  return out;
+}
+
 /** A verb in a chain: `.Get(`, `.Post(`, … `.Any(`. */
 const CHAIN_VERB_RE = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head|Any)\s*\(/g;
 
@@ -274,7 +299,12 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   /** The current function returns the router it builds. */
   let returnsRouter = false;
 
+  const constants = stringConstants(lines);
   const literal = (arg: string | undefined): string | null => {
+    // `apiBase + "/matches"` / `apiBase` on a constant the file declares: the constant is part of the path.
+    const onConst = arg?.trim().match(CONST_PLUS_PATH_RE);
+    const base = onConst ? constants.get(onConst[1]!) : undefined;
+    if (base !== undefined && base.startsWith("/")) return onConst![2] === undefined ? base : joinPrefix(base, onConst![2]!);
     const m = arg?.match(STRING_RE) ?? arg?.match(BASE_PLUS_PATH_RE) ?? arg?.match(BASE_WRAPPED_RE);
     if (m) return m[1]!;
     // `"/folders/" + root`: the variable is a segment the caller fills.
@@ -310,10 +340,12 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
       facts!.push({ kind: ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
     }
 
-    const sub = line.match(SUBROUTER_RE);
+    const subMatch = line.match(SUBROUTER_RE);
+    const subPrefix = subMatch ? literal(subMatch[3]) : null;
+    const sub = subPrefix !== null ? subMatch : null;
     if (sub && routerVars.has(sub[2]!)) routerVars.set(sub[1]!, routerVars.get(sub[2]!)!);
     if (sub) {
-      varPrefix.set(sub[1]!, (varPrefix.get(sub[2]!) ?? "") + sub[3]!);
+      varPrefix.set(sub[1]!, (varPrefix.get(sub[2]!) ?? "") + subPrefix!);
       varGuards.set(sub[1]!, [...(varGuards.get(sub[2]!) ?? [])]);
     }
     const group = sub ? null : line.match(GROUP_RE);
@@ -370,6 +402,27 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
           const method = v[1] === "Any" ? null : HTTP_VERBS_TITLE[v[1]!]!;
           push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...comboGuards, ...guards], recv);
         }
+        depth += braceDelta(line);
+        while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) routeStack.pop();
+        continue;
+      }
+    }
+    // gorilla: `r.Methods("GET").Path("/matches/{id}").HandlerFunc(h)` — verbs, path and handler as chained calls.
+    const chain = line.match(GORILLA_CHAIN_RE);
+    if (chain && routerVars.has(chain[1]!)) {
+      let text = line;
+      for (let k = i + 1; k < Math.min(lines.length, i + 8) && (/\.\s*$/.test(text) || /^\s*\./.test(lines[k]!)); k++) text += " " + lines[k]!.trim();
+      const pathCall = /\.\s*Path\s*\(/.exec(text);
+      const handlerCall = /\.\s*Handler(?:Func)?\s*\(/.exec(text);
+      const path = pathCall ? literal(parseArgs(text, pathCall.index + pathCall[0].length - 1).args[0]) : null;
+      if (path !== null && path.startsWith("/") && handlerCall) {
+        const recv = chain[1]!;
+        const methodsArg = /\.\s*Methods\s*\(([^)]*)\)/.exec(text)?.[1] ?? "";
+        const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => VERBS.has(v));
+        const { handler, guards } = splitHandler(parseArgs(text, handlerCall.index + handlerCall[0].length - 1).args);
+        const full = joinPrefix(prefixOf(recv), path);
+        if (verbs.length > 0) for (const v of verbs) push(full, v, handler, lineNo, inheritedOf(recv), guards, recv);
+        else push(full, null, handler, lineNo, inheritedOf(recv), guards, recv);
         depth += braceDelta(line);
         while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) routeStack.pop();
         continue;

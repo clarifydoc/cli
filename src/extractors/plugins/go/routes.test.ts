@@ -326,3 +326,40 @@ describe("a router built by groups of closures (gitea style)", () => {
     ]);
   });
 });
+
+describe("Go routes: gorilla route builders and constant prefixes", () => {
+  it("reads Methods().Path().Handler() chains, across lines too", () => {
+    const routes = extractGoRoutes(lines(`
+func main() {
+	r := mux.NewRouter()
+	r.Methods("POST").Path("/matches/{id}/goals").HandlerFunc(addGoal)
+	r.Path("/players/{id}").
+		Methods("GET", http.MethodPut).
+		Handler(http.HandlerFunc(playerHandler))
+}`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "POST /matches/{id}/goals addGoal",
+      "GET /players/{id} playerHandler",
+      "PUT /players/{id} playerHandler",
+    ]);
+  });
+
+  it("puts a string constant the file declares in front of the path, where a base the deployment sets stays out", () => {
+    const routes = extractGoRoutes(lines(`
+const apiBase = "/league"
+
+const (
+	clubsPath = "/clubs"
+)
+
+func main() {
+	r := mux.NewRouter()
+	r.HandleFunc(apiBase+"/matches", listMatches).Methods("GET")
+	r.HandleFunc(clubsPath, listClubs)
+	r.HandleFunc(cfg.BasePath+"/cups", listCups)
+	api := r.PathPrefix(apiBase).Subrouter()
+	api.HandleFunc("/table", table)
+}`));
+    expect(routes.map((r) => r.path)).toEqual(["/league/matches", "/clubs", "/cups", "/league/table"]);
+  });
+});
