@@ -434,6 +434,29 @@ describe("OpenAPI schema properties for the request-schema pass", () => {
   });
 });
 
+describe("OpenAPI property pointers into another schema", () => {
+  it("types a member copied from another spec's property by nothing, never by its own name", () => {
+    const lines = `openapi: 3.0.0
+info: { title: Transfers, version: "1" }
+paths: {}
+components:
+  schemas:
+    TransferEvent:
+      type: object
+      properties:
+        id:
+          $ref: '../api-spec/club-api.yaml#/components/schemas/Club/properties/id'
+        squad:
+          $ref: '../api-spec/club-api.yaml#/components/schemas/Club/properties/players/items'
+        club:
+          $ref: '../api-spec/club-api.yaml#/components/schemas/Club'
+`.split("\n");
+    const event = extractOpenApiEntities(lines).find((e) => e.name === "TransferEvent")!;
+    expect(event.properties.map((p) => `${p.name}:${p.type}`)).toEqual(["id:null", "squad:null", "club:Club"]);
+    expect(extractOpenApiRelations(lines, extractOpenApiEntities(lines)).map((r) => `${r.fromField}->${r.toEntity}`)).toEqual([]);
+  });
+});
+
 describe("OpenAPI request-schema hooks", () => {
   it("round-trips the stored type texts to JSON Schema shapes", async () => {
     const { openapiRequestSchema: h } = await import("./request-schema.js");

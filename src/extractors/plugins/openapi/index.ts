@@ -273,6 +273,10 @@ function get(node: SpecNode | undefined, ...path: string[]): SpecNode | undefine
 /** `#/components/schemas/User` / `#/definitions/User` → `User`. */
 function refName(ref: string | null | undefined): string | null {
   if (!ref) return null;
+  // A pointer INTO a schema (`…#/components/schemas/Club/properties/id`) is that member's
+  // schema, which names no type: its last segment is the member, never a schema.
+  const fragment = ref.includes("#") ? ref.slice(ref.indexOf("#") + 1) : "";
+  if (/\/(?:properties|items|additionalProperties|allOf|oneOf|anyOf|not|patternProperties)(?:\/|$)/.test(fragment)) return null;
   // `./school/School.yaml` — a schema kept in a file of its own is named after the file.
   const seg = ref.split("/").pop()?.replace(/\.(?:ya?ml|json)$/i, "");
   return seg && /^[A-Za-z_]/.test(seg) ? seg : null;
