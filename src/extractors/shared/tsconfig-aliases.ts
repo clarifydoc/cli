@@ -345,7 +345,92 @@ export function sourceRootStamp(importerAbs: string, projectRoot: string): strin
 }
 
 /** Reset every config read: each analysis run starts here, so a long-lived process sees an edited tsconfig. */
+/** Nearest package.json `imports` map per directory (null: the nearest package.json declares none). */
+const packageImportsCache = new Map<string, { dir: string; imports: Record<string, unknown> } | null>();
+
+/** The `imports` field of the package.json nearest above `dir` — Node's package scope; null when it has none. */
+function nearestPackageImports(dir: string): { dir: string; imports: Record<string, unknown> } | null {
+  const visited: string[] = [];
+  let current = resolve(dir);
+  let result: { dir: string; imports: Record<string, unknown> } | null = null;
+  for (;;) {
+    const hit = packageImportsCache.get(current);
+    if (hit !== undefined) { result = hit; break; }
+    visited.push(current);
+    const pkg = join(current, "package.json");
+    if (existsSync(pkg)) {
+      try {
+        const parsed = JSON.parse(readFileSync(pkg, "utf-8")) as { imports?: unknown };
+        if (parsed.imports && typeof parsed.imports === "object" && !Array.isArray(parsed.imports)) result = { dir: current, imports: parsed.imports as Record<string, unknown> };
+      } catch { /* unreadable package.json: no imports */ }
+      break;
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  for (const d of visited) packageImportsCache.set(d, result);
+  return result;
+}
+
+/** Conditions read from a conditional target, source-leaning first. */
+const IMPORT_CONDITIONS = ["source", "development", "import", "module", "node", "default", "require"];
+
+function importTarget(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const v of value) { const t = importTarget(v); if (t) return t; }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    for (const c of IMPORT_CONDITIONS) if (c in obj) { const t = importTarget(obj[c]); if (t) return t; }
+  }
+  return null;
+}
+
+/**
+ * A package-internal import (`import { findClub } from "#db/clubs"`) through
+ * the nearest package.json `imports` map — an exact key, else the `*` pattern
+ * with the longest prefix — as a path relative to `projectRoot` (a build-output
+ * target read back to its source as tsconfig aliases are), or the package it
+ * names. The specifier unchanged when it is no `#` import or nothing maps it.
+ */
+export function applyPackageImports(source: string, importerAbs: string, projectRoot: string): string {
+  if (!source.startsWith("#")) return source;
+  const scope = nearestPackageImports(dirname(importerAbs));
+  if (!scope) return source;
+  let target: string | null = null;
+  if (source in scope.imports) target = importTarget(scope.imports[source]);
+  else {
+    let best = -1;
+    for (const [key, value] of Object.entries(scope.imports)) {
+      const star = key.indexOf("*");
+      if (star < 0) continue;
+      const prefix = key.slice(0, star);
+      const suffix = key.slice(star + 1);
+      if (prefix.length <= best || !source.startsWith(prefix) || !source.endsWith(suffix) || source.length < prefix.length + suffix.length) continue;
+      const t = importTarget(value);
+      if (!t) continue;
+      best = prefix.length;
+      target = t.split("*").join(source.slice(prefix.length, source.length - suffix.length));
+    }
+  }
+  if (!target) return source;
+  if (!target.startsWith("./")) return target; // another package
+  const abs = sourceOfBuilt(resolve(scope.dir, target).replace(/\.(?:d\.ts|m?js|cjs)$/, ""));
+  const rel = posix.relative(toPosix(resolve(projectRoot)), toPosix(abs));
+  return rel.startsWith("..") ? source : rel;
+}
+
+/** What the nearest package.json `imports` map says, for the incremental cache key ("" when none). */
+export function packageImportsStamp(importerAbs: string): string {
+  const scope = nearestPackageImports(dirname(importerAbs));
+  return scope ? `${scope.dir}\0${JSON.stringify(scope.imports)}` : "";
+}
+
 export function clearTsconfigAliasCache(): void {
+  packageImportsCache.clear();
   tsconfigCache.clear();
   dirAliasCache.clear();
   packageDepsCache.clear();

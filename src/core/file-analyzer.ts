@@ -14,7 +14,7 @@ import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { dirname, relative } from "path";
-import { applyAliases, applySourceRoot, loadTsconfigAliasesForDir, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
+import { applyAliases, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
@@ -221,6 +221,8 @@ function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, i
   if (isScript) {
     const root = sourceRootStamp(file.absolutePath, projectRoot);
     if (root) parts.push(`s${root}`);
+    const imports = packageImportsStamp(file.absolutePath);
+    if (imports) parts.push(`p${imports}`);
   }
   return parts.length ? createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16) : undefined;
 }
@@ -242,6 +244,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // define their own `paths` and the repo root often has NO tsconfig, so
     // the task-level root map alone left whole SPAs' aliased imports — and
     // with them every cross-file link in those SPAs — unresolved.
+    // `import { findClub } from "#db/clubs"`: the package's own `imports` map.
+    if (extensionFamily(file.relativePath) === "script") {
+      for (const imp of a.imports) imp.source = applyPackageImports(imp.source, file.absolutePath, projectRoot);
+    }
     const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
     const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
     if (aliases.size > 0) {
