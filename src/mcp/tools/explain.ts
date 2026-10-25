@@ -4,6 +4,7 @@ import { numberArg, requiredStringArg, stringArg } from "../format.js";
 import { fileChangedNote, requireAnalysis, type ToolContext } from "./context.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
+import { roleLine } from "../role.js";
 import { routeFactId } from "../../core/fact-ids.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
@@ -39,7 +40,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
     description:
       "One call for the context of a route (\"POST /api/orders\"), a screen, a function (\"OrderService.create\") or a " +
       "file, packed into `maxTokens` in priority order: a route's contract and callers, the data it reaches, its " +
-      "handler's source, the routes sharing its tables and its blast radius; a function's source, callers and risk. Use it before changing " +
+      "handler's source, the routes sharing its tables and its blast radius; a function's role, source, callers and risk. Use it before changing " +
       "something; follow the named calls for what did not fit.",
     inputSchema: {
       type: "object",
@@ -124,13 +125,15 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         parts.push({ title: "Callers", get: () => trace({ symbol: subject, ...where, direction: "callers", depth: 2, limit: 15 }), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         // The files declaring it, by the call graph: one, or the one named.
         const declaring = [...new Set((summary.symbolLinks ?? []).filter((l) => l.targetSymbol === subject && (!fileArg || l.targetFile === fileArg)).map((l) => l.targetFile))];
-        home = fileArg ?? (declaring.length === 1 ? declaring[0] : undefined);
+        home = fileArg ?? (declaring.length === 1 ? declaring[0] : definedIn(summary, subject));
         if (declaring.length === 1) parts.push({ title: "Tests", get: async () => testsPart(summary, [{ file: declaring[0]!, symbol: subject }]), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         if (fileArg) parts.push({ title: "Risk", get: () => blast({ path: fileArg }), follow: `clarifydoc_blast_radius path="${fileArg}"` });
       }
 
       const moved = home ? await fileChangedNote(ctx.store, home) : null;
-      const out: string[] = [moved ? `${heading}\n${moved}` : heading];
+      // What the subject is, for a function or a file: the facts that make it so.
+      const role = home && (kind === "symbol" || kind === "file") ? roleLine(loaded, { file: home, ...(kind === "symbol" ? { symbol: subject } : {}) }) : null;
+      const out: string[] = [[heading, role, moved].filter(Boolean).join("\n")];
       const left = () => budget - tokensOf(out.join("\n\n"));
       const skipped: string[] = [];
       for (const p of parts) {
@@ -191,6 +194,12 @@ export function relatedRoutes(summary: ProjectAnalysis, r: Row): string | null {
   });
   if (ranked.length > 10) rows.push(`- … ${ranked.length - 10} more: clarifydoc_data_flows resource="${[...mine.keys()][0]}" entryKind="route"`);
   return [head, ...rows].join("\n");
+}
+
+/** The one file whose functions include `symbol` exactly, when only one does (a function nothing calls has no link to find it by). */
+function definedIn(summary: ProjectAnalysis, symbol: string): string | undefined {
+  const files = (summary.complexity ?? []).filter((c) => c.functions.some((f) => f.functionName === symbol)).map((c) => c.filePath);
+  return files.length === 1 ? files[0] : undefined;
 }
 
 /** The tests that reach a subject through the call graph, and how to run them; saying so when none does. */
