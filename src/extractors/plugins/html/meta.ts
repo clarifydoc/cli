@@ -3,6 +3,7 @@ import { htmlSpec, htmlPreprocess } from "./index.js";
 import { htmlManifest } from "./manifest.js";
 import { materializeElementRequests } from "../shared/element-requests.js";
 import { readTemplate } from "../templates/index.js";
+import { htmlProjectRootPages } from "./project-root-pages.js";
 
 /** Django / Jinja template tags: a page with these is a server template, not a static page. */
 const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token|endblock|trans|blocktrans|for|endfor|if|endif|set|macro)\b/;
@@ -23,6 +24,8 @@ const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token
 export const htmlMeta: LanguagePluginMeta = {
   ...htmlManifest,
   regexSpec: htmlSpec,
+  // A sub-project's own dev server serves its pages from its root.
+  routeResolvers: [htmlProjectRootPages],
   preprocess: (rawSource) =>
     htmlPreprocess(rawSource) ?? {
       sourceText: rawSource,

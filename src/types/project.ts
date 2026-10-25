@@ -70,4 +70,6 @@ export interface ProjectContext {
   /** A module specifier as written (`./auth`, `dcim.api.urls`) → the project file it names, or null. */
   resolveModule(fromFile: string, specifier: string): string | null;
   fileOf(path: string): FileAnalysis | undefined;
+  /** The root directory of a sub-project (`""` for the analysis root), or null for an unknown id. */
+  projectRootOf?(projectId: string): string | null;
 }

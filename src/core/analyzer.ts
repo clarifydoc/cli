@@ -1024,11 +1024,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const importIndex = buildImportIndex(allAnalyses);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
+  const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
   const projectContext: ProjectContext = {
     importIndex,
     classes: buildClassIndex(allAnalyses, importIndex),
     resolveModule: (fromFile, specifier) => resolveImportSource(fromFile, specifier, knownFiles),
     fileOf: (path) => analysisByPath.get(path),
+    projectRootOf: (id) => subProjectRoots.get(id) ?? null,
   };
 
   // Plugin route passes that need other files: an inherited controller route
