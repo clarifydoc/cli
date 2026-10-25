@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
-import { editedFile, framed, searchTerm } from "./hooks.js";
+import { join, resolve } from "path";
+import { editedFile, fileStem, framed, runHook, searchTerm } from "./hooks.js";
 import { CLIENTS, applyPlans, explorerTools, mcpSnippet, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planPlugin, planSkills, projectFacts, userServerKey } from "./install.js";
 import { buildMcpServer } from "../mcp/server.js";
 
@@ -38,6 +38,39 @@ describe("hook context", () => {
   });
 });
 
+describe("hooks on new files and edits", () => {
+  it("reads what a new file is about from its name, and nothing from a generic one", () => {
+    expect(fileStem("src/league/formatMatchDate.ts")).toBe("formatMatchDate");
+    expect(fileStem("src/league/standings.test.ts")).toBe("standings");
+    for (const f of ["src/index.ts", "lib/utils.py", "app/helpers.rb", "a/ab.ts"]) expect(fileStem(f)).toBeNull();
+  });
+
+  it("names what already exists before a new file is written, and the decisions naming a file after it is edited", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hook-new-file-"));
+    const root = join(dir, "garage");
+    try {
+      cpSync(resolve("test-fixtures/sample-backend"), root, { recursive: true });
+      mkdirSync(join(root, ".git"));
+      cpSync(resolve("test-output/sample-backend"), join(root, ".clarifydoc", "garage"), { recursive: true });
+      const write = async (f: string) => runHook("pre-write", { cwd: root, tool_input: { file_path: join(root, f) } });
+      const hit = JSON.parse((await write("services/searchPlayers.ts"))!).hookSpecificOutput;
+      expect(hit.hookEventName).toBe("PreToolUse");
+      expect(hit.additionalContext).toMatch(/^ClarifyDoc: before creating services\/searchPlayers\.ts[\s\S]*searchPlayers\(\) \(services\/playerService\.ts:\d+\)/);
+      // A name only partly matched, an existing file and a generic name stay silent.
+      expect(await write("services/authHelpers.ts")).toBeNull();
+      expect(await write("services/playerService.ts")).toBeNull();
+      expect(await write("services/index.ts")).toBeNull();
+
+      mkdirSync(join(root, "docs", "adr"), { recursive: true });
+      writeFileSync(join(root, "docs", "adr", "0001-player-store.md"), "# Players live in Postgres\n\nSee services/playerService.ts.\n");
+      const edit = JSON.parse((await runHook("post-edit", { cwd: root, tool_input: { file_path: join(root, "services", "playerService.ts") } }))!).hookSpecificOutput;
+      expect(edit.additionalContext).toMatch(/The decisions that name it, then what depends on it[\s\S]*<repository-data>\n- \[decision\] Players live in Postgres — docs\/adr\/0001-player-store\.md[\s\S]*# Blast radius — services\/playerService\.ts/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("install plans", () => {
   const self = { command: "clarifydoc", args: [] };
   it("a user-level entry serving another project is kept, never re-pointed", () => {
@@ -67,7 +100,7 @@ describe("install plans", () => {
     try {
       applyPlans([planClaudeHooks(root, self)], false);
       const again = JSON.parse(planClaudeHooks(root, self).content);
-      expect(again.hooks.PreToolUse).toHaveLength(1);
+      expect(again.hooks.PreToolUse.map((h: { matcher: string }) => h.matcher)).toEqual(["Grep|Glob", "Write"]);
       expect(again.hooks.PostToolUse[0].hooks[0].command).toBe("clarifydoc hook post-edit");
       expect(again.hooks.SessionStart).toHaveLength(1);
     } finally {

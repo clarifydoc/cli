@@ -12,6 +12,12 @@ interface ReachRule {
   question: string;
   tools: string;
   why: string;
+  /**
+   * Said only in the AGENTS.md / CLAUDE.md section (what `clarifydoc install`
+   * and the editor write), not in the server instructions every session pays
+   * for: the tool's own description already says it at connection time.
+   */
+  fileOnly?: true;
 }
 
 const REACH_FOR: ReachRule[] = [
@@ -56,6 +62,18 @@ const REACH_FOR: ReachRule[] = [
     why: "it ranks functions, classes, routes and files across every sub-project by name, and with `body=true` by what their bodies and doc comments say; no hit narrows the search, it does not prove absence",
   },
   {
+    question: "Why is this code the way it is, and which decisions must a change respect?",
+    tools: "clarifydoc_context_docs",
+    why: "it lists the decision records, architecture documents and WHY:/DECISION: comments that name a file, each flagged when the code it names changed after it",
+    fileOnly: true,
+  },
+  {
+    question: "What does the installed version of this package export?",
+    tools: "clarifydoc_extract",
+    why: "with `package=` it reads the package's own declarations where it is installed, so a call matches the version that runs, not the one remembered",
+    fileOnly: true,
+  },
+  {
     question: "What does this endpoint accept, and who may call it?",
     tools: "clarifydoc_contract",
     why: "it gives the request body's shape, the parameters' bindings and the auth policy as declared in code",
@@ -70,7 +88,7 @@ const CAVEAT =
 export const INSTRUCTIONS = `ClarifyDoc maps this codebase from its source — frontend route to API endpoint to database
 table — by static analysis, not guesses. Reach for it instead of reading files or searching text when the
 question is:
-${REACH_FOR.map((r) => `- ${r.question} ${r.tools} — ${r.why}.`).join("\n")}
+${REACH_FOR.filter((r) => !r.fileOnly).map((r) => `- ${r.question} ${r.tools} — ${r.why}.`).join("\n")}
 
 Start with clarifydoc_status (what is mapped, how fresh) and clarifydoc_search (find a route, screen, symbol, table
 or file by name); each tool's description says what else it answers. ${CAVEAT} Paths are project-relative, with

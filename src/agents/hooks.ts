@@ -10,19 +10,22 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  *  - `pre-search` (before Grep/Glob): when the map already knows what the
  *    agent is searching for — a route, a symbol, a file — say so, with where
  *    and who calls it. Never blocks the search.
+ *  - `pre-write` (before Write): when the file does not exist yet, what the
+ *    map already holds under a similar name — a helper may already exist.
  *  - `post-edit` (after Edit/Write): who depends on the file just changed,
- *    which routes and screens pass through it, the tests that reach it.
+ *    which routes and screens pass through it, the tests that reach it, and
+ *    the decision records that name it.
  *  - `session-start`: what the map covers and how fresh it is.
  *
  * Every hook is silent when there is nothing worth saying, when the project
  * has no analysis, and on any error — a hook must never stand in the way.
  * Nothing is analyzed here: the hook reads what the last analysis wrote.
  */
-export type HookEvent = "pre-search" | "post-edit" | "session-start";
-export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-edit", "session-start"];
+export type HookEvent = "pre-search" | "pre-write" | "post-edit" | "session-start";
+export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "pre-write", "post-edit", "session-start"];
 
 const MAX_CONTEXT = 1800;
-const HOST_EVENT: Record<HookEvent, string> = { "pre-search": "PreToolUse", "post-edit": "PostToolUse", "session-start": "SessionStart" };
+const HOST_EVENT: Record<HookEvent, string> = { "pre-search": "PreToolUse", "pre-write": "PreToolUse", "post-edit": "PostToolUse", "session-start": "SessionStart" };
 
 interface HookInput {
   cwd?: string;
@@ -56,14 +59,30 @@ export async function runHook(event: HookEvent, input: HookInput, fallbackCwd = 
       text,
       "For who-calls-what across files and the HTTP boundary, clarifydoc_trace and clarifydoc_routes answer directly.",
     );
+  } else if (event === "pre-write") {
+    const file = editedFile(input, root);
+    if (!file || existsSync(join(root, file))) return null;
+    const term = fileStem(file);
+    if (!term) return null;
+    const text = await call("clarifydoc_search", { query: term, limit: 6 });
+    // Only a name that matches as a whole is worth interrupting a write for.
+    if (!text || /^No |no match|No result matches every term/i.test(text.trim())) return null;
+    context = framed(
+      `ClarifyDoc: before creating ${file} — the map already holds these under a similar name; check whether one does the job:`,
+      text,
+      "clarifydoc_search body=true finds code by what it does; clarifydoc_extract package=<name> gives an installed package's API.",
+    );
   } else if (event === "post-edit") {
     const file = editedFile(input, root);
     if (!file) return null;
     const text = await call("clarifydoc_blast_radius", { path: file, limit: 8 });
     if (!text) return null;
+    // Decision records naming the file come first: short, and the part a cut must not lose.
+    const decisions = await call("clarifydoc_context_docs", { file });
+    const rows = decisions?.startsWith("# Decisions about") ? decisions.split("\n").filter((l) => l.startsWith("- ")).slice(0, 4) : [];
     context = framed(
-      `ClarifyDoc: you changed ${file}. What depends on it (from the last analysis):`,
-      text,
+      `ClarifyDoc: you changed ${file}. ${rows.length ? "The decisions that name it, then what" : "What"} depends on it (from the last analysis):`,
+      rows.length ? `${rows.join("\n")}\n\n${text}` : text,
       "Before finishing, clarifydoc_impact lists the changed functions, their callers and the tests to run.",
     );
   } else {
@@ -129,6 +148,12 @@ function shellSearchPattern(command: string): string | null {
 }
 
 const unquote = (w: string) => w.replace(/^(['"])(.*)\1$/, "$2");
+
+/** The name a new file is about: `src/utils/formatMatchDate.ts` → formatMatchDate; generic names (index, utils) say nothing. */
+export function fileStem(file: string): string | null {
+  const stem = (file.split("/").pop() ?? "").replace(/\.[^.]*$/, "").replace(/\.(?:test|spec|d)$/, "");
+  return stem.length >= 4 && !/^(?:index|main|utils?|helpers?|types|constants|mod|init|__init__|app|setup|config)$/i.test(stem) ? stem : null;
+}
 
 /** The project-relative file an Edit/Write/MultiEdit changed. */
 export function editedFile(input: HookInput, root: string): string | null {

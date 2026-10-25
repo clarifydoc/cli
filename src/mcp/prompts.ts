@@ -19,11 +19,12 @@ export const WORKFLOW_PROMPTS: McpPrompt[] = [
       `1. clarifydoc_file path="${file}" — what the file declares, its routes/screens/data access and its layer.`,
       `2. clarifydoc_blast_radius path="${file}" — what kind of file it is, who depends on it, and the screens and routes whose execution passes through it.`,
       ...(symbol ? [
-        `3. clarifydoc_extract symbol="${symbol}" file="${file}" — its source and the functions it calls.`,
+        `3. clarifydoc_explain subject="${symbol}" file="${file}" — what it is (route handler, data access, …, from the facts), its source, callers and tests.`,
         `4. clarifydoc_trace symbol="${symbol}" file="${file}" direction="callers" — who calls it, with file:line.`,
       ] : []),
-      `${symbol ? 5 : 3}. clarifydoc_impact files=["${file}"] — the tests to run and the risk level.`,
-      "Then summarize: what the change can break, which callers must be checked, and which tests to run.",
+      `${symbol ? 5 : 3}. clarifydoc_context_docs file="${file}" — the decision records and WHY:/DECISION: comments about it, flagged when the code moved on after them.`,
+      `${symbol ? 6 : 4}. clarifydoc_impact files=["${file}"] — the tests to run and the risk level.`,
+      "Then summarize: what the change can break, which callers must be checked, which decisions it must respect, and which tests to run.",
     ].join("\n"),
   },
   {
@@ -65,7 +66,8 @@ export const WORKFLOW_PROMPTS: McpPrompt[] = [
       `2. clarifydoc_routes path="${path}"${method ? ` method="${method}"` : ""} detail=true — the frontend files and services that call it, with their project.`,
       `3. clarifydoc_data_flows entry="${path}" entryKind="route" — the tables and queues it reads and writes, with the call path.`,
       "4. clarifydoc_trace symbol=<its handler> direction=\"callees\" — what the handler calls, where the flows above do not say.",
-      "Then list every caller that must change with the endpoint, the data it touches, and what a client relying on today's contract would break on.",
+      `5. clarifydoc_explain subject="${method ? `${method} ` : ""}${path}" — among the rest, the other routes that share its tables: a change to the data's shape reaches them too.`,
+      "Then list every caller that must change with the endpoint, the data it touches, the routes sharing that data, and what a client relying on today's contract would break on.",
     ].join("\n"),
   },
   {
@@ -79,6 +81,23 @@ export const WORKFLOW_PROMPTS: McpPrompt[] = [
       `2. clarifydoc_routes path=<each call's URL> — the route that serves each call, and its handler.`,
       `3. clarifydoc_data_flows entry="${screen}" entryKind="screen" — the tables each reaches, read or written.`,
       "Then describe, for each user action on the screen: the call it makes, the endpoint that serves it, and the data it reads or changes, naming file:line and flagging any link marked inferred or ambiguous.",
+    ].join("\n"),
+  },
+  {
+    name: "before-writing",
+    title: "Before writing new code",
+    description: "Whether what you are about to write already exists in the project, and the installed API of a package you will call.",
+    arguments: [
+      { name: "what", description: "What the new code does, in a few words (e.g. \"format a match date\").", required: true },
+      { name: "package", description: "A third-party package it will call, if one." },
+    ],
+    render: ({ what, package: pkg }) => [
+      `Before writing code that will "${what}", check with the ClarifyDoc tools whether the project already has it:`,
+      `1. clarifydoc_search query="${what}" — functions, classes, routes and files by name.`,
+      `2. clarifydoc_search query="${what}" body=true — functions whose bodies and doc comments say it, under another name.`,
+      "3. clarifydoc_explain subject=<a candidate> — what it is, who calls it and what it reaches, to judge whether it fits.",
+      ...(pkg ? [`4. clarifydoc_extract package="${pkg}" — the API of the version installed here, not the one remembered (symbol=<an export> for its declaration).`] : []),
+      "Then reuse or extend what exists, saying where; write new code only when nothing fits, and say what you searched for. No hit narrows the search; it does not prove absence.",
     ].join("\n"),
   },
   {

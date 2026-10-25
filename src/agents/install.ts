@@ -214,7 +214,7 @@ export function planMcpConfig(client: Client, root: string, self = selfCommand()
   }
 }
 
-/** Claude Code hooks in the project's `.claude/settings.json`: before searches, after edits, at session start. */
+/** Claude Code hooks in the project's `.claude/settings.json`: before searches and new files, after edits, at session start. */
 export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   const file = join(root, ".claude", "settings.json");
   const read = readJson(file);
@@ -230,6 +230,7 @@ export function planClaudeHooks(root: string, self = selfCommand()): Planned {
     hooks[hostEvent] = list;
   };
   add("PreToolUse", "Grep|Glob", "pre-search");
+  add("PreToolUse", "Write", "pre-write");
   add("PostToolUse", "Edit|Write|MultiEdit", "post-edit");
   add("SessionStart", undefined, "session-start");
   if (read === null) return { file, content: pretty({ hooks }), skip: "it is not plain JSON (comments?), so it was not rewritten — add these hooks by hand" };
