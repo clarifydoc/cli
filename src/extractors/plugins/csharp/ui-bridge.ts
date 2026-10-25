@@ -12,6 +12,9 @@ import { commonPrefixLength } from "../shared/path-utils.js";
  *      `+=` is not a call, so no call edge exists in either direction.
  *   2. XAML code-behind: `Click="ButtonCopy_Click"` in `Foo.axaml` names a
  *      method of the class `x:Class` declares, implemented in `Foo.axaml.cs`.
+ *   3. Blazor code-behind: `@onclick="Save"` in `Garage.razor` names a method
+ *      of the component class `Garage`, a partial whose code sits in
+ *      `Garage.razor.cs` when the markup's own `@code` block does not declare it.
  *
  * Both produce synthetic `<ui file>::<site> → <cs file>::<Class>.<handler>`
  * links (confidence INFERRED), exactly the shape the click-trace funnel
@@ -23,14 +26,14 @@ export class CsharpUiBridgeResolver implements DispatchResolver {
   readonly id = "dotnet-ui";
   // VB is included for MAUI/WPF projects with VB code-behind — the partial-class
   // join is language-agnostic (classes + methods).
-  readonly languages: Language[] = ["csharp", "vb", "xaml"];
+  readonly languages: Language[] = ["csharp", "vb", "xaml", "blazor"];
   readonly priority = 20;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     // class name → declaring analyses (with the class itself).
     const byClass = new Map<string, { file: string; cls: ClassInfo }[]>();
     for (const a of analyses) {
-      if (a.language === "xaml") continue;
+      if (a.language === "xaml" || a.language === "blazor") continue;
       for (const cls of a.classes ?? []) {
         const list = byClass.get(cls.name) ?? [];
         list.push({ file: a.filePath, cls });
@@ -69,6 +72,31 @@ export class CsharpUiBridgeResolver implements DispatchResolver {
             sourceSymbol: "<component>",
             sourceLine: el.line,
             callName: el.handler!,
+            targetFile: hit.file,
+            targetSymbol: `${hit.cls.name}.${hit.method.name}`,
+            targetLine: hit.method.line,
+            confidence: "INFERRED",
+          });
+        }
+        continue;
+      }
+
+      if (a.language === "blazor") {
+        // The component is the class the file is named after; its own `@code` methods resolve without help.
+        const owner = a.filePath.split("/").pop()!.replace(/\.razor$/i, "");
+        const own = new Set((a.functions ?? []).map((f) => f.name));
+        const candidates = byClass.get(owner) ?? [];
+        // The `.razor.cs` beside the markup is the component's partial; a same-named class elsewhere only without one.
+        const beside = candidates.filter((c) => c.file === `${a.filePath}.cs`);
+        for (const el of els) {
+          if (!el.handler || own.has(el.handler)) continue;
+          const hit = findHandler(beside.length > 0 ? beside : candidates, el.handler, a.filePath);
+          if (!hit) continue;
+          add({
+            sourceFile: a.filePath,
+            sourceSymbol: "<component>",
+            sourceLine: el.line,
+            callName: el.handler,
             targetFile: hit.file,
             targetSymbol: `${hit.cls.name}.${hit.method.name}`,
             targetLine: hit.method.line,

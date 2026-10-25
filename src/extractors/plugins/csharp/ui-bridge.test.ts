@@ -13,7 +13,7 @@ function cls(name: string, methods: FunctionInfo[]): ClassInfo {
 function analysis(
   filePath: string,
   language: FileAnalysis["language"],
-  over: Partial<Pick<FileAnalysis, "classes" | "interactiveElements" | "screens">> = {},
+  over: Partial<Pick<FileAnalysis, "classes" | "interactiveElements" | "screens" | "functions">> = {},
 ): FileAnalysis {
   return {
     filePath,
@@ -21,6 +21,7 @@ function analysis(
     classes: over.classes ?? [],
     interactiveElements: over.interactiveElements ?? [],
     screens: over.screens ?? [],
+    functions: over.functions ?? [],
   } as unknown as FileAnalysis;
 }
 
@@ -78,6 +79,25 @@ describe("CsharpUiBridgeResolver — WinForms partials", () => {
     const links = resolver.resolve([designer, v9, v10]);
     expect(links).toHaveLength(1);
     expect(links[0]!.targetFile).toBe("v9/App/FrmMain.cs");
+  });
+});
+
+describe("CsharpUiBridgeResolver — Blazor code-behind", () => {
+  it("links a .razor handler to the component's .razor.cs partial, not to its own @code methods", () => {
+    const markup = analysis("Pages/Garage.razor", "blazor", {
+      interactiveElements: [el("OnRepairClicked", 12), el("Refresh", 14)],
+      functions: [fn("Refresh", 30)],
+    });
+    const codeBehind = analysis("Pages/Garage.razor.cs", "csharp", {
+      classes: [cls("Garage", [fn("OnRepairClicked", 20), fn("Refresh", 40)])],
+    });
+    const elsewhere = analysis("Admin/Garage.razor.cs", "csharp", {
+      classes: [cls("Garage", [fn("OnRepairClicked", 8)])],
+    });
+    const links = resolver.resolve([markup, elsewhere, codeBehind]);
+    expect(links.map((l) => `${l.sourceLine} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "12 OnRepairClicked -> Pages/Garage.razor.cs::Garage.OnRepairClicked",
+    ]);
   });
 });
 

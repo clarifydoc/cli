@@ -96,6 +96,36 @@ describe("Blazor interactive-element extraction", () => {
   });
 });
 
+describe("Blazor events in less usual spellings", () => {
+  it("reads an unquoted handler", () => {
+    const els = blazorSpec.extractInteractiveElements!(lines(`<button @onclick=OnRepairAsync>Repair</button>\n<div @onmousedown=@OnDrag></div>`));
+    expect(els.map((e) => `${e.event} ${e.handler}`)).toEqual(["onclick OnRepairAsync", "onmousedown OnDrag"]);
+  });
+
+  it("reads the markup a @code block renders, and nothing of its C#", () => {
+    const src = `<Garage />
+@code {
+    private RenderFragment<bool> Toolbar { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        Toolbar = (bool wide) => (__builder) =>
+        {
+            <Button IsVisible="@CanRepair"
+                    Appearance="Stealth"
+                    @onclick="@OnRepair">
+                <TextBlock Text="Repair" />
+            </Button>
+            <tr @onclick="@(() => OnCarClick(car))"></tr>
+        };
+        var cars = new List<Car>();
+    }
+}`;
+    const els = blazorSpec.extractInteractiveElements!(lines(src));
+    expect(els.map((e) => `${e.line} ${e.element} ${e.handler}`)).toEqual(["11 custom OnRepair", "14 custom OnCarClick"]);
+  });
+});
+
 describe("Blazor imports (@using)", () => {
   it("extracts @using namespaces", () => {
     const imp = blazorSpec.importPatterns[0]!;

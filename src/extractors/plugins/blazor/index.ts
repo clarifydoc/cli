@@ -359,7 +359,8 @@ const NATIVE_INTERACTIVE: Record<string, InteractiveElementInfo["element"]> = {
   a: "link",
 };
 
-const EVENT_RE = /@on([a-z]+)\s*=\s*"([^"]*)"/g;
+/** `@onclick="Save"`, `@onclick="@(() => Save(car))"`, or unquoted `@onclick=Save`. */
+const EVENT_RE = /@on([a-z]+)\s*=\s*(?:"([^"]*)"|(@?[A-Za-z_][\w.]*))/g;
 /** A component's callback parameter: `<EditForm OnValidSubmit="@SaveAsync">`, `<FluentButton OnClick="Save">`. */
 const CALLBACK_RE = /\s(On[A-Z]\w*)\s*=\s*"([^"]*)"/g;
 const BIND_RE = /@bind(?:-[A-Za-z]+)?\s*=\s*"([^"]*)"/g;
@@ -383,8 +384,31 @@ function cleanHandler(raw: string): string | null {
   return null;
 }
 
+/**
+ * The markup a `@code` block renders: a `RenderFragment` lambda's `<Button @onclick="Save">`
+ * is markup inside C#. A line in a code block is kept when it opens or closes a tag, and the
+ * lines after it while that tag is still open (quoted values blanked first, so `=>` in
+ * `"@(() => Save())"` closes nothing).
+ */
+function withCodeBlockMarkup(lines: string[], markup: string[]): string[] {
+  const out = markup.slice();
+  for (const [start, end] of codeBlocks(lines)) {
+    let open = false;
+    for (let i = start + 1; i <= end; i++) {
+      const raw = lines[i] ?? "";
+      const tagLine = /^\s*<\/?[A-Za-z]/.test(raw);
+      if (!tagLine && !open) continue;
+      out[i] = raw;
+      const bare = raw.replace(/"[^"]*"/g, '""');
+      const lastOpen = bare.lastIndexOf("<");
+      open = tagLine || open ? bare.indexOf(">", Math.max(lastOpen, 0)) < 0 : false;
+    }
+  }
+  return out;
+}
+
 function extractBlazorInteractiveElements(lines: string[]): InteractiveElementInfo[] {
-  const markup = markupOnly(lines);
+  const markup = withCodeBlockMarkup(lines, markupOnly(lines));
   const out: InteractiveElementInfo[] = [];
   let carriedTag: string | null = null; // last opened tag (carries across lines within a tag)
   for (let i = 0; i < markup.length; i++) {
@@ -401,7 +425,7 @@ function extractBlazorInteractiveElements(lines: string[]): InteractiveElementIn
       out.push({
         element: elementForTag(tagAt(ev.index!)),
         event: "on" + ev[1]!,
-        handler: cleanHandler(ev[2]!),
+        handler: cleanHandler((ev[2] ?? ev[3])!),
         line: ln,
       });
     }
