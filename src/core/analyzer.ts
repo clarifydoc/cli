@@ -79,6 +79,7 @@ import { typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
+import { openLoopShapeCache } from "./loop-shape-cache.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
@@ -1668,7 +1669,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // Migrations and seeds run once, by a tool: a query per row there is no N+1.
     const runOnce = /(?:^|\/)(?:migrations?|migrate|alembic|seeds?|seeders|fixtures)\//i;
     const skip = (f: string) => isUnauthored(f) || fileLayerMap[f] === "test" || runOnce.test(f);
-    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph }).catch(() => []);
+    // An incremental run keeps each file's loops by content hash: building every graph again is most of this pass.
+    const shapes = options.incremental && !dryRun ? await openLoopShapeCache(outputDir, newManifestEntries, projectRoot) : null;
+    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph, ...(shapes ? { shapesOf: shapes.get } : {}) }).catch(() => []);
+    await shapes?.save().catch(() => undefined);
     const blocking = findBlockingInAsync(allAnalyses, skip);
     patterns.push(...loops, ...blocking);
     if (loops.length || blocking.length) progress.detail(`  Performance patterns: ${loops.length} query-in-loop, ${blocking.length} blocking-in-async`);

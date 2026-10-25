@@ -22,6 +22,8 @@ export async function findQueriesInLoops(input: {
   maxFiles?: number;
   /** The ER model: a loop over one entity's rows that queries a related one names the relation. */
   entityGraph?: Pick<EntityGraph, "nodes" | "edges">;
+  /** Where a file's loops come from — a cache an incremental run keeps by content hash; default `loopShapes`. */
+  shapesOf?: (file: string) => Promise<LoopShape[] | null>;
 }): Promise<PatternInfo[]> {
   const dbFns = new Map<string, SymbolDataAccess>();
   const sitesByFile = new Map<string, Array<{ line: number; via?: string; entity: string }>>();
@@ -49,17 +51,14 @@ export async function findQueriesInLoops(input: {
 
   const out: PatternInfo[] = [];
   const files = [...sitesByFile.keys()].sort().slice(0, input.maxFiles ?? 2000);
+  const shapesOf = input.shapesOf ?? ((file: string) => loopShapes(input.projectRoot, file));
   for (const file of files) {
-    let cfgs;
-    try {
-      cfgs = (await controlFlowForFile({ filePath: join(input.projectRoot, file), displayPath: file })).cfgs;
-    } catch {
-      continue; // no graph for this language
-    }
+    const cfgs = await shapesOf(file);
+    if (!cfgs) continue; // no graph for this language
     const seen = new Set<number>();
     let lines: string[] | undefined;
     for (const cfg of cfgs) {
-      const loops = cfg.nodes.filter((n) => n.kind === "LOOP" && n.line !== undefined && n.endLine !== undefined);
+      const loops = cfg.loops;
       if (!loops.length) continue;
       for (const site of sitesByFile.get(file)!) {
         if (site.line < cfg.line || site.line > cfg.endLine || seen.has(site.line)) continue;
@@ -90,6 +89,36 @@ export async function findQueriesInLoops(input: {
         });
       }
     }
+  }
+  return out;
+}
+
+/** One function's span and the loops its control-flow graph holds — all `findQueriesInLoops` reads of the graph. */
+export interface LoopShape {
+  functionName: string;
+  line: number;
+  endLine: number;
+  loops: Array<{ line: number; endLine: number; label: string }>;
+}
+
+/**
+ * The loop-holding functions of a file, in source order, from its control-flow
+ * graphs; null when its language has none. A pure function of the file's text,
+ * so a caller may keep it by content hash.
+ */
+export async function loopShapes(projectRoot: string, file: string): Promise<LoopShape[] | null> {
+  let cfgs;
+  try {
+    cfgs = (await controlFlowForFile({ filePath: join(projectRoot, file), displayPath: file })).cfgs;
+  } catch {
+    return null;
+  }
+  const out: LoopShape[] = [];
+  for (const cfg of cfgs) {
+    const loops = cfg.nodes
+      .filter((n) => n.kind === "LOOP" && n.line !== undefined && n.endLine !== undefined)
+      .map((n) => ({ line: n.line!, endLine: n.endLine!, label: n.label }));
+    if (loops.length) out.push({ functionName: cfg.functionName, line: cfg.line, endLine: cfg.endLine, loops });
   }
   return out;
 }

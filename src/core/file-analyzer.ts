@@ -184,15 +184,31 @@ function stampOf(map: Map<string, string> | Map<string, { dir: string; entry: st
  * map moves the imports of files whose own bytes did not change.
  */
 export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "relativePath" | "language">, projectRoot: string, tsconfigAliases: Map<string, string>): string | undefined {
+  // Every input is per directory and per kind of file: sibling files share one stamp.
+  const isJs = file.language === "typescript" || file.language === "javascript";
+  const isScript = extensionFamily(file.relativePath) === "script";
+  let byDir = stampMemo.get(tsconfigAliases);
+  if (!byDir) stampMemo.set(tsconfigAliases, (byDir = new Map()));
+  const key = `${dirname(file.absolutePath)}\0${isJs ? 1 : 0}${isScript ? 1 : 0}\0${projectRoot}`;
+  if (byDir.has(key)) return byDir.get(key);
+  const stamp = computeImportRewriteStamp(file, isJs, isScript, projectRoot, tsconfigAliases);
+  byDir.set(key, stamp);
+  return stamp;
+}
+
+/** `importRewriteStamp` by directory, per root alias map (one per run: the analyzer clears the config caches first). */
+const stampMemo = new WeakMap<Map<string, string>, Map<string, string | undefined>>();
+
+function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, isJs: boolean, isScript: boolean, projectRoot: string, tsconfigAliases: Map<string, string>): string | undefined {
   const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
   const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
   const parts: string[] = [];
   if (aliases.size > 0) parts.push(`a${stampOf(aliases, projectRoot)}`);
-  if (file.language === "typescript" || file.language === "javascript") {
+  if (isJs) {
     const packages = loadWorkspacePackages(projectRoot);
     if (packages.size > 0) parts.push(`w${stampOf(packages, projectRoot)}`);
   }
-  if (extensionFamily(file.relativePath) === "script") {
+  if (isScript) {
     const root = sourceRootStamp(file.absolutePath, projectRoot);
     if (root) parts.push(`s${root}`);
   }

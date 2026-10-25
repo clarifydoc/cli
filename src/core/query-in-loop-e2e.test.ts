@@ -79,6 +79,27 @@ describe("performance patterns, end to end", () => {
       expect(p.entries?.[0]).toMatchObject({ kind: "route", entry: "GET /report", file: "src/server.ts" });
     }
   });
+
+  it("finds the same from the loop cache an incremental run keeps, and rebuilds a file whose bytes changed", async () => {
+    const { readFile: read } = await import("fs/promises");
+    const root = join(dir, "app");
+    const out = join(dir, "out-incremental");
+    const perf = async () => {
+      await analyze({ projectRoot: root, outputDir: out, lsp: false, gitHistory: false, stableOutput: true, incremental: true });
+      const s = await loadReportSummary(out);
+      return (s.patterns ?? []).filter((p) => p.kind === "query-in-loop").map((p) => `${p.name}:${p.line} ${p.detail}`).sort();
+    };
+    const cold = (await loadReportSummary(join(dir, "out"))).patterns!.filter((p) => p.kind === "query-in-loop").map((p) => `${p.name}:${p.line} ${p.detail}`).sort();
+    expect(await perf()).toEqual(cold);
+    const cache = JSON.parse(await read(join(out, ".loop-shapes.json"), "utf8")) as { files: Record<string, { shapes: Array<{ functionName: string }> }> };
+    expect(cache.files["src/cars.ts"]!.shapes.map((s) => s.functionName)).toEqual(["report"]);
+    // Served from the cache this time.
+    expect(await perf()).toEqual(cold);
+    // Two lines added above the loops: the cached lines would be stale.
+    const cars = join(root, "src", "cars.ts");
+    await writeFile(cars, "// garage\n// workshop\n" + (await read(cars, "utf8")));
+    expect((await perf()).map((p) => p.split(" ")[0])).toEqual(["report:11", "report:14"]);
+  });
 });
 
 describe("how big a loop is", () => {

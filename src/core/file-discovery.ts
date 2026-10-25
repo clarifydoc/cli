@@ -160,6 +160,38 @@ export interface DiscoveryOptions {
  * read only when it resolves to a regular file inside the root, so the alias
  * behaves as before while a link out of the tree reads nothing.
  */
+/**
+ * Every `SOURCE_DIRS` marker under the root, each searched with the default
+ * ignores minus those that would hide the marker itself (`**\/bin/**` for
+ * `bin/dune`). One walk serves them all: it drops only the ignores some marker
+ * needs gone, and a hit of a marker that keeps such an ignore is checked
+ * against it here. Falls back to a walk per marker when a dropped ignore is not
+ * a plain `**\/<dir>/**`.
+ */
+async function findMarkers(
+  root: string,
+  ignore: readonly string[],
+  prune: (dir: string) => boolean,
+): Promise<Array<{ dir: string; marker: string; markerMatches?: RegExp; markers: string[] }>> {
+  const stem = (p: string) => p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "");
+  const own = SOURCE_DIRS.map((s) => ({ ...s, ignore: ignore.filter((p) => !s.marker.startsWith(stem(p) + "/")) }));
+  const shared = ignore.filter((p) => own.every((s) => s.ignore.includes(p)));
+  const dropped = ignore.filter((p) => !shared.includes(p));
+  const plainDir = /^\*\*\/[^*?[\]{}()!/]+\/\*\*$/;
+  if (!dropped.every((p) => plainDir.test(p))) {
+    const out = [];
+    for (const s of own) out.push({ ...s, markers: await glob(`**/${s.marker}`, { cwd: root, ignore: s.ignore, prune }) });
+    return out;
+  }
+  const hits = await glob([...new Set(own.map((s) => `**/${s.marker}`))], { cwd: root, ignore: shared, prune });
+  return own.map((s) => {
+    // The ignores this marker keeps that the shared walk did not apply.
+    const keep = dropped.filter((p) => s.ignore.includes(p)).map((p) => `/${stem(p)}/`);
+    const markers = hits.filter((h) => (h === s.marker || h.endsWith(`/${s.marker}`)) && !keep.some((seg) => `/${h}`.includes(seg)));
+    return { dir: s.dir, marker: s.marker, ...(s.markerMatches ? { markerMatches: s.markerMatches } : {}), markers };
+  });
+}
+
 export async function discoverFiles(
   projectRoot: string,
   options: DiscoveryOptions = {},
@@ -197,12 +229,7 @@ export async function discoverFiles(
   if (!options.include?.length && SOURCE_DIRS.length > 0) {
     const seen = new Set(entries);
     const dirs = new Set<string>();
-    for (const { dir, marker, markerMatches } of SOURCE_DIRS) {
-      const markers = await glob(`**/${marker}`, {
-        cwd: root,
-        ignore: ignore.filter((p) => !marker.startsWith(p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "") + "/")),
-        prune,
-      });
+    for (const { dir, marker, markerMatches, markers } of await findMarkers(root, ignore, prune)) {
       for (const m of markers) {
         if (markerMatches && !markerMatches.test(readText(resolve(root, m)))) continue;
         const parent = m.slice(0, m.length - marker.length).replace(/\/$/, "");
