@@ -219,7 +219,7 @@ export function railsUnderscore(name: string): string {
 }
 
 /** Naive Rails inflector: `user_role` → `user_roles`, `category` → `categories`. */
-function railsPluralize(token: string): string {
+export function railsPluralize(token: string): string {
   if (/[^aeiou]y$/.test(token)) return token.replace(/y$/, "ies");
   if (/(s|x|z|ch|sh)$/.test(token)) return token + "es";
   return token + "s";

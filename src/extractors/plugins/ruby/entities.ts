@@ -1,6 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
-import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsUnderscore } from "./schema.js";
+import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsPluralize, railsUnderscore } from "./schema.js";
 
 /**
  * Extracts ActiveRecord (Rails) and Sequel::Model entities + their
@@ -821,8 +821,14 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
  * `UserService.create` reads like `User.create` — a constant and an
  * ActiveRecord verb — but a class the project declares that is not a model is
  * a service object, and its own body holds the queries. The per-file pass
- * cannot tell; the project can, so those rows go. A constant declared nowhere
- * here (a model from a gem or an engine) is kept.
+ * cannot tell; the project can, so those rows go. So do two other receivers
+ * that only look like models: a SCREAMING_CASE constant (`TABS.find`, an
+ * array or hash), and — where the project has a `db/schema.rb` — a class
+ * declared nowhere here whose table the schema lacks (`I18n.exists?`,
+ * `Stripe::Invoice.create`, `Tempfile.create`). A gem's model whose table the
+ * schema holds (`ActsAsTaggableOn::Tagging` → `taggings`,
+ * `ActiveStorage::Blob` → `active_storage_blobs`) is kept, and so is every
+ * undeclared constant when there is no schema to ask.
  */
 function dropServiceObjectQueries(analyses: FileAnalysis[]): void {
   const ruby = analyses.filter((a) => a.language === "ruby");
@@ -831,11 +837,21 @@ function dropServiceObjectQueries(analyses: FileAnalysis[]): void {
   for (const a of ruby) {
     for (const cls of a.classes) (cls.decorators.includes("entity") ? models : declared).add(cls.name.split("::").pop()!);
   }
-  const service = (name: string) => declared.has(name) && !models.has(name);
+  const tables = new Set(analyses.flatMap((a) => (a.railsSchemaTables ?? []).map((t) => t.table)));
+  const inSchema = (name: string) => {
+    const under = railsUnderscore(name);
+    const names = [railsPluralize(under), under];
+    for (const t of tables) if (names.some((n) => t === n || t.endsWith(`_${n}`))) return true;
+    return false;
+  };
+  const notModel = (name: string) =>
+    (declared.has(name) && !models.has(name)) ||
+    /^[A-Z][A-Z\d_]+$/.test(name) ||
+    (tables.size > 0 && !declared.has(name) && !models.has(name) && !inSchema(name));
   for (const a of ruby) {
-    if (!a.dataSources.some((d) => d.kind === "database" && d.entity && service(d.entity))) continue;
+    if (!a.dataSources.some((d) => d.kind === "database" && d.entity && notModel(d.entity))) continue;
     a.dataSources = a.dataSources.filter((d) => {
-      if (d.kind !== "database" || !d.entity || !service(d.entity)) return true;
+      if (d.kind !== "database" || !d.entity || !notModel(d.entity)) return true;
       // Only the `Constant.verb` rows, whose receiver is the class itself.
       return d.name.slice(0, d.name.lastIndexOf(".")).split("::").pop() !== d.entity;
     });

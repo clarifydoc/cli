@@ -62,6 +62,50 @@ end`, "app/controllers/players_controller.rb", "ruby");
   });
 });
 
+describe("Ruby receivers that only look like models (real-repo FP shape)", () => {
+  const files = (schema: boolean) => {
+    const player = extractWithRegex(`class Player < ApplicationRecord
+end`, "app/models/player.rb", "ruby");
+    const ctl = extractWithRegex(`class SquadsController < ApplicationController
+  TABS = %w[squad fixtures].freeze
+
+  def show
+    TABS.find { |t| t == params[:tab] }
+    I18n.exists?("squad.title")
+    Stripe::Invoice.create(customer: id)
+    ActsAsTaggableOn::Tagging.where(taggable: player)
+    ActiveStorage::Blob.find_signed(params[:id])
+    Player.find(params[:id])
+  end
+end`, "app/controllers/squads_controller.rb", "ruby");
+    const out = [player, ctl];
+    if (schema) {
+      out.push(extractWithRegex(`ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
+  create_table "players", force: :cascade do |t|
+    t.string "name"
+  end
+  create_table "taggings", force: :cascade do |t|
+    t.bigint "tag_id"
+  end
+  create_table "active_storage_blobs", force: :cascade do |t|
+    t.string "key"
+  end
+end`, "db/schema.rb", "ruby"));
+    }
+    new RubyEntityExtractor().reconcileProject(out);
+    return ctl.dataSources.filter((d) => d.kind === "database").map((d) => d.entity ?? "-");
+  };
+
+  it("drops a SCREAMING_CASE constant, and with a schema a class declared nowhere whose table it lacks", () => {
+    expect(files(true)).toEqual(["Tagging", "Blob", "Player"]);
+  });
+
+  it("keeps an undeclared class when there is no schema to ask", () => {
+    expect(files(false)).toEqual(expect.arrayContaining(["Invoice", "Player"]));
+    expect(files(false)).not.toContain("TABS");
+  });
+});
+
 describe("Ruby concerns and abstract bases are not tables", () => {
   it("hands a concern's associations to the models that include it", () => {
     const concern = extractWithRegex(`module Scoreable
