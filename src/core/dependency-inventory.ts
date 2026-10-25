@@ -85,6 +85,15 @@ function classify(name: string): KnownPackageEntry {
 const IGNORE = ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**", "**/vendor/**"];
 
 /** Read a file as UTF-8, or null when it cannot be read. */
+/** `name` in `dir` or the nearest directory above it, never above `projectRoot`. */
+async function readAbove(dir: string, name: string, projectRoot: string): Promise<string | null> {
+  for (let current = resolve(dir); ; current = dirname(current)) {
+    const text = await readIf(join(current, name));
+    if (text !== null) return text;
+    if (current === projectRoot || !current.startsWith(projectRoot) || dirname(current) === current) return null;
+  }
+}
+
 async function readIf(absPath: string): Promise<string | null> {
   try {
     return await readFile(absPath, "utf-8");
@@ -127,7 +136,7 @@ function parseGitmodules(text: string, declaredIn: string): DeclaredPackage[] {
 }
 
 /** The packages one manifest format declares at one root (`rel`: the root, relative to the project). */
-async function readManifest(absRoot: string, rel: string, spec: PackageManifestSpec): Promise<DeclaredPackage[]> {
+async function readManifest(absRoot: string, rel: string, spec: PackageManifestSpec, projectRoot: string): Promise<DeclaredPackage[]> {
   const files = spec.glob
     ? (await glob([...spec.files], { cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false }))
         .slice(0, spec.glob.limit)
@@ -140,6 +149,7 @@ async function readManifest(absRoot: string, rel: string, spec: PackageManifestS
       declaredIn: rel ? `${rel}/${path}` : path,
       path,
       readSibling: (name) => readIf(join(absRoot, dirname(path), name)),
+      readAbove: (name) => readAbove(join(absRoot, dirname(path)), name, projectRoot),
     }));
     if (spec.firstOnly) break;
   }
@@ -147,10 +157,10 @@ async function readManifest(absRoot: string, rel: string, spec: PackageManifestS
 }
 
 /** Parse all dependencies declared at a single root directory. */
-async function collectAtRoot(absRoot: string, rel: string): Promise<DeclaredPackage[]> {
+async function collectAtRoot(absRoot: string, rel: string, projectRoot: string): Promise<DeclaredPackage[]> {
   const out: DeclaredPackage[] = [];
   for (const manager of PACKAGE_MANAGERS) {
-    for (const spec of manager.manifests) out.push(...await readManifest(absRoot, rel, spec));
+    for (const spec of manager.manifests) out.push(...await readManifest(absRoot, rel, spec, projectRoot));
   }
   // Vendored git submodules — the de-facto dependency channel for ecosystems
   // without a package manager (Delphi, plain C, game engines): the library IS
@@ -178,7 +188,7 @@ export async function collectExternalPackages(
   const byKey = new Map<string, ExternalPackage>();
 
   for (const rel of roots) {
-    const raws = await collectAtRoot(rel ? resolve(root, rel) : root, rel.replace(/\\/g, "/"));
+    const raws = await collectAtRoot(rel ? resolve(root, rel) : root, rel.replace(/\\/g, "/"), root);
     for (const raw of raws) {
       const key = `${raw.ecosystem} ${raw.name.toLowerCase()}`;
       const existing = byKey.get(key);

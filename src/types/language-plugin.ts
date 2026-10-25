@@ -61,6 +61,11 @@ export interface ManifestFileContext {
   path: string;
   /** Another file in the manifest's own directory (`Gemfile.lock` beside `Gemfile`); null when absent. */
   readSibling(name: string): Promise<string | null>;
+  /**
+   * A file at `relativePath` from the manifest's directory or the nearest one above it inside
+   * the project (a module's build file reading the build's `gradle/libs.versions.toml`).
+   */
+  readAbove?(relativePath: string): Promise<string | null>;
 }
 
 /** One manifest format of a package manager, read at the analyzed root and at every sub-project root. */
