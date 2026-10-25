@@ -1,7 +1,7 @@
 import type { Tree } from "web-tree-sitter";
 import type { ExternalPackage, FileAnalysis, ProjectAnalysis, SubProject } from "../types/analysis.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
-import { pluginFor } from "../extractors/registry.js";
+import { isApiContractLanguage, manifestFor, pluginFor } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
 
 /**
@@ -108,8 +108,11 @@ export function assessCoverage(input: {
     let missed = 0;
     for (const imp of a.imports ?? []) {
       if (imp.executes || !imp.source.startsWith(".")) continue;
-      // `./App.css`, `./logo.svg`: an asset no plugin reads is not a missed edge.
-      if (/\.[A-Za-z0-9]{1,8}$/.test(imp.source.split("/").pop() ?? "") && !/^\.+$/.test(imp.source.split("/").pop() ?? "") && !getLanguageForFile(imp.source)) continue;
+      // `./App.css`, `./logo.svg`: an asset no plugin reads is not a missed edge;
+      // nor is a data file (`./messages/en.json`) an API-description plugin happens to own.
+      const named = /\.[A-Za-z0-9]{1,8}$/.test(imp.source.split("/").pop() ?? "") && !/^\.+$/.test(imp.source.split("/").pop() ?? "");
+      const namedLanguage = named ? getLanguageForFile(imp.source) : null;
+      if (named && (!namedLanguage || isApiContractLanguage(namedLanguage))) continue;
       total++;
       if (input.resolveModule(a.filePath, imp.source)) resolved++;
       else missed++;
@@ -124,28 +127,43 @@ export function assessCoverage(input: {
   // there, or a frontend framework with no screen.
   const routesIn = new Set(input.routeMap.map((r) => r.projectId ?? ""));
   const screensIn = new Set(input.screens.map((s) => input.fileProjects[s.filePath] ?? ""));
-  const want = new Map<string, { routes: Set<string>; screens: Set<string> }>();
+  const want = new Map<string, { routes: Set<string>; screens: Set<string>; ecosystems: Set<string> }>();
+  const rootOf = new Map(input.subProjects.map((sp) => [sp.id, sp.root === "." ? "" : sp.root.replace(/\/+$/, "")]));
+  /** `inner` is a sub-project nested under `outer`'s root (a workspace member under the workspace). */
+  const nestedUnder = (inner: string, outer: string): boolean => {
+    const i = rootOf.get(inner);
+    const o = rootOf.get(outer);
+    return i !== undefined && o !== undefined && i !== o && (o === "" || i.startsWith(o + "/"));
+  };
   for (const p of input.packages) {
     if (p.scope === "dev" || p.used === false || (p.category !== "framework" && p.category !== "frontend")) continue;
-    for (const d of p.declarations ?? [{ declaredIn: p.declaredIn, scope: p.scope, version: p.version }]) {
+    const decls = p.declarations ?? [{ declaredIn: p.declaredIn, scope: p.scope, version: p.version }];
+    const declaringProjects = decls.filter((d) => d.scope !== "dev").map((d) => projectOfPath(d.declaredIn, input.subProjects) ?? "");
+    for (const d of decls) {
       if (d.scope === "dev") continue;
       const project = projectOfPath(d.declaredIn, input.subProjects) ?? "";
-      const w = want.get(project) ?? want.set(project, { routes: new Set(), screens: new Set() }).get(project)!;
+      // A workspace that pins the version its members use (`[workspace.dependencies]`) uses nothing itself.
+      if (declaringProjects.some((other) => nestedUnder(other, project))) continue;
+      const w = want.get(project) ?? want.set(project, { routes: new Set(), screens: new Set(), ecosystems: new Set() }).get(project)!;
       (p.category === "framework" ? w.routes : w.screens).add(p.name);
+      if (p.category === "framework") w.ecosystems.add(p.ecosystem);
     }
   }
   const gaps: AnalysisCoverage["gaps"] = [];
-  const handlersIn = (project: string) => {
+  const handlersIn = (project: string, ecosystems: ReadonlySet<string>) => {
     const found: string[] = [];
     for (const a of input.analyses) {
       if ((input.fileProjects[a.filePath] ?? "") !== project || isTestFile(a.filePath, a.language)) continue;
+      // Only code that could use the framework: a Python function is no unrouted axum handler.
+      const imports = manifestFor(a.language)?.packageEcosystems;
+      if (imports && ![...ecosystems].some((e) => imports.includes(e as never))) continue;
       for (const fn of a.functions ?? []) if (handlerShaped(fn.params ?? [])) found.push(`${a.filePath}:${fn.line} ${fn.name}`);
     }
     return found.length ? { count: found.length, examples: found.slice(0, 3) } : undefined;
   };
   for (const [project, w] of [...want].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (w.routes.size && !routesIn.has(project)) {
-      const handlers = handlersIn(project);
+      const handlers = handlersIn(project, w.ecosystems);
       gaps.push({ project, kind: "routes", dependencies: [...w.routes].sort(), ...(handlers ? { handlers } : {}) });
     }
     if (w.screens.size && !screensIn.has(project)) gaps.push({ project, kind: "screens", dependencies: [...w.screens].sort() });

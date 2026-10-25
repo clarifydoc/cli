@@ -97,6 +97,21 @@ describe("resolveCallOrigins", () => {
     expect(c!.origin).not.toHaveProperty("external");
   });
 
+  it("reads a vendor's server at its default local port as that vendor, unless a project listens there (real-repo FP)", () => {
+    const [ollama, own] = run(
+      [
+        call("web/llm.ts", "/api/tags", { baseRef: { kind: "literal", key: "http://localhost:11434" } }),
+        call("web/api.ts", "/api/items", { baseRef: { kind: "literal", key: "http://localhost:9200" } }),
+      ],
+      [analysis("web/llm.ts", "web", "typescript"), analysis("web/api.ts", "web", "typescript")],
+      {},
+      { ...deployment, services: [...deployment.services, { name: "search", composeFile: "docker-compose.yml", kind: "app", project: "fleet", hostPorts: [9200] }] },
+    );
+    expect(ollama!.origin).toMatchObject({ host: "localhost:11434", external: true, service: "Ollama" });
+    expect(ollama!.target).toBe("http://localhost:11434/api/tags");
+    expect(own!.origin).toMatchObject({ project: "fleet" });
+  });
+
   it("resolves a loopback origin by the port a service publishes or listens on", () => {
     const [c] = run(
       [call("web/api.ts", "/api/items", { baseRef: { kind: "literal", key: "http://localhost:5102" } })],

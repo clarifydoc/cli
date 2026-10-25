@@ -111,9 +111,16 @@ const BUILTIN_SOURCES = new Set([
 /**
  * The engine's own catalogue — Firebird `RDB$`/`MON$`/`SEC$`, Oracle `V$`/`GV$`
  * views, SQLite's `sqlite_master`, the standard `information_schema` and
- * PostgreSQL's `pg_catalog`.
+ * PostgreSQL's `pg_catalog` (its `pg_` relations also unqualified: `pg_class`, `pg_roles`).
  */
-const SYSTEM_RELATION_RE = /^(?:(?:RDB|MON|SEC|G?V)\$|sqlite_(?:master|schema|sequence|temp_master|stat\d)$|information_schema\.|pg_catalog\.)/i;
+const SYSTEM_RELATION_RE = /^(?:(?:RDB|MON|SEC|G?V)\$|sqlite_(?:master|schema|sequence|temp_master|stat\d)$|information_schema\.|pg_catalog\.|pg_\w+$)/i;
+
+/**
+ * A migration tool's bookkeeping table — what has been applied, not the
+ * application's data: Alembic, Flyway, Rails, Entity Framework, Knex,
+ * Sequelize, Prisma, Doctrine, Liquibase. A schema may qualify it.
+ */
+const BOOKKEEPING_TABLE_RE = /^(?:[\w"`[\]]+\.)?["`[]?(?:alembic_version|flyway_schema_history|schema_migrations|ar_internal_metadata|__EFMigrationsHistory|knex_migrations(?:_lock)?|SequelizeMeta|_prisma_migrations|doctrine_migration_versions|databasechangelog(?:lock)?)["`\]]?$/i;
 
 /** SQL keywords that must never be read as a table name — macro-splice fallout,
  *  and backtracking artifacts (`CREATE TABLE IF NOT EXISTS " + tableName` leaves
@@ -238,7 +245,7 @@ function routineName(name: string | undefined): string | null {
 /** A table name, or null when it is a keyword, a CTE or the engine's catalogue. */
 function tableName(name: string | undefined, ctes: Set<string>): string | null {
   if (!name || notATable(name) || ctes.has(name.toUpperCase())) return null;
-  if (SYSTEM_RELATION_RE.test(name)) return null;
+  if (SYSTEM_RELATION_RE.test(name) || BOOKKEEPING_TABLE_RE.test(name)) return null;
   // `FROM league.{table}`: the schema is written, the name is a hole.
   if (name.endsWith(".")) return null;
   return name;

@@ -1222,3 +1222,20 @@ const img = new EventSource(blobUrl);`);
     ]);
   });
 });
+
+describe("JS lookups keyed by a path are no requests (real-repo FP)", () => {
+  it("never reads a lookup keyed by a source file or a symbol in one, nor a local named like an HTTP library", async () => {
+    const calls = await apiCallsOf(`
+      import ky from "ky";
+      export function check() {
+        const result = detectCommunities(graph);
+        result.assignments.get("/league/standings.ts");
+        index.get("/league/table.ts:rank");
+        const got = expectedNodes({ ops: [] });
+        got.get("s");
+        ky.get("/api/clubs");
+        api.get("/assets/app.js");
+      }`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /api/clubs", "get /assets/app.js"]);
+  });
+});

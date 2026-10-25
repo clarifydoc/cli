@@ -64,6 +64,24 @@ export function serviceForHost(host: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Servers a developer runs on their own machine at a vendor's default port: a
+ * loopback URL on one of these ports that no project of the analysis listens
+ * on is that vendor (`http://localhost:11434/api/tags` is Ollama), never an
+ * unmatched call into the app. Ports common to many servers (3000, 8000,
+ * 8080, …) are left out: those are the app's own.
+ */
+const LOCAL_SERVICE_PORTS: ReadonlyMap<number, string> = new Map([
+  [11434, "Ollama"], [6333, "Qdrant"], [7700, "Meilisearch"], [8108, "Typesense"], [9200, "Elasticsearch"],
+  [19530, "Milvus"], [8123, "ClickHouse"], [5984, "CouchDB"], [8086, "InfluxDB"], [8500, "Consul"],
+  [8200, "Vault"], [15672, "RabbitMQ management"],
+]);
+
+export function serviceForLoopbackPort(port: number | string | undefined): string | undefined {
+  const n = typeof port === "string" ? Number(port) : port;
+  return n === undefined || !Number.isFinite(n) ? undefined : LOCAL_SERVICE_PORTS.get(n);
+}
+
 /** Every external host the code calls, grouped by the service it belongs to (or by itself). */
 export interface ExternalService {
   /** The service (`Stripe`), or the host itself when the table does not know it. */

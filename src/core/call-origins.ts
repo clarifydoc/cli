@@ -8,7 +8,7 @@ import type {
   ProxyRule,
   ServiceAddress,
 } from "../types/analysis.js";
-import { serviceForHost } from "./external-services.js";
+import { serviceForHost, serviceForLoopbackPort } from "./external-services.js";
 import type { ImportIndex } from "../types/project.js";
 import type { ProjectConfigValue } from "./config-values.js";
 import { serviceConfigFor } from "../extractors/registry.js";
@@ -196,6 +196,9 @@ export function resolveCallOrigins(input: {
       } else if (r.kind === "unknown" && !isLoopbackHost(addr.host)) {
         const origin = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)/i.exec(v.value)?.[1] ?? `http://${addr.host}`;
         outside.push({ host: addr.host, origin, path: addr.path });
+      } else if (r.kind === "unknown" && serviceForLoopbackPort(addr.port)) {
+        // A vendor's server on its default port that no project here listens on (a local Ollama).
+        outside.push({ host: hostLabel, origin: `http://${hostLabel}`, path: addr.path });
       } else if (r.kind === "unknown") {
         unknownLoopback ??= hostLabel;
       } else {
@@ -293,7 +296,7 @@ export function resolveCallOrigins(input: {
     }
     if (!origin) continue;
     if (origin.external && origin.host) {
-      const service = serviceForHost(origin.host);
+      const service = serviceForHost(origin.host) ?? (origin.host.startsWith("localhost:") ? serviceForLoopbackPort(origin.host.slice("localhost:".length)) : undefined);
       if (service) origin.service = service;
     }
     call.origin = origin;

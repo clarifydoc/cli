@@ -1,3 +1,4 @@
+import { templateEscapePreprocess } from "./template-escapes.js";
 import { markupCalls } from "./markup-calls.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
@@ -262,7 +263,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   routeResolvers,
   // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
-  preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path),
+  preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
@@ -291,7 +292,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   routeResolvers,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
-  preprocess: (raw) => bundlePreprocess(raw),
+  preprocess: (raw) => bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

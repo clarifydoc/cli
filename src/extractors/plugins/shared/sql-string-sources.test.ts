@@ -191,6 +191,14 @@ describe("every table a statement reads", () => {
     expect(q("SELECT * FROM team$history")).toEqual([["SELECT", "team$history", false]]);
     expect(q("SELECT 1 FROM sqlite_master WHERE type = 'table'")).toEqual([]);
     expect(q("SELECT column_name FROM information_schema.columns WHERE table_name = 'clubs'")).toEqual([]);
+    expect(q("SELECT relname FROM pg_class JOIN pg_roles ON true")).toEqual([]);
+  });
+
+  it("drops a migration tool's bookkeeping tables (real-repo FP)", () => {
+    expect(q("SELECT version_num FROM alembic_version")).toEqual([]);
+    expect(q("SELECT version FROM public.flyway_schema_history")).toEqual([]);
+    expect(q("SELECT MigrationId FROM [__EFMigrationsHistory]")).toEqual([]);
+    expect(q("SELECT * FROM schema_migrations JOIN clubs ON 1 = 1")).toEqual([["SELECT", "clubs", false]]);
   });
 
   it("skips a quoted CTE's name, as a query builder dumps it", () => {

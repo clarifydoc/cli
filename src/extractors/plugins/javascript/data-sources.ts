@@ -951,6 +951,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return this.clientKinds.get(root) ?? null;
   }
 
+  /**
+   * A local that merely shares an HTTP library's name: `const got = expectedNodes(…)`
+   * in a test, then `got.get("s")`. The library is only the receiver when the
+   * file imports it, or builds the local from it (`got.extend(…)`, `ky.create(…)`).
+   */
+  private localNamedLikeLibrary(recv: string): boolean {
+    if (!/^(?:got|ky)$/.test(recv)) return false;
+    if ((this.imports ??= importEvidence(this.sourceText)).names.has(recv)) return false;
+    const decl = new RegExp(String.raw`\b(?:const|let|var)\s+${recv}\s*=\s*([^;\n]*)`).exec(this.sourceText);
+    return !!decl && !/\b(?:got|ky)\s*\.\s*(?:extend|create)\s*\(/.test(decl[1]!);
+  }
+
   /** Receivers this file declares as a collection: `const cache = new Map()`, `private seen: Set<string>`. */
   private collectionReceivers: Set<string> | null = null;
 
@@ -1136,9 +1148,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `http.silently.withRetries.put(…)`: getters that configure the client keep it the client —
         // a chain of plain property reads off an HTTP-client root is trusted like the root.
         const chainText = fn?.text.replace(/\s+/g, "") ?? "";
-        const clientChain = !!recvRoot && CLIENT_ROOT_RE.test(recvRoot) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText) &&
+        const clientChain = !!recvRoot && CLIENT_ROOT_RE.test(recvRoot) && !this.localNamedLikeLibrary(recvRoot) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText) &&
           !chainText.split(".").slice(1, -1).some((seg) => REQUEST_DATA_SEGMENT.test(seg));
-        const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)));
+        const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)) && !this.localNamedLikeLibrary(recv));
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
@@ -1221,7 +1233,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // receiver must not be a collection the file builds itself.
           const urlEvidence = trusted
             ? !!resolved && looksLikeUrl(resolved.url)
-            : !!resolved && urlShaped(resolved.url) && !(recv && this.isCollectionReceiver(recv));
+            : !!resolved && urlShaped(resolved.url) && !namesSourceSymbol(resolved.url) && !(recv && this.isCollectionReceiver(recv));
           // A jQuery shorthand is trusted for a URL held in a variable or built
           // by a helper, but a literal must still read as one: `$.get('x')` is not.
           const literalNonUrl = !!jqueryVerb && firstArg?.type === "string" && !urlEvidence;
@@ -2311,6 +2323,17 @@ function looksLikeUrl(s: string): boolean {
  */
 function urlShaped(s: string): boolean {
   return /^(?:\.{0,2}\/|[a-z][\w+.-]*:\/\/|\$\{[^}]+\}\/)/i.test(s);
+}
+
+/**
+ * A key that names a source file or a symbol in one, not a request: a lookup
+ * keyed by path (`assignments.get("/project/isolated.ts")`, `graph.get("/test.ts:run")`).
+ * A server never serves its sources by those names; a page or asset path
+ * (`/app.js`, `/index.php`) is still a request.
+ */
+function namesSourceSymbol(url: string): boolean {
+  const last = url.split(/[?#]/)[0]!.split("/").pop() ?? "";
+  return /\.(?:tsx?|mts|cts|py|rb|go|java|kt|cs|rs|swift|scala|c|cc|cpp|h|hpp)$/i.test(last) || /^[^:]+\.\w+:\w/.test(last);
 }
 
 /** Receivers that are never HTTP clients, whatever their verb: Cypress, URL/query helpers, caches. */
