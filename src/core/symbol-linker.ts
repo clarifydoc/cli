@@ -2337,7 +2337,8 @@ function resolveCallToDefinition(
       // `use function App\Support\money;` — the import names a function, not a file.
       const fn = !isQualified && call.target.includes("\\") ? namespacedFunction(ctx, analysis, [call.target.replace(/^\\/, "")]) : null;
       if (fn) return mkLink(fn.file, fn.def.name, fn.def.line, "EXTRACTED", "direct");
-      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType();
+      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType()
+        ?? (parts.length === 2 ? aliasedClassMember(ctx, analysis, parts[0]!, leafName, mkLink) : null);
     }
   } else if (call.kind === "internal") {
     // Internal calls resolve within the same file
@@ -2555,11 +2556,19 @@ function resolveCallToDefinition(
     // happens to export a class named Application (Word_97.pas collected 68
     // cross-project dependents that way).
     let candidateFiles = classNameIndex.get(className);
+    let declaredClass = className;
+    // A type alias called on (`using ScoreCalc = League.Scoring.Calc;` … `ScoreCalc.Add(1, 2)`).
+    if (!candidateFiles && ctx.typeAliases) {
+      const target = dealias(ctx, className, sourceFile);
+      if (target !== className && classNameIndex.has(target)) {
+        candidateFiles = classNameIndex.get(target);
+        declaredClass = target;
+      }
+    }
     // A namespace written relative to the caller's (`Routes::Misc.home`
     // inside `module Invidious`, a Rails `Users::Create` under `Admin`)
     // names the ONE class whose declared name ends that way; two such
     // classes are a lookup the linker cannot decide, so neither is taken.
-    let declaredClass = className;
     if (!candidateFiles) {
       const matches = ctx.namespaceSuffixIndex.get(className);
       if (matches && new Set(matches.map((m) => m.name)).size === 1) {
@@ -3670,6 +3679,15 @@ function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, proj
   if (reexported) return reexported;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   return typeFile ? { typeName, typeFile } : null;
+}
+
+/** `ScoreCalc.Add()` where `ScoreCalc` aliases a class (`using ScoreCalc = League.Scoring.Calc;`): that class's member. */
+function aliasedClassMember(ctx: LinkContext, analysis: FileAnalysis, head: string, leafName: string, mkLink: MkLink): SymbolLink | null {
+  const target = dealias(ctx, head, analysis.filePath);
+  if (target === head) return null;
+  const file = typeFileFor(ctx, target, analysis.filePath, analysis.projectId);
+  const hit = file ? findMethodInClass(ctx, target, file, leafName) : null;
+  return hit ? mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "class-name") : null;
 }
 
 /** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */

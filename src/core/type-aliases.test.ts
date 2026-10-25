@@ -22,6 +22,8 @@ describe("type aliases followed for receivers", () => {
     "api/Api.csproj": `<Project Sdk="Microsoft.NET.Sdk.Web"></Project>`,
     "api/ClubRepository.cs": `namespace League.Data;\npublic class ClubRepository { public void Save() {} }`,
     "api/MatchService.cs": `using Clubs = League.Data.ClubRepository;\nnamespace League.Services;\npublic class MatchService {\n  public void Play(Clubs clubs) { clubs.Save(); }\n}`,
+    "api/Scoring.cs": `namespace League.Scoring;\npublic static class Calc { public static int Add(int a, int b) => a + b; }`,
+    "api/Table.cs": `using ScoreCalc = League.Scoring.Calc;\nnamespace League.Services;\npublic class Table {\n  public int Points() { return ScoreCalc.Add(1, 2); }\n}`,
     "api/TransferService.cs": `namespace League.Services;\npublic class TransferService {\n  public void Move(Clubs clubs) { clubs.Save(); }\n}`,
     "core/Cargo.toml": `[package]\nname = "core"\nversion = "0.1.0"`,
     "core/src/store.rs": `pub struct ClubStore;\nimpl ClubStore {\n    pub fn save(&self) {}\n}\npub type Store = std::sync::Arc<ClubStore>;\n`,
@@ -48,6 +50,7 @@ describe("type aliases followed for receivers", () => {
     expect(reach("svc/handler/match.go", "repo.Save")).toEqual(["svc/store/repo.go::ClubRepo.Save"]);
     expect(reach("api/MatchService.cs", "clubs.Save")).toEqual(["api/ClubRepository.cs::ClubRepository.Save"]);
     expect(reach("core/src/service.rs", "store.save")).toEqual(["core/src/store.rs::ClubStore.save"]);
+    expect(reach("api/Table.cs", "ScoreCalc.Add")).toEqual(["api/Scoring.cs::Calc.Add"]);
     // A C# `using` alias names the type only in its own file.
     expect(reach("api/TransferService.cs", "clubs.Save")).toEqual([]);
   });
