@@ -146,6 +146,8 @@ export class PythonExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    // `*args` / `**kwargs` (bare or annotated) take what the listed parameters do not.
+    if (paramsNode?.namedChildren.some((p) => SPLAT_TYPES.has(p.type) || (p.type === "typed_parameter" && SPLAT_TYPES.has(p.namedChild(0)?.type ?? "")))) fn.variadic = true;
     // Flask/Django views bind nothing through the signature; what they read
     // off `request` is the only trace of their query/form/body parameters.
     if (body && /\brequest\b/.test(bodyText)) {
@@ -402,6 +404,8 @@ function pythonParams(paramsNode: Node, aliases: ReadonlyMap<string, string>): P
   }
   return params;
 }
+
+const SPLAT_TYPES: ReadonlySet<string> = new Set(["list_splat_pattern", "dictionary_splat_pattern"]);
 
 /** A FastAPI dependency marker or dependency-injector `Provide[…]`, as a default or inside `Annotated[…]`. */
 const INJECTION_MARKER_RE = /\b(?:Depends|Security)\s*\(|\bProvide\s*\[/;

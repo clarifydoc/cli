@@ -811,12 +811,19 @@ export interface CallExtractionHooks {
    */
   argsOf?(node: Node): string[] | null;
   /**
-   * How many arguments the call passes (a trailing lambda counts), for a
-   * language with overloading: the linker picks the overload whose arity
-   * accepts it. Null when it cannot be told (a spread argument). Sets
-   * `CallInfo.argCount`.
+   * How many arguments the call passes (a trailing lambda counts): in a
+   * language with overloading the linker picks the overload whose arity
+   * accepts it, and the patch check compares it with the definitions. Null
+   * when it cannot be told (a spread argument). Sets `CallInfo.argCount`.
    */
   argCountOf?(node: Node): number | null;
+  /**
+   * The language has no overloading — a second definition of a name is an
+   * overload signature, a typing stub or a conditional redefinition, not a
+   * body to choose (TypeScript, Python, PHP): calls are not split by their
+   * argument count, and the linker never picks a definition by it.
+   */
+  noOverloads?: boolean;
 }
 
 /**
@@ -971,6 +978,24 @@ export interface LanguagePluginManifest {
    * member is looked up along the C3 method resolution order.
    */
   multipleInheritance?: boolean;
+  /**
+   * How a call's argument count is judged against a definition of this
+   * language (the patch check). Unset: every parameter without a default is
+   * required and no more arguments than parameters are accepted.
+   */
+  callArity?: {
+    /** Fewer arguments than parameters are accepted (JavaScript: the rest are `undefined`). */
+    missingAllowed?: boolean;
+    /** More arguments than parameters are accepted (PHP userland functions, JavaScript). */
+    extraAllowed?: boolean;
+    /**
+     * Decorators known to keep the signature as written; a definition with any
+     * other is not judged — a decorator may inject or rewrite parameters
+     * (Python `@inject`, `@click.option`). Unset: decorators are never judged
+     * to change the signature.
+     */
+    signatureKeepingDecorators?: readonly string[];
+  };
   /**
    * Every file of a directory shares one top-level scope (Go: a package IS
    * its directory; Kotlin and Swift files of one package/module): a bare call

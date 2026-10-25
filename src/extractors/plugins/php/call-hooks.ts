@@ -96,4 +96,19 @@ export const phpCallHooks: CallExtractionHooks = {
     if (!looked) return null;
     return looked.qualifier ? { type: looked.type, qualifier: looked.qualifier } : { type: looked.type };
   },
+
+  // `...$xs` unpacks any number; `f(...)` makes a closure of `f`, calling nothing.
+  argCountOf(node) {
+    const args = node.childForFieldName("arguments") ?? node.namedChildren.find((c) => c.type === "arguments");
+    if (!args) return node.type === "object_creation_expression" ? 0 : null;
+    let n = 0;
+    for (const a of args.namedChildren) {
+      if (a.type === "comment") continue;
+      if (a.type !== "argument") return null;
+      if (a.text.startsWith("...")) return null;
+      n++;
+    }
+    return n;
+  },
+  noOverloads: true,
 };

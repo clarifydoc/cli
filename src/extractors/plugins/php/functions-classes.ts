@@ -279,6 +279,7 @@ export class PhpExtractor extends FunctionClassExtractor {
         };
         const qualifier = injectionQualifier(this.parseAttributes(p));
         if (qualifier) param.qualifier = qualifier;
+        if (p.type === "variadic_parameter") param.variadic = true;
         params.push(param);
       }
     }

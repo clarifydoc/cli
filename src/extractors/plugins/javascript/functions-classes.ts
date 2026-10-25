@@ -1414,6 +1414,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           type,
           defaultValue: defaultNode?.text ?? null,
           ...(di.qualifier ? { qualifier: di.qualifier } : {}),
+          ...(child.type === "rest_pattern" || name.startsWith("...") ? { variadic: true } : {}),
+          ...(child.type === "optional_parameter" && !defaultNode ? { optional: true } : {}),
         });
       }
     }

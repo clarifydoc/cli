@@ -138,6 +138,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   language: "javascript",
   family: "script",
+  // Any parameter may be left out (it is `undefined`) and extra arguments are ignored.
+  callArity: { missingAllowed: true, extraAllowed: true },
   // A package's `bin/` scripts, when its package.json declares `bin`.
   sourceDirs: [{ dir: "bin", marker: "package.json", markerMatches: /"bin"\s*:/ }],
   packageEcosystems: ["npm"],

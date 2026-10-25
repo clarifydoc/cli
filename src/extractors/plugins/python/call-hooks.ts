@@ -64,4 +64,18 @@ export const pythonCallHooks: CallExtractionHooks = {
   // `injector.get(UserRepo).find()`, `container.repo().find()` — a container
   // lookup chained straight into the call types its receiver (see di.ts).
   receiverTypeOf: pythonReceiverTypeOf,
+  // Positional and keyword arguments alike; `*xs` / `**kw` hide the count.
+  argCountOf(node) {
+    const args = node.childForFieldName("arguments");
+    if (!args) return null;
+    if (args.type === "generator_expression") return 1;
+    let n = 0;
+    for (const a of args.namedChildren) {
+      if (a.type === "comment") continue;
+      if (a.type === "list_splat" || a.type === "dictionary_splat") return null;
+      n++;
+    }
+    return n;
+  },
+  noOverloads: true,
 };

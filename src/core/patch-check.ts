@@ -3,13 +3,14 @@ import { join } from "path";
 import type { FileAnalysis, SymbolLink } from "../types/analysis.js";
 import { manifestFor } from "../extractors/registry.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
+import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { analyzeWorkingFiles, loadFileAnalyses } from "./changed-symbols.js";
 
 /** What a proposed edit would break before it is made: syntax it introduces, and calls with an argument count nothing accepts. */
 export interface PatchCheck {
   /** Files whose proposed content parses with more errors than the file has now, and where (first ten lines). */
   syntax: Array<{ file: string; errors: number; before: number; lines: number[] }>;
-  /** Calls in the proposed content whose argument count no definition of that name accepts (languages that record it: Java, Kotlin, C#). */
+  /** Calls in the proposed content whose argument count no definition of that name accepts (languages that record it: Java, Kotlin, C#, TypeScript, Python, PHP). */
   arity: Array<{ file: string; line: number; call: string; passed: number; accepts: string }>;
 }
 
@@ -82,13 +83,20 @@ export async function checkPatch(
   const all = new Map<string, Pick<FileAnalysis, "functions" | "classes">>([...stored, ...proposed]);
   // Every definition by name: how many arguments it takes (required..total, open-ended when variadic).
   const accepts = new Map<string, Array<[number, number]>>();
-  for (const a of all.values()) {
+  for (const [file, a] of all) {
+    const language = getLanguageForFile(file);
+    const arity = language ? manifestFor(language)?.callArity : undefined;
+    const keeps = arity?.signatureKeepingDecorators ? new Set(arity.signatureKeepingDecorators) : null;
     const defs = [...a.functions.map((f) => [f.name, f] as const), ...a.classes.flatMap((c) => c.methods.map((m) => [m.name.split(".").pop()!, m] as const))];
     for (const [name, fn] of defs) {
       const params = (fn.params ?? []).filter((p) => p.name !== "self" && p.name !== "this");
-      const variadic = params.some((p) => /^\.\.\.|^\*|\.\.\.$|^params\b/.test(p.name) || /\.\.\.|\[\]\s*\.\.\./.test(p.type ?? ""));
-      const required = params.filter((p) => p.defaultValue === null && !/\?$/.test(p.name)).length;
-      (accepts.get(name) ?? accepts.set(name, []).get(name)!).push([required, variadic ? Infinity : params.length]);
+      // A decorator that may rewrite the signature leaves nothing to judge.
+      const rewritten = keeps !== null && (fn.decorators ?? []).some((d) => !keeps.has(d.replace(/\(.*$/s, "").trim()));
+      const variadic = rewritten || arity?.extraAllowed || fn.variadic || params.some((p) => p.variadic || /^\.\.\.|^\*|\.\.\.$|^params\b/.test(p.name) || /\.\.\.|\[\]\s*\.\.\./.test(p.type ?? ""));
+      const required = rewritten || arity?.missingAllowed ? 0 : params.filter((p) => p.defaultValue === null && !p.optional && !p.variadic && !/\?$/.test(p.name)).length;
+      // Keyed by language family: a Python `park` says nothing of a TypeScript call to `park`.
+      const key = `${extensionFamily(file) ?? language ?? ""}\0${name}`;
+      (accepts.get(key) ?? accepts.set(key, []).get(key)!).push([required, variadic ? Infinity : params.length]);
     }
   }
   for (const [file, a] of proposed) {
@@ -96,7 +104,7 @@ export async function checkPatch(
       for (const c of fn.calls ?? []) {
         if (c.argCount === undefined) continue;
         const leaf = c.name.split(".").pop()!;
-        const ranges = accepts.get(leaf);
+        const ranges = accepts.get(`${extensionFamily(file) ?? getLanguageForFile(file) ?? ""}\0${leaf}`);
         // Only a name the project defines, every definition of it known: nothing to say about a library call.
         if (!ranges?.length || !definers.has(leaf) && ![...proposed.values()].some((p) => p.functions.some((f) => f.name === leaf) || p.classes.some((k) => k.methods.some((m) => m.name.split(".").pop() === leaf)))) continue;
         if (ranges.some(([lo, hi]) => c.argCount! >= lo && c.argCount! <= hi)) continue;

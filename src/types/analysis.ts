@@ -691,8 +691,10 @@ export interface ParamInfo {
    * passes, and registrations never apply to it. Omitted otherwise.
    */
   injected?: boolean;
-  /** Takes any number of trailing arguments (Java `String... a`, C# `params T[] a`). */
+  /** Takes any number of trailing arguments (Java `String... a`, C# `params T[] a`, TS `...rest`, PHP `...$rest`). */
   variadic?: boolean;
+  /** A caller may leave it out without a default standing in (TypeScript `b?: number`). */
+  optional?: boolean;
 }
 
 /**
@@ -748,9 +750,11 @@ export interface CallInfo {
    */
   args?: string[];
   /**
-   * How many arguments the call passes, in a language with overloading (Java,
-   * Kotlin, C#) — the linker picks `save(Order)` or `save(Order, boolean)` by
-   * it. Absent elsewhere and where a spread argument hides the count.
+   * How many arguments the call passes (Java, Kotlin, C#, TypeScript, Python,
+   * PHP): in a language with overloading the linker picks `save(Order)` or
+   * `save(Order, boolean)` by it; the patch check compares it with the
+   * definitions' parameters. Absent elsewhere and where a spread argument
+   * hides the count.
    */
   argCount?: number;
 }
@@ -758,6 +762,11 @@ export interface CallInfo {
 export interface FunctionInfo {
   name: string;
   params: ParamInfo[];
+  /**
+   * Takes further arguments `params` does not list (Python `*args` /
+   * `**kwargs`, which are no parameters a caller names). Omitted otherwise.
+   */
+  variadic?: boolean;
   returnType: string | null;
   isAsync: boolean;
   isExported: boolean;

@@ -243,9 +243,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.isReference && boundHere.has(c.name)) continue;
     // A keyed dispatch is one call per key: `dispatch('a/x')` and `dispatch('b/y')` reach different handlers.
     // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
-    // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads.
+    // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads
+    // (not where the language has none: there the first call's count stands for the name).
     const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
-      : c.argCount != null ? `${c.name}\0#${c.argCount}` : c.name;
+      : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}` : c.name;
     if (seen.has(seenKey)) continue;
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.args) call.args = c.args;

@@ -20,7 +20,7 @@ import {
 import { extractEvents } from "./events.js";
 import { extractCustomElements } from "./web-components.js";
 import { extractPathReferences } from "./path-references.js";
-import { javascriptCallHooks } from "./call-hooks.js";
+import { javascriptCallHooks, typescriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
@@ -274,7 +274,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
   ast: astHooks("typescript"),
-  calls: javascriptCallHooks,
+  calls: typescriptCallHooks,
   requestSchema: javascriptRequestSchema,
   grpcStubService: jsGrpcStub,
   reachability: javascriptReachability,

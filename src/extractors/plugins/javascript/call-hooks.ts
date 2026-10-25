@@ -76,6 +76,28 @@ export const javascriptCallHooks: CallExtractionHooks = {
   argsOf: handedArgs,
 };
 
+/**
+ * TypeScript checks a call's argument count against the signature, so the
+ * count is recorded there (plain JavaScript passes any number). A spread
+ * hides the count; a tagged template passes its parts.
+ */
+export const typescriptCallHooks: CallExtractionHooks = {
+  ...javascriptCallHooks,
+  argCountOf(node) {
+    const args = node.childForFieldName("arguments");
+    if (!args) return node.type === "new_expression" ? 0 : null;
+    if (args.type !== "arguments") return null;
+    let n = 0;
+    for (const a of args.namedChildren) {
+      if (a.type === "comment") continue;
+      if (a.type === "spread_element") return null;
+      n++;
+    }
+    return n;
+  },
+  noOverloads: true,
+};
+
 /** Function-like nodes whose parameters an argument may name. */
 const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
 

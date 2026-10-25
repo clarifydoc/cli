@@ -692,14 +692,16 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   const overloads = new Map<string, Overload[]>();
   const add = (file: string, name: string, fn: FunctionInfo): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
-    const variadic = params.some((p) => p.variadic);
-    const min = params.filter((p) => !p.variadic && p.defaultValue == null).length;
+    const variadic = fn.variadic || params.some((p) => p.variadic);
+    const min = params.filter((p) => !p.variadic && !p.optional && p.defaultValue == null).length;
     const key = `${file}\u0000${name}`;
     let list = overloads.get(key);
     if (!list) overloads.set(key, (list = []));
     list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length });
   };
   for (const a of analyses) {
+    // A second definition is no overload where the language has none (a TS overload signature, a typing stub).
+    if (pluginFor(a.language)?.calls?.noOverloads) continue;
     for (const fn of a.functions) add(a.filePath, fn.name, fn);
     for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m);
   }
