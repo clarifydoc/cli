@@ -103,7 +103,8 @@ export function csharpBaseRefOf(expr: string): CallBaseRef | null {
   for (let prev = ""; prev !== s; ) {
     prev = s;
     s = s.replace(/!$/, "").trim();
-    const uri = /^new\s+(?:System\.)?Uri\s*\(([\s\S]*)\)$/.exec(s);
+    // `new Uri(x)`, and the target-typed `new(x)` a `BaseAddress = new("https+http://api")` writes.
+    const uri = /^new\s*(?:(?:System\.)?Uri)?\s*\(([\s\S]*)\)$/.exec(s);
     if (uri) s = uri[1]!.split(/,\s*UriKind\./)[0]!.trim();
     if (s.startsWith("(") && s.endsWith(")")) s = s.slice(1, -1).trim();
   }

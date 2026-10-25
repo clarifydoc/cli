@@ -1,4 +1,5 @@
 import { extractCsharpScheduledJobs } from "./scheduled-jobs.js";
+import { extractAspireResources } from "./aspire.js";
 import { extractCsharpTypeAliases } from "./type-aliases.js";
 import { csharpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
@@ -84,6 +85,8 @@ export const csharpMeta: LanguagePluginMeta = {
     // `services.AddScoped<IRepo, SqlRepo>()`, Autofac `RegisterType<T>().As<I>()`, …
     diBindings: (tree, sourceText) => extractCsharpDiBindings(tree, sourceText),
     typeAliases: (tree) => extractCsharpTypeAliases(tree),
+    // A .NET Aspire AppHost: the resources it runs, under the names service discovery gives them.
+    deployedResources: (_tree, sourceText) => extractAspireResources(sourceText),
     // `AddHttpClient<T>(c => c.BaseAddress = …)`, named clients, `_http.BaseAddress = …`.
     httpClientRegistrations: extractCsharpHttpClientRegistrations,
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.

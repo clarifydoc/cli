@@ -3272,6 +3272,12 @@ export interface DeployedResourceFact {
   line: number;
   /** A function's handler as the runtime reads it (`users.list`). */
   handler?: string;
+  /**
+   * The project it runs: a project path relative to the declaring file
+   * (`../League.Api/League.Api.csproj`, `../web`), or a project name matched
+   * with its punctuation ignored (Aspire's `Projects.League_Api` → `League_Api`).
+   */
+  runs?: string;
   /** Env keys the resource is given (values only when literal). */
   env?: Record<string, string>;
   /** What it is wired to: a grant, an event source or an env reference, by the other resource's `name`. */

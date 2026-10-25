@@ -277,6 +277,8 @@ export interface RawService {
   family?: string;
   /** The entry file the source states (a Lambda's handler module), over the command-based one. */
   entryFile?: string;
+  /** The project a code-declared resource runs, by name (`League_Api`) — `DeployedResourceFact.runs`. */
+  runs?: string;
 }
 
 /**
@@ -527,10 +529,15 @@ function indexProjects(subProjects: readonly SubProject[]): ProjectIndex {
  * between several candidates at one tier.
  */
 function matchProject(
-  svc: Pick<RawService, "name" | "image" | "entrypoint">,
+  svc: Pick<RawService, "name" | "image" | "entrypoint" | "runs">,
   { byExact, byNorm }: ProjectIndex,
   pick: (cands: SubProject[] | undefined) => string | undefined,
 ): string | undefined {
+  // The project the declaring code names (`AddProject<Projects.League_Api>`) before any guess.
+  if (svc.runs) {
+    const hit = pick(byNorm.get(normName(svc.runs)));
+    if (hit) return hit;
+  }
   const artifact = entryArtifact(svc.entrypoint);
   if (artifact) {
     const hit = pick(byExact.get(artifact.toLowerCase())) ?? pick(byNorm.get(normName(artifact)));
@@ -791,10 +798,17 @@ export async function detectDeployment(
   // Infrastructure code declares (a CDK stack): one stack scope per file, its wiring as edges.
   const codeEdges: Array<{ from: string; to: string; kind: "bus" | "db" | "http"; via: string }> = [];
   for (const { file, resources } of options.resources ?? []) {
-    mergeGroup(resources.map((r) => ({
-      name: r.name, file, env: { ...(r.env ?? {}) }, dependsOn: [], ports: [], kind: r.kind,
-      ...(r.family ? { family: r.family } : {}), ...(r.handler ? { entrypoint: r.handler } : {}),
-    })), file);
+    mergeGroup(resources.map((r) => {
+      // A project path relative to the declaring file is a build context; a bare name is matched by name.
+      const path = r.runs && (r.runs.includes("/") || /\.\w+proj$/i.test(r.runs)) ? posix.normalize(posix.join(posix.dirname(file), r.runs)) : undefined;
+      const context = path && /\.\w+proj$/i.test(path) ? posix.dirname(path) : path;
+      return {
+        name: r.name, file, env: { ...(r.env ?? {}) }, dependsOn: [], ports: [], kind: r.kind,
+        ...(r.family ? { family: r.family } : {}), ...(r.handler ? { entrypoint: r.handler } : {}),
+        ...(context !== undefined && !context.startsWith("..") ? { build: { context: context === "." ? "" : context } } : {}),
+        ...(r.runs && path === undefined ? { runs: r.runs } : {}),
+      };
+    }), file);
     for (const r of resources) for (const e of r.edges ?? []) codeEdges.push({ from: r.name, to: e.to, kind: e.kind, via: e.via });
   }
 
