@@ -11,6 +11,8 @@ import { csharpBaseRefOf } from "./service-config.js";
  *     HttpClient injected into `InventoryClient` carries that base, so the
  *     client IS the class (`AddHttpClient<IInventory, InventoryClient>`: the
  *     implementation, where the HttpClient lands);
+ *     Refit's `AddRefitClient<IClubApi>()` is typed the same way, keyed by the
+ *     API interface its requests are declared on (refit.ts);
  *   - named: `AddHttpClient("legacy", c => …)`, reached through
  *     `factory.CreateClient("legacy")` → `name:legacy`.
  * A class that sets its own client's base (`_http.BaseAddress = …` in its
@@ -60,7 +62,8 @@ function typedClientKey(generic: string): string | null {
 }
 
 export function extractCsharpHttpClientRegistrations(tree: Tree, sourceText: string): HttpClientRegistration[] {
-  if (!sourceText.includes("BaseAddress")) return [];
+  const restService = sourceText.includes("RestService.For");
+  if (!sourceText.includes("BaseAddress") && !restService) return [];
   const out: HttpClientRegistration[] = [];
   const claimed = new Set<number>();
   const push = (client: string, assignment: Node) => {
@@ -74,7 +77,16 @@ export function extractCsharpHttpClientRegistrations(tree: Tree, sourceText: str
     const fn = call.childForFieldName("function");
     const name = fn?.type === "member_access_expression" ? fn.childForFieldName("name") : fn;
     const nameText = name?.text ?? "";
-    if (!/^AddHttpClient\b/.test(nameText)) continue;
+    // Refit: `RestService.For<IClubApi>("http://…")` — the generated client, given its base.
+    if (restService && /^For\s*</.test(nameText) && /^RestService\b/.test(fn?.childForFieldName("expression")?.text ?? "")) {
+      const key = typedClientKey(nameText);
+      const first = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type === "argument")?.text.trim();
+      const base = first ? csharpBaseRefOf(first) : null;
+      if (key && base) out.push({ client: key, scope: "project", base, line: call.startPosition.row + 1 });
+      continue;
+    }
+    // A typed client — `AddHttpClient<T>`, Refit's `AddRefitClient<T>` — or a named one.
+    if (!/^(?:AddHttpClient|AddRefitClient)\b/.test(nameText)) continue;
     let key = nameText.includes("<") ? typedClientKey(nameText) : null;
     if (!key) {
       const first = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type === "argument")?.text.trim();

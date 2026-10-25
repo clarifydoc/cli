@@ -6,6 +6,7 @@ import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
+import { REFIT_GATE, refitInterfaceCalls } from "./refit.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -250,6 +251,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private dbSetNames = new Map<string, string | null>();
   /** The file talks to Redis through StackExchange.Redis (`IDatabase`). */
   private usesRedis = false;
+  /** The file uses Refit: an interface's verb attributes declare requests. */
+  private refitFile = false;
   /** The file uses Confluent.Kafka. */
   private usesKafka = false;
   /** Fields and parameters declared `IDistributedCache` (`_cache`, `cache`). */
@@ -280,6 +283,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       }
     }
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
+    this.refitFile = REFIT_GATE.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
     this.constStrings = new Map();
@@ -720,6 +724,15 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    // A Refit interface: each `[Get("/x")]` method is a request through the client registered for it.
+    if (node.type === "interface_declaration") {
+      if (this.refitFile) {
+        for (const c of refitInterfaceCalls(node)) {
+          sources.push(this.ds({ kind: "api-call", name: c.verb, target: c.target, line: c.line, baseRef: { kind: "client", key: c.client } }));
+        }
+      }
+      return;
+    }
     if (node.type === "class_declaration" || node.type === "record_declaration") {
       this.messageHandlers(node, sources);
       return;

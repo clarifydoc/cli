@@ -23,6 +23,9 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *                               fleet's launchSettings URL and compose port.
  *                             appsettings.Test.json points at legacy: a test
  *                             profile never decides where production calls go.
+ *   cars    IFleetApi         a Refit interface, its `[Get]` the request;
+ *                             AddRefitClient<IFleetApi>() gets the same
+ *                             `Services:Fleet` base → fleet, not legacy.
  *   cars    CarsController    _factory.CreateClient("legacy") → named client
  *                             `http://legacy:8080` → legacy.
  *   cars    PaymentsClient    https://api.stripe.com — a third party.
@@ -54,6 +57,7 @@ const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microser
 const EXPECTED = [
   { call: "cars/Clients/FleetClient.cs:12", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
   { call: "cars/Clients/FleetClient.cs:14", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
+  { call: "cars/Clients/IFleetApi.cs:7", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
   { call: "cars/Controllers/CarsController.cs:37", route: "GET /api/parts", at: "legacy/Controllers/PartsController.cs:11" },
   { call: "worker/src/index.ts:6", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
   { call: "worker/src/index.ts:15", route: "GET /api/parts/{id}", at: "fleet/Controllers/PartsController.cs:12" },
@@ -95,6 +99,7 @@ describe("service-to-service links — hand-labelled fixture", () => {
     const origin = (file: string, line: number) =>
       summary.apiCalls.find((c) => c.filePath === file && c.line === line)?.origin;
     expect(origin("cars/Clients/FleetClient.cs", 12)).toMatchObject({ project: "fleet", confidence: "EXTRACTED" });
+    expect(origin("cars/Clients/IFleetApi.cs", 7)).toMatchObject({ project: "fleet", confidence: "EXTRACTED" });
     expect(origin("cars/Controllers/CarsController.cs", 37)).toMatchObject({ project: "legacy", host: "legacy" });
     expect(origin("worker/src/index.ts", 6)).toMatchObject({ project: "cars", host: "cars" });
     expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "fleet", host: "fleet" });
@@ -116,7 +121,7 @@ describe("service-to-service links — hand-labelled fixture", () => {
       ["billing", "league", "http", 2, null],
       ["billing", "person-person-api", "http", 2, null],
       // docker-compose.yml: cars `Services__Fleet: http://fleet:8080`.
-      ["cars", "fleet", "http", 2, "Services__Fleet"],
+      ["cars", "fleet", "http", 3, "Services__Fleet"],
       ["cars", "legacy", "http", 1, null],
       ["web", "cars", "http", 1, null],
       ["web", "fleet", "http", 2, null],
