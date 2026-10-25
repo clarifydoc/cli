@@ -97,8 +97,26 @@ function pageTitle(lines: string[]): string | null {
 /** A framework's document shell (SvelteKit `src/app.html`, `%sveltekit.body%`; Vite/CRA-style `%PUBLIC_URL%` aside): it wraps every page and is none. */
 const DOCUMENT_SHELL_RE = /%sveltekit\.(?:body|head)%/;
 
+/** A directory that holds documentation, not the app. */
+const DOCS_DIR_RE = /(?:^|\/)(?:docs?|documentation|architecture|diagrams?)\//i;
+
+/**
+ * A diagram written as a page (`docs/architecture/flows.html`: an inline `<svg>` or a Mermaid block,
+ * perhaps with export buttons) in a documentation directory: it is read, never navigated — no
+ * form, no field, no link to another page — so it is no route or screen of the app.
+ */
+export function isDiagramDocument(lines: readonly string[], filePath: string): boolean {
+  if (!DOCS_DIR_RE.test(filePath)) return false;
+  const text = lines.join("\n");
+  if (!/<svg\b|class\s*=\s*["'][^"']*\bmermaid\b/i.test(text)) return false;
+  if (/<(?:form|input|select|textarea)\b/i.test(text)) return false;
+  // A link to another page of the site (not an anchor, not an external URL).
+  return !/<a\b[^>]*\bhref\s*=\s*["'](?![#"']|[a-z][\w+.-]*:|\/\/)/i.test(text);
+}
+
 function extractHtmlRoutes(lines: string[], filePath?: string): RouteInfo[] {
   if (!filePath || lines.some((l) => DOCUMENT_SHELL_RE.test(l))) return [];
+  if (isDiagramDocument(lines, filePath)) return [];
   return [
     {
       path: pageRoutePath(filePath),

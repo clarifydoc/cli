@@ -1267,7 +1267,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources, importIndex);
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
-  const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles);
+  const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles, importIndex);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
@@ -2414,17 +2414,22 @@ function buildScreensFromComponents(
   allAnalyses: FileAnalysis[],
   rawSources: Map<string, string>,
   alreadyScreened: Set<string>,
+  importIndex?: ImportIndex,
 ): ScreenInfo[] {
   const screens: ScreenInfo[] = [];
-  for (const analysis of allAnalyses) {
-    if (alreadyScreened.has(analysis.filePath)) continue;
+  const candidates = allAnalyses.filter((analysis) => {
+    if (alreadyScreened.has(analysis.filePath)) return false;
     // A test renders a component; it is not one. Stories and fixtures are
     // caught by the same per-language test patterns.
-    if (isTestFile(analysis.filePath, analysis.language)) continue;
+    if (isTestFile(analysis.filePath, analysis.language)) return false;
     // Frontend SFC/JSX files, OR any file that yielded a component tree (e.g. an
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
-    if (!hasTree && !/\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath)) continue;
+    return hasTree || /\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath);
+  });
+  const parts = importIndex ? routerlessParts(allAnalyses, candidates, importIndex) : new Set<string>();
+  for (const analysis of candidates) {
+    if (parts.has(analysis.filePath)) continue;
     const screen = buildScreen(
       analysis,
       screenNameFromFile(analysis),
@@ -2438,6 +2443,48 @@ function buildScreensFromComponents(
     screens.push(screen);
   }
   return screens;
+}
+
+/**
+ * In a sub-project with no frontend route, every component file used to be a screen: a legend, an
+ * overlay, a node renderer each its own. There the screens are what the app shows on its own. A
+ * component that another component of the project imports is a part of that one, and a file that
+ * exports nothing but imports project components (the entry mounting the root) hands its screen
+ * to them. What such an entry mounts, or what nothing imports, stays.
+ */
+function routerlessParts(allAnalyses: FileAnalysis[], candidates: FileAnalysis[], importIndex: ImportIndex): Set<string> {
+  // Routed: a frontend route declared in the language of the project's components (a page of its own,
+  // `site/index.html` beside a webview, routes only itself).
+  const componentLanguages = new Set(candidates.map((a) => `${a.projectId ?? "root"}\0${a.language}`));
+  const routed = new Set(
+    allAnalyses
+      .filter((a) => componentLanguages.has(`${a.projectId ?? "root"}\0${a.language}`) && (a.routes ?? []).some((r) => r.kind === "frontend"))
+      .map((a) => a.projectId ?? "root"),
+  );
+  const byPath = new Map(candidates.map((a) => [a.filePath, a]));
+  const parts = new Set<string>();
+  const renderedByEntry = new Set<string>();
+  const entries: FileAnalysis[] = [];
+  for (const a of candidates) {
+    if (routed.has(a.projectId ?? "root")) continue;
+    // What it renders or hands on (a node type registered by name, `nodeTypes = { file: FileNode }`):
+    // the project components it imports.
+    const rendered = new Set<string>();
+    for (const name of a.imports.flatMap((i) => (i.isType ? [] : i.specifiers))) {
+      const target = importIndex.localFor(a.filePath, name);
+      const t = target ? byPath.get(target) : undefined;
+      if (t && t.filePath !== a.filePath && (t.projectId ?? "root") === (a.projectId ?? "root")) rendered.add(t.filePath);
+    }
+    if (a.exports.length === 0) {
+      if (rendered.size > 0) entries.push(a);
+      for (const f of rendered) renderedByEntry.add(f);
+    } else {
+      for (const f of rendered) parts.add(f);
+    }
+  }
+  for (const f of renderedByEntry) parts.delete(f);
+  for (const e of entries) parts.add(e.filePath);
+  return parts;
 }
 
 /** Screen name fallback when a route carries no usable handler: prefer a named

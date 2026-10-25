@@ -222,3 +222,16 @@ describe("directory guard pages", () => {
     expect(htmlPreprocess('<title>403 Forbidden</title><p>No entry to the pit lane.</p><a href="/garage">Back</a>')).toBeNull();
   });
 });
+
+describe("diagram documents", () => {
+  it("is a drawing in a docs directory with nothing to fill in or follow", async () => {
+    const { isDiagramDocument } = await import("./index.js");
+    const svg = ['<html><body><svg viewBox="0 0 10 10"></svg><button onclick="save()">PNG</button></body></html>'];
+    expect(isDiagramDocument(svg, "docs/architecture/garage.html")).toBe(true);
+    expect(isDiagramDocument(['<pre class="mermaid">graph TD; Club-->Player</pre>'], "docs/flows.html")).toBe(true);
+    // A site served from docs/ (a link to another page, a form), or a drawing outside docs/, stays a page.
+    expect(isDiagramDocument(['<svg></svg><a href="clubs.html">Clubs</a>'], "docs/index.html")).toBe(false);
+    expect(isDiagramDocument(['<svg></svg><form action="/search"><input name="q"></form>'], "docs/search.html")).toBe(false);
+    expect(isDiagramDocument(svg, "site/index.html")).toBe(false);
+  });
+});
