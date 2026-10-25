@@ -40,7 +40,7 @@ function capitalizedRoot(root: string): readonly string[] {
 }
 
 const JAVA_NESTED_SCOPE_TYPES = [
-  "method_declaration", "constructor_declaration", "lambda_expression", "anonymous_class_body",
+  "method_declaration", "constructor_declaration", "lambda_expression",
 ];
 
 /**
@@ -103,7 +103,11 @@ export const javaCallHooks: CallExtractionHooks = {
   // `stream().map(x -> mapper.toDto(x))`) runs on behalf of the method that
   // wires it: its calls are the method's. A lambda bound to a local
   // (`Runnable r = () -> …`) stays a boundary (see call-graph.ts).
-  anonymousScopeTypes: ["lambda_expression"],
+  // So does an anonymous class (`cache.get(new Task<Boolean>() { public
+  // Boolean get() { return getService().find(id); } })`) or a local class: a
+  // `class_body` met inside a method body is no member class, its methods are
+  // no symbol of their own, and the method that builds it is where they run.
+  anonymousScopeTypes: ["lambda_expression", "class_body"],
   callbackArgNodeTypes: ["method_invocation"],
   // A name the method binds itself is a value when passed as an argument,
   // not a callback reference (see CallExtractionHooks.bindingSites).

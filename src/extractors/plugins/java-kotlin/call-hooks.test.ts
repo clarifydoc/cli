@@ -35,6 +35,33 @@ describe("JVM argsOf — what a CRUD call is handed", () => {
   });
 });
 
+describe("JVM calls inside an anonymous or local class", () => {
+  it("attributes the methods' calls to the method that builds the object, not to no function", async () => {
+    const m = await methodOf(`class ClubServiceImpl {
+  public boolean hasSquad(final String clubId) {
+    return cache.get(new MicroCache.Task<Boolean>() {
+      @Override
+      public Boolean get() {
+        return getService().findPlayers(clubId, "squad").isEmpty();
+      }
+    });
+  }
+}`, "java", "hasSquad");
+    expect(m.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["cache.get", "getService().findPlayers", "getService"]));
+  });
+
+  it("does not make the anonymous class's methods members of the enclosing class", async () => {
+    const src = `class Garage {
+  void park() { Runnable r = new Runnable() { public void run() { repo.save(car); } }; r.run(); }
+}`;
+    const tree = await parseSource(src, "java" as any, "X.java");
+    const ex = new JavaKotlinExtractor();
+    const methods = ex.extractClasses(tree, src).flatMap((c) => c.methods).map((f) => f.name);
+    expect(methods).toEqual(["park"]);
+    expect((await methodOf(src, "java", "park")).calls.map((c) => c.name)).toEqual(expect.arrayContaining(["repo.save", "r.run"]));
+  });
+});
+
 describe("JVM receiverTypeOf — client proxies built in the chain", () => {
   it("types a JAX-RS, MicroProfile, Feign or Retrofit proxy by the interface it is built for", async () => {
     const m = await methodOf(`class C {

@@ -697,6 +697,10 @@ export interface CallExtractionHooks {
    * addToCart(id)}` or a `useEffect(() => { fetch(...) })` callback executes
    * on behalf of the function that wires it. Named bindings still stop the
    * walk (they are extracted as their own functions). Unioned across plugins.
+   * A class BODY may be listed too (Java's `new Task<T>() { public T get() {
+   * … } }`, met inside a method body): the methods it declares belong to no
+   * named symbol, so a nested scope whose parent is an anonymous scope is read
+   * on as well.
    */
   anonymousScopeTypes?: readonly string[];
   /**

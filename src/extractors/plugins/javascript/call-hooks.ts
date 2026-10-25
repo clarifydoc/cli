@@ -22,7 +22,9 @@ export const javascriptCallHooks: CallExtractionHooks = {
   ],
   // Inline handlers/callbacks are anonymous expressions — their calls belong
   // to the enclosing function (see CallExtractionHooks.anonymousScopeTypes).
-  anonymousScopeTypes: ["arrow_function", "function_expression"],
+  // So are the methods of a class expression built in place
+  // (`register(new (class implements Runner { run() { … } })())`).
+  anonymousScopeTypes: ["arrow_function", "function_expression", "class"],
   runsAtTopLevel: moduleCallback,
   callbackArgNodeTypes: ["call_expression"],
   // A name the function binds itself is a value when passed as an argument,

@@ -117,3 +117,18 @@ describe("classifyCalls — the file's own code is not a DB call by name", () =>
       .toEqual(["this.exec:internal", "self.repo.update:internal", "clubs.get:database"]);
   });
 });
+
+describe("extractCalls — classes built in place are no symbols", () => {
+  it("TypeScript: a class expression's methods run on behalf of the function that builds it; a bound one stays a boundary", async () => {
+    expect(await callsIn(`
+function load(api) {
+  const runner = new (class implements Runner { run() { return api.fetchPlayers(); } })();
+  const Named = class { go() { return api.fetchClubs(); } };
+  return runner;
+}`, "typescript", "function_declaration")).toEqual(expect.arrayContaining(["api.fetchPlayers"]));
+    expect(await callsIn(`
+function load(api) {
+  const Named = class { go() { return api.fetchClubs(); } };
+}`, "typescript", "function_declaration")).not.toContain("api.fetchClubs");
+  });
+});

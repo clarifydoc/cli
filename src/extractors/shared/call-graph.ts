@@ -107,10 +107,14 @@ function collectPatternNames(pattern: Node, into: Set<string>): void {
  * is not a symbol of its own — its calls execute on behalf of the enclosing
  * function, so the call walk continues through it. A function expression bound
  * to a name (`const f = () => {…}`) IS extracted as its own function and stays
- * a boundary.
+ * a boundary. A method declared directly in an anonymous class body (listed as
+ * an anonymous scope) is no symbol either: it runs on behalf of the function
+ * that constructs the object.
  */
 function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>): boolean {
-  return anonymous.has(node.type) && node.parent?.type !== "variable_declarator";
+  const parent = node.parent;
+  if (!anonymous.has(node.type)) return !!parent && anonymous.has(parent.type);
+  return parent?.type !== "variable_declarator";
 }
 
 /** True if the node type opens a nested function/class scope (cross-plugin union). */
