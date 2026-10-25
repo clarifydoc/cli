@@ -474,7 +474,7 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
   }
   if (PY_HTTP_VERBS.has(leaf) && PY_HTTP_RECEIVER_RE.test(recv)) {
     // A literal, or a local the function builds it in (`url = f"http://{BASE}/api/x"`).
-    const target = pyStringLiteral(args[0]) ?? (args[0] ? pyStringValue(args[0], call) : null);
+    const target = args[0] ? pyStringValue(args[0], call) : null;
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
   }
   return null;
@@ -682,7 +682,20 @@ function positional(call: Node): Node[] {
  */
 function pyStringValue(node: Node, at: Node, depth = 0): string | null {
   if (depth > 3) return null;
-  if (node.type === "string") return pyStringLiteral(node);
+  if (node.type === "string") {
+    const text = pyStringLiteral(node);
+    // An f-string's `{name}` hole naming a local the function builds as a string
+    // (`base = f"/api/clubs/{club['id']}"`, then `f"{base}/players"`) holds that text.
+    if (text === null || !/^[a-zA-Z]*[fF]/.test(node.text)) return text;
+    // Only a function's own local: a module constant is a base the call-origin pass reads (`baseRef`).
+    let fn: Node | null = at.parent;
+    while (fn && fn.type !== "function_definition" && fn.type !== "module") fn = fn.parent;
+    if (fn?.type !== "function_definition") return text;
+    return text.replace(/\{([A-Za-z_]\w*)\}/g, (hole, name: string) => {
+      const value = singleAssignment(name, at);
+      return (value && pyStringValue(value, value, depth + 1)) ?? hole;
+    });
+  }
   if (node.type === "concatenated_string") {
     const parts = node.namedChildren.map((c) => pyStringValue(c, at, depth + 1));
     return parts.every((p) => p !== null) ? parts.join("") : null;

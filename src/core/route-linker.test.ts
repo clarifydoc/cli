@@ -1119,3 +1119,13 @@ describe("routes with a parameter that takes the rest of the path", () => {
     expect(link("/players/7/stats", routes)).toEqual([]);
   });
 });
+
+describe("the unknown-base suffix tier", () => {
+  it("never absorbs a route parameter into the unknown base (real-repo FP)", () => {
+    const routes = [route("server/providers.py", "GET", "/api/providers/{provider_id}/models", "list_models")];
+    const call = (target: string) => ({ ...apiCall("server/llm/openai.py", "get", target), baseExpr: "base_url" }) as never;
+    expect(linkApiCallsToRoutes([call("/models")], routes)).toEqual([]);
+    // A literal prefix is what an unknown base may stand for.
+    expect(linkApiCallsToRoutes([call("/{}/models")], routes).map((l) => l.routePath)).toEqual(["/api/providers/{provider_id}/models"]);
+  });
+});

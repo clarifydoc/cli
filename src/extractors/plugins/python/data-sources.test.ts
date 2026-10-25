@@ -158,6 +158,18 @@ describe("Python URLs and SQL held in locals", () => {
     ].join("\n"))).toEqual([["api-call", "{BASE}/players/{player_id}", null, null], ["api-call", "{}/players", null, null]]);
   });
 
+  it("fills an f-string hole naming a local base the function builds (real-repo FP)", async () => {
+    expect(await rows([
+      "def test_club_history(client, club):",
+      '    base = f"/api/clubs/{club[\'id\']}"',
+      '    client.get(f"{base}/fixtures")',
+      '    client.get(f"{base}/players/{player_id}")',
+    ].join("\n"))).toEqual([
+      ["api-call", "/api/clubs/{club['id']}/fixtures", null, null],
+      ["api-call", "/api/clubs/{club['id']}/players/{player_id}", null, null],
+    ]);
+  });
+
   it("reads the table and the verb from raw SQL, literal or local", async () => {
     expect(await rows([
       "def report(cursor, n):",
