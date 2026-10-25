@@ -32,6 +32,12 @@ Feign.builder().target(PersonApi.class, "http://person:8080");`)).toEqual([
     ]);
   });
 
+  it("reads a factory method named for the proxy it makes, on any receiver, when handed an address", async () => {
+    expect(await proxies(`
+webClientUtils.createWebClientProxy(PersonApi.class, loadBalancerURL + serviceURI, ContextAccessor.get());
+helper.createProxy(Application.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }]);
+  });
+
   it("reads an in-house REST client factory only when it is handed an address", async () => {
     expect(await proxies(`
 EosRestClientFactory.createWithAPIFriendlyProviders(SchoolSelectionApi.class, getSchoolSelectionRestURL());

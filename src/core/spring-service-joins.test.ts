@@ -16,6 +16,11 @@ const POM = (name: string) =>
 <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-openfeign</artifactId></dependency></dependencies></project>`;
 
 const FILES: Record<string, string> = {
+  "docker-compose.yml": `services:
+  league:
+    build: ./league
+    ports: ["8085:8085"]
+`,
   "league/pom.xml": POM("league"),
   "league/src/main/resources/application.yml": `spring:
   application:
@@ -48,6 +53,28 @@ import org.springframework.web.bind.annotation.*;
 @FeignClient(name = "league", path = "/league/clubs")
 public interface ClubClient {
   @DeleteMapping("/{id}") void remove(@PathVariable("id") String id);
+}
+`,
+  "fans/src/main/java/com/example/fans/KitClient.java": `package com.example.fans;
+import org.springframework.web.service.annotation.*;
+import org.springframework.web.bind.annotation.PathVariable;
+@HttpExchange("http://league:8085/league/clubs")
+public interface KitClient {
+  @PutExchange("/{id}/kits") String setKits(@PathVariable String id);
+}
+`,
+  "fans/src/main/java/com/example/fans/ClubCalls.java": `package com.example.fans;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestClient;
+import org.apache.http.client.methods.HttpDelete;
+public class ClubCalls {
+  private final WebClient web = WebClient.builder().baseUrl("http://league:8085/league").build();
+  private final RestClient rest = RestClient.create("http://league:8085/league");
+  public void run(CloseableHttpClient http) throws Exception {
+    web.get().uri("/clubs/{id}", 7).retrieve().bodyToMono(String.class).block();
+    rest.post().uri("/clubs/{id}/players", 7).retrieve().body(String.class);
+    http.execute(new HttpDelete("http://league:8085/league/clubs/7"));
+  }
 }
 `,
   "fans/src/main/java/com/example/fans/Stand.java": `package com.example.fans;
@@ -89,5 +116,20 @@ describe("Spring services joined across a context path", () => {
   it("links a Feign call naming the context path to the route", () => {
     const links = (summary.apiRouteLinks ?? []).map((l) => `${l.source}:${l.sourceLine} ${l.method} ${l.routePath} -> ${l.target}`);
     expect(links).toContain("fans/src/main/java/com/example/fans/ClubClient.java:6 DELETE /league/clubs/{id} -> league/src/main/java/com/example/league/ClubController.java");
+  });
+
+  it("links WebClient, RestClient, HTTP-interface and Apache HttpClient calls through the league's address", () => {
+    const links = (summary.apiRouteLinks ?? [])
+      .filter((l) => /ClubCalls|KitClient/.test(l.source))
+      .map((l) => `${l.source.split("/").pop()}:${l.sourceLine} ${l.method} ${l.routePath} ${l.confidence}`)
+      .sort();
+    expect(links).toEqual([
+      "ClubCalls.java:10 POST /league/clubs/{id}/players EXTRACTED",
+      "ClubCalls.java:11 DELETE /league/clubs/{id} EXTRACTED",
+      "ClubCalls.java:9 GET /league/clubs/{id} EXTRACTED",
+      "KitClient.java:6 PUT /league/clubs/{id}/kits EXTRACTED",
+    ].sort());
+    const origin = summary.apiCalls.find((c) => c.filePath.endsWith("ClubCalls.java") && c.line === 9)?.origin;
+    expect(origin).toMatchObject({ host: "league", confidence: "EXTRACTED" });
   });
 });

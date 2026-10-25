@@ -17,7 +17,8 @@ import type { HttpClientRegistration } from "../../../types/analysis.js";
  * `ApplicationFactory.create(X.class)` is not a proxy. An in-house wrapper
  * (`EosRestClientFactory.create(X.class, url)`) counts when it is named like a
  * REST client factory AND handed an address, as does a client builder
- * (`Framework.clientFor(PersonApi.class, url).build()`) handed one. Registered by the type's fully
+ * (`Framework.clientFor(PersonApi.class, url).build()`) or a method named for the proxy it makes
+ * (`webClientUtils.createWebClientProxy(PersonApi.class, url)`) handed one. Registered by the type's fully
  * qualified name, from the file's imports or package. A method of the file
  * that hands its `Class<T>` parameter to one of those factories
  * (`<T> T createClient(Class<T> type, Context c) { … JAXRSClientFactory.fromClient(client, type, true) … }`)
@@ -81,7 +82,8 @@ export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpCl
     if (literals.length !== 1) return;
     const known = isKnown(name, object);
     const addressed = args.some((a) => a.type !== "class_literal" && ADDRESS_ARG.test(a.text));
-    const wrapper = addressed && ((/^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object)) || /^clientFor$/.test(name));
+    // A factory method named for what it makes (`createWebClientProxy(PersonApi.class, url)`) needs no receiver name.
+    const wrapper = addressed && ((/^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object)) || /^(?:clientFor|create\w*Proxy)$/.test(name));
     if (!known && !wrapper) return;
     const type = literals[0]!.text.replace(/\.class$/, "").trim();
     const fqn = fqnOf(type);

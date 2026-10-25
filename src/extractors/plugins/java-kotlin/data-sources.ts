@@ -366,6 +366,108 @@ function requestChainVerb(node: Node, receiver: string): string {
   return (verb ?? builtVerb ?? "GET").toUpperCase();
 }
 
+/** The calls that send a Spring `WebClient` / `RestClient` request built by a fluent chain. */
+const SPRING_FLUENT_SENDS = new Set(["retrieve", "exchange", "exchangeToMono", "exchangeToFlux"]);
+const FLUENT_VERBS = new Set(["get", "post", "put", "delete", "patch", "head", "options"]);
+/** Apache HttpClient request classes (4.x `org.apache.http.client.methods`, 5.x `classic.methods`). */
+const APACHE_REQUEST_RE = /^Http(Get|Post|Put|Delete|Patch|Head|Options)$/;
+/** Apache HttpClient 5 request builders: `ClassicRequestBuilder.get(url)`, `SimpleRequestBuilder.post(url)`. */
+const APACHE_BUILDER_RE = /(?:^|\.)(?:Classic|Simple)?RequestBuilder$/;
+/** What a request URL looks like once rendered: absolute, an app path, or a path behind an unknown base. */
+const REQUEST_URL_RE = /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/;
+
+/**
+ * The calls of a fluent chain from `start` down to its root, outermost first
+ * (`web.get().uri(x).retrieve()` from `retrieve`'s receiver: uri, get), and
+ * the root expression the chain starts from (`web`).
+ */
+function fluentChain(start: Node | null): { calls: Array<{ name: string; args: Node[]; receiver: string }>; root: Node | null } {
+  const calls: Array<{ name: string; args: Node[]; receiver: string }> = [];
+  let cur = start;
+  for (let i = 0; cur && i < 24 && (cur.type === "method_invocation" || cur.type === "call_expression"); i++) {
+    const parts = resolveCall(cur);
+    if (!parts) break;
+    calls.push({ name: parts.method, args: callArguments(cur), receiver: parts.receiver });
+    cur = receiverNode(cur);
+  }
+  return { calls, root: cur };
+}
+
+/**
+ * The value a field or property of the file is given: its declaration's
+ * initializer, else an assignment to it (`this.web = builder.baseUrl(x).build()`).
+ */
+function memberInitializer(at: Node, name: string): Node | null {
+  let found: Node | null = null;
+  const scan = (n: Node): void => {
+    if (found) return;
+    if (n.type === "variable_declarator" && n.parent?.type === "field_declaration" && n.childForFieldName("name")?.text === name) found = n.childForFieldName("value");
+    else if (n.type === "property_declaration" && kotlinNameAndType(n).name === name) found = initializerAfterEquals(n);
+    else if (n.type === "assignment_expression" && n.childForFieldName("left")?.text.replace(/^this\./, "") === name) found = n.childForFieldName("right");
+    for (const c of n.children) scan(c);
+  };
+  scan(at.tree.rootNode);
+  return found;
+}
+
+/**
+ * The base address a Spring client chain names: `WebClient.builder().baseUrl(x)`,
+ * `RestClient.builder().baseUrl(x)`, `WebClient.create(x)` / `RestClient.create(x)`.
+ * Undefined when the chain does not build a client; null when it builds one without a base.
+ */
+function springClientBase(calls: ReadonlyArray<{ name: string; args: Node[]; receiver: string }>): Node | null | undefined {
+  const based = calls.find((c) => c.name === "baseUrl" && c.args.length === 1);
+  if (based) return based.args[0]!;
+  const created = calls.find((c) => c.name === "create" && /(?:^|\.)(?:WebClient|RestClient)$/.test(c.receiver.trim()));
+  if (created) return created.args[0] ?? null;
+  return calls.some((c) => c.name === "builder" && /(?:^|\.)(?:WebClient|RestClient)$/.test(c.receiver.trim())) ? null : undefined;
+}
+
+/** The path a `.uri(…)` argument names: a URL expression, or the `path(…)` an `uriBuilder ->` lambda sets. */
+function fluentUriPath(arg: Node | undefined, at: Node): string | null {
+  if (!arg) return null;
+  if (/lambda/.test(arg.type)) {
+    let path: Node | null = null;
+    const scan = (n: Node): void => {
+      if (path) return;
+      if (n.type === "method_invocation" || n.type === "call_expression") {
+        const parts = resolveCall(n);
+        if (parts?.method === "path" && parts.firstArg) path = parts.firstArg;
+      }
+      for (const c of n.children) scan(c);
+    };
+    scan(arg);
+    return path ? urlExpression(path, at, 0) : null;
+  }
+  return urlExpression(arg, at, 0);
+}
+
+/** `new HttpGet(url)` / Kotlin `HttpGet(url)` / `ClassicRequestBuilder.get(url)`, in place or in a local: its verb and URL. */
+function apacheRequest(arg: Node, at: Node): { verb: string; target: string | null } | null {
+  const expr = /^(?:identifier|simple_identifier)$/.test(arg.type) ? localInitializer(at, arg.text) : arg;
+  if (!expr) return null;
+  let verb: string | undefined;
+  let url: Node | null = null;
+  if (expr.type === "object_creation_expression") {
+    verb = APACHE_REQUEST_RE.exec(simpleTypeName(expr.childForFieldName("type")?.text) ?? "")?.[1];
+    url = firstJavaArg(expr.childForFieldName("arguments"));
+  } else if (expr.type === "method_invocation" || expr.type === "call_expression") {
+    const own = resolveCall(expr);
+    if (own && !own.receiver) {
+      verb = APACHE_REQUEST_RE.exec(own.method)?.[1];
+      url = own.firstArg;
+    } else {
+      const { calls } = fluentChain(expr);
+      const built = calls.find((c) => FLUENT_VERBS.has(c.name) && APACHE_BUILDER_RE.test(c.receiver.trim()));
+      verb = built?.name;
+      url = built?.args[0] ?? null;
+    }
+  }
+  if (!verb) return null;
+  const rendered = url ? urlExpression(url, at, 0) : null;
+  return { verb: verb.toUpperCase(), target: rendered && REQUEST_URL_RE.test(rendered) ? rendered : null };
+}
+
 /** A jOOQ-style table reference: an ALL-CAPS generated constant (`STUDENT`, `US2000JOB`). */
 const TABLE_CONST_RE = /^[A-Z][A-Z0-9_]*$/;
 
@@ -444,6 +546,24 @@ const RETROFIT_ANN_RE = /^@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*"([^"
 const FEIGN_MAPPING_RE = /^@(Get|Post|Put|Patch|Delete)Mapping\s*\(/;
 const ANN_PATH_RE = /(?:value|path)\s*=\s*[[{]?\s*"([^"]*)"|\(\s*[[{]?\s*"([^"]*)"/;
 
+/** The url an `@HttpExchange` / `@GetExchange` annotation names: positional, `value =` or `url =`. */
+function exchangePath(annotation: string): string {
+  return /\(\s*"([^"]*)"/.exec(annotation)?.[1] ?? /\b(?:value|url)\s*=\s*"([^"]*)"/.exec(annotation)?.[1] ?? "";
+}
+
+/** The interface-level `@HttpExchange` of a Spring HTTP interface: its url and the interface's name. */
+function httpExchangeInterface(text: string): { base: string; iface: string | null } {
+  const m = /@HttpExchange\b(\s*\([^)]*\))?\s*(?:@[\w.]+(?:\s*\([^)]*\))?\s*)*(?:(?:public|internal|private|sealed|fun)\s+)*interface\s+(\w+)/.exec(text);
+  const iface = m?.[2] ?? /\binterface\s+(\w+)/.exec(text)?.[1] ?? null;
+  return { base: m?.[1] ? exchangePath(m[1]) : "", iface };
+}
+
+/** An `@HttpExchange` base (absolute or a path) joined with a method's url. */
+function joinExchange(base: string, path: string): string {
+  const origin = /^(https?:\/\/[^/]+)(.*)$/i.exec(base);
+  return origin ? origin[1]! + joinUrl(origin[2]!, path).replace(/^\/$/, "") : joinUrl(base, path);
+}
+
 /** Join an optional client base path with a call path, with one leading `/`. */
 function joinUrl(base: string | null, path: string): string {
   const parts = [base ?? "", path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean);
@@ -500,6 +620,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isKeycloakHttpFile = false;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
+  /**
+   * A Spring HTTP interface (`@HttpExchange`): its methods' `@GetExchange("/x")`
+   * are outbound calls, under the interface's own `@HttpExchange` url; null otherwise.
+   */
+  private httpExchange: { base: string; iface: string | null } | null = null;
 
   /** A request whose URL starts with a field `@Value` fills is based on that configuration key. */
   protected override ds(info: Parameters<DataSourceExtractor["ds"]>[0]): DataSourceInfo {
@@ -527,6 +652,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
+    this.httpExchange = /@(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text) && /\binterface\s+\w/.test(text) ? httpExchangeInterface(text) : null;
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
       ? new Map([...text.matchAll(/^\s*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
       : null;
@@ -652,6 +778,26 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           line: node.startPosition.row + 1,
           ...(iface ? { baseRef: { kind: "client" as const, key: iface } } : {}),
         }));
+      }
+
+      // Spring HTTP interface methods: `@GetExchange("/{id}")`, `@HttpExchange(method = "GET", url = "/x")`.
+      if (this.httpExchange) {
+        const exchange = /^@(Get|Post|Put|Patch|Delete)Exchange\b/.exec(text);
+        const holder = node.parent?.type === "modifiers" ? node.parent.parent : node.parent;
+        const onMethod = !!holder && /^(?:method_declaration|function_declaration)$/.test(holder.type);
+        const generic = !exchange && onMethod && /^@HttpExchange\b/.test(text) ? /\bmethod\s*=\s*"(\w+)"/.exec(text)?.[1] : undefined;
+        const verb = exchange?.[1] ?? generic;
+        if (verb && onMethod) {
+          const target = joinExchange(this.httpExchange.base, exchangePath(text));
+          sources.push(this.ds({
+            kind: "api-call",
+            name: verb.toUpperCase(),
+            target,
+            line: node.startPosition.row + 1,
+            // A relative base is the client's: the adapter the proxy factory is handed states it.
+            ...(!/^https?:\/\//i.test(target) && this.httpExchange.iface ? { baseRef: { kind: "client" as const, key: this.httpExchange.iface } } : {}),
+          }));
+        }
       }
 
       // Feign client methods: Spring mapping annotations, outbound semantics.
@@ -943,6 +1089,23 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       sources.push(this.ds({ kind: "api-call", name: "GET", target: url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null, line }));
       return;
     }
+    // Spring `WebClient` / `RestClient`: `web.get().uri("/clubs/{id}", id).retrieve()` sends to the
+    // client's base — the `baseUrl(…)` / `create(…)` it was built with — and the uri.
+    if (SPRING_FLUENT_SENDS.has(method)) {
+      const request = this.springFluentRequest(node);
+      if (request) {
+        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line }));
+        return;
+      }
+    }
+    // Apache HttpClient: `client.execute(new HttpDelete(url))`, the request built in place or in a local.
+    if (method === "execute" && call.firstArg) {
+      const request = apacheRequest(call.firstArg, node);
+      if (request) {
+        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line }));
+        return;
+      }
+    }
     const built = builtRequestUrl(node, call);
     if (built) {
       sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built, line }));
@@ -953,7 +1116,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // `request.exchange()` on a ServerRequest is an accessor: a bare exchange/retrieve
     // sends only at the end of a request chain (`webClient.get().uri(…).exchange()`).
     const accessor = (method === "exchange" || method === "retrieve") && callArguments(node).length === 0 && !/\.uri\s*\(|\.(?:get|post|put|patch|delete|method)\s*\(/.test(receiver) && !HTTP_HINT_RE.test(receiver);
-    if ((HTTP_METHODS.has(method) && !accessor) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver))) {
+    // `WebClient.create(x).get()`: a Spring client's argument-less verb only starts the request its send reads.
+    const springSpec = FLUENT_VERBS.has(method) && callArguments(node).length === 0 && /\b(?:WebClient|RestClient)\b/.test(receiver);
+    if ((HTTP_METHODS.has(method) && !accessor) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver) && !springSpec)) {
       // RestTemplate's URL is its first argument: `getForObject(clubsUrl + "/api/clubs/" + id, Club.class)`.
       const url = REST_TEMPLATE_URL_FIRST.has(method) && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
@@ -990,6 +1155,40 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (!root) return false;
     const declared = localDeclaredType(node, root) ?? this.fieldTypes.get(root) ?? null;
     return (declared ? /^Q[A-Z]/.test(declared) : false) || this.querydslPaths!.has(root);
+  }
+
+  /**
+   * The request a Spring `WebClient` / `RestClient` chain sends: the verb it
+   * picks (`get()`, `method(HttpMethod.POST)`), the `uri(…)` it names and the
+   * base of the client it starts from — built inline, or held by a variable,
+   * field or property whose initializer builds it. A client whose base this
+   * file does not state reads as an unknown base named for it (`${web}/clubs`).
+   * Null when the chain names no uri.
+   */
+  private springFluentRequest(node: Node): { verb: string; target: string | null } | null {
+    const { calls, root } = fluentChain(receiverNode(node));
+    const uri = calls.find((c) => c.name === "uri");
+    if (!uri) return null;
+    const verb = calls.find((c) => FLUENT_VERBS.has(c.name) && c.args.length === 0)?.name.toUpperCase() ??
+      /\bHttpMethod\.(\w+)/.exec(calls.find((c) => c.name === "method")?.args[0]?.text ?? "")?.[1];
+    if (!verb) return null;
+    const path = fluentUriPath(uri.args[0], node);
+    if (path === null) return { verb, target: null };
+    if (/^https?:\/\//i.test(path)) return { verb, target: path };
+    let base = springClientBase(calls);
+    let variable: string | null = null;
+    if (base === undefined && root) {
+      variable = /^(?:this\.)?(\w+)$/.exec(root.text.trim())?.[1] ?? null;
+      const init = variable ? (localInitializer(node, variable) ?? memberInitializer(node, variable)) : null;
+      if (init) {
+        const own = resolveCall(init);
+        const chain = fluentChain(receiverNode(init));
+        base = springClientBase(own ? [{ name: own.method, args: callArguments(init), receiver: own.receiver }, ...chain.calls] : chain.calls);
+      }
+    }
+    const baseText = base ? (urlExpression(base, node, 0) ?? "${" + base.text.replace(/\s+/g, " ").replace(/^this\./, "") + "}") : base === null ? "" : variable ? "${" + variable + "}" : "";
+    const joined = baseText ? `${baseText.replace(/\/+$/, "")}${path.startsWith("/") ? "" : "/"}${path}` : path;
+    return { verb, target: REQUEST_URL_RE.test(joined) ? joined : null };
   }
 
   /**

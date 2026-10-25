@@ -712,8 +712,8 @@ describe("exchange() as an accessor", () => {
     super(request.exchange());
     ResponseEntity<Club> r = restTemplate.exchange("/clubs/" + id, HttpMethod.GET, null, Club.class);
     Mono<Club> m = webClient.get().uri("/clubs/{id}", id).retrieve().bodyToMono(Club.class);`, "java");
-    // The RestTemplate and WebClient requests only — the RestTemplate one with its URL and verb.
-    expect(ds.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual(["GET /clubs/${id}", "retrieve null"]);
+    // The RestTemplate and WebClient requests only, each with its URL and verb (the client's base unknown here).
+    expect(ds.filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`)).toEqual(["GET /clubs/${id}", "GET ${webClient}/clubs/{id}"]);
   });
 });
 
@@ -810,5 +810,80 @@ public interface PlayerRepository extends CrudRepository<Player, Long> {
     const tree = await parseSource(src, "java", "PlayerRepository.java");
     const rows = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.routine);
     expect(rows.map((d) => `${d.target} @${d.line}`)).toEqual(["usp_SignPlayer @4", "usp_NotifyAgent @7"]);
+  });
+});
+
+describe("Spring WebClient, RestClient, HTTP interfaces and Apache HttpClient requests", () => {
+  const extract = async (src: string, lang: Language = "java") => {
+    const tree = await parseSource(src, lang as any, lang === "kotlin" ? "Calls.kt" : "Calls.java");
+    return new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`);
+  };
+
+  it("reads the verb and uri of a fluent chain under the base its client is built with", async () => {
+    expect(await extract(`package x;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestClient;
+public class ClubCalls {
+  private final WebClient web = WebClient.builder().baseUrl("http://clubs:8085/league").build();
+  private final RestClient rest;
+  private final WebClient bare;
+  ClubCalls(WebClient.Builder builder) {
+    this.rest = RestClient.create("http://clubs:8085/league");
+    this.bare = builder.build();
+  }
+  void run(String id) {
+    web.get().uri("/clubs/{id}", id).retrieve().bodyToMono(String.class).block();
+    rest.post().uri("/clubs/{id}/players", id).retrieve().body(String.class);
+    web.method(HttpMethod.PATCH).uri(b -> b.path("/clubs/{id}/kits").build(id)).retrieve();
+    bare.delete().uri("/clubs/" + id).retrieve();
+    WebClient.create("http://garage:8080").get().uri("/cars").exchangeToMono(r -> r.bodyToMono(String.class));
+  }
+}`)).toEqual([
+      "GET http://clubs:8085/league/clubs/{id}",
+      "POST http://clubs:8085/league/clubs/{id}/players",
+      "PATCH http://clubs:8085/league/clubs/{id}/kits",
+      "DELETE ${bare}/clubs/${id}",
+      "GET http://garage:8080/cars",
+    ]);
+  });
+
+  it("reads a Kotlin chain, its base a @Value property", async () => {
+    const rows = await extract(`package x
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.web.reactive.function.client.WebClient
+class ClubCalls(@Value("\\\${clubs.url}") private val clubsUrl: String) {
+  private val web = WebClient.builder().baseUrl(clubsUrl).build()
+  fun load(id: String) = web.get().uri("/clubs/{id}", id).retrieve()
+}`, "kotlin");
+    expect(rows).toEqual(["GET ${clubsUrl}/clubs/{id}"]);
+  });
+
+  it("reads Apache HttpClient requests built in place or in a local", async () => {
+    expect(await extract(`package x;
+import org.apache.http.client.methods.*;
+public class Garage {
+  void run(CloseableHttpClient http, String id) throws Exception {
+    http.execute(new HttpDelete("http://garage:8080/cars/" + id));
+    HttpPost post = new HttpPost("http://garage:8080/cars");
+    http.execute(post);
+    http.execute(ClassicRequestBuilder.put("http://garage:8080/cars/" + id).build());
+  }
+}`)).toEqual(["DELETE http://garage:8080/cars/${id}", "POST http://garage:8080/cars", "PUT http://garage:8080/cars/${id}"]);
+  });
+
+  it("reads a Spring HTTP interface's methods as calls under its @HttpExchange url", async () => {
+    expect(await extract(`package x;
+import org.springframework.web.service.annotation.*;
+@HttpExchange("http://clubs:8085/league/clubs")
+public interface KitClient {
+  @PutExchange("/{id}/kits") String setKits(@PathVariable String id);
+  @HttpExchange(method = "DELETE", url = "/{id}") void remove(@PathVariable String id);
+}`)).toEqual(["PUT http://clubs:8085/league/clubs/{id}/kits", "DELETE http://clubs:8085/league/clubs/{id}"]);
+    expect(await extract(`package x;
+import org.springframework.web.service.annotation.*;
+@HttpExchange(url = "/api/cars")
+interface CarClient {
+  @GetExchange fun all(): List<String>
+}`.replace("fun all(): List<String>", "List<String> all();"))).toEqual(["GET /api/cars"]);
   });
 });
