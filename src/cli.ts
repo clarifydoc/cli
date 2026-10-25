@@ -328,7 +328,8 @@ program
           const touched = [...new Set([...hunks.keys(), ...changed])];
           const before = await loadFileAnalyses(analysisDir, touched);
           const found = symbolsInHunks(before, hunks);
-          const after = await analyzeWorkingFiles(projectRoot, [...before.keys()]);
+          // Every touched file, new ones too: a function that left one file may have moved into another.
+          const after = await analyzeWorkingFiles(projectRoot, touched);
           symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, summary.symbolLinks ?? []), hunks };
         } catch (e) {
           // No line ranges: the file-level impact stands alone.

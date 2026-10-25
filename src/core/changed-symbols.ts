@@ -154,12 +154,16 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
   return out;
 }
 
-/** A function whose callers a change can break: removed, or its required parameters changed. */
+/** A function whose callers a change can break: removed, moved, or its required parameters changed. */
 export interface SignatureChange {
   file: string;
   symbol: string;
   line: number;
-  kind: "removed" | "arity" | "return-type";
+  /**
+   * `moved`: gone from this file, and the change added the same function —
+   * same name, same parameters — to exactly one other file (`movedTo`).
+   */
+  kind: "removed" | "moved" | "arity" | "return-type";
   /** Required parameters before and after (`arity`); the declared return types (`return-type`). */
   before?: number | string;
   after?: number | string;
@@ -168,17 +172,24 @@ export interface SignatureChange {
    * the same function renamed. Callers still break; the fix is the new name.
    */
   renamedTo?: string;
+  /** `moved`: the file the function now lives in. */
+  movedTo?: string;
   /** Callers the analysis is sure of (EXTRACTED links). */
   callers: number;
-  /** The change breaks those callers as they are written. */
+  /**
+   * The change breaks those callers as they are written. For a move, only the
+   * callers in files the change leaves alone: one it edits is taken to follow
+   * the function to its new place.
+   */
   breaking: boolean;
 }
 
 type Spans = Pick<FileAnalysis, "functions" | "classes">;
 
-/** "removed (possibly renamed to placeOrder)", "1 → 2 required parameters", "returns Order, was Order | null". */
-export function describeSignatureChange(c: Pick<SignatureChange, "kind" | "before" | "after" | "renamedTo">): string {
+/** "removed (possibly renamed to placeOrder)", "moved to src/orders.ts", "1 → 2 required parameters", "returns Order, was Order | null". */
+export function describeSignatureChange(c: Pick<SignatureChange, "kind" | "before" | "after" | "renamedTo" | "movedTo">): string {
   if (c.kind === "removed") return c.renamedTo ? `removed (possibly renamed to ${c.renamedTo})` : "removed";
+  if (c.kind === "moved") return `moved to ${c.movedTo}`;
   if (c.kind === "return-type") return `returns ${c.after}, was ${c.before}`;
   return `${c.before} → ${c.after} required parameters`;
 }
@@ -223,24 +234,40 @@ export function signatureChanges(
   links: readonly SymbolLink[],
 ): SignatureChange[] {
   const sureCallers = new Map<string, number>();
+  const callerFiles = new Map<string, Set<string>>();
   for (const l of links) {
     if (l.navigational || l.sourceSymbol.startsWith("(") || l.confidence !== "EXTRACTED") continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
     sureCallers.set(key, (sureCallers.get(key) ?? 0) + 1);
+    (callerFiles.get(key) ?? callerFiles.set(key, new Set()).get(key)!).add(l.sourceFile);
+  }
+  const before_ = new Map([...before].map(([file, spans]) => [file, signatures(spans)]));
+  const after_ = new Map([...after].map(([file, spans]) => [file, signatures(spans)]));
+  // Every function the change added, by name: one gone from its file may have moved to another.
+  const addedTo = new Map<string, Array<{ file: string; sig: Signature }>>();
+  for (const [file, next] of after_) {
+    const prev = before_.get(file);
+    for (const [name, sig] of next) {
+      if (prev?.has(name)) continue;
+      (addedTo.get(name) ?? addedTo.set(name, []).get(name)!).push({ file, sig });
+    }
   }
   const out: SignatureChange[] = [];
-  for (const [file, was] of before) {
-    const now = after.get(file);
-    if (!now) continue;
-    const prev = signatures(was);
-    const next = signatures(now);
+  for (const [file, prev] of before_) {
+    const next = after_.get(file);
+    if (!next) continue;
     // Functions the change added to this file: a removed one with the same parameters may be it, renamed.
     const added = [...next].filter(([name]) => !prev.has(name));
     const sameClass = (a: string, b: string) => a.slice(0, a.lastIndexOf(".") + 1) === b.slice(0, b.lastIndexOf(".") + 1);
     for (const [symbol, sig] of prev) {
       const callers = sureCallers.get(`${file}::${symbol}`) ?? 0;
       const cur = next.get(symbol);
-      if (!cur) {
+      // The same function — name and parameters — added to exactly one other file: a move, not a removal.
+      const moved = cur ? [] : (addedTo.get(symbol) ?? []).filter((m) => m.file !== file && m.sig.params === sig.params);
+      if (moved.length === 1) {
+        const stranded = [...(callerFiles.get(`${file}::${symbol}`) ?? [])].filter((f) => f !== file && !after.has(f));
+        out.push({ file, symbol, line: sig.line, kind: "moved", movedTo: moved[0]!.file, callers, breaking: stranded.length > 0 });
+      } else if (!cur) {
         // Only an unambiguous match: one added function, same class, same parameters (and some to compare).
         const twins = added.filter(([name, s2]) => sameClass(name, symbol) && s2.params === sig.params && (sig.total > 0 || s2.returnKey === sig.returnKey));
         out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });

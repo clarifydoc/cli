@@ -89,6 +89,59 @@ describe("signatureChanges", () => {
   });
 });
 
+describe("a function moved to another file", () => {
+  const fn = (name: string, line: number, params: string[]) =>
+    ({ name, line, endLine: line + 3, params: params.map((n) => ({ name: n, type: "Car", defaultValue: null })) });
+  const link = (sourceFile: string, target: string, file = "garage.ts") =>
+    ({ sourceFile, sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: file, targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
+
+  it("is a move, breaking only the callers the change does not edit", async () => {
+    const { signatureChanges, describeSignatureChange } = await import("./changed-symbols.js");
+    const before = new Map([["garage.ts", { functions: [fn("park", 1, ["car"]), fn("wash", 10, ["car"])], classes: [] } as never]]);
+    const after = new Map([
+      ["garage.ts", { functions: [], classes: [] } as never],
+      // New file: not in the stored analysis, so only on the after side.
+      ["parking.ts", { functions: [fn("park", 1, ["car"])], classes: [] } as never],
+      // A caller the change edits (its import now names parking.ts).
+      ["pitlane.ts", { functions: [], classes: [] } as never],
+    ]);
+    const out = signatureChanges(before, after, [link("pitlane.ts", "park"), link("pitlane.ts", "wash")]);
+    expect(out.map((c) => [c.symbol, c.kind, c.movedTo ?? "", describeSignatureChange(c), c.breaking])).toEqual([
+      // Gone everywhere: still a removal, and its caller breaks even though the change edits it.
+      ["wash", "removed", "", "removed", true],
+      ["park", "moved", "parking.ts", "moved to parking.ts", false],
+    ]);
+    // A caller outside the change still imports the old file.
+    const stranded = signatureChanges(before, after, [link("paddock.ts", "park")]);
+    expect(stranded.find((c) => c.symbol === "park")).toMatchObject({ kind: "moved", breaking: true, callers: 1 });
+  });
+
+  it("is a removal when the twin differs in parameters, or two files gained it", async () => {
+    const { signatureChanges } = await import("./changed-symbols.js");
+    const before = new Map([["garage.ts", { functions: [fn("park", 1, ["car"]), fn("tow", 10, ["car"])], classes: [] } as never]]);
+    const after = new Map([
+      ["garage.ts", { functions: [], classes: [] } as never],
+      ["parking.ts", { functions: [fn("park", 1, ["car", "bay"]), fn("tow", 10, ["car"])], classes: [] } as never],
+      ["towing.ts", { functions: [fn("tow", 1, ["car"])], classes: [] } as never],
+    ]);
+    expect(signatureChanges(before, after, []).map((c) => [c.symbol, c.kind])).toEqual([
+      ["park", "removed"],
+      ["tow", "removed"],
+    ]);
+  });
+
+  it("is a move for a method that keeps its class", async () => {
+    const { signatureChanges } = await import("./changed-symbols.js");
+    const cls = (name: string, methods: unknown[]) => ({ name, kind: "class", methods, properties: [], line: 1, endLine: 20 });
+    const before = new Map([["Garage.java", { functions: [], classes: [cls("Garage", [fn("park", 2, ["car"])])] } as never]]);
+    const after = new Map([
+      ["Garage.java", { functions: [], classes: [] } as never],
+      ["parking/Garage.java", { functions: [], classes: [cls("Garage", [fn("park", 2, ["car"])])] } as never],
+    ]);
+    expect(signatureChanges(before, after, [])).toMatchObject([{ symbol: "Garage.park", kind: "moved", movedTo: "parking/Garage.java", breaking: false }]);
+  });
+});
+
 describe("an edit not made yet", () => {
   it("reads old-side ranges, a pure insertion as the line it follows", () => {
     const diff = ["--- a/src/a.ts", "+++ b/src/a.ts", "@@ -3,2 +3,4 @@", "@@ -9,0 +12,3 @@", "@@ -20 +24 @@"].join("\n");
