@@ -20,6 +20,33 @@ const FILES: Record<string, string> = {
   league:
     build: ./league
     ports: ["8085:8085"]
+  gateway:
+    build: ./gateway
+    ports: ["8080:8080"]
+`,
+  "gateway/pom.xml": POM("gateway"),
+  "gateway/src/main/resources/application.yml": `spring:
+  application:
+    name: gateway
+  cloud:
+    gateway:
+      routes:
+        - id: clubs
+          uri: lb://league
+          predicates:
+            - Path=/api/clubs/**
+          filters:
+            - RewritePath=/api/clubs/(?<rest>.*), /league/clubs/\${rest}
+`,
+  "gateway/src/main/java/com/example/gateway/GatewayApp.java": `package com.example.gateway;
+public class GatewayApp {}
+`,
+  "fans/src/main/java/com/example/fans/Scoreboard.java": `package com.example.fans;
+import org.springframework.web.client.RestTemplate;
+public class Scoreboard {
+  private final RestTemplate rest = new RestTemplate();
+  public String club(String id) { return rest.getForObject("http://gateway:8080/api/clubs/" + id, String.class); }
+}
 `,
   "league/pom.xml": POM("league"),
   "league/src/main/resources/application.yml": `spring:
@@ -124,6 +151,14 @@ describe("Spring services joined across a context path", () => {
   it("links a Feign call naming the context path to the route", () => {
     const links = (summary.apiRouteLinks ?? []).map((l) => `${l.source}:${l.sourceLine} ${l.method} ${l.routePath} -> ${l.target}`);
     expect(links).toContain("fans/src/main/java/com/example/fans/ClubClient.java:6 DELETE /league/clubs/{id} -> league/src/main/java/com/example/league/ClubController.java");
+  });
+
+  it("follows a call through a Spring Cloud Gateway route to the service and path it forwards to", () => {
+    const call = summary.apiCalls.find((c) => c.filePath.endsWith("Scoreboard.java"));
+    expect(call?.origin).toMatchObject({ host: "league", confidence: "EXTRACTED" });
+    expect(call?.origin?.evidence.filter((e) => e.step === "proxy").map((e) => e.file)).toEqual(["gateway/src/main/resources/application.yml"]);
+    const link = (summary.apiRouteLinks ?? []).find((l) => l.source.endsWith("Scoreboard.java"));
+    expect(link).toMatchObject({ method: "GET", routePath: "/league/clubs/{id}", target: "league/src/main/java/com/example/league/ClubController.java", confidence: "EXTRACTED" });
   });
 
   it("finds a Feign client's service by the name it registers under in discovery", () => {

@@ -1,5 +1,6 @@
 import type { ConfigEntry, ConfigSourceSpec, RouteBase, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { propertiesKeys, yamlKeys, type ConfigKey } from "../shared/config-keys.js";
+import { springGatewayProxies } from "./gateway-routes.js";
 
 /**
  * How a JVM (Spring) program is told where other services are: properties
@@ -104,6 +105,8 @@ function springRouteBase(entries: ReadonlyArray<ConfigEntry & { file: string }>)
 
 export const jvmServiceConfig: ServiceConfigSpec = {
   sources: [springConfig],
+  // Spring Cloud Gateway / Zuul routes in the same files.
+  proxySources: [springGatewayProxies],
   envNamesFor: (key) => [key.replace(/[.\-[\]]+/g, "_").replace(/_+$/, "").toUpperCase()],
   routeBaseOf: springRouteBase,
 };
