@@ -266,36 +266,145 @@ function importLineOf(analyses: readonly FileAnalysis[], sourceFile: string, tar
 
 /**
  * The team's own import rules (`.clarifydoc/config.json` `rules`), checked over
- * the dependency graph: an edge from a file matching `from` to one matching
- * `to` breaks the rule unless `except` names either end. Reported as layer
- * violations that carry the rule's name, so the Health tab and MCP list them
- * beside the built-in layer-order check.
+ * the dependency graph and reported as layer violations that carry the rule's
+ * name, so the Health tab and MCP list them beside the built-in layer-order
+ * check. A `to` rule forbids an edge from a file matching `from` to one
+ * matching `to`; an `allowOnly` rule forbids every edge out of `from` to a
+ * project file it does not name; a rule over `each` elements with neither
+ * keeps the elements apart. An edge within one `each` element never breaks a
+ * rule, and `except` lifts any rule for the files it names on either end. A
+ * `noCycles` rule reports every edge of a cycle among its files or elements.
  */
 export function detectRuleViolations(
   analyses: readonly FileAnalysis[],
   componentGraph: Record<string, string[]>,
   fileLayerMap: Record<string, ArchLayer>,
-  rules: ReadonlyArray<{ name: string; from: string[]; to: string[]; except: string[]; severity: "error" | "warn" }>,
+  rules: ReadonlyArray<DependencyRule>,
 ): LayerViolation[] {
   if (rules.length === 0) return [];
   const out: LayerViolation[] = [];
+  const violation = (rule: DependencyRule, sourceFile: string, targetFile: string, extra: Partial<LayerViolation> = {}): LayerViolation => ({
+    sourceFile,
+    sourceLayer: fileLayerMap[sourceFile] ?? "unknown",
+    targetFile,
+    targetLayer: fileLayerMap[targetFile] ?? "unknown",
+    importSpecifier: targetFile.split("/").pop() ?? targetFile,
+    line: importLineOf(analyses, sourceFile, targetFile),
+    rule: rule.name,
+    severity: rule.severity,
+    ...extra,
+  });
+  const edgeRules = rules.filter((r) => !r.noCycles);
   for (const [sourceFile, targets] of Object.entries(componentGraph)) {
-    for (const rule of rules) {
-      if (!matchesAnyGlob(sourceFile, rule.from) || matchesAnyGlob(sourceFile, rule.except)) continue;
+    for (const rule of edgeRules) {
+      if (!covers(rule, sourceFile)) continue;
+      const own = rule.each ? elementOf(sourceFile, rule.each) : null;
       for (const targetFile of targets) {
-        if (targetFile === sourceFile || !matchesAnyGlob(targetFile, rule.to) || matchesAnyGlob(targetFile, rule.except)) continue;
-        out.push({
-          sourceFile,
-          sourceLayer: fileLayerMap[sourceFile] ?? "unknown",
-          targetFile,
-          targetLayer: fileLayerMap[targetFile] ?? "unknown",
-          importSpecifier: targetFile.split("/").pop() ?? targetFile,
-          line: importLineOf(analyses, sourceFile, targetFile),
-          rule: rule.name,
-          severity: rule.severity,
-        });
+        if (targetFile === sourceFile || matchesAnyGlob(targetFile, rule.except)) continue;
+        const theirs = rule.each ? elementOf(targetFile, rule.each) : null;
+        if (own !== null && own === theirs) continue;
+        const breach = rule.to.length > 0
+          ? matchesAnyGlob(targetFile, rule.to)
+          : rule.allowOnly
+            ? !matchesAnyGlob(targetFile, rule.allowOnly)
+            : theirs !== null;
+        if (breach) out.push(violation(rule, sourceFile, targetFile));
       }
     }
   }
+  for (const rule of rules.filter((r) => r.noCycles)) {
+    // The unit a cycle is between: the `each` element, else the file itself.
+    const unit = (file: string): string | null => (covers(rule, file) ? (rule.each ? elementOf(file, rule.each) : file) : null);
+    const edges: Array<{ sourceFile: string; targetFile: string; from: string; to: string }> = [];
+    const graph = new Map<string, Set<string>>();
+    for (const [sourceFile, targets] of Object.entries(componentGraph)) {
+      const from = unit(sourceFile);
+      if (from === null) continue;
+      for (const targetFile of targets) {
+        const to = unit(targetFile);
+        if (to === null || to === from) continue;
+        edges.push({ sourceFile, targetFile, from, to });
+        (graph.get(from) ?? graph.set(from, new Set()).get(from)!).add(to);
+      }
+    }
+    const component = stronglyConnected(graph);
+    const members = new Map<number, string[]>();
+    for (const [u, c] of component) (members.get(c) ?? members.set(c, []).get(c)!).push(u);
+    for (const e of edges) {
+      const c = component.get(e.from);
+      if (c === undefined || c !== component.get(e.to)) continue;
+      out.push(violation(rule, e.sourceFile, e.targetFile, { cycle: [...members.get(c)!].sort() }));
+    }
+  }
+  return out;
+}
+
+/** A team rule as `resolveArchitectureOverrides` hands it over. */
+type DependencyRule = {
+  name: string;
+  from: string[];
+  to: string[];
+  except: string[];
+  severity: "error" | "warn";
+  each?: string;
+  allowOnly?: string[];
+  noCycles?: boolean;
+};
+
+/** Whether a rule speaks for edges out of `file`: it matches `from` (or lies in an `each` element when there is none) and `except` does not name it. */
+function covers(rule: DependencyRule, file: string): boolean {
+  if (matchesAnyGlob(file, rule.except)) return false;
+  if (rule.from.length > 0) return matchesAnyGlob(file, rule.from);
+  return rule.each !== undefined && elementOf(file, rule.each) !== null;
+}
+
+/**
+ * The `each` element a file lies in: the directory, as many segments deep as
+ * the pattern, that the pattern matches (`features/billing` for
+ * `features/billing/api/bill.ts` under `features/*`); null outside every one.
+ */
+function elementOf(file: string, each: string): string | null {
+  const depth = each.split("/").length;
+  const segments = file.split("/");
+  if (segments.length <= depth) return null;
+  const dir = segments.slice(0, depth).join("/");
+  return matchesAnyGlob(dir, [`/${each}`]) ? dir : null;
+}
+
+/** Tarjan's strongly connected components; each node in a component of two or more gets that component's number. */
+function stronglyConnected(graph: ReadonlyMap<string, ReadonlySet<string>>): Map<string, number> {
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const out = new Map<string, number>();
+  let next = 0;
+  let components = 0;
+  const visit = (v: string): void => {
+    index.set(v, next);
+    low.set(v, next++);
+    stack.push(v);
+    onStack.add(v);
+    for (const w of graph.get(v) ?? []) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (onStack.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+    }
+    if (low.get(v) === index.get(v)) {
+      const members: string[] = [];
+      let w: string;
+      do {
+        w = stack.pop()!;
+        onStack.delete(w);
+        members.push(w);
+      } while (w !== v);
+      if (members.length > 1) {
+        for (const m of members) out.set(m, components);
+        components++;
+      }
+    }
+  };
+  for (const v of [...graph.keys()].sort()) if (!index.has(v)) visit(v);
   return out;
 }

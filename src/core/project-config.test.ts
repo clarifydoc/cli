@@ -105,6 +105,30 @@ describe("resolveArchitectureOverrides / matchesAnyGlob", () => {
   });
 });
 
+describe("loadProjectConfig — element rules", () => {
+  it("reads each, allowOnly and noCycles, and drops a rule mixing kinds or with a bad each", () => {
+    write(JSON.stringify({
+      rules: [
+        { name: "features apart", each: "src/features/*/" },
+        { name: "use shared only", each: "src/features/*", allowOnly: "src/shared/**", severity: "warn" },
+        { name: "no cycles", from: "src/**", noCycles: true },
+        { name: "two kinds", from: "a/**", to: "b/**", noCycles: true },
+        { name: "deep each", each: "src/**" },
+      ],
+    }));
+    const r = loadProjectConfig(root);
+    expect(r.config.rules).toEqual([
+      { name: "features apart", from: [], to: [], each: "src/features/*", severity: "error" },
+      { name: "use shared only", from: [], to: [], each: "src/features/*", allowOnly: ["src/shared/**"], severity: "warn" },
+      { name: "no cycles", from: ["src/**"], to: [], noCycles: true, severity: "error" },
+    ]);
+    expect(r.warnings).toEqual([
+      expect.stringMatching(/rules\[3\] \(two kinds\) takes one of "to", "allowOnly" and "noCycles"/),
+      expect.stringMatching(/rules\[4\] \(deep each\) "each" must be a directory pattern/),
+    ]);
+  });
+});
+
 describe("loadProjectConfig — dependency rules", () => {
   it("reads rules, accepts a single glob for a side, and drops malformed ones", () => {
     write(JSON.stringify({

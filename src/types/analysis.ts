@@ -2619,6 +2619,8 @@ export interface LayerViolation {
   rule?: string;
   /** The rule's severity (`error` unless the rule says `warn`). */
   severity?: "error" | "warn";
+  /** A `noCycles` rule: the files or `each` elements of the cycle this import closes, sorted. */
+  cycle?: string[];
 }
 
 export interface BlastSymbolUsage {

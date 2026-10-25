@@ -870,7 +870,8 @@ export function healthTool(ctx: ToolContext): McpTool {
                 limit,
                 (v) =>
                   `${v.rule ? `rule "${v.rule}"${v.severity === "warn" ? " (warn)" : ""}` : `${v.sourceLayer} → ${v.targetLayer}`}: ` +
-                  `${loc(v.sourceFile, v.line)} imports ${v.importSpecifier} (${v.targetFile})`,
+                  `${loc(v.sourceFile, v.line)} imports ${v.importSpecifier} (${v.targetFile})` +
+                  (v.cycle ? `, closing the cycle ${v.cycle.join(" ↔ ")}` : ""),
                 { offset },
               ),
             ]),

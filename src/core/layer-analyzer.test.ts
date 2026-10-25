@@ -292,4 +292,51 @@ describe("detectRuleViolations — the team's own import rules", () => {
       ["features/billing/bill.ts", "features/payroll/salary.ts", "billing ↛ payroll", "error"],
     ]);
   });
+
+  const rule = (r: Record<string, unknown>) => ({ name: "r", from: [], to: [], except: [], severity: "error" as const, ...r });
+  const graph = {
+    "src/features/club/page.ts": ["src/features/club/api.ts", "src/features/match/api.ts", "src/shared/date.ts", "src/core/store.ts"],
+    "src/features/club/api.ts": ["src/shared/date.ts"],
+    "src/features/match/api.ts": ["src/features/club/api.ts", "src/shared/date.ts"],
+    "src/features/match/view.ts": ["src/features/player/card.ts"],
+    "src/shared/date.ts": [],
+  };
+  const pairs = (v: Array<{ sourceFile: string; targetFile: string }>) => v.map((x) => `${x.sourceFile} → ${x.targetFile}`);
+
+  it("keeps each element apart: an import into another element breaks it, one within its own does not", async () => {
+    const { detectRuleViolations } = await import("./layer-analyzer.js");
+    const v = detectRuleViolations([], graph, {}, [rule({ name: "features apart", each: "src/features/*", except: ["**/api.ts"] })]);
+    // `except` lifts the api files on either end; the shared folder is no element.
+    expect(pairs(v)).toEqual(["src/features/match/view.ts → src/features/player/card.ts"]);
+  });
+
+  it("allowOnly: an element imports its own files and what the rule lists, nothing else", async () => {
+    const { detectRuleViolations } = await import("./layer-analyzer.js");
+    const v = detectRuleViolations([], graph, {}, [rule({ name: "features use shared only", each: "src/features/*", allowOnly: ["src/shared/**"] })]);
+    expect(pairs(v)).toEqual([
+      "src/features/club/page.ts → src/features/match/api.ts",
+      "src/features/club/page.ts → src/core/store.ts",
+      "src/features/match/api.ts → src/features/club/api.ts",
+      "src/features/match/view.ts → src/features/player/card.ts",
+    ]);
+    // Without elements, `from` names who is held to the list.
+    const flat = detectRuleViolations([], graph, {}, [rule({ from: ["src/shared/**", "src/features/club/api.ts"], allowOnly: ["src/shared/**"] })]);
+    expect(pairs(flat)).toEqual([]);
+  });
+
+  it("noCycles: every import of a cycle between elements, with the cycle named", async () => {
+    const { detectRuleViolations } = await import("./layer-analyzer.js");
+    const cyclic = { ...graph, "src/features/club/api.ts": ["src/features/match/api.ts"] };
+    const v = detectRuleViolations([], cyclic, {}, [rule({ name: "no feature cycles", each: "src/features/*", noCycles: true, severity: "warn" })]);
+    expect(v.map((x) => [`${x.sourceFile} → ${x.targetFile}`, x.cycle, x.severity])).toEqual([
+      ["src/features/club/page.ts → src/features/match/api.ts", ["src/features/club", "src/features/match"], "warn"],
+      ["src/features/club/api.ts → src/features/match/api.ts", ["src/features/club", "src/features/match"], "warn"],
+      ["src/features/match/api.ts → src/features/club/api.ts", ["src/features/club", "src/features/match"], "warn"],
+    ]);
+    // No cycle, nothing reported; and between files when there are no elements.
+    const acyclic = { ...graph, "src/features/match/api.ts": ["src/shared/date.ts"] };
+    expect(detectRuleViolations([], acyclic, {}, [rule({ each: "src/features/*", noCycles: true })])).toEqual([]);
+    const files = detectRuleViolations([], cyclic, {}, [rule({ from: ["src/features/**"], noCycles: true })]);
+    expect(pairs(files)).toEqual(["src/features/club/api.ts → src/features/match/api.ts", "src/features/match/api.ts → src/features/club/api.ts"]);
+  });
 });

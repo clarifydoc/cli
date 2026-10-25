@@ -166,7 +166,9 @@ export function structuralFindings(summary: {
       title: v.rule ? "Import a team rule forbids" : "Import against the layer order",
       level: v.rule ? (v.severity === "warn" ? "warning" : "error") : "warning",
       message: v.rule
-        ? `${v.sourceFile} imports ${v.targetFile} (${v.importSpecifier}), which the rule "${v.rule}" forbids.`
+        ? v.cycle
+          ? `${v.sourceFile} imports ${v.targetFile} (${v.importSpecifier}), closing a dependency cycle between ${v.cycle.join(", ")} that the rule "${v.rule}" forbids.`
+          : `${v.sourceFile} imports ${v.targetFile} (${v.importSpecifier}), which the rule "${v.rule}" forbids.`
         : `${v.sourceLayer} imports ${v.targetLayer}: ${v.sourceFile} → ${v.targetFile} (${v.importSpecifier}).`,
       file: v.sourceFile,
       line: v.line,

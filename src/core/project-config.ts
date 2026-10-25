@@ -69,14 +69,30 @@ export interface LayerRuleInput {
 }
 
 /**
- * A team's own dependency rule: files matching `from` must not import files
- * matching `to` (`features/billing/**` must not import `features/payroll/**`).
- * `except` lifts it for the files it names on either side.
+ * A team's own dependency rule. One of three kinds:
+ *
+ * - `to` (forbid): files matching `from` must not import files matching `to`
+ *   (`features/billing/**` must not import `features/payroll/**`);
+ * - `allowOnly`: files matching `from` may import only project files matching it;
+ * - `noCycles`: no import cycle among the files matching `from` (or among the
+ *   `each` elements).
+ *
+ * `each` makes every directory a one-`*` pattern names its own element
+ * (`features/*`: `features/billing`, `features/payroll`, …): imports within an
+ * element are never a breach, `from` defaults to every file inside one, and a
+ * rule with none of the three kinds keeps the elements apart — no element
+ * imports another. `except` lifts any rule for the files it names on either side.
  */
 export interface DependencyRuleInput {
   name: string;
   from: string[];
   to: string[];
+  /** Directory pattern whose every match is its own element (`features/*`). */
+  each?: string;
+  /** The only project files `from` may import (besides its own `each` element). */
+  allowOnly?: string[];
+  /** No dependency cycle among the files (or `each` elements) the rule covers. */
+  noCycles?: boolean;
   except?: string[];
   /** How a breach is reported; `error` by default. */
   severity?: "error" | "warn";
@@ -211,8 +227,24 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
         }
         const from = globs(rule.from);
         const to = globs(rule.to);
-        if (from.length === 0 || to.length === 0) {
-          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) needs "from" and "to" globs; ignored`);
+        const allowOnly = rule.allowOnly !== undefined ? globs(rule.allowOnly) : undefined;
+        const noCycles = rule.noCycles === true;
+        let each: string | undefined;
+        if (rule.each !== undefined) {
+          const pattern = typeof rule.each === "string" ? rule.each.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
+          if (!pattern || pattern.includes("**") || !pattern.includes("*")) {
+            warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) "each" must be a directory pattern with a "*" segment and no "**" (features/*); ignored`);
+            return;
+          }
+          each = pattern;
+        }
+        const kinds = [to.length > 0, allowOnly !== undefined, noCycles].filter(Boolean).length;
+        if (kinds > 1) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) takes one of "to", "allowOnly" and "noCycles"; ignored`);
+          return;
+        }
+        if ((from.length === 0 && !each) || (kinds === 0 && !each)) {
+          warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) needs "from" and "to" globs (or "allowOnly", "noCycles", "each"); ignored`);
           return;
         }
         const severity = rule.severity === "warn" ? "warn" : "error";
@@ -220,7 +252,16 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
           warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: rules[${i}] (${rule.name}) severity must be "error" or "warn"; using "error"`);
         }
         const except = globs(rule.except);
-        rules.push({ name: rule.name, from, to, ...(except.length ? { except } : {}), severity });
+        rules.push({
+          name: rule.name,
+          from,
+          to,
+          ...(each ? { each } : {}),
+          ...(allowOnly !== undefined ? { allowOnly } : {}),
+          ...(noCycles ? { noCycles } : {}),
+          ...(except.length ? { except } : {}),
+          severity,
+        });
       });
       config.rules = rules;
     }
@@ -248,8 +289,12 @@ export interface ArchitectureOverrides {
   layers: Array<{ layer: ArchLayer; patterns: string[] }>;
   exempt: string[];
   generated: string[];
-  rules: Array<Required<Pick<DependencyRuleInput, "name" | "from" | "to" | "severity">> & { except: string[] }>;
+  rules: ResolvedDependencyRule[];
 }
+
+/** A dependency rule with its globs normalized (see `DependencyRuleInput`). */
+export type ResolvedDependencyRule = Required<Pick<DependencyRuleInput, "name" | "from" | "to" | "severity">> &
+  Pick<DependencyRuleInput, "each" | "allowOnly" | "noCycles"> & { except: string[] };
 
 /**
  * Normalize the config's layer, exempt and generated globs to posix form so
@@ -269,6 +314,9 @@ export function resolveArchitectureOverrides(config: ProjectConfig): Architectur
       to: r.to.map(normalizeGlob),
       except: (r.except ?? []).map(normalizeGlob),
       severity: r.severity ?? "error",
+      ...(r.each ? { each: normalizeGlob(r.each) } : {}),
+      ...(r.allowOnly ? { allowOnly: r.allowOnly.map(normalizeGlob) } : {}),
+      ...(r.noCycles ? { noCycles: true } : {}),
     })),
   };
 }
