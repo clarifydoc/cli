@@ -252,6 +252,23 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     expect(graded([routes, controller, other])[0]).toEqual(["PlayerController#index", "AMBIGUOUS"]);
   });
 
+  it("never serves a route by another class's member of the same name beside the handler's class", () => {
+    // `ClubViewSet` takes `create` from a framework base; `MatchViewSet` in the same file
+    // declares its own. The route for clubs is not served by the match one.
+    const views = {
+      ...file("league/views.py", "web", {
+        classes: [
+          { ...cls("ClubViewSet"), line: 1, endLine: 3 },
+          { ...cls("MatchViewSet"), line: 5, endLine: 9, methods: [{ ...fn("create", []), line: 6, endLine: 8 }] },
+        ],
+      }),
+      language: "python",
+      routes: [route("/api/clubs/", "ClubViewSet.create")],
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([views]).filter((l) => l.sourceSymbol.startsWith("route:"));
+    expect(links.map((l) => l.targetSymbol)).not.toContain("MatchViewSet.create");
+  });
+
   it("keeps a `Class.method` handler whose class is namespaced on the target side (Phoenix)", () => {
     const router = {
       ...file("lib/app_web/router.ex", "app", {}),

@@ -240,7 +240,7 @@ describe("symbol linker properties", () => {
 
   // Known gaps, kept as failing properties so the fix shows up here: when one
   // is fixed its `it.fails` starts failing, and becomes a plain `it`.
-  it.fails("open: a declared type or `extends` name resolves only within the caller's language family", () => {
+  it("open: a declared type or `extends` name resolves only within the caller's language family", () => {
     // A Python class extending `League` links `self.handle()` to a TypeScript
     // `League` in another sub-project when Python declares none.
     forEveryLink((link) => {
@@ -248,7 +248,7 @@ describe("symbol linker properties", () => {
     });
   });
 
-  it.fails("open: a class-qualified call never lands on a free function beside the class", () => {
+  it("open: a class-qualified call never lands on a free function beside the class", () => {
     // `Match.find()` where `Match` inherits `find` from a base class, and the
     // file also defines a module-level `find`, links to the free function.
     forEveryLink((link, _source, target) => {
@@ -257,13 +257,29 @@ describe("symbol linker properties", () => {
     });
   });
 
-  it.fails("open: an interface member never fans out to itself", () => {
+  it("open: an interface member never fans out to itself", () => {
     // `interface Club { save }` and `class Match : Club` declaring no `save`:
     // the fan-out links `Club.save` to `Club.save`.
     forEveryLink((link) => {
       if (link.relation !== "implements") return;
       expect(`${link.targetFile}::${link.targetSymbol}`, JSON.stringify(link)).not.toBe(`${link.sourceFile}::${link.sourceSymbol}`);
     });
+  });
+
+  it("the links do not depend on the order the files come in", () => {
+    const sig = (links: SymbolLink[]) => links.map((l) => JSON.stringify(l)).sort();
+    fc.assert(
+      fc.property(projects, fc.nat(), ({ analyses, subProjects }, seed) => {
+        const shuffled = [...analyses];
+        for (let i = shuffled.length - 1, r = seed; i > 0; i--) {
+          r = (r * 1103515245 + 12345) % 2147483648;
+          const j = r % (i + 1);
+          [shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!];
+        }
+        expect(sig(buildSymbolLinks(structuredClone(shuffled), subProjects))).toEqual(sig(buildSymbolLinks(structuredClone(analyses), subProjects)));
+      }),
+      RUNS,
+    );
   });
 
   it("the report's wire encoding of the links decodes back to them", () => {

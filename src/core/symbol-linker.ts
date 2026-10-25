@@ -24,6 +24,7 @@ import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor } from "../extractors/registry.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
+import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 
 interface SymbolDef {
   name: string;
@@ -45,7 +46,12 @@ interface SymbolDef {
  *
  * Runs as a post-analysis pass after all files have been individually analyzed.
  */
-export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly SubProject[] = []): SymbolLink[] {
+export function buildSymbolLinks(input: FileAnalysis[], subProjects: readonly SubProject[] = []): SymbolLink[] {
+  // In path order, whatever order the caller holds them in: where two
+  // candidates tie, which one an index met first must not depend on it.
+  const analyses = input.every((a, i) => i === 0 || byOrdinal(input[i - 1]!.filePath, a.filePath) <= 0)
+    ? input
+    : [...input].sort(byOrdinalKey((a) => a.filePath));
   const symbolIndex = buildSymbolIndex(analyses);
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   // Design files (a Delphi `.dfm`) name the class their code unit declares;
@@ -55,7 +61,6 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
   const ctx: LinkContext = {
     filePathMap: buildFilePathMap(analyses),
     symbolIndex,
-    inheritanceMap: buildInheritanceMap(typeDecls),
     memberTypes,
     injectionMap: buildInjectionMap(analyses, memberTypes),
     bindings: buildBindingIndex(analyses),
@@ -306,6 +311,15 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
                 const base = filePath.split("/").pop()!.replace(/\.\w+$/, "");
                 if (!syms.has(classPart) && !syms.has(`${classPart}.${handlerName}`) && base !== classPart) continue;
                 if (def.name === `${classPart}.${handlerName}`) exact++;
+                // The class is in this file but the name is another class's member
+                // (or a free function beside it): not the handler the route names.
+                else if (def.name.includes(".")) {
+                  const owner = def.name.slice(0, def.name.lastIndexOf("."));
+                  if (owner !== classPart && ![`::${classPart}`, `.${classPart}`, `\\${classPart}`].some((tail) => owner.endsWith(tail))) continue;
+                } else {
+                  const cls = ctx.classAt.get(memberKey(filePath, classPart));
+                  if (cls && (def.line < cls.line || def.line > cls.endLine)) continue;
+                }
               }
               candidates++;
               first ??= { filePath, def };
@@ -378,7 +392,9 @@ export function buildSymbolLinks(analyses: FileAnalysis[], subProjects: readonly
         // Where the method actually is: the class body, a sibling file of its
         // package (Go), or a base class it inherits from.
         const implMethod = findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
-        if (!implMethod) continue;
+        // A class that declares none takes the interface's own (a C# `class Match : Club`
+        // whose base list names the interface): no implementation to fan out to.
+        if (!implMethod || (implMethod.file === info.interfaceFile && implMethod.symbol === ifaceSymbol)) continue;
         links.push({
           sourceFile: info.interfaceFile,
           sourceSymbol: ifaceSymbol,
@@ -1311,7 +1327,8 @@ interface LinkContext {
   /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
   namespacedFunctions?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   symbolIndex: Map<string, Map<string, SymbolDef>>;
-  inheritanceMap: Map<string, { parentClass: string; parentFile: string }>;
+  /** Lazy: `${file}\0${class}` → its base class as located from that file (null: none in the project). */
+  parentAt?: Map<string, { parentClass: string; parentFile: string } | null>;
   /** `${file}\0${class}` → member → declared type (own + inherited). */
   memberTypes: Map<string, Map<string, InjectionPoint>>;
   /** File-level flattening of `memberTypes`, for calls outside a class body. */
@@ -1663,30 +1680,26 @@ function buildNamespaceSuffixIndex(
  * Build an inheritance map: className → { parentClass, parentFile }
  * Used to resolve inherited method calls.
  */
-function buildInheritanceMap(
-  analyses: FileAnalysis[],
-): Map<string, { parentClass: string; parentFile: string }> {
-  const classToFile = new Map<string, string>();
-  for (const a of analyses) {
-    for (const cls of a.classes) {
-      classToFile.set(cls.name, a.filePath);
-    }
-  }
-
-  const map = new Map<string, { parentClass: string; parentFile: string }>();
-  for (const a of analyses) {
-    for (const cls of a.classes) {
-      if (cls.extends) {
-        // `Base<T>` / `Base[T]` names the class `Base`.
-        const parent = bareClassName(cls.extends);
-        const parentFile = classToFile.get(parent);
-        if (parentFile) {
-          map.set(cls.name, { parentClass: parent, parentFile });
-        }
-      }
-    }
-  }
-  return map;
+/**
+ * The base class `className` (declared in `classFile`) extends, located the way
+ * a type it names is (`locateClass`: its own import, sub-project, then a
+ * definition unique in its type space) — never a same-named class of another
+ * language family.
+ */
+function parentClassOf(ctx: LinkContext, className: string, classFile: string): { parentClass: string; parentFile: string } | null {
+  const key = memberKey(classFile, className);
+  const cache = (ctx.parentAt ??= new Map());
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const cls = ctx.classAt.get(key);
+  // `Base<T>` / `Base[T]` names the class `Base`.
+  const parent = cls?.extends ? bareClassName(cls.extends) : "";
+  const parentFile = parent && parent !== className
+    ? locateClass(ctx, parent, classFile, ctx.projectOf.get(classFile) ?? "root") ?? onlyConcrete(ctx, parent, cls?.kind === "interface", classFile)
+    : null;
+  const out = parentFile ? { parentClass: parent, parentFile } : null;
+  cache.set(key, out);
+  return out;
 }
 
 /**
@@ -1721,10 +1734,8 @@ interface InjectionPoint {
  * `_repository` on `BaseCommandHandler<T,R>`), never overwriting.
  */
 function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, InjectionPoint>> {
-  // Every definition of a class name (a name can recur across services/features),
-  // and the first ClassInfo per name for walking base classes.
+  // Every definition of a class name (a name can recur across services/features).
   const classToFiles = new Map<string, string[]>();
-  const classByName = new Map<string, FileAnalysis["classes"][number]>();
   const declAt = new Map<string, FileAnalysis["classes"][number]>();
   const languageOfFile = new Map(analyses.map((a) => [a.filePath, a.language as string]));
   for (const a of analyses) {
@@ -1732,7 +1743,6 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
       let arr = classToFiles.get(cls.name);
       if (!arr) classToFiles.set(cls.name, (arr = []));
       if (arr.length < CLASS_CANDIDATE_CAP && !arr.includes(a.filePath)) arr.push(a.filePath);
-      if (!classByName.has(cls.name)) classByName.set(cls.name, cls);
       declAt.set(memberKey(a.filePath, cls.name), cls);
     }
   }
@@ -1755,9 +1765,15 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
     }
     return null;
   };
+  // Only a declaration in the consumer's own type space: a Java field typed
+  // `Club` never means a TypeScript `Club`.
+  const inSpace = (files: readonly string[], consumerFile: string): string[] => {
+    const lang = languageOfFile.get(consumerFile) ?? "";
+    return files.filter((f) => sameTypeSpace(consumerFile, lang, f, languageOfFile.get(f) ?? ""));
+  };
   const fileOf = (typeName: string, consumerFile: string): string | null =>
     importedDecl(typeName, consumerFile) ??
-    pickDefinition(typeName, classToFiles.get(typeName) ?? [], consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
+    pickDefinition(typeName, inSpace(classToFiles.get(typeName) ?? [], consumerFile), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
 
   // One type declared across several files of a directory — a Go struct
   // whose methods sit in sibling files (each file carries a stub class with
@@ -1806,14 +1822,18 @@ function buildMemberTypes(analyses: FileAnalysis[]): Map<string, Map<string, Inj
         for (const prop of partner.cls.properties) add(prop.name, prop.type, prop.qualifier, false);
       }
 
-      const seen = new Set<string>([cls.name]);
+      // Base classes as located from the class that names them (its import,
+      // its directory, its type space) — never a same-named class elsewhere.
+      const seen = new Set<string>([memberKey(a.filePath, cls.name)]);
       let base = bareClassName(cls.extends);
+      let baseFile = base ? fileOf(base, a.filePath) : null;
       let child: FileAnalysis["classes"][number] | null = cls;
-      while (base && classByName.has(base) && !seen.has(base)) {
-        seen.add(base);
-        const baseCls = classByName.get(base)!;
+      while (base && baseFile && !seen.has(memberKey(baseFile, base))) {
+        seen.add(memberKey(baseFile, base));
+        const baseCls = declAt.get(memberKey(baseFile, base))!;
         for (const prop of baseCls.properties) add(prop.name, (child && handedType(child, baseCls, prop.name)) ?? prop.type, prop.qualifier, false);
         base = bareClassName(baseCls.extends);
+        baseFile = base ? fileOf(base, baseFile) : null;
         child = null;
       }
       if (members.size > 0) out.set(memberKey(a.filePath, cls.name), members);
@@ -2253,7 +2273,7 @@ function resolveCallToDefinition(
   /** A name that REFERS to a callable (a route's handler), not a call written in a body. */
   reference = false,
 ): SymbolLink | null {
-  const { filePathMap, symbolIndex, inheritanceMap, classCatalog, leafCatalog, classNameIndex } = ctx;
+  const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"
   const parts = call.name.split(".");
@@ -2408,10 +2428,10 @@ function resolveCallToDefinition(
   if (!def && call.kind === "internal" && onSelf) {
     const currentClasses = analysis.classes;
     for (const cls of currentClasses) {
-      let parentInfo = inheritanceMap.get(cls.name);
+      let parentInfo = parentClassOf(ctx, cls.name, sourceFile);
       const visited = new Set<string>();
-      while (parentInfo && !visited.has(parentInfo.parentClass)) {
-        visited.add(parentInfo.parentClass);
+      while (parentInfo && !visited.has(memberKey(parentInfo.parentFile, parentInfo.parentClass))) {
+        visited.add(memberKey(parentInfo.parentFile, parentInfo.parentClass));
         const parentSymbols = symbolIndex.get(parentInfo.parentFile);
         if (parentSymbols) {
           const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
@@ -2424,7 +2444,7 @@ function resolveCallToDefinition(
           }
         }
         // Walk further up the chain
-        parentInfo = inheritanceMap.get(parentInfo.parentClass);
+        parentInfo = parentClassOf(ctx, parentInfo.parentClass, parentInfo.parentFile);
       }
     }
     // A method the class takes from a module/trait it mixes in (Ruby
@@ -2593,10 +2613,25 @@ function resolveCallToDefinition(
         // language names one apart (Ruby `def self.call` → `X.self.call`).
         // Bare, only where the name IS a class of that file (a member it lists bare): a local
         // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
+        // The bare entry counts only inside the class's own body: a free
+        // function beside the class (or another class's member) is not its member.
+        const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
+        const bare = cls ? syms.get(methodName) : undefined;
         const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
-          (ctx.classAt.has(memberKey(filePath, declaredClass)) ? syms.get(methodName) : undefined);
+          (bare && bare.line >= cls!.line && bare.line <= cls!.endLine ? bare : undefined);
         if (classDef) {
           return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
+        }
+      }
+      // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`).
+      if (!methodName.includes(".")) {
+        for (const filePath of eligible) {
+          if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
+          const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName);
+          if (!inherited) break;
+          const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
+          if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
+          return link;
         }
       }
       // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
@@ -4082,7 +4117,7 @@ function findMethodInClass(
     // A class extends a class: an interface of the same name (`Contracts\Repository`
     // beside the abstract `Repository`) is no candidate when the name ties.
     const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root")
-      ?? onlyConcrete(ctx, base, ctx.classAt.get(key)?.kind === "interface");
+      ?? onlyConcrete(ctx, base, ctx.classAt.get(key)?.kind === "interface", file);
     if (!baseFile) return null;
     name = base;
     file = baseFile;
@@ -4199,10 +4234,12 @@ function methodBesideClass(
   return def ? { file: hits[0]!, symbol: def.name, line: def.line } : null;
 }
 
-/** The one non-interface declaration of `name` (an interface's base may be an interface). */
-function onlyConcrete(ctx: LinkContext, name: string, fromInterface: boolean): string | null {
+/** The one non-interface declaration of `name` in `nearFile`'s type space (an interface's base may be an interface). */
+function onlyConcrete(ctx: LinkContext, name: string, fromInterface: boolean, nearFile: string): string | null {
   if (fromInterface) return null;
-  const files = (ctx.classFiles.get(name) ?? []).filter((f) => ctx.classAt.get(memberKey(f, name))?.kind !== "interface");
+  const lang = ctx.languageOf.get(nearFile) ?? "";
+  const files = (ctx.classFiles.get(name) ?? []).filter((f) =>
+    ctx.classAt.get(memberKey(f, name))?.kind !== "interface" && sameTypeSpace(nearFile, lang, f, ctx.languageOf.get(f) ?? ""));
   return files.length === 1 ? files[0]! : null;
 }
 
