@@ -697,6 +697,21 @@ export const CONFIG_SOURCES: readonly ConfigSourceSpec[] = ALL_MANIFESTS.flatMap
 /** Every plugin's forwarding-rule readers (dev proxies, gateways), in `ALL_MANIFESTS` order — each once, though manifests share them. */
 export const PROXY_SOURCES: readonly ProxySourceSpec[] = [...new Set(ALL_MANIFESTS.flatMap((m) => m.serviceConfig?.proxySources ?? []))];
 
+/**
+ * The plugins that read a configured route base (`ServiceConfigSpec.routeBaseOf`),
+ * each once with the languages whose routes it applies to (manifests share a spec).
+ */
+export const ROUTE_BASE_SPECS: ReadonlyArray<{ languages: ReadonlySet<Language>; spec: ServiceConfigSpec }> = (() => {
+  const bySpec = new Map<ServiceConfigSpec, Set<Language>>();
+  for (const m of ALL_MANIFESTS) {
+    if (!m.serviceConfig?.routeBaseOf) continue;
+    const langs = bySpec.get(m.serviceConfig) ?? new Set<Language>();
+    langs.add(m.language);
+    bySpec.set(m.serviceConfig, langs);
+  }
+  return [...bySpec].map(([spec, languages]) => ({ languages, spec }));
+})();
+
 /** How a language's programs are configured to reach other services (undefined: the plugin says nothing). */
 export function serviceConfigFor(language: string): ServiceConfigSpec | undefined {
   return MANIFEST_BY_LANGUAGE.get(language as Language)?.serviceConfig;

@@ -117,7 +117,8 @@ import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoutePath, pairContractTwins } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
-import { readProjectConfig, readProjectProxies } from "./config-values.js";
+import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-values.js";
+import { applyRouteBases } from "./route-bases.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { clientProxyCalls } from "./client-proxies.js";
@@ -1041,6 +1042,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (mountedRouteCount > 0 && verbose) {
     progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
   }
+  // The base a project's configuration serves every route under (a servlet
+  // context path): outermost, so after mounts compose; before the anchors.
+  const basedRouteCount = applyRouteBases(allAnalyses, await readRouteBases(projectRoot, subProjects));
+  if (basedRouteCount > 0) progress.detail(`  Routes under a configured base path: ${basedRouteCount}`);
 
   progress.step("Building dependency graph...");
   // Edges only `import type` states, refined once the call links are known (import-kinds.ts).

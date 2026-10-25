@@ -1060,6 +1060,12 @@ export interface RouteInfo {
   /** Id of the project-level resolver that created or rewrote this row. */
   resolvedBy?: string;
   /**
+   * The configured base the project serves its routes under, already in front
+   * of `path` (Spring `server.servlet.context-path: /league` → `/league/clubs`),
+   * and where it is set.
+   */
+  basePath?: { path: string; key: string; file: string };
+  /**
    * API routes only: further paths the same endpoint answers at, which the
    * cross-tier linker matches like `path` — the URI segments a CodeIgniter
    * method binds as arguments (`/sync/photo/{sync_id}`), an alias a route

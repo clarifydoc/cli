@@ -1,4 +1,4 @@
-import type { ConfigEntry, ConfigSourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
+import type { ConfigEntry, ConfigSourceSpec, RouteBase, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { propertiesKeys, yamlKeys, type ConfigKey } from "../shared/config-keys.js";
 
 /**
@@ -54,7 +54,52 @@ const springConfig: ConfigSourceSpec = {
   },
 };
 
+/**
+ * The keys that put every route of a Spring app under a base, by relaxed-binding
+ * form (lower case, no `-`/`_`): the servlet context path (Boot 2+ and 1.x), the
+ * DispatcherServlet's own path inside it, and WebFlux's base path.
+ */
+const CONTEXT_PATH_KEYS = new Set(["server.servlet.contextpath", "server.contextpath"]);
+const SERVLET_PATH_KEYS = new Set(["spring.mvc.servlet.path", "server.servlet.path", "server.servletpath"]);
+const WEBFLUX_BASE_KEYS = new Set(["spring.webflux.basepath"]);
+
+/** A base as configured → `/league`; "" for the root `/`; null for an unresolved placeholder or anything not a path. */
+function basePathValue(value: string): string | null {
+  const v = value.trim().replace(/^["']|["']$/g, "").replace(/\/+$/, "");
+  if (!v) return "";
+  if (v.includes("${")) return null;
+  const path = v.startsWith("/") ? v : `/${v}`;
+  return /^(?:\/[\w.~-]+)+$/.test(path) ? path : null;
+}
+
+/**
+ * The one base a family of keys sets outside any profile: undefined when none
+ * (or the root), null when a value is unknown or the files disagree.
+ */
+function familyValue(entries: ReadonlyArray<ConfigEntry & { file: string }>, keys: ReadonlySet<string>): (ConfigEntry & { file: string; path: string }) | null | undefined {
+  const hits = entries.filter((e) => !e.profile && !e.test && !e.env && keys.has(e.key.toLowerCase().replace(/[-_]/g, "")));
+  const values = new Set(hits.map((e) => basePathValue(e.value)));
+  if (values.size === 0) return undefined;
+  if (values.has(null) || values.size > 1) return null;
+  const path = [...values][0]!;
+  return path ? { ...hits[0]!, path } : undefined;
+}
+
+/** `server.servlet.context-path` (+ `spring.mvc.servlet.path`), else `spring.webflux.base-path`. */
+function springRouteBase(entries: ReadonlyArray<ConfigEntry & { file: string }>): RouteBase | null {
+  const context = familyValue(entries, CONTEXT_PATH_KEYS);
+  const servlet = familyValue(entries, SERVLET_PATH_KEYS);
+  if (context === null || servlet === null) return null;
+  const parts = [context, servlet].filter((p): p is NonNullable<typeof p> => !!p);
+  if (parts.length > 0) {
+    return { path: parts.map((p) => p.path).join(""), key: parts.map((p) => p.key).join(" + "), file: parts[0]!.file, ...(parts[0]!.line ? { line: parts[0]!.line } : {}) };
+  }
+  const flux = familyValue(entries, WEBFLUX_BASE_KEYS);
+  return flux ? { path: flux.path, key: flux.key, file: flux.file, ...(flux.line ? { line: flux.line } : {}) } : null;
+}
+
 export const jvmServiceConfig: ServiceConfigSpec = {
   sources: [springConfig],
   envNamesFor: (key) => [key.replace(/[.\-[\]]+/g, "_").replace(/_+$/, "").toUpperCase()],
+  routeBaseOf: springRouteBase,
 };

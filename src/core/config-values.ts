@@ -5,9 +5,9 @@ import { isSensitive } from "./file-discovery.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { readDockerfile } from "./dockerfiles.js";
-import { CONFIG_SOURCES, PROXY_SOURCES } from "../extractors/registry.js";
-import type { ProxyRule, SubProject } from "../types/analysis.js";
-import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec } from "../types/language-plugin.js";
+import { CONFIG_SOURCES, PROXY_SOURCES, ROUTE_BASE_SPECS } from "../extractors/registry.js";
+import type { Language, ProxyRule, SubProject } from "../types/analysis.js";
+import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec, RouteBase } from "../types/language-plugin.js";
 
 /**
  * The addresses each sub-project's configuration files state: where it is
@@ -109,6 +109,36 @@ export function readProjectProxies(
       return target ? [{ ...rule, target, file }] : [];
     }),
   );
+}
+
+/** A configured route base of one sub-project, and the languages whose routes it prefixes. */
+export interface ProjectRouteBase {
+  languages: ReadonlySet<Language>;
+  base: RouteBase;
+}
+
+/**
+ * The base each sub-project serves its routes under, as its configuration
+ * states it (Spring `server.servlet.context-path`): every entry of the
+ * plugin's own config files goes to its `routeBaseOf`, which decides.
+ */
+export async function readRouteBases(
+  projectRoot: string,
+  subProjects: readonly SubProject[],
+  specs = ROUTE_BASE_SPECS,
+): Promise<Map<string, ProjectRouteBase[]>> {
+  const out = new Map<string, ProjectRouteBase[]>();
+  for (const { languages, spec } of specs) {
+    const entries = await readAtRoots(projectRoot, subProjects, spec.sources ?? [], (src, text, path, file) =>
+      src.parse(text, path).map((entry) => ({ ...entry, file })),
+    );
+    for (const [project, list] of entries) {
+      const base = spec.routeBaseOf?.(list);
+      if (!base) continue;
+      out.set(project, [...(out.get(project) ?? []), { languages, base }]);
+    }
+  }
+  return out;
 }
 
 /**

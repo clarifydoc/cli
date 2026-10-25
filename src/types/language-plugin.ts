@@ -111,6 +111,26 @@ export interface ServiceConfigSpec {
    * looked up by its own name only).
    */
   envNamesFor?(key: string): string[];
+  /**
+   * The base every route this language serves in a project is mounted under,
+   * as the project's own configuration (read through `sources`, every entry —
+   * not only addresses) states it: Spring `server.servlet.context-path`,
+   * `spring.webflux.base-path`. Profile-specific values never decide it. Null
+   * when nothing sets one, or the files disagree. Core prefixes the project's
+   * complete API routes of this language with it.
+   */
+  routeBaseOf?(entries: ReadonlyArray<ConfigEntry & { file: string }>): RouteBase | null;
+}
+
+/** A configured base the routes of a project are served under (see `ServiceConfigSpec.routeBaseOf`). */
+export interface RouteBase {
+  /** `/league`: leading slash, no trailing one. */
+  path: string;
+  /** The key(s) that set it, as written (`server.servlet.context-path`). */
+  key: string;
+  /** Project-relative posix path of the file stating it. */
+  file: string;
+  line?: number;
 }
 
 /** One proxy-rule file format: where it sits under a project root, and how to read it. */
