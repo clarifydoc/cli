@@ -667,8 +667,23 @@ describe("JVM HTTP — requests are read where they are built", () => {
       "DELETE ${this.baseUrl}/api/garages/${id}",
       "GET https://api.example.com/v0/${garage}/Cars?limit=${limit}",
       "POST ${endpoint}/api/drivers",
+      // A request to a URL nothing here writes out is still a request — to no target.
+      "GET null",
+      "GET null",
       "POST ${baseUrl}/drivers/v1/active?season=${season}",
     ]);
+  });
+
+  it("records a request built for a URL the method is handed, and its send only where no builder records it", async () => {
+    const java = (body: string) => sourcesOf(body, "java");
+    expect(api(await java(`
+    HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url)).header("Accept", "application/json").GET();
+    HttpResponse<String> response = httpClient.send(request.build(), HttpResponse.BodyHandlers.ofString());`))).toEqual(["GET null"]);
+    // A request handed in: the client named for one sends it; a map of clients is no client.
+    expect(api(await java(`
+    httpClient.send(prepared, HttpResponse.BodyHandlers.ofString());
+    httpClients.get("main");
+    this.okHttpClient.execute(call);`))).toEqual(["send null", "execute null"]);
   });
 
   it("reads Java concatenation inside new URI(…) and keeps a `$` in a Java literal as text", async () => {

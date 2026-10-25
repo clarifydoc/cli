@@ -229,15 +229,30 @@ function findUrlArg(node: Node): Node | null {
   return null;
 }
 
-function builtRequestUrl(node: Node, call: CallParts): string | null {
+function builtRequestUrl(node: Node, call: CallParts): { target: string | null } | null {
   const { method, receiver } = call;
   const builds =
     (method === "url" && /\bRequest\s*\.\s*Builder\s*\(/.test(receiver)) ||
     ((method === "newBuilder" || method === "uri") && /\bHttpRequest\b/.test(receiver));
-  const url = builds && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
-  // An absolute URL, an app path, or a path behind an unknown base — never a bare hole.
-  return url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
+  if (!builds || !call.firstArg) return null;
+  const url = urlExpression(call.firstArg, node, 0);
+  // An absolute URL, an app path, or a path behind an unknown base — never a bare hole: a
+  // request built for a URL the method is handed (`HttpRequest.newBuilder(URI.create(url))`)
+  // is still a request, to a target nobody wrote here.
+  return { target: url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null };
 }
+
+/** The text of the method (or lambda) body enclosing `node`, else the file's. */
+function enclosingBodyText(node: Node): string {
+  let cur: Node | null = node.parent;
+  while (cur && !/^(?:method_declaration|constructor_declaration|function_declaration|lambda_expression|lambda_literal|anonymous_function)$/.test(cur.type)) cur = cur.parent;
+  return (cur ?? node.tree.rootNode).text;
+}
+
+/** A receiver named as an HTTP client, whatever its case (`httpClient`, `this.okHttpClient`), never a collection of them. */
+const CLIENT_NAMED_RE = /(?:^|\.)(?:http|okHttp|rest|web)Client$/i;
+/** A request built where it is sent: the builder step records it, so the send adds nothing. */
+const REQUEST_BUILDER_RE = /\bHttpRequest\s*\.\s*newBuilder\b|\bRequest\s*\.\s*Builder\s*\(/;
 
 /**
  * The text of a URL expression: a string literal (Kotlin templates rendered),
@@ -1128,7 +1143,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
     const built = builtRequestUrl(node, call);
     if (built) {
-      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built, line }));
+      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built.target, line }));
       return;
     }
     // Otherwise only a call that SENDS on a client named as one: a builder's
@@ -1138,7 +1153,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const accessor = (method === "exchange" || method === "retrieve") && callArguments(node).length === 0 && !/\.uri\s*\(|\.(?:get|post|put|patch|delete|method)\s*\(/.test(receiver) && !HTTP_HINT_RE.test(receiver);
     // `WebClient.create(x).get()`: a Spring client's argument-less verb only starts the request its send reads.
     const springSpec = FLUENT_VERBS.has(method) && callArguments(node).length === 0 && /\b(?:WebClient|RestClient)\b/.test(receiver);
-    if ((HTTP_METHODS.has(method) && !accessor) || (HTTP_SEND_METHODS.has(method) && HTTP_HINT_RE.test(receiver) && !springSpec)) {
+    const clientSend = HTTP_SEND_METHODS.has(method) && !springSpec && (HTTP_HINT_RE.test(receiver) ||
+      // A client known only by its name: a send of a request, never an argument-less verb that starts a fluent one.
+      (CLIENT_NAMED_RE.test(receiver.trim()) && (!FLUENT_VERBS.has(method) || callArguments(node).length > 0) &&
+        !REQUEST_BUILDER_RE.test(enclosingBodyText(node))));
+    if ((HTTP_METHODS.has(method) && !accessor) || clientSend) {
       // RestTemplate's URL is its first argument: `getForObject(clubsUrl + "/api/clubs/" + id, Club.class)`.
       const url = REST_TEMPLATE_URL_FIRST.has(method) && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
