@@ -92,6 +92,25 @@ describe("resolveTarget — language-family fence", () => {
   });
 });
 
+describe("resolveTarget — relative imports stay in the importer's family", () => {
+  it("never resolves `./Car` from a Python file to a C# `Car.cs`", () => {
+    const map = buildFilePathMap([{ filePath: "garage/Car.cs" }, { filePath: "garage/main.py" }] as any[]);
+    expect(resolveTarget("./Car", "garage/main.py", map)).toBeNull();
+  });
+
+  it("picks the importer's own family when both files exist", () => {
+    // `Car.ts` outranks `Car.py` for the extension-less key; a Python importer still means `Car.py`.
+    const map = buildFilePathMap([{ filePath: "garage/Car.ts" }, { filePath: "garage/Car.py" }, { filePath: "garage/main.py" }, { filePath: "garage/main.ts" }] as any[]);
+    expect(resolveTarget("./Car", "garage/main.py", map)).toBe("garage/Car.py");
+    expect(resolveTarget("./Car", "garage/main.ts", map)).toBe("garage/Car.ts");
+  });
+
+  it("still takes a file the import names with its extension, whatever its language", () => {
+    const map = buildFilePathMap([{ filePath: "garage/car.scss" }, { filePath: "garage/Car.tsx" }] as any[]);
+    expect(resolveTarget("./car.scss", "garage/Car.tsx", map)).toBe("garage/car.scss");
+  });
+});
+
 describe("resolveTarget — Python relative modules", () => {
   const map = buildFilePathMap([
     { filePath: "pkg/cli.py" },

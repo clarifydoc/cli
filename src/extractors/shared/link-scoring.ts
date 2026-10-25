@@ -337,9 +337,9 @@ export function resolveTarget(importSource: string, sourceFile: string, filePath
     resolveCache.set(filePathMap, cache);
   }
   // Relative imports resolve against the importer's directory, and bare-name
-  // (basename) matches pick by path affinity to the importer — the cache key
-  // must always carry the importer's directory.
-  const cacheKey = `${posix.dirname(sourceFile)}\u0000${importSource}`;
+  // (basename) matches pick by path affinity to the importer and keep to its
+  // language family — the cache key must always carry the directory and family.
+  const cacheKey = `${posix.dirname(sourceFile)}\u0000${extensionFamily(sourceFile) ?? ""}\u0000${importSource}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -503,9 +503,20 @@ function getBasenameCandidates(filePathMap: Map<string, string>): Map<string, st
 
 /** Try to match a candidate path against the file path map (with extension/index fallbacks) */
 function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFile: string): string | null {
+  // A file the import names with its extension is that file, whatever its
+  // language (`import "./x.scss"`). One whose extension is IMPLIED is a module
+  // of the importer's own family: `./Car` from a `.py` file never means `Car.cs`.
+  const family = extensionFamily(sourceFile);
+  const kin = (f: string | undefined): f is string => {
+    if (!f) return false;
+    if (!family || f === candidate) return true;
+    const other = extensionFamily(f);
+    return other === null || other === family;
+  };
+
   // Direct match
   const direct = filePathMap.get(candidate);
-  if (direct) return direct;
+  if (kin(direct)) return direct;
 
   // ESM-TS convention: the specifier says `./router.js` (what the COMPILED
   // module will be) while the file on disk is `router.ts`. The map's keys are
@@ -516,17 +527,17 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFil
   const scriptExt = candidate.match(/\.(?:mjs|cjs|jsx|js)$/);
   if (scriptExt) {
     const stripped = filePathMap.get(candidate.slice(0, -scriptExt[0].length));
-    if (stripped) return stripped;
+    if (kin(stripped)) return stripped;
   }
 
   // With common extensions
   for (const ext of MATCH_EXTENSIONS) {
     const withExt = filePathMap.get(candidate + ext);
-    if (withExt) return withExt;
+    if (kin(withExt)) return withExt;
   }
 
   // /index variants — and a Python package's `__init__`
-  const withIndex = filePathMap.get(candidate + "/index") ?? filePathMap.get(candidate + "/__init__");
+  const withIndex = [filePathMap.get(candidate + "/index"), filePathMap.get(candidate + "/__init__")].find(kin);
   if (withIndex) return withIndex;
 
   // Basename match: "UserModel" → files whose basename matches
@@ -538,18 +549,17 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFil
       // Same LANGUAGE FAMILY only — `uses X` never imports a .js file, and a
       // doc-generator TOC stub must not shadow a same-named unit. Importers
       // with an unknown family keep every candidate.
-      const family = extensionFamily(sourceFile);
-      const kin = family ? candidates.filter((c) => extensionFamily(c) === family) : candidates;
-      if (kin.length === 0) return null;
+      const sameFamily = family ? candidates.filter((c) => extensionFamily(c) === family) : candidates;
+      if (sameFamily.length === 0) return null;
       // In a multi-project solution the importer's OWN project wins outright;
       // path affinity only breaks ties within the chosen scope.
       const projectOf = projectOfCache.get(filePathMap);
       const srcProject = projectOf?.get(sourceFile);
       const sameProject = srcProject !== undefined
-        ? kin.filter((c) => projectOf!.get(c) === srcProject)
+        ? sameFamily.filter((c) => projectOf!.get(c) === srcProject)
         : [];
       return pickByPathAffinity(
-        sameProject.length > 0 ? sameProject : kin,
+        sameProject.length > 0 ? sameProject : sameFamily,
         (c) => c,
         sourceFile,
       );
