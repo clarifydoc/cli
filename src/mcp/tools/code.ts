@@ -36,6 +36,7 @@ import {
 } from "../format.js";
 import { fileChangedNote, mustResolveFile, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
+import { decisionsAbout } from "./decisions.js";
 
 export function routesTool(ctx: ToolContext): McpTool {
   return {
@@ -468,6 +469,7 @@ const FILE_SECTIONS = [
   "findings",
   "blast",
   "imports",
+  "decisions",
 ] as const;
 type FileSection = (typeof FILE_SECTIONS)[number];
 
@@ -720,6 +722,11 @@ export function fileTool(ctx: ToolContext): McpTool {
           if (detail.language) lines.unshift(`language: ${detail.language}`);
           if (lines.length) blocks.push(section("Imports / exports", lines));
         }
+      }
+
+      if (want.has("decisions")) {
+        const rows = await decisionsAbout(ctx.store, loaded, path, limit).catch(() => []);
+        if (rows.length) blocks.push(section("Decisions", rows));
       }
 
       return { text: joinLines(blocks) };
@@ -1176,13 +1183,10 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
     name: "clarifydoc_blast_radius",
     title: "Blast radius of a change",
     description:
-      "What breaks if a file changes: a verdict naming what KIND of file it is (foundation type, boundary, " +
-      "on a UI-to-data flow, shared internals, localized) with the rules behind that judgement and the " +
-      "user-visible behaviour at risk, plus direct and transitive dependents, the exported symbols other files use " +
-      "(with caller counts), the cross-tier reach — screens and API routes whose execution passes through " +
-      "the file, plus the entities and queues it ultimately touches — and the context burden: how many files " +
-      "and roughly how many tokens must be read to edit it safely. Call without `path` for the riskiest files " +
-      "in the project.",
+      "What breaks if a file changes: a verdict on what kind of file it is (foundation type, boundary, on a " +
+      "UI-to-data flow, shared internals, localized) with its reasons and the behaviour at risk; direct and " +
+      "transitive dependents; exported symbols in use; the screens, routes, entities and queues it reaches; and " +
+      "how many files and tokens must be read to edit it safely. Omit `path` for the riskiest files.",
     inputSchema: {
       type: "object",
       properties: {

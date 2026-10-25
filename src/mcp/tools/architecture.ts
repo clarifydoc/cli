@@ -27,8 +27,7 @@ export function architectureTool(ctx: ToolContext): McpTool {
       "view=communities: the clusters the import graph falls into, with cohesion. view=hubs: the most connected " +
       "files. view=cycles: import cycles. view=surprises: links between communities, or to a hub from the " +
       "periphery, worth a second look. view=questions: what the topology suggests asking. view=cochange: files " +
-      "that change together in git history, marked when no import explains it. Omit `view` for the overview. " +
-      "Use it to orient in a codebase before reading files, and to see where a change sits structurally.",
+      "that change together in git history, marked when no import explains it. Omit `view` for the overview.",
     inputSchema: {
       type: "object",
       properties: {

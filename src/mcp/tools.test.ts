@@ -72,6 +72,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_data_flows",
       "clarifydoc_health",
       "clarifydoc_architecture",
+      "clarifydoc_context_docs",
       "clarifydoc_impact",
       "clarifydoc_control_flow",
       "clarifydoc_analyze",
@@ -167,6 +168,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
     ["clarifydoc_trace", { symbol: "zzzNotAThing" }],
     ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
     ["clarifydoc_health", { category: "security", file: "zzz-not-a-thing" }],
+    ["clarifydoc_context_docs", { query: "zzz-not-a-thing" }],
   ])("%s points at another tool when it has nothing to show", async (name, args) => {
     const { text, isError } = await call(server, name, args);
     expect(isError, `${name} treated an empty result as a failure`).toBe(false);

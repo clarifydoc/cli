@@ -5,6 +5,7 @@ import { assessFreshness, type FreshnessReport } from "../../core/manifest.js";
 import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
 import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
+import { contextIndex } from "./decisions.js";
 
 export interface ToolContext {
   store: AnalysisStore;
@@ -175,6 +176,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         ? Object.entries(summary.entryPoints.reduce<Record<string, number>>((m, e) => ({ ...m, [e.kind]: (m[e.kind] ?? 0) + 1 }), {})).map(([k, n]) => `${n} ${k}`).join(", ")
         : undefined],
       ["health", health ? `${health.score}/100 (${health.grade})` : undefined],
+      ["context docs", await contextLine(loaded, store)],
     ]),
     "",
   ];
@@ -267,6 +269,19 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
   lines.push("", `analysis dir: ${store.analysisDir}`);
   // A project with no frameworks or sub-projects would otherwise leave a gap.
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n");
+}
+
+/** "2 decision records, 1 context document (1 may be stale) — clarifydoc_context_docs", or undefined when none. */
+async function contextLine(loaded: LoadedAnalysis, store: AnalysisStore): Promise<string | undefined> {
+  try {
+    const { docs, staleness } = await contextIndex(store, loaded);
+    if (!docs.length) return undefined;
+    const counts = countMap(tally(docs, (d) => ({ decision: "decision records", context: "context documents", schema: "schema dumps" })[d.kind]));
+    const stale = docs.filter((d) => staleness.get(d.path)?.changedSince.length).length;
+    return `${counts}${stale ? ` (${stale} may be stale)` : ""} — clarifydoc_context_docs`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

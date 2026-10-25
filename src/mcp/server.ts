@@ -25,6 +25,7 @@ import { revisionOf } from "./paging.js";
 import { renderUsage, usageLine } from "./usage.js";
 import { WORKFLOW_PROMPTS } from "./prompts.js";
 import { explainTool } from "./tools/explain.js";
+import { contextDocsTool } from "./tools/decisions.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
 
@@ -176,6 +177,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     dataFlowsTool(ctx),
     healthTool(ctx),
     architectureTool(ctx),
+    contextDocsTool(ctx),
     impactTool(ctx),
     controlFlowTool(ctx),
     analyzeTool(ctx),

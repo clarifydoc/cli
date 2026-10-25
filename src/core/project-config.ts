@@ -111,10 +111,12 @@ export interface ProjectConfig {
   security?: SecurityConfig;
   /** API specs outside the tree the code's calls are checked against (paths relative to the project root). */
   specs?: string[];
+  /** Documents an agent should consult, beside the decision records found by convention (core/context-docs.ts). */
+  context?: Array<{ path: string; description?: string }>;
 }
 
 const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
-  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract", "security", "specs",
+  "$comment", "$schema", "refactorPressure", "layers", "exempt", "generated", "rules", "extract", "security", "specs", "context",
 ]);
 
 const ARCH_LAYERS: ReadonlySet<string> = new Set<ArchLayer>([
@@ -180,6 +182,16 @@ export function loadProjectConfig(projectRoot: string): LoadedProjectConfig {
     const specs = stringList(parsed.specs);
     if (!Array.isArray(parsed.specs) || specs.length !== parsed.specs.length) warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: "specs" must be a list of paths; non-strings ignored`);
     config.specs = specs;
+  }
+  if (parsed.context !== undefined) {
+    const docs: Array<{ path: string; description?: string }> = [];
+    (Array.isArray(parsed.context) ? parsed.context : [parsed.context]).forEach((d, i) => {
+      if (typeof d === "string" && d.trim()) docs.push({ path: d.trim() });
+      else if (isPlainObject(d) && typeof d.path === "string" && d.path.trim()) {
+        docs.push({ path: d.path.trim(), ...(typeof d.description === "string" && d.description.trim() ? { description: d.description.trim() } : {}) });
+      } else warnings.push(`${PROJECT_CONFIG_RELATIVE_PATH}: context[${i}] needs a "path"; ignored`);
+    });
+    config.context = docs;
   }
   if (parsed.security !== undefined) {
     const got = parseSecurityConfig(parsed.security, PROJECT_CONFIG_RELATIVE_PATH);

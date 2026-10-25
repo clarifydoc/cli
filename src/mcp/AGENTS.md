@@ -15,7 +15,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 | [empty.ts](empty.ts) | The shape of a result with no rows in it — miss, denominator, `Next:` |
 | [server.ts](server.ts) | Assembles store + tools + instructions into a servable `McpServer`, plus the resource templates (`clarifydoc://file/{path}`, `clarifydoc://symbol/{symbol}/{path}` — each the text of the tool that already says it) and the workflow prompts (`before-editing`, `trace-feature`, `endpoint-gaps`: the order of tool calls that answers one recurring question) |
 | [role.ts](role.ts) | What a file or function is (route handler, data access, data model, screen, entry point, API client, shared utility, orchestrator), from extracted facts only — never a name token; `clarifydoc_explain`'s second line |
-| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts` |
+| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts`, `decisions.ts` (`clarifydoc_context_docs` and `clarifydoc_file`'s Decisions section: decision records, context documents and decision markers from `core/context-docs.ts`, reused for 30 s; a document is read only from that list) |
 
 ## Rules that keep it working
 
