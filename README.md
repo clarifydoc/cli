@@ -430,15 +430,16 @@ instead of interleaving with it.
 | `clarifydoc_contract` | One endpoint's request shape, parameter bindings and auth, as an OpenAPI-like operation |
 | `clarifydoc_services` | Sub-project → sub-project dependencies (HTTP and messaging) with their endpoints |
 | `clarifydoc_screens` | Screens/pages, their routes, the endpoints they call, the dialogs they open |
-| `clarifydoc_file` | Everything about one file: functions, complexity, data access, callers, findings |
+| `clarifydoc_file` | Everything about one file: functions, complexity, data access, callers, findings, the decisions that name it; flagged when the file changed since the analysis |
 | `clarifydoc_trace` | Callers/callees of a symbol, N hops, plus the data effects it reaches; `to=` for the path between two symbols |
-| `clarifydoc_extract` | One function's source and the functions it calls, cut to a token budget |
+| `clarifydoc_extract` | One function's source and the functions it calls, cut to a token budget; with `package=`, an installed package's exported API at the installed version |
 | `clarifydoc_blast_radius` | What breaks if a file changes — dependents, screens/routes/entities reached |
 | `clarifydoc_data_model` | Entities/tables, columns, relations, and the functions that read/write them |
 | `clarifydoc_data_flows` | Route/screen → data effect rows (e.g. which endpoints reach a DB write) |
 | `clarifydoc_health` | Score plus security, layer violations, complexity, duplicates, hotspots, dead code, refactor pressure |
 | `clarifydoc_architecture` | Folder dependencies with instability, communities, hub files, import cycles, surprising links, files that change together |
-| `clarifydoc_explain` | One route, screen, function or file packed into a token budget: contract and callers, what it reaches, source, blast radius |
+| `clarifydoc_context_docs` | Decision records (ADRs), architecture/glossary documents, schema dumps and WHY:/DECISION: comments — listed, searched, read, or those naming a file — each flagged when files it names changed after it; declare more under `context` in `.clarifydoc/config.json` |
+| `clarifydoc_explain` | One route, screen, function or file packed into a token budget: what it is (route handler, data access, …, from the facts), contract and callers, what it reaches, source, the routes sharing its tables, blast radius |
 | `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run; the changed functions and their callers, signature breaks, owners and reviewers, files usually changed with it; with `proposed` (a file's new content) the same for an edit not made yet |
 | `clarifydoc_control_flow` | One function's control flow as Mermaid, or the backward slice at a line: the statements that can affect the values used there |
 | `clarifydoc_analyze` | Re-run the analysis (incremental). The only tool that writes anything |
