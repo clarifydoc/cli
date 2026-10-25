@@ -89,6 +89,41 @@ describe("signatureChanges", () => {
   });
 });
 
+describe("parameter types and visibility", () => {
+  const fn = (name: string, line: number, params: Array<[string, string | null]>, isExported = true) =>
+    ({ name, line, endLine: line + 3, isExported, returnType: null, params: params.map(([n, t]) => ({ name: n, type: t, defaultValue: null })) });
+  const link = (sourceFile: string, target: string) =>
+    ({ sourceFile, sourceSymbol: "c", sourceLine: 1, callName: target, targetFile: "garage.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED" }) as never;
+
+  it("reports a parameter whose declared type changed at the same arity", async () => {
+    const { signatureChanges, describeSignatureChange } = await import("./changed-symbols.js");
+    const before = new Map([["garage.ts", { functions: [fn("park", 1, [["car", "Car"], ["bay", "number"]]), fn("wash", 10, [["car", null]]), fn("tow", 20, [["car", "Car"]])], classes: [] } as never]]);
+    const after = new Map([["garage.ts", { functions: [fn("park", 1, [["car", "Car"], ["bay", "Bay"]]), fn("wash", 10, [["car", "Car"]]), fn("tow", 20, [["car", " Car "]])], classes: [] } as never]]);
+    const out = signatureChanges(before, after, [link("pitlane.ts", "park")]);
+    // `wash` gained a type it did not declare, `tow` only whitespace: neither is a change.
+    expect(out.map((c) => [c.symbol, c.kind, describeSignatureChange(c), c.breaking])).toEqual([["park", "param-type", "takes bay: Bay, was bay: number", true]]);
+  });
+
+  it("reports a function no longer exported, breaking only callers in other files", async () => {
+    const { signatureChanges, describeSignatureChange } = await import("./changed-symbols.js");
+    const before = new Map([["garage.ts", { functions: [fn("park", 1, []), fn("wash", 10, [])], classes: [] } as never]]);
+    const after = new Map([["garage.ts", { functions: [fn("park", 1, [], false), fn("wash", 10, [], false)], classes: [] } as never]]);
+    const out = signatureChanges(before, after, [link("pitlane.ts", "park"), link("garage.ts", "wash")]);
+    expect(out.map((c) => [c.symbol, c.kind, describeSignatureChange(c), c.breaking])).toEqual([
+      ["park", "visibility", "no longer exported or public", true],
+      ["wash", "visibility", "no longer exported or public", false],
+    ]);
+  });
+
+  it("reads a public method made private off its class", async () => {
+    const { signatureChanges } = await import("./changed-symbols.js");
+    const cls = (methods: unknown[]) => ({ name: "Garage", kind: "class", methods, properties: [], line: 1, endLine: 20 });
+    const before = new Map([["Garage.java", { functions: [], classes: [cls([fn("park", 2, [["car", "Car"]])])] } as never]]);
+    const after = new Map([["Garage.java", { functions: [], classes: [cls([fn("park", 2, [["car", "Car"]], false)])] } as never]]);
+    expect(signatureChanges(before, after, [])).toMatchObject([{ symbol: "Garage.park", kind: "visibility", breaking: false }]);
+  });
+});
+
 describe("a function moved to another file", () => {
   const fn = (name: string, line: number, params: string[]) =>
     ({ name, line, endLine: line + 3, params: params.map((n) => ({ name: n, type: "Car", defaultValue: null })) });

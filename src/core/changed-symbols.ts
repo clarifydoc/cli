@@ -154,7 +154,7 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
   return out;
 }
 
-/** A function whose callers a change can break: removed, moved, or its required parameters changed. */
+/** A function whose callers a change can break: removed, moved, hidden, or its parameters or return type changed. */
 export interface SignatureChange {
   file: string;
   symbol: string;
@@ -163,8 +163,12 @@ export interface SignatureChange {
    * `moved`: gone from this file, and the change added the same function —
    * same name, same parameters — to exactly one other file (`movedTo`).
    */
-  kind: "removed" | "moved" | "arity" | "return-type";
-  /** Required parameters before and after (`arity`); the declared return types (`return-type`). */
+  kind: "removed" | "moved" | "arity" | "param-type" | "visibility" | "return-type";
+  /**
+   * Required parameters before and after (`arity`); the parameters whose declared type changed, as
+   * `name: Type` (`param-type`); the declared return types (`return-type`); `exported` and `private`
+   * (`visibility` — no longer exported or public, so a caller in another file loses it).
+   */
   before?: number | string;
   after?: number | string;
   /**
@@ -186,20 +190,36 @@ export interface SignatureChange {
 
 type Spans = Pick<FileAnalysis, "functions" | "classes">;
 
-/** "removed (possibly renamed to placeOrder)", "moved to src/orders.ts", "1 → 2 required parameters", "returns Order, was Order | null". */
+/**
+ * "removed (possibly renamed to placeOrder)", "moved to src/orders.ts", "1 → 2 required parameters",
+ * "takes id: Uuid, was id: string", "no longer exported or public", "returns Order, was Order | null".
+ */
 export function describeSignatureChange(c: Pick<SignatureChange, "kind" | "before" | "after" | "renamedTo" | "movedTo">): string {
   if (c.kind === "removed") return c.renamedTo ? `removed (possibly renamed to ${c.renamedTo})` : "removed";
   if (c.kind === "moved") return `moved to ${c.movedTo}`;
+  if (c.kind === "param-type") return `takes ${c.after}, was ${c.before}`;
+  if (c.kind === "visibility") return "no longer exported or public";
   if (c.kind === "return-type") return `returns ${c.after}, was ${c.before}`;
   return `${c.before} → ${c.after} required parameters`;
 }
 
 /** Every function and method of a file by the name call links use, with its parameters. */
-interface Signature { line: number; required: number; total: number; variadic: boolean; params: string; returnType: string | null; returnKey: string | null }
+interface Signature {
+  line: number;
+  required: number;
+  total: number;
+  variadic: boolean;
+  params: string;
+  /** Each parameter's name and declared type as written, `type` null when it declares none. */
+  typed: Array<{ name: string; type: string | null; key: string | null }>;
+  returnType: string | null;
+  returnKey: string | null;
+  exported?: boolean;
+}
 
 function signatures(a: Spans): Map<string, Signature> {
   const out = new Map<string, Signature>();
-  const add = (name: string, fn: { line: number; params?: Array<{ name: string; type?: string | null; defaultValue: string | null }>; returnType?: string | null }) => {
+  const add = (name: string, fn: { line: number; params?: Array<{ name: string; type?: string | null; defaultValue: string | null }>; returnType?: string | null; isExported?: boolean }) => {
     const params = (fn.params ?? []).filter((p) => p.name !== "self" && p.name !== "this" && p.name !== "cls");
     const variadic = params.some((p) => /^\.\.\.|^\*/.test(p.name));
     out.set(name, {
@@ -211,6 +231,8 @@ function signatures(a: Spans): Map<string, Signature> {
       params: params.map((p) => `${p.name}:${p.type ?? ""}`).join(","),
       returnType: fn.returnType?.trim().replace(/^:\s*/, "") || null,
       returnKey: normType(fn.returnType),
+      typed: params.map((p) => ({ name: p.name, type: p.type?.trim() || null, key: normType(p.type) })),
+      ...(typeof fn.isExported === "boolean" ? { exported: fn.isExported } : {}),
     });
   };
   for (const f of a.functions) if (f.name !== "<setup>") add(f.name, f);
@@ -273,6 +295,14 @@ export function signatureChanges(
         out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });
       } else if (cur.required !== sig.required && !cur.variadic) {
         out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers, breaking: callers > 0 && cur.required > sig.required });
+      } else if (sig.exported === true && cur.exported === false) {
+        // Callers in its own file keep it; the others lose it.
+        const outside = [...(callerFiles.get(`${file}::${symbol}`) ?? [])].filter((f) => f !== file);
+        out.push({ file, symbol, line: cur.line, kind: "visibility", before: "exported", after: "private", callers, breaking: outside.length > 0 });
+      } else if (typeChanges(sig, cur)) {
+        // Same parameters by position, a declared type changed: a caller passes what the old one took.
+        const { before: was, after: now } = typeChanges(sig, cur)!;
+        out.push({ file, symbol, line: cur.line, kind: "param-type", before: was, after: now, callers, breaking: callers > 0 });
       } else if (sig.returnKey && cur.returnKey && sig.returnKey !== cur.returnKey) {
         // A caller that uses the result was written against the old type.
         out.push({ file, symbol, line: cur.line, kind: "return-type", before: sig.returnType ?? sig.returnKey, after: cur.returnType ?? cur.returnKey, callers, breaking: callers > 0 });
@@ -282,7 +312,25 @@ export function signatureChanges(
   return out.sort((x, y) => Number(y.breaking) - Number(x.breaking) || byOrdinal(x.file, y.file) || x.line - y.line);
 }
 
-/** A declared return type compared as written, whitespace aside. */
+/**
+ * The parameters whose declared type changed between two signatures of the same
+ * arity, position by position, as `name: Type` lists; null when none did. A
+ * parameter that declares no type on either side is not a change.
+ */
+function typeChanges(was: Signature, now: Signature): { before: string; after: string } | null {
+  if (was.typed.length !== now.typed.length) return null;
+  const before: string[] = [];
+  const after: string[] = [];
+  was.typed.forEach((p, i) => {
+    const q = now.typed[i]!;
+    if (!p.key || !q.key || p.key === q.key) return;
+    before.push(`${p.name}: ${p.type}`);
+    after.push(`${q.name}: ${q.type}`);
+  });
+  return before.length ? { before: before.join(", "), after: after.join(", ") } : null;
+}
+
+/** A declared type compared as written, whitespace aside. */
 function normType(t: string | null | undefined): string | null {
   const s = (t ?? "").replace(/\s+/g, "").replace(/^:/, "");
   return s ? s : null;
