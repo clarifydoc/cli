@@ -213,3 +213,34 @@ function helperCall(name: string): { fn: string; method: string } | null {
   }
   return null;
 }
+
+/**
+ * A call through a client proxy is a request, not also a database access: a
+ * plugin that reads a repository-named receiver (`personRepository.findPersons(…)`)
+ * as a data-access row cannot see per file that the receiver is a REST proxy.
+ * Drops the database row each contract call shadows — same file, same line,
+ * the operation's method named — and returns how many went.
+ */
+export function dropProxiedDatabaseRows(analyses: readonly FileAnalysis[], proxyCalls: readonly ApiCall[]): number {
+  const shadowed = new Map<string, Set<string>>();
+  for (const c of proxyCalls) {
+    if (!c.contract) continue;
+    const key = `${c.filePath}\0${c.line}`;
+    (shadowed.get(key) ?? shadowed.set(key, new Set()).get(key)!).add(c.contract.method);
+  }
+  if (shadowed.size === 0) return 0;
+  let dropped = 0;
+  for (const a of analyses) {
+    if (!a.dataSources?.length) continue;
+    const kept = a.dataSources.filter((ds) => {
+      if (ds.kind !== "database") return true;
+      const methods = shadowed.get(`${a.filePath}\0${ds.line}`);
+      const method = /([A-Za-z_$][\w$]*)\s*$/.exec(ds.name)?.[1];
+      if (!methods || !method || !methods.has(method)) return true;
+      dropped++;
+      return false;
+    });
+    if (kept.length !== a.dataSources.length) a.dataSources = kept;
+  }
+  return dropped;
+}

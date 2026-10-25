@@ -121,7 +121,7 @@ import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-
 import { applyRouteBases } from "./route-bases.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
-import { clientProxyCalls } from "./client-proxies.js";
+import { clientProxyCalls, dropProxiedDatabaseRows } from "./client-proxies.js";
 import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
@@ -1187,6 +1187,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // operation they invoke, which the linker joins to the route declaring it.
   const proxyCalls = clientProxyCalls(allAnalyses, (f, n) => importIndex.localFor(f, n));
   allApiCalls.push(...proxyCalls);
+  dropProxiedDatabaseRows(allAnalyses, proxyCalls);
   if (proxyCalls.length > 0) progress.detail(`  Calls through client proxies: ${proxyCalls.length}`);
   // Calls through gRPC stubs (`client.GetOrder(ctx, req)` on a `pb.NewOrderServiceClient(conn)`): the rpc they invoke.
   const grpcCalls = grpcClientCalls(allAnalyses, allRoutes);
@@ -1733,12 +1734,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // through the call graph, so a controller that calls a repository that writes
   // the DB is shown to (transitively) touch it. Reuses the same symbol-link
   // edges (regular + synthetic HTTP/MQ) as the trace-impact pass above, so it
-  // must run after them. Gated on data access — a pure frontend has no sink to
+  // must run after them. Gated on data access or outbound calls of a service — a pure frontend has no sink to
   // reach. `dataFlows` is the source→sink view (which handlers reach which
   // effects).
   let symbolReach: SymbolReachSummary[] = [];
   let dataFlows: DataFlowPath[] = [];
-  if (hasDbAccess || hasQueueAccess) {
+  // A service that only calls other services still has flows: route → the request it makes.
+  const servesAndCalls = allApiCalls.length > 0 && allRoutes.some((r) => r.kind === "api");
+  if (hasDbAccess || hasQueueAccess || servesAndCalls) {
     // Per-site DB read/write classification: the plugin-set `access` on database
     // data sources (ORM verb) unioned with `db-write` mutation lines. Core only
     // unions line numbers — the verb knowledge stays in the plugins.

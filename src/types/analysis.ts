@@ -153,6 +153,8 @@ export interface ClassGraph {
  */
 export interface EntityGraphColumn {
   name: string;
+  /** The physical column, where it differs from `name` (`PropertyInfo.column`). */
+  column?: string;
   type: string | null;
   isPrimaryKey?: boolean;
   isForeignKey?: boolean;
@@ -856,6 +858,13 @@ export interface PropertyInfo {
    * constructor into the wrapper's own calls on it. Keyword arguments omitted.
    */
   constructedWith?: string[];
+  /**
+   * The physical column an ORM entity maps the member to, where the code names
+   * one that differs from the member (`@Column(name = "first_name")`).
+   */
+  column?: string;
+  /** An ORM entity member the code declares as (part of) the primary key (`@Id`, `@EmbeddedId`). */
+  primaryKey?: boolean;
 }
 
 export interface ClassInfo {

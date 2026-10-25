@@ -7,6 +7,7 @@ import type {
   EntityModelRef,
   ClassGraph,
   ClassInfo,
+  PropertyInfo,
   EntityRelation,
   TypeUsageKind,
   Confidence,
@@ -30,8 +31,14 @@ import { isApiContractLanguage } from "../extractors/registry.js";
 /** Structural decorators that are NOT the originating ORM tag. */
 const STRUCTURAL = new Set([
   "entity", "table", "enum", "view", "materialized-view",
-  "index", "sequence", "schema", "type",
+  "index", "sequence", "schema", "type", "abstract",
 ]);
+
+/**
+ * An entity base that maps no table of its own (JPA `@MappedSuperclass`, an
+ * abstract model): no node, its columns are its subclasses'.
+ */
+const ABSTRACT_ENTITY = "abstract";
 
 const CONFIDENCE_RANK: Record<Confidence, number> = {
   EXTRACTED: 3,
@@ -218,6 +225,29 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   // repository keeps them — they are all the model it states).
   const modelled = analyses.some((a) => !isApiContractLanguage(a.language) && (a.classes ?? []).some((c) => (c.decorators ?? []).includes("entity") || (c.decorators ?? []).includes("table")));
 
+  // Table-less entity bases by bare name, and the chain of them above a class.
+  const abstractBases = new Map<string, ClassInfo>();
+  for (const a of analyses) {
+    if (isApiContractLanguage(a.language)) continue;
+    for (const c of a.classes ?? []) {
+      const b = bareName(c.name);
+      if (b && (c.decorators ?? []).includes(ABSTRACT_ENTITY) && (c.decorators ?? []).includes("entity") && !abstractBases.has(b)) abstractBases.set(b, c);
+    }
+  }
+  const abstractAncestors = (cls: ClassInfo): ClassInfo[] => {
+    const out: ClassInfo[] = [];
+    const seen = new Set<string>();
+    let parent = bareName(cls.extends?.replace(/<.*$/s, "") ?? null);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      const base = abstractBases.get(parent);
+      if (!base) break;
+      out.push(base);
+      parent = bareName(base.extends?.replace(/<.*$/s, "") ?? null);
+    }
+    return out;
+  };
+
   // ── Pass 1: nodes (entities / tables / enums) ──
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
@@ -245,11 +275,23 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
       const markerIdx = decs.findIndex((d) => d === "entity" || d === "table" || d === "enum");
       const next = markerIdx >= 0 ? decs[markerIdx + 1] : undefined;
       const orm = (next && !STRUCTURAL.has(next)) ? next : (decs.includes("table") ? "sql" : null);
-      const columns: EntityGraphColumn[] = (cls.properties ?? []).map((p) => ({
+      if (isEntity && decs.includes(ABSTRACT_ENTITY)) continue;
+      const toColumn = (p: PropertyInfo): EntityGraphColumn => ({
         name: p.name,
+        ...(p.column ? { column: p.column } : {}),
         type: p.type,
-        isPrimaryKey: isPrimaryKey(p.name, p.type),
-      }));
+        isPrimaryKey: p.primaryKey ?? isPrimaryKey(p.name, p.type),
+      });
+      const columns: EntityGraphColumn[] = (cls.properties ?? []).map(toColumn);
+      // The columns a table-less base maps (an inherited `@Id`) are this table's.
+      const own = new Set(columns.map((c) => c.name));
+      for (const base of abstractAncestors(cls)) {
+        for (const p of base.properties ?? []) {
+          if (own.has(p.name)) continue;
+          own.add(p.name);
+          columns.push(toColumn(p));
+        }
+      }
 
       nodes.set(id, {
         id,

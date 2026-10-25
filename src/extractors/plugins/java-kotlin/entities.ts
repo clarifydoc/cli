@@ -132,13 +132,15 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
               // type (`@Embedded`/`@ElementCollection`). Anything else (computed
               // Kotlin `val`, helper state, loggers) is treated as transient.
               if (this.isPersistedColumn(ann)) {
-                // PropertyInfo has no dedicated db-column field, so the property
-                // keeps the Java/Kotlin field name (what downstream consumers
-                // match on) and carries the declared type. An explicit
-                // `@Column("col")` / `@Column(name="col")` physical-column
-                // mapping cannot be represented in PropertyInfo today and is
-                // intentionally not folded into the name/type (see notes).
-                properties.push(this.column(field.name, field.type));
+                // The property keeps the Java/Kotlin field name (what downstream
+                // consumers match on) and the declared type; an explicit
+                // `@Column(name = "col")` / Kotlin `@Column("col")` is its physical
+                // column, and `@Id` / `@EmbeddedId` its primary key.
+                const prop = this.column(field.name, field.type);
+                const physical = columnNameOf(ann);
+                if (physical && physical !== field.name) prop.column = physical;
+                if (this.hasAnnotation(ann, "Id") || this.hasAnnotation(ann, "EmbeddedId")) prop.primaryKey = true;
+                properties.push(prop);
               }
             } catch {
               // Skip any member we cannot parse cleanly; keep going.
@@ -443,6 +445,11 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
       if (lines[i]) candidates.push(lines[i]);
     }
     const blob = candidates.join("\n");
+
+    // A `@MappedSuperclass` maps no table of its own: its columns are its entity subclasses'.
+    const marked = (name: string) => (cls.decorators ?? []).some((d) => new RegExp(`^@?(?:[\\w.]*\\.)?${name}\\b`).test(d)) ||
+      new RegExp(`@(?:[\\w.]*\\.)?${name}\\b`).test(blob);
+    if (marked("MappedSuperclass") && !marked("Entity")) out.push("abstract");
 
     const inh = blob.match(/@(?:[\w.]*\.)?Inheritance\b[\s\S]*?strategy\s*=\s*(?:InheritanceType\.)?(\w+)/);
     if (inh) out.push(`inheritance:${inh[1].toLowerCase().replace(/_/g, "-")}`);
@@ -822,6 +829,17 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
 }
 
 /** A parsed field/property declaration. */
+/** The physical column a JPA member annotation names: `@Column(name = "col")`, `@Column("col")` (Spring Data). */
+function columnNameOf(ann: readonly string[]): string | null {
+  for (const a of ann) {
+    const m = /^@?(?:[\w.]*\.)?Column\s*\(([\s\S]*)\)\s*$/.exec(a.trim());
+    if (!m) continue;
+    const named = /\bname\s*=\s*"([^"]+)"/.exec(m[1]!) ?? /^\s*(?:value\s*=\s*)?"([^"]+)"/.exec(m[1]!);
+    if (named) return named[1]!.replace(/^[`"[]|[`"\]]$/g, "");
+  }
+  return null;
+}
+
 interface ParsedField {
   name: string;
   /** Raw type text (e.g. `List<Comment>`, `Author?`). */

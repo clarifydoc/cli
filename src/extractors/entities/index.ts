@@ -103,9 +103,22 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
       if ((e.decorators.includes("jooq") || e.decorators.includes("swiftdata") || e.decorators.includes("coredata")) && e.properties.length > 0) {
         existing.properties = e.properties;
       } else {
-        const haveProps = new Set(existing.properties.map((p) => p.name));
+        const have = new Map(existing.properties.map((p) => [p.name, p]));
         for (const p of e.properties) {
-          if (!haveProps.has(p.name)) existing.properties.push(p);
+          const known = have.get(p.name);
+          if (!known) {
+            existing.properties.push(p);
+            continue;
+          }
+          // The extractor's mapping facts land on the member the class extractor found.
+          if (p.column && !known.column) known.column = p.column;
+          if (p.primaryKey && !known.primaryKey) known.primaryKey = true;
+        }
+        // A static member (a named-query name, a shared predicate) is no column of a table,
+        // unless the entity extractor itself returned it.
+        if (!existing.decorators.includes("enum")) {
+          const mapped = new Set(e.properties.map((p) => p.name));
+          existing.properties = existing.properties.filter((p) => !p.isStatic || mapped.has(p.name));
         }
       }
       for (const im of e.implements) {
