@@ -235,3 +235,12 @@ describe("diagram documents", () => {
     expect(isDiagramDocument(svg, "site/index.html")).toBe(false);
   });
 });
+
+describe("template placeholder titles", () => {
+  it("names no page by a {{TITLE}}-style placeholder", () => {
+    const handler = (title: string) => htmlSpec.extractRoutes!(lines(`<html><head><title>${title}</title></head><body></body></html>`), [], "src/assets/viewer-template.html")[0]!.handler;
+    for (const t of ["{{TITLE}}", "{{ page.title }}", "<%= title %>", "%PAGE_TITLE%", "${title}", "__TITLE__"]) expect(handler(t)).toBeNull();
+    expect(handler("League table {{season}}")).toBe("League table {{season}}");
+    expect(handler("Garage")).toBe("Garage");
+  });
+});

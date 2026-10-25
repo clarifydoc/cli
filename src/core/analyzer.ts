@@ -2203,9 +2203,16 @@ function extractPageTitle(source: string): string | null {
   if (vueMatch) return `{{ ${vueMatch[1]} }}`;
   // Plain HTML page: fall back to the document <title>.
   const titleMatch = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (titleMatch) return titleMatch[1].trim().replace(/\s+/g, " ") || null;
+  if (titleMatch) {
+    const title = titleMatch[1].trim().replace(/\s+/g, " ");
+    // A template's placeholder (`{{TITLE}}`, `<%= title %>`, `%PAGE_TITLE%`) is filled at build or serve time: no caption.
+    return title && !TITLE_PLACEHOLDER_RE.test(title) ? title : null;
+  }
   return null;
 }
+
+/** A `<title>` that is only a template placeholder. */
+const TITLE_PLACEHOLDER_RE = /^(?:\{\{[^{}]*\}\}|\{%[^%]*%\}|<%=?[^%]*%>|%[A-Za-z_][\w.]*%|\$\{[^}]*\}|\[\[[^\]]*\]\]|__[A-Z][A-Z0-9_]*__)$/;
 
 /** Extract navigation targets from source (navigate(), router.push(), Link, href) */
 function extractNavigationTargets(source: string): string[] {

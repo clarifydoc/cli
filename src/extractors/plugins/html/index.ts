@@ -91,8 +91,13 @@ export function pageRoutePath(filePath: string): string {
 /** The page's `<title>` text, or null. */
 function pageTitle(lines: string[]): string | null {
   const m = lines.join("\n").match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  return m ? m[1].trim().replace(/\s+/g, " ") || null : null;
+  const title = m ? m[1].trim().replace(/\s+/g, " ") : "";
+  // A template's placeholder (`{{TITLE}}`, `<%= title %>`, `%PAGE_TITLE%`) is filled at build or serve time: no title.
+  return title && !TITLE_PLACEHOLDER_RE.test(title) ? title : null;
 }
+
+/** A `<title>` that is only a template placeholder. */
+export const TITLE_PLACEHOLDER_RE = /^(?:\{\{[^{}]*\}\}|\{%[^%]*%\}|<%=?[^%]*%>|%[A-Za-z_][\w.]*%|\$\{[^}]*\}|\[\[[^\]]*\]\]|__[A-Z][A-Z0-9_]*__)$/;
 
 /** A framework's document shell (SvelteKit `src/app.html`, `%sveltekit.body%`; Vite/CRA-style `%PUBLIC_URL%` aside): it wraps every page and is none. */
 const DOCUMENT_SHELL_RE = /%sveltekit\.(?:body|head)%/;
