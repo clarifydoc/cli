@@ -71,6 +71,12 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
   /** Defaults to true; set false for tools that mutate state (running a scan). */
   readOnly?: boolean;
+  /**
+   * Ask a host that defers MCP tools behind a search to load this one's schema
+   * up front (`_meta["anthropic/alwaysLoad"]`, honoured by Claude Code; others
+   * ignore a `_meta` key they do not know).
+   */
+  alwaysLoad?: boolean;
   handler: (args: Record<string, unknown>, extras?: ToolExtras) => Promise<ToolResult> | ToolResult;
 }
 
@@ -406,6 +412,7 @@ function describeTool(tool: McpTool) {
       readOnlyHint: tool.readOnly !== false,
       openWorldHint: false,
     },
+    ...(tool.alwaysLoad ? { _meta: { "anthropic/alwaysLoad": true } } : {}),
   };
 }
 

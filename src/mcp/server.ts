@@ -74,6 +74,9 @@ export const CORE_TOOLS = [
   "clarifydoc_analyze",
 ] as const;
 
+/** Tools a deferring host should load up front: find a thing, follow a call. */
+export const ALWAYS_LOAD: ReadonlySet<string> = new Set(["clarifydoc_search", "clarifydoc_trace"]);
+
 /** The tools a profile keeps, in the server's own order; throws on a name no tool has. */
 export function selectTools<T extends { name: string }>(tools: T[], profile: string | undefined): T[] {
   const spec = (profile ?? "all").trim();
@@ -184,6 +187,10 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
   ];
   // Composed from the tools above, so it says nothing they would not.
   tools.push(explainTool(ctx, tools));
+  // The way in, loaded before the first question where a host defers the rest
+  // behind a tool search — otherwise an agent deciding how to answer sees its
+  // own grep and read, but not the map.
+  for (const t of tools) if (ALWAYS_LOAD.has(t.name)) t.alwaysLoad = true;
   const listed = selectTools(tools, config.tools);
   // Read when asked, after the server below exists.
   let server: McpServer | undefined;

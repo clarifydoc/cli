@@ -86,6 +86,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
   `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out
   is not callable, so an answer that names one is a dead end there — keep the core set what answers point to most.
+  `ALWAYS_LOAD` (search, trace) carry `_meta["anthropic/alwaysLoad"]: true`, which Claude Code reads to load
+  those schemas up front while it defers the rest behind its tool search; `_meta` is not counted in the budget
+  (it reaches the host, not the model).
 - **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, or a cold
   start — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
   with its stage and file count (`describeRun`, read off the analyzer's own progress line), and the run goes on.

@@ -22,8 +22,17 @@ describe("what a session pays up front", () => {
     const { server } = buildMcpServer({ projectRoot: tmpdir(), allowAnalyze: false, allowColdStart: false });
     const list = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })) as { result: unknown };
     const init = (await server.handleMessage({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } })) as { result: { instructions?: string } };
-    const bytes = Buffer.byteLength(JSON.stringify(list.result)) + Buffer.byteLength(init.result.instructions ?? "");
+    // `_meta` is for the host (Claude Code reads `anthropic/alwaysLoad` to decide what to load), not for the
+    // model's context, so it is not counted.
+    const listed = JSON.stringify(list.result, (k, v) => (k === "_meta" ? undefined : v));
+    const bytes = Buffer.byteLength(listed) + Buffer.byteLength(init.result.instructions ?? "");
     expect(bytes, `tools/list + instructions = ${bytes} bytes`).toBeLessThan(BUDGET_BYTES);
+  });
+
+  it("asks a deferring host to load search and trace up front, and nothing else", async () => {
+    const { server } = buildMcpServer({ projectRoot: tmpdir(), allowAnalyze: false, allowColdStart: false });
+    const list = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })) as { result: { tools: Array<{ name: string; _meta?: Record<string, unknown> }> } };
+    expect(list.result.tools.filter((t) => t._meta?.["anthropic/alwaysLoad"] === true).map((t) => t.name)).toEqual(["clarifydoc_search", "clarifydoc_trace"]);
   });
 
   it("logs each call locally when asked, cutting long arguments and marking empty answers", async () => {
