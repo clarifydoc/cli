@@ -123,14 +123,15 @@ export async function detectGitopsReleases(projectRoot: string, subProjects: rea
     deep: 6,
     ignore: ["**/node_modules/**", "**/vendor/**", "**/.git/**", "**/.terraform/**", "**/.github/**"],
   })).map((f) => f.split("\\").join("/")).sort(byOrdinal).slice(0, 1000);
+  // Read in parallel batches (a locale-heavy repo has hundreds of YAML files), then judge in path order.
+  const texts: Array<string | undefined> = [];
+  for (let i = 0; i < files.length; i += 32) {
+    texts.push(...(await Promise.all(files.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf8").catch(() => undefined)))));
+  }
   const out: CiDeploy[] = [];
-  for (const file of files) {
-    let text: string;
-    try {
-      text = await readFile(join(absRoot, file), "utf8");
-    } catch {
-      continue;
-    }
+  for (const [i, file] of files.entries()) {
+    const text = texts[i];
+    if (text === undefined) continue;
     if (text.length > 1_000_000) continue;
     if (file.endsWith(".tf")) {
       if (text.includes("helm_release")) out.push(...rowsOfTerraform(file, text));

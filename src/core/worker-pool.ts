@@ -6,11 +6,14 @@
  */
 import { Worker } from "worker_threads";
 import os from "os";
-import type { FileTask, FileResult } from "./file-analyzer.js";
+import type { FileTask, FileResult, SkippedFile } from "./file-analyzer.js";
+
+/** What one task settles with: an analysis, a file its plugin refused (when the task asks), or nothing. */
+type Outcome = FileResult | SkippedFile | null;
 
 interface Pending {
   task: FileTask;
-  resolve: (r: FileResult | null) => void;
+  resolve: (r: Outcome) => void;
 }
 
 /**
@@ -28,9 +31,9 @@ export class AnalysisWorkerPool {
   private queueHead = 0;
   private pending = new Map<Worker, Pending>();
   private nextId = 0;
-  private fallback: (task: FileTask) => Promise<FileResult | null>;
+  private fallback: (task: FileTask) => Promise<Outcome>;
 
-  private constructor(fallback: (task: FileTask) => Promise<FileResult | null>) {
+  private constructor(fallback: (task: FileTask) => Promise<Outcome>) {
     this.fallback = fallback;
   }
 
@@ -41,7 +44,7 @@ export class AnalysisWorkerPool {
    */
   static create(
     size: number,
-    fallback: (task: FileTask) => Promise<FileResult | null>,
+    fallback: (task: FileTask) => Promise<Outcome>,
   ): AnalysisWorkerPool | null {
     const workerUrl = new URL("./analyze-worker.js", import.meta.url);
     const pool = new AnalysisWorkerPool(fallback);
@@ -70,7 +73,7 @@ export class AnalysisWorkerPool {
     return Math.min(8, Math.max(1, cores - 1));
   }
 
-  run(task: FileTask): Promise<FileResult | null> {
+  run(task: FileTask): Promise<Outcome> {
     // All workers gone (crashed): analyze in-process instead of queueing forever.
     if (this.workers.length === 0) return this.fallback(task);
     return new Promise((resolve) => {
@@ -94,7 +97,7 @@ export class AnalysisWorkerPool {
   private attach(worker: Worker): void {
     this.workers.push(worker);
     this.idle.push(worker);
-    worker.on("message", (msg: { id: number; result: FileResult | null }) => {
+    worker.on("message", (msg: { id: number; result: Outcome }) => {
       const item = this.pending.get(worker);
       this.pending.delete(worker);
       item?.resolve(msg.result);

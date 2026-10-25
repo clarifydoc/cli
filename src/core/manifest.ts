@@ -40,6 +40,12 @@ export interface Manifest {
   extractorVersion: string;
   /** Keys are POSIX relative paths. */
   entries: Record<string, ManifestEntry>;
+  /**
+   * Files a plugin refused by their content (preprocess `{ skip }`: a JSON file that is not an API
+   * spec, a foreign-format `.xml`). Kept apart from `entries`, which are the analyzed files, so the
+   * next incremental run skips them unread while the bytes are the same.
+   */
+  skipped?: Record<string, ManifestEntry>;
   /** The commit the analysis was made at, when known — what freshness compares HEAD to. */
   revision?: { commit: string; branch: string | null };
   /** What the run was made from besides the files (`runFingerprint`): equal next time, with no file changed, means up to date. */

@@ -47,7 +47,7 @@ import {
 } from "./output-writer.js";
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload, loadReportSummary } from "./report-payload.js";
-import { analyzeFile, importRewriteStamp, type FileTask, type FileResult } from "./file-analyzer.js";
+import { analyzeFileOutcome, importRewriteStamp, type FileTask, type FileResult, type SkippedFile } from "./file-analyzer.js";
 import { AnalysisWorkerPool } from "./worker-pool.js";
 import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { clearWorkspacePackageCache } from "../extractors/shared/workspace-packages.js";
@@ -837,6 +837,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
   const newManifestEntries: Record<string, ManifestEntry> = {};
+  const newSkipped: Record<string, ManifestEntry> = {};
   let unchangedCount = 0;
   let reparsedCount = 0;
   // Files whose CONTENT changed since the previous manifest (changed + new).
@@ -848,9 +849,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // startup. Falls back to in-process analysis when workers are unavailable
   // (e.g. running from source, CLARIFYDOC_WORKERS=0, or tiny projects).
   const poolSize = AnalysisWorkerPool.defaultSize(files.length);
-  const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFile) : null;
-  const runTask = (task: FileTask): Promise<FileResult | null> =>
-    pool ? pool.run(task) : analyzeFile(task);
+  const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFileOutcome) : null;
+  const runTask = (task: FileTask): Promise<FileResult | SkippedFile | null> =>
+    pool ? pool.run(task) : analyzeFileOutcome(task);
   // With a pool, keep a couple of extra slots so the main thread can overlap
   // manifest classification / cache reads while every worker stays busy.
   const fileConcurrency = pool ? poolSize + 2 : 8;
@@ -883,6 +884,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const resolver = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
         const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
 
+        // A file its plugin refused last time, with the same bytes and import configuration: refused again, unread.
+        const refused = options.incremental ? prevManifest?.skipped?.[manifestKey] : undefined;
+        if (refused) {
+          const classification = await classifyFileForCache(file.absolutePath, refused);
+          if (classification.state === "unchanged" && refused.resolver === resolver) {
+            newSkipped[manifestKey] = refused.mtime === classification.mtime ? refused : stamped({ mtime: classification.mtime, sha256: classification.sha256 });
+            return null;
+          }
+        }
         if (options.incremental && prevManifest) {
           const prev = prevManifest.entries[manifestKey];
           const classification = await classifyFileForCache(file.absolutePath, prev);
@@ -898,10 +908,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           }
         }
 
-        const result = await runTask({
+        const outcome = await runTask({
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
+          ...(options.incremental ? { reportSkips: true as const } : {}),
         });
+        if (outcome && "skipped" in outcome) {
+          const entry = newManifestEntries[manifestKey] ?? stamped(await classifyFileForCache(file.absolutePath, undefined).then((c) => ({ mtime: c.mtime, sha256: c.sha256 })));
+          newSkipped[manifestKey] = entry;
+        }
+        const result = outcome && "skipped" in outcome ? null : outcome;
         if (result === null) {
           // Skipped (preprocess {skip}: generated API docs, foreign-format
           // xml…) — no output JSON was written, so a manifest entry would make
@@ -960,6 +976,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       allSecurityIssues.push(...securityIssues);
     }
   }
+  // Sources the passes below read and per-file analysis did not hand over: in parallel, while linking runs.
+  const prefetched = rawSources.prefetch(allAnalyses.map((a) => a.filePath)).catch(() => undefined);
 
   // Drop skipped files from `fileProjects`. A plugin that claims a broad
   // extension (openapi → .yaml/.json, springxml → .xml) discovers every such
@@ -1905,6 +1923,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // What the project's Markdown names that the tree no longer bears out.
   const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false).catch(() => undefined);
   if (docDrift?.findings.length) progress.detail(`  Doc drift: ${docDrift.findings.length} reference(s) in ${new Set(docDrift.findings.map((f) => f.doc)).size} doc(s) the tree does not bear out`);
+  await prefetched;
   const deadCode = analyzeReachability({
     analyses: allAnalyses,
     componentGraph,
@@ -2140,6 +2159,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       version: 1,
       extractorVersion: EXTRACTOR_VERSION,
       entries: newManifestEntries,
+      ...(Object.keys(newSkipped).length ? { skipped: newSkipped } : {}),
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
       ...(fingerprint ? { fingerprint } : {}),
       ...(fingerprints ? { codeFingerprint: fingerprints.code } : {}),
@@ -3344,6 +3364,21 @@ function detectDirectives(
 class SourceTexts extends Map<string, string> {
   constructor(private readonly root: string) {
     super();
+  }
+
+  /**
+   * Read `files` that no analysis handed over, in parallel batches, ahead of the passes that ask
+   * one at a time (reachability reads nearly every source): the same texts, without a synchronous
+   * read per file on the critical path. A file a pass asks for first is read by `get` as before.
+   */
+  async prefetch(files: readonly string[]): Promise<void> {
+    const todo = files.filter((f) => !super.has(f));
+    for (let i = 0; i < todo.length; i += 64) {
+      await Promise.all(todo.slice(i, i + 64).map(async (f) => {
+        const text = await readFile(join(this.root, f), "utf-8").catch(() => undefined);
+        if (text !== undefined && !super.has(f)) super.set(f, text);
+      }));
+    }
   }
 
   override get(file: string): string | undefined {

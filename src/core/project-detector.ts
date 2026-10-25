@@ -47,6 +47,12 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/CMakeLists.txt", kind: "cmake" },
 ];
 
+/** Whether a marker pattern (a file name or `*.ext` under any directory) names a file, given its lower-cased base name. */
+function markerMatches(pattern: string, base: string): boolean {
+  const name = pattern.slice(pattern.lastIndexOf("/") + 1).toLowerCase();
+  return name.startsWith("*.") ? base.endsWith(name.slice(1)) && base.length > name.length - 1 : base === name;
+}
+
 const MARKER_IGNORE = [
   "**/node_modules/**",
   "**/dist/**",
@@ -102,24 +108,26 @@ export async function detectSubProjects(
     { kinds: Set<SubProjectKind>; markers: Set<string> }
   >();
 
-  for (const { pattern, kind } of MARKER_GLOBS) {
-    const found = await glob(pattern, {
-      cwd: root,
-      ignore: MARKER_IGNORE,
-      absolute: false,
-      dot: false,
-      // Legacy Windows repos ship PROJECT.DPR / MAKEFILE-cased markers.
-      caseSensitiveMatch: false,
-      prune,
-    });
-    const matches = ignorePatterns.length === 0
-      ? found
-      : found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
-    for (const match of matches) {
+  // One walk for every marker: each pattern is `**/<name>` or `**/*.<ext>`, matched case-insensitively.
+  const found = await glob(MARKER_GLOBS.map((m) => m.pattern), {
+    cwd: root,
+    ignore: MARKER_IGNORE,
+    absolute: false,
+    dot: false,
+    // Legacy Windows repos ship PROJECT.DPR / MAKEFILE-cased markers.
+    caseSensitiveMatch: false,
+    prune,
+  });
+  const matches = ignorePatterns.length === 0
+    ? found
+    : found.filter((rel) => !isIgnored(join(root, rel), root, ignorePatterns));
+  for (const match of matches) {
+    const norm = match.replace(/\\/g, "/");
+    const lastSlash = norm.lastIndexOf("/");
+    const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
+    const base = norm.slice(lastSlash + 1).toLowerCase();
+    for (const { kind } of MARKER_GLOBS.filter((m) => markerMatches(m.pattern, base))) {
       if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;
-      const norm = match.replace(/\\/g, "/");
-      const lastSlash = norm.lastIndexOf("/");
-      const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
       let entry = byDir.get(dir);
       if (!entry) {
         entry = { kinds: new Set(), markers: new Set() };

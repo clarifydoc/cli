@@ -6,7 +6,7 @@
  * tsconfigAliases Map) and the FileResult back without manual serialization.
  */
 import { parentPort } from "worker_threads";
-import { analyzeFile, type FileTask } from "./file-analyzer.js";
+import { analyzeFileOutcome, type FileTask } from "./file-analyzer.js";
 
 interface WorkerRequest {
   id: number;
@@ -19,12 +19,12 @@ if (!parentPort) {
 
 parentPort.on("message", (msg: WorkerRequest) => {
   void (async () => {
-    // analyzeFile catches per-file errors internally (returns null); this
+    // analyzeFileOutcome catches per-file errors internally (returns null); this
     // outer catch only guards infrastructure failures so the pool's pending
     // promise always settles.
-    let result = null;
+    let result: unknown = null;
     try {
-      result = await analyzeFile(msg.task);
+      result = await analyzeFileOutcome(msg.task);
     } catch (err) {
       console.error(`  Worker error analyzing ${msg.task.file.relativePath}: ${(err as Error).message}`);
     }

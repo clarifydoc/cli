@@ -95,6 +95,16 @@ export interface FileTask {
    * beside it does not switch Expo routing off. Absent: the analyzed root's.
    */
   routeScope?: { relativePath: string; frameworkIds: string[] };
+  /**
+   * Hand back a `SkippedFile` rather than null when the file's plugin refuses it (preprocess
+   * `{ skip }`), so an incremental run can remember the refusal by content hash.
+   */
+  reportSkips?: boolean;
+}
+
+/** A file its plugin refused by content: what `analyzeFile` returns for it when the task sets `reportSkips`. */
+export interface SkippedFile {
+  skipped: string;
 }
 
 /**
@@ -215,7 +225,14 @@ function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, i
   return parts.length ? createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16) : undefined;
 }
 
+/** Analyze one file and write its JSON; null when it fails or its plugin refuses it. */
 export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
+  const outcome = await analyzeFileOutcome({ ...task, reportSkips: false });
+  return outcome && "skipped" in outcome ? null : outcome;
+}
+
+/** `analyzeFile`, telling a file its plugin refused (`SkippedFile`) from a failure when the task sets `reportSkips`. */
+export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | SkippedFile | null> {
   const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
   const routeScope = task.routeScope ?? { relativePath: file.relativePath, frameworkIds };
 
@@ -295,7 +312,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
       const pre = filePlugin.preprocess?.(rawSource, file.relativePath);
       if (pre && "skip" in pre) {
         if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
-        return null;
+        return task.reportSkips ? { skipped: pre.skip } : null;
       }
       const regexSource = pre?.sourceText ?? rawSource;
       const { extractWithRegex } = await import("./regex-extractor.js");
@@ -338,7 +355,7 @@ export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
     if (pre) {
       if ("skip" in pre) {
         if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
-        return null;
+        return task.reportSkips ? { skipped: pre.skip } : null;
       }
       sourceText = pre.sourceText;
       language = pre.language;
