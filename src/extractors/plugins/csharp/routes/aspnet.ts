@@ -565,7 +565,7 @@ const UNBOUND_TYPES = new Set(["CancellationToken"]);
  * an inferred or unknown one follows the same rules as at extraction.
  */
 export function rebindParams(params: readonly RouteParamInfo[], path: string, apiController: boolean): RouteParamInfo[] {
-  const routeParams = new Set([...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!.toLowerCase()));
+  const routeParams = new Set([...path.matchAll(/\{\*?([^}]+)\}/g)].map((m) => m[1]!.toLowerCase()));
   return params.map((p) => {
     if (p.binding !== null && !p.inferred) return p;
     let inferred: RouteParamBinding | null = null;
@@ -579,7 +579,7 @@ function parameterBindings(methodNode: Node, path: string, apiController: boolea
   const paramsNode = methodNode.childForFieldName("parameters");
   if (!paramsNode) return [];
   const routeParams = new Set(
-    [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!.toLowerCase()),
+    [...path.matchAll(/\{\*?([^}]+)\}/g)].map((m) => m[1]!.toLowerCase()),
   );
   const out: RouteParamInfo[] = [];
   for (const p of paramsNode.children) {
@@ -722,9 +722,13 @@ function substituteTokens(
   return out;
 }
 
-/** Strip route constraints/defaults/catch-all markers: `{id:guid}` / `{id?}` / `{*slug}` -> `{id}`/`{slug}`. */
+/**
+ * Strip route constraints and defaults: `{id:guid}` / `{id?}` -> `{id}`. A
+ * catch-all keeps one marker (`{**slug:nonfile}` -> `{*slug}`): it takes the
+ * rest of the path, slashes included.
+ */
 function stripConstraints(path: string): string {
-  return path.replace(/\{\*{0,2}([^}:=?]+)[^}]*\}/g, "{$1}");
+  return path.replace(/\{(\*{0,2})([^}:=?]+)[^}]*\}/g, (_m, star: string, name: string) => `{${star ? "*" : ""}${name}}`);
 }
 
 /** Build the full, normalized endpoint path for one route. */

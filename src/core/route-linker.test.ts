@@ -1086,3 +1086,36 @@ describe("route aliases", () => {
     expect(links[0]?.routePath).toBe("/showroom/index");
   });
 });
+
+describe("routes with a parameter that takes the rest of the path", () => {
+  const link = (target: string, routes: Array<RouteInfo & { filePath: string }>) =>
+    linkApiCallsToRoutes([apiCall("web/files.ts", "get", target)], routes).map((l) => l.routePath);
+
+  it("joins a multi-segment tail in every greedy syntax, in the middle of a path too", () => {
+    const routes = [
+      route("server/files.py", "GET", "/api/clubs/{club_id}/files/{file_path:path}", "get_file"),
+      route("server/kits.py", "GET", "/api/kits/{kit_key:path}/usage", "kit_usage"),
+      route("server/Docs.cs", "GET", "/api/docs/{*slug}", "Docs"),
+      route("server/media.js", "GET", "/api/media/:rest+", "media"),
+      route("server/badges.go", "GET", "/api/badges/{name...}", "badges"),
+      route("server/crests.rb", "GET", "/api/crests/*path", "crests"),
+    ];
+    expect(link("/api/clubs/7/files/docs/kits/home.pdf", routes)).toEqual(["/api/clubs/{club_id}/files/{file_path:path}"]);
+    expect(link("/api/kits/home/away/usage", routes)).toEqual(["/api/kits/{kit_key:path}/usage"]);
+    expect(link("/api/docs/league/rules", routes)).toEqual(["/api/docs/{*slug}"]);
+    expect(link("/api/media/2026/finals/goal.mp4", routes)).toEqual(["/api/media/:rest+"]);
+    expect(link("/api/badges/a/b", routes)).toEqual(["/api/badges/{name...}"]);
+    expect(link("/api/crests/north/east", routes)).toEqual(["/api/crests/*path"]);
+  });
+
+  it("prefers a specific route, needs a segment for a required tail and never joins a catch-all at the root", () => {
+    const routes = [
+      route("server/files.py", "GET", "/api/files/{file_path:path}", "get_file"),
+      route("server/files.py", "GET", "/api/files/recent/list", "recent"),
+      route("server/spa.js", "GET", "*", "spa"),
+    ];
+    expect(link("/api/files/recent/list", routes)).toEqual(["/api/files/recent/list"]);
+    expect(link("/api/files", routes)).toEqual([]);
+    expect(link("/players/7/stats", routes)).toEqual([]);
+  });
+});
