@@ -1,3 +1,4 @@
+import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
 import type { CallBaseRef, ProxyRule } from "../../../types/analysis.js";
 import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { flattenStrings, lineOfPair, parseJsoncObject } from "../shared/jsonc.js";
@@ -212,8 +213,10 @@ const ocelot: ProxySourceSpec = {
 };
 
 export const csharpServiceConfig: ServiceConfigSpec = {
-  sources: [appsettings, launchSettings],
+  sources: [appsettings, launchSettings, azureHostJson],
   proxySources: [yarp, ocelot],
+  // An Azure Functions app serves its HTTP triggers under host.json's route prefix.
+  routeBaseOf: azureRouteBase,
   baseRefOf: csharpBaseRefOf,
   // .NET's environment provider maps `__` to the `:` key separator.
   envNamesFor: (key) => [key.replace(/:/g, "__")],

@@ -1,3 +1,4 @@
+import { azureFunctionPath } from "../shared/azure-functions.js";
 import type { Node } from "web-tree-sitter";
 import type { CallInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
@@ -196,9 +197,13 @@ interface RouterDecl {
   guards: GuardAttr[];
   /** The prefix `url_for` names its routes under: a Flask `Blueprint("clubs", …)`'s name, "" for an app. */
   endpointPrefix: string;
+  /** An Azure Functions app or blueprint (`func.FunctionApp()`, `func.Blueprint()`): routes by `route=`, named by the function. */
+  azure?: true;
 }
 
-const ROUTER_CTORS = new Set(["APIRouter", "Blueprint", "FastAPI", "Flask"]);
+const ROUTER_CTORS = new Set(["APIRouter", "Blueprint", "FastAPI", "Flask", "FunctionApp", "DFApp"]);
+/** Azure Functions' app and blueprint constructors, as the `azure.functions` module is usually imported. */
+const AZURE_APP_CTOR = /^(?:(?:func|azure\.functions|df|durable_functions)\.)?(?:FunctionApp|DFApp)$|^(?:func|azure\.functions|df|durable_functions)\.Blueprint$/;
 /** A project's own router class (`UserAPIRouter(APIRouter)`, `AdminRouter`) takes a prefix the same way. */
 const ROUTER_CLASS_NAME = /Router$/;
 
@@ -225,7 +230,12 @@ function collectRouterDecls(root: Node, consts: ReadonlyMap<string, string>): Ma
     // `Blueprint("clubs", __name__)`: its routes are `clubs.<function>` to `url_for`.
     const first = ctorName === "Blueprint" && args ? args.namedChildren.find((a) => a.type !== "keyword_argument" && a.type !== "comment") : undefined;
     const blueprint = first?.type === "string" ? first.text.replace(/^[a-z]*["']|["']$/gi, "") : null;
-    decls.set(left.text, { prefix, guards: deps ? guardsFromDependencies(deps) : [], endpointPrefix: blueprint ? `${blueprint}.` : "" });
+    decls.set(left.text, {
+      prefix,
+      guards: deps ? guardsFromDependencies(deps) : [],
+      endpointPrefix: blueprint ? `${blueprint}.` : "",
+      ...(AZURE_APP_CTOR.test(ctor!.text) ? { azure: true as const } : {}),
+    });
   }
   return decls;
 }
@@ -308,6 +318,10 @@ interface RouteDecorator {
   statusCode: number | null;
   /** Flask `endpoint="x"`: the name `url_for` builds the URL from, instead of the function's. */
   endpoint: string | null;
+  /** Azure Functions: `route="x"`, whether `methods=` was given, and `auth_level=`. */
+  azureRoute: string | null;
+  methodsListed: boolean;
+  authLevel: string | null;
 }
 
 /**
@@ -352,7 +366,20 @@ function routeDecorator(dec: Node): RouteDecorator | null {
     responseModel: model && model.text !== "None" ? model.text : null,
     statusCode: Number.isFinite(statusCode) ? statusCode : null,
     endpoint: (args ? stringKeyword(args, "endpoint", new Map()) : null) ?? null,
+    azureRoute: args ? literalKeywordArg(args, "route") : null,
+    methodsListed: !!args && stringArgs(keywordArg(args, "methods")).length > 0,
+    authLevel: args ? keywordArg(args, "auth_level")?.text.replace(/^.*\./, "") ?? null : null,
   };
+}
+
+/** `@app.function_name(name="GetDriver")` → GetDriver. */
+function azureFunctionName(dec: Node): string | null {
+  const call = dec.namedChild(0);
+  const fn = call?.type === "call" ? call.childForFieldName("function") : null;
+  if (fn?.type !== "attribute" || fn.childForFieldName("attribute")?.text !== "function_name") return null;
+  const args = call!.childForFieldName("arguments");
+  const first = args ? firstPositionalArg(args) : null;
+  return (args ? literalKeywordArg(args, "name") : null) ?? (first?.type === "string" ? stripQuotes(first.text) : null);
 }
 
 function joinPrefix(prefix: string, path: string): string {
@@ -366,8 +393,10 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
     const routeDecs: RouteDecorator[] = [];
     const guards: GuardAttr[] = [];
     let fnDef: Node | null = null;
+    let functionName: string | null = null;
     for (const child of node.children) {
       if (child.type === "decorator") {
+        functionName ??= azureFunctionName(child);
         const rd = routeDecorator(child);
         if (rd) routeDecs.push(rd);
         else {
@@ -382,7 +411,16 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
       const handler = fnDef?.childForFieldName("name")?.text ?? null;
       for (const rd of routeDecs) {
         const router = rd.receiver ? routers.get(rd.receiver) : undefined;
-        const path = joinPrefix(router?.prefix ?? "", rd.path);
+        // Azure Functions: `route=` (else the function's name), any method unless `methods=` lists them.
+        const azure = !!router?.azure && !!handler;
+        if (azure) {
+          if (!rd.methodsListed) rd.methods = ["ALL"];
+          if (rd.authLevel) {
+            const level = rd.authLevel.toLowerCase();
+            guards.push(level === "anonymous" ? { text: `auth_level=${rd.authLevel}`, anonymous: true } : { text: `auth_level=${rd.authLevel}`, schemes: [`function-key:${level}`] });
+          }
+        }
+        const path = azure ? azureFunctionPath(rd.azureRoute, functionName ?? handler!) : joinPrefix(router?.prefix ?? "", rd.path);
         const signature = fnDef ? signatureParams(fnDef, path) : { params: [], guards: [], dependencies: [] };
         const params = [...signature.params, ...bodyAccessParams(fnDef, path, signature.params)];
         // FastAPI's response: `response_model=`, else the return annotation (not a Response object), and `status_code=`.

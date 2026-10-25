@@ -3,6 +3,7 @@ import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
 import { pypiPackageManager } from "./package-manifests.js";
+import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -15,6 +16,8 @@ export const pythonManifest: LanguagePluginManifest = {
   testCommand: pythonTestCommand,
   projectCommands: pythonProjectCommands,
   language: "python",
+  // An Azure Functions app serves its HTTP triggers under host.json's route prefix.
+  serviceConfig: { sources: [azureHostJson], routeBaseOf: azureRouteBase },
   family: "python",
   packageManagers: [pypiPackageManager],
   packageEcosystems: ["pypi"],

@@ -4,6 +4,7 @@ import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, filterKind, routeFilters, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
+import { AZURE_FUNCTIONS_GATE, extractAzureFunctionRoutes } from "./azure-functions.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
 import { collectHotChocolateFacts } from "../graphql.js";
@@ -794,8 +795,10 @@ export const csharpRouteExtractor: RouteExtractor = {
     collectHotChocolateFacts(sourceText, facts);
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
+    const azure = AZURE_FUNCTIONS_GATE.test(sourceText);
     if (
       !minimal &&
+      !azure &&
       !ROUTE_ATTRIBUTE_GATE.test(sourceText) &&
       !CONTROLLER_CLASS_GATE.test(sourceText) &&
       !ATTRIBUTE_CLASS_GATE.test(sourceText) &&
@@ -807,6 +810,8 @@ export const csharpRouteExtractor: RouteExtractor = {
     extractAspnetRoutes(tree.rootNode, routes, facts, sourceText);
     // Minimal APIs (`app.MapGet("/x", Handler)`, see minimal-api.ts).
     if (minimal) extractMinimalApiRoutes(tree.rootNode, routes);
+    // Azure Functions HTTP triggers (see azure-functions.ts).
+    if (azure) extractAzureFunctionRoutes(tree.rootNode, routes);
     return routes;
   },
 };

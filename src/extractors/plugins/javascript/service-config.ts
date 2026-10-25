@@ -1,3 +1,4 @@
+import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
 import type { CallBaseRef, ProxyRule } from "../../../types/analysis.js";
 import type { ProxySourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
 import { lineOfPair, parseJsoncObject } from "../shared/jsonc.js";
@@ -89,6 +90,9 @@ const craProxy: ProxySourceSpec = {
 };
 
 export const jsServiceConfig: ServiceConfigSpec = {
+  // An Azure Functions app serves its HTTP triggers under host.json's route prefix.
+  sources: [azureHostJson],
+  routeBaseOf: azureRouteBase,
   baseRefOf: jsBaseRefOf,
   // nginx: the server an SPA's container runs, forwarding its API paths.
   proxySources: [angularProxy, craProxy, nginxProxy],

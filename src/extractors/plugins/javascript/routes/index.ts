@@ -12,6 +12,7 @@ import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-fi
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 import { extractGrpcJsServices } from "./grpc-server.js";
+import { mayDeclareAzureFunctions, visitAzureFunction } from "./azure-functions.js";
 import { applyPrefixScopes, collectPluginPrefixes, mayDeclareRouteObjects, mayRegisterPlugins, visitRouteObjects } from "./fastify-hapi.js";
 
 /**
@@ -27,6 +28,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const express: RouteInfo[] = [];
     const routeObjects: RouteInfo[] = [];
     const maybeRouteObjects = mayDeclareRouteObjects(sourceText);
+    const maybeAzure = mayDeclareAzureFunctions(sourceText);
     const reactRouter: RouteInfo[] = [];
     const nestjs: RouteInfo[] = [];
     const vueRouter: RouteInfo[] = [];
@@ -40,6 +42,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const walk = (node: Node): void => {
       visitExpressRoute(node, express);
       if (maybeRouteObjects) visitRouteObjects(node, routeObjects);
+      if (maybeAzure) visitAzureFunction(node, routeObjects);
       visitReactRouterRoute(node, reactRouter, facts);
       visitNestjsRoute(node, nestjs, facts);
       visitVueRouterRoute(node, vueRouter, facts);
