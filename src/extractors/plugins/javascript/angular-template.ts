@@ -125,6 +125,9 @@ function collectAngularInteractive(
     if (/\[\(ngModel\)\]/.test(attrs)) {
       elements.push({ element, event: "[(ngModel)]", handler: null, line });
     }
+    // `routerLink="/clubs"` / `[routerLink]="['/clubs', club.id, 'view']"`: a link to a client route.
+    const target = routerLinkTarget(attrs);
+    if (target) elements.push({ element: "link", event: "click", handler: null, line, request: { method: "GET", target } });
   }
   return elements;
 }
@@ -158,6 +161,54 @@ function extractAngularProps(attrs: string): string[] {
     props.push(name);
   }
   return props;
+}
+
+/**
+ * The client route a `routerLink` names, as an absolute path with each runtime
+ * segment as `{}`; null when it is relative (`./edit`) or not literal.
+ *   routerLink="/clubs"                          → /clubs
+ *   [routerLink]="['/clubs', club.id, 'view']"   → /clubs/{}/view
+ *   [routerLink]="'/clubs'"                      → /clubs
+ */
+export function routerLinkTarget(attrs: string): string | null {
+  const plain = /(?:^|\s)routerLink\s*=\s*"([^"]*)"/.exec(attrs);
+  if (plain) return plain[1]!.startsWith("/") ? plain[1]!.split(/[?#]/)[0]!.replace(/\{\{[^}]*\}\}/g, "{}") : null;
+  const bound = /\[routerLink\]\s*=\s*"([^"]*)"/.exec(attrs)?.[1]?.trim();
+  if (!bound) return null;
+  const items = bound.startsWith("[") ? splitTopLevel(bound.slice(1, bound.lastIndexOf("]"))) : [bound];
+  const segments: string[] = [];
+  for (const [i, item] of items.entries()) {
+    const lit = /^'([^']*)'$|^`([^`$]*)`$/.exec(item.trim());
+    const text = lit ? (lit[1] ?? lit[2])! : null;
+    if (i === 0 && (text === null || !text.startsWith("/"))) return null;
+    segments.push(text === null ? "{}" : text.replace(/^\/+|\/+$/g, ""));
+  }
+  const path = "/" + segments.filter(Boolean).join("/");
+  return path;
+}
+
+/** `a, f(b, c), 'd'` → its top-level comma-separated items. */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  if (text.slice(start).trim()) out.push(text.slice(start));
+  return out.map((t) => t.trim()).filter(Boolean);
 }
 
 /** Normalize a handler expression to a short name (`onClick($event)` → `onClick`). */

@@ -1287,6 +1287,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles, importIndex);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
+  canonicalNavigationTargets(allScreens, allRoutes.filter((r) => r.kind === "frontend").map((r) => r.path));
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
   markStartupScreens(allAnalyses, allScreens, rawSources);
@@ -2251,6 +2252,14 @@ function extractNavigationTargets(source: string): string[] {
       if (path && path.startsWith("/")) targets.add(path);
     }
   }
+  // A path given as segments (`navigate(['/clubs', id, 'view'])`): literal segments kept, the rest `{}`.
+  for (const m of source.matchAll(/\bnavigate\(\s*\[\s*(['"`])(\/[^'"`]*)\1([^\]]*)\]/g)) {
+    const rest = m[3]!.split(",").slice(1).map((seg) => {
+      const lit = /^\s*(['"`])([^'"`$]*)\1\s*$/.exec(seg);
+      return lit ? lit[2]!.replace(/^\/+|\/+$/g, "") : "{}";
+    });
+    targets.add(["/" + m[2]!.replace(/^\/+|\/+$/g, ""), ...rest.filter(Boolean)].join("/").replace(/\/{2,}/g, "/"));
+  }
   // A screen named rather than routed (`navigation.navigate("Profile")`,
   // `navigation.push("Details", …)`, Compose's `navController.navigate("home")`):
   // the name, matched only against screens a navigator declares under it.
@@ -2266,6 +2275,44 @@ function extractNavigationTargets(source: string): string[] {
     targets.add(href);
   }
   return [...targets];
+}
+
+/**
+ * A navigation target written as a path (`/clubs/{}/view`) names the screen
+ * whose route that is however the router spells it (`clubs/:id/view`): each
+ * target is rewritten to the one screen route path it matches, segment for
+ * segment with every parameter alike, so the screen graph can follow it.
+ * A path no screen is mounted at takes the client route's own spelling.
+ */
+function canonicalNavigationTargets(screens: ScreenInfo[], routePaths: string[]): void {
+  const key = (p: string) =>
+    ("/" + p.split(/[?#]/)[0]!)
+      .replace(/\/{2,}/g, "/")
+      .replace(/\/$/, "")
+      .split("/")
+      .map((seg) => (/^(?::\w+\??|\{[^}]*\}|\[[^\]]*\]|\$\w+)$/.test(seg) ? "{}" : seg))
+      .join("/");
+  const byKey = new Map<string, Set<string>>();
+  for (const sc of screens) {
+    if (!sc.routePath) continue;
+    const k = key(sc.routePath);
+    (byKey.get(k) ?? byKey.set(k, new Set()).get(k)!).add(sc.routePath);
+  }
+  const byRoute = new Map<string, Set<string>>();
+  for (const p of routePaths) {
+    const k = key(p);
+    if (!byKey.has(k)) (byRoute.get(k) ?? byRoute.set(k, new Set()).get(k)!).add(p);
+  }
+  for (const sc of screens) {
+    if (sc.navigatesTo.length === 0) continue;
+    const out = new Set<string>();
+    for (const t of sc.navigatesTo) {
+      const hits = t.startsWith("/") ? byKey.get(key(t)) ?? byRoute.get(key(t)) : undefined;
+      const target = hits?.size === 1 ? [...hits][0]! : t;
+      if (target !== sc.routePath) out.add(target);
+    }
+    sc.navigatesTo = [...out];
+  }
 }
 
 /**
@@ -2656,7 +2703,11 @@ function buildScreen(
     components,
     filePath: analysis.filePath,
     routePath,
-    navigatesTo: extractNavigationTargets(rawSource),
+    // What the source navigates to, and the client routes its links name (`routerLink`).
+    navigatesTo: [...new Set([
+      ...extractNavigationTargets(rawSource),
+      ...analysis.interactiveElements.flatMap((el) => (el.element === "link" && el.request?.method === "GET" && el.request.target.startsWith("/") ? [el.request.target] : [])),
+    ])],
   };
 }
 
