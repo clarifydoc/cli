@@ -644,6 +644,16 @@ describe("clarifydoc_explain — backend fixture", () => {
     expect(reaches.text).toMatch(/## What it reaches\n\n(?!No call-graph)/);
   });
 
+  it("names the other routes that share a table with the one explained, writers first", async () => {
+    const r = await call(server, "clarifydoc_explain", { subject: "GET /api/players/:id", maxTokens: 12000 });
+    const part = r.text.split("## Routes sharing its tables\n\n")[1]?.split("\n\n")[0] ?? "";
+    expect(part.split("\n")[0]).toBe("It reads player.");
+    const rows = part.split("\n").slice(1);
+    expect(rows.length).toBeGreaterThan(2);
+    expect(rows.some((l) => l.includes("GET /api/players/:id "))).toBe(false);
+    expect(rows[0]).toMatch(/^- (POST|PUT|DELETE) \S+ \(\S+:\d+\) — writes player$/);
+  });
+
   it("explains a function by its source and callers", async () => {
     const r = await call(server, "clarifydoc_explain", { subject: "getPlayerById" });
     expect(r.text).toMatch(/## Source/);

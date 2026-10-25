@@ -17,7 +17,8 @@ const VERB = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/i;
 /**
  * Everything the analysis knows about one subject, packed into a token
  * budget in the order an agent needs it: for a route its contract and
- * callers, then what it reaches, then its handler's source, then its risk;
+ * callers, then what it reaches, then its handler's source, then the routes
+ * sharing its tables, then its risk;
  * for a symbol its source, callers and risk; for a screen the screen, what
  * it calls and its source file. Each part is another tool's answer, so the
  * pack says nothing those tools would not — it saves the round trips. Parts
@@ -38,7 +39,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
     description:
       "One call for the context of a route (\"POST /api/orders\"), a screen, a function (\"OrderService.create\") or a " +
       "file, packed into `maxTokens` in priority order: a route's contract and callers, the data it reaches, its " +
-      "handler's source and its blast radius; a function's source, callers and risk. Use it before changing " +
+      "handler's source, the routes sharing its tables and its blast radius; a function's source, callers and risk. Use it before changing " +
       "something; follow the named calls for what did not fit.",
     inputSchema: {
       type: "object",
@@ -91,6 +92,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
           const targets = [...(anchor ? [{ file: r.filePath, symbol: anchor }] : []), ...(r.handler ? [{ file: r.filePath, symbol: r.handler }] : [])];
           if (targets.length) parts.push({ title: "Tests", get: async () => testsPart(summary, targets), follow: `clarifydoc_trace symbol="${targets[0]!.symbol}" file="${r.filePath}" direction="callers"` });
         }
+        parts.push({ title: "Routes sharing its tables", get: async () => relatedRoutes(summary, r), follow: `clarifydoc_data_flows entry="${label(r)}"` });
         parts.push({ title: "Risk", get: () => blast({ path: r.filePath }), follow: `clarifydoc_blast_radius path="${r.filePath}"` });
       } else if (kind === "screen") {
         heading = `# Screen ${subject}`;
@@ -153,6 +155,42 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
       return { text: out.join("\n\n") };
     },
   };
+}
+
+const TABLE_EFFECTS = new Set(["db", "db-read", "db-write"]);
+
+/**
+ * The other routes that read or write a table this route reaches, from the
+ * data flows: what else moves when this one's data changes shape, and who
+ * writes what it reads. Routes sharing more tables first, then those writing
+ * one; null when the route reaches no table.
+ */
+export function relatedRoutes(summary: ProjectAnalysis, r: Row): string | null {
+  const flows = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && TABLE_EFFECTS.has(f.effect));
+  const own = `${r.httpMethod ?? ""} ${r.path}`.trim();
+  const isOwn = (f: { entryFile: string; entryLabel: string }) => f.entryFile === r.filePath && f.entryLabel === own;
+  const access = (effects: Set<string>) => (effects.has("db-write") ? (effects.has("db-read") ? "reads and writes" : "writes") : effects.has("db-read") ? "reads" : "uses");
+  const mine = new Map<string, Set<string>>();
+  for (const f of flows) if (isOwn(f)) (mine.get(f.resource) ?? mine.set(f.resource, new Set()).get(f.resource)!).add(f.effect);
+  if (!mine.size) return null;
+  const others = new Map<string, { label: string; file: string; tables: Map<string, Set<string>> }>();
+  for (const f of flows) {
+    if (isOwn(f) || !mine.has(f.resource)) continue;
+    const key = `${f.entryFile}\u0000${f.entryLabel}`;
+    const row = others.get(key) ?? others.set(key, { label: f.entryLabel, file: f.entryFile, tables: new Map() }).get(key)!;
+    (row.tables.get(f.resource) ?? row.tables.set(f.resource, new Set()).get(f.resource)!).add(f.effect);
+  }
+  const head = `It ${[...mine].map(([t, e]) => `${access(e)} ${t}`).join(", ")}.`;
+  if (!others.size) return `${head} No other route reaches ${mine.size === 1 ? "that table" : "those tables"}.`;
+  const writes = (o: { tables: Map<string, Set<string>> }) => [...o.tables.values()].some((e) => e.has("db-write"));
+  const ranked = [...others.values()].sort((a, b) => b.tables.size - a.tables.size || Number(writes(b)) - Number(writes(a)) || a.label.localeCompare(b.label));
+  const lineOf = (o: { label: string; file: string }) => (summary.routeMap ?? []).find((x) => x.filePath === o.file && `${x.httpMethod ?? ""} ${x.path}`.trim() === o.label)?.line;
+  const rows = ranked.slice(0, 10).map((o) => {
+    const line = lineOf(o);
+    return `- ${o.label} (${o.file}${line ? `:${line}` : ""}) — ${[...o.tables].map(([t, e]) => `${access(e)} ${t}`).join(", ")}`;
+  });
+  if (ranked.length > 10) rows.push(`- … ${ranked.length - 10} more: clarifydoc_data_flows resource="${[...mine.keys()][0]}" entryKind="route"`);
+  return [head, ...rows].join("\n");
 }
 
 /** The tests that reach a subject through the call graph, and how to run them; saying so when none does. */
