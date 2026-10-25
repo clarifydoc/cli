@@ -1,6 +1,7 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
+import { npmInstalledApi } from "./installed-api.js";
 import { packageLockLicenses, parsePackageLock, parsePnpmLock, parseYarnLock, withLicenses, withLocked } from "../shared/lockfiles.js";
 
 /** npm: `package.json`'s dependency sections. */
@@ -166,6 +167,7 @@ export const npmPackageManager: PackageManagerSpec = {
     return s.split("/")[0]!.toLowerCase();
   },
   assertsUnused: true,
+  installedApi: npmInstalledApi,
   // `@types/react` is used when `react` is; `@types/babel__core` types `@babel/core`.
   impliedBy(name) {
     const m = /^@types\/(.+)$/.exec(name);

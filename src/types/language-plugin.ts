@@ -222,6 +222,26 @@ export interface PackageManagerSpec {
     separator: string;
     load(readAtRoot: (relativePath: string) => Promise<string | null>): Promise<ReadonlyMap<string, string>>;
   };
+  /**
+   * The exported API of `name` as INSTALLED under one of `dirs` (each a
+   * directory the package manager installs into, nearest first), read on
+   * demand — never during analysis. With `symbol`, that export's declaration
+   * too. Null when the package is not installed there.
+   */
+  installedApi?(dirs: readonly string[], name: string, symbol?: string): Promise<InstalledPackageApi | null>;
+}
+
+/** What an installed package exports, from its own declarations (`PackageManagerSpec.installedApi`). */
+export interface InstalledPackageApi {
+  name: string;
+  version?: string;
+  /** The file the API was read from, absolute. */
+  source: string;
+  exports: Array<{ name: string; kind: string; signature: string; file: string; line: number }>;
+  /** More exports than were read (file or row cap reached). */
+  truncated?: boolean;
+  /** `symbol`'s declaration with its doc comment, when one was asked for and found. */
+  declaration?: { text: string; file: string; line: number };
 }
 
 /**

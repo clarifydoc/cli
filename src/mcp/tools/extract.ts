@@ -6,6 +6,7 @@ import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
 import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { noResults } from "../empty.js";
+import { packageApiText } from "../package-api.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -41,8 +42,8 @@ export function extractTool(ctx: ToolContext): McpTool {
     description:
       "The source code of one function or method plus the functions it calls (breadth-first over the resolved " +
       "call graph, up to `depth` hops), within a token budget — what you need to read to change it, without " +
-      "reading whole files. Every body comes with path:start-end and how it was reached (the call and its " +
-      "confidence); callees that do not fit are listed with their size so you can ask for them.",
+      "reading whole files; callees that do not fit are listed with their size. `package`: an installed " +
+      "package's API at its installed version (`symbol` picks one).",
     inputSchema: {
       type: "object",
       properties: {
@@ -50,12 +51,14 @@ export function extractTool(ctx: ToolContext): McpTool {
         file: { type: "string", description: "The file that defines it (project-relative path), when the name is not unique." },
         depth: { type: "number", description: "Hops of callees to include, 0-3 (default 1; 0 = the function alone)." },
         maxTokens: { type: "number", description: "Budget for the source returned (default 6000, max 30000)." },
+        package: { type: "string" },
       },
-      required: ["symbol"],
       additionalProperties: false,
     },
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
+      const pkg = stringArg(args, "package");
+      if (pkg) return { text: await packageApiText(loaded, ctx.store.projectRoot, pkg.trim(), stringArg(args, "symbol")) };
       const symbol = requiredStringArg(args, "symbol");
       const fileArg = stringArg(args, "file");
       const depth = numberArg(args, "depth", 1, { min: 0, max: 3 });
