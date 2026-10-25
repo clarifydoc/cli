@@ -99,6 +99,30 @@ export function changeSummary(f: FreshnessReport): string {
 }
 
 /**
+ * The per-file side of freshness: one line for a subject file the manifest
+ * says moved since the analysis, so an agent reading its facts knows the line
+ * numbers and calls may be off before it acts on them. Null while it matches,
+ * or when nothing can be compared.
+ */
+export async function fileChangedNote(store: AnalysisStore, path: string): Promise<string | null> {
+  const state = (await store.changedSinceAnalysis([path])).get(path);
+  if (!state) return null;
+  const refresh = store.allowAnalyze ? "clarifydoc_analyze refreshes it" : "re-run `clarifydoc analyze --incremental` to refresh it";
+  return state === "removed"
+    ? `⚠ ${path} was removed or renamed since the analysis — what follows describes the file as it was; ${refresh}.`
+    : `⚠ ${path} changed since the analysis — its facts and line numbers may be out of date; ${refresh}.`;
+}
+
+/** A row suffix for each listed file that moved since the analysis (`" (changed since the analysis)"`), "" for the rest. */
+export async function rowFreshness(store: AnalysisStore, paths: Iterable<string>): Promise<(path: string) => string> {
+  const moved = await store.changedSinceAnalysis(paths);
+  return (path) => {
+    const state = moved.get(path);
+    return state ? ` (${state} since the analysis)` : "";
+  };
+}
+
+/**
  * The line every answer ends with while the analysis no longer describes the
  * source: what moved, and how to refresh. Null while it is fresh, or when
  * nothing can be compared (no manifest). Checked at most every few seconds,

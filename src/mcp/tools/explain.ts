@@ -1,7 +1,7 @@
 import type { McpTool } from "../protocol.js";
 import type { ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
-import { requireAnalysis, type ToolContext } from "./context.js";
+import { fileChangedNote, requireAnalysis, type ToolContext } from "./context.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
 import { routeFactId } from "../../core/fact-ids.js";
@@ -64,6 +64,8 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
 
       const parts: Array<{ title: string; get: (left: number) => Promise<string | null>; follow: string }> = [];
       let heading = "";
+      /** The file the subject lives in, when one is known: its freshness heads the pack. */
+      let home: string | undefined;
 
       if (kind === "route") {
         const found = findRoutes(summary.routeMap ?? [], subject, fileArg);
@@ -79,6 +81,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         const r = found[0]!;
         const method = r.httpMethod ?? undefined;
         heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line}) · [${routeFactId(r)}]`;
+        home = r.filePath;
         const seed = r.handler ?? `route:${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`;
         if (r.kind === "api") parts.push({ title: "Contract and callers", get: () => contract({ path: r.path, ...(method ? { method } : {}), file: r.filePath }), follow: `clarifydoc_contract path="${r.path}"` });
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);
@@ -94,6 +97,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         parts.push({ title: "Screen", get: () => screens({ query: subject }), follow: `clarifydoc_screens query="${subject}"` });
         const s = (summary.screens ?? []).find((x) => x.name === subject || x.filePath === subject);
         if (s) {
+          home = s.filePath;
           parts.push({ title: "What it calls", get: () => trace({ file: s.filePath, direction: "callees", depth: 2, limit: 15 }), follow: `clarifydoc_trace file="${s.filePath}" direction="callees"` });
           parts.push({ title: "File", get: () => file({ path: s.filePath }), follow: `clarifydoc_file path="${s.filePath}"` });
         }
@@ -108,6 +112,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         parts.push({ title: "Files", get: async () => `${members.slice(0, 40).map((f) => `- ${f}`).join("\n")}${members.length > 40 ? `\n- … ${members.length - 40} more` : ""}`, follow: `clarifydoc_architecture` });
       } else if (kind === "file") {
         heading = `# ${subject}`;
+        home = subject;
         parts.push({ title: "File", get: () => file({ path: subject }), follow: `clarifydoc_file path="${subject}"` });
         parts.push({ title: "Risk", get: () => blast({ path: subject }), follow: `clarifydoc_blast_radius path="${subject}"` });
       } else {
@@ -117,11 +122,13 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         parts.push({ title: "Callers", get: () => trace({ symbol: subject, ...where, direction: "callers", depth: 2, limit: 15 }), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         // The files declaring it, by the call graph: one, or the one named.
         const declaring = [...new Set((summary.symbolLinks ?? []).filter((l) => l.targetSymbol === subject && (!fileArg || l.targetFile === fileArg)).map((l) => l.targetFile))];
+        home = fileArg ?? (declaring.length === 1 ? declaring[0] : undefined);
         if (declaring.length === 1) parts.push({ title: "Tests", get: async () => testsPart(summary, [{ file: declaring[0]!, symbol: subject }]), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         if (fileArg) parts.push({ title: "Risk", get: () => blast({ path: fileArg }), follow: `clarifydoc_blast_radius path="${fileArg}"` });
       }
 
-      const out: string[] = [heading];
+      const moved = home ? await fileChangedNote(ctx.store, home) : null;
+      const out: string[] = [moved ? `${heading}\n${moved}` : heading];
       const left = () => budget - tokensOf(out.join("\n\n"));
       const skipped: string[] = [];
       for (const p of parts) {
@@ -234,9 +241,12 @@ function communityEdges(summary: ProjectAnalysis, id: string): string {
   return lines.join("\n");
 }
 
-/** A tool's own `Next:` line is about that tool alone; the pack ends with its own. */
+/**
+ * A tool's own `Next:` line is about that tool alone; the pack ends with its
+ * own. Its freshness note (`⚠ …`) is said once, under the pack's heading.
+ */
 function stripNext(text: string): string {
-  return text.split("\n").filter((l) => !/^Next:/.test(l)).join("\n").trim();
+  return text.split("\n").filter((l) => !/^Next:/.test(l) && !/^⚠ /.test(l)).join("\n").trim();
 }
 
 /** A section cut at a line boundary to `tokens`. */

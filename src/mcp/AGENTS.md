@@ -49,7 +49,10 @@ write. That is what lets an external agent be configured as nothing but a comman
   or added since (`assessFreshness`: added files come from `git ls-files`, in directories the analysis covers,
   written after its manifest), and HEAD against the commit it was made at (`sourceRevision`, also in the
   manifest). One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze` are
-  left alone, since they are about exactly that.
+  left alone, since they are about exactly that. Per file, the subject of `clarifydoc_file`,
+  `clarifydoc_blast_radius` and `clarifydoc_explain` gets a `⚠ … changed since the analysis` line under the heading
+  and each listed dependent a `(changed since the analysis)` suffix (`AnalysisStore.changedSinceAnalysis`: a stat
+  per path against the manifest, a hash only where the mtime moved, verdicts kept per mtime). No manifest, no note.
 - **Body search is opt-in.** `clarifydoc_search body=true` (or `throws=`) builds a BM25 index over function
   bodies and the doc comments above them — spans from the summary's complexity rows, text from the
   source — once per loaded analysis, in memory (`body-search.ts`). `signature=` reads parameters and

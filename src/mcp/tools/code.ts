@@ -34,7 +34,7 @@ import {
   page,
   pageFooter,
 } from "../format.js";
-import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { fileChangedNote, mustResolveFile, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 
 export function routesTool(ctx: ToolContext): McpTool {
@@ -508,7 +508,8 @@ export function fileTool(ctx: ToolContext): McpTool {
       const f = loaded.index.byFile.get(path);
       if (!f) return { text: `${path} is in the file list but carries no analysis facts.` };
 
-      const blocks: string[][] = [[`# ${path}`, ""]];
+      const moved = await fileChangedNote(ctx.store, path);
+      const blocks: string[][] = [[`# ${path}`, ...(moved ? [moved] : []), ""]];
 
       if (want.has("overview")) {
         const project = loaded.summary.subProjects?.find((p) => p.id === f.projectId);
@@ -1210,6 +1211,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
 
       if (!pathArg) {
         const ranked = [...all].sort((a, b) => b.impactScore - a.impactScore);
+        const movedRow = await rowFreshness(ctx.store, ranked.slice(0, limit).map((b) => b.filePath));
         return {
           text: joinLines([
             `# Highest-impact files (${all.length} scored)`,
@@ -1217,7 +1219,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
               ranked,
               limit,
               (b) =>
-                `${b.filePath} — ${b.verdict ? `${b.verdict.category}, ` : ""}score ${b.impactScore}, ` +
+                `${b.filePath}${movedRow(b.filePath)} — ${b.verdict ? `${b.verdict.category}, ` : ""}score ${b.impactScore}, ` +
                 `${b.level}/${b.changeRisk}, ` +
                 `${b.directDependents} direct / ${b.transitiveDependents} transitive dependents`,
             ),
@@ -1243,9 +1245,12 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         };
       }
 
+      const moved = await fileChangedNote(ctx.store, path);
+      const movedRow = await rowFreshness(ctx.store, [...b.affectedFiles.slice(0, limit), ...b.transitiveFiles.slice(0, limit), ...b.dependsOn.slice(0, limit)]);
       const blocks: string[][] = [
         [
           `# Blast radius — ${path}`,
+          ...(moved ? [moved] : []),
           ...(b.verdict ? [b.verdict.summary, ""] : []),
           facts([
             ["verdict", b.verdict ? `${b.verdict.category} (${b.verdict.level})` : undefined],
@@ -1285,10 +1290,10 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         }
       }
 
-      blocks.push(section(`Direct dependents (${b.affectedFiles.length})`, bulletList(b.affectedFiles, limit, (f) => f)));
+      blocks.push(section(`Direct dependents (${b.affectedFiles.length})`, bulletList(b.affectedFiles, limit, (f) => `${f}${movedRow(f)}`)));
       if (b.transitiveFiles.length) {
         blocks.push(
-          section(`Transitive dependents (${b.transitiveFiles.length})`, bulletList(b.transitiveFiles, limit, (f) => f)),
+          section(`Transitive dependents (${b.transitiveFiles.length})`, bulletList(b.transitiveFiles, limit, (f) => `${f}${movedRow(f)}`)),
         );
       }
       if (b.exportedSymbols.length) {
@@ -1339,7 +1344,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         );
       }
       if (b.dependsOn.length) {
-        blocks.push(section(`This file depends on (${b.dependsOn.length})`, bulletList(b.dependsOn, limit, (f) => f)));
+        blocks.push(section(`This file depends on (${b.dependsOn.length})`, bulletList(b.dependsOn, limit, (f) => `${f}${movedRow(f)}`)));
       }
 
       return { text: joinLines(blocks) };

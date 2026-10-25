@@ -45,6 +45,7 @@ import type {
 import { analyze, type AnalyzeResult } from "../core/analyzer.js";
 import { discoverFiles } from "../core/file-discovery.js";
 import { loadReportSummary } from "../core/report-payload.js";
+import { classifyFile, loadManifestRaw, type Manifest } from "../core/manifest.js";
 
 /** Routes/api-calls carry the owning file once aggregated project-wide. */
 export type RouteWithFile = RouteInfo & { filePath: string; projectId?: string; requestSchema?: JsonSchemaNode };
@@ -242,6 +243,10 @@ export class AnalysisStore {
   private runProgress: { startedAt: number; stage: string; done?: number; total?: number } | null = null;
   /** In-flight load, so a burst of tool calls parses the summary once. */
   private loading: { key: string; promise: Promise<LoadedAnalysis> } | null = null;
+  /** The manifest the per-file freshness check compares against, by its stat. */
+  private manifest: { key: string; manifest: Manifest | null } | null = null;
+  /** Per-file verdicts by the mtime they were judged at, so a moved mtime is hashed once. */
+  private judged = new Map<string, { mtime: number; changed: boolean }>();
   private readonly log: (message: string) => void;
 
   constructor(private readonly options: AnalysisStoreOptions) {
@@ -505,6 +510,54 @@ export class AnalysisStore {
       if (this.runAbort === abort) this.runAbort = null;
       if (this.runProgress === progress) this.runProgress = null;
     }
+  }
+
+  /**
+   * Which of `paths` no longer match what the analysis read: `changed` (the
+   * content's hash differs from the manifest's) or `removed`. A path the
+   * manifest does not list, or an analysis with no manifest, says nothing —
+   * absence of a note is never a claim of freshness. A stat per path, a hash
+   * only where the mtime moved, each verdict kept until the mtime moves again;
+   * at most `cap` paths are judged per call.
+   */
+  async changedSinceAnalysis(paths: Iterable<string>, cap = 200): Promise<Map<string, "changed" | "removed">> {
+    const out = new Map<string, "changed" | "removed">();
+    const manifestPath = join(this.options.analysisDir, "manifest.json");
+    const info = await statOrNull(manifestPath);
+    if (!info) return out;
+    const key = `${info.mtimeMs}:${info.size}`;
+    if (this.manifest?.key !== key) {
+      this.manifest = { key, manifest: await loadManifestRaw(this.options.analysisDir) };
+      this.judged.clear();
+    }
+    const manifest = this.manifest.manifest;
+    if (!manifest) return out;
+    let n = 0;
+    for (const rel of new Set(paths)) {
+      if (n >= cap) break;
+      const entry = manifest.entries[rel];
+      if (!entry) continue;
+      n++;
+      const abs = join(resolve(this.options.projectRoot), rel);
+      const s = await statOrNull(abs);
+      if (!s) {
+        out.set(rel, "removed");
+        continue;
+      }
+      const seen = this.judged.get(rel);
+      if (seen && seen.mtime === s.mtimeMs) {
+        if (seen.changed) out.set(rel, "changed");
+        continue;
+      }
+      try {
+        const changed = (await classifyFile(abs, entry)).state !== "unchanged";
+        this.judged.set(rel, { mtime: s.mtimeMs, changed });
+        if (changed) out.set(rel, "changed");
+      } catch {
+        out.set(rel, "removed");
+      }
+    }
+    return out;
   }
 
   /**
