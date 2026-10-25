@@ -2810,6 +2810,7 @@ export function buildComponentGraph(
   // `apps/a/lib/util.ts` — a path-suffix scan used to take the first file
   // anywhere ending `lib/util`, often another app's).
   const filePathMap = buildFilePathMap(analyses);
+  const knownFiles = new Set(byPath.keys());
   // Where a language searches load paths too (Sass): the one same-family file
   // whose extension-less path ends with what the import names.
   const loadPathCache = new Map<string, string | undefined>();
@@ -2900,6 +2901,17 @@ export function buildComponentGraph(
       // dynamic imports tend to be (`import("./main.vue")`) — match the
       // extension-stripped keys in strippedPathToFile.
       if (imp.source.startsWith(".")) {
+        // A module named in the specifier (`from . import fixtures, standings as st`,
+        // `from .league import table`) is that module's file, as the import index resolves it.
+        if (imp.specifiers.length > 0) {
+          const modules = new Set<string>();
+          for (const local of imp.specifiers) {
+            const hit = resolveImportSource(a.filePath, imp.source, knownFiles, imp.aliases?.[local] ?? local);
+            if (hit && hit !== a.filePath) modules.add(hit);
+          }
+          for (const m of modules) addRef(m);
+          if (modules.size > 0) continue;
+        }
         const match = resolveTarget(imp.source, a.filePath, filePathMap) ?? (pluginFor(a.language as Language)?.importLoadPaths ? onLoadPath(imp.source, a.filePath) : undefined);
         // Another family's file only when the import names it, extension and
         // all: a component's `import "./app.scss"` is that stylesheet.

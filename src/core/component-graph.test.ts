@@ -219,3 +219,19 @@ describe("buildComponentGraph — Sass load paths", () => {
     expect(ts["apps/a/main.ts"]).toBeUndefined();
   });
 });
+
+describe("buildComponentGraph — Python modules named in the specifier", () => {
+  it("`from . import fixtures, standings as st` depends on each module, `from . import helper` on the package", () => {
+    const py = (path: string, imports: Partial<ImportInfo>[] = []) => file(path, { language: "python", imports });
+    const graph = buildComponentGraph([
+      py("league/__init__.py"),
+      py("league/fixtures.py"),
+      py("league/standings.py"),
+      py("league/table.py", [
+        { source: ".", specifiers: ["fixtures", "st"], aliases: { st: "standings" }, isNamespace: false },
+        { source: ".", specifiers: ["helper"], isNamespace: false },
+      ]),
+    ]);
+    expect(graph["league/table.py"]?.sort()).toEqual(["league/__init__.py", "league/fixtures.py", "league/standings.py"]);
+  });
+});
