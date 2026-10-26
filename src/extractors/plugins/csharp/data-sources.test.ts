@@ -593,6 +593,25 @@ public class FixtureService {
   });
 });
 
+describe("C# a wrapper handed a parameter-typed client and a built Uri (real-repo FP)", () => {
+  it("names the parameter's type and evaluates new Uri(…) and string.Format", async () => {
+    const src = `namespace League;
+internal static class Updates {
+  internal static async Task Check(IWebClientService web, Spec spec) {
+    const string FeedUrl = "https://feeds.example.com/{0}/index.json";
+    await web.SafeGetStringAsync(new Uri("https://api.example.com/repos/league/releases"), ct);
+    string url = string.Format(FeedUrl, spec.Id);
+    await web.SafeGetStringAsync(new Uri(url), ct);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "Updates.cs");
+    expect(extractCsharpPathArgCalls(tree, src).map((c) => [c.callee, c.args[0], c.receiverType])).toEqual([
+      ["SafeGetStringAsync", "https://api.example.com/repos/league/releases", "IWebClientService"],
+      ["SafeGetStringAsync", "https://feeds.example.com/{spec.Id}/index.json", "IWebClientService"],
+    ]);
+  });
+});
+
 describe("C# consumers that filter on the routing key", () => {
   it("consume the key they compare against (real-repo FP)", async () => {
     const src = `namespace League;

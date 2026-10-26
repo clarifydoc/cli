@@ -323,7 +323,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     this.stringLocals = [];
     // Each initializer as written (`$"api/v1/x"`, `GetPath(id) + "/x"`); `evalUri` reads it.
     for (const m of sourceText.matchAll(/\b(?:var|string)\s+(\w+)\s*=\s*([^;]+);/g)) {
-      if (!m[2]!.includes('"') && !/^\s*\w+\s*\(/.test(m[2]!)) continue;
+      if (!m[2]!.includes('"') && !/^\s*(?:\w+|(?:string|String)\.Format|[\w.]*Combine(?:Uri|Url)\w*)\s*\(/.test(m[2]!)) continue;
       const line = sourceText.slice(0, m.index!).split("\n").length;
       this.stringLocals.push({ name: m[1]!, line, value: m[2]!.trim() });
     }
@@ -376,7 +376,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const fn = inv.childForFieldName("function");
       // `_requestProvider.PostAsync(uri, …)` on a field or property of a declared type: that type's method.
       const object = fn?.type === "member_access_expression" ? fn.childForFieldName("expression") : null;
-      const receiverType = object?.type === "identifier" ? memberDeclaredType(inv, object.text) : null;
+      const declared = object?.type === "identifier" ? (parameterType(inv, object.text)?.replace(/<[\s\S]*$/, "") ?? memberDeclaredType(inv, object.text)) : null;
+      const receiverType = declared && declared !== "var" && /^[A-Z]/.test(declared.replace(/^.*\./, "")) ? declared : null;
       const name = fn?.type === "identifier" || fn?.type === "generic_name" ? fn
         : fn?.type === "member_access_expression" && (/^(?:this|base)$/.test(fn.firstChild?.type ?? "") || receiverType) ? fn.childForFieldName("name")
         : null;
@@ -385,7 +386,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const line = inv.startPosition.row + 1;
       const args = argumentNodes(inv).map((arg) => {
         const text = arg.text.trim().replace(NAMED_ARG_RE, "").trim();
-        if (!/^[@$]*"|^[A-Za-z_]\w*$/.test(text)) return null;
+        if (!/^[@$]*"|^[A-Za-z_]\w*$|^new\s+(?:System\.)?Uri\s*\(|^(?:string|String)\.Format\s*\(/.test(text)) return null;
         const v = this.evalUri(text, line, 0);
         return v && v.includes("/") ? memberHoles(v, inv) : null;
       });
@@ -430,6 +431,23 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         const v = this.callHelper(helper[1]!, helper[2]!, line, depth, bound);
         if (v === null) return null;
         out += v;
+        stated = true;
+      } else if (/^new\s+(?:System\.)?Uri\s*\(/.test(p) && depth < 4) {
+        // `new Uri("https://…")`, `new Uri(url)`: the URI it is built from.
+        const inner = splitTopLevelArgs(p.slice(p.indexOf("(") + 1, p.lastIndexOf(")")))[0];
+        const v = inner !== undefined ? this.evalUri(inner, line, depth + 1, bound) : null;
+        if (v === null) return null;
+        out += v;
+        stated = true;
+      } else if (/^(?:string|String)\.Format\s*\(/.test(p) && depth < 4) {
+        // `string.Format(UrlTemplate, id)`: the template, each `{n}` the argument it names.
+        const args = splitTopLevelArgs(p.slice(p.indexOf("(") + 1, p.lastIndexOf(")")));
+        const fmt = args[0] !== undefined ? this.evalUri(args[0], line, depth + 1, bound) : null;
+        if (fmt === null) return null;
+        out += fmt.replace(/\{(\d+)(?::[^}]*)?\}/g, (_m, n: string) => {
+          const arg = (args[Number(n) + 1] ?? "").replace(/\s+/g, "");
+          return `{${/^[A-Za-z_][\w.]*$/.test(arg) ? arg : `arg${n}`}}`;
+        });
         stated = true;
       } else if (COMBINE_CALL_RE.test(p) && this.combineCall(p, line, depth, bound) !== null) {
         out += this.combineCall(p, line, depth, bound)!;
