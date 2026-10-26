@@ -4,12 +4,13 @@ import { goTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { goFrameworkRules } from "./frameworks.js";
 import { goPackageManager } from "./package-manifests.js";
+import { goPackageDirectory } from "./package-directory.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and leaf rules only.
  */
 export const goManifest: LanguagePluginManifest = {
   migrationFiles: goMigrationFiles,
@@ -20,6 +21,8 @@ export const goManifest: LanguagePluginManifest = {
   // A package is its directory: a bare call reaches the function a sibling file declares.
   directoryScope: true,
   importsNameDirectories: true,
+  // An import path is the go.mod module path, then the package's directory under it.
+  packageDirectory: goPackageDirectory,
   packageManagers: [goPackageManager],
   packageEcosystems: ["go"],
   parsing: "regex",

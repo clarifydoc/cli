@@ -89,6 +89,19 @@ export interface PackageManifestSpec {
    * import of that sub-project.
    */
   selfName?(text: string): string | null;
+  /**
+   * Packages the manifest maps to a directory of this repository instead of a
+   * download (go.mod `replace example.com/kit => ./kit`): `path` relative to
+   * the manifest's directory. Recorded on `SubProject.packages` with that root.
+   */
+  localPackages?(text: string): Array<{ name: string; path: string }>;
+}
+
+/** A package of this repository by the name its importers write: its manifest's own name and the directory it is rooted at. */
+export interface PackageRoot {
+  name: string;
+  /** Directory from the analysis root, posix, `""` for the root itself. */
+  root: string;
 }
 
 /**
@@ -918,6 +931,19 @@ export interface LanguagePluginManifest {
    * project's. Leaf code: it reads only `ctx`.
    */
   resolveImport?(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext): string | null;
+  /**
+   * The directory a package import names, for a language whose import path is
+   * the package's own name plus its directory (`importsNameDirectories` — a Go
+   * import is the go.mod module path, then the directory under that module):
+   * the directory from the analysis root; null when the import is no package
+   * of this repository (the standard library, a download); undefined when the
+   * packages cannot say (no manifest declares a name), and core falls back to
+   * matching the import's trailing segments against directory names.
+   * `packages` are this repository's packages of the language's ecosystems;
+   * `hasDirectory` says whether an analyzed file lies directly in a directory.
+   * Leaf code.
+   */
+  packageDirectory?(importingFile: string, source: string, packages: readonly PackageRoot[], hasDirectory: (dir: string) => boolean): string | null | undefined;
   /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null

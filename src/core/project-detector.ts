@@ -1,7 +1,7 @@
 import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";
-import { join, resolve } from "path";
+import { join, posix, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 import { PACKAGE_MANAGERS } from "../extractors/registry.js";
@@ -166,28 +166,35 @@ export async function detectSubProjects(
 
   subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   await Promise.all(subProjects.map(async (p) => {
-    const declared = await declaredPackageName(root, p);
-    if (declared) {
-      p.packageName = declared.name;
-      p.packageEcosystem = declared.ecosystem;
+    const { names, local } = await declaredPackages(root, p);
+    const [first, ...rest] = names;
+    if (first) {
+      p.packageName = first.name;
+      p.packageEcosystem = first.ecosystem;
     }
+    if (rest.length + local.length > 0) p.packages = [...rest, ...local];
   }));
   return subProjects;
 }
 
 /**
- * The name the manifest at `dir` declares for its own package, asked of every
+ * The packages the manifests at a sub-project's root declare, asked of every
  * registered package-manager format that can say (the registry's
- * `PackageManifestSpec.selfName`): core reads the file, the plugin reads the
- * format. The first format whose manifest is present and names one wins.
+ * `PackageManifestSpec.selfName` / `localPackages`): core reads the file, the
+ * plugin reads the format. The first format whose manifest names one gives
+ * `packageName`; each other ecosystem's name follows, then the packages a
+ * manifest maps to a directory of the repository (rooted inside it only).
  */
-async function declaredPackageName(
+async function declaredPackages(
   root: string,
   project: SubProject,
-): Promise<{ name: string; ecosystem: PackageEcosystem } | null> {
+): Promise<{ names: Array<{ name: string; ecosystem: PackageEcosystem }>; local: Array<{ name: string; ecosystem: PackageEcosystem; root: string }> }> {
+  const out: Array<{ name: string; ecosystem: PackageEcosystem }> = [];
+  const local: Array<{ name: string; ecosystem: PackageEcosystem; root: string }> = [];
   for (const manager of PACKAGE_MANAGERS) {
+    let named = out.some((p) => p.ecosystem === manager.ecosystem);
     for (const spec of manager.manifests) {
-      if (!spec.selfName || spec.glob) continue;
+      if ((!spec.selfName && !spec.localPackages) || spec.glob) continue;
       for (const file of spec.files) {
         let text: string;
         try {
@@ -195,12 +202,20 @@ async function declaredPackageName(
         } catch {
           continue;
         }
-        const name = spec.selfName(text);
-        if (name) return { name, ecosystem: manager.ecosystem };
+        const name = named ? null : spec.selfName?.(text);
+        if (name) {
+          out.push({ name, ecosystem: manager.ecosystem });
+          named = true;
+        }
+        for (const pkg of spec.localPackages?.(text) ?? []) {
+          const dir = posix.normalize(posix.join(project.root.replace(/\\/g, "/"), posix.dirname(file), pkg.path)).replace(/\/+$/, "");
+          if (dir === ".." || dir.startsWith("../") || posix.isAbsolute(dir)) continue;
+          local.push({ name: pkg.name, ecosystem: manager.ecosystem, root: dir === "." ? "" : dir });
+        }
       }
     }
   }
-  return null;
+  return { names: out, local };
 }
 
 /** True when this CMakeLists.txt declares a project (`project(...)` call). */

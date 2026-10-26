@@ -174,6 +174,8 @@ export function expandRequestFactories(
   analyses: readonly FileAnalysis[],
   importIndex: ImportIndex,
   classes?: ClassIndex,
+  /** The package-import resolver the project shares (built from `analyses` alone when absent). */
+  sharedImportDirectory?: (source: string, fromFile: string) => string | null,
 ): number {
   const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
   if (!analyses.some((a) => a.pathArgCalls?.length)) return 0;
@@ -254,7 +256,7 @@ export function expandRequestFactories(
   };
 
   const known = new Set(calls.filter((c) => c.kind === "api-call" && c.target).map((c) => `${c.filePath}:${c.line}:${c.target}`));
-  let importDirectory: ((source: string, fromFile: string) => string | null) | null = null;
+  let importDirectory: ((source: string, fromFile: string) => string | null) | null = sharedImportDirectory ?? null;
   const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
   let added = 0;
   // A factory calling a factory: a site handing on its own function's parameter

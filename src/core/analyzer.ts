@@ -1057,7 +1057,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
   const classIndex = buildClassIndex(allAnalyses, importIndex);
-  const moduleValue = buildModuleValueLookup(allAnalyses, importIndex, classIndex);
+  // The directory each package import names (Go: by its go.mod module path).
+  const importDirectory = buildImportDirectoryResolver(allAnalyses, subProjects);
+  const moduleValue = buildModuleValueLookup(allAnalyses, importIndex, classIndex, importDirectory);
   const projectContext: ProjectContext = {
     importIndex,
     classes: classIndex,
@@ -1107,11 +1109,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const typeOnlyImports: Record<string, string[]> = {};
   // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
   const dynamicImportEdges: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges);
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory);
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
-  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects));
+  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects, importDirectory));
 
   // Resolve dispatch indirection (mediator / command-bus) the generic linker
   // can't see: a controller's `Send(new XQuery())` has no call edge to the
@@ -1271,7 +1273,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // the inner one's rows land in it: expand until a round adds nothing.
   let factoryCalls = 0;
   for (let round = 0, added = -1; round < 4 && added !== 0; round++) {
-    added = expandRequestFactories(allApiCalls, allAnalyses, importIndex, projectContext.classes);
+    added = expandRequestFactories(allApiCalls, allAnalyses, importIndex, projectContext.classes, importDirectory);
     factoryCalls += added;
   }
   if (factoryCalls > 0 && verbose) progress.detail(`  request-factory calls: ${factoryCalls}`);
@@ -2902,6 +2904,8 @@ export function buildComponentGraph(
   typeOnlyOut?: Record<string, string[]>,
   /** Filled with each file's edges that only dynamic imports state (`import("./x")`): loaded on demand. */
   dynamicOut?: Record<string, string[]>,
+  /** The package-import resolver the project shares (built from `analyses` alone when absent). */
+  importDirectory?: (source: string, fromFile: string) => string | null,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -2990,7 +2994,7 @@ export function buildComponentGraph(
   }
 
   // The ONE project directory a package import names (import-directories.ts).
-  const resolveImportDirectory = buildImportDirectoryResolver(analyses);
+  const resolveImportDirectory = importDirectory ?? buildImportDirectoryResolver(analyses);
   // Names each file declares, for narrowing a package import to the files
   // whose names the importer uses.
   const declaredCache = new Map<string, Set<string>>();

@@ -22,7 +22,8 @@ import { commonPrefixLength, extensionFamily } from "../extractors/plugins/share
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectories, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
+import { buildImportDirectoryResolver, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
@@ -47,7 +48,12 @@ interface SymbolDef {
  *
  * Runs as a post-analysis pass after all files have been individually analyzed.
  */
-export function buildSymbolLinks(input: FileAnalysis[], subProjects: readonly SubProject[] = []): SymbolLink[] {
+export function buildSymbolLinks(
+  input: FileAnalysis[],
+  subProjects: readonly SubProject[] = [],
+  /** The package-import resolver the project shares (built here when absent). */
+  importDirectory?: ImportDirectoryResolver,
+): SymbolLink[] {
   // In path order, whatever order the caller holds them in: where two
   // candidates tie, which one an index met first must not depend on it.
   const analyses = input.every((a, i) => i === 0 || byOrdinal(input[i - 1]!.filePath, a.filePath) <= 0)
@@ -87,6 +93,8 @@ export function buildSymbolLinks(input: FileAnalysis[], subProjects: readonly Su
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
     packageProjects: buildPackageProjectIndex(subProjects),
+    importDirectory: importDirectory ?? buildImportDirectoryResolver(analyses, subProjects),
+    packageImportsCache: new Map(),
     importedProjectsCache: new Map(),
     projectStemsCache: new Map(),
     importedStemsCache: new Map(),
@@ -1437,6 +1445,10 @@ interface LinkContext {
   /** Lazy per-file cache: files this file's imports resolve to (Strategy 4's
    *  cross-project gate). */
   importedFilesCache: Map<string, Set<string>>;
+  /** The project directory a package import names (`import-directories.ts`; Go by its go.mod module path). */
+  importDirectory: ImportDirectoryResolver;
+  /** Per package (directory + test flag): the files of the packages its files import (`packageScoped` languages). */
+  packageImportsCache: Map<string, Set<string>>;
   /**
    * Sub-projects by the package their manifest declares, keyed per ecosystem
    * the way that ecosystem's `PackageManagerSpec` keys packages
@@ -1462,17 +1474,82 @@ function fileStem(filePath: string): string {
   return (dot > 0 ? base.slice(0, dot) : base).toLowerCase();
 }
 
+/**
+ * A language whose package is its directory AND whose imports name package
+ * directories (Go): an import loads every file of one directory, and what one
+ * file of a package imports is in scope for its siblings' values too.
+ */
+function packageScoped(language: string): boolean {
+  return importsNameDirectories(language) && !!pluginFor(language as Language)?.directoryScope;
+}
+
+/**
+ * A test of its package by the language's own rule (`_test.go`), which no
+ * import loads — not by directory name: `modules/test` is a package like any.
+ */
+function packageTest(ctx: LinkContext, file: string): boolean {
+  const language = (ctx.languageOf.get(file) ?? "") as Language;
+  const own = testFilePatternsFor(language);
+  return own.length > 0 ? own.some((re) => re.test(file)) : isTestFile(file, language);
+}
+
+/** The files of a package an import names: the directory's files of the importer's family, never its tests. */
+function packageFilesOf(ctx: LinkContext, dir: string, fromFile: string): string[] {
+  ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
+  const family = extensionFamily(fromFile);
+  return (ctx.directoryFiles.get(dir ? `${dir}/` : "") ?? []).filter(
+    (f) => f !== fromFile && extensionFamily(f) === family && !packageTest(ctx, f),
+  );
+}
+
 /** Files the analysis's imports resolve to (cached per source file). */
 function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
   let set = ctx.importedFilesCache.get(analysis.filePath);
   if (!set) {
-    set = new Set();
-    for (const imp of analysis.imports) {
-      const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
-      if (f && f !== analysis.filePath) set.add(f);
+    if (packageScoped(analysis.language)) {
+      set = packageImportsOf(analysis, ctx);
+    } else {
+      set = new Set();
+      for (const imp of analysis.imports) {
+        const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
+        if (f && f !== analysis.filePath) set.add(f);
+      }
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
+  return set;
+}
+
+/**
+ * The files of every package the analysis's package imports (`packageScoped`):
+ * a Go value's type is in scope wherever any file of the package imported it —
+ * `t.Owner.Name()` in one file, the `user` import in the file declaring the
+ * struct. A production file counts its non-test siblings; a test file adds its own.
+ */
+function packageImportsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
+  const file = analysis.filePath;
+  const dir = file.slice(0, Math.max(0, file.lastIndexOf("/")));
+  const isTest = packageTest(ctx, file);
+  const key = `${dir}\0${isTest ? file : ""}`;
+  let set = ctx.packageImportsCache.get(key);
+  if (set) return set;
+  set = new Set();
+  ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const family = extensionFamily(file);
+  const members = (ctx.directoryFiles.get(dir ? `${dir}/` : "") ?? []).filter(
+    (f) => f === file || (extensionFamily(f) === family && !packageTest(ctx, f)),
+  );
+  for (const member of members) {
+    const a = ctx.analysisByFile.get(member);
+    if (!a) continue;
+    for (const imp of a.imports) {
+      const target = ctx.importDirectory(imp.source, member);
+      if (target === null || target === dir) continue;
+      for (const f of packageFilesOf(ctx, target, member)) set.add(f);
+    }
+  }
+  ctx.packageImportsCache.set(key, set);
   return set;
 }
 
@@ -1490,8 +1567,9 @@ function importedProjectsOf(analysis: FileAnalysis, ctx: LinkContext): Set<strin
   if (!set) {
     set = new Set();
     if (ctx.packageProjects.size > 0) {
+      const byDirectory = packageScoped(analysis.language);
       for (const imp of analysis.imports) {
-        if (resolveTarget(imp.source, analysis.filePath, ctx.filePathMap)) continue;
+        if (byDirectory ? ctx.importDirectory(imp.source, analysis.filePath) !== null : resolveTarget(imp.source, analysis.filePath, ctx.filePathMap)) continue;
         const project = packageProjectOf(imp.source, analysis.language, ctx);
         if (project && project !== analysis.projectId) set.add(project);
       }
@@ -1520,6 +1598,13 @@ function importsFile(analysis: FileAnalysis, file: string, ctx: LinkContext): bo
  * parameter, a local, nor an external package.
  */
 function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string, ctx: LinkContext): boolean {
+  if (packageScoped(analysis.language)) {
+    // A Go import binds its package's name (or its alias): the target must lie in that directory.
+    const imp = analysis.imports.find((i) => i.specifiers.includes(head));
+    if (!imp) return false;
+    const dir = ctx.importDirectory(imp.source, analysis.filePath);
+    return dir !== null && targetFile.slice(0, Math.max(0, targetFile.lastIndexOf("/"))) === dir;
+  }
   for (const imp of analysis.imports) {
     const resolved = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
     if (imp.specifiers.length === 0) {
@@ -1537,6 +1622,13 @@ function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string
     if (/(?:^|\/)(?:index\.[^/]+|__init__\.pyi?|mod\.rs)$/.test(resolved)) return true;
   }
   return false;
+}
+
+/** Whether `head` is the name an import binds to a package no project directory holds (the standard library, a download). */
+function headNamesForeignPackage(analysis: FileAnalysis, head: string, ctx: LinkContext): boolean {
+  const imp = analysis.imports.find((i) => i.specifiers.includes(head));
+  // Decided by the language's package rule only: a trailing-segment guess that finds no directory proves nothing.
+  return !!imp && ctx.importDirectory.exact(imp.source, analysis.filePath) === null;
 }
 
 /** True when the analysis imports nothing the linker can see — by path or by package. */
@@ -1589,7 +1681,8 @@ function importedStemsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
   let set = ctx.importedStemsCache.get(analysis.filePath);
   if (!set) {
     set = new Set();
-    for (const f of importedFilesOf(analysis, ctx)) set.add(fileStem(f));
+    // A package import names a directory, never a file stem.
+    if (!packageScoped(analysis.language)) for (const f of importedFilesOf(analysis, ctx)) set.add(fileStem(f));
     for (const project of importedProjectsOf(analysis, ctx)) for (const stem of projectStemsOf(project, ctx)) set.add(stem);
     ctx.importedStemsCache.set(analysis.filePath, set);
   }
@@ -2793,7 +2886,25 @@ function resolveCallToDefinition(
   if (!def && isQualified) {
     const head = parts[0]!;
     const imp = analysis.imports.find((i) => !i.isType && i.specifiers.includes(head));
-    if (imp) {
+    // The one directory the import names, when the language's package rule
+    // decides it (a Go import by its go.mod module path): the symbol is that
+    // package's, or no project file's — the standard library, a download.
+    const exactDir = imp && packageScoped(analysis.language) ? ctx.importDirectory.exact(imp.source, sourceFile) : undefined;
+    if (imp && exactDir !== undefined) {
+      if (exactDir !== null) {
+        let found: { file: string; def: SymbolDef } | null = null;
+        let count = 0;
+        for (const filePath of packageFilesOf(ctx, exactDir, sourceFile)) {
+          const d = symbolIndex.get(filePath)?.get(leafName);
+          if (d) {
+            count++;
+            if (count > 1) break;
+            found = { file: filePath, def: d };
+          }
+        }
+        if (count === 1 && found) return mkLink(found.file, found.def.name, found.def.line, "INFERRED", "import-dir");
+      }
+    } else if (imp) {
       const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
       if (impFile && impFile !== sourceFile) {
         // Import maps to a single file (TS namespace import, Python module)
@@ -2955,7 +3066,11 @@ function resolveCallToDefinition(
         // only its declared return could say; Strategy 2 followed that and failed,
         // so a match by name alone needs the target to be in scope.
         const callReceiver = parts.slice(1, -1).some((p) => p.includes("("));
-        if (!contradicted && !freeTargetVetoed && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
+        // A receiver that is a package no project directory holds (`strings.Cut`,
+        // `builder.Select().From` on an imported query builder): its values are
+        // that package's types, never a project method of the same name.
+        const foreignPackage = packageScoped(analysis.language) && headNamesForeignPackage(analysis, head.replace(/\?$/, ""), ctx);
+        if (!contradicted && !freeTargetVetoed && !foreignPackage && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,
             entry.def.name,

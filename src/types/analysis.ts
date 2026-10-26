@@ -3121,6 +3121,14 @@ export interface SubProject {
   packageName?: string;
   /** The package ecosystem that name belongs to (`cargo`, `npm`, `go`, …) — the matching rules are the ecosystem's. */
   packageEcosystem?: PackageEcosystem;
+  /**
+   * Further packages the sub-project's manifests declare: the name another
+   * ecosystem's manifest at the same root gives (a go.mod `module` beside a
+   * package.json `name`), and — with `root` — a package a manifest maps to a
+   * directory of this repository (go.mod `replace … => ./dir`). Absent when
+   * `packageName` is the only one.
+   */
+  packages?: Array<{ name: string; ecosystem: PackageEcosystem; root?: string }>;
   markers: string[];
   /**
    * Frameworks/ORMs detected from this sub-project's own manifests (its nested

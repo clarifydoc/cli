@@ -37,7 +37,13 @@ export type { ModuleValueLookup };
 const NAME = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
 const HOLE = /\$\{([^{}]*)\}/g;
 
-export function buildModuleValueLookup(analyses: readonly FileAnalysis[], importIndex: ImportIndex, classes?: ClassIndex): ModuleValueLookup {
+export function buildModuleValueLookup(
+  analyses: readonly FileAnalysis[],
+  importIndex: ImportIndex,
+  classes?: ClassIndex,
+  /** The package-import resolver the project shares (built from `analyses` alone when absent). */
+  sharedImportDirectory?: (source: string, fromFile: string) => string | null,
+): ModuleValueLookup {
   const byFile = new Map(analyses.map((a) => [a.filePath, a]));
   let filesByDir: Map<string, FileAnalysis[]> | null = null;
   const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -52,7 +58,7 @@ export function buildModuleValueLookup(analyses: readonly FileAnalysis[], import
     }
     return filesByDir.get(dir) ?? [];
   };
-  let importDirectory: ((source: string, fromFile: string) => string | null) | null = null;
+  let importDirectory: ((source: string, fromFile: string) => string | null) | null = sharedImportDirectory ?? null;
 
   /** One value among the files that define `key`, or null when none or several differ. */
   const unique = (files: readonly FileAnalysis[], key: string, from: FileAnalysis): { value: string; file: string } | null => {
