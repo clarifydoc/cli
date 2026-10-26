@@ -477,13 +477,68 @@ function chainRootIsRoute(call: Node): boolean {
   return cur?.type === "scoped_call_expression" && cur.childForFieldName("scope")?.text === "Route";
 }
 
+/** One pass of a `foreach` over a literal array: the loop variables and what they hold. */
+type LoopBinding = Map<string, { text: string | null; node: Node | null }>;
+
+/**
+ * The passes of the `foreach` a route call sits in when it walks an array
+ * literal the file assigns (`$endpoints = ['ping' => PingController::class, …]`,
+ * reached directly or through a closure's `use`): one binding per entry, the
+ * key variable to the entry's key, the value variable to its value. Null when
+ * the call is in no such loop.
+ */
+function literalLoop(call: Node): LoopBinding[] | null {
+  let loop: Node | null = call.parent;
+  while (loop && loop.type !== "foreach_statement") loop = loop.parent;
+  if (!loop) return null;
+  const iterated = loop.namedChildren[0];
+  const binding = loop.namedChildren[1];
+  if (iterated?.type !== "variable_name" || !binding) return null;
+  const keyVar = binding.type === "pair" ? binding.namedChildren[0]?.text : null;
+  const valueVar = binding.type === "pair" ? binding.namedChildren[1]?.text : binding.type === "variable_name" ? binding.text : null;
+  const literals = call.tree.rootNode.descendantsOfType("assignment_expression").filter(
+    (a): a is Node => !!a && a.childForFieldName("left")?.text === iterated.text && a.childForFieldName("right")?.type === "array_creation_expression",
+  );
+  if (literals.length !== 1) return null;
+  const out: LoopBinding[] = [];
+  for (const el of literals[0]!.childForFieldName("right")!.namedChildren) {
+    if (el.type !== "array_element_initializer") continue;
+    const parts = el.namedChildren;
+    const key = parts.length === 2 ? parts[0]! : null;
+    const value = parts.length === 2 ? parts[1]! : parts[0] ?? null;
+    const b: LoopBinding = new Map();
+    if (keyVar) b.set(keyVar, { text: key ? stringValue(key) : null, node: key });
+    if (valueVar) b.set(valueVar, { text: value ? stringValue(value) : null, node: value });
+    out.push(b);
+  }
+  return out;
+}
+
+/** A route path with the loop's variables (`"{$endpoint}.view"`, `"$endpoint"`) filled in; null when one has no string value. */
+function boundString(node: Node | undefined, bound: LoopBinding | undefined): string | null {
+  const text = stringValue(node);
+  if (text === null || !bound || node?.type !== "encapsed_string") return text;
+  let missing = false;
+  const out = text.replace(/\{(\$\w+)\}|(\$\w+)/g, (m, braced: string | undefined, bare: string | undefined) => {
+    const v = bound.get((braced ?? bare)!);
+    if (!v) return m;
+    if (v.text === null) missing = true;
+    return v.text ?? "";
+  });
+  return missing ? null : out;
+}
+
 function emitVerbRoute(
   call: Node,
   verb: string,
-  args: Node[],
+  rawArgs: Node[],
   routes: RouteInfo[],
   basePrefix: string,
+  bound?: LoopBinding,
 ): void {
+  // A loop variable handed as the handler (`$controller`) is the entry's value.
+  const args = bound ? rawArgs.map((a) => (a.type === "variable_name" && bound.get(a.text)?.node) || a) : rawArgs;
+  const stringValue = (node: Node | undefined): string | null => boundString(node, bound);
   const line = call.startPosition.row + 1;
   const scope = groupScopeOf(call);
   const prefixes = basePrefix ? [basePrefix, ...scope.prefixes] : scope.prefixes;
@@ -595,7 +650,7 @@ export function visitLaravelRoute(node: Node, routes: RouteInfo[], basePrefix = 
     if (node.childForFieldName("scope")?.text !== "Route") return;
     const verb = node.childForFieldName("name")?.text ?? "";
     if (!ROUTE_CALL_NAMES.has(verb)) return;
-    emitVerbRoute(node, verb, callArgs(node), routes, basePrefix);
+    emitLooped(node, verb, routes, basePrefix);
     return;
   }
 
@@ -604,8 +659,20 @@ export function visitLaravelRoute(node: Node, routes: RouteInfo[], basePrefix = 
     const verb = node.childForFieldName("name")?.text ?? "";
     if (!ROUTE_CALL_NAMES.has(verb)) return;
     if (!chainRootIsRoute(node)) return;
-    emitVerbRoute(node, verb, callArgs(node), routes, basePrefix);
+    emitLooped(node, verb, routes, basePrefix);
   }
+}
+
+/** A route call, once per entry of the literal array a `foreach` around it walks. */
+function emitLooped(node: Node, verb: string, routes: RouteInfo[], basePrefix: string): void {
+  const passes = literalLoop(node);
+  // Only a call that uses a loop variable differs from pass to pass.
+  const uses = (b: LoopBinding) => [...b.keys()].some((v) => new RegExp(`\\${v}\\b`).test(node.text));
+  if (!passes || passes.length === 0 || !uses(passes[0]!)) {
+    emitVerbRoute(node, verb, callArgs(node), routes, basePrefix);
+    return;
+  }
+  for (const bound of passes) emitVerbRoute(node, verb, callArgs(node), routes, basePrefix, bound);
 }
 
 /**

@@ -14,6 +14,36 @@ async function routesOf(source: string, filePath = "routes/web.php"): Promise<Ro
   return phpRouteExtractor.extractRoutes(tree, source, filePath);
 }
 
+describe("Laravel routes registered in a loop over a literal array (real-repo FP shape)", () => {
+  it("registers one route per entry, the key in the path and the value as the controller", async () => {
+    const routes = await routesOf(`<?php
+use App\\Http\\Controllers\\League\\PingController;
+use App\\Http\\Controllers\\League\\GetClubController;
+
+$endpoints = [
+    'ping' => PingController::class,
+    'getClub' => GetClubController::class,
+];
+
+Route::prefix('league')->group(static function () use ($endpoints): void {
+    foreach ($endpoints as $endpoint => $controller) {
+        Route::match(['get', 'post'], "{$endpoint}{format?}", $controller);
+    }
+    foreach (['a', 'b'] as $unused) {
+        Route::get('/health', fn () => 'ok');
+    }
+});
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET /league/ping{format?} PingController#__invoke",
+      "POST /league/ping{format?} PingController#__invoke",
+      "GET /league/getClub{format?} GetClubController#__invoke",
+      "POST /league/getClub{format?} GetClubController#__invoke",
+      "GET /league/health null",
+    ]);
+  });
+});
+
 describe("Laravel Route:: facade routing", () => {
   it("extracts verb routes with tuple, string, and closure handlers", async () => {
     const SRC = `<?php
