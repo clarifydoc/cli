@@ -42,3 +42,11 @@ describe("Angular output bindings", () => {
     ]);
   });
 });
+
+describe("Angular key-filtered events", () => {
+  it("reads (keyup.enter) as an event with its handler (real-repo FP)", () => {
+    const els = extractAngularInteractiveElementsFromTemplate(`<input type="text" id="club-url"
+       (keyup.enter)="loadClub()">`);
+    expect(els.map((e) => [e.event, e.handler])).toEqual([["(keyup.enter)", "loadClub"]]);
+  });
+});

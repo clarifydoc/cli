@@ -74,8 +74,8 @@ export function extractAngularTemplateUrl(sourceText: string): string | null {
  *  `SVELTE_TAG_RE` — quoted attr values are skipped so `>` inside them doesn't
  *  end the tag early. */
 const ANGULAR_TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>'"])*?)\/?>/g;
-/** `(event)="handler"` output binding: captures (1) event name, (2) handler. */
-const ANGULAR_EVENT_RE = /\(([a-zA-Z][a-zA-Z0-9]*)\)\s*=\s*"([^"]*)"/g;
+/** `(event)="handler"` output binding, a key event's filter included (`(keyup.enter)`): captures (1) event name, (2) handler. */
+const ANGULAR_EVENT_RE = /\(([a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)*)\)\s*=\s*"([^"]*)"/g;
 
 export function extractAngularInteractiveElements(
   sourceText: string,
