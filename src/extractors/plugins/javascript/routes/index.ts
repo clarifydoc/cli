@@ -1,4 +1,5 @@
 import { collectScreenTables } from "./screen-tables.js";
+import { staticMountFacts } from "../../shared/static-mounts.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
@@ -76,6 +77,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (maybeTanstack) collectTanstackCodeRoutes(tree.rootNode, sourceText, tanstack);
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.
     collectCdkRoutes(tree.rootNode, sourceText, facts);
+    // `app.use(express.static(path.join(here, "public")))`: the pages there are served from the mount.
+    if (facts) facts.push(...staticMountFacts(sourceText));
 
     // Code-first GraphQL schemas (NestJS/TypeGraphQL resolvers, Pothos, Nexus, graphql-js): their root fields.
     const graphql: RouteInfo[] = [];

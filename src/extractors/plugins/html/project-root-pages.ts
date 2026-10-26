@@ -2,6 +2,7 @@ import type { FileAnalysis } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { pageRoutePath } from "./index.js";
+import { STATIC_MOUNT_FACT, type StaticMount } from "../shared/static-mounts.js";
 
 /**
  * A page of a sub-project its own dev server or bundler serves is at the path it has inside that
@@ -23,11 +24,33 @@ function hasAny(ctx: ProjectContext, root: string, names: readonly string[]): bo
 
 export const htmlProjectRootPages: RouteResolver = {
   id: "html-project-root",
-  languages: ["html"],
+  languages: ["html", "javascript", "typescript"],
   priority: 30,
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
+    // Directories a server mounts as static files: their pages are served from the mount.
+    const mounts: Array<{ dir: string; prefix: string }> = [];
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== STATIC_MOUNT_FACT) continue;
+        const m = f.data as StaticMount;
+        const parts = (a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")).split("/") : []);
+        for (const seg of m.dir.split("/")) {
+          if (seg === "..") parts.pop();
+          else if (seg && seg !== ".") parts.push(seg);
+        }
+        mounts.push({ dir: parts.join("/"), prefix: m.prefix.replace(/\/+$/, "") });
+      }
+    }
     const served = new Map<string, "vite" | "bundler" | null>();
     for (const a of analyses) {
+      if (a.language !== "html") continue;
+      const mount = mounts.find((m) => m.dir === "" || a.filePath.startsWith(`${m.dir}/`));
+      if (mount) {
+        const own = pageRoutePath(a.filePath);
+        const path = `${mount.prefix}${pageRoutePath(mount.dir ? a.filePath.slice(mount.dir.length + 1) : a.filePath)}`;
+        a.routes = a.routes.map((r) => (r.kind === "frontend" && r.path === own && r.path !== path ? { ...r, path } : r));
+        continue;
+      }
       const root = a.projectId ? ctx.projectRootOf?.(a.projectId) : null;
       if (!root || !a.filePath.startsWith(`${root}/`)) continue;
       let kind = served.get(root);

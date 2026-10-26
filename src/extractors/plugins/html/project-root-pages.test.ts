@@ -40,3 +40,14 @@ describe("pages of a sub-project with its own dev server", () => {
     expect(run([page("index.html", "root", "/")], ["vite.config.ts"], { root: "" })).toEqual(["/"]);
   });
 });
+
+describe("pages of a directory a server mounts as static files", () => {
+  it("serves them from the mount, the server's own directory resolved", async () => {
+    const { staticMountFacts } = await import("../shared/static-mounts.js");
+    const server = { filePath: "catalog/index.js", projectId: "root", language: "javascript", routes: [],
+      routeFacts: staticMountFacts(`app.use('/vendor/kit', express.static(kitBundles));\napp.use(express.static(path.join(here, 'public')));\napp.use('/docs', express.static('../site'));`) } as unknown as FileAnalysis;
+    const pages = [page("catalog/public/index.html", "root", "/catalog/public/"), page("site/garage.html", "root", "/site/garage.html"), page("other/x.html", "root", "/other/x.html")];
+    htmlProjectRootPages.resolve([...pages, server], { fileOf: () => undefined, projectRootOf: () => "" } as unknown as ProjectContext);
+    expect(pages.map((p) => p.routes[0]!.path)).toEqual(["/", "/docs/garage.html", "/other/x.html"]);
+  });
+});
