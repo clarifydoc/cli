@@ -33,7 +33,8 @@ const KNOWN_FACTORIES: ReadonlyArray<{ method: RegExp; receiver: RegExp }> = [
   { method: /^target$/, receiver: /Feign/ },
 ];
 const WRAPPER_RECEIVER = /Rest\w*Client|ClientFactory|ProxyFactory/;
-const ADDRESS_ARG = /url|uri|address|endpoint|^"https?:\/\//i;
+/** An argument naming where the service is: `url`, `serviceURI`, `host` (`@Value("${league.host}") String host`). */
+const ADDRESS_ARG = /url|uri|address|endpoint|host|^"https?:\/\//i;
 
 function walk(node: Node, visit: (n: Node) => void): void {
   visit(node);

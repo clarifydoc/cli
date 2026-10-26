@@ -47,7 +47,8 @@ EosRestClientFactory.create(Settings.class, defaults);`)).toEqual([{ proxyOf: "c
   it("reads a client builder handed an address", async () => {
     expect(await proxies(`
 Framework.clientFor(PersonApi.class, url).withTimeout(30, SECONDS).build();
-Framework.clientFor(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }]);
+Framework.clientFor(LeagueApi.class, host).useCommLog(true).build();
+Framework.clientFor(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }, { proxyOf: "com.acme.app.LeagueApi" }]);
   });
 
   it("reads nothing into factories that are not proxies", async () => {
