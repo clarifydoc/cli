@@ -3,6 +3,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppStringConstants } from "../cpp/index.js";
+import { C_CODE, definitionAt } from "../shared/c-family-code.js";
 
 function stripCType(raw: string): string {
   return stripTypeModifiers(raw, "c");
@@ -49,8 +50,20 @@ export const cSpec: RegexLangSpec = {
       pattern: /^\s*(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b)(?:static\s+|inline\s+|extern\s+|const\s+)*(?:[\w*&\s]+?[*&\s])?([a-zA-Z_]\w*)\s*\([^)]*\)\s*\{/,
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
+      accept: definitionAt(C_CODE),
+    },
+    {
+      // A definition at file scope whose parameter list wraps onto later lines
+      // (`int reply(client *c,` …) or whose `{` opens on the next line: taken
+      // when a body follows the closing `)` — a prototype ends with `;`.
+      pattern: /^(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b|typedef\b)(?:static\s+|inline\s+|extern\s+|const\s+)*(?:[\w*&\s]+?[*&\s])?([a-zA-Z_]\w*)\s*\((?:[^;]*\)[^;{]*|[^;)]*)$/,
+      isExported: (line) => !/^\s*static\b/.test(line),
+      isAsync: () => false,
+      accept: definitionAt(C_CODE),
     },
   ],
+  blockEnds: C_CODE.blockEnds,
+  callSourceLines: C_CODE.callSourceLines,
 
   parseParam: parseCParam,
   parseReturnType: parseCReturnType,

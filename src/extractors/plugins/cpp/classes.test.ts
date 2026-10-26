@@ -40,7 +40,8 @@ static int helper(int x) {
     expect(classes.map((c) => c.name)).toEqual(["Player", "AdminPlayer"]);
     expect(methodNames(classes[0])).toEqual(["Player", "displayName"]);
     expect(methodNames(classes[1])).toEqual(["displayName"]);
-    expect(classes[1]!.methods[0]!.calls.map((c) => c.name)).toContain("displayName");
+    // The base-class call names its class (`Player::displayName()`).
+    expect(classes[1]!.methods[0]!.calls.map((c) => c.name)).toContain("Player.displayName");
   });
 
   it("removes the attached definitions from the top-level functions (no double count)", () => {

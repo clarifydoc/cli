@@ -4,6 +4,26 @@ import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
 import { extractCppClasses } from "./classes.js";
+import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
+import { callChainPatterns } from "../shared/call-chains.js";
+
+/** A chain's head: a function or a `ns::Type::function` path — never the tail of a longer path, selector or `->`. */
+const CPP_CHAIN_HEAD = String.raw`(?<![\w.:>])((?:[A-Za-z_]\w*\s*::\s*)*[A-Za-z_]\w*)`;
+/** `drogon::app` → `app`, `Router::instance` → `Router.instance`: namespaces dropped, a type kept as the receiver. */
+function cppChainHead(raw: string): string {
+  const parts = raw.split(/\s*::\s*/);
+  while (parts.length > 1 && !/^[A-Z]/.test(parts[0]!)) parts.shift();
+  return parts.slice(-2).join(".");
+}
+
+/** Not a statement keyword that reads like a call (`if (x)`, `return f(x)`). */
+const NOT_A_STATEMENT = String.raw`(?!(?:if|while|for|switch|do|else|return|case|sizeof|catch|delete|new|throw|co_return|co_await|co_yield|static_assert|decltype|alignof|typeid)\b)`;
+/** Declaration specifiers before the return type. */
+const MODIFIERS = String.raw`(?:(?:static|inline|virtual|constexpr|consteval|explicit|friend|const|extern)\s+)*`;
+/** A qualified name's scopes: `drogon::orm::Mapper<T>::`. */
+const QUALIFIER = String.raw`(?:[A-Za-z_]\w*(?:<[^<>;()]*>)?::)*`;
+/** The defined name: an identifier, a destructor, an operator. */
+const NAME = String.raw`(?!(?:constexpr|consteval|requires|decltype|noexcept|alignas|static_assert)\b)(~?[A-Za-z_]\w*|operator\s*(?:\(\)|\[\]|[^\s\w(]+))`;
 
 /** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
 const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
@@ -91,33 +111,40 @@ export const cppSpec: RegexLangSpec = {
       pattern: /\b([A-Za-z_]\w*)\s*(?:<[^<>]*>)?\s*<<<[^;]*?>>>\s*\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
     },
+    // A static member called through its class, `Router::instance()`: the type
+    // names the receiver (the baseline reads only `instance`, which any
+    // same-named function would capture).
+    {
+      // A one-letter head is a template parameter (`T::create()`), whose type only the instantiation says.
+      pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*([A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
+    },
+    // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`.
+    ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead),
   ],
 
   functionPatterns: [
     {
-      // Definitions: `[modifiers] [return] Name(...)` or `Class::Name(...)`
+      // Definitions: `[modifiers] [return] Name(...)` or `ns::Class::Name(...)`
       // followed by `{` or `:` (member-init list) on the same line.
-      pattern: /^\s*(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b|catch\b)(?:static\s+|inline\s+|virtual\s+|constexpr\s+|explicit\s+|friend\s+|const\s+)*(?:[\w:<>,*&\s]+?[*&\s>])?(?:[A-Za-z_]\w*::)?(~?[A-Za-z_]\w*)\s*\([^)]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:\{|:[^;])/,
+      pattern: new RegExp(String.raw`^\s*${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\([^)]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:\{|:[^;:])`),
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
+      accept: definitionAt(CPP_CODE),
     },
     {
       // A signature whose parameter list wraps onto later lines
-      // (`Status Convert(ServerContext* context,` …), taken when a body
-      // follows the closing `)` — a prototype ends with `;` instead.
-      pattern: /^\s*(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b|catch\b|delete\b|new\b|throw\b)(?:static\s+|inline\s+|virtual\s+|constexpr\s+|explicit\s+|friend\s+|const\s+)*[\w:<>,]+[\s*&]+[*&]?(?:[A-Za-z_]\w*::)?(~?[A-Za-z_]\w*)\s*\([^)]*$/,
+      // (`Status Convert(ServerContext* context,` …), or one whose body opens
+      // on the next line (`void Club::play() const` / `{`): taken when a body
+      // follows the closing `)` — a prototype ends with `;`, a call too.
+      pattern: new RegExp(String.raw`^\s*${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\((?:[^;]*\)[^;{]*|[^;)]*)$`),
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
-      accept: (lines, i) => bodyFollowsSignature(lines, i),
-    },
-    {
-      // Out-of-line constructor / destructor where the `:` member-init list
-      // or the `{` is on the following line — `User::User(...)` ending with `)`.
-      pattern: /^\s*([A-Za-z_]\w*)::~?\1\s*\([^)]*\)\s*$/,
-      isExported: () => true,
-      isAsync: () => false,
+      accept: definitionAt(CPP_CODE),
     },
   ],
+  blockEnds: CPP_CODE.blockEnds,
+  callSourceLines: CPP_CODE.callSourceLines,
 
   parseParam: parseCppParam,
   parseReturnType: parseCppReturnType,
@@ -193,19 +220,4 @@ export const cppSpec: RegexLangSpec = {
 
 };
 
-/** Whether the parameter list opened on line `i` closes, within a few lines, into a body (`{`, a `:` init list) rather than `;`. */
-function bodyFollowsSignature(lines: readonly string[], i: number): boolean {
-  const text = lines.slice(i, i + 12).join("\n");
-  const open = text.indexOf("(");
-  if (open < 0) return false;
-  let depth = 0;
-  for (let k = open; k < text.length; k++) {
-    if (text[k] === "(") depth++;
-    else if (text[k] === ")" && --depth === 0) {
-      const rest = text.slice(k + 1).replace(/^(?:\s|const\b|noexcept\b|override\b|final\b|->\s*[\w:<>*&]+)*/, "");
-      return rest.startsWith("{") || (rest.startsWith(":") && !rest.startsWith("::"));
-    }
-  }
-  return false;
-}
 

@@ -137,6 +137,8 @@ export interface BraceCodeHooks {
   blockEnds: (lines: readonly string[]) => ReadonlyMap<number, number>;
   /** `RegexLangSpec.callSourceLines`: multi-line literals and comments blanked, one-line strings kept. */
   callSourceLines: (lines: readonly string[]) => readonly string[];
+  /** The lines with every comment and literal blanked: code only. */
+  codeLines: (lines: readonly string[]) => readonly string[];
   /** The lines with comments and multi-line literals blanked, one-line strings kept — what a route scan reads. */
   commentFreeLines: (lines: readonly string[]) => readonly string[];
   /**
@@ -191,6 +193,7 @@ export function braceCodeHooks(lex: BraceLexicon, callCode?: (line: string) => s
       }
       return c;
     },
+    codeLines: codeOf,
     commentFreeLines: keptOf,
     startsInCode(lines, i) {
       const raw = lines[i] ?? "";
