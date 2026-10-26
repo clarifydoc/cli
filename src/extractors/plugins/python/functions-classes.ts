@@ -112,6 +112,30 @@ export class PythonExtractor extends FunctionClassExtractor {
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
     this.extractPythonClasses(node, classes);
+    // A class a function builds (a form factory's `class _ClubForm(ClubForm)`) is a class of
+    // its own: its methods' calls are in no enclosing body otherwise.
+    if (NESTED_CLASS.test(node.text)) this.collectFunctionLocalClasses(node, false, classes);
+  }
+
+  private collectFunctionLocalClasses(node: Node, inFunction: boolean, classes: ClassInfo[]): void {
+    for (const child of node.namedChildren) {
+      const inner = child.type === "decorated_definition" ? child.namedChildren.find((c) => c.type === "function_definition" || c.type === "class_definition") ?? child : child;
+      if (inner.type === "function_definition") {
+        const body = inner.childForFieldName("body");
+        if (body) this.collectFunctionLocalClasses(body, true, classes);
+      } else if (inner.type === "class_definition") {
+        if (inFunction) {
+          const local: ClassInfo[] = [];
+          this.extractPythonClass(child, local);
+          for (const cls of local) if (cls.methods.length > 0) classes.push(cls);
+        }
+        // Methods of any class hold function bodies again.
+        const body = inner.childForFieldName("body");
+        if (body) this.collectFunctionLocalClasses(body, false, classes);
+      } else {
+        this.collectFunctionLocalClasses(child, inFunction, classes);
+      }
+    }
   }
 
   /** The `def`s directly in `node` (a module or a class body), decorated or not. */
@@ -194,8 +218,12 @@ export class PythonExtractor extends FunctionClassExtractor {
   }
 
   private extractPythonClasses(node: Node, classes: ClassInfo[]): void {
-    for (const child of node.children) {
+    for (const child of node.children) this.extractPythonClass(child, classes);
+  }
 
+  /** `child` as a class (decorated or not) with the behaviour-bearing classes nested in it; nothing for any other node. */
+  private extractPythonClass(child: Node, classes: ClassInfo[]): void {
+    {
       if (child.type === "decorated_definition") {
         const decorators: string[] = [];
         let classDef: Node | null = null;
@@ -537,6 +565,9 @@ function collectEnumMembers(body: Node, enumName: string, out: PropertyInfo[]): 
     out.push({ name: left.text, type: enumName, visibility: "public", isStatic: true, isReadonly: true });
   }
 }
+
+/** Cheap gate: some `class` is indented (nested in a class or a function). */
+const NESTED_CLASS = /\n[ \t]+class\s+\w/;
 
 /** Cheap gate: some `def` is indented (a method or a nested function). */
 const NESTED_DEF = /\n[ \t]+(?:async[ \t]+)?def[ \t]/;

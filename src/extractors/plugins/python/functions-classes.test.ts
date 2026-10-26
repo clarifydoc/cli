@@ -134,6 +134,27 @@ class Player(Base):
 });
 
 describe("nested classes and fixtures", () => {
+  it("extracts a class a function builds, with its methods and their calls (real-repo FP)", async () => {
+    const { classes } = await extract(`
+def get_transfer_form(a_type, b_type):
+
+    class FormMetaclass(forms.models.ModelFormMetaclass):
+        def __new__(mcs, name, bases, attrs):
+            return super().__new__(mcs, name, bases, attrs)
+
+    class _TransferForm(TransferForm, metaclass=FormMetaclass):
+        class Meta:
+            model = Transfer
+
+        def clean(self):
+            validate_window(self.instance)
+
+    return _TransferForm
+`);
+    expect(classes.map((c) => `${c.name}:${c.methods.map((m) => m.name).join(",")}`)).toEqual(["FormMetaclass:__new__", "_TransferForm:clean"]);
+    expect(classes[1]!.methods[0]!.calls.map((c) => c.name)).toContain("validate_window");
+  });
+
   it("extracts a nested class with methods, never a configuration class", async () => {
     const { classes } = await extract(`
 class Outer:

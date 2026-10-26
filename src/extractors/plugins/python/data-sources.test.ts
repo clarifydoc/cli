@@ -59,6 +59,21 @@ describe("Python outbound HTTP calls", () => {
     expect(calls).toEqual([{ name: "get", target: "/api/players", line: 1 }]);
   });
 
+  it("reads a verb on a session the enclosing function made as HTTP, never as a database read (real-repo FP)", async () => {
+    const src = [
+      "import requests",
+      "def get_league_tables():",
+      "    session = requests.Session()",
+      "    def get_pages():",
+      "        first = session.get(settings.LEAGUE_TABLE_URL, timeout=3).json()",
+      "        yield first",
+      "    return list(get_pages())",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).map((d) => `${d.kind} ${d.name} ${d.target}`);
+    expect(rows).toEqual(["api-call get null"]);
+  });
+
   it("is not fooled by text that merely contains a client module's name", async () => {
     const src = [
       'pending_requests.get("task_type")',

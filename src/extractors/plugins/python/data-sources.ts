@@ -201,6 +201,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(body ? { requestBody: body } : {}),
             ...(reads ? { responseReads: reads } : {}),
           }));
+          // An HTTP call is not also a database read (`session.get(url)`).
+          return;
         }
 
         // os.environ, os.getenv
@@ -550,6 +552,50 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
     // A literal, or a local the function builds it in (`url = f"http://{BASE}/api/x"`).
     const target = args[0] ? pyStringValue(args[0], call) : null;
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
+  }
+  // A verb on a local the code made an HTTP client: `session = requests.Session()` — in this
+  // function or one it is nested in — whatever the URL argument is.
+  if (PY_HTTP_VERBS.has(leaf) && obj.type === "identifier") {
+    const made = boundValue(recv, call);
+    if (made?.type === "call" && PY_HTTP_CLIENT_CTOR.test(made.childForFieldName("function")?.text ?? "")) {
+      return { name: leaf, target: args[0] ? pyStringValue(args[0], call) : null };
+    }
+  }
+  return null;
+}
+
+/** The constructors of an HTTP client object. */
+const PY_HTTP_CLIENT_CTOR = /^(?:requests\.(?:Session|session)|httpx\.(?:Client|AsyncClient)|aiohttp\.ClientSession|Session|ClientSession)$/;
+
+/**
+ * The value `name` is bound to where `at` reads it: its one assignment in the
+ * enclosing function, else — a name the function never assigns — in the
+ * function it is nested in, out to the module (a closure reads its outer locals).
+ */
+function boundValue(name: string, at: Node): Node | null {
+  let scope: Node | null = at.parent;
+  while (scope) {
+    while (scope && scope.type !== "function_definition" && scope.type !== "module") scope = scope.parent;
+    if (!scope) return null;
+    let found: Node | null = null;
+    let count = 0;
+    const root = scope;
+    const visit = (n: Node): void => {
+      if (count > 1) return;
+      if (n !== root && (n.type === "function_definition" || n.type === "class_definition")) return;
+      const left = n.type === "assignment" || n.type === "augmented_assignment" || n.type === "for_statement" ? n.childForFieldName("left")?.text : undefined;
+      if (left === name) {
+        count += n.type === "assignment" ? 1 : 2;
+        found = n.type === "assignment" ? n.childForFieldName("right") : null;
+      }
+      for (const c of n.namedChildren) visit(c);
+    };
+    visit(root);
+    const params = root.type === "function_definition" ? root.childForFieldName("parameters")?.namedChildren ?? [] : [];
+    if (params.some((p) => (p.type === "identifier" ? p.text : p.childForFieldName("name")?.text ?? p.namedChildren[0]?.text) === name)) return null;
+    if (count === 1) return found;
+    if (count > 1 || root.type === "module") return null;
+    scope = root.parent;
   }
   return null;
 }
