@@ -646,6 +646,13 @@ describe("Java JPA / Hibernate rows name their entity", () => {
   it("counts a query chain once, on the query it builds", async () => {
     const rows = await sourcesOf(`em.createNamedQuery("q", Unit.class).setParameter("a", id).getResultList();`, "java");
     expect(db(rows)).toEqual([["createNamedQuery", "Unit"]]);
+    // Split after the receiver's dot (real-repo FP), and a JDK network lookup sharing a derived-query verb.
+    const split = await sourcesOf(`return em.
+        createNamedQuery("club.active")
+        .setParameter("a", id)
+        .getResultList();
+    socket = new ServerSocket(port, 1, InetAddress.getByName(hostname));`, "java");
+    expect(db(split)).toEqual([["createNamedQuery", null]]);
   });
 
   it("is not fooled by services, REST templates and HTTP sessions", async () => {
@@ -726,7 +733,7 @@ describe("JVM HTTP — requests are read where they are built", () => {
 });
 
 describe("dependency-injection annotations are read by name", () => {
-  it("records @Autowired as injection and @Value as the configuration key it reads, not a parameter annotation whose argument says Value", async () => {
+  it("records @Value as the configuration key it reads, not @Autowired nor a parameter annotation whose argument says Value", async () => {
     const src = `package x
 class ClubController(@Autowired val clubs: ClubService) {
   @field:Value("\${league.size}") lateinit var size: String
@@ -734,7 +741,7 @@ class ClubController(@Autowired val clubs: ClubService) {
 }`;
     const tree = await parseSource(src, "kotlin" as any, "ClubController.kt");
     const ds = new JavaKotlinDataSourceExtractor().extract(tree, src);
-    expect(ds.filter((d) => d.kind === "import").map((d) => d.name)).toEqual(["Autowired"]);
+    expect(ds.filter((d) => d.kind === "import")).toEqual([]);
     expect(ds.filter((d) => d.kind === "env").map((d) => d.target)).toEqual(["league.size"]);
   });
 });

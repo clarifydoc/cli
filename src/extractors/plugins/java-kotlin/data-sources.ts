@@ -613,7 +613,7 @@ function joinUrl(base: string | null, path: string): string {
 }
 
 /** Dependency-injection annotations: `@Autowired`, `@Inject`, `@Value("${x}")`, qualified or with a Kotlin use-site target. */
-const DI_ANNOTATION_RE = /^@(?:\w+:)?(?:[\w.]+\.)?(?:Autowired|Inject|Value)(?![\w.])/;
+const VALUE_ANNOTATION_RE = /^@(?:\w+:)?(?:[\w.]+\.)?Value(?![\w.])/;
 
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
@@ -732,16 +732,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
-    // @Autowired / @Inject / @Value annotations indicate dependency injection.
+    // `@Value` injects configuration. (`@Autowired` / `@Inject` mark an injection point, which
+    // the parameter and field types and the container's bindings already state — not data.)
     if (node.type === "annotation" || node.type === "marker_annotation") {
       const text = node.text;
-      // By the annotation's NAME (`@field:Value`, `@javax.inject.Inject`): a substring
-      // test read `@RequestParam(defaultValue = "x")` and `@JsonValue` as injections.
-      if (DI_ANNOTATION_RE.test(text)) {
+      // By the annotation's NAME (`@field:Value`): a substring test read
+      // `@RequestParam(defaultValue = "x")` and `@JsonValue` as injections.
+      if (VALUE_ANNOTATION_RE.test(text)) {
         // `@Value("${league.season:2024}")` reads configuration — the key, its default dropped.
         const configKey = /Value\s*\(\s*(?:value\s*=\s*)?"\$\{([^}:]+)/.exec(text)?.[1]?.trim();
         sources.push(this.ds({
-          kind: /(?:^@|[.:])Value\b/.test(text) ? "env" : "import",
+          kind: "env",
           name: text.replace(/^@/, ""),
           target: configKey ?? null,
           line: node.startPosition.row + 1,
@@ -1021,6 +1022,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // thirds of one real codebase's service methods.
       // A field inherited from a base class has no declaration here; its name still says service.
       if (!seg || (declared ? SERVICE_LAYER_TYPE_RE.test(declared) : SERVICE_LAYER_NAME_RE.test(seg))) return;
+      // `InetAddress.getByName(host)`, `NetworkInterface.getByIndex(i)`: the JDK's network lookups share the verb.
+      if (/^(?:java\.net\.)?(?:Inet[46]?Address|NetworkInterface)$/.test(receiver.trim())) return;
       // A repository is a field or a local: `persons.stream()…count()`, `Projections.count(…)`
       // and `cb.count(…)` are a stream, a static helper and a criteria builder.
       if (SPRING_DATA_EXACT.has(method) && (!/^[a-z_$][\w$]*$/.test(seg) || /^(?:cb|criteriaBuilder|builder|stream)$/i.test(seg))) return;
@@ -1037,7 +1040,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // `em.createNamedQuery("q", X.class).setParameter(…).getResultList()` is ONE access: the
       // `createNamedQuery` row inside the chain carries it, with its entity.
       if (/^(?:getResultList|getSingleResult|list|uniqueResult)$/.test(method) &&
-        /\.create(?:Named|Native|SQL)?Query\s*\(|\.getNamedQuery\s*\(|\.createCriteria\s*\(/.test(receiver)) return;
+        /\.\s*create(?:Named|Native|SQL)?Query\s*\(|\.\s*getNamedQuery\s*\(|\.\s*createCriteria\s*\(/.test(receiver)) return;
       // A query held in a constant of the file (`session.createSQLQuery(EXISTS)`), or written at the call.
       // …or in a local of the method (`String sql = """ SELECT … """; em.createNativeQuery(sql)`).
       const constant = call.firstArg && /^(?:this\.)?\w+$/.test(call.firstArg.text)
