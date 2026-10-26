@@ -117,15 +117,21 @@ export function blankCode(text: string, lex: BraceLexicon, keepSingleLine = fals
   return out.join("");
 }
 
-/** 0-based line of a declaration → 1-based line its block ends on, read over blanked code. */
-class LazyEnds extends Map<number, number> {
-  constructor(private readonly code: string[]) {
+/**
+ * 0-based line of a declaration → 1-based line its block ends on, computed on
+ * first ask by `endOf` (brace matching over blanked code by default).
+ */
+export class LazyBlockEnds extends Map<number, number> {
+  constructor(
+    private readonly code: string[],
+    private readonly endOf: (code: string[], i: number) => number = (c, i) => findEndLine(c, i, "brace"),
+  ) {
     super();
   }
   override get(i: number): number | undefined {
     let end = super.get(i);
     if (end === undefined && i >= 0 && i < this.code.length) {
-      end = findEndLine(this.code, i, "brace");
+      end = this.endOf(this.code, i);
       super.set(i, end);
     }
     return end;
@@ -154,7 +160,12 @@ export interface BraceCodeHooks {
  * computed once per file. `callCode` may rewrite the call scan's lines
  * further (blank a keyword that reads like a call, Go's `func(`).
  */
-export function braceCodeHooks(lex: BraceLexicon, callCode?: (line: string) => string): BraceCodeHooks {
+export function braceCodeHooks(
+  lex: BraceLexicon,
+  callCode?: (line: string) => string,
+  /** Where the block declared on a line ends, over blanked code — brace matching unless the language says otherwise. */
+  endOf?: (code: string[], i: number) => number,
+): BraceCodeHooks {
   const blanked = new WeakMap<readonly string[], string[]>();
   const ends = new WeakMap<readonly string[], ReadonlyMap<number, number>>();
   const kept = new WeakMap<readonly string[], readonly string[]>();
@@ -179,7 +190,7 @@ export function braceCodeHooks(lex: BraceLexicon, callCode?: (line: string) => s
     blockEnds(lines) {
       let e = ends.get(lines);
       if (!e) {
-        e = new LazyEnds(codeOf(lines));
+        e = new LazyBlockEnds(codeOf(lines), endOf);
         ends.set(lines, e);
       }
       return e;

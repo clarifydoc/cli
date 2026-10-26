@@ -1,8 +1,9 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import type { RegexLangSpec } from "../shared/regex-base.js";
+import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
+import { SCALA_CODE } from "./blocks.js";
 import {
   codeOf,
   constructorParamLists,
@@ -13,6 +14,31 @@ import {
   scalaDiCallPatterns,
   scalaInitializerType,
 } from "./di.js";
+
+/** Words after which a name followed by `{` or `:` is a declaration or a type, not a call. */
+const NOT_CALLED_AFTER = String.raw`(?<!\b(?:extends|with|new|class|object|trait|enum|case|def|val|var|given|type|derives|import|package|if|then|else|while|do|yield|match|try|catch|finally|for|return|throw|extension|using|implicit|lazy|override|private|protected|final|sealed|abstract)\s+)`;
+/** Keywords that read like a call taking a block or an indented argument. */
+const BLOCK_KEYWORDS = /^(?:if|then|else|while|do|yield|match|try|catch|finally|for|new|case|given|extension|end|return|throw|object|class|trait|enum|def|val|var|type)$/;
+
+/**
+ * A call whose argument is a block or an indented body rather than a
+ * parenthesized list: `Auth { ctx => … }`, `def show = Open:` with the body
+ * below, `Ok.page:`, `xs.foreach: x =>`. The baseline sees no `(` there.
+ * Read only where an expression starts (after `=`, `(`, `,` or as a
+ * statement), never on a declaration or a type.
+ */
+const BLOCK_ARGUMENT_CALL: CallPattern = {
+  pattern: new RegExp(
+    String.raw`(?:^\s*|[=(,]\s*)` +
+      NOT_CALLED_AFTER +
+      String.raw`((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)\s*(?:\{|:\s*(?:(?:\([\w\s,:]*\)|\w+)\s*\??=>\s*)?$)`,
+    "g",
+  ),
+  buildName: (m) => {
+    const leafName = m[1]!.split(".").pop()!;
+    return BLOCK_KEYWORDS.test(leafName) ? { name: "", leafName: "" } : { name: m[1]!, leafName };
+  },
+};
 
 /**
  * Everything a declaration can inherit from: `extends A with B with C`.
@@ -184,8 +210,12 @@ export const scalaSpec: RegexLangSpec = {
     {
       pattern: /\bdef\s+([a-zA-Z_]\w*)\s*[\[(:=]/,
       isExported: (line) => !line.trimStart().startsWith("private"),
+      // Not one in a comment or a `"""` template.
+      accept: SCALA_CODE.startsInCode,
     },
   ],
+  blockEnds: SCALA_CODE.blockEnds,
+  callSourceLines: SCALA_CODE.callSourceLines,
 
   classPatterns: [
     {
@@ -292,7 +322,7 @@ export const scalaSpec: RegexLangSpec = {
     return classes;
   },
 
-  callPatterns: scalaDiCallPatterns,
+  callPatterns: [...scalaDiCallPatterns, BLOCK_ARGUMENT_CALL],
   extractLocalTypes: extractScalaLocalTypes,
   extractDiBindings: (lines) => extractScalaDiBindings(lines),
 
