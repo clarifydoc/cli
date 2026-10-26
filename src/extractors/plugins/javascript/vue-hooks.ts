@@ -2,6 +2,7 @@ import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractVueInteractiveElements } from "./interactive-elements.js";
 import { screenSwitchFacts } from "./routes/screen-tables.js";
+import { addReactiveTriggers } from "./reactive-triggers.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -49,6 +50,8 @@ export function vuePreprocess(
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
+      // `userSearch.value = q` in a handler re-runs the composable built from that ref.
+      addReactiveTriggers(analysis, raw);
       for (const comp of sfc.templateComponents) {
         const importSource =
           analysis.imports.find((imp) =>

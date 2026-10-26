@@ -216,7 +216,8 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     const dispatch = EVENT_DISPATCH_RE.exec(line);
     if (dispatch) {
       const after = [line.slice(dispatch.index + dispatch[0].length), lines[i + 1] ?? ""].join(" ");
-      const type = EVENT_LITERAL_RE.exec(after)?.[1];
+      // `events.DispatchOnCommit(s, event)`: an event held in a variable, typed where it is declared.
+      const type = EVENT_LITERAL_RE.exec(after)?.[1] ?? heldEventType(lines, i, callArgs(lines, i, dispatch.index + dispatch[0].length - 1));
       if (type) {
         sources.push({ kind: "queue-publish", name: `Event: ${dispatch[1]}`, target: type, entity: type, calls: [], line: lineNo });
         continue;
@@ -278,4 +279,25 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   for (const d of extractXormDataSources(lines)) if (!gormLines.has(d.line)) sources.push(d);
 
   return sources;
+}
+
+/**
+ * The type of the event a dispatch hands on in a variable (its last argument):
+ * a parameter of the enclosing function declared `event *SessionsRevokedEvent`,
+ * or a local built `event := &SessionsRevokedEvent{…}` above the call.
+ */
+function heldEventType(lines: readonly string[], at: number, args: string[]): string | null {
+  const name = args[args.length - 1]?.trim();
+  if (!name || !/^[a-z_]\w*$/.test(name)) return null;
+  for (let k = at; k >= 0 && at - k <= 80; k--) {
+    const line = lines[k]!;
+    const local = new RegExp(`\\b${name}\\s*:?=\\s*&?(?:\\w+\\.)?([A-Z]\\w*)\\s*\\{`).exec(line);
+    if (local) return local[1]!;
+    if (/^func\b/.test(line)) {
+      const param = new RegExp(`[(,]\\s*${name}\\s+\\*?(?:\\w+\\.)?([A-Z]\\w*)\\b`).exec(line);
+      // A parameter of the bus's own interface type (`e events.Event`) names no event.
+      return param && !/^(?:Event|Message|Msg)$/.test(param[1]!) ? param[1]! : null;
+    }
+  }
+  return null;
 }

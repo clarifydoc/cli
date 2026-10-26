@@ -178,3 +178,28 @@ func Serve(clubID int64) {
     ]);
   });
 });
+
+describe("Go domain events dispatched from a variable", () => {
+  it("types the event by the parameter or local holding it, never by the bus's own interface", () => {
+    const src = `package models
+
+func revokeSeason(s *xorm.Session, event *SeasonRevokedEvent) error {
+\tevents.DispatchOnCommit(s, event)
+\treturn nil
+}
+
+func transfer(s *xorm.Session) {
+\tev := &PlayerTransferredEvent{PlayerID: 7}
+\tevents.Dispatch(ev)
+}
+
+func forward(e events.Event) {
+\tevents.Dispatch(e)
+}
+`;
+    expect(extractGoDataSources(src.split("\n")).filter((d) => d.kind === "queue-publish").map((d) => `${d.line} ${d.target}`)).toEqual([
+      "4 SeasonRevokedEvent",
+      "10 PlayerTransferredEvent",
+    ]);
+  });
+});
