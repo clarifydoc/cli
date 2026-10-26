@@ -695,6 +695,8 @@ export interface AstExtractorHooks {
   typeAliases?(tree: Tree, sourceText: string): import("./analysis.js").TypeAliasInfo[];
   /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
   declaredNamespace?(tree: Tree, sourceText: string): string | null;
+  /** The package or namespace the file's declarations belong to → `FileAnalysis.packageName` (C# `namespace League.Clubs;`). */
+  packageName?(tree: Tree, sourceText: string): string | null;
   /**
    * Typed locals of the file's TOP-LEVEL statements (C# `Program.cs`,
    * a script body) → the `<setup>` pseudo-function's `localTypes`, so
@@ -965,10 +967,20 @@ export interface LanguagePluginManifest {
   autoloadedFiles?(analysis: FileAnalysis, filesEndingWith: (suffix: string) => readonly string[]): readonly string[];
   /**
    * The class a receiver's own name states, in a language whose locals carry
-   * no declared type (Ruby's `match_report.close!` → `MatchReport`): evidence
-   * for a unique-name method link on that class where nothing else is. Leaf code.
+   * no declared type the linker can read (Ruby's `match_report.close!` →
+   * `MatchReport`, Scala's `api` → `Api`): evidence for a unique-name method
+   * link on a class of that name or ending in it (`ScoreApi`). Leaf code.
    */
   typeNamedByReceiver?(receiver: string): string | null;
+  /**
+   * Imports name a package (or a member of one) by its declared name, not a
+   * file or a directory (Scala `import league.clubs.Club`, C# `using
+   * League.Clubs;`): the symbol linker reads an import as the files whose
+   * `FileAnalysis.packageName` it names — narrowed to those declaring the
+   * member it names, when one does — and a file as seeing its own package and
+   * the packages enclosing it.
+   */
+  importsNamePackages?: boolean;
   /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null

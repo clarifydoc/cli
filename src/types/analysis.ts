@@ -490,6 +490,14 @@ export interface FileAnalysis {
    */
   declaredNamespace?: string;
   /**
+   * The package or namespace the file's declarations belong to, as the
+   * language writes it (Scala `package league.clubs`, chained clauses joined;
+   * C# `namespace League.Clubs;`). Where imports name packages rather than
+   * files (`LanguagePluginManifest.importsNamePackages`), the linker reads an
+   * import as the files declaring that package. Omitted when the file declares none.
+   */
+  packageName?: string;
+  /**
    * HTTP client instances this file creates with a base URL, by variable name
    * → the base's PATH (`const apiClient = axios.create({ baseURL: "/api" })`
    * → `{ apiClient: "/api" }`; a full URL keeps only its path). Calls through

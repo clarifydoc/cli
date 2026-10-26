@@ -1417,6 +1417,10 @@ interface LinkContext {
   filePathMap: Map<string, string>;
   /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
   directoryFiles?: Map<string, string[]>;
+  /** `${family}\0${package}` → the files declaring it (`importsNamePackages`), built on first use. */
+  packageFiles?: Map<string, string[]>;
+  /** Per file, the files it sees by package (`importsNamePackages`). */
+  packageScopeCache?: Map<string, Set<string>>;
   /** Analyzed files by file name, built on first use (`autoloadedFiles`). */
   filesByName?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
@@ -1672,9 +1676,81 @@ function importedProjectsOf(analysis: FileAnalysis, ctx: LinkContext): Set<strin
   return set;
 }
 
-/** True when the analysis imports `file` — by path, or by the package of the sub-project that holds it. */
+const NO_FILES: ReadonlySet<string> = new Set();
+
+/** The files declaring `pkg` in the language family `family` (`importsNamePackages`; index built on first use). */
+function filesOfPackage(ctx: LinkContext, family: string | null, pkg: string): readonly string[] {
+  if (!ctx.packageFiles) {
+    ctx.packageFiles = new Map();
+    for (const a of ctx.analyses) {
+      if (!a.packageName || !manifestFor(a.language as Language)?.importsNamePackages) continue;
+      const key = `${extensionFamily(a.filePath)}\0${a.packageName}`;
+      const list = ctx.packageFiles.get(key);
+      if (list) list.push(a.filePath);
+      else ctx.packageFiles.set(key, [a.filePath]);
+    }
+  }
+  return ctx.packageFiles.get(`${family}\0${pkg}`) ?? [];
+}
+
+/**
+ * The files a package import names: the longest leading part that is a
+ * declared package, narrowed to its files declaring the member named next
+ * (`league.clubs.Club` → the files of `league.clubs` declaring `Club`; all of
+ * them when none does — a type alias, a package object's member). Null when
+ * no leading part is a package of the project.
+ */
+function packageImportFiles(ctx: LinkContext, family: string | null, segments: readonly string[]): readonly string[] | null {
+  for (let i = segments.length; i > 0; i--) {
+    const files = filesOfPackage(ctx, family, segments.slice(0, i).join("."));
+    if (files.length === 0) continue;
+    if (i === segments.length) return files;
+    const member = segments[i]!;
+    const declaring = files.filter((f) => ctx.symbolIndex.get(f)?.has(member));
+    return declaring.length > 0 ? declaring : files;
+  }
+  return null;
+}
+
+/**
+ * What a file sees by package, in a language whose imports name packages
+ * (`importsNamePackages`): the files of its own package and of the packages
+ * enclosing it, and those each import names — tried as written, then under
+ * each enclosing package (a relative `import clubs.Club` inside `league`).
+ * A production file never sees a test file this way.
+ */
+function packageScopeOf(analysis: FileAnalysis, ctx: LinkContext): ReadonlySet<string> {
+  if (!manifestFor(analysis.language as Language)?.importsNamePackages) return NO_FILES;
+  ctx.packageScopeCache ??= new Map();
+  let set = ctx.packageScopeCache.get(analysis.filePath);
+  if (set) return set;
+  set = new Set();
+  const family = extensionFamily(analysis.filePath);
+  const isTest = packageTest(ctx, analysis.filePath);
+  const own = analysis.packageName?.split(".") ?? [];
+  const enclosing = own.map((_, i) => own.slice(0, own.length - i));
+  const add = (files: readonly string[]) => {
+    for (const f of files) if (f !== analysis.filePath && (isTest || !packageTest(ctx, f))) set!.add(f);
+  };
+  for (const pkg of enclosing) add(filesOfPackage(ctx, family, pkg.join(".")));
+  for (const imp of analysis.imports) {
+    const segments = imp.source.split(".").filter(Boolean);
+    for (const prefix of [[], ...enclosing]) {
+      const files = packageImportFiles(ctx, family, [...prefix, ...segments]);
+      if (files) {
+        add(files);
+        break;
+      }
+    }
+  }
+  ctx.packageScopeCache.set(analysis.filePath, set);
+  return set;
+}
+
+/** True when the analysis imports `file` — by path, by package, or by the package of the sub-project that holds it. */
 function importsFile(analysis: FileAnalysis, file: string, ctx: LinkContext): boolean {
   if (importedFilesOf(analysis, ctx).has(file)) return true;
+  if (packageScopeOf(analysis, ctx).has(file)) return true;
   const projects = importedProjectsOf(analysis, ctx);
   if (projects.size === 0) return false;
   const project = ctx.projectOf.get(file);
@@ -1750,7 +1826,7 @@ function importPath(ctx: LinkContext, source: string, fromFile: string): string 
  */
 function importsNothing(analysis: FileAnalysis, ctx: LinkContext): boolean {
   if (manifestFor(analysis.language as Language)?.autoloadedFiles) return false;
-  return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0;
+  return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0 && packageScopeOf(analysis, ctx).size === 0;
 }
 
 /**
@@ -3172,13 +3248,14 @@ function resolveCallToDefinition(
         // is the obvious first candidate to drop if it turns out to cost more
         // in conflicts than it earns in recall.
         // Where locals carry no declared type, the receiver's own name may state
-        // its class (`match_report.close!` → `MatchReport`).
+        // its class, or end it (`match_report.close!` → `MatchReport`,
+        // `api.addScore` on a `ScoreApi`).
         const namedType = tgtClass ? manifestFor(analysis.language as Language)?.typeNamedByReceiver?.(head.replace(/\?$/, "")) : null;
         const evidenced =
           sameDir ||
           importsFile(analysis, entry.file, ctx) ||
           importedStemsOf(analysis, ctx).has(fileStem(entry.file)) ||
-          (!!namedType && tgtClass!.split(/::|\./).pop() === namedType);
+          (!!namedType && tgtClass!.split(/::|\./).pop()!.endsWith(namedType));
         // A free function is reached through a receiver only when the receiver
         // is its module: `Math.round`, `monkeypatch.setattr` or a `path` local's
         // `read_bytes` never call the project's `round` / `setattr` / `read_bytes`.

@@ -326,6 +326,18 @@ export const scalaSpec: RegexLangSpec = {
   extractLocalTypes: extractScalaLocalTypes,
   extractDiBindings: (lines) => extractScalaDiBindings(lines),
 
+  // `package league` then `package clubs` is `league.clubs`; a `package object` is a declaration.
+  extractPackageName: (lines) => {
+    const parts: string[] = [];
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t || t.startsWith("//") || t.startsWith("/*") || t.startsWith("*")) continue;
+      const m = t.match(/^package\s+(?!object\b)([\w.]+)\s*[:{]?\s*$/);
+      if (!m) break;
+      parts.push(m[1]!);
+    }
+    return parts.length > 0 ? parts.join(".") : null;
+  },
   importPatterns: [
     {
       pattern: /^\s*import\s+(.+)/,

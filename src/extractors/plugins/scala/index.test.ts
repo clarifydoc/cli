@@ -83,3 +83,15 @@ describe("scala members", () => {
     ]);
   });
 });
+
+describe("scala package clause", () => {
+  const pkg = (src: string) => scalaSpec.extractPackageName!(src.split("\n"));
+  it("joins chained clauses and stops at the first declaration", () => {
+    expect(pkg(`// header\npackage league\npackage clubs\n\nimport league.stats.Pair\nobject Table`)).toBe("league.clubs");
+    expect(pkg(`package league.clubs\n\nfinal class ClubApi`)).toBe("league.clubs");
+  });
+  it("reads no package from a package object or a file without one", () => {
+    expect(pkg(`package object clubs {\n}`)).toBeNull();
+    expect(pkg(`object Main`)).toBeNull();
+  });
+});

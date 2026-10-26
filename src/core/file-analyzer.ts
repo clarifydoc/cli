@@ -493,6 +493,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (typeAliases && typeAliases.length > 0) analysis.typeAliases = typeAliases;
     const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
     if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
+    const packageName = hooks?.packageName?.(tree, sourceText);
+    if (packageName) analysis.packageName = packageName;
 
     // Classify calls using import context, language patterns, and variable
     // aliases — and what this file defines itself, so a call into the file's

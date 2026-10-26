@@ -59,6 +59,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   diBindings: "optional",
   typeAliases: "optional",
   declaredNamespace: "optional",
+  packageName: "optional",
   httpClientBases: "optional",
   storeModules: "optional",
   messageHandlers: "optional",
