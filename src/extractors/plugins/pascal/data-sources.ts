@@ -392,10 +392,58 @@ function sqlScannerLines(lines: string[]): string[] {
   return out;
 }
 
+/** A routine returning a highlighter's sample text (`TSynSQLSyn.GetSampleSource`). */
+const SAMPLE_ROUTINE_RE = /^\s*(?:class\s+)?(?:function|procedure)\s+[\w.]*Sample\w*\b/i;
+/** An assignment of sample text to a control: `SynMemoSQLSample.Text := 'SELECT …' + …`. */
+const SAMPLE_ASSIGN_RE = /^\s*[\w.]*Sample\w*(?:\.\w+)*\s*:=/i;
+/** One fragment of a string list: `'frame-row frame-val from from-chars ' +`, `'trigger,void,opaque,blob,' +`. */
+const LIST_FRAGMENT_RE = /^\s*(?:[\w.]+\s*(?::=|=)\s*)?'([A-Za-z0-9_\-, ]*)'\s*[+;,)]?\s*$/;
+
+/**
+ * Text that is shown, not run: a highlighter's sample source, sample SQL put
+ * in a preview control, and keyword lists (hyphenated words, or words joined
+ * by commas alone). Blanked for the SQL scanner, lines kept.
+ */
+function blankDisplayText(lines: string[]): string[] {
+  const out = [...lines];
+  const isWordList = (text: string): boolean => {
+    const words = text.split(/[ ,]+/).filter(Boolean);
+    if (words.length < 6) return false;
+    return (!text.trim().includes(" ") && text.includes(",")) || words.filter((w) => w.includes("-")).length * 3 >= words.length;
+  };
+  for (let i = 0; i < out.length; i++) {
+    if (SAMPLE_ROUTINE_RE.test(out[i]!)) {
+      for (let k = i; k < out.length; k++) {
+        const end = /^end\s*;/.test(out[k]!);
+        out[k] = "";
+        if (end) {
+          i = k;
+          break;
+        }
+      }
+      continue;
+    }
+    if (SAMPLE_ASSIGN_RE.test(out[i]!)) {
+      for (let k = i; k < out.length && k < i + 80; k++) {
+        const done = /;\s*$/.test(out[k]!);
+        out[k] = "";
+        if (done) {
+          i = k;
+          break;
+        }
+      }
+      continue;
+    }
+    const frag = LIST_FRAGMENT_RE.exec(out[i]!);
+    if (frag && isWordList(frag[1]!)) out[i] = "";
+  }
+  return out;
+}
+
 export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
   const lines = stripPascalComments(rawLines);
 
-  const sources: DataSourceInfo[] = extractSqlStringDataSources(sqlScannerLines(lines));
+  const sources: DataSourceInfo[] = extractSqlStringDataSources(sqlScannerLines(blankDisplayText(lines)));
   const declared = declaredDatasets(lines);
   const urls = new UrlResolver(lines);
   // `FieldByName` reads a column of a dataset already open — one row per

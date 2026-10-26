@@ -339,3 +339,34 @@ end
     ]);
   });
 });
+
+describe("Pascal text that is shown, not run (real-repo FP)", () => {
+  it("reads no table from a highlighter's sample source, a preview control's sample SQL or a keyword list", () => {
+    const rows = src(`unit SynHighlighterLeague;
+interface
+const
+  KeyWords: string =
+    'frame-row frame-val from from-chars ' +
+    'from-pixels gateways get-byte get-codepages ' +
+    'select-all side-labels skip-deleted-record squad-list ';
+  Types = 'trigger,void,opaque,refcursor,binary,blob,int4,int2';
+implementation
+
+function TSynLeagueSyn.GetSampleSource: UnicodeString;
+begin
+  Result := '-- sample source'#13#10 +
+    'SELECT name FROM planets'#13#10 +
+    'WHERE moons > 2;';
+end;
+
+procedure TfrmPreferences.FormCreate(Sender: TObject);
+begin
+  SynMemoSQLSample.Text := 'SELECT 1' + sLineBreak +
+    'FROM tableA AS ta' + sLineBreak +
+    'WHERE x IS NULL;';
+  Query.SQL.Text := 'SELECT * FROM clubs';
+end;
+end.`);
+    expect(rows.filter((d) => d.kind === "database").map((d) => d.target)).toEqual(["clubs"]);
+  });
+});
