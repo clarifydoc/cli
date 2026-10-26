@@ -35,6 +35,12 @@ export function extractJsVariableAliases(
   function bind(name: string, source: string, factory: string) {
     if (conflicted.has(name)) return;
     const prev = aliases.get(name);
+    // A binding from an unimported factory (no source) is the weakest fact: it never
+    // displaces or conflicts with one from an imported factory, which replaces it.
+    if (prev !== undefined && (prev.source === "") !== (source === "")) {
+      if (prev.source === "") aliases.set(name, { source, factory });
+      return;
+    }
     if (prev !== undefined) {
       if (prev.source !== source) {
         aliases.delete(name);

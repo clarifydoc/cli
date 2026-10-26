@@ -146,6 +146,18 @@ export function Garage() {
     expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext" }); // renamed binding
   });
 
+  it("keeps the factory of an unimported call with no source, never over an imported one (real-repo FP)", async () => {
+    const imports = [{ source: "./laps", specifiers: ["useLaps"], line: 1 }] as unknown as ImportInfo[];
+    const src = `import { useLaps } from "./laps";
+const { park } = useGarage();
+function one() { const query = buildQuery(); return query; }
+function two() { const query = useLaps(); query.refetch(); }`;
+    const tree = await parse(src, "x.ts");
+    const aliases = extractJsVariableAliases(tree, imports);
+    expect(aliases.get("park")).toEqual({ source: "", factory: "useGarage" });
+    expect(aliases.get("query")).toEqual({ source: "./laps", factory: "useLaps" });
+  });
+
   it("drops a name bound to DIFFERENT sources (ambiguous) rather than guessing", async () => {
     const imports = [
       { source: "./a", specifiers: ["useA"], line: 1 },
