@@ -665,6 +665,13 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(rows.filter((d) => d.kind === "env").map((d) => d.target)).toEqual(["user.home", "league.url"]);
   });
 
+  it("reads a JCR query manager's query", async () => {
+    const rows = await sourcesOf(`
+    QueryManager queryManager = session.getWorkspace().getQueryManager();
+    Query query = queryManager.createQuery(queryString, Query.XPATH);`, "java");
+    expect(rows.filter((d) => d.kind === "database").map((d) => d.name)).toEqual(["createQuery"]);
+  });
+
   it("reads a plain JDBC statement declared as a try resource", async () => {
     const rows = await sourcesOf(`
     try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
