@@ -16,6 +16,8 @@ const FILES: Record<string, string> = {
   "src/main/java/com/example/league/EventEmitter.java": `package com.example.league;
 
 import java.util.function.Supplier;
+import com.google.protobuf.Message;
+import com.google.protobuf.Message.Builder;
 
 public abstract class EventEmitter {
     @Autowired
@@ -27,6 +29,14 @@ public abstract class EventEmitter {
 
     protected final void emitSubEntity(Player player, Object event) {
         eventPublisher.send(createAuditData(), createMetaData(player.getClubId()), event);
+    }
+
+    protected final void emitMessage(String id, Builder builder) {
+        emitMessage(id, builder.build());
+    }
+
+    protected final void emitMessage(String id, Message msg) {
+        eventPublisher.send(createAuditData(), createMetaData(id), msg);
     }
 
     protected static <E> E event(Supplier<E> constructor) {
@@ -49,6 +59,19 @@ public class PlayerEventEmitter extends EventEmitter {
 
     public void fireOther(Player player, Object payload) {
         emitSubEntity(player, payload);
+    }
+}
+`,
+  "src/main/java/com/example/league/MatchEventEmitter.java": `package com.example.league;
+
+public class MatchEventEmitter extends EventEmitter {
+    public void fireStarted(Match match) {
+        emitMessage(match.getId(), MatchStartedEvent.newBuilder()
+            .setMatchId(match.getId()));
+    }
+
+    public void fireAbandoned(Match match) {
+        emitMessage(match.getId(), MatchAbandonedEvent.getDefaultInstance());
     }
 }
 `,
@@ -78,6 +101,7 @@ describe("events published through an Object-typed helper", () => {
 
   it("publishes, at each subclass call, the event type it hands the helper", () => {
     const queues = (summary.dataAccessGraph?.nodes ?? []).filter((n) => n.kind === "queue").map((n) => n.name).sort();
-    expect(queues).toEqual(["PlayerReleasedEvent", "PlayerSignedEvent"]);
+    // The protobuf base `Message` a helper parameter is typed as is no event of its own.
+    expect(queues).toEqual(["MatchAbandonedEvent", "MatchStartedEvent", "PlayerReleasedEvent", "PlayerSignedEvent"]);
   });
 });

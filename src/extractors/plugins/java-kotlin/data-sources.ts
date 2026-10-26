@@ -1126,7 +1126,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (EVENT_PUBLISH_METHODS.has(method)) {
       const recvLeaf = receiver.split(".").pop()?.trim() ?? "";
       if (method === "publishEvent" || EVENT_PUBLISHER_RECEIVER_RE.test(recvLeaf)) {
-        const events = this.resolveEventArgs(node, method === "publishEvent");
+        const resolved = this.resolveEventArgs(node, method === "publishEvent");
+        // A helper parameter typed as the base message (`emit(…, Message msg)`) says nothing:
+        // the project pass types it at the helper's callers instead.
+        const events = resolved.every((e) => GENERIC_EVENT_TYPE_RE.test(e)) && payloadParameter(node) !== null ? [] : resolved;
         if (events.length > 0) {
           for (const evt of events) {
             sources.push(this.ds({

@@ -1176,7 +1176,10 @@ function helperPublishedEvents(jvm: readonly FileAnalysis[]): void {
           const helper = name ? chain.map((c) => helpers.get(c)?.get(name)).find(Boolean) : undefined;
           const arg = helper ? call.args?.[helper.index]?.trim() : undefined;
           if (!helper || !arg) continue;
-          const type = simple(/^new\s+([\w.]+)/.exec(arg)?.[1] ?? (/^[\w$]+$/.test(arg) ? scope.get(arg) : null));
+          // `new X(…)`, a protobuf `X.newBuilder()…` / `X.getDefaultInstance()`, or a typed name.
+          const type = simple(/^new\s+([\w.]+)/.exec(arg)?.[1]
+            ?? /^([A-Z][\w.]*?)\s*\.\s*(?:newBuilder|getDefaultInstance)\s*\(/.exec(arg)?.[1]
+            ?? (/^[\w$]+$/.test(arg) ? scope.get(arg) : null));
           if (!type || !EVENT_TYPE_RE.test(type) || GENERIC_EVENT_TYPE_RE.test(type)) continue;
           a.dataSources ??= [];
           if (a.dataSources.some((d) => d.line === call.line && d.kind === "queue-publish" && d.target === type)) continue;
