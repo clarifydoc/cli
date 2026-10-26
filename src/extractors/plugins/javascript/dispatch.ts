@@ -33,11 +33,13 @@ export class JsComponentEmitResolver implements DispatchResolver {
     const spans = (a: FileAnalysis) => spanCache.get(a) ?? spanCache.set(a, spansOf(a)).get(a)!;
 
     // Every binding of a child's event on its tag: child file → event key → bindings.
-    interface Binding { parent: FileAnalysis; handler: string; child: FileAnalysis; event: string }
+    interface Binding { parent: FileAnalysis; handler: string; child: FileAnalysis; event: string; angular: boolean }
     const bindings = new Map<string, Map<string, Binding[]>>();
+    const selectors = angularSelectors(analyses);
     for (const parent of analyses) {
+      // Vue's `@save="…"`, and Angular's `(save)="…"` on a component's tag.
       const els = (parent.interactiveElements ?? []).filter(
-        (el) => el.element === "custom" && el.component && el.handler && el.event.startsWith("@"),
+        (el) => el.element === "custom" && el.component && el.handler && (el.event.startsWith("@") || (el.event.startsWith("(") && el.event.endsWith(")"))),
       );
       if (els.length === 0) continue;
 
@@ -49,17 +51,18 @@ export class JsComponentEmitResolver implements DispatchResolver {
       for (const sub of parent.subComponents ?? []) {
         if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       }
-      if (subByKey.size === 0) continue;
       for (const el of els) {
-        const importSource = subByKey.get(tagKey(el.component!));
-        if (!importSource) continue;
-        const childFile = resolveTarget(importSource, parent.filePath, filePathMap);
+        const angular = el.event.startsWith("(");
+        // An Angular tag is its component's selector, whichever module declares it.
+        const childFile = angular
+          ? selectors.get(tagKey(el.component!)) ?? null
+          : subByKey.has(tagKey(el.component!)) ? resolveTarget(subByKey.get(tagKey(el.component!))!, parent.filePath, filePathMap) : null;
         const child = childFile ? byPath.get(childFile) : undefined;
         if (!child) continue; // external/library component — nothing to wire
-        const event = el.event.slice(1).split(".")[0]!; // strip @ + modifiers
+        const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, child, event });
+        list.push({ parent, handler: el.handler!, child, event, angular });
       }
     }
 
@@ -74,7 +77,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
       seen.add(at);
       const out: Array<{ file: string; span: SymbolSpan }> = [];
       for (const b of bindings.get(file)?.get(key) ?? []) {
-        const reEmit = REEMIT.exec(b.handler.trim());
+        const reEmit = (b.angular ? REEMIT_OUTPUT : REEMIT).exec(b.handler.trim());
         if (reEmit) {
           out.push(...targetsOf(b.parent.filePath, tagKey(reEmit[1]!), depth + 1, seen));
           continue;
@@ -135,6 +138,30 @@ export class JsComponentEmitResolver implements DispatchResolver {
 
 /** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */
 const REEMIT = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(\s*['"]([\w:-]+)['"][^;]*\)$/;
+/** Angular's: the parent emits an output of its own (`(reload)="reload.emit()"`, kept as `reload.emit`). */
+const REEMIT_OUTPUT = /^(?:this\.)?([\w$]+)\.emit\b/;
+
+/**
+ * Angular components by the tag their selector gives them (`selector: 'app-cover-image'`)
+ * → the declaring file. A selector two files declare is left out.
+ */
+function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const clash = new Set<string>();
+  for (const a of analyses) {
+    for (const cls of a.classes ?? []) {
+      for (const d of cls.decorators ?? []) {
+        const m = /^Component\s*\(\s*\{[\s\S]*?\bselector\s*:\s*['"`]([\w-]+)['"`]/.exec(d);
+        if (!m) continue;
+        const key = tagKey(m[1]!);
+        if (out.has(key) && out.get(key) !== a.filePath) clash.add(key);
+        out.set(key, a.filePath);
+      }
+    }
+  }
+  for (const k of clash) out.delete(k);
+  return out;
+}
 
 /**
  * React's emit: a callback handed down as a prop. `<AddNewMovie
@@ -304,6 +331,9 @@ function markupEmit(child: FileAnalysis, eventName: string): { name: string; lin
     for (const m of el.handler?.matchAll(/(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:-]+)['"]/g) ?? []) {
       if (tagKey(m[1]!) === tagKey(eventName)) return { name: m[1]!, line: el.line };
     }
+    // Angular: an output emitted from the markup (`(click)="read.emit(x)"`, kept as `read.emit`).
+    const output = el.event.startsWith("(") ? /^(?:this\.)?([\w$]+)\.emit\b/.exec(el.handler ?? "") : null;
+    if (output && tagKey(output[1]!) === tagKey(eventName)) return { name: output[1]!, line: el.line };
   }
   return null;
 }

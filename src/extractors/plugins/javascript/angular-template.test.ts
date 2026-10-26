@@ -31,3 +31,14 @@ describe("Angular template links", () => {
     ]);
   });
 });
+
+describe("Angular output bindings", () => {
+  it("names a component's tag and keeps an output emitted from the markup", () => {
+    const els = extractAngularInteractiveElementsFromTemplate(`<app-match-card (deleted)="removeMatch($event)"></app-match-card>
+<button (click)="read.emit(match)">Read</button>`);
+    expect(els.map((e) => [e.element, e.event, e.handler, e.component ?? null])).toEqual([
+      ["custom", "(deleted)", "removeMatch", "app-match-card"],
+      ["button", "(click)", "read.emit", null],
+    ]);
+  });
+});

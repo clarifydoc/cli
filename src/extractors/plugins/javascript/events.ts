@@ -22,6 +22,9 @@ export function extractEvents(
   // Strategy C: emit('name', ...) calls as fallback
   extractEmitCalls(sourceText, events, seen);
 
+  // Strategy D: an Angular component's outputs.
+  extractAngularOutputs(sourceText, events, seen);
+
   // A declared event sits where it is first emitted: the function around that line is what a parent's handler follows.
   const emittedAt = new Map<string, number>();
   for (const m of sourceText.matchAll(EMIT_CALL_RE)) if (!emittedAt.has(m[1]!)) emittedAt.set(m[1]!, lineAt(sourceText, m.index!));
@@ -117,6 +120,25 @@ function extractEmitCalls(
 
     const line = lineAt(source, callMatch.index);
     events.push({ name, params: [], line });
+  }
+}
+
+/**
+ * An Angular component's outputs — `read = output<Chapter>()`,
+ * `@Output() deleted = new EventEmitter<number>()`, `@Output('removed') remove = …`
+ * (the alias is the event a parent binds) — each placed where the class first
+ * emits it (`this.read.emit(…)`), else at its declaration.
+ */
+function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<string>): void {
+  if (!/from\s+['"]@angular\/core['"]/.test(source)) return;
+  const re = /(?:@Output\(\s*(?:['"]([\w-]+)['"])?\s*\)\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*(?:[!?]?\s*:[^=;\n]+)?=?|(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*=\s*(?:output|outputFromObservable)\s*(?:<[^>\n]*>)?\s*\()/g;
+  for (const m of source.matchAll(re)) {
+    const field = m[2] ?? m[3]!;
+    const name = m[1] ?? field;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const emit = new RegExp(String.raw`\b(?:this\.)?` + field.replace(/\$/g, "\\$") + String.raw`\.emit\s*\(`).exec(source);
+    events.push({ name, params: [], line: lineAt(source, emit ? emit.index : m.index!) });
   }
 }
 

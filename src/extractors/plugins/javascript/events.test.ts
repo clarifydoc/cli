@@ -39,3 +39,23 @@ describe("Vue events one call signature declares together", () => {
     ]);
   });
 });
+
+describe("Angular component outputs", () => {
+  it("reads signal outputs, @Output fields and an alias, each where the class first emits it", () => {
+    const src = `import { Component, EventEmitter, Output, output } from '@angular/core';
+
+@Component({ selector: 'app-match-card', template: '' })
+export class MatchCardComponent {
+  readonly read = output<Match>();
+  @Output() deleted = new EventEmitter<number>();
+  @Output('cardRemoved') remove: EventEmitter<void> = new EventEmitter();
+
+  onDelete(id: number) {
+    this.deleted.emit(id);
+  }
+}`;
+    expect(extractEvents(src, "typescript").map((e) => `${e.name} @${e.line}`)).toEqual(["read @5", "deleted @10", "cardRemoved @7"]);
+    // Not an Angular file: no outputs.
+    expect(extractEvents("const read = output();", "typescript")).toEqual([]);
+  });
+});

@@ -132,6 +132,28 @@ describe("JsComponentEmitResolver", () => {
     ]);
   });
 
+  it("joins an Angular output to the handler a parent binds on the component's selector, through a re-emitting parent", () => {
+    const card = fa("src/app/match-card.component.ts", {
+      classes: [{ name: "MatchCardComponent", decorators: ["Component({ selector: 'app-match-card', templateUrl: './match-card.component.html' })"], methods: [], properties: [] }] as never,
+      events: [{ name: "read", params: [], line: 5 }],
+      interactiveElements: [{ element: "button", event: "(click)", handler: "read.emit", line: 2 }],
+    });
+    const list = fa("src/app/match-list.component.ts", {
+      classes: [{ name: "MatchListComponent", decorators: ["Component({ selector: 'app-match-list' })"], methods: [], properties: [] }] as never,
+      events: [{ name: "opened", params: [], line: 4 }],
+      interactiveElements: [{ element: "custom", event: "(read)", handler: "opened.emit", line: 3, component: "app-match-card" }],
+    });
+    const page = fa("src/app/fixtures.component.ts", {
+      classes: [{ name: "FixturesComponent", decorators: ["Component({ selector: 'app-fixtures' })"], methods: [fn("openMatch", 20, 30)], properties: [] }] as never,
+      interactiveElements: [{ element: "custom", event: "(opened)", handler: "openMatch", line: 3, component: "app-match-list" }],
+    });
+    const links = new JsComponentEmitResolver().resolve([card, list, page]);
+    expect(links.map((l) => `${l.sourceFile}:${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`).sort()).toEqual([
+      "src/app/match-card.component.ts:<template> emit:read -> FixturesComponent.openMatch",
+      "src/app/match-list.component.ts:<template> emit:opened -> FixturesComponent.openMatch",
+    ]);
+  });
+
   it("creates nothing for events the child never declares (native fallthrough)", () => {
     const clickParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],

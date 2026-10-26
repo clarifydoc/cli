@@ -119,7 +119,8 @@ function collectAngularInteractive(
     ANGULAR_EVENT_RE.lastIndex = 0;
     let e: RegExpExecArray | null;
     while ((e = ANGULAR_EVENT_RE.exec(attrs)) !== null) {
-      elements.push({ element, event: `(${e[1]})`, handler: cleanHandler(e[2] ?? null), line });
+      // A component's tag (`<app-cover-image>`) names the component whose output the event is.
+      elements.push({ element, event: `(${e[1]})`, handler: cleanHandler(e[2] ?? null), line, ...(element === "custom" && tag.includes("-") ? { component: tag } : {}) });
     }
     // [(ngModel)] two-way binding.
     if (/\[\(ngModel\)\]/.test(attrs)) {
@@ -211,10 +212,16 @@ function splitTopLevel(text: string): string[] {
   return out.map((t) => t.trim()).filter(Boolean);
 }
 
-/** Normalize a handler expression to a short name (`onClick($event)` → `onClick`). */
+/**
+ * Normalize a handler expression to a short name (`onClick($event)` → `onClick`).
+ * An output emitted straight from the markup keeps its output's name
+ * (`read.emit(chapter)` → `read.emit`): the parent's handler is found through it.
+ */
 function cleanHandler(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
+  const emit = /^(?:this\.)?([a-zA-Z_$][\w$]*)\.emit\s*\(/.exec(trimmed);
+  if (emit) return `${emit[1]}.emit`;
   const call = trimmed.match(/^([a-zA-Z_$][\w$.]*)/);
   return call ? call[1]!.split(".").pop()! : trimmed;
 }
