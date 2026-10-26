@@ -94,6 +94,12 @@ export function splitUnknownBase(url: string): { target: string; baseExpr?: stri
   }
   if (holes) base = stripHole(holes);
   if (holeHost) base = holes ? `${holeHost[0]} + ${base}` : holeHost[0];
+  // A scheme left as a hole, then the host (`${protocol}//${host}/ws/x`): the host is part of the base.
+  const lateHost = holes && !holeHost && !origin ? HOLE_HOST_ORIGIN.exec(s) : null;
+  if (lateHost) {
+    base = `${base} + ${lateHost[0]}`;
+    s = s.slice(lateHost[0].length) || "/";
+  }
   if (!holes && !origin && !holeHost) {
     // `session` on a client with a base: as unknown a base as a hole.
     if (s.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(s) || !RELATIVE_PATH.test(s)) return null;

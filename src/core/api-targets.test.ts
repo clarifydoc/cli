@@ -52,6 +52,7 @@ describe("splitUnknownBase — websocket and protocol-relative hosts", () => {
     expect(splitUnknownBase("//${env.socketHost}/ws/scores/")).toMatchObject({ target: "/ws/scores/" });
     expect(splitUnknownBase("wss://${host}/ws/scores/")).toMatchObject({ target: "/ws/scores/" });
     expect(splitUnknownBase("ws://localhost:8000/ws/scores/")).toEqual({ target: "/ws/scores/", origin: "ws://localhost:8000" });
+    expect(splitUnknownBase("${env.socketProtocol}//${env.socketHost}/ws/scores/")).toMatchObject({ target: "/ws/scores/" });
   });
 });
 
