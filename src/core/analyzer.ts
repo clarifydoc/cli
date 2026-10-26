@@ -1045,6 +1045,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Step 4: Post-analysis
 
+  // A file a plugin handed to another language's reader (a WSDL saved as `.xml`) carries a language
+  // discovery did not load here; the project passes below ask its plugin.
+  await ensureLanguagesLoaded(new Set(allAnalyses.map((a) => a.language)));
+
   // One project-wide import index, shared across the router mount resolver and
   // every serial builder that resolves cross-file references (screens, type
   // blast, class graph). Building it once avoids re-iterating all imports.

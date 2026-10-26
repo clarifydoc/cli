@@ -323,6 +323,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         return task.reportSkips ? { skipped: pre.skip } : null;
       }
       const regexSource = pre?.sourceText ?? rawSource;
+      // A file handed to another language's reader (a WSDL saved as `.xml`): that plugin may not be loaded yet.
+      if (pre?.language && pre.language !== file.language) await ensureLanguagesLoaded([pre.language]);
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language, regexLines);
