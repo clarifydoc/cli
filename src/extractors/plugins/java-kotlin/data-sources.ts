@@ -1206,6 +1206,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
 
     // 7) Environment / config reads.
     if (method === "getProperty" || method === "getenv") {
+      // A receiver declared as something else than a configuration holder (a JCR `Node`,
+      // a bean) reads its own property, not the environment.
+      const leaf = receiverLeaf(receiver);
+      const declared = /^[\w$]+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+      if (declared && !/(?:Environment|PropertyResolver|Properties|PropertySource\w*|Config\w*|Configuration|Settings|System|Env)$/.test(declared)) return;
       // The variable (or system property) named: `System.getenv("DATABASE_URL")`.
       const key = /\b(?:getenv|getProperty)\s*\(\s*"([A-Za-z_][\w.-]*)"/.exec(node.text)?.[1] ?? null;
       sources.push(this.ds({ kind: "env", name: method, target: key, line }));

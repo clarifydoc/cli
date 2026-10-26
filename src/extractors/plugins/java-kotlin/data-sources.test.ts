@@ -655,6 +655,16 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(db(split)).toEqual([["createNamedQuery", null]]);
   });
 
+  it("reads getProperty on a configuration holder as the environment, not on a content node", async () => {
+    const rows = await sourcesOf(`
+    Node node = session.getNode("/clubs");
+    String name = node.getProperty("name").getString();
+    String home = System.getProperty("user.home");
+    Environment env = context.getEnvironment();
+    String url = env.getProperty("league.url");`, "java");
+    expect(rows.filter((d) => d.kind === "env").map((d) => d.target)).toEqual(["user.home", "league.url"]);
+  });
+
   it("reads a plain JDBC statement declared as a try resource", async () => {
     const rows = await sourcesOf(`
     try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
