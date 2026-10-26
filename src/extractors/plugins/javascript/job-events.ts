@@ -1,5 +1,6 @@
 import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { JOB_KEY_SEPARATOR } from "./call-hooks.js";
 
 /**
  * A job queued or an event emitted by name, joined to the handlers registered
@@ -37,13 +38,14 @@ export class JobEventResolver implements DispatchResolver {
       const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       for (const fn of fns) {
         for (const call of fn.calls) {
-          const targets = call.key ? handlers.get(call.key) : undefined;
+          // `queueAll` enqueues several jobs: one key each.
+          const targets = call.key ? call.key.split(JOB_KEY_SEPARATOR).flatMap((k) => handlers.get(k) ?? []) : undefined;
           for (const h of targets ?? []) {
             links.push({
               sourceFile: a.filePath,
               sourceSymbol: fn.name,
               sourceLine: call.line,
-              callName: call.key!,
+              callName: call.key!.includes(JOB_KEY_SEPARATOR) ? (call.key!.split(JOB_KEY_SEPARATOR).find((k) => handlers.get(k)?.includes(h)) ?? call.key!) : call.key!,
               targetFile: h.file,
               targetSymbol: h.symbol,
               targetLine: h.line,

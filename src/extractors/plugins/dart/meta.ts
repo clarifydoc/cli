@@ -9,6 +9,7 @@ import { dartRequestSchema } from "./request-schema.js";
 import { dartReachability } from "./reachability.js";
 import { DartEntityExtractor } from "./entities.js";
 import { goRouterResolver } from "./go-router.js";
+import { DriftQueryResolver } from "./drift-queries.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -37,4 +38,6 @@ export const dartMeta: LanguagePluginMeta = {
   dbCallRoots: ["FirebaseFirestore", "Firestore", "Database", "db", "supabase"],
   requestSchema: dartRequestSchema,
   routeResolvers: [goRouterResolver],
+  // `_db.mergedAssetDrift.mergedBucket(…)` → the named query of `merged_asset.drift`.
+  dispatchResolvers: [new DriftQueryResolver()],
 };

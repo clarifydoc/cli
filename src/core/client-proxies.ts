@@ -2,6 +2,8 @@ import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo } from "../t
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { SELF_HEADS, isConstructor } from "./typed-receivers.js";
 import { resolveImportSource } from "./import-index.js";
+import { isTestFile } from "./test-file-detector.js";
+import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -75,6 +77,15 @@ export function clientProxyCalls(
     }
     return found;
   };
+  // A project class by its simple name (one of that name), for a member holding a proxy one level down.
+  const classesNamed = new Map<string, Array<{ file: string; cls: ClassInfo }>>();
+  for (const a of analyses) for (const c of a.classes) (classesNamed.get(c.name) ?? classesNamed.set(c.name, []).get(c.name)!).push({ file: a.filePath, cls: c });
+  /** The one class of that name in the caller's language family — a test's own fake only for a test. */
+  const classFor = (name: string, from: FileAnalysis): ClassInfo | undefined => {
+    const fromTest = isTestFile(from.filePath, from.language);
+    const hits = (classesNamed.get(name) ?? []).filter((h) => extensionFamily(h.file) === extensionFamily(from.filePath) && (fromTest || !isTestFile(h.file, byPath.get(h.file)?.language ?? from.language)));
+    return hits.length === 1 ? hits[0]!.cls : undefined;
+  };
   const out: ApiCall[] = [];
   for (const a of analyses) {
     const imported = new Map<string, string>();
@@ -121,30 +132,35 @@ export function clientProxyCalls(
         out.push(contractCall(type, method, call.line, a.filePath));
       }
     };
+    /**
+     * `name` typed `raw`: the proxy itself, or — a project class holding proxies
+     * (`final ApiService _apiService;` whose `AuthenticationApi authenticationApi`) —
+     * each proxy member under `name.member`.
+     */
+    const bind = (into: Map<string, string>, name: string, raw: string | null | undefined): void => {
+      const t = proxyOf(raw);
+      if (t) {
+        into.set(name, t);
+        return;
+      }
+      const held = raw ? classFor(receiverTypeName(raw, a.language) ?? raw.trim(), a) : undefined;
+      for (const p of held?.properties ?? []) {
+        const inner = proxyOf(p.type);
+        if (inner) into.set(`${name}.${p.name}`, inner);
+      }
+    };
     const scopeOf = (fn: FunctionInfo, members: ReadonlyMap<string, string>) => {
       const scope = new Map(members);
-      for (const p of fn.params) {
-        const t = proxyOf(p.type);
-        if (t) scope.set(p.name, t);
-      }
-      for (const l of fn.localTypes ?? []) {
-        const t = proxyOf(l.type);
-        if (t) scope.set(l.name, t);
-      }
+      for (const p of fn.params) bind(scope, p.name, p.type);
+      for (const l of fn.localTypes ?? []) bind(scope, l.name, l.type);
       return scope;
     };
     const membersOf = (cls: ClassInfo) => {
       const members = new Map<string, string>();
-      for (const p of cls.properties) {
-        const t = proxyOf(p.type);
-        if (t) members.set(p.name, t);
-      }
+      for (const p of cls.properties) bind(members, p.name, p.type);
       for (const m of cls.methods) {
         if (!isConstructor(m, cls)) continue;
-        for (const p of m.params) {
-          const t = proxyOf(p.type);
-          if (t) members.set(p.name, t);
-        }
+        for (const p of m.params) bind(members, p.name, p.type);
       }
       return members;
     };

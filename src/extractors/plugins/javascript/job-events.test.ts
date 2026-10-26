@@ -9,7 +9,21 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
 /** Real-repo FP: 105 `jobRepository.queue` sites and 42 `emit`s cut route → service → job handler → repository. */
 const FILES: Record<string, string> = {
   "package.json": JSON.stringify({ name: "league-server", dependencies: { "@nestjs/common": "10.0.0", "@nestjs/core": "10.0.0" } }),
-  "src/enum.ts": "export enum JobName { MatchReport = 'match-report' }\nexport enum QueueName { Reports = 'reports' }\n",
+  "src/enum.ts": "export enum JobName { MatchReport = 'match-report', TableRefresh = 'table-refresh', SquadPhoto = 'squad-photo' }\nexport enum QueueName { Reports = 'reports' }\n",
+  "src/services/season.service.ts": `import { JobName } from '../enum';
+export class SeasonService {
+  constructor(private jobRepository: JobRepository) {}
+
+  async close(ids: string[], refresh: boolean) {
+    const jobs: JobItem[] = [{ name: JobName.MatchReport, data: {} }];
+    if (refresh) {
+      jobs.push({ name: JobName.TableRefresh });
+    }
+    await this.jobRepository.queueAll(jobs);
+    await this.jobRepository.queueAll(ids.map((id) => ({ name: JobName.SquadPhoto, data: { id } })));
+  }
+}
+`,
   "src/services/match.service.ts": `import { JobName } from '../enum';
 export class MatchService {
   constructor(private jobRepository: JobRepository, private eventRepository: EventRepository) {}
@@ -34,6 +48,12 @@ export class ReportService {
   "src/services/table.service.ts": `export class TableService {
   @OnEvent('MatchFinished')
   async recompute() {}
+
+  @OnJob({ name: JobName.TableRefresh, queue: QueueName.Reports })
+  async handleTableRefresh() {}
+
+  @OnJob({ name: JobName.SquadPhoto, queue: QueueName.Reports })
+  async handleSquadPhoto() {}
 }
 `,
 };
@@ -63,6 +83,18 @@ describe("jobs and events joined by name", () => {
       "event:MatchFinished → ReportService.onMatchFinished",
       "event:MatchFinished → TableService.recompute",
       "job:JobName.MatchReport → ReportService.handleMatchReport",
+    ]);
+  });
+
+  it("links queueAll to the handler of every job its list holds — built in the function, or mapped (real-repo FP)", () => {
+    const links = summary.symbolLinks
+      .filter((l) => l.sourceSymbol === "SeasonService.close" && /^job:/.test(l.callName))
+      .map((l) => `${l.sourceLine} ${l.callName} → ${l.targetSymbol}`)
+      .sort();
+    expect(links).toEqual([
+      "10 job:JobName.MatchReport → ReportService.handleMatchReport",
+      "10 job:JobName.TableRefresh → TableService.handleTableRefresh",
+      "11 job:JobName.SquadPhoto → TableService.handleSquadPhoto",
     ]);
   });
 });

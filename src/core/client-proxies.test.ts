@@ -112,3 +112,27 @@ describe("markConsumedContracts", () => {
     expect([implemented.consumed, otherPackage.consumed]).toEqual([undefined, undefined]);
   });
 });
+
+describe("clientProxyCalls — a proxy held by another object", () => {
+  it("reaches a proxy one member down a project class the receiver is typed as (real-repo FP)", () => {
+    const apiDart = (filePath: string) => ({
+      filePath,
+      language: "dart",
+      projectId: "mobile",
+      imports: [],
+      functions: [],
+      classes: [{ name: "LeagueService", properties: [{ name: "clubsApi", type: "ClubsApi" }], methods: [] }],
+      httpClientRegistrations: [{ client: "ClubsApi", scope: "project", proxyOf: "ClubsApi", line: 3 }],
+    }) as unknown as FileAnalysis;
+    const server = { filePath: "server/src/league.service.ts", language: "typescript", projectId: "server", imports: [], functions: [], classes: [{ name: "LeagueService", properties: [], methods: [] }] } as unknown as FileAnalysis;
+    const repo = {
+      filePath: "lib/repositories/club.repository.dart",
+      language: "dart",
+      projectId: "mobile",
+      imports: [],
+      functions: [],
+      classes: [{ name: "ClubRepository", properties: [{ name: "_service", type: "LeagueService" }], methods: [{ name: "load", params: [], calls: [call("_service.clubsApi.getClub", 9), call("_service.other.getClub", 10)] }] }],
+    } as unknown as FileAnalysis;
+    expect(clientProxyCalls([apiDart("lib/services/league.service.dart"), server, repo]).filter((c) => c.filePath === repo.filePath).map((c) => [c.line, c.name])).toEqual([[9, "ClubsApi.getClub"]]);
+  });
+});

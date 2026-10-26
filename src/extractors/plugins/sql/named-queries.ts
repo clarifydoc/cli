@@ -7,6 +7,7 @@ import type { FunctionInfo } from "../../../types/analysis.js";
  *     -- name: get-article-by-slug^         aiosql (Python), dotsql / goyesql (Go)
  *     -- :name find-user :? :1              HugSQL (Clojure), PugSQL (Python)
  *     -- name: GetAuthor :one               sqlc (Go)
+ *     mergedBucket:                         Drift (Dart, a `.drift` file)
  *
  * Each becomes a function named as written, without aiosql's operator suffix
  * (`!`, `^`, `$`, `<!`, `*!`, `#`), spanning its statement up to the next
@@ -16,7 +17,7 @@ import type { FunctionInfo } from "../../../types/analysis.js";
  * `queries.get_article_by_slug`) is the calling language's resolver's business.
  */
 
-const HEADER = /^\s*--\s*(?:name\s*:\s*|:name\s+)([A-Za-z_][\w-]*)([!^$#*<>]*)/;
+const HEADER = /^\s*--\s*(?:name\s*:\s*|:name\s+)([A-Za-z_][\w-]*)([!^$#*<>]*)|^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:\s*$/;
 
 export const NAMED_QUERY_DECORATOR = "@named-query";
 
@@ -24,7 +25,7 @@ export function namedQueries(lines: readonly string[]): FunctionInfo[] {
   const heads: Array<{ name: string; line: number }> = [];
   for (let i = 0; i < lines.length; i++) {
     const m = HEADER.exec(lines[i]!);
-    if (m) heads.push({ name: m[1]!, line: i + 1 });
+    if (m) heads.push({ name: (m[1] ?? m[3])!, line: i + 1 });
   }
   return heads.map((h, i) => {
     let end = (heads[i + 1]?.line ?? lines.length + 1) - 1;

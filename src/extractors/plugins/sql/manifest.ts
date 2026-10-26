@@ -10,6 +10,6 @@ import { sqlFrameworkRules } from "./frameworks.js";
 export const sqlManifest: LanguagePluginManifest = {
   language: "sql",
   parsing: "regex",
-  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql"],
+  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".drift"],
   frameworkRules: sqlFrameworkRules,
 };

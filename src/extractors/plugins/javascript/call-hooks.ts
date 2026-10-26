@@ -192,15 +192,66 @@ function jobOrEventKey(node: Node, leaf: string): string | null {
   const first = node.childForFieldName("arguments")?.namedChildren[0];
   if (!first) return null;
   if (leaf === "emit") return first.type === "string" && first.text.length > 2 ? `event:${first.text.slice(1, -1)}` : null;
-  const job = leaf === "queueAll" ? (first.type === "array" ? first.namedChildren[0] : null) : first;
+  if (leaf === "queue") {
+    const name = jobName(first);
+    return name ? `job:${name}` : null;
+  }
+  // `queueAll([...])`, `queueAll(ids.map((id) => ({ name: JobName.X, … })))`, or a list the
+  // function builds (`const jobs = [{ name: … }]; jobs.push({ name: … })`): every job it names.
+  const names = [...new Set(jobNamesIn(first, node, 0))];
+  return names.length > 0 ? names.map((n) => `job:${n}`).join(JOB_KEY_SEPARATOR) : null;
+}
+
+/** Several job keys in one `CallInfo.key`, as `queueAll` enqueues several jobs. */
+export const JOB_KEY_SEPARATOR = "|";
+
+/** `{ name: JobName.X, … }` → `JobName.X` (a string literal unquoted). */
+function jobName(job: Node | null | undefined): string | null {
+  while (job?.type === "parenthesized_expression") job = job.namedChildren[0];
   if (job?.type !== "object") return null;
   for (const pair of job.namedChildren) {
     if (pair.type !== "pair" || pair.childForFieldName("key")?.text !== "name") continue;
     const value = pair.childForFieldName("value");
-    if (value?.type === "string") return `job:${value.text.slice(1, -1)}`;
-    if (value?.type === "member_expression" && /^[\w$]+\.[\w$]+$/.test(value.text)) return `job:${value.text}`;
+    if (value?.type === "string") return value.text.slice(1, -1);
+    if (value?.type === "member_expression" && /^[\w$]+\.[\w$]+$/.test(value.text)) return value.text;
   }
   return null;
+}
+
+/** The job names a list expression holds, following a local list to where the function builds it. */
+function jobNamesIn(expr: Node | null | undefined, at: Node, depth: number): string[] {
+  if (!expr || depth > 3) return [];
+  const direct = jobName(expr);
+  if (direct) return [direct];
+  if (expr.type === "array") {
+    return expr.namedChildren.flatMap((el) => (el.type === "spread_element" ? jobNamesIn(el.namedChildren[0], at, depth + 1) : jobName(el) ? [jobName(el)!] : []));
+  }
+  // `items.map((x) => ({ name: … }))`: what the callback returns.
+  if (expr.type === "call_expression") {
+    const fn = expr.childForFieldName("function");
+    if (fn?.type !== "member_expression" || !/^(?:map|flatMap)$/.test(fn.childForFieldName("property")?.text ?? "")) return [];
+    const cb = expr.childForFieldName("arguments")?.namedChildren[0];
+    if (cb?.type !== "arrow_function") return [];
+    const body = cb.childForFieldName("body");
+    if (body?.type === "statement_block") return body.descendantsOfType("return_statement").flatMap((r) => jobNamesIn(r?.namedChildren[0], at, depth + 1));
+    return jobNamesIn(body, at, depth + 1);
+  }
+  if (expr.type !== "identifier") return [];
+  // A local of the enclosing function: its initializer and every `push` onto it.
+  let scope: Node | null = at.parent;
+  while (scope && !/function|method_definition|arrow_function/.test(scope.type)) scope = scope.parent;
+  if (!scope) return [];
+  const name = expr.text;
+  const out: string[] = [];
+  for (const d of scope.descendantsOfType("variable_declarator")) {
+    if (d?.childForFieldName("name")?.text === name) out.push(...jobNamesIn(d.childForFieldName("value"), at, depth + 1));
+  }
+  for (const c of scope.descendantsOfType("call_expression")) {
+    const fn = c?.childForFieldName("function");
+    if (fn?.type !== "member_expression" || fn.childForFieldName("object")?.text !== name || fn.childForFieldName("property")?.text !== "push") continue;
+    for (const arg of c!.childForFieldName("arguments")?.namedChildren ?? []) out.push(...(arg.type === "spread_element" ? jobNamesIn(arg.namedChildren[0], at, depth + 1) : jobName(arg) ? [jobName(arg)!] : []));
+  }
+  return out;
 }
 
 /**

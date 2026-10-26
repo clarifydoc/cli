@@ -613,7 +613,8 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 
 export const sqlSpec: RegexLangSpec = {
   language: "sql",
-  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql"],
+  // `.drift`: Drift (Dart) query files — tables and named queries (`mergedBucket:`) in plain SQL.
+  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".drift"],
   blockStyle: "brace", // overridden in custom extractors via findRoutineEnd/findParenEnd
   lineCommentPrefixes: ["--", "#"],
 
