@@ -88,7 +88,8 @@ describe("Django templates and route names", () => {
     const frontend = (summary.routeMap ?? []).filter((r) => r.kind === "frontend").map((r) => r.path);
     expect(frontend).not.toContain("/clubs/templates/clubs/list.html");
     expect(frontend).not.toContain("/clubs/templates/emails/transfer.html");
-    expect(frontend).toContain("/templates/static-page.html");
+    // A page in a templates/ directory is rendered by a view even without template syntax.
+    expect(frontend).not.toContain("/templates/static-page.html");
   });
 
   it("links the template's link, form and htmx request to the routes they name", () => {
