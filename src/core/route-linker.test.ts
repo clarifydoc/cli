@@ -1145,3 +1145,20 @@ describe("the unknown-base suffix tier", () => {
     expect(linkApiCallsToRoutes([call("/{}/models")], routes).map((l) => l.routePath)).toEqual(["/api/providers/{provider_id}/models"]);
   });
 });
+
+describe("linkApiCallsToRoutes — a hole inside a segment", () => {
+  it("joins the routes whose literal segment the fixed parts agree with (real-repo FP)", () => {
+    const routes = [
+      route("api/DownloadController.cs", "GET", "/api/download/match-size", "MatchSize"),
+      route("api/DownloadController.cs", "GET", "/api/download/season-size", "SeasonSize"),
+      route("api/DownloadController.cs", "GET", "/api/download/season", "Season"),
+    ];
+    const { links } = linkApiCallsToRoutesDetailed([
+      apiCall("web/download.service.ts", "get", "/api/download/${kind}-size?${kind}Id=${id}"),
+      apiCall("web/download.service.ts", "get", "/api/download/bulk-${kind}-size", 2),
+    ], routes);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ sourceLine: 1, confidence: "AMBIGUOUS" });
+    expect(["/api/download/match-size", "/api/download/season-size"]).toContain(links[0]!.routePath);
+  });
+});
