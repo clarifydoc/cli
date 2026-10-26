@@ -68,6 +68,7 @@ export {
   type NormalizedProjectAnalysis,
 } from "./core/element-registry.js";
 export { computeComplexity, aggregateComplexity } from "./core/complexity-analyzer.js";
+export { computeRefactorPressure, DEFAULT_REFACTOR_PRESSURE_CONFIG, type RefactorPressureConfig, type RefactorPressureInput } from "./core/refactor-pressure.js";
 export {
   buildControlFlow,
   cyclomaticFromCfg,
