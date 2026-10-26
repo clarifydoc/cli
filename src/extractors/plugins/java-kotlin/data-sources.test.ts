@@ -568,6 +568,27 @@ class GameServiceImpl {
     ]);
   });
 
+  it("types an object a method parameter, a var's initializer or an earlier fetch holds (real-repo FP)", async () => {
+    const java = `import run.halo.app.extension.ReactiveExtensionClient;
+class SquadServiceImpl {
+  private final ReactiveExtensionClient client;
+  Mono<Squad> publish(Squad squad) {
+    return draft().flatMap(w -> { squad.setDraft(w); return client.update(squad); });
+  }
+  Mono<Void> notify(String type) {
+    var notice = createNotice(type);
+    return Mono.defer(() -> client.create(notice)).then();
+  }
+  Mono<Coach> retire(Mono<String> name) {
+    return name.flatMap(n -> client.get(Coach.class, n)).flatMap(coach -> client.update(coach));
+  }
+  private Notice createNotice(String type) { return new Notice(); }
+}`;
+    const tree = await parseSource(java, "java", "SquadServiceImpl.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database" && /update|create/.test(d.name));
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual(["client.update Squad", "client.create Notice", "client.update Coach"]);
+  });
+
   it("types a lambda's parameter from the call its chain starts with (real-repo FP)", async () => {
     const java = `import run.halo.app.extension.ExtensionClient;
 class FixtureCountUpdater {

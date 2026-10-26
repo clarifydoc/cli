@@ -1101,6 +1101,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // registered through `Alpine.data(name, …)`: the template's `@click="save"` calls its members.
               const built = moduleLevel && this.alpine ? factoryObject(value) : null;
               if (built) this.extractObjectMembers(name, built, functions, false, 0);
+              // An exported factory returning an object of functions — a generated API client's
+              // `XApiAxiosParamCreator = function (configuration) { return { createX: async (…) => {…} } }`:
+              // each member is a function of its own (`XApiAxiosParamCreator.createX`), so a request
+              // it builds belongs to that operation, not to the factory.
+              const members = !built && moduleLevel && isExported ? functionObjectReturned(value) : null;
+              if (members) this.extractObjectMembers(name, members, functions, false, 0);
             } else if (name && wrapped) {
               // `const save = useCallback(async () => {…}, [deps])`,
               // `const Row = memo((props) => …)` — the wrapper returns the
@@ -2030,6 +2036,16 @@ function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, strin
     }
   }
   fn.calls.push(...extra);
+}
+
+/** The object a factory returns when every member (two or more) is a function, else null. */
+function functionObjectReturned(fn: Node): Node | null {
+  const obj = factoryObject(fn);
+  if (!obj) return null;
+  const members = obj.namedChildren.filter((m) => m.type !== "comment");
+  if (members.length < 2) return null;
+  const isFn = (m: Node) => m.type === "method_definition" || (m.type === "pair" && /^(?:arrow_function|function_expression)$/.test(m.childForFieldName("value")?.type ?? ""));
+  return members.every(isFn) ? obj : null;
 }
 
 /** The object literal a function builds and returns: `(id) => ({ … })`, or a body ending `return { … }`. */

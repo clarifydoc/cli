@@ -986,7 +986,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const literal = /^[A-Z]\w*(?:\.class|::class(?:\.java)?)$/.test(call.firstArg?.text ?? "") ? call.firstArg!.text.replace(/(?:\.class|::class(?:\.java)?)$/, "") : null;
       if ((declared && /ExtensionClient$/.test(declared)) || (literal && /client$/i.test(seg))) {
         const argName = call.firstArg?.type === "identifier" ? call.firstArg.text : null;
-        const entity = literal ?? (argName ? localDeclaredType(node, argName) ?? lambdaParamClass(node, argName) : null);
+        const entity = literal ?? (argName ? heldEntityType(node, argName) : null);
         sources.push(this.ds({
           kind: "database",
           name: `${seg || "client"}.${method}`,
@@ -1750,9 +1750,55 @@ function lambdaParamClass(node: Node, name: string): string | null {
     if (!names.includes(name)) continue;
     const call = at.parent?.type === "argument_list" ? at.parent.parent : null;
     for (let link: Node | null | undefined = call?.type === "method_invocation" ? call.childForFieldName("object") : null; link?.type === "method_invocation"; link = link.childForFieldName("object")) {
-      const first = link.childForFieldName("arguments")?.namedChildren[0];
+      const args = link.childForFieldName("arguments");
+      const first = args?.namedChildren[0];
       const m = first ? /^([A-Z]\w*)\.class$/.exec(first.text) : null;
       if (m) return m[1]!;
+      // `.flatMap(name -> client.get(User.class, name))`: the link's own lambda fetches the entity.
+      const fetched = first?.type === "lambda_expression" ? /\b(?:get|fetch|list|listAll|listBy)\s*\(\s*([A-Z]\w*)\.class\b/.exec(first.text) : null;
+      if (fetched) return fetched[1]!;
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * The entity class an object handed to an extension client holds: its declared
+ * type in the enclosing function — or, inside a lambda, in the method around it
+ * (`post` a parameter of `update(Post post)` read in `.flatMap(w -> client.update(post))`);
+ * a `var` built by `new X(…)` or by a method of the file declaring its return type
+ * (`var reason = createReason(…)` → `Reason`); else the class the lambda chain it
+ * arrives through fetches.
+ */
+function heldEntityType(node: Node, name: string): string | null {
+  for (let at: Node | null = node; at; ) {
+    const declared = localDeclaredType(at, name);
+    if (declared && declared !== "var" && declared !== "val") return declared;
+    if (declared === "var" || declared === "val") return initializerType(at, name);
+    // Up to the next enclosing function (a lambda's enclosing method).
+    let fn: Node | null = at.parent;
+    while (fn && !/^(method_declaration|constructor_declaration|function_declaration|lambda_expression|lambda_literal)$/.test(fn.type)) fn = fn.parent;
+    if (!fn || fn.type !== "lambda_expression") break;
+    at = fn;
+  }
+  return lambdaParamClass(node, name);
+}
+
+/** The type a `var` is initialized to: `new X(…)`, or a same-file method's declared return type (`Mono<X>` → `X`). */
+function initializerType(node: Node, name: string): string | null {
+  let fn: Node | null = node.parent;
+  while (fn && !/^(method_declaration|constructor_declaration|lambda_expression)$/.test(fn.type)) fn = fn.parent;
+  for (const decl of fn?.descendantsOfType("variable_declarator") ?? []) {
+    if (decl?.childForFieldName("name")?.text !== name) continue;
+    const value = decl.childForFieldName("value");
+    if (value?.type === "object_creation_expression") return simpleTypeName(value.childForFieldName("type")?.text);
+    if (value?.type === "method_invocation" && !value.childForFieldName("object")) {
+      const callee = value.childForFieldName("name")?.text;
+      const method = node.tree.rootNode.descendantsOfType("method_declaration").find((m) => m?.childForFieldName("name")?.text === callee);
+      const ret = method?.childForFieldName("type")?.text ?? "";
+      const inner = /^(?:Mono|Optional|Flux|Uni|CompletableFuture)<\s*([A-Z][\w.]*)\s*>$/.exec(ret)?.[1] ?? ret;
+      return /^[A-Z][\w.]*$/.test(inner) ? simpleTypeName(inner) : null;
     }
     return null;
   }

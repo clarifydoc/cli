@@ -509,3 +509,28 @@ describe("URL templates built by joining parts", () => {
     expect(await templateOf("function squadUrl(club, season) { return ['/api', 'clubs', club, 'squads', season].join('/'); }", "squadUrl")).toBe("/api/clubs/{club}/squads/{season}");
   });
 });
+
+describe("an exported factory returning an object of functions", () => {
+  it("names each member a function of its own, so a request belongs to its operation (real-repo FP)", async () => {
+    const src = `export const ClubsApiAxiosParamCreator = function (configuration?: Configuration) {
+    return {
+        createClub: async (club?: Club, options = {}) => {
+            const localVarPath = \`/api/v2/clubs\`;
+            return { url: localVarPath, options };
+        },
+        deleteClub: async (name: string, options = {}) => {
+            const localVarPath = \`/api/v2/clubs/{name}\`;
+            return { url: localVarPath, options };
+        },
+    }
+};
+export const settings = function () {
+    return { theme: 'dark', save: () => {} }
+};
+`;
+    const tree = await parseSource(src, "typescript" as any, "clubs-api.ts");
+    const names = new JavaScriptExtractor().extractFunctions(tree, src).map((f) => `${f.name}@${f.line}`);
+    // An object holding data besides functions is no namespace of functions.
+    expect(names).toEqual(["ClubsApiAxiosParamCreator@1", "ClubsApiAxiosParamCreator.createClub@3", "ClubsApiAxiosParamCreator.deleteClub@7", "settings@13"]);
+  });
+});
