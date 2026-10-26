@@ -26,3 +26,25 @@ describe("C# reachability — what PowerShell and the compiler load", () => {
     expect(passive(analysis("Scouting.cs", { name: "ScoutingFeature", extends: "Feature" }))).not.toBeNull();
   });
 });
+
+describe("C# reachability — a NuGet package's public types", () => {
+  it("keeps the public types of a project packed on build alive, not those of an app", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("fs/promises");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const root = await mkdtemp(join(tmpdir(), "cd-nuget-"));
+    try {
+      await mkdir(join(root, "League.Api/Core"), { recursive: true });
+      await mkdir(join(root, "League.App"), { recursive: true });
+      await writeFile(join(root, "League.Api/League.Api.csproj"), "<Project><PropertyGroup><GeneratePackageOnBuild>True</GeneratePackageOnBuild></PropertyGroup></Project>");
+      await writeFile(join(root, "League.App/League.App.csproj"), "<Project><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+      const files = new Set(["League.Api/League.Api.csproj", "League.App/League.App.csproj", "League.Api/Core/ResultInfo.cs", "League.App/Orphan.cs"]);
+      const m = await csharpReachability.load({ projectRoot: root, roots: ["League.Api", "League.App"], files });
+      const passive = (a: FileAnalysis) => m.passiveReason!(a, a.filePath, none);
+      expect(passive(analysis("League.Api/Core/ResultInfo.cs", { name: "ResultInfo", isExported: true }))).toBe("NuGet package (public API)");
+      expect(passive(analysis("League.App/Orphan.cs", { name: "Orphan", isExported: true }))).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

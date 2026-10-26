@@ -1,4 +1,4 @@
-import { conventionReachability } from "../shared/reachability-kit.js";
+import { conventionReachability, withPassive } from "../shared/reachability-kit.js";
 
 /**
  * C# dead-code model. A `using` names a namespace, never a file: types are
@@ -48,4 +48,21 @@ export const csharpReachability = conventionReachability({
   // Not *.csproj: an old-style project lists every compiled file, which would
   // make every file "named in configuration".
   configFiles: /(?:^|\/)(?:appsettings[^/]*\.json|[^/]*\.config|[^/]*\.cshtml|launchSettings\.json)$/i,
+  // A project packed as a NuGet package (`<GeneratePackageOnBuild>` / `<IsPackable>` true) is a
+  // library: its public types are for its consumers.
+  async extend(_ctx, kit, base) {
+    const packageDirs: string[] = [];
+    for (const rel of await kit.listFiles()) {
+      if (!/\.csproj$/i.test(rel)) continue;
+      const text = (await kit.readText(rel)) ?? "";
+      if (!/<(?:GeneratePackageOnBuild|IsPackable)>\s*true\s*</i.test(text)) continue;
+      packageDirs.push(rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+    }
+    if (packageDirs.length === 0) return {};
+    return withPassive(base, (analysis) =>
+      packageDirs.some((d) => d === "" || analysis.filePath.startsWith(d + "/")) && analysis.classes.some((c) => c.isExported)
+        ? "NuGet package (public API)"
+        : null,
+    );
+  },
 });
