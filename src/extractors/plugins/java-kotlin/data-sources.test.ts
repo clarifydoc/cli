@@ -655,6 +655,14 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(db(split)).toEqual([["createNamedQuery", null]]);
   });
 
+  it("reads the JPQL's from-entity over a projection's result class, and no type parameter (real-repo FP)", async () => {
+    const rows = await sourcesOf(`
+    String q = "select new com.example.league.ClubRow(c.id, c.name) from Club c where c.active = true";
+    em.createQuery(q, ClubRow.class).getResultList();
+    TypedQuery<T> typed = em.createQuery(criteria);`, "java");
+    expect(db(rows)).toEqual([["createQuery", "Club"], ["createQuery", null]]);
+  });
+
   it("is not fooled by services, REST templates and HTTP sessions", async () => {
     const rows = await sourcesOf(`
     elementTemplateService.merge(template);

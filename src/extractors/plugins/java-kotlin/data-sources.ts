@@ -1047,7 +1047,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         ? this.stringConsts.get(call.firstArg.text.replace(/^this\./, "")) ?? localStringValue(node, call.firstArg.text, this.stringConsts)
         : call.firstArg ? stringArgText(call.firstArg, this.stringConsts) : null;
       const fromConstant = constant ? constantQueryTarget(constant) : null;
-      const entity = jpaEntityArg(node)
+      // `em.createQuery("select new x.ClubRow(c.id) from Club c", ClubRow.class)`: the class literal is the
+      // result's shape; the JPQL's `from` names what is read.
+      const jpqlEntity = method === "createQuery" && constant ? jpaEntityText(`"${constant}"`) : null;
+      const entity = jpqlEntity
+        ?? jpaEntityArg(node)
         ?? fromConstant?.entity
         // `TypedQuery<Player> q = em.createQuery(criteria)`: the declared result type names it.
         ?? typedQueryEntity(node)
@@ -1421,7 +1425,8 @@ function typedQueryEntity(call: Node): string | null {
   const decl = n?.type === "variable_declarator" ? n.parent : null;
   const type = decl?.type === "local_variable_declaration" || decl?.type === "field_declaration" ? decl.childForFieldName("type")?.text : null;
   const m = type ? /^(?:TypedQuery|Query|NativeQuery|SelectionQuery)\s*<\s*([A-Z]\w*)\s*>$/.exec(type) : null;
-  return m && !NOT_AN_ENTITY_LITERAL.has(m[1]!) && !/^(?:Long|Integer|String|Object|Tuple|Boolean|Double)$/.test(m[1]!) ? m[1]! : null;
+  // `TypedQuery<T>` in a generic DAO names a type parameter, no entity.
+  return m && !NOT_AN_ENTITY_LITERAL.has(m[1]!) && !/^(?:Long|Integer|String|Object|Tuple|Boolean|Double|[A-Z]\d?)$/.test(m[1]!) ? m[1]! : null;
 }
 
 /** The type an argument builds: Java `new X(...)`, Kotlin `X(...)`, a builder chain rooted at it (`X.newBuilder()…`). */
