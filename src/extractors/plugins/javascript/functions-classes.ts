@@ -881,6 +881,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   private ctxTree: Tree | null = null;
   /** Whether the file defines a Pinia store (a substring gate, see `piniaStoreOf`). */
   private pinia = false;
+  /** The file registers Alpine.js components (`Alpine.data(…)`): a factory's returned methods are the template's handlers. */
+  private alpine = false;
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.beginFile(tree, sourceText);
@@ -973,6 +975,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (this.ctxTree === tree) return;
     this.ctxTree = tree;
     this.pinia = sourceText.includes("defineStore");
+    this.alpine = sourceText.includes("Alpine.data(");
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
@@ -1076,6 +1079,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
                 value.type === "function_expression")
             ) {
               functions.push(this.parseJsArrowOrExpr(name, value, isExported));
+              // An Alpine component factory, `let show = function () { return { init() {…}, save() {…} } }`
+              // registered through `Alpine.data(name, …)`: the template's `@click="save"` calls its members.
+              const built = moduleLevel && this.alpine ? factoryObject(value) : null;
+              if (built) this.extractObjectMembers(name, built, functions, false, 0);
             } else if (name && wrapped) {
               // `const save = useCallback(async () => {…}, [deps])`,
               // `const Row = memo((props) => …)` — the wrapper returns the
@@ -2005,6 +2012,18 @@ function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, strin
     }
   }
   fn.calls.push(...extra);
+}
+
+/** The object literal a function builds and returns: `(id) => ({ … })`, or a body ending `return { … }`. */
+function factoryObject(fn: Node): Node | null {
+  const expr = returnedObject(fn);
+  if (expr) return expr;
+  const body = fn.childForFieldName("body");
+  if (body?.type !== "statement_block") return null;
+  const last = body.namedChildren.filter((n) => n.type !== "comment").pop();
+  let ret = last?.type === "return_statement" ? last.namedChild(0) : null;
+  while (ret?.type === "parenthesized_expression") ret = ret.namedChild(0);
+  return ret?.type === "object" ? ret : null;
 }
 
 /** The object literal an arrow function returns as its expression body (`(id) => ({ … })`), or null. */

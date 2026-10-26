@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
+import { bladeImports, extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
+import { extractHtmlInteractiveElements } from "../html/index.js";
 
 /**
  * Blade templates reached the PHP plugin (they are .php) but contributed no
@@ -49,5 +50,28 @@ class PartController {
   public function index() { return Part::all(); }
 }`;
     expect(extractBladeInteractiveElements(SRC)).toEqual([]);
+  });
+});
+
+describe("what a Blade view loads", () => {
+  it("imports its @vite scripts and the views it extends, includes and renders", () => {
+    const view = `@extends('layout.session')
+@section('content')
+  <x-club.card :club="$club" />
+  <x-slot name="footer">x</x-slot>
+  @include('partials.club-form', ['club' => $club])
+@endsection
+@vite(['js/pages/clubs/show.js', 'sass/app.scss'])`;
+    expect(bladeImports(view).map((i) => `${i.line} ${i.source}`)).toEqual([
+      "7 js/pages/clubs/show.js",
+      "1 layout/session.blade.php",
+      "5 partials/club-form.blade.php",
+      "3 components/club/card.blade.php",
+    ]);
+  });
+
+  it("reads Alpine event directives as handlers, never a template dialect's own @attribute", () => {
+    const els = extractHtmlInteractiveElements([`<button type="button" @click.prevent="relegate(club)">Go</button>`, `<input @bind="Name" />`]);
+    expect(els.map((e) => `${e.event} ${e.handler}`)).toEqual(["onclick relegate", "input null"]);
   });
 });

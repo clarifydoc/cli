@@ -7,7 +7,7 @@ import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
-import { extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
+import { bladeImports, extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
 import { phpManifest } from "./manifest.js";
 import { PhpExtractor } from "./functions-classes.js";
 import { PhpImportExportExtractor } from "./imports-exports.js";
@@ -52,11 +52,19 @@ export const phpMeta: LanguagePluginMeta = {
   // around its code: forms, links, inline AJAX and the screen (views.ts).
   // An `.inc` is PHP only when it holds a PHP tag: Delphi's `{$I x.inc}` compiler switches and
   // fragments share the extension.
-  // A Blade template's inline `<script>` requests are the page's (`window.axios.put('api/v1/…')`).
+  // A Blade template's inline `<script>` requests are the page's (`window.axios.put('api/v1/…')`), and
+  // the scripts its `@vite([...])` directive loads and the views it extends, includes and renders are its imports.
   preprocess: (rawSource, relativePath) =>
     /\.inc$/i.test(relativePath) && !/<\?(?:php\b|=)/i.test(rawSource) ? { skip: "an .inc with no PHP in it" }
-      : /\.blade\.php$/i.test(relativePath) && /<script\b/i.test(rawSource)
-        ? { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => { analysis.dataSources.push(...inlineScriptRequests(raw.split(/\r?\n/))); } }
+      : /\.blade\.php$/i.test(relativePath)
+        ? {
+            sourceText: rawSource,
+            language: "php",
+            postExtract: (analysis, raw) => {
+              if (/<script\b/i.test(raw)) analysis.dataSources.push(...inlineScriptRequests(raw.split(/\r?\n/)));
+              analysis.imports.push(...bladeImports(raw));
+            },
+          }
       : phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
   functionsClasses: new PhpExtractor(),
   importsExports: new PhpImportExportExtractor(),

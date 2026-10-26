@@ -1,4 +1,4 @@
-import type { InteractiveElementInfo, ScreenInfo } from "../../../types/analysis.js";
+import type { ImportInfo, InteractiveElementInfo, ScreenInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { handlerOf } from "../shared/element-requests.js";
 
@@ -18,9 +18,10 @@ import { handlerOf } from "../shared/element-requests.js";
  */
 
 const BLADE_FILE_RE = /\.blade\.php$/i;
-/** Blade-authored content: a directive or an echo — present in practice in every template. */
+/** Blade-authored content: a directive or an echo — present in practice in every template — or,
+ *  in a partial with neither, Alpine.js markup (`x-data`, `@click=`). */
 const BLADE_MARKER_RE =
-  /@(extends|section|yield|include|includeIf|csrf|method|foreach|endforeach|if|endif|auth|guest|push|stack)\b|\{\{\s*[$\w]/;
+  /@(extends|section|yield|include|includeIf|csrf|method|foreach|endforeach|if|endif|auth|guest|push|stack)\b|\{\{\s*[$\w]|\sx-(?:data|on:\w+)\s*=|\s@(?:click|submit|change|input|keyup|keydown)[.=]/;
 
 /** `@section('title', 'Product Catalog')` → "Product Catalog". */
 const SECTION_TITLE_RE = /@section\s*\(\s*['"]title['"]\s*,\s*['"]([^'"]+)['"]/;
@@ -78,4 +79,45 @@ export function extractBladeInteractiveElements(sourceText: string): Interactive
     const name = el.request.target.slice(ROUTE_MARK.length).replace(/~/g, ".");
     return { ...el, handler: handlerOf(el.request.method, "/" + name.replace(/\./g, "/")), request: { method: el.request.method, target: `route:${name}` } };
   });
+}
+
+/** `@vite(['js/pages/clubs/show.js', 'sass/app.scss'])` / `@vite('resources/js/app.ts')` — the entry points a view loads. */
+const VITE_DIRECTIVE_RE = /@vite\s*\(\s*(\[[^\]]*\]|(['"])[^'"]+\2)/g;
+const SCRIPT_ENTRY_RE = /\.(?:[cm]?js|jsx|ts|tsx)$/i;
+/** `@extends('layout.app')`, `@include('partials.club-card', […])`, `@component('alerts.box')`: a view by its dotted name. */
+const VIEW_DIRECTIVE_RE = /@(?:extends|include|includeIf|component|each)\s*\(\s*(['"])([\w.-]+)\1/g;
+/** `<x-layout.range />`, `<x-club-card :club="$club">`: an anonymous component under `views/components`. */
+const COMPONENT_TAG_RE = /<x-([a-z0-9][\w.-]*)(?=[\s/>])/g;
+const NOT_A_VIEW_COMPONENT = new Set(["slot", "dynamic-component"]);
+
+/**
+ * What a Blade view loads, as imports: the scripts of its `@vite` directive (its
+ * behaviour, as a `<script src>` is a plain page's; stylesheets are left out),
+ * and the views it is built from — the layout it extends, the partials it
+ * includes, the `<x-…>` components it renders — spelled as their files under
+ * the views directory (`layout/app.blade.php`), so a handler a partial names
+ * can be looked up in the scripts of the pages that include it.
+ */
+export function bladeImports(sourceText: string): ImportInfo[] {
+  const out: ImportInfo[] = [];
+  const seen = new Set<string>();
+  const lineAt = (index: number) => sourceText.slice(0, index).split("\n").length;
+  const add = (source: string, index: number) => {
+    if (seen.has(source)) return;
+    seen.add(source);
+    out.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: lineAt(index) });
+  };
+  if (sourceText.includes("@vite")) {
+    for (const m of sourceText.matchAll(VITE_DIRECTIVE_RE)) {
+      for (const s of m[1]!.matchAll(/(['"])([^'"]+)\1/g)) {
+        const source = s[2]!.trim();
+        if (SCRIPT_ENTRY_RE.test(source)) add(source, m.index!);
+      }
+    }
+  }
+  for (const m of sourceText.matchAll(VIEW_DIRECTIVE_RE)) add(`${m[2]!.replace(/\./g, "/")}.blade.php`, m.index!);
+  for (const m of sourceText.matchAll(COMPONENT_TAG_RE)) {
+    if (!NOT_A_VIEW_COMPONENT.has(m[1]!)) add(`components/${m[1]!.replace(/\./g, "/")}.blade.php`, m.index!);
+  }
+  return out;
 }

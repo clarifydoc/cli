@@ -1,5 +1,6 @@
 import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 
 const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
 
@@ -15,6 +16,13 @@ const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
  * link from the page's `<component>` to the handler, in the script that binds
  * it or another script the page loads; an inline handler is the function the
  * binding sits in. A selector that names only a tag binds nothing.
+ *
+ * An element whose inline handler NAMES a function the page does not define —
+ * `onclick="saveClub()"`, Alpine's `@click="changeRange"` — calls the function
+ * of that name in the scripts the page loads (`<script src>`, a Blade
+ * `@vite([...])` entry), or else in the modules those scripts import (an Alpine
+ * component spread from `../shared/dates.js`): one link per handler, only when
+ * exactly one function at the nearer level has that name.
  */
 export class DomBindingResolver implements DispatchResolver {
   readonly id = "dom-binding";
@@ -23,7 +31,7 @@ export class DomBindingResolver implements DispatchResolver {
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const scripts = analyses.filter((a) => SCRIPT_LANGUAGES.has(a.language));
-    if (!scripts.some((s) => s.domBindings?.length)) return [];
+    if (scripts.length === 0) return [];
     const byBase = new Map<string, FileAnalysis[]>();
     for (const s of scripts) {
       const base = s.filePath.slice(s.filePath.lastIndexOf("/") + 1);
@@ -39,7 +47,7 @@ export class DomBindingResolver implements DispatchResolver {
       return named.length === 1 ? named[0]! : null;
     };
 
-    const links: SymbolLink[] = [];
+    const links: SymbolLink[] = namedHandlerLinks(analyses, scripts);
     for (const page of analyses) {
       if (SCRIPT_LANGUAGES.has(page.language)) continue;
       const elements = page.interactiveElements.filter((e) => e.selector);
@@ -69,6 +77,126 @@ export class DomBindingResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+
+/** The file an import of `from` names: a relative specifier through the path map, else by path suffix, else the one file of that name. */
+function importResolver(analyses: FileAnalysis[]): (source: string, from: FileAnalysis) => FileAnalysis | null {
+  const filePathMap = buildFilePathMap(analyses);
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const byBase = new Map<string, FileAnalysis[]>();
+  for (const a of analyses) {
+    const base = a.filePath.slice(a.filePath.lastIndexOf("/") + 1);
+    (byBase.get(base) ?? byBase.set(base, []).get(base)!).push(a);
+  }
+  return (source, from) => {
+    if (source.startsWith(".") && SCRIPT_LANGUAGES.has(from.language)) {
+      const file = resolveTarget(source, from.filePath, filePathMap);
+      return file ? byPath.get(file) ?? null : null;
+    }
+    const rel = source.replace(/[?#].*$/, "").replace(/^(?:\.{0,2}\/|~\/)+/, "");
+    const named = byBase.get(rel.slice(rel.lastIndexOf("/") + 1)) ?? [];
+    const bySuffix = named.filter((s) => s.filePath === rel || s.filePath.endsWith(`/${rel}`));
+    if (bySuffix.length === 1) return bySuffix[0]!;
+    return named.length === 1 && SCRIPT_LANGUAGES.has(named[0]!.language) ? named[0]! : null;
+  };
+}
+
+/**
+ * Links from each page to the functions its inline handlers name. A name is
+ * looked up in the page's own scripts, then in what they import (two levels);
+ * a partial, layout or component that loads no script of its own is looked up
+ * the same way from each page that includes it (up to four includes up), so a
+ * shared `<x-date-range>` whose `@click="changeRange"` lives in a module every
+ * page script imports links once, and a shared form whose `save` each page
+ * defines links to each page's `save`.
+ */
+function namedHandlerLinks(analyses: FileAnalysis[], scripts: FileAnalysis[]): SymbolLink[] {
+  const pages = analyses.filter((a) => !SCRIPT_LANGUAGES.has(a.language));
+  const wanted = pages
+    .map((page) => ({ page, named: page.interactiveElements.filter((e) => !e.request && e.event.startsWith("on") && e.handler && IDENT.test(e.handler)) }))
+    .filter((p) => p.named.length > 0);
+  if (wanted.length === 0 || scripts.length === 0) return [];
+  const resolveImport = importResolver(analyses);
+  const loads = new Map<FileAnalysis, FileAnalysis[]>();
+  const loadsOf = (a: FileAnalysis): FileAnalysis[] => {
+    let out = loads.get(a);
+    if (!out) loads.set(a, (out = [...new Set(a.imports.map((i) => resolveImport(i.source, a)).filter((f): f is FileAnalysis => !!f && f !== a))]));
+    return out;
+  };
+  const includers = new Map<FileAnalysis, FileAnalysis[]>();
+  for (const page of pages) {
+    for (const loaded of loadsOf(page)) {
+      if (!SCRIPT_LANGUAGES.has(loaded.language)) (includers.get(loaded) ?? includers.set(loaded, []).get(loaded)!).push(page);
+    }
+  }
+  /** A page's scripts by level: those it loads, then what they import (two levels). */
+  const levelCache = new Map<FileAnalysis, FileAnalysis[][]>();
+  const levelsOf = (page: FileAnalysis): FileAnalysis[][] => {
+    const cached = levelCache.get(page);
+    if (cached) return cached;
+    const first = loadsOf(page).filter((f) => SCRIPT_LANGUAGES.has(f.language));
+    const levels: FileAnalysis[][] = first.length ? [first] : [];
+    const seen = new Set(first);
+    for (let depth = 0; depth < 2 && levels.length; depth++) {
+      const next = [...new Set(levels[levels.length - 1]!.flatMap(loadsOf))].filter((s) => !seen.has(s) && SCRIPT_LANGUAGES.has(s.language));
+      if (next.length === 0) break;
+      for (const s of next) seen.add(s);
+      levels.push(next);
+    }
+    levelCache.set(page, levels);
+    return levels;
+  };
+  /** The one function named `name` at the nearest level of a page's scripts that has one. */
+  const lookup = (page: FileAnalysis, name: string): { file: string; symbol: string; line: number } | null => {
+    for (const level of levelsOf(page)) {
+      const hits = level.flatMap((s) => s.functions.filter((f) => f.name === name || f.name.endsWith(`.${name}`)).map((f) => ({ file: s.filePath, symbol: f.name, line: f.line })));
+      if (hits.length) return hits.length === 1 ? hits[0]! : null;
+    }
+    return null;
+  };
+
+  const out: SymbolLink[] = [];
+  for (const { page, named } of wanted) {
+    const own = new Set(page.functions.map((f) => f.name));
+    const done = new Set<string>();
+    for (const el of named) {
+      const name = el.handler!;
+      if (own.has(name) || done.has(name)) continue;
+      done.add(name);
+      const targets = new Map<string, { file: string; symbol: string; line: number }>();
+      const direct = lookup(page, name);
+      if (direct) targets.set(`${direct.file}::${direct.symbol}`, direct);
+      else {
+        // The pages this one is part of, nearest first.
+        const seen = new Set([page]);
+        let frontier = [page];
+        for (let depth = 0; depth < 4 && frontier.length && targets.size === 0; depth++) {
+          const next: FileAnalysis[] = [];
+          for (const p of frontier) for (const up of includers.get(p) ?? []) if (!seen.has(up)) (seen.add(up), next.push(up));
+          for (const up of next) {
+            const hit = lookup(up, name);
+            if (hit) targets.set(`${hit.file}::${hit.symbol}`, hit);
+          }
+          frontier = next;
+        }
+      }
+      for (const t of targets.values()) {
+        out.push({
+          sourceFile: page.filePath,
+          sourceSymbol: "<component>",
+          sourceLine: el.line,
+          callName: name,
+          targetFile: t.file,
+          targetSymbol: t.symbol,
+          targetLine: t.line,
+          confidence: "INFERRED",
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /** The function a binding runs: named — in its script, else in another the page loads — or, inline, the function it sits in. */

@@ -233,6 +233,19 @@ const READS_WRAPPED = new Set(["form", "button", "input", "a"]);
  *  attributes merely CONTAINING "on" out — without it, `content="notranslate"`
  *  matched as event "ontent" / handler "notranslate". */
 const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'/gi;
+/** Alpine.js / petite-vue event directives: `@click="changeRange"`, `x-on:submit.prevent="save()"`.
+ *  Only DOM event names: a template dialect's own `@word=` attribute (Razor `@bind=`) is no handler. */
+const DIRECTIVE_HANDLER_RE =
+  /(?:^|\s)(?:@|x-on:|v-on:)(click|dblclick|submit|change|input|keyup|keydown|keypress|focus|blur|mouseenter|mouseleave|mouseover|mouseout|mousedown|mouseup|scroll|select|reset|paste|drop|dragstart|dragend|touchstart|touchend)(?:\.[\w.-]+)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+/** The first inline handler an element's attributes carry: `onclick="…"` or an event directive. */
+function inlineHandler(attrs: string): { event: string; handler: string | null } | null {
+  const on = HANDLER_RE.exec(attrs);
+  HANDLER_RE.lastIndex = 0;
+  if (on) return { event: "on" + (on[1] ?? on[3])!.toLowerCase(), handler: cleanHandler((on[2] ?? on[4])!) };
+  const directive = DIRECTIVE_HANDLER_RE.exec(attrs);
+  DIRECTIVE_HANDLER_RE.lastIndex = 0;
+  return directive ? { event: "on" + directive[1]!.toLowerCase(), handler: cleanHandler((directive[2] ?? directive[3])!) } : null;
+}
 /** Input types that are state/filter noise rather than meaningful actions. */
 const SKIP_INPUT_TYPES = new Set(["checkbox", "radio", "hidden"]);
 
@@ -343,10 +356,7 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
           if (close >= 0) break;
         }
       }
-      const handlers = [...attrs.matchAll(HANDLER_RE)];
-      const inline = handlers[0]
-        ? { event: "on" + (handlers[0][1] ?? handlers[0][3])!.toLowerCase(), handler: cleanHandler((handlers[0][2] ?? handlers[0][4])!) }
-        : null;
+      const inline = inlineHandler(attrs);
       const control = FORM_CONTROL[tag];
       const id = attr(attrs, "id");
       const type = (attr(attrs, "type") ?? (tag === "button" ? "submit" : "text")).toLowerCase();
