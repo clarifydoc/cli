@@ -119,4 +119,26 @@ describe("Python reachability model", () => {
     ]);
     expect(m.resolvePath("app/main.py", "module:django.contrib.admin")).toEqual([]);
   });
+
+  it("keeps modules a registry, a package loader or a lazy __getattr__ table names", async () => {
+    const pkg = ["league/__init__.py", "league/cli/__init__.py", "league/cli/main.py", "league/cli/commands/__init__.py",
+      "league/cli/commands/fixtures_cmd.py", "league/sections/__init__.py", "league/sections/table.py", "league/sections/form.py",
+      "league/squad/__init__.py", "league/squad/_squad_utils.py"];
+    const m = await model(pkg);
+    const registry = extractPythonPathReferences(`_COMMANDS_PKG = "league.cli.commands"
+_COMMANDS = (("fixtures", "fixtures_cmd:fixtures_group"),)
+for name, target in _COMMANDS:
+    register(name, f"{_COMMANDS_PKG}.{target}")
+`);
+    expect(registry.flatMap((r) => m.resolvePath("league/cli/main.py", r))).toContain("league/cli/commands/fixtures_cmd.py");
+    const loader = extractPythonPathReferences(`import pkgutil, importlib\nfor mod in pkgutil.iter_modules(__path__):\n    importlib.import_module(f"{__name__}.{mod.name}")\n`);
+    expect(loader.flatMap((r) => m.resolvePath("league/sections/__init__.py", r)).sort()).toEqual(["league/sections/form.py", "league/sections/table.py"]);
+    const lazy = extractPythonPathReferences(`from importlib import import_module
+_LAZY = {"SquadUtils": "._squad_utils"}
+
+def __getattr__(name):
+    return getattr(import_module(_LAZY[name], __name__), name)
+`);
+    expect(lazy.flatMap((r) => m.resolvePath("league/squad/__init__.py", r))).toContain("league/squad/_squad_utils.py");
+  });
 });

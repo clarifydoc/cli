@@ -15,4 +15,14 @@ describe("C# reachability — what PowerShell and the compiler load", () => {
     expect(passive(analysis("Fix.cs", { name: "Fix", extends: "CodeFixProvider" }))).not.toBeNull();
     expect(passive(analysis("Orphan.cs", { name: "OrphanBall" }))).toBeNull();
   });
+
+  it("keeps MassTransit and NServiceBus consumers, activities, sagas and features alive", async () => {
+    const m = await csharpReachability.load({ projectRoot: "/nonexistent", roots: [], files: new Set<string>() });
+    const passive = (a: FileAnalysis) => m.passiveReason!(a, a.filePath, none);
+    expect(passive(analysis("TransferJob.cs", { name: "TransferJobConsumer", implements: ["IJobConsumer<TransferPlayer>"] }))).not.toBeNull();
+    expect(passive(analysis("TransferDef.cs", { name: "TransferConsumerDefinition", extends: "ConsumerDefinition<TransferConsumer>" }))).not.toBeNull();
+    expect(passive(analysis("MatchState.cs", { name: "MatchStateMachine", extends: "MassTransitStateMachine<MatchState>" }))).not.toBeNull();
+    expect(passive(analysis("SignPlayer.cs", { name: "SignPlayerSaga", extends: "Saga<SignPlayerData>", implements: ["IAmStartedByMessages<OfferMade>", "IHandleTimeouts<OfferExpired>"] }))).not.toBeNull();
+    expect(passive(analysis("Scouting.cs", { name: "ScoutingFeature", extends: "Feature" }))).not.toBeNull();
+  });
 });

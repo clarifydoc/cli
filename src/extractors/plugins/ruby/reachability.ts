@@ -25,7 +25,8 @@ export const rubyReachability = conventionReachability({
     hanami: [[/^(?:app|slices)\/[^/]+\/actions\//, "Hanami action"]],
   },
   passiveFiles: [
-    [/^db\/(?:migrate\/|seeds)/, "database task"],
+    // `db/migrate/`, and each further database's (`db/cache_migrate/`, `db/queue_migrations/`).
+    [/^db\/(?:[\w-]+_)?(?:migrate|migrations)\/|^db\/seeds/, "database task"],
     [/^lib\/tasks\//, "Rake task"],
     [/\.rake$/, "Rake task"],
     [/(?:^|\/)(?:Rakefile|Gemfile|Guardfile|Capfile|Vagrantfile|Dangerfile|Fastfile|Podfile)$/, "tool file"],

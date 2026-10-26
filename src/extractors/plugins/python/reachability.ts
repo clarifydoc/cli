@@ -223,6 +223,13 @@ async function loadPythonReachability(ctx: ReachabilityLoadContext): Promise<Rea
         }
         return [];
       }
+      if (ref.startsWith("relmodule:")) return resolveImport(fromFile, ref.slice(10));
+      if (ref === "package-modules:" || ref === "package-tree:") {
+        const dir = dirOf(fromFile);
+        const prefix = dir ? `${dir}/` : "";
+        return [...files].filter((f) => f.endsWith(".py") && f.startsWith(prefix) && f !== fromFile &&
+          (ref === "package-tree:" || !f.slice(prefix.length).includes("/") || /^[^/]+\/__init__\.py$/.test(f.slice(prefix.length))));
+      }
       if (ref.startsWith("file:")) {
         const p = ref.slice(5);
         const local = join2(dirOf(fromFile), p);
@@ -247,6 +254,25 @@ export function extractPythonPathReferences(sourceText: string): string[] {
     out.add(`module:${m[1]}`);
   }
   for (const m of sourceText.matchAll(/["']((?:\.{1,2}\/)?[\w./-]+\.py)["']/g)) out.add(`file:${m[1]}`);
+  // A registry naming a module relative to a package the file names
+  // (`("components", "components_cmd:components_group")` registered under
+  // `f"{_COMMANDS_PKG}.{target}"`): each such module under each dotted
+  // package string of the file, and beside the file itself.
+  const packages = [...sourceText.matchAll(/["']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)["']/g)].map((m) => m[1]!);
+  const short = [...new Set([...sourceText.matchAll(/["']([A-Za-z_]\w*):[A-Za-z_]\w*["']/g)].map((m) => m[1]!))];
+  if (short.length > 0 && packages.length * short.length <= 2000) {
+    for (const pkg of packages) for (const mod of short) out.add(`module:${pkg}.${mod}`);
+  }
+  for (const mod of short) out.add(`relmodule:.${mod}`);
+  // A package loading every module in it (`pkgutil.iter_modules(__path__)`, `walk_packages(__path__)`).
+  if (/\bpkgutil\.iter_modules\(\s*__path__/.test(sourceText)) out.add("package-modules:");
+  if (/\bpkgutil\.walk_packages\(\s*__path__/.test(sourceText)) out.add("package-tree:");
+  // A lazy module `__getattr__` importing what a table names (`"Squad": "._squad_utils"`, `import_module(f".{mod}", __name__)`).
+  if (/^def\s+__getattr__\s*\(/m.test(sourceText) && /\bimport_module\b/.test(sourceText)) {
+    for (const m of sourceText.matchAll(/["'](\.{0,2}[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)["']/g)) {
+      out.add(`relmodule:${m[1]!.startsWith(".") ? m[1] : `.${m[1]}`}`);
+    }
+  }
   return [...out];
 }
 
