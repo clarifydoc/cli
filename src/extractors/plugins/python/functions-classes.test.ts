@@ -70,6 +70,30 @@ def helper(x):
 });
 
 describe("Python nested functions", () => {
+  it("reports a def inside a module-level if / try block as a module function (real-repo FP)", async () => {
+    const { functions } = await extract(`
+import sys
+
+if args.compare:
+    def write_pairs(title, pairs):
+        def row(p):
+            return p.club
+        print(title, [row(p) for p in pairs])
+    write_pairs("moved", moved)
+
+try:
+    from league import fast_table
+except ImportError:
+    def fast_table(rows):
+        return sorted(rows)
+`);
+    expect(functions.filter((f) => f.name !== "<setup>").map((f) => `${f.name}@${f.line} ${f.isExported ? "exported" : "-"}`)).toEqual([
+      "write_pairs@5 exported",
+      "row@6 -",
+      "fast_table@14 exported",
+    ]);
+  });
+
   it("reports a def nested in a function or a method as a function of its own, with its calls (real-repo FP)", async () => {
     const { functions, classes } = await extract(`
 def repeat_every(seconds):

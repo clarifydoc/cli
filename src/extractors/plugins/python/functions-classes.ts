@@ -85,16 +85,20 @@ export class PythonExtractor extends FunctionClassExtractor {
     if (NESTED_DEF.test(node.text)) this.collectNestedFunctions(node, false, functions);
   }
 
-  private collectNestedFunctions(node: Node, inFunction: boolean, functions: FunctionInfo[]): void {
+  /**
+   * `inBlock`: below a module-level `if` / `try` / `with` / loop — a `def` there
+   * (`if args.compare: def write_pairs(…)`) is a module function, kept as one.
+   */
+  private collectNestedFunctions(node: Node, inFunction: boolean, functions: FunctionInfo[], inBlock = false): void {
     for (const child of node.namedChildren) {
       const def = child.type === "function_definition" ? child
         : child.type === "decorated_definition" ? child.namedChildren.find((c) => c.type === "function_definition") ?? null : null;
       const cls = child.type === "class_definition" ? child
         : child.type === "decorated_definition" ? child.namedChildren.find((c) => c.type === "class_definition") ?? null : null;
       if (def) {
-        if (inFunction) {
+        if (inFunction || inBlock) {
           const parsed = this.parsePythonFunction(def);
-          parsed.fn.isExported = false;
+          if (inFunction) parsed.fn.isExported = false;
           if (child !== def) parsed.fn.decorators = child.namedChildren.filter((c) => c.type === "decorator").map((d) => d.text.replace(/^@/, ""));
           functions.push(parsed.fn);
         }
@@ -105,7 +109,7 @@ export class PythonExtractor extends FunctionClassExtractor {
         const body = cls.childForFieldName("body");
         if (body) this.collectNestedFunctions(body, false, functions);
       } else {
-        this.collectNestedFunctions(child, inFunction, functions);
+        this.collectNestedFunctions(child, inFunction, functions, !inFunction && (inBlock || MODULE_BLOCK.test(child.type)));
       }
     }
   }
@@ -575,6 +579,9 @@ function collectEnumMembers(body: Node, enumName: string, out: PropertyInfo[]): 
 
 /** Cheap gate: some `class` is indented (nested in a class or a function). */
 const NESTED_CLASS = /\n[ \t]+class\s+\w/;
+
+/** Module-level statements whose blocks may declare a function (`if __name__ == "__main__":`, `try:`). */
+const MODULE_BLOCK = /^(?:if_statement|try_statement|with_statement|for_statement|while_statement|match_statement)$/;
 
 /** Cheap gate: some `def` is indented (a method or a nested function). */
 const NESTED_DEF = /\n[ \t]+(?:async[ \t]+)?def[ \t]/;
