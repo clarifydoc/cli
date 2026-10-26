@@ -195,7 +195,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           sources.push(this.ds({
             kind: "api-call",
             name: http.name,
-            target: based ? based.target : http.target,
+            target: based ? based.target : (http.target ? statedPath(http.target, node) ?? http.target : http.target),
             ...(based ? { baseRef: { kind: "literal" as const, key: based.origin } } : {}),
             line: node.startPosition.row + 1,
             ...(body ? { requestBody: body } : {}),
@@ -668,6 +668,18 @@ function statedBase(target: string, at: Node): { origin: string; target: string 
   if (!url) return null;
   const path = url[2]!.replace(/\/+$/, "") + rest;
   return { origin: url[1]!, target: path.startsWith("/") ? path : `/${path}` };
+}
+
+/**
+ * A URL that starts with an app path the class or module states once
+ * (`f"{self.ENDPOINT}1/"` with the class attribute `ENDPOINT = "/api/config/"`):
+ * the path written out. Null when the value is no app path or is assigned more than once.
+ */
+function statedPath(target: string, at: Node): string | null {
+  const m = /^\$?\{(self\.)?([A-Za-z_]\w*)\}/.exec(target);
+  if (!m) return null;
+  const value = m[1] ? selfAttributeValue(m[2]!, at) : moduleConstantValue(m[2]!, at);
+  return value && value.startsWith("/") && !/[{}]/.test(value) ? value + target.slice(m[0].length) : null;
 }
 
 /** The one string the class enclosing `at` gives `self.<name>` (in any method) or its class attribute `<name>`. */

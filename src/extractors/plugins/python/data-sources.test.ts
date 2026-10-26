@@ -312,6 +312,15 @@ describe("Python api-call — a base the file states", () => {
     ]);
   });
 
+  it("writes out an app path a test class states once (real-repo FP)", async () => {
+    expect(await rows([
+      "class TestLeagueConfig(APITestCase):",
+      '    ENDPOINT = "/api/config/"',
+      "    def test_update(self):",
+      '        self.client.patch(f"{self.ENDPOINT}1/", {"name": "x"})',
+    ].join("\n"))).toEqual(["patch /api/config/1/"]);
+  });
+
   it("keeps the host of a module constant, unless it is assigned twice or rebound locally", async () => {
     expect(await rows([
       "import requests",
