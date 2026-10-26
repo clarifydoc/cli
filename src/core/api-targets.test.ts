@@ -47,6 +47,14 @@ describe("splitUnknownBase", () => {
   });
 });
 
+describe("splitUnknownBase — websocket and protocol-relative hosts", () => {
+  it("splits a host hole off a ws:// or //-relative URL, and keeps a loopback ws origin", () => {
+    expect(splitUnknownBase("//${env.socketHost}/ws/scores/")).toMatchObject({ target: "/ws/scores/" });
+    expect(splitUnknownBase("wss://${host}/ws/scores/")).toMatchObject({ target: "/ws/scores/" });
+    expect(splitUnknownBase("ws://localhost:8000/ws/scores/")).toEqual({ target: "/ws/scores/", origin: "ws://localhost:8000" });
+  });
+});
+
 describe("finalizeApiTargets", () => {
   it("rewrites api-call rows only", () => {
     const rows = [

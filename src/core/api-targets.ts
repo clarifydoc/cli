@@ -65,9 +65,9 @@ function isCodeText(url: string): boolean {
 }
 
 /** A server on this machine: a loopback host. */
-const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?=\/|$)/i;
-/** A host the source leaves as a hole (`http://${IP}:5000`): some server, not stated which. */
-const HOLE_HOST_ORIGIN = /^https?:\/\/[^/]*\$\{[^/]*?(?=\/|$)/i;
+const LOOPBACK_ORIGIN = /^(?:https?|wss?):\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?=\/|$)/i;
+/** A host the source leaves as a hole (`http://${IP}:5000`, a websocket's `//${host}`): some server, not stated which. */
+const HOLE_HOST_ORIGIN = /^(?:(?:https?|wss?):)?\/\/[^/]*\$\{[^/]*?(?=\/|$)/i;
 const RELATIVE_PATH = /^[A-Za-z0-9_.~-]+(?:[/?#]|$)/;
 
 /**
