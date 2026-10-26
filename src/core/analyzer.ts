@@ -76,6 +76,7 @@ import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from 
 import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
 import { runtimeGraph, typeOnlyEdges } from "./import-kinds.js";
+import { rankDataFlows } from "./flow-criticality.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
@@ -1919,6 +1920,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (findingsWithEntries > 0) progress.detail(`  Security findings reachable from a route: ${findingsWithEntries}`);
   // The route-level findings above are ours too: the same rule ids and settings (idempotent over the rest).
   allSecurityIssues.splice(0, allSecurityIssues.length, ...applySecurityRules(allSecurityIssues, projectConfig.config.security).issues);
+  // Which data flows matter most: scored and sorted, most critical first.
+  if (dataFlows.length > 0) {
+    const pressingFlows = rankDataFlows(dataFlows, { routes: allRoutes, securityIssues: allSecurityIssues });
+    progress.detail(`  Data-flow criticality: ${pressingFlows} of ${dataFlows.length} flow(s) high or critical`);
+  }
 
   const healthScore = computeHealthScore({
     analyses: allAnalyses,

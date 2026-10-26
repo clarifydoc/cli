@@ -2,6 +2,7 @@
 
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { describeFlowReasons } from "../../core/flow-criticality.js";
 import type { DataFlowPath, EntityGraphEdge, EntityGraphNode } from "../../types/analysis.js";
 import {
   bulletList,
@@ -249,6 +250,15 @@ function viaText(via: DataFlowPath["via"]): string {
   return `\n      via ${hops.join(" → ")}`;
 }
 
+/** ` [high: writes data, its route allows anonymous callers]` for a high or critical flow; nothing otherwise. */
+function criticalityNote(f: DataFlowPath): string {
+  const c = f.criticality;
+  if (!c || (c.level !== "critical" && c.level !== "high")) return "";
+  const why = describeFlowReasons(c.reasons.filter((r) => r !== "shared_resource"));
+  const shared = c.sharedBy ? `${why ? ", " : ""}${c.sharedBy} entry points do the same` : "";
+  return ` [${c.level}: ${why}${shared}]`;
+}
+
 export function dataFlowsTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_data_flows",
@@ -256,7 +266,8 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
     description:
       "Source→sink rows: UI screens and API routes that transitively reach a data effect — a table read or " +
       "written, a queue published or consumed, an outbound API call — with the number of call-graph hops and the " +
-      "confidence of the path. Filter by effect (e.g. db-write) to answer 'which endpoints can modify this data'.",
+      "confidence of the path, most critical first. Filter by effect (e.g. db-write) to answer " +
+      "'which endpoints can modify this data'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -346,17 +357,20 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
         if (group) group.rows.push(row);
         else grouped.set(key, { kind: row.entryKind, label: row.entryLabel, file: row.entryFile, rows: [row] });
       }
-      const entries = [...grouped.values()].sort((a, b) => b.rows.length - a.rows.length);
+      // Most critical entry point first (flow-criticality.ts), then the widest footprint.
+      const top = (g: { rows: typeof rows }): number => Math.max(...g.rows.map((r) => r.criticality?.score ?? 0));
+      const entries = [...grouped.values()].sort((a, b) => top(b) - top(a) || b.rows.length - a.rows.length);
       const pg = page(entries, offset, limit);
       const { shown } = pg;
 
       const body = shown.map(({ kind, label, file, rows: group }) => {
-        const head = `- ${kind} ${label} (${file})`;
+        const worst = group.reduce<DataFlowPath["criticality"]>((w, r) => ((r.criticality?.score ?? -1) > (w?.score ?? -1) ? r.criticality : w), undefined);
+        const head = `- ${kind} ${label} (${file})${worst && (worst.level === "critical" || worst.level === "high") ? ` — ${worst.level}` : ""}`;
         const effects = bulletList(
-          [...group].sort((a, b) => a.distance - b.distance),
+          [...group].sort((a, b) => (b.criticality?.score ?? 0) - (a.criticality?.score ?? 0) || a.distance - b.distance),
           10,
           (f) =>
-            `${f.effect} ${f.resource}${f.distance > 0 ? ` — ${f.distance} hops` : " — direct"}${confidenceNote(f.confidence)}${viaText(f.via)}`,
+            `${f.effect} ${f.resource}${f.distance > 0 ? ` — ${f.distance} hops` : " — direct"}${confidenceNote(f.confidence)}${criticalityNote(f)}${viaText(f.via)}`,
           { indent: "  " },
         );
         return [head, ...effects].join("\n");

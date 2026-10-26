@@ -2332,6 +2332,18 @@ export interface DataFlowPath {
    * written before it was recorded.
    */
   via?: FlowHop[];
+  /** How much this flow matters when something goes wrong (flow-criticality.ts). Absent on older artifacts. */
+  criticality?: FlowCriticality;
+}
+
+/** A data flow's criticality: a 0–100 score, its level and the reason ids behind it. */
+export interface FlowCriticality {
+  score: number;
+  level: "critical" | "high" | "medium" | "low";
+  /** Reason ids (`FLOW_REASON_LABELS`): the effect first, then each signal that added to the score. */
+  reasons: string[];
+  /** Entry points that reach the same effect on the same resource, when more than one. */
+  sharedBy?: number;
 }
 
 /** One function on a data flow's witness path (`DataFlowPath.via`). */
