@@ -296,6 +296,16 @@ function rtkEvidence(src: string): { slice: boolean; base: string } {
   return { slice, base };
 }
 
+/** A string or template an options object states for a key (`{ path: `/clubs/${id}` }`), as written; null when absent. */
+function optionString(obj: Node, key: RegExp): string | null {
+  for (const pair of obj.namedChildren) {
+    if (pair.type !== "pair" || !key.test(stripQuotes(pair.childForFieldName("key")?.text ?? ""))) continue;
+    const v = pair.childForFieldName("value");
+    return v && (v.type === "string" || v.type === "template_string") ? stripQuotes(v.text) : null;
+  }
+  return null;
+}
+
 /** The name `{ refetch }` / `{ refetch: reload }` binds in a destructured query result. */
 function refetchBinding(pattern: Node): Node | null {
   for (const p of pattern.namedChildren) {
@@ -533,6 +543,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     const hook = fn?.type === "identifier" ? /^use(?:Lazy)?([A-Z][\w$]*?)(?:Query|Mutation|InfiniteQuery|QueryState)$/.exec(fnName) : null;
     const initiate = fn?.type === "member_expression" && fnName === "initiate" ? /\.endpoints\.([\w$]+)\.initiate$/.exec(fn.text.replace(/\s+/g, "")) : null;
     if (hook && (this.imports ??= importEvidence(this.sourceText)).names.has(fnName)) {
+      // A project hook handed the request's path in its options (`useApiQuery({ path: `/movie/${id}/folder` })`):
+      // that path, with the verb the options state (a query's is GET).
+      const options = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
+      const path = options?.type === "object" ? optionString(options, /^(?:path|url)$/) : null;
+      if (path !== null && /^\/|^\$\{[\w$.]+\}\//.test(path)) {
+        const verb = optionString(options!, /^method$/)?.toUpperCase() ?? (/Query$/.test(fnName) ? "GET" : fnName);
+        sources.push(this.ds({ kind: "api-call", name: verb, target: path, line }));
+        return true;
+      }
       const endpoint = hook[1]![0]!.toLowerCase() + hook[1]!.slice(1);
       sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint }));
       // `const [remove] = useDeleteGameMutation()`: the mutation (or lazy query)

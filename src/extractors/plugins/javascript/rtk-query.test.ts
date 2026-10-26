@@ -24,6 +24,25 @@ export const api = createApi({
 });
 export const { useGetGamesQuery, useAddGameMutation } = api;`;
 
+describe("a project's query hook handed its path", () => {
+  it("requests the path its options state, not an endpoint by the hook's name (real-repo FP)", async () => {
+    const calls = await callsOf(`import useApiQuery from "Helpers/Hooks/useApiQuery";
+import useApiMutation from "Helpers/Hooks/useApiMutation";
+import { useGetGamesQuery } from "./api";
+export function Kit({ clubId }) {
+  const { data } = useApiQuery({ path: \`/club/\${clubId}/kit\` });
+  const save = useApiMutation({ path: "/kit", method: "put" });
+  const games = useGetGamesQuery({ path: "home" });
+}`);
+    expect(calls.map((d) => `${d.name} ${d.target} ${d.endpoint ?? "-"}`)).toEqual([
+      "GET /club/${clubId}/kit -",
+      "PUT /kit -",
+      // An RTK hook's argument is its endpoint's, whatever it is called.
+      "useGetGamesQuery null getGames",
+    ]);
+  });
+});
+
 describe("RTK Query", () => {
   it("each endpoint is one api-call at the slice's base, tagged with its name", async () => {
     expect((await callsOf(SLICE)).map((d) => `${d.name} ${d.target} ${d.endpoint}`)).toEqual([
