@@ -161,6 +161,21 @@ describe("dartSpec — data sources", () => {
     expect(byName["apiClient.delete"]).toMatchObject({ target: "/balls/42" });
   });
 
+  it("reads a call on a class's static client, on one line or with the verb on the next (real-repo shape)", () => {
+    const ds = dataSources(`
+      final uri = Uri.parse('$url/users/me');
+      final response = await NetworkRepository.client.get(uri);
+      final res = await NetworkRepository.client
+          .get(Uri.parse("$baseUrl/.well-known/league"))
+          .timeout(const Duration(seconds: 5));
+      final cached = Store.cache.get(key);
+    `).filter((d) => d.kind === "api-call");
+    expect(ds.map((d) => `${d.name} ${d.target} @${d.line}`)).toEqual([
+      "client.get ${url}/users/me @3",
+      "client.get ${baseUrl}/.well-known/league @5",
+    ]);
+  });
+
   it("does NOT treat non-client receivers as HTTP calls", () => {
     const ds = dataSources(`
       list.get(0);

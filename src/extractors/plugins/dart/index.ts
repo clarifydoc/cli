@@ -214,10 +214,11 @@ const HTTP_VERBS =
 
 /**
  * `<recv>.<verb>(` — global so a line can hold several. The receiver is a
- * client variable, `Dio()`, or a getter call returning one (`this.getDio()`).
+ * client variable — a class's static one too (`NetworkRepository.client.get(`) —,
+ * `Dio()`, or a getter call returning one (`this.getDio()`).
  */
 const HTTP_CALL_RE = new RegExp(
-  String.raw`(?<![\w.])(?:this\.)?((?:[A-Za-z_$]\w*)|Dio\(\)|_?get[A-Z]\w*\(\))\.(${HTTP_VERBS})\s*\(`,
+  String.raw`(?<![\w.])(?:this\.|[A-Z]\w*\.)?((?:[A-Za-z_$]\w*)|Dio\(\)|_?get[A-Z]\w*\(\))\.(${HTTP_VERBS})\s*\(`,
   "g",
 );
 
@@ -280,7 +281,7 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     const split = new RegExp(String.raw`^(\s*)\.(${HTTP_VERBS})\s*\(`).exec(line);
     let prev = i - 1;
     while (prev >= 0 && !lines[prev]!.trim()) prev--;
-    const splitReceiver = split && prev >= 0 ? /(?<![\w.])(?:this\.)?([A-Za-z_$]\w*)\s*$/.exec(lines[prev]!)?.[1] : undefined;
+    const splitReceiver = split && prev >= 0 ? /(?<![\w.])(?:this\.|[A-Z]\w*\.)?([A-Za-z_$]\w*)\s*$/.exec(lines[prev]!)?.[1] : undefined;
     const httpCalls = [...line.matchAll(HTTP_CALL_RE)].map((m) => ({ receiver: m[1]!, verb: m[2]!, index: m.index!, text: m[0]! }));
     if (split && splitReceiver) httpCalls.unshift({ receiver: splitReceiver, verb: split[2]!, index: split[1]!.length, text: split[0]!.slice(split[1]!.length) });
     for (const m of httpCalls) {
