@@ -728,6 +728,57 @@ describe("C# typed repository query helpers", () => {
   });
 });
 
+describe("C# generic repository statements built from the model's table", () => {
+  it("binds the base's own writes and counts to its type parameter, with the access the statement states (real-repo FP)", async () => {
+    const src = `namespace League.Squads {
+  public class BasicRepository<TModel> where TModel : ModelBase {
+    protected readonly IDatabase _database;
+    protected readonly string _table;
+    private readonly string _insertSql;
+    private readonly string _updateSql;
+    private readonly List<PropertyInfo> _properties;
+    public BasicRepository(IDatabase database) {
+      _database = database;
+      var type = typeof(TModel);
+      _table = TableMapping.Mapper.TableNameMapping(type);
+      _insertSql = GetInsertSql();
+      _properties = type.GetProperties().Select(x => x).ToList();
+      _updateSql = GetUpdateSql(_properties);
+    }
+    private string GetInsertSql() { return $"INSERT INTO \\"{_table}\\" (a) VALUES (@a)"; }
+    private string GetUpdateSql(List<PropertyInfo> columns) { var sb = new StringBuilder(); sb.AppendFormat("UPDATE \\"{0}\\" SET ", _table); return sb.ToString(); }
+    public int Count() { using (var conn = _database.OpenConnection()) { return conn.ExecuteScalar<int>($"SELECT COUNT(*) FROM \\"{_table}\\""); } }
+    private TModel Insert(IDbConnection connection, TModel model) {
+      var multi = RetryStrategy.Execute(static (state, _) => state.connection.QueryMultiple(state._insertSql, state.model), (connection, _insertSql, model));
+      return model;
+    }
+    private void UpdateFields(IDbConnection connection, TModel model) {
+      var sql = _updateSql;
+      RetryStrategy.Execute(static (state, _) => state.connection.Execute(state.sql, state.model), (connection, sql, model));
+    }
+    protected void Delete(SqlBuilder builder) {
+      var sql = builder.AddDeleteTemplate(typeof(TModel));
+      using (var conn = _database.OpenConnection()) { conn.Execute(sql.RawSql, sql.Parameters); }
+    }
+    public void Purge() { using (var conn = _database.OpenConnection()) { conn.Execute($"DELETE FROM \\"{_table}\\""); } }
+    public void Log(IDbConnection conn, string other) { conn.Execute(other); }
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "BasicRepository.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? (d.entityTypeParameter ? `<${d.entityTypeParameter}>` : "-")} ${d.access ?? "-"} @${d.line}`)).toEqual([
+      "Dapper: ExecuteScalar <TModel> read @18",
+      "Dapper: QueryMultiple <TModel> write @20",
+      // The UPDATE the statement is built with wins over the `.Select(` its columns are read with.
+      "Dapper: Execute <TModel> write @25",
+      "Dapper: Execute <TModel> write @29",
+      "Dapper: Execute <TModel> write @31",
+      // A statement handed in from outside names no table.
+      "Dapper: Execute - write @32",
+    ]);
+  });
+});
+
 describe("C# stored procedures — the routine a command runs", () => {
   it("names the procedure of an ADO.NET command, a Dapper call and an EF raw EXEC", async () => {
     const rows = (await dbSourcesOf(`    using var cmd = new SqlCommand("dbo.usp_SignPlayer", conn);

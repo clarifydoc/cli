@@ -843,13 +843,24 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const dapperRoutine = dapperSql !== null ? routineCalled(dapperSql, /CommandType\.StoredProcedure\b/.test(node.text)) : null;
     if (DAPPER_METHODS.has(method) &&
         (root === "connection" || root === "_connection" || root === "conn" ||
-         /Connection$/.test(root) || (dapperSql !== null && (tableFrom(dapperSql) !== null || dapperRoutine !== null)))) {
+         /Connection$/.test(root) || (parts.length > 2 && /^_?conn(?:ection)?$|Connection$/.test(receiver)) ||
+         (dapperSql !== null && (tableFrom(dapperSql) !== null || dapperRoutine !== null)))) {
       if (dapperRoutine) {
         sources.push(this.ds({ kind: "database", name: `Dapper: ${method}`, target: dapperRoutine, routine: true, line: node.startPosition.row + 1 }));
         return;
       }
       const sql = dapperSql;
       const hit = sql ? tableFrom(sql) : null;
+      // A generic repository's own statement (`$"DELETE FROM \"{_table}\""`, `_insertSql`, `sql.RawSql` of a
+      // `builder.AddDeleteTemplate(typeof(TModel))`): the table is whatever a caller closes the parameter over.
+      const bound = hit ? null : boundModelParameter(node);
+      if (bound) {
+        sources.push(this.ds({
+          kind: "database", name: `Dapper: ${method}`, target: null, entityTypeParameter: bound.parameter,
+          ...(bound.access ? { access: bound.access } : access(method, DAPPER_ACCESS)), line: node.startPosition.row + 1,
+        }));
+        return;
+      }
       sources.push(this.ds({
         kind: "database",
         name: `Dapper: ${method}`,
@@ -1421,6 +1432,105 @@ function enclosingTypeDecl(node: Node): Node | null {
     if (p.type === "class_declaration" || p.type === "record_declaration" || p.type === "struct_declaration") return p;
   }
   return null;
+}
+
+/** Members whose text is code a generic repository's statement may be built from. */
+const MEMBER_TYPES = new Set(["method_declaration", "constructor_declaration", "local_function_statement", "property_declaration", "accessor_declaration"]);
+
+/** What SQL text says it does: a write verb wins (`INSERT …; SELECT last_insert_rowid()`), a builder's verb counts. */
+function statementAccess(text: string): "read" | "write" | undefined {
+  if (/\b(?:INSERT\s+INTO|DELETE\s+FROM|MERGE\s+INTO)\b|\bUPDATE\s+[\\"'`[{\w]|\.(?:Add)?(?:Insert|Update|Delete|Upsert)\w*\(/.test(text)) return "write";
+  if (/\bSELECT\b|\.(?:Add)?(?:Select|PageCount|Count)\w*\(/.test(text)) return "read";
+  return undefined;
+}
+
+/**
+ * Inside a generic class (`BasicRepository<TModel>`), the type parameter a statement's table is: the SQL
+ * argument interpolates or names a field, local or method whose value is derived from `typeof(TModel)` —
+ * `_table = Mapper.TableNameMapping(typeof(TModel))` (through a local), `_insertSql = GetInsertSql()` whose body
+ * interpolates `_table`, `var sql = builder.AddDeleteTemplate(typeof(TModel))`. With the access the statement's
+ * text, or what it is built from, states.
+ */
+function boundModelParameter(call: Node): { parameter: string; access?: "read" | "write" } | null {
+  const cls = enclosingTypeDecl(call);
+  const params = (cls?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []).map((t) => t.text);
+  if (!cls || params.length === 0) return null;
+  const arg = argumentNodes(call)[0]?.namedChildren[0];
+  if (!arg) return null;
+  // name → the texts it is assigned from (fields across the class, locals within the member); methods → their bodies.
+  const defs = new Map<string, string[]>();
+  const add = (name: string, text: string) => { const l = defs.get(name); if (l) l.push(text); else defs.set(name, [text]); };
+  let member: Node | null = call.parent;
+  while (member && !MEMBER_TYPES.has(member.type)) member = member.parent;
+  const fields = new Set<string>();
+  const body = cls.childForFieldName("body");
+  for (const d of body?.namedChildren ?? []) {
+    if (d.type === "field_declaration") {
+      for (const v of d.descendantsOfType("variable_declarator")) {
+        const name = v.childForFieldName("name")?.text ?? v.namedChildren[0]?.text;
+        if (!name) continue;
+        fields.add(name);
+        const init = v.namedChildren[v.namedChildren.length - 1];
+        if (init && init.text !== name) add(name, init.text);
+      }
+    } else if (d.type === "method_declaration") {
+      const name = d.childForFieldName("name")?.text;
+      const b = d.childForFieldName("body") ?? d.namedChildren.find((c) => c.type === "arrow_expression_clause");
+      if (name && b) add(`${name}(`, b.text);
+    }
+  }
+  // A member's assignments; a field's value carries the texts of the member's locals it reads
+  // (`var type = typeof(TModel); _table = Map(type);`).
+  const scan = (scope: Node, keep: (name: string) => boolean) => {
+    const locals = new Map<string, string>();
+    const assigned: Array<[string, string]> = [];
+    for (const a of scope.descendantsOfType(["assignment_expression", "variable_declarator"])) {
+      let name: string | undefined, text: string | undefined;
+      if (a.type === "assignment_expression") {
+        name = a.childForFieldName("left")?.text.replace(/^this\./, "");
+        text = a.childForFieldName("right")?.text;
+      } else {
+        name = a.childForFieldName("name")?.text ?? a.namedChildren[0]?.text;
+        const init = a.namedChildren[a.namedChildren.length - 1];
+        text = init && init.text !== name ? init.text : undefined;
+      }
+      if (!name || !text || !/^\w+$/.test(name)) continue;
+      if (!fields.has(name)) locals.set(name, `${locals.get(name) ?? ""} ${text}`);
+      assigned.push([name, text]);
+    }
+    const withLocals = (text: string) => text + [...locals].filter(([n]) => new RegExp(`\\b${n}\\b`).test(text)).map(([, t]) => ` ${t}`).join("");
+    for (const [name, text] of assigned) if (keep(name)) add(name, fields.has(name) ? withLocals(text) : text);
+  };
+  if (body) for (const d of body.namedChildren) if (d.type === "constructor_declaration" || d.type === "method_declaration") scan(d, (n) => fields.has(n));
+  if (member) scan(member, (n) => !fields.has(n));
+  // Fixpoint: a name is bound to the parameter its texts name through typeof() or another bound name.
+  const bound = new Map<string, string>();
+  const mentions = (text: string, name: string) => name.endsWith("(")
+    ? new RegExp(`(?<![\\w.])${name.slice(0, -1)}\\s*\\(`).test(text)
+    : new RegExp(`\\b${name}\\b`).test(text);
+  const paramOf = (text: string): string | undefined => {
+    for (const p of params) if (new RegExp(`\\btypeof\\s*\\(\\s*${p}\\s*\\)`).test(text)) return p;
+    for (const [n, p] of bound) if (mentions(text, n)) return p;
+    return undefined;
+  };
+  for (let changed = true, rounds = 0; changed && rounds < 8; rounds++) {
+    changed = false;
+    for (const [name, texts] of defs) {
+      if (bound.has(name)) continue;
+      const p = texts.map(paramOf).find((x) => x);
+      if (p) { bound.set(name, p); changed = true; }
+    }
+  }
+  // The statement: an interpolated string's holes, or the names an expression reads.
+  const read = arg.type === "interpolated_string_expression"
+    ? arg.descendantsOfType("interpolation").map((h) => h.text).join(" ")
+    : arg.text;
+  const parameter = paramOf(read);
+  if (!parameter) return null;
+  const expand = (text: string, depth: number): string => depth > 3 ? text
+    : text + " " + [...defs].filter(([n]) => bound.has(n) && mentions(text, n)).map(([, t]) => expand(t.join(" "), depth + 1)).join(" ");
+  const accessOf = statementAccess(arg.type === "interpolated_string_expression" ? arg.text : "") ?? statementAccess(expand(read, 0));
+  return { parameter, ...(accessOf ? { access: accessOf } : {}) };
 }
 
 /** The model a repository class is closed over: `class MovieRepository : BasicRepository<Movie>` → Movie. */
