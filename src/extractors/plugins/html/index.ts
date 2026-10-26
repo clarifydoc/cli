@@ -102,6 +102,9 @@ export const TITLE_PLACEHOLDER_RE = /^(?:\{\{[^{}]*\}\}|\{%[^%]*%\}|<%=?[^%]*%>|
 /** A framework's document shell (SvelteKit `src/app.html`, `%sveltekit.body%`; Vite/CRA-style `%PUBLIC_URL%` aside): it wraps every page and is none. */
 const DOCUMENT_SHELL_RE = /%sveltekit\.(?:body|head)%/;
 
+/** A directory of server-rendered templates. */
+const SERVER_TEMPLATE_DIR_RE = /(?:^|\/)templates\//;
+
 /** A directory that holds documentation, not the app. */
 const DOCS_DIR_RE = /(?:^|\/)(?:docs?|documentation|architecture|diagrams?)\//i;
 
@@ -122,6 +125,9 @@ export function isDiagramDocument(lines: readonly string[], filePath: string): b
 function extractHtmlRoutes(lines: string[], filePath?: string): RouteInfo[] {
   if (!filePath || lines.some((l) => DOCUMENT_SHELL_RE.test(l))) return [];
   if (isDiagramDocument(lines, filePath)) return [];
+  // A server's template directory (Django/Jinja `templates/`, Spring `resources/templates/` mail and
+  // error pages, a snippet a page includes): rendered by code, never served at its own path.
+  if (SERVER_TEMPLATE_DIR_RE.test(filePath)) return [];
   return [
     {
       path: pageRoutePath(filePath),

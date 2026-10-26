@@ -39,6 +39,12 @@ describe("HTML page-route extraction (the page IS the screen)", () => {
     expect(htmlSpec.extractRoutes!(lines(`<title>x</title>`), [])).toEqual([]);
   });
 
+  it("returns no route for a page in a server's template directory (real-repo FP)", () => {
+    const page = `<html><head><title>Welcome to the league</title></head><body><p>Hi</p></body></html>`;
+    expect(htmlSpec.extractRoutes!(lines(page), [], "src/main/resources/templates/mail/welcomeEmail.html")).toEqual([]);
+    expect(htmlSpec.extractRoutes!(lines(page), [], "league/templates/snippets/svg_logo.html")).toEqual([]);
+  });
+
   it("returns no route for a SvelteKit document shell, which wraps every page", () => {
     const shell = `<!doctype html>\n<html>\n<head>%sveltekit.head%</head>\n<body><div>%sveltekit.body%</div></body>\n</html>`;
     expect(htmlSpec.extractRoutes!(lines(shell), [], "web/src/app.html")).toEqual([]);
