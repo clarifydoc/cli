@@ -144,3 +144,34 @@ func migrate(tx *xorm.Engine) error {
 }`)).toEqual(["3 xorm: Insert Label write", "4 xorm: Get Label read", "8 xorm: Insert clubTokens write"]);
   });
 });
+
+describe("xorm builder statements", () => {
+  it("reads the table a builder statement names, over lines and through its conditions (real-repo FP)", () => {
+    expect(rows(`package migrations
+
+import (
+	"xorm.io/builder"
+	"xorm.io/xorm"
+)
+
+func dropOrphans(x *xorm.Engine) error {
+	condDelete := func(colName string) builder.Cond {
+		return builder.NotIn(colName, builder.Select("id").From("\`player\`"))
+	}
+	if _, err := x.Exec(builder.Delete(condDelete("uid")).From("squad_player")); err != nil {
+		return err
+	}
+	_, err := x.Exec(builder.Update(builder.Eq{"is_captain": false}).
+		Where(builder.Eq{"club_id": 3}).
+		From("lineup"))
+	_, err = x.Exec(builder.Insert(builder.Eq{"name": "kit"}).Into("kit_bag"))
+	return err
+}
+`).filter((r) => r.includes("builder"))).toEqual([
+      "10 xorm builder: Select player read",
+      "12 xorm builder: Delete squad_player write",
+      "15 xorm builder: Update lineup write",
+      "18 xorm builder: Insert kit_bag write",
+    ]);
+  });
+});

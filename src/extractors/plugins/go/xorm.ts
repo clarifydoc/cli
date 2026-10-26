@@ -74,7 +74,59 @@ const GORM: OrmChainSpec = {
 export function extractXormDataSources(lines: string[]): DataSourceInfo[] {
   const gorm = extractOrmChains(lines, GORM);
   // A GORM file's `db.Insert`/`Unscoped()` are GORM's, not xorm's.
-  return GORM.file.test(lines.join("\n")) ? gorm : [...extractOrmChains(lines, XORM), ...gorm];
+  return GORM.file.test(lines.join("\n")) ? gorm : [...extractOrmChains(lines, XORM), ...gorm, ...extractBuilderStatements(lines)];
+}
+
+const BUILDER_IMPORT = /"xorm\.io\/builder"/;
+const BUILDER_VERB = /\bbuilder\.(Select|Insert|Update|Delete)\s*\(/g;
+
+/**
+ * xorm's SQL builder (`xorm.io/builder`) names the table a statement runs on:
+ * `builder.Delete(cond).From("team_user")`, `builder.Select("uid").From("`user`")` (a subquery
+ * a condition reads), `builder.Insert(eq).Into("stopwatch")`. One row per statement whose
+ * chain — over lines — reaches a `.From`/`.Into` with a literal table; a read for `Select`.
+ */
+function extractBuilderStatements(lines: string[]): DataSourceInfo[] {
+  const text = lines.join("\n");
+  if (!BUILDER_IMPORT.test(text)) return [];
+  const lineAt = (index: number) => text.slice(0, index).split("\n").length;
+  const out: DataSourceInfo[] = [];
+  for (const m of text.matchAll(BUILDER_VERB)) {
+    let i = closeParen(text, m.index! + m[0].length - 1);
+    let table: string | null = null;
+    // The chain's steps, `.Where(…)` and the like, up to the one naming the table.
+    for (let step = 0; i > 0 && step < 6 && table === null; step++) {
+      const next = /^\s*\.\s*([A-Za-z]\w*)\s*\(/.exec(text.slice(i + 1, i + 200));
+      if (!next) break;
+      const open = i + 1 + next[0].length - 1;
+      if (next[1] === "From" || next[1] === "Into") {
+        table = /^\(\s*"`?([A-Za-z_][\w.]*)`?(?:\s+(?:AS\s+)?\w+)?"/i.exec(text.slice(open, open + 80))?.[1] ?? null;
+        break;
+      }
+      i = closeParen(text, open);
+    }
+    if (!table) continue;
+    out.push({
+      kind: "database", name: `xorm builder: ${m[1]}`, target: table, entity: table,
+      access: m[1] === "Select" ? "read" : "write", calls: [], line: lineAt(m.index!),
+    });
+  }
+  return out;
+}
+
+/** The index of the `)` closing the `(` at `open` (strings skipped), or -1. */
+function closeParen(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "`") {
+      const end = text.indexOf(c, i + 1);
+      if (end < 0) return -1;
+      i = end;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
 }
 
 function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[] {
