@@ -2898,6 +2898,22 @@ function treeToComponents(
 }
 
 /** Build a graph of file -> files it imports */
+/**
+ * A barrel's `export { x } from "./y"` depends on `./y` as an import would:
+ * one import per forwarded module the file does not import as well.
+ */
+function reexportImports(a: FileAnalysis): ImportInfo[] {
+  const bySource = new Map<string, ImportInfo>();
+  for (const e of a.exports) {
+    if (!e.source || a.imports.some((i) => i.source === e.source)) continue;
+    const imp = bySource.get(e.source) ?? { source: e.source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: e.line };
+    if (e.name === "*") imp.isNamespace = true;
+    else imp.specifiers.push(e.sourceName ?? e.name);
+    bySource.set(e.source, imp);
+  }
+  return [...bySource.values()];
+}
+
 export function buildComponentGraph(
   analyses: FileAnalysis[],
   /** Filled with each file's edges that only type-only imports state (`import type`): no runtime dependency. */
@@ -3093,7 +3109,7 @@ export function buildComponentGraph(
     const dirImports = importsNameDirectories(a.language);
     const usedLeaves = dirImports ? new Set([...usedNames].map((n) => n.slice(n.lastIndexOf(".") + 1))) : usedNames;
 
-    for (const imp of a.imports) {
+    for (const imp of [...a.imports, ...reexportImports(a)]) {
       // A type-only import (`import type`) is no runtime dependency: its edge is noted as such.
       const addRef = (target: string) => {
         refSet.add(target);

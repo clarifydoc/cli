@@ -235,3 +235,19 @@ describe("buildComponentGraph — Python modules named in the specifier", () => 
     expect(graph["league/table.py"]?.sort()).toEqual(["league/__init__.py", "league/fixtures.py", "league/standings.py"]);
   });
 });
+
+describe("buildComponentGraph — a barrel's re-exports", () => {
+  it("gives `export { x } from './y'` an edge to the module it forwards", () => {
+    const barrel = createEmptyAnalysis("src/index.ts", "typescript");
+    barrel.exports = [
+      { name: "createClub", kind: "re-export", source: "./clubs.js", line: 1 },
+      { name: "*", kind: "re-export", source: "./players", line: 2 },
+    ];
+    const clubs = createEmptyAnalysis("src/clubs.ts", "typescript");
+    clubs.exports = [{ name: "createClub", kind: "function", line: 1 }];
+    const players = createEmptyAnalysis("src/players.ts", "typescript");
+    players.exports = [{ name: "Player", kind: "class", line: 1 }];
+    const graph = buildComponentGraph([barrel, clubs, players]);
+    expect([...(graph["src/index.ts"] ?? [])].sort()).toEqual(["src/clubs.ts", "src/players.ts"]);
+  });
+});
