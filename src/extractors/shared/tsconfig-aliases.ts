@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from "fs";
+import { clearDirectoryListings } from "./dir-listings.js";
 import { dirname, join, resolve, sep, posix } from "path";
 import { stripJsonc } from "../plugins/shared/jsonc.js";
 import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
@@ -432,6 +433,7 @@ export function packageImportsStamp(importerAbs: string): string {
 }
 
 export function clearTsconfigAliasCache(): void {
+  clearDirectoryListings();
   packageImportsCache.clear();
   tsconfigCache.clear();
   dirAliasCache.clear();

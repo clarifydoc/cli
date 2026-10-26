@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, posix, relative, resolve, sep } from "path";
+import { clearDirectoryListings, rememberListing } from "./dir-listings.js";
 
 /**
  * Packages of the repository itself, imported by name — a pnpm/npm/yarn
@@ -39,6 +40,7 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
     } catch {
       return;
     }
+    rememberListing(dir, entries.map((e) => e.name));
     if (dir !== root && entries.some((e) => e.isFile() && e.name === "package.json")) {
       const pkg = readPackage(join(dir, "package.json"));
       const entry = pkg?.name ? sourceEntry(dir, pkg) : null;
@@ -144,4 +146,5 @@ export function applyWorkspacePackages(
 /** Tests reset the per-root cache. */
 export function clearWorkspacePackageCache(): void {
   cache.clear();
+  clearDirectoryListings();
 }

@@ -569,15 +569,36 @@ function tryMatch(candidate: string, filePathMap: Map<string, string>, sourceFil
   return null;
 }
 
+/**
+ * The registered prefixes split by how they match, built once per registered
+ * list: one ending in a namespace delimiter ("java.", "std::", "Illuminate\\",
+ * "net/") is a full prefix, matched literally; a bare root ("fmt", "lodash")
+ * matches itself, or itself followed by "." or "/". (The bare-root rule once
+ * appended its own delimiter to every entry, which made the delimited ones
+ * unmatchable — "java." + "." never prefixes java.util.List.)
+ */
+const prefixSets = new WeakMap<readonly string[], { literal: Set<string>; roots: Set<string>; maxLiteral: number }>();
+
 export function isExternalPackage(source: string): boolean {
-  return requireRegistered(externalModulePrefixes).some(prefix =>
-    // A prefix ending in a namespace delimiter ("java.", "std::",
-    // "Illuminate\", "net/") is already a full prefix — match it literally.
-    // The bare-root branch below appends its own delimiter, which silently
-    // made every such entry unmatchable ("java." + "." never prefixes
-    // java.util.List), across half the plugin manifests.
-    /[./\\:]$/.test(prefix)
-      ? source.startsWith(prefix)
-      : source === prefix || source.startsWith(prefix + ".") || source.startsWith(prefix + "/")
-  );
+  const prefixes = requireRegistered(externalModulePrefixes);
+  let sets = prefixSets.get(prefixes);
+  if (!sets) {
+    sets = { literal: new Set(), roots: new Set(), maxLiteral: 0 };
+    for (const prefix of prefixes) {
+      if (/[./\\:]$/.test(prefix)) {
+        sets.literal.add(prefix);
+        sets.maxLiteral = Math.max(sets.maxLiteral, prefix.length);
+      } else sets.roots.add(prefix);
+    }
+    prefixSets.set(prefixes, sets);
+  }
+  if (sets.roots.has(source)) return true;
+  for (let i = 1; i <= source.length; i++) {
+    const ch = source[i - 1];
+    if (ch !== "." && ch !== "/" && ch !== "\\" && ch !== ":") continue;
+    // `source[0, i)` ends in a delimiter: a literal prefix, or a root followed by "." or "/".
+    if (i <= sets.maxLiteral && sets.literal.has(source.slice(0, i))) return true;
+    if ((ch === "." || ch === "/") && sets.roots.has(source.slice(0, i - 1))) return true;
+  }
+  return false;
 }

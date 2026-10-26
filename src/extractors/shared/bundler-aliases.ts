@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync, existsSync, statSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
+import { listDirectory } from "./dir-listings.js";
 import { dirname, join, resolve } from "path";
 import { escapeRegex } from "../plugins/shared/path-utils.js";
 
@@ -28,12 +29,9 @@ const IMPORT_EXTS = ["", ".ts", ".mts", ".js", ".mjs", ".cjs", "/index.ts", "/in
 export function bundlerConfigsIn(dir: string): string[] {
   // One listing of the directory instead of a stat per candidate name (24 of them, for every
   // directory an import's alias lookup passes through); a listed name is still checked to exist.
-  let names: Set<string>;
-  try {
-    names = new Set(readdirSync(dir));
-  } catch {
-    return [];
-  }
+  const listed = listDirectory(dir);
+  if (!listed) return [];
+  const names = new Set(listed);
   const out: string[] = [];
   for (const stem of CONFIG_STEMS) for (const ext of CONFIG_EXTS) {
     if (!names.has(stem + ext)) continue;

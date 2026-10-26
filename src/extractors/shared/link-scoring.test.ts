@@ -1,8 +1,19 @@
 import { describe, it, expect } from "vitest";
 import "../registry.js"; // side effect: registers external-module prefixes
 import { isExternalPackage, buildFilePathMap, resolveTarget } from "./link-scoring.js";
+import { ALL_EXTERNAL_MODULE_PREFIXES } from "../registry.js";
 
 describe("isExternalPackage", () => {
+  it("answers as a scan over every registered prefix does", () => {
+    const scan = (source: string) =>
+      ALL_EXTERNAL_MODULE_PREFIXES.some((p) => (/[./\\:]$/.test(p) ? source.startsWith(p) : source === p || source.startsWith(p + ".") || source.startsWith(p + "/")));
+    const sources = [
+      ...ALL_EXTERNAL_MODULE_PREFIXES.flatMap((p) => [p, `${p}x`, `${p}.Club`, `${p}/club`, `${p}::Club`, `${p}\\Club`, p.slice(0, -1), `x${p}`]),
+      "", ".", "/", "./club", "../garage/car", "@league/clubs", "league.clubs.Club", "github.com/league/clubs", "Garage::Car", "App\\Garage\\Car",
+    ];
+    for (const s of sources) expect(isExternalPackage(s), s).toBe(scan(s));
+  });
+
   it("matches delimiter-suffixed prefixes literally (java., std::, Illuminate\\)", () => {
     expect(isExternalPackage("java.util.List")).toBe(true);
     expect(isExternalPackage("javax.servlet.http.HttpServlet")).toBe(true);
