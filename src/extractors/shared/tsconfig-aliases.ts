@@ -240,25 +240,27 @@ export function applyAliases(
  * `entry/`, or beside `package.json`. The path itself when it exists or no source is found.
  */
 function sourceOfBuilt(abs: string): string {
-  const built = /^(.*)[\\/](?:dist|build|lib|out)[\\/](.+)$/.exec(abs);
-  if (!built || BASE_URL_EXTENSIONS.some((ext) => existsSync(abs + ext)) || !existsSync(join(built[1]!, "package.json"))) return abs;
-  const rest = built[2]!.replace(/\.(?:d\.ts|m?js|cjs)$/, "");
+  // The last build directory with a path below it: the package root before it, the module after.
+  const out = [...abs.matchAll(/[\\/](?:dist|build|lib|out)(?=[\\/].)/g)].pop();
+  const pkg = out ? abs.slice(0, out.index) : "";
+  if (!out || BASE_URL_EXTENSIONS.some((ext) => existsSync(abs + ext)) || !existsSync(join(pkg, "package.json"))) return abs;
+  const rest = abs.slice(out.index! + out[0].length + 1).replace(/\.(?:d\.ts|m?js|cjs)$/, "");
   // The main bundle: the one entry the package's bundler config names (`entry: ["./entry/index.ts"]`).
   if (rest === "index") {
     for (const name of ["vite.config", "tsdown.config", "tsup.config"]) {
       for (const ext of [".ts", ".mts", ".js", ".mjs"]) {
-        const config = join(built[1]!, name + ext);
+        const config = join(pkg, name + ext);
         if (!existsSync(config)) continue;
         let text = "";
         try { text = readFileSync(config, "utf-8"); } catch { /* unreadable config: no entry */ }
         const entries = [...text.matchAll(/\bentry\s*:\s*\[?\s*["'`]([^"'`]+)["'`]\s*\]?/g)].map((m) => m[1]!);
-        const entry = entries.length > 0 && entries.every((e) => e === entries[0]) ? join(built[1]!, entries[0]!) : null;
+        const entry = entries.length > 0 && entries.every((e) => e === entries[0]) ? join(pkg, entries[0]!) : null;
         if (entry && existsSync(entry)) return entry.replace(/\.(?:tsx?|m?jsx?)$/, "");
       }
     }
   }
   for (const dir of ["src", "entry", ""]) {
-    const cand = join(built[1]!, dir, rest);
+    const cand = join(pkg, dir, rest);
     if (BASE_URL_EXTENSIONS.some((ext) => existsSync(cand + ext))) return cand;
   }
   return abs;

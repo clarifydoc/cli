@@ -1,7 +1,7 @@
 import { routeChains } from "./mermaid.js";
 import { projectName } from "./markdown.js";
 import type { EntityNode, Route, Screen, Summary } from "./types.js";
-import { plural } from "./text.js";
+import { cell, plural } from "./text.js";
 
 /**
  * The analysis as an Obsidian vault: a note per route, screen, entity and
@@ -209,7 +209,7 @@ export function obsidianVault(summary: Summary): BundleFile[] {
     ];
     if (columns.length) {
       lines.push("", "| Column | Type | Key |", "|---|---|---|", ...columns.slice(0, LIST_CAP).map((c) =>
-        `| ${c.name.replace(/\|/g, "\\|")} | ${(c.type ?? "").replace(/\|/g, "\\|")} | ${c.isPrimaryKey ? "PK" : c.isForeignKey ? "FK" : ""} |`));
+        `| ${cell(c.name)} | ${c.type ? cell(c.type) : ""} | ${c.isPrimaryKey ? "PK" : c.isForeignKey ? "FK" : ""} |`));
     }
     if (related.length) lines.push("", "## Related", "", ...list(unique(related)));
     if (reached.length) lines.push("", "## Reached by routes", "", ...list(unique(reached.map(routeLink))));

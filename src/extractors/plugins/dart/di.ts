@@ -1,6 +1,7 @@
 import type { CallInfo, DiBinding, FunctionInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Dependency injection as Dart/Flutter code spells it — get_it (and kiwi,
@@ -553,7 +554,7 @@ const KEEPS_ELEMENTS = new Set(["where", "toList", "toSet", "skip", "take", "ski
 function elementParams(body: string, collections: ReadonlyMap<string, string>): LocalType[] {
   const out: LocalType[] = [];
   for (const [name, element] of collections) {
-    const re = new RegExp(String.raw`(?<![\w$.])(?:this\.)?${name.replace(/\$/g, "\\$")}\b`, "g");
+    const re = new RegExp(String.raw`(?<![\w$.])(?:this\.)?${escapeRegex(name)}\b`, "g");
     let m: RegExpExecArray | null;
     while ((m = re.exec(body))) {
       let at = m.index + m[0].length;
@@ -580,7 +581,7 @@ function elementParams(body: string, collections: ReadonlyMap<string, string>): 
         at = close;
       }
     }
-    for (const f of body.matchAll(new RegExp(String.raw`\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\.)?${name.replace(/\$/g, "\\$")}\s*\)`, "g"))) {
+    for (const f of body.matchAll(new RegExp(String.raw`\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\.)?${escapeRegex(name)}\s*\)`, "g"))) {
       out.push({ name: f[1]!, type: element });
     }
   }

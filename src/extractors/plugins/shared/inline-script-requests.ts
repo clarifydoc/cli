@@ -27,7 +27,7 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
       const target = m[1] && written.startsWith("/") ? `\${${m[1]}}${written.replace(/[?#].*$/, "").replace("{{param}}", ":param")}`
         : /^https?:\/\/[^\s"'`]+$/i.test(written) ? written
         // A path relative to the page (`axios.put('api/v1/preferences/x')`) is that app path.
-        : literalPath((/^(?:\.\/)?[\w-]+(?:\/[^\s"'`]*)+$/.test(written) && !STATIC_ASSET.test(written) ? "/" + written.replace(/^\.\//, "") : written).replace(/\$\{([^}]*)\}/g, "{{$1}}"));
+        : literalPath((/^(?:\.\/)?[\w-]+\/[^\s"'`]*$/.test(written) && !STATIC_ASSET.test(written) ? "/" + written.replace(/^\.\//, "") : written).replace(/\$\{([^}]*)\}/g, "{{$1}}"));
       if (!target) continue;
       let method = m[4] ?? (m[7] ? (m[7] === "post" ? "post" : "get") : null);
       if (!method) {

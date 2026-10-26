@@ -235,7 +235,7 @@ websocket
 
   it("needs the import: an EventEmitter's emit is not Socket.IO (it is an in-process channel)", async () => {
     const s = await jsSourcesOf(`const socket = new EventEmitter(); socket.emit("chat message", 1);`);
-    expect(s.filter((d) => d.name.startsWith("Socket.IO"))).toEqual([]);
+    expect(s.filter((d) => /^Socket\.IO\b/.test(d.name))).toEqual([]);
     expect(s.filter((d) => d.kind === "queue-publish").map((d) => d.name)).toEqual(["EventEmitter: emit"]);
   });
 });

@@ -283,7 +283,7 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         if (collectionItem) webActionRoute(collectionItem, rootObject?.type ?? null, analysis);
         collectionItem = null;
       } else if (collectionItem) {
-        const prop = /^(\w+)\s*=\s*(.+)$/.exec(trimmed);
+        const prop = /^(\w+)\s*=(.+)$/.exec(trimmed);
         if (prop) collectionItem.props.set(prop[1]!, prop[2]!.trim());
       }
       // "end>" or standalone ">" closes a collection

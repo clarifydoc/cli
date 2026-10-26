@@ -13,6 +13,7 @@
  * never knew is INFERRED — perhaps a plan, not a drift.
  */
 import type { Confidence } from "../types/analysis.js";
+import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 
 export interface DocReference {
   doc: string;
@@ -59,7 +60,7 @@ export function docReferences(doc: string, text: string): DocReference[] {
     }
     const g = fence ? null : /^\s*<!--\s*(?:([\w.-]+):start|BEGIN\b[^>]*?)\s*-->/i.exec(raw);
     if (g) {
-      generated = g[1] ? new RegExp(`<!--\\s*${g[1].replace(/\./g, "\\.")}:end\\s*-->`, "i") : /<!--\s*END\b[^>]*-->/i;
+      generated = g[1] ? new RegExp(`<!--\\s*${escapeRegex(g[1])}:end\\s*-->`, "i") : /<!--\s*END\b[^>]*-->/i;
       return;
     }
     const f = /^\s*(```+|~~~+)/.exec(raw);

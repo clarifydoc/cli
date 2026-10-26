@@ -141,10 +141,21 @@ export function readLaravelMigration(source: string): { tables: ClassInfo[]; ops
           if (!cls.properties.some((p) => p.name === name)) cls.properties.push(column(name, type));
         } else ops.push({ op: "add-column", table: block.table, column: name, type, line });
       };
-      // One statement per `$table->…;`, its chain included.
-      for (const st of block.body.matchAll(/\$\w+->(\w+)\(([^;]*?)\)((?:->\w+\([^;]*?\))*)\s*;/g)) {
-        const [, verb, args, chain] = st as unknown as [string, string, string, string];
-        const line = lineOf(block.body, st.index!, block.line);
+      // One statement per `$table->…;`, its chain included: the call's own arguments end at
+      // the first `)` a `->method(` follows.
+      const call = /\$\w+->(\w+)\(/g;
+      for (let st = call.exec(block.body); st; st = call.exec(block.body)) {
+        const semi = block.body.indexOf(";", call.lastIndex);
+        if (semi < 0) break;
+        const statement = block.body.slice(call.lastIndex, semi).trimEnd();
+        if (!statement.endsWith(")")) continue;
+        call.lastIndex = semi + 1;
+        const verb = st[1]!;
+        const inner = statement.slice(0, -1);
+        const close = /\)(?=->\w+\()/.exec(inner)?.index ?? inner.length;
+        const args = inner.slice(0, close);
+        const chain = close < inner.length ? inner.slice(close + 1) + ")" : "";
+        const line = lineOf(block.body, st.index, block.line);
         const name = firstString(args);
         if (verb === "dropColumn" || verb === "dropColumns") {
           const names = [...args.matchAll(/['"]([\w]+)['"]/g)].map((x) => x[1]!);

@@ -28,6 +28,19 @@ export function attrOf(attrs: string, name: string): string | null {
   return m ? (m[1] ?? m[2] ?? null) : null;
 }
 
+/** `xml` without its `<!-- … -->` comments; an unclosed one is kept, as it stands. */
+export function withoutXmlComments(xml: string): string {
+  let out = "";
+  let at = 0;
+  for (let open = xml.indexOf("<!--"); open >= 0; open = xml.indexOf("<!--", at)) {
+    const close = xml.indexOf("-->", open + 4);
+    if (close < 0) break;
+    out += xml.slice(at, open);
+    at = close + 3;
+  }
+  return out + xml.slice(at);
+}
+
 /** Scan all tags in an XML source, tracking 1-based line numbers. */
 export function scanTags(source: string): XmlTag[] {
   const masked = source.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));

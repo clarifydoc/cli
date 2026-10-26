@@ -1,11 +1,12 @@
 import type { ProjectCommand, ProjectRootView } from "../../../types/language-plugin.js";
+import { withoutXmlComments } from "../shared/xml-scan.js";
 
 /** Maven or Gradle (through the wrapper when the project has one); Spring Boot's run goal. */
 export function jvmProjectCommands(root: ProjectRootView): ProjectCommand[] {
   const has = (f: string) => root.entries.includes(f);
   if (has("pom.xml")) {
     const mvn = has("mvnw") ? "./mvnw" : "mvn";
-    const pom = (root.read("pom.xml") ?? "").replace(/<!--[\s\S]*?-->/g, "");
+    const pom = withoutXmlComments(root.read("pom.xml") ?? "");
     // A parent or aggregator POM runs nothing itself, and a plugin it only manages is its children's.
     const runs = !/<packaging>\s*pom\s*<\/packaging>/.test(pom) && /spring-boot-maven-plugin/.test(pom.replace(/<pluginManagement>[\s\S]*?<\/pluginManagement>/g, ""));
     return [

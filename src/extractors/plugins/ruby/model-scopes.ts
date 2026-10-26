@@ -1,4 +1,5 @@
 import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Inside an ActiveRecord model the receiver of a query is the model itself:
@@ -58,7 +59,7 @@ export function addScopeMethods(lines: readonly string[], cls: ClassInfo): void 
 const READS = ["where", "find_by", "find_by!", "find", "find_each", "includes", "joins", "left_joins", "order", "select", "pluck", "exists?", "group", "having", "distinct", "limit", "unscoped", "find_or_create_by", "find_or_create_by!", "find_or_initialize_by"];
 const WRITES = ["create", "create!", "update", "update!", "update_all", "update_columns", "update_column", "destroy_all", "delete_all", "insert_all", "upsert_all", "increment!", "decrement!", "toggle!"];
 const WRITE_SET = new Set(WRITES);
-const verbAlt = [...READS, ...WRITES].map((v) => v.replace(/[?!]/g, "\\$&")).join("|");
+const verbAlt = [...READS, ...WRITES].map(escapeRegex).join("|");
 /** A bare verb with its argument list, or `self.verb(`: the model is the receiver. */
 const BARE_VERB_RE = new RegExp(`(?<![\\w.@$:])(?:self\\.)?(${verbAlt})(?=\\s*\\()`, "g");
 /** A statement that only persists the record itself: `save!`, `self.destroy`. */

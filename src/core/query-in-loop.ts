@@ -155,7 +155,8 @@ export function loopSize(
     }
   }
   // A literal list of a few items: `for (const k of ["a", "b"])`, `for x in (1, 2, 3)`.
-  const list = /(?:\bof|\bin|\bforeach|\beach)\s*[([]((?:\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?)\s*,?)+)[)\]]/.exec(header);
+  const item = String.raw`(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?)`;
+  const list = new RegExp(String.raw`(?:\bof|\bin|\bforeach|\beach)\s*[([](\s*${item}\s*(?:,\s*${item}\s*)*(?:,\s*)?)[)\]]`).exec(header);
   if (list) {
     const n = list[1]!.split(",").filter((x) => x.trim()).length;
     if (n <= SMALL_LOOP) return { bound: n };

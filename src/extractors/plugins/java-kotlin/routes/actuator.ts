@@ -8,7 +8,7 @@ import type { RouteInfo } from "../../../../types/analysis.js";
  * the default is what a client that does not read the property calls.)
  */
 const ENDPOINT_RE = /@(?:Web)?Endpoint\s*\(\s*(?:id\s*=\s*)?"([^"]+)"/;
-const OPERATION_RE = /@(Read|Write|Delete)Operation\b[^\n]*\n(?:\s*@\w+(?:\([^)]*\))?\s*\n)*\s*(?:public\s+|protected\s+|private\s+)?[\w<>[\],.? ]+?\s+(\w+)\s*\(([^)]*)\)/g;
+const OPERATION_RE = /@(Read|Write|Delete)Operation\b[^\n]*\n(?:\s*@\w+(?:\([^)]*\))?[ \t]*\r?\n)*\s*(?:public\s+|protected\s+|private\s+)?[\w<>[\],.? ]+?\s+(\w+)\s*\(([^)]*)\)/g;
 const VERB = { Read: "GET", Write: "POST", Delete: "DELETE" } as const;
 
 export function extractActuatorEndpoints(source: string, routes: RouteInfo[]): void {

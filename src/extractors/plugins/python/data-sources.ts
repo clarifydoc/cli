@@ -4,6 +4,7 @@ import type { DataSourceInfo, JsonSchemaNode, Language } from "../../../types/an
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { pythonResponseReads } from "./response-reads.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -308,7 +309,7 @@ const INSTANCE_VERBS = new Set(["save", "delete", "refresh_from_db"]);
  * `match = Match(home=…)`, `club: Club = …`): unique-or-nothing over every assignment.
  */
 function heldModel(held: string, sourceText: string): string | null {
-  const name = held.replace(/\./g, "\\.");
+  const name = escapeRegex(held);
   const models = new Set<string>();
   for (const m of sourceText.matchAll(new RegExp(String.raw`(?:^|[^\w.])` + name + String.raw`\s*(?::\s*([A-Z]\w*)[^=\n]*)?=\s*(?!=)(?:await\s+)?(?:([A-Z]\w*)(?:\.objects\.\w+)?\s*\()?`, "gm"))) {
     const model = m[1] ?? m[2];

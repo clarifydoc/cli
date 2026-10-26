@@ -455,8 +455,13 @@ export function attributeLinesAbove(lines: string[], i: number, spec: RegexLangS
   for (let j = i - 1; j >= 0; j--) {
     let m = lines[j]!.match(re);
     let joinedLines = false;
-    // A trailing comment after the attribute (`)] // why`) is not part of it.
-    const uncommented = (l: string): string => l.replace(/\s+\/\/[^"]*$/, "").trim();
+    // A trailing comment after the attribute (`)] // why`) is not part of it: the first
+    // ` //` past the last quote, so a URL inside a string stays.
+    const uncommented = (l: string): string => {
+      let at = l.indexOf("//", l.lastIndexOf('"') + 1);
+      while (at > 0 && !/\s/.test(l[at - 1]!)) at = l.indexOf("//", at + 1);
+      return (at > 0 ? l.slice(0, at) : l).trim();
+    };
     if (!m && /[\])]$/.test(uncommented(lines[j]!))) {
       // An attribute over several lines (`#[cfg_attr(⏎ feature = "x",⏎ derive(Queryable)⏎)]`): its
       // lines joined, when the first bracket it opens closes only at its end.

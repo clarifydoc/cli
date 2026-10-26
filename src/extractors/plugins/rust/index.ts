@@ -44,7 +44,7 @@ export const rustSpec: RegexLangSpec = {
    * inner text (delimiters dropped) becomes the item's decorator; stacked
    * attributes gather nearest-last. `#![…]` inner attributes are not items'.
    */
-  attributeLine: { pattern: /^\s*#\[(.*)\]\s*(?:\/\/.*)?$/ },
+  attributeLine: { pattern: /^\s*#\[(.*)\]\s*(?:\/\/[^\]]*)?$/ },
 
   /**
    * Rust qualified-call syntax — `Config::from_args()`, `<Type>::method()`.

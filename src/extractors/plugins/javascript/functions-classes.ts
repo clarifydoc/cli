@@ -6,6 +6,7 @@ import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
 import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
@@ -497,7 +498,7 @@ export function extractUrlTemplates(
     }
     // `let endpoint; if (home) endpoint = `/badges/${id}/home`; else endpoint = …; return `${endpoint}?kit=1``
     // — one template per value the local is given (each arm of a ternary one).
-    const branchLocal = locals.assigned.size > 0 ? [...locals.assigned.keys()].find((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}(?![\\w$])`).test(ret.text)) : undefined;
+    const branchLocal = locals.assigned.size > 0 ? [...locals.assigned.keys()].find((n) => new RegExp(`(?<![\\w$.])${escapeRegex(n)}(?![\\w$])`).test(ret.text)) : undefined;
     for (const branch of ternaryArms(ret, 0)) {
       if (!branchLocal) {
         if (push(fold(astToValueExpr(branch)))) return templates;

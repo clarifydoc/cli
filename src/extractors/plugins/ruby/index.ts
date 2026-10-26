@@ -152,7 +152,7 @@ function boundLocals(lines: readonly string[], fn: FunctionInfo): Set<string> {
   for (const [, text] of bodyLines(lines, fn)) {
     const code = text.replace(/#.*$/, "");
     for (const m of code.matchAll(/(?:^|[^\w.@:])([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])/g)) bound.add(m[1]!);
-    const multiple = /^\s*\(?\*?([a-z_]\w*(?:\s*\)?\s*,\s*\(?\*?[a-z_]\w*)+)\s*\)?\s*=(?![=~>])/.exec(code);
+    const multiple = /^\s*\(?\*?([a-z_]\w*(?:\s*(?:\)\s*)?,\s*\(?\*?[a-z_]\w*)+)\s*(?:\)\s*)?=(?![=~>])/.exec(code);
     if (multiple) for (const n of multiple[1]!.split(",")) bound.add(n.replace(/[()*\s]/g, ""));
     for (const m of code.matchAll(/\|([^|]*)\|/g)) for (const n of m[1]!.split(",")) bound.add(n.trim().replace(/^[*&(]+|[)]+$/g, "").replace(/\s*[=:].*$/, ""));
     const rescued = /\brescue\b[^#]*=>\s*([a-z_]\w*)/.exec(code);

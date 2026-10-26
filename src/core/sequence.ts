@@ -73,7 +73,7 @@ const classLane = (file: string, symbol: string): string => {
 /** The lane a call lands in, by the options' lane level. */
 function laneRule(opts: SequenceOptions): (file: string, symbol: string) => string {
   if (opts.lanes !== "package") return classLane;
-  const expand = (opts.expand ?? []).map((d) => d.replace(/^\.\/|\/+$/g, "")).filter(Boolean);
+  const expand = (opts.expand ?? []).map((d) => trimTrailingSlashes(d.replace(/^\.\//, ""))).filter(Boolean);
   return (file, symbol) => {
     if (expand.some((d) => file === d || file.startsWith(`${d}/`))) return classLane(file, symbol);
     const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";

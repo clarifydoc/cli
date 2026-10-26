@@ -6,6 +6,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
 import { namedQueries } from "./named-queries.js";
 import { statementAccesses } from "../shared/sql-string-sources.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /** A name as written, quotes of every dialect removed: `accounting."order"` → `accounting.order`. */
 const unquoteName = (s: string): string => s.replace(/[[\]"`]/g, "");
@@ -446,7 +447,7 @@ function aliasTables(text: string): Map<string, string> {
 
 /** The 1-based line of `lines[start, end)` that names `table` (its last part), else the statement's first. */
 function lineNaming(lines: string[], start: number, end: number, table: string): number {
-  const leaf = new RegExp(String.raw`(?<![\w$])${table.split(".").pop()!.replace(/[$]/g, "\\$&")}(?![\w$])`, "i");
+  const leaf = new RegExp(String.raw`(?<![\w$])${escapeRegex(table.split(".").pop()!)}(?![\w$])`, "i");
   for (let i = start; i < end; i++) if (leaf.test(lines[i]!)) return i + 1;
   return start + 1;
 }
