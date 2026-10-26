@@ -1,4 +1,4 @@
-import type { RegexLangSpec } from "../shared/regex-base.js";
+import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 
 const codeLinesMemo = new WeakMap<readonly string[], string[]>();
 
@@ -52,6 +52,20 @@ function luaCodeLines(lines: readonly string[]): string[] {
   return out;
 }
 
+/**
+ * A function of a module called on the `require` that loads it
+ * (`require("resty.openidc").authenticate(opts)`): the module's function, named
+ * as the module's binding would name it (`openidc.authenticate`).
+ */
+const REQUIRE_CALL: CallPattern = {
+  pattern: /\brequire\s*\(?\s*(["'])[^"']*\1\s*\)?\s*[.:]\s*([A-Za-z_]\w*)\s*\(/,
+  buildName: (m, rawLine) => {
+    const module = /^require\s*\(?\s*["']([^"']+)["']/.exec((rawLine ?? "").slice(m.index))?.[1] ?? "";
+    const binding = module.split(".").pop() || "require";
+    return { name: `${binding}.${m[2]}`, leafName: m[2]! };
+  },
+};
+
 export const luaSpec: RegexLangSpec = {
   language: "lua",
   extensions: [".lua"],
@@ -60,6 +74,7 @@ export const luaSpec: RegexLangSpec = {
   // A script's own statements run when it loads (an OpenResty access-phase script is mostly top-level code).
   topLevelCalls: true,
   callSourceLines: luaCodeLines,
+  callPatterns: [REQUIRE_CALL],
 
   functionPatterns: [
     {

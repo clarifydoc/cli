@@ -27,3 +27,13 @@ end
     expect(a.functions.find((f) => f.name === "fail")?.calls.map((c) => c.name)).toEqual(["ngx.log", "ngx.redirect"]);
   });
 });
+
+describe("Lua calls on a require", () => {
+  it("names a module function called on the require that loads it", () => {
+    const a = extractWithRegex(`local res = require("league.auth").authenticate(opts, target)
+local hex = require("league.codec").to_hex(id)
+`, "access.lua", "lua");
+    const setup = a.functions.find((f) => f.name === "<setup>");
+    expect(setup?.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["auth.authenticate", "codec.to_hex"]));
+  });
+});
