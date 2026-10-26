@@ -119,6 +119,49 @@ export interface SymbolReachInput {
    * never inspects method names.
    */
   dbAccessByLine?: Map<string, "read" | "write">;
+  /**
+   * Reads whose table is a type parameter of the performing method's class
+   * (see `attributeGenericDataAccess`). Each is bound along the call chain
+   * through the links' `typeArgs` and becomes an ordinary effect at the first
+   * caller that closes the parameter over a concrete type.
+   */
+  genericDataAccess?: GenericDataAccess[];
+  /** A class's own type parameters, in order (`file`, class name). */
+  typeParametersOf?: (file: string, className: string) => readonly string[] | undefined;
+  /** The resource name a bound type argument reaches as (the ER node it matches). */
+  canonicalEntity?: (raw: string) => string;
+}
+
+/** A database access whose entity is the `parameter`-th type parameter of the class declaring `symbol`. */
+export interface GenericDataAccess {
+  file: string;
+  symbol: string;
+  parameter: number;
+  access?: "read" | "write";
+}
+
+/**
+ * Attribute each `database` row whose table is a class type parameter
+ * (`DataSourceInfo.entityTypeParameter`) to its innermost method, with the
+ * parameter's position in that method's class.
+ */
+export function attributeGenericDataAccess(analyses: FileAnalysis[]): GenericDataAccess[] {
+  const out: GenericDataAccess[] = [];
+  for (const a of analyses) {
+    const rows = (a.dataSources ?? []).filter((ds) => ds.kind === "database" && ds.entityTypeParameter);
+    if (rows.length === 0) continue;
+    const spans = spansOf(a);
+    for (const ds of rows) {
+      const at = innermostAt(spans, ds.line);
+      const dot = at ? at.symbol.lastIndexOf(".") : -1;
+      if (!at || dot <= 0) continue;
+      const cls = a.classes.find((c) => c.name === at.symbol.slice(0, dot));
+      const parameter = cls?.typeParameters?.indexOf(ds.entityTypeParameter!) ?? -1;
+      if (parameter < 0) continue;
+      out.push({ file: a.filePath, symbol: at.symbol, parameter, ...(ds.access ? { access: ds.access } : {}) });
+    }
+  }
+  return out;
 }
 
 interface Seed {
@@ -127,6 +170,16 @@ interface Seed {
   resource: string;
   originFile: string;
   originSymbol: string;
+  /** Hops from the origin already walked (a bound generic access); 0 for a direct one. */
+  dist?: number;
+  /** For a bound generic access: the hops below `key` down to the performing method. */
+  tail?: FlowHop[];
+}
+
+/** `List<Club>?`, `League.Club[]` → `Club`; null when not a plain type name. */
+function boundTypeName(arg: string): string | null {
+  const bare = arg.replace(/<.*$/s, "").replace(/[?\[\]\s]+$/, "").split(/\.|::/).pop() ?? "";
+  return /^[A-Z]\w*$/.test(bare) ? bare : null;
 }
 
 const symbolOf = (key: string): string => key.slice(key.indexOf("::") + 2);
@@ -158,6 +211,8 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
   const { reverse, confidence: edgeConfidence, callLine } = buildSymbolAdjacency(input.symbolLinks);
   // (kind, resource) → reached symbol → the callee it was reached from.
   const parents = new Map<string, Map<string, string | null>>();
+  // (kind, resource) → a bound generic access's root → the hops below it.
+  const tails = new Map<string, Map<string, FlowHop[]>>();
   const witness: ReachWitness = {
     pathOf(key, kind, resource) {
       const parent = parents.get(`${kind} ${resource}`);
@@ -169,6 +224,12 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
         const line = next ? callLine.get(edgeKey(cur, next)) : undefined;
         if (line !== undefined) hop.line = line;
         hops.push(hop);
+        const tail = next ? undefined : tails.get(`${kind} ${resource}`)?.get(cur);
+        if (tail) {
+          const below = callLine.get(edgeKey(cur, keyOf(tail[0]!.file, tail[0]!.symbol)));
+          if (below !== undefined) hop.line = below;
+          hops.push(...tail.map((h) => ({ ...h })));
+        }
       }
       return hops;
     },
@@ -210,6 +271,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
       seeds.push({ key: keyOf(a.file, a.symbol), kind: "api-call", resource, originFile: a.file, originSymbol: a.symbol });
     }
   }
+  if (input.genericDataAccess?.length) seeds.push(...bindGenericAccess(input, reverse, callLine, guessed));
   if (seeds.length === 0) return { reach: [], witness };
 
   // Group by (kind, resource) so one reverse-BFS covers every function that
@@ -243,9 +305,26 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     parents.set(`${kind} ${resource}`, parent);
     type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean };
     const reached: Hop[] = [];
+    // Roots that start further out (bound generic accesses) join the queue when
+    // its frontier reaches their distance, so every symbol keeps its shortest one.
+    const pending: Array<Hop & { tail?: FlowHop[] }> = [];
     const walk = (queue: Hop[], allowGuess: boolean): void => {
       let qi = 0;
-      while (qi < queue.length) {
+      let pi = 0;
+      while (qi < queue.length || pi < pending.length) {
+        while (pi < pending.length && (qi >= queue.length || pending[pi]!.dist <= queue[qi]!.dist)) {
+          const root = pending[pi++]!;
+          if (visited.has(root.key)) continue;
+          visited.add(root.key);
+          parent.set(root.key, null);
+          if (root.tail) {
+            let t = tails.get(`${kind} ${resource}`);
+            if (!t) tails.set(`${kind} ${resource}`, (t = new Map()));
+            t.set(root.key, root.tail);
+          }
+          queue.splice(qi, 0, { key: root.key, dist: root.dist, oFile: root.oFile, oSym: root.oSym, guessed: false });
+        }
+        if (qi >= queue.length) break;
         const cur = queue[qi++]!;
         if (!allowGuess || cur.guessed) reached.push(cur);
         if (cur.dist >= MAX_DEPTH) continue;
@@ -261,13 +340,17 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     };
     const roots: Hop[] = [];
     for (const s of group) {
-      if (!visited.has(s.key)) {
+      if (s.dist) {
+        pending.push({ key: s.key, dist: s.dist, oFile: s.originFile, oSym: s.originSymbol, guessed: false, ...(s.tail ? { tail: s.tail } : {}) });
+      } else if (!visited.has(s.key)) {
         visited.add(s.key);
         parent.set(s.key, null);
         roots.push({ key: s.key, dist: 0, oFile: s.originFile, oSym: s.originSymbol, guessed: false });
       }
     }
+    pending.sort((a, b) => a.dist - b.dist);
     walk(roots, false);
+    pending.length = 0;
     walk([...reached], true);
     for (const cur of reached) {
       addEffect(cur.key, {
@@ -302,6 +385,90 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
   }
   out.sort((a, b) => byOrdinal(a.file, b.file) || byOrdinal(a.symbol, b.symbol));
   return { reach: out, witness };
+}
+
+/**
+ * Bind each generic access (a read of `TModel` in `Repository<TModel>.All`)
+ * along the reverse call graph: a call inside the class keeps the parameter, a
+ * link whose `typeArgs` close it moves it to the caller's own parameter or —
+ * once it names a type — ends the walk with an ordinary seed at that caller,
+ * carrying the hops walked. A caller that states no binding ends nothing: the
+ * table is never guessed. Guessed (AMBIGUOUS) links are not crossed.
+ */
+function bindGenericAccess(
+  input: SymbolReachInput,
+  reverse: ReadonlyMap<string, string[]>,
+  callLine: ReadonlyMap<string, number>,
+  guessed: (callee: string, caller: string) => boolean,
+): Seed[] {
+  const bindings = new Map<string, Array<Array<string | null>>>();
+  for (const l of input.symbolLinks) {
+    if (!l.typeArgs) continue;
+    const ek = edgeKey(keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol));
+    let list = bindings.get(ek);
+    if (!list) bindings.set(ek, (list = []));
+    list.push(l.typeArgs);
+  }
+  const classOf = (key: string): string | null => {
+    const sym = symbolOf(key);
+    const dot = sym.lastIndexOf(".");
+    return dot > 0 ? sym.slice(0, dot) : null;
+  };
+  const best = new Map<string, Seed>();
+  for (const g of input.genericDataAccess ?? []) {
+    const kind: DataEffectKind = g.access === "write" ? "db-write" : g.access === "read" ? "db-read" : "db";
+    type State = { key: string; param: number; dist: number; prev: State | null };
+    const start: State = { key: keyOf(g.file, g.symbol), param: g.parameter, dist: 0, prev: null };
+    const seen = new Set<string>([`${start.key}\0${start.param}`]);
+    const queue: State[] = [start];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi]!;
+      if (cur.dist + 1 > MAX_DEPTH) continue;
+      const curClass = classOf(cur.key);
+      for (const caller of reverse.get(cur.key) ?? []) {
+        if (guessed(cur.key, caller)) continue;
+        const callerClass = classOf(caller);
+        const bound = bindings.get(edgeKey(caller, cur.key));
+        const outcomes: Array<{ param: number } | { type: string }> = [];
+        if (bound) {
+          const params = callerClass ? input.typeParametersOf?.(fileOf(caller), callerClass) ?? [] : [];
+          for (const args of bound) {
+            const arg = args[cur.param];
+            if (!arg) continue;
+            const own = params.indexOf(arg);
+            if (own >= 0) outcomes.push({ param: own });
+            else {
+              const type = boundTypeName(arg);
+              if (type) outcomes.push({ type });
+            }
+          }
+        } else if (callerClass && callerClass === curClass && fileOf(caller) === fileOf(cur.key)) {
+          outcomes.push({ param: cur.param });
+        }
+        for (const o of outcomes) {
+          if ("param" in o) {
+            const sk = `${caller}\0${o.param}`;
+            if (seen.has(sk)) continue;
+            seen.add(sk);
+            queue.push({ key: caller, param: o.param, dist: cur.dist + 1, prev: cur });
+            continue;
+          }
+          const resource = input.canonicalEntity?.(o.type) ?? o.type;
+          const id = `${caller}\0${kind}\0${resource}`;
+          if ((best.get(id)?.dist ?? Infinity) <= cur.dist + 1) continue;
+          const tail: FlowHop[] = [];
+          for (let h: State | null = cur; h; h = h.prev) {
+            const hop: FlowHop = { file: fileOf(h.key), symbol: symbolOf(h.key) };
+            const line = h.prev ? callLine.get(edgeKey(h.key, h.prev.key)) : undefined;
+            if (line !== undefined) hop.line = line;
+            tail.push(hop);
+          }
+          best.set(id, { key: caller, kind, resource, originFile: g.file, originSymbol: g.symbol, dist: cur.dist + 1, tail });
+        }
+      }
+    }
+  }
+  return [...best.values()];
 }
 
 /**

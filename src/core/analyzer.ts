@@ -108,11 +108,12 @@ import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./top
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
-import { buildDataAccessGraph, attributeDataAccessToSymbols } from "./data-access-graph.js";
+import { buildDataAccessGraph, attributeDataAccessToSymbols, entityMatcher } from "./data-access-graph.js";
 import {
   attributeApiCallsToSymbols,
   computeDataFlows,
   computeSymbolReachWithWitness,
+  attributeGenericDataAccess,
 } from "./data-flow-reach.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
@@ -1793,11 +1794,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         if (m.kind === "db-write") dbAccessByLine.set(`${a.filePath}::${m.line}`, "write");
       }
     }
+    const genericDataAccess = attributeGenericDataAccess(allAnalyses);
+    const classAt = genericDataAccess.length > 0 ? new Map(allAnalyses.flatMap((a) => a.classes.map((c) => [`${a.filePath}\0${c.name}`, c] as const))) : null;
+    const matchEntity = genericDataAccess.length > 0 ? entityMatcher(entityGraph) : null;
     const reached = computeSymbolReachWithWitness({
       symbolLinks,
       symbolDataAccess,
       apiCallAccess: attributeApiCallsToSymbols(allAnalyses, allApiCalls),
       dbAccessByLine,
+      ...(genericDataAccess.length > 0 ? {
+        genericDataAccess,
+        typeParametersOf: (file: string, cls: string) => classAt!.get(`${file}\0${cls}`)?.typeParameters,
+        canonicalEntity: (raw: string) => matchEntity!(raw) ?? raw,
+      } : {}),
     });
     symbolReach = reached.reach;
     dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness, allEntryPoints);
@@ -1807,6 +1816,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       );
     }
   }
+
+  // The generic bindings were for the reach alone (`SymbolLink.typeArgs`).
+  for (const l of symbolLinks) delete l.typeArgs;
 
   // ORM/DB migrations across known ecosystems (path-convention based).
   const migrations = detectMigrations(allAnalyses.map((a) => a.filePath));

@@ -715,7 +715,9 @@ describe("C# typed repository query helpers", () => {
 }`;
     const tree = await parseSource(src, "csharp" as never, "PlayerRepository.cs");
     const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
-    expect(rows.map((d) => `${d.name} ${d.entity}${d.joined ? " joined" : ""} @${d.line}`)).toEqual([
+    expect(rows.map((d) => `${d.name} ${d.entity ?? `<${d.entityTypeParameter}>`}${d.joined ? " joined" : ""} @${d.line}`)).toEqual([
+      // The base's own read: whatever a caller closes TModel over (bound in the data-flow reach).
+      "_database.Query <TModel> @4",
       "Query Player @7",
       "_database.QueryJoined Player @9",
       "_database.QueryJoined Kit joined @9",

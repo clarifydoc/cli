@@ -1481,6 +1481,13 @@ export interface DataSourceInfo {
    */
   receiverIsInstance?: boolean;
   /**
+   * For `database`: the table read is the enclosing class's type parameter of
+   * this name (`_database.Query<TModel>(…)` inside `BasicRepository<TModel>`).
+   * `entity` stays empty; the data-flow reach binds the parameter along each
+   * call chain to the type a caller closes it over (`: BasicRepository<Club>`).
+   */
+  entityTypeParameter?: string;
+  /**
    * For `database`: the named query the call runs (`em.createNamedQuery("match.byClub")`),
    * declared elsewhere — a project pass fills `entity` from the query's declaration.
    */
@@ -2171,6 +2178,15 @@ export interface SymbolLink {
    */
   viaType?: string;
   viaTypeFile?: string;
+  /**
+   * When the target is a method of a generic class: what the caller closes the
+   * class's type parameters over, in order (`_clubs.All()` on an
+   * `IRepository<Club>` reaching `Repository<TModel>.All` → `["Club"]`; null
+   * where unbound). An argument may be one of the caller's own type parameters.
+   * Read by the data-flow reach to name the table a generic repository touches.
+   * In-memory only: dropped once the reach ran.
+   */
+  typeArgs?: Array<string | null>;
 }
 
 /**

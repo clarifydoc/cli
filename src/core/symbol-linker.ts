@@ -442,6 +442,7 @@ export function buildSymbolLinks(input: FileAnalysis[], subProjects: readonly Su
   }
 
   pickOverloads(deduped, analyses);
+  annotateTypeArguments(deduped, ctx);
   return deduped;
 }
 
@@ -1722,6 +1723,8 @@ interface InjectionPoint {
   typeFile: string | null;
   /** DI token/key (`@Inject(TOKEN)`, `@Qualifier("x")`). */
   qualifier?: string;
+  /** The type as written, generic arguments kept (`IRepository<TModel>`). */
+  written?: string;
   /** The member's own name (Spring's by-name fallback matches it against bean names). */
   member: string;
   /** The class the member belongs to (contextual bindings key on it). */
@@ -1819,6 +1822,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
           consumer: cls.name,
         };
         if (qualifier) point.qualifier = qualifier;
+        if (type && type.includes("<")) point.written = type;
         members.set(name, point);
       };
       for (const m of cls.methods) {
@@ -4097,13 +4101,17 @@ function ownerOverrideLinks(
     const handed = onField && ownerClass && bareClassName(ownerClass.extends) === host.name ? handedType(ownerClass, host, onField[1]!) : null;
     if (handed) {
       const link = resolveCallToDefinition(sourceFile, sourceSymbol, { ...call, receiverType: handed }, analysis, ctx);
-      if (link) out.push({ ...link, strategy: "route-override" });
+      if (link) {
+        const typeArgs = typeArgumentsAt(ctx, handed, owner.file, link.targetFile, link.targetSymbol);
+        out.push({ ...link, strategy: "route-override", ...(typeArgs ? { typeArgs } : {}) });
+      }
       continue;
     }
     const name = /^(?:this\.|self\.|base\.)?(\w+)$/.exec(call.name)?.[1];
     if (!name || name === handlerName || !own.has(name)) continue;
     const override = findMethodInClass(ctx, route.owner!, owner.file, name);
     if (!override || override.symbol === `${host.name}.${name}`) continue;
+    const typeArgs = typeArgumentsAt(ctx, route.owner!, owner.file, override.file, override.symbol);
     out.push({
       sourceFile,
       sourceSymbol,
@@ -4115,6 +4123,7 @@ function ownerOverrideLinks(
       confidence: "INFERRED",
       strategy: "route-override",
       relation: "calls",
+      ...(typeArgs ? { typeArgs } : {}),
     });
   }
   return out;
@@ -4535,4 +4544,145 @@ function importResolveContext(ctx: LinkContext): ImportResolveContext {
     globImportsOf: (file) => (byFile.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
   };
   return ctx.importResolve;
+}
+
+/**
+ * `IRepo<Club, List<int>>` → `{ name: "IRepo", args: ["Club", "List<int>"] }`,
+ * the name without its namespace. Null for anything not shaped `Name` or `Name<…>`.
+ */
+function parseGenericType(written: string): { name: string; args: string[] } | null {
+  const t = written.trim().replace(/\?$/, "");
+  const lt = t.indexOf("<");
+  const name = bareSupertypeName(lt < 0 ? t : t.slice(0, lt));
+  if (!/^\w+$/.test(name)) return null;
+  if (lt < 0) return { name, args: [] };
+  if (!t.endsWith(">")) return null;
+  const args: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of t.slice(lt + 1, -1)) {
+    if (ch === "<" || ch === "[" || ch === "(") depth++;
+    else if (ch === ">" || ch === "]" || ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      args.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  args.push(cur.trim());
+  return args.every(Boolean) ? { name, args } : null;
+}
+
+/** A written type with each type parameter replaced by what it is bound to. */
+function substituteTypeParameters(written: string, bound: ReadonlyMap<string, string>): string {
+  return bound.size === 0 ? written : written.replace(/\b\w+\b/g, (w) => bound.get(w) ?? w);
+}
+
+/**
+ * Every class a written type is, itself and its bases transitively, each with
+ * the type arguments it is closed over from there: `ClubRepository` (`:
+ * BasicRepository<Club>`) → `BasicRepository` with `["Club"]`, and
+ * `IBasicRepository` with `["Club"]` above it. Keyed by `${file}\0${class}`.
+ */
+function closedAncestors(ctx: LinkContext, written: string, fromFile: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const visit = (w: string, near: string, depth: number): void => {
+    const parsed = parseGenericType(w);
+    if (!parsed || depth > 8) return;
+    const file = locateClass(ctx, parsed.name, near, ctx.projectOf.get(near) ?? "root");
+    if (!file) return;
+    const key = memberKey(file, parsed.name);
+    const cls = ctx.classAt.get(key);
+    if (!cls || out.has(key)) return;
+    out.set(key, parsed.args);
+    const params = cls.typeParameters ?? [];
+    const bound = new Map<string, string>();
+    if (params.length === parsed.args.length) params.forEach((p, i) => bound.set(p, parsed.args[i]!));
+    for (const base of [cls.extends, ...cls.implements]) {
+      if (base) visit(substituteTypeParameters(base, bound), file, depth + 1);
+    }
+  };
+  visit(written, fromFile, 0);
+  return out;
+}
+
+/**
+ * What the type parameters of the class declaring `targetSymbol` are bound to
+ * when a receiver of the written type calls it: the type's own arguments when
+ * the class is among its bases (`ClubRepository` → `BasicRepository<Club>`),
+ * else unified through a base both share (an `IRepository<Club>` receiver whose
+ * call lands on the implementation `Repository<T> : IRepository<T>` binds `T`).
+ * Null when the class is not generic or nothing binds it; disagreeing paths bind nothing.
+ */
+function typeArgumentsAt(ctx: LinkContext, written: string, fromFile: string, targetFile: string, targetSymbol: string): Array<string | null> | null {
+  const dot = targetSymbol.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const className = targetSymbol.slice(0, dot);
+  const target = ctx.classAt.get(memberKey(targetFile, className));
+  const params = target?.typeParameters ?? [];
+  if (params.length === 0) return null;
+  const up = closedAncestors(ctx, written, fromFile);
+  const direct = up.get(memberKey(targetFile, className));
+  if (direct) return direct.length === params.length ? direct : null;
+  const down = closedAncestors(ctx, `${className}<${params.join(", ")}>`, targetFile);
+  const binding: Array<string | null> = params.map(() => null);
+  for (const [key, symbolic] of down) {
+    const closed = up.get(key);
+    if (!closed || closed.length !== symbolic.length) continue;
+    for (let j = 0; j < symbolic.length; j++) {
+      const i = params.indexOf(symbolic[j]!);
+      if (i < 0) continue;
+      if (binding[i] !== null && binding[i] !== closed[j]) return null;
+      binding[i] = closed[j]!;
+    }
+  }
+  return binding.some((b) => b !== null) ? binding : null;
+}
+
+/**
+ * Bind each link into a generic class's method to the type arguments its
+ * caller closes that class over (`SymbolLink.typeArgs`): a call on a member,
+ * parameter or local whose declared type names them, or a self-call from a
+ * subclass that closes its base. A self-call inside the class itself binds
+ * nothing (the parameters stay its own).
+ */
+function annotateTypeArguments(links: SymbolLink[], ctx: LinkContext): void {
+  const fnAt = new Map<string, FunctionInfo>();
+  let indexed = false;
+  for (const link of links) {
+    if (link.typeArgs || link.navigational) continue;
+    const dot = link.targetSymbol.lastIndexOf(".");
+    if (dot <= 0 || !ctx.classAt.get(memberKey(link.targetFile, link.targetSymbol.slice(0, dot)))?.typeParameters?.length) continue;
+    const sDot = link.sourceSymbol.lastIndexOf(".");
+    const sourceClassName = sDot > 0 ? link.sourceSymbol.slice(0, sDot) : null;
+    const sourceClass = sourceClassName ? ctx.classAt.get(memberKey(link.sourceFile, sourceClassName)) : undefined;
+    let written: string | null | undefined = null;
+    const onMember = /^(?:(?:this|base|self)\.)?(\w+)\.\w+$/.exec(link.callName);
+    if (onMember) {
+      const member = onMember[1]!;
+      const point = sourceClass ? ctx.memberTypes.get(memberKey(link.sourceFile, sourceClassName!))?.get(nameKey(ctx.languageOf.get(link.sourceFile), member)) : undefined;
+      written = point?.written ?? point?.typeName;
+      if (!written) {
+        if (!indexed) {
+          indexed = true;
+          for (const a of ctx.analyses) {
+            for (const fn of a.functions) fnAt.set(memberKey(a.filePath, fn.name), fn);
+            for (const cls of a.classes) for (const m of cls.methods) fnAt.set(memberKey(a.filePath, `${cls.name}.${m.name}`), m);
+          }
+        }
+        const fn = fnAt.get(memberKey(link.sourceFile, link.sourceSymbol));
+        written = fn?.params.find((p) => p.name === member)?.type ?? fn?.localTypes?.find((l) => l.name === member)?.type;
+      }
+    } else if (/^(?:(?:this|base|self)\.)?\w+$/.test(link.callName)) {
+      if (sourceClass && !(link.sourceFile === link.targetFile && sourceClassName === link.targetSymbol.slice(0, dot))) {
+        written = sourceClass.typeParameters?.length ? `${sourceClassName}<${sourceClass.typeParameters.join(", ")}>` : sourceClassName;
+      } else if (link.sourceSymbol.startsWith("route:")) {
+        // A route served through an inherited handler runs on its owner's instance.
+        ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+        written = ctx.analysisAt.get(link.sourceFile)?.routes.find((r) => r.owner && `route:${r.httpMethod ?? "USE"} ${r.path}` === link.sourceSymbol)?.owner;
+      }
+    }
+    if (!written) continue;
+    const typeArgs = typeArgumentsAt(ctx, written, link.sourceFile, link.targetFile, link.targetSymbol);
+    if (typeArgs) link.typeArgs = typeArgs;
+  }
 }

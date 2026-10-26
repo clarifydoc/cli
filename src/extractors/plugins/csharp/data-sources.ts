@@ -1002,6 +1002,15 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         ...(i > 0 ? { joined: true } : {}), line: node.startPosition.row + 1,
       })));
       if (concrete.length > 0) return;
+      // A generic repository's own read (`_database.Query<TModel>(…)` in `BasicRepository<TModel>`):
+      // the table is whatever a caller's type closes `TModel` over, bound along the call chain.
+      const open = typeArgs.length === 1 && onDatabase && typeParams.has(typeArgs[0]!) ? typeArgs[0]! : null;
+      if (open) {
+        sources.push(this.ds({
+          kind: "database", name: `${receiver}.${method}`, target: null, entityTypeParameter: open, access: "read", line: node.startPosition.row + 1,
+        }));
+        return;
+      }
     }
 
     // StackExchange.Redis: `db.HashGetAsync(key, field)`, `db.StringSetAsync(key, value)` on an

@@ -191,6 +191,18 @@ function fileBasename(p: string): string {
  * outside any function belongs to the file's `<setup>` when the plugin made
  * one (module-level code), and is dropped otherwise.
  */
+/** Raw entity name → the ER node it matches (case-insensitive, singular/plural), else null. */
+export function entityMatcher(entityGraph: EntityGraph): (raw: string) => string | null {
+  const entityByKey = nodeKeyIndex(entityGraph.nodes, (n) => n.name);
+  return (raw) => {
+    for (const k of entityMatchKeys(raw)) {
+      const hit = entityByKey.get(k);
+      if (hit) return hit;
+    }
+    return null;
+  };
+}
+
 export function attributeDataAccessToSymbols(
   analyses: FileAnalysis[],
   entityGraph: EntityGraph,
