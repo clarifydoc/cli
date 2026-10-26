@@ -90,6 +90,8 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   typeOnlyEdges: "optional",
   communityNames: "optional",
   fileLayerReasons: "optional",
+  fileLayerAlternates: "optional",
+  fileLayerConflicts: "optional",
   screens: "required",
   apiRouteLinks: "optional",
   apiRouteLinkStats: "optional",

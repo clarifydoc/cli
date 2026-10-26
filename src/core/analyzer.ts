@@ -96,7 +96,7 @@ import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
 import { detectDuplicates } from "./duplication-detector.js";
-import { classifyFileLayers, detectLayerViolations, detectRuleViolations } from "./layer-analyzer.js";
+import { classifyFileLayers, detectLayerViolations, detectRuleViolations, layerDisagreements, layerEvidence, type LayerTier } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
 import { attachRiskVerdicts } from "./risk-verdict.js";
@@ -1507,12 +1507,16 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   );
   const fileLayerReasons: Record<string, string> = {};
   const analysisOf = new Map(allAnalyses.map((a) => [a.filePath, a]));
+  const fileLayerTiers: Record<string, LayerTier> = {};
   const fileLayerMap = classifyFileLayers(
     allAnalyses.map((a) => ({ path: a.filePath, language: a.language })),
     architecture,
     (f) => layerEvidence(analysisOf.get(f)),
     fileLayerReasons,
+    fileLayerTiers,
   );
+  const layerSplit = layerDisagreements(allAnalyses, fileLayerMap, fileLayerTiers, isUnauthored);
+  if (layerSplit.conflicts.length) progress.detail(`  Layers: ${layerSplit.conflicts.length} file(s) placed by path in a layer their content contradicts`);
   const layerViolations = [
     ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
     // The team's own rules (`.clarifydoc/config.json` `rules`), beside the built-in order.
@@ -2022,6 +2026,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const suggestions = generateSuggestions({
     typeOnlyEdges: typeOnly,
     cycles: importCycles,
+    layerConflicts: layerSplit.conflicts,
     analyses: allAnalyses,
     healthScore,
     patterns,
@@ -2133,6 +2138,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     refactorPressure: refactorPressure.length > 0 ? refactorPressure : undefined,
     fileLayerMap,
     fileLayerReasons,
+    ...(Object.keys(layerSplit.alternates).length ? { fileLayerAlternates: layerSplit.alternates } : {}),
+    ...(layerSplit.conflicts.length ? { fileLayerConflicts: layerSplit.conflicts } : {}),
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
@@ -3562,27 +3569,6 @@ async function readTestCoverage(files: readonly string[], analyses: readonly Fil
     });
   }
   return reports.length ? buildTestCoverage(reports, analyses, projectRoot) : undefined;
-}
-
-/**
- * A file's layer from what it does, for one no path rule places: the routes
- * it declares, the entities it defines, the template it renders — first fact
- * wins, in that order. A file declaring routes sits where a routes folder
- * does, at the top of the stack (`ui`), so the server wiring that mounts route
- * modules never reads as an upward import. Database access is not evidence
- * on its own: entry and wiring files touch it too.
- */
-function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; reason: string } | null {
-  // An API contract (OpenAPI, …) declares routes it does not serve: it is no layer of the application.
-  if (!a || isApiContractLanguage(a.language)) return null;
-  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
-  const api = a.routes.filter((r) => r.kind === "api").length;
-  const pages = a.routes.length - api;
-  if (api || pages) return { layer: "ui", reason: `it declares ${api ? n(api, "API route") : n(pages, "frontend route")} — the top of the stack, as a routes folder is` };
-  const entities = a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
-  if (entities.length) return { layer: "data", reason: `it defines the ${entities.length === 1 ? "entity" : "entities"} ${entities.slice(0, 3).join(", ")}` };
-  if ((a.templateTree?.length ?? 0) > 0) return { layer: "components", reason: "it renders a template" };
-  return null;
 }
 
 /**

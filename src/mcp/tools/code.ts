@@ -519,6 +519,8 @@ export function fileTool(ctx: ToolContext): McpTool {
           facts([
             ["sub-project", project ? `${project.name} [${project.kind}]` : f.projectId],
             ["layer", f.layer ? `${f.layer}${loaded.summary.fileLayerReasons?.[path] ? ` — ${loaded.summary.fileLayerReasons[path]}` : ""}` : undefined],
+            ["also", loaded.summary.fileLayerAlternates?.[path]?.map((x) => `${x.layer} — ${x.reason}`).join("; ")],
+            ["misplaced?", loaded.summary.fileLayerConflicts?.some((c) => c.file === path) ? "its path puts it in this layer, but nothing it does agrees" : undefined],
             ["complexity", f.complexity ? `total ${f.complexity.totalComplexity}, max ${f.complexity.maxComplexity}` : undefined],
             ["functions", f.complexity?.functions.length],
             ["test coverage", testCoverageLine(loaded.summary.testCoverage, path)],

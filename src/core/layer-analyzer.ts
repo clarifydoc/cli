@@ -1,4 +1,5 @@
 import type { FileAnalysis, ArchLayer, Language, LayerViolation } from "../types/analysis.js";
+import { isApiContractLanguage } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
 import { matchesAnyGlob, type ArchitectureOverrides } from "./project-config.js";
 
@@ -103,6 +104,9 @@ const BASENAME_PATTERNS: [RegExp, ArchLayer, ((isJvm: boolean) => boolean)?][] =
  */
 const TEST_SEGMENT_RE = /(?:^|[/\\])(?:[^/\\]*Tests?|Test[A-Z_0-9][^/\\]*)(?=$|[/\\.])/;
 
+/** Which rule placed a file in its layer: a test convention, the repository's config, its name, its folder, what it does, or none. */
+export type LayerTier = "test" | "config" | "name" | "folder" | "content" | "none";
+
 /** Layer hierarchy — lower number = lower layer */
 const LAYER_LEVEL: Record<ArchLayer, number> = {
   config: 0,
@@ -135,6 +139,8 @@ export function classifyFileLayers(
   evidence?: (path: string) => { layer: ArchLayer; reason: string } | null,
   /** Filled with why each file got its layer. */
   reasonsOut?: Record<string, string>,
+  /** Filled with which tier placed each file. */
+  tiersOut?: Record<string, LayerTier>,
 ): Record<string, ArchLayer> {
   const result: Record<string, ArchLayer> = {};
   const rules = overrides?.layers ?? [];
@@ -151,6 +157,7 @@ export function classifyFileLayers(
     const normalized = fp.replace(/\\/g, "/");
     let assigned: ArchLayer = "unknown";
     let reason = "no path rule or file fact places it";
+    let tier: LayerTier = "none";
 
     // Test conventions trump directory tokens — a spec that lives in `utils/`
     // is still a test, and tests are exempt from layer violations. Tooling
@@ -159,12 +166,15 @@ export function classifyFileLayers(
     if (isTestFile(normalized, language) || TEST_SEGMENT_RE.test(normalized)) {
       assigned = "test";
       reason = "a test file by its name or folder";
+      tier = "test";
     } else if (matchesAnyGlob(normalized, exempt)) {
       assigned = "unknown";
       reason = "exempt in .clarifydoc/config.json";
+      tier = "config";
     } else if (overridden) {
       assigned = overridden.layer;
       reason = `a layers rule in .clarifydoc/config.json (${overridden.patterns.join(", ")})`;
+      tier = "config";
     } else if (TOOLING_SEGMENT_RE.test(normalized)) {
       assigned = "unknown";
       reason = "a tooling or script tree, outside the layered app";
@@ -178,6 +188,7 @@ export function classifyFileLayers(
         if (pattern.test(baseName)) {
           assigned = layer;
           reason = `its file name (${baseName})`;
+          tier = "name";
           break;
         }
       }
@@ -187,6 +198,7 @@ export function classifyFileLayers(
           if (m) {
             assigned = layer;
             reason = `its folder (${m[0].replace(/^[/\\.]/, "")})`;
+            tier = "folder";
             break;
           }
         }
@@ -196,12 +208,14 @@ export function classifyFileLayers(
         if (e) {
           assigned = e.layer;
           reason = e.reason;
+          tier = "content";
         }
       }
     }
 
     result[fp] = assigned;
     if (reasonsOut) reasonsOut[fp] = reason;
+    if (tiersOut) tiersOut[fp] = tier;
   }
 
   return result;
@@ -407,4 +421,105 @@ function stronglyConnected(graph: ReadonlyMap<string, ReadonlySet<string>>): Map
   };
   for (const v of [...graph.keys()].sort()) if (!index.has(v)) visit(v);
   return out;
+}
+
+/** Generic source containers among the utils folder tokens, and the tokens that do claim a utility. */
+const CONTAINER_FOLDER_RE = seg("lib|shared|common");
+const UTILITY_FOLDER_RE = seg("utils?|helpers?");
+
+/** One layer a file's content puts it in. */
+export interface LayerEvidence {
+  layer: ArchLayer;
+  reason: string;
+  /** Path layers this fact agrees with. */
+  agrees: readonly ArchLayer[];
+  /** A fact that contradicts a path on its own: serving an API, defining or querying data. */
+  strong?: boolean;
+  /** Never places a file by itself (the last tier of `classifyFileLayers` skips it). */
+  notAlone?: boolean;
+}
+
+/**
+ * A file's layer from what it does, for one no path rule places: the routes
+ * it declares, the entities it defines, the template it renders — first fact
+ * wins, in that order. A file declaring routes sits where a routes folder
+ * does, at the top of the stack (`ui`), so the server wiring that mounts route
+ * modules never reads as an upward import. Database access is not evidence
+ * on its own: entry and wiring files touch it too.
+ */
+export function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; reason: string } | null {
+  const first = layerEvidenceAll(a).find((e) => !e.notAlone);
+  return first ? { layer: first.layer, reason: first.reason } : null;
+}
+
+/**
+ * Every layer what a file DOES puts it in, strongest first — the routes it
+ * declares, the entities it defines, the database it queries, the template it
+ * renders — each with the layers that agree with it (a controller's API
+ * routes agree with the services folder it sits in; a service querying the
+ * database is a service). Only declared and extracted facts count, never an
+ * import: a file that imports a web framework's error type or dependency
+ * marker declares no route and is no API file.
+ */
+export function layerEvidenceAll(a: FileAnalysis | undefined): LayerEvidence[] {
+  // An API contract (OpenAPI, …) declares routes it does not serve: it is no layer of the application.
+  if (!a || isApiContractLanguage(a.language)) return [];
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  // `strong`: a fact that contradicts a path on its own — serving an API, defining or querying data. A
+  // frontend route (a static page counts) or a rendered template is too common outside ui to say so.
+  const out: LayerEvidence[] = [];
+  const api = a.routes.filter((r) => r.kind === "api").length;
+  const pages = a.routes.length - api;
+  if (api || pages) {
+    out.push({
+      layer: "ui",
+      reason: `it declares ${api ? n(api, "API route") : n(pages, "frontend route")} — the top of the stack, as a routes folder is`,
+      agrees: api ? ["ui", "services"] : ["ui", "components"],
+      ...(api ? { strong: true } : {}),
+    });
+  }
+  const entities = a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
+  if (entities.length) out.push({ layer: "data", reason: `it defines the ${entities.length === 1 ? "entity" : "entities"} ${entities.slice(0, 3).join(", ")}`, agrees: ["data"], strong: true });
+  const queries = a.dataSources.filter((d) => d.kind === "database").length + a.dataMutations.filter((m) => m.kind === "db-write").length;
+  // Not evidence on its own for the primary layer (entry and wiring files touch the database too), but it is
+  // a second layer beside a path's, and it contradicts a ui/utils/config path.
+  if (queries && !entities.length) out.push({ layer: "data", reason: `it queries the database (${n(queries, "statement")})`, agrees: ["data", "services"], strong: true, notAlone: true });
+  if ((a.templateTree?.length ?? 0) > 0) out.push({ layer: "components", reason: "it renders a template", agrees: ["components", "ui"] });
+  return out;
+}
+
+/**
+ * Where a file's path and what it does disagree. `alternates`: the other
+ * layers its content puts it in (an API controller that also queries the
+ * database is both — the layer violation inside one file). `conflicts`: files
+ * a path or name rule placed in a layer none of their content agrees with —
+ * a `utils/` file that queries the database is misplaced.
+ */
+export function layerDisagreements(
+  analyses: readonly FileAnalysis[],
+  layers: Readonly<Record<string, ArchLayer>>,
+  tiers: Readonly<Record<string, LayerTier>>,
+  skip: (file: string) => boolean,
+): { alternates: Record<string, Array<{ layer: ArchLayer; reason: string }>>; conflicts: Array<{ file: string; layer: ArchLayer; evidence: string }> } {
+  const alternates: Record<string, Array<{ layer: ArchLayer; reason: string }>> = {};
+  const conflicts: Array<{ file: string; layer: ArchLayer; evidence: string }> = [];
+  for (const a of analyses) {
+    const layer = layers[a.filePath];
+    if (!layer || layer === "test" || layer === "unknown" || skip(a.filePath)) continue;
+    const evidence = layerEvidenceAll(a);
+    const other = evidence.filter((e) => e.layer !== layer && !e.agrees.includes(layer));
+    if (other.length) alternates[a.filePath] = other.map(({ layer: l, reason }) => ({ layer: l, reason }));
+    const tier = tiers[a.filePath];
+    // Misplaced: a path or name rule placed it, nothing it does agrees, and a strong fact says otherwise.
+    // A page or component that queries the database is the ui→data shortcut, recorded as an alternate; a
+    // utils or config file that does is in the wrong place.
+    const strong = other.filter((e) => e.strong && (!e.notAlone || layer === "utils" || layer === "config"));
+    // `lib/`, `shared/`, `common/` are where a project keeps its source, not a claim that it is a utility:
+    // a folder rule from such a container alone is no path to contradict.
+    const containerOnly = tier === "folder" && CONTAINER_FOLDER_RE.test(a.filePath) && !UTILITY_FOLDER_RE.test(a.filePath);
+    if ((tier === "name" || tier === "folder") && !containerOnly && strong.length && other.length === evidence.length) {
+      conflicts.push({ file: a.filePath, layer, evidence: strong.map((e) => e.reason).join("; ") });
+    }
+  }
+  return { alternates, conflicts };
 }

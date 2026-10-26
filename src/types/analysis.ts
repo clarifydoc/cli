@@ -3213,6 +3213,14 @@ export interface ProjectAnalysis {
   fileLayerMap?: Record<string, ArchLayer>;
   /** Why each file is in its layer: its name, its folder, a config rule, or what it does (it declares routes, defines entities…). */
   fileLayerReasons?: Record<string, string>;
+  /**
+   * The other layers what a file does puts it in, beside its own: an API
+   * controller that also queries the database is both. Only declared facts
+   * count (routes, entities, queries, templates), never imports.
+   */
+  fileLayerAlternates?: Record<string, Array<{ layer: ArchLayer; reason: string }>>;
+  /** Files a path or name rule placed in a layer none of their content agrees with — a `utils/` file that queries the database. */
+  fileLayerConflicts?: Array<{ file: string; layer: ArchLayer; evidence: string }>;
   /** What produced this analysis and what it could see. Omitted on old artifacts. */
   provenance?: AnalysisProvenance;
   /** Auto-detected generated/library barrel roots (e.g. kubb output dirs). */

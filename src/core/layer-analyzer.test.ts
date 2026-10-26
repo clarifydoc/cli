@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { classifyFileLayers, detectLayerViolations } from "./layer-analyzer.js";
-import type { FileAnalysis } from "../types/analysis.js";
+import { classifyFileLayers, detectLayerViolations, layerDisagreements, layerEvidence, layerEvidenceAll, type LayerTier } from "./layer-analyzer.js";
+import { createEmptyAnalysis, type FileAnalysis } from "../types/analysis.js";
 
 const classify = (fp: string) => classifyFileLayers([fp])[fp];
 
@@ -338,5 +338,48 @@ describe("detectRuleViolations — the team's own import rules", () => {
     expect(detectRuleViolations([], acyclic, {}, [rule({ each: "src/features/*", noCycles: true })])).toEqual([]);
     const files = detectRuleViolations([], cyclic, {}, [rule({ from: ["src/features/**"], noCycles: true })]);
     expect(pairs(files)).toEqual(["src/features/club/api.ts → src/features/match/api.ts", "src/features/match/api.ts → src/features/club/api.ts"]);
+  });
+});
+
+describe("layers from what a file does — several labels, disagreements recorded", () => {
+  const withFacts = (filePath: string, facts: { apiRoutes?: number; entity?: string; queries?: number }) => {
+    const a = createEmptyAnalysis(filePath, "typescript");
+    a.routes = Array.from({ length: facts.apiRoutes ?? 0 }, (_, i) => ({ path: `/api/v2/clubs/${i}`, httpMethod: "GET", kind: "api", line: i + 1 })) as never;
+    if (facts.entity) a.classes = [{ name: facts.entity, decorators: ["entity"] }] as never;
+    a.dataSources = Array.from({ length: facts.queries ?? 0 }, (_, i) => ({ kind: "database", name: "clubs", target: "clubs", calls: [], line: i + 1 })) as never;
+    return a;
+  };
+
+  it("records the second layer of a controller that queries the database, and a utils file that does as misplaced", () => {
+    const files = [
+      withFacts("src/controllers/club.controller.ts", { apiRoutes: 2, queries: 3 }),
+      withFacts("src/utils/fixtures.ts", { queries: 1 }),
+      withFacts("src/models/player.ts", { entity: "Player" }),
+      withFacts("src/wiring/main.ts", { queries: 1 }),
+    ];
+    const tiers: Record<string, LayerTier> = {};
+    const layers = classifyFileLayers(files.map((f) => f.filePath), undefined, (f) => layerEvidence(files.find((a) => a.filePath === f)), {}, tiers);
+    // Database access alone never places a file: `wiring/` stays unknown.
+    expect(layers["src/wiring/main.ts"]).toBe("unknown");
+    expect(tiers["src/utils/fixtures.ts"]).toBe("folder");
+    const { alternates, conflicts } = layerDisagreements(files, layers, tiers, () => false);
+    expect(Object.keys(alternates).sort()).toEqual(["src/utils/fixtures.ts"]);
+    expect(conflicts).toEqual([{ file: "src/utils/fixtures.ts", layer: "utils", evidence: "it queries the database (1 statement)" }]);
+    // The controller's routes and queries agree with the services layer its name gives it.
+    expect(layers["src/controllers/club.controller.ts"]).toBe("services");
+    expect(layerEvidenceAll(files[0]).map((e) => e.layer)).toEqual(["ui", "data"]);
+  });
+});
+
+describe("layer disagreements — source containers", () => {
+  it("does not call a lib/ file misplaced for querying the database (lib/ is where Elixir, Ruby and OCaml keep source)", () => {
+    const a = createEmptyAnalysis("lib/league/clubs.ex", "elixir");
+    a.dataSources = [{ kind: "database", name: "clubs", target: "clubs", calls: [], line: 3 }] as never;
+    const tiers: Record<string, LayerTier> = {};
+    const layers = classifyFileLayers([a.filePath], undefined, undefined, {}, tiers);
+    expect(layers[a.filePath]).toBe("utils");
+    const { alternates, conflicts } = layerDisagreements([a], layers, tiers, () => false);
+    expect(conflicts).toEqual([]);
+    expect(alternates[a.filePath]?.map((x) => x.layer)).toEqual(["data"]);
   });
 });

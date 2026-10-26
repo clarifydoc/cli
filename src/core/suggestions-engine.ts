@@ -51,6 +51,8 @@ interface SuggestionInput {
   typeOnlyEdges?: Record<string, string[]>;
   /** The import cycles, when the caller computed them once for every consumer; else computed here. */
   cycles?: readonly string[][];
+  /** Files placed by path in a layer their content contradicts (analyzer `layerDisagreements`). */
+  layerConflicts?: ReadonlyArray<{ file: string; layer: string; evidence: string }>;
   /** Files under a generated/library tree that nothing outside imports (dead code). */
   unusedFiles?: string[];
   /** Authored code no entry point reaches, and unused exports (dead-code.ts). */
@@ -184,6 +186,17 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
       message: `${lv.sourceLayer} layer imports from ${lv.targetLayer} layer`,
       filePath: lv.sourceFile,
       actionable: `Remove import of ${lv.importSpecifier} or invert the dependency`,
+    });
+  }
+
+  // ── Medium: files whose folder says one layer and whose content another ──
+  for (const c of (input.layerConflicts ?? []).slice(0, 5)) {
+    suggestions.push({
+      priority: "medium",
+      category: "Architecture",
+      message: `Sits in the ${c.layer} layer by its path, but ${c.evidence}`,
+      filePath: c.file,
+      actionable: "Move it to the layer its work belongs to, or split that work out",
     });
   }
 
