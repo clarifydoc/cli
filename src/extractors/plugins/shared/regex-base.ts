@@ -242,8 +242,11 @@ export interface RegexLangSpec {
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
   /** Type aliases the file declares (Go `type A = B`, Rust `type A = B;`) → `FileAnalysis.typeAliases`. */
   extractTypeAliases?: (lines: string[]) => TypeAliasInfo[];
-  /** The package the file's declarations belong to → `FileAnalysis.packageName` (Scala `package league.clubs`). */
-  extractPackageName?: (lines: string[]) => string | null;
+  /**
+   * The package the file's declarations belong to → `FileAnalysis.packageName`
+   * (Scala `package league.clubs`; a Swift file's module, the SwiftPM target its directory is).
+   */
+  extractPackageName?: (lines: string[], filePath: string) => string | null;
   /** Entry points that are not routes (scheduled jobs, commands) → `FileAnalysis.entryPoints`. */
   extractEntryPoints?: (lines: string[], filePath: string) => EntryPointInfo[];
   /** HTTP clients and client proxies the file configures → `FileAnalysis.httpClientRegistrations`. */

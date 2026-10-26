@@ -238,9 +238,12 @@ export const swiftSpec: RegexLangSpec = {
     return classes;
   },
 
+  // A module is a SwiftPM target: `Sources/<Target>/…` (and its tests' `Tests/<Target>/…`).
+  extractPackageName: (_lines, filePath) => filePath.match(/(?:^|\/)(?:Sources|Tests)\/([^/]+)\//)?.[1] ?? null,
   importPatterns: [
     {
-      pattern: /^\s*import\s+(\w+)/,
+      // `@testable import Club`, `import struct Club.Player` name the module too.
+      pattern: /^\s*(?:@\w+\s+)*import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(\w+)/,
       getSource: (m) => m[1],
       getSpecifiers: () => [],
     },

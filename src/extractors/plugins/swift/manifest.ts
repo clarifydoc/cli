@@ -13,6 +13,8 @@ export const swiftManifest: LanguagePluginManifest = {
   family: "swift",
   // One module's files share their top-level scope; a directory is the closest evidence.
   directoryScope: true,
+  // `import Club` names a module — a SwiftPM target, whatever directories its files sit in.
+  importsNamePackages: true,
   packageManagers: [swiftpmPackageManager, cocoapodsPackageManager],
   packageEcosystems: ["swiftpm", "cocoapods"],
   parsing: "regex",

@@ -85,7 +85,7 @@ describe("scala members", () => {
 });
 
 describe("scala package clause", () => {
-  const pkg = (src: string) => scalaSpec.extractPackageName!(src.split("\n"));
+  const pkg = (src: string) => scalaSpec.extractPackageName!(src.split("\n"), "modules/clubs/src/main/Table.scala");
   it("joins chained clauses and stops at the first declaration", () => {
     expect(pkg(`// header\npackage league\npackage clubs\n\nimport league.stats.Pair\nobject Table`)).toBe("league.clubs");
     expect(pkg(`package league.clubs\n\nfinal class ClubApi`)).toBe("league.clubs");

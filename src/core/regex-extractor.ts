@@ -73,7 +73,7 @@ export function extractWithRegex(
   if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
   const typeAliases = spec.extractTypeAliases?.(lines);
   if (typeAliases && typeAliases.length > 0) analysis.typeAliases = typeAliases;
-  const packageName = spec.extractPackageName?.(lines);
+  const packageName = spec.extractPackageName?.(lines, filePath);
   if (packageName) analysis.packageName = packageName;
   const messageHandlers = spec.extractMessageHandlers?.(lines);
   if (messageHandlers && messageHandlers.length > 0) analysis.messageHandlers = messageHandlers;
