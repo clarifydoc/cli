@@ -196,9 +196,17 @@ function javaQueryNameArgs(node: Node): string[] | null {
   const named = args.some((a) => a.type === "string_literal" && QUERY_NAME_LITERAL.test(a.text));
   const handed = args.length === 1 && args[0]!.type === "identifier" && !!node.childForFieldName("object") &&
     CRUD_METHOD.test(node.childForFieldName("name")?.text ?? "");
-  if (!named && !handed) return null;
+  // A class's own event helper handed the event (`emitSubEntity(address, event)`): the
+  // entity pass types the helper's publish by what each caller hands it.
+  const object = node.childForFieldName("object");
+  const helper = (!object || object.type === "this" || object.type === "super") && args.length > 0 &&
+    EVENT_HELPER_METHOD.test(node.childForFieldName("name")?.text ?? "");
+  if (!named && !handed && !helper) return null;
   return args.map((a) => a.text.replace(/\s+/g, " "));
 }
+
+/** A helper named for publishing (`emit`, `emitSubEntity`, `publishCreated`, `fireEvent`). */
+const EVENT_HELPER_METHOD = /^(?:emit|publish|fire|raise|dispatch)(?:[A-Z]\w*)?$/;
 
 /** A Java call's argument count: the `argument_list`'s expressions. */
 function javaArgCount(node: Node): number | null {

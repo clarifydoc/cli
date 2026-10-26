@@ -36,7 +36,9 @@ export function hasDbRootTypes(language: Language): boolean {
  * neither its root nor its method names are database evidence.
  */
 export function dbRootRefused(root: string, declaredType: string, language: Language): boolean {
-  const re = DB_ROOT_TYPES.get(language)?.[root.toLowerCase()];
+  const types = DB_ROOT_TYPES.get(language);
+  // Own keys only: a receiver named `constructor` or `toString` is no DB root, not Object's member.
+  const re = types && Object.hasOwn(types, root.toLowerCase()) ? types[root.toLowerCase()] : undefined;
   if (!re) return false;
   const simple = declaredType.replace(/<.*$/s, "").replace(/\?$/, "").split(/[.\\$]/).pop()!.trim();
   return !re.test(simple);

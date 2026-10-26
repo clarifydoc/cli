@@ -1,6 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
-import { daoReceiverEntity } from "./data-sources.js";
+import { daoReceiverEntity, EVENT_TYPE_RE, GENERIC_EVENT_TYPE_RE } from "./data-sources.js";
 
 /**
  * Extracts JPA entities + their relations from Java and Kotlin source.
@@ -38,6 +38,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
     statedRepositoryEntities(jvm);
     implementedDaoTables(jvm);
     handedEntityAccess(jvm);
+    helperPublishedEvents(jvm);
     const byName = namedQueryEntities(analyses);
     if (byName.size === 0) return;
     for (const a of jvm) {
@@ -1087,6 +1088,55 @@ function handedEntityAccess(jvm: readonly FileAnalysis[]): void {
           a.dataSources ??= [];
           if (a.dataSources.some((d) => d.line === call.line && d.entity === entity)) continue;
           a.dataSources.push({ kind: "database", name: `${owner}.${parts![2]}`, target: entity, entity, access, calls: [], line: call.line });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * A helper publishing what it is handed (`protected void emitSubEntity(T entity, Object event)
+ * { eventPublisher.send(audit, meta, event); }`, its row marked `payloadParameter`)
+ * publishes, at each call in its class or a subclass, the event type the call hands
+ * it there (`AddressCreatedEvent event = …; emitSubEntity(address, event)`): a row
+ * at the call. The marker rows themselves name nothing and are dropped.
+ */
+function helperPublishedEvents(jvm: readonly FileAnalysis[]): void {
+  const simple = (t: string | null | undefined): string | null => t?.replace(/<.*$/, "").replace(/^.*\./, "").trim() || null;
+  const helpers = new Map<string, Map<string, { index: number; name: string }>>();
+  for (const a of jvm) {
+    const marked = (a.dataSources ?? []).filter((d) => d.kind === "queue-publish" && d.payloadParameter !== undefined);
+    if (marked.length === 0) continue;
+    for (const ds of marked) {
+      const cls = a.classes.find((c) => ds.line >= c.line && ds.line <= c.endLine && c.methods.some((m) => ds.line >= m.line && ds.line <= (m.endLine ?? m.line)));
+      const m = cls?.methods.find((x) => ds.line >= x.line && ds.line <= (x.endLine ?? x.line));
+      if (cls && m) (helpers.get(cls.name) ?? helpers.set(cls.name, new Map()).get(cls.name)!).set(m.name, { index: ds.payloadParameter!, name: ds.name });
+    }
+    a.dataSources = a.dataSources.filter((d) => d.payloadParameter === undefined);
+  }
+  if (helpers.size === 0) return;
+  const baseOf = new Map<string, string>();
+  for (const a of jvm) for (const cls of a.classes) { const b = simple(cls.extends); if (b) baseOf.set(cls.name, b); }
+  for (const a of jvm) {
+    for (const cls of a.classes) {
+      const chain: string[] = [];
+      for (let c: string | undefined = cls.name; c && chain.length < 6 && !chain.includes(c); c = baseOf.get(c)) chain.push(c);
+      if (!chain.some((c) => helpers.has(c))) continue;
+      const fields = new Map(cls.properties.filter((p) => p.type).map((p) => [p.name, p.type!]));
+      for (const m of cls.methods) {
+        const scope = new Map(fields);
+        for (const p of m.params) if (p.type) scope.set(p.name, p.type);
+        for (const l of m.localTypes ?? []) if (l.type) scope.set(l.name, l.type);
+        for (const call of m.calls) {
+          const name = /^(?:this\.|super\.)?([\w$]+)$/.exec(call.name)?.[1];
+          const helper = name ? chain.map((c) => helpers.get(c)?.get(name)).find(Boolean) : undefined;
+          const arg = helper ? call.args?.[helper.index]?.trim() : undefined;
+          if (!helper || !arg) continue;
+          const type = simple(/^new\s+([\w.]+)/.exec(arg)?.[1] ?? (/^[\w$]+$/.test(arg) ? scope.get(arg) : null));
+          if (!type || !EVENT_TYPE_RE.test(type) || GENERIC_EVENT_TYPE_RE.test(type)) continue;
+          a.dataSources ??= [];
+          if (a.dataSources.some((d) => d.line === call.line && d.kind === "queue-publish" && d.target === type)) continue;
+          a.dataSources.push({ kind: "queue-publish", name: helper.name, target: type, calls: [], line: call.line });
         }
       }
     }

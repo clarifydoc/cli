@@ -1502,6 +1502,12 @@ export interface DataSourceInfo {
    */
   handler?: string;
   /**
+   * For `queue-publish`: the message is the enclosing method's parameter at
+   * this position (`emit(Entity e, Object event)` → 1), so the destination is
+   * the type each caller hands it — a project pass adds a row at those calls.
+   */
+  payloadParameter?: number;
+  /**
    * For `database`: the named query the call runs (`em.createNamedQuery("match.byClub")`),
    * declared elsewhere — a project pass fills `entity` from the query's declaration.
    */

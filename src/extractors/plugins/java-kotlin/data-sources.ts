@@ -548,9 +548,9 @@ const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
 // An event payload type: `AccountCreatedEvent`, `LoginMessage`, a request a
 // service sends on the bus and its reply (`PurgePersonRequest`, `…Response`) … The
 // suffix fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
-const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
+export const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
 /** Base payload types, which say nothing about the event: protobuf's `Message`, Spring's `ApplicationEvent`. */
-const GENERIC_EVENT_TYPE_RE = /^(?:Message|MessageLite|AbstractMessage|GeneratedMessage(?:V3)?|Event|ApplicationEvent|BaseEvent|DomainEvent|Command|Notification)$/;
+export const GENERIC_EVENT_TYPE_RE = /^(?:Message|MessageLite|AbstractMessage|GeneratedMessage(?:V3)?|Event|ApplicationEvent|BaseEvent|DomainEvent|Command|Notification)$/;
 
 // ─── Outbound HTTP declared via annotations ──────────────────────────────────
 // Retrofit interface methods carry the outbound URL in the verb annotation
@@ -1112,6 +1112,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           }
           return;
         }
+        // The payload is a parameter of a helper nothing here calls with a type (`emit(Entity e, Object event)`):
+        // the project pass types it at the helper's callers.
+        const payload = payloadParameter(node);
+        if (payload !== null) {
+          sources.push(this.ds({ kind: "queue-publish", name: `EVT: ${method}`, target: null, payloadParameter: payload, line }));
+          return;
+        }
       }
     }
 
@@ -1415,6 +1422,25 @@ function constructedType(arg: Node): string | null {
  * parameter `name` (`sendDWEvent(entity, audit, MatchPlayedEvent.newBuilder()…build())`
  * into `void sendDWEvent(…, Object event)`), event-shaped ones only.
  */
+/**
+ * The position, among the enclosing method's parameters, of the rightmost call
+ * argument that is one of them and is not typed as an event (`Object event`) —
+ * the payload a helper publishes for whoever calls it. Null otherwise.
+ */
+function payloadParameter(call: Node): number | null {
+  let method: Node | null = call.parent;
+  while (method && method.type !== "method_declaration") method = method.parent;
+  const params = method?.childForFieldName("parameters")?.namedChildren.filter((p) => p.type === "formal_parameter") ?? [];
+  const args = callArguments(call);
+  for (let i = args.length - 1; i >= 0; i--) {
+    const index = params.findIndex((p) => p.childForFieldName("name")?.text === args[i]!.text);
+    if (index < 0) continue;
+    const type = simpleTypeName(params[index]!.childForFieldName("type")?.text);
+    return type && EVENT_TYPE_RE.test(type) && !GENERIC_EVENT_TYPE_RE.test(type) ? null : index;
+  }
+  return null;
+}
+
 function parameterArgTypes(at: Node, name: string): string[] {
   let method: Node | null = at.parent;
   while (method && method.type !== "method_declaration") method = method.parent;
