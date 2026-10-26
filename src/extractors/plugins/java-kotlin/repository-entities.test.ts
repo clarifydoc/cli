@@ -91,3 +91,34 @@ public interface RepositoryFan extends JpaRepository<EntityClubFan, Long> {
     expect(service.dataSources.map((d) => `${d.line} ${d.name} ${d.entity} ${d.access}`)).toEqual(["7 LeagueChange.create Club write"]);
   });
 });
+
+describe("a DAO whose implementation's SQL names its table", () => {
+  it("types a call through the DAO by that table, not the value class its name spells", () => {
+    const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
+    const impl = javaFile("src/main/java/league/MatchEventDAOImpl.java", {
+      classes: [{ name: "MatchEventDAOImpl", kind: "class", extends: null, implements: ["MatchEventDAO"], decorators: [], methods: [], properties: [], isExported: true, line: 1, endLine: 40 }],
+      dataSources: [
+        { kind: "database", name: "INSERT INTO", target: "league_event_queue", entity: "league_event_queue", access: "write", calls: [], line: 10 },
+        { kind: "database", name: "DELETE FROM", target: "league_event_queue", entity: "league_event_queue", access: "write", calls: [], line: 20 },
+      ],
+    });
+    // Two tables: which one a call means is not stated.
+    const mixed = javaFile("src/main/java/league/KitDAOImpl.java", {
+      classes: [{ name: "KitDAOImpl", kind: "class", extends: null, implements: ["KitDAO"], decorators: [], methods: [], properties: [], isExported: true, line: 1, endLine: 40 }],
+      dataSources: [
+        { kind: "database", name: "SELECT", target: "kits", entity: "kits", access: "read", calls: [], line: 10 },
+        { kind: "database", name: "SELECT", target: "kit_sizes", entity: "kit_sizes", access: "read", calls: [], line: 20 },
+      ],
+    });
+    const publisher = javaFile("src/main/java/league/MatchPublisher.java", {
+      classes: [{ name: "MatchPublisher", kind: "class", extends: null, implements: [], decorators: [], methods: [], isExported: true, line: 1, endLine: 30,
+        properties: [field("matchEventDAO", "MatchEventDAO"), field("kitDAO", "KitDAO")] }],
+      dataSources: [
+        { kind: "database", name: "DAO: create", target: "MatchEvent", entity: "MatchEvent", access: "write", calls: [], line: 10 },
+        { kind: "database", name: "DAO: find", target: "Kit", entity: "Kit", access: "read", calls: [], line: 12 },
+      ],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([impl, mixed, publisher]);
+    expect(publisher.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["league_event_queue league_event_queue", "Kit Kit"]);
+  });
+});

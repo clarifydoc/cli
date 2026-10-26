@@ -36,6 +36,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
     statedRepositoryEntities(jvm);
+    implementedDaoTables(jvm);
     handedEntityAccess(jvm);
     const byName = namedQueryEntities(analyses);
     if (byName.size === 0) return;
@@ -952,6 +953,56 @@ function statedRepositoryEntities(jvm: readonly FileAnalysis[]): void {
       const [entity] = options;
       if (ds.target === ds.entity) ds.target = entity!;
       ds.entity = entity!;
+    }
+  }
+}
+
+/**
+ * A DAO whose implementation states its table in SQL (`RawMessageDAOImpl` running
+ * `INSERT INTO hnfwk_local_event_queue …`): a call through the DAO type
+ * (`rawMessageDAO.create(…)`, read as `RawMessage` from the DAO's name) touches
+ * that table, not a value class the DAO's name happens to spell. Only when the
+ * implementations' own SQL names exactly one table, and the name read is no
+ * declared entity.
+ */
+function implementedDaoTables(jvm: readonly FileAnalysis[]): void {
+  const entities = new Set(jvm.flatMap((a) => (a.classes ?? []).filter((c) => c.decorators?.includes("entity")).map((c) => c.name)));
+  const tablesOf = new Map<string, Set<string>>();
+  for (const a of jvm) {
+    for (const cls of a.classes ?? []) {
+      if (cls.kind === "interface" || cls.implements.length === 0) continue;
+      const tables = (a.dataSources ?? [])
+        .filter((ds) => ds.kind === "database" && ds.entity && !ds.routine && !ds.name.startsWith("DAO: ") && ds.line >= cls.line && ds.line <= cls.endLine)
+        .map((ds) => ds.entity!);
+      if (tables.length === 0) continue;
+      for (const iface of cls.implements) {
+        const name = iface.replace(/<.*$/, "").replace(/^.*\./, "");
+        const set = tablesOf.get(name) ?? tablesOf.set(name, new Set()).get(name)!;
+        for (const t of tables) set.add(t);
+      }
+    }
+  }
+  if (tablesOf.size === 0) return;
+  for (const a of jvm) {
+    const rows = (a.dataSources ?? []).filter((ds) => ds.kind === "database" && ds.name.startsWith("DAO: ") && ds.entity && !entities.has(ds.entity));
+    if (rows.length === 0) continue;
+    // The DAO types each name the row's extractor read stands for.
+    const typed = new Map<string, Set<string>>();
+    for (const cls of a.classes ?? []) {
+      for (const m of [...cls.properties, ...cls.methods.flatMap((x) => x.params)]) {
+        const type = m.type?.replace(/<.*$/, "").replace(/^.*\./, "");
+        if (!type || !tablesOf.has(type)) continue;
+        const name = daoReceiverEntity(m.name, new Map([[m.name, type]]));
+        if (name) (typed.get(name) ?? typed.set(name, new Set()).get(name)!).add(type);
+      }
+    }
+    for (const ds of rows) {
+      const types = typed.get(ds.entity!);
+      const tables = types?.size === 1 ? tablesOf.get([...types][0]!) : undefined;
+      if (tables?.size !== 1) continue;
+      const [table] = tables;
+      if (ds.target === ds.entity) ds.target = table!;
+      ds.entity = table!;
     }
   }
 }
