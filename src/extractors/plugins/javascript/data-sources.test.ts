@@ -36,6 +36,19 @@ describe("JS ORM read/write classification (access)", () => {
   });
 });
 
+describe("JS messages on a client are no database access", () => {
+  it("reads a service worker's client.postMessage and a handle's event hook as nothing (real-repo FP)", async () => {
+    const ds = await dbOf(`
+      self.addEventListener("message", async (event) => {
+        const client = event.source;
+        client.postMessage({ type: "MATCH_CACHED", matchId });
+        db.on("error", report);
+        await client.query("SELECT * FROM clubs");
+      });`);
+    expect(ds.map((d) => d.name)).toEqual(["client.query"]);
+  });
+});
+
 describe("JS request wrappers whose fetch takes a ternary", () => {
   it("reads both arms, and one path when they differ only by a query string", async () => {
     const SRC = `import * as url from './util/url'

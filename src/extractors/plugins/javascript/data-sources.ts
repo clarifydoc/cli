@@ -2493,9 +2493,14 @@ function isOrmCall(name: string): boolean {
     const receiver = parts[parts.length - 2];
     if (receiver && isModelLikeRoot(receiver)) return true;
   }
+  // A trusted root's events and messages are no access: `client.postMessage(…)` (a service
+  // worker's window client), `db.on("error", …)`, `client.addEventListener(…)`.
+  if (trustedRoot && NON_ACCESS_LEAVES.has(leaf)) return false;
   if (trustedRoot) return true;
   return false;
 }
+
+const NON_ACCESS_LEAVES = new Set(["postMessage", "addEventListener", "removeEventListener", "dispatchEvent", "on", "off", "once", "emit", "focus", "navigate"]);
 
 /**
  * Drizzle names the table as the verb's argument — `db.insert(posts).values(…)`,
