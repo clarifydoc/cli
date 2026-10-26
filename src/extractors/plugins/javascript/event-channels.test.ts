@@ -24,6 +24,22 @@ class SquadManager {
 }`)).toEqual(["pub PlayerUpdate (EventEmitter: emit) @2", "sub PlayerUpdate (EventEmitter: on) @6", "sub AuthLogout (EventEmitter: on) @7"]);
   });
 
+  it("a chained subscription: each `.on` of the chain listens on the same bus", async () => {
+    expect((await channels(`import { eventBus } from "./event-bus";
+eventBus
+  .on("PLAYERS_DELETED", () => squadStore.fetch())
+  .on("PLAYERS_UPDATED", () => squadStore.fetch())
+  .on("PLAYER_SIGNED", () => {
+    outdated = true
+  })
+results.on("x", () => 1).on("y", () => 2)
+`)).sort()).toEqual([
+      "sub PLAYERS_DELETED (EventEmitter: on) @3",
+      "sub PLAYERS_UPDATED (EventEmitter: on) @4",
+      "sub PLAYER_SIGNED (EventEmitter: on) @5",
+    ]);
+  });
+
   it("NestJS events: emit publishes, @OnEvent consumes on its method", async () => {
     expect(await channels(`import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
 export class Cars {

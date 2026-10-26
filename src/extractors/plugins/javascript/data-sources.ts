@@ -1344,12 +1344,17 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           }
           // An in-process emitter: `bus.emit("order.created", o)` publishes, `bus.on("order.created", fn)` consumes.
           if (fnName === "emit" || fnName === "on" || fnName === "once" || fnName === "addListener") {
-            const root = memberRoot(fn) ?? recv;
+            // `eventBus.on("a", f).on("b", g)`: each link of the chain listens on the same emitter.
+            const chained = fnName !== "emit" ? onChainRoot(fn) : null;
+            const onRecv = chained && fn.childForFieldName("object")?.type === "call_expression" ? chained : recv;
+            const root = memberRoot(fn) ?? onRecv;
             const event = literalString(mqArgs[0] ?? null);
-            const leafRecv = recv.replace(/^this\./, "");
-            const emitterLike = mqev.emitters.has(recv) || mqev.emitters.has(leafRecv) || EMITTER_NAME_RE.test(leafRecv);
+            const leafRecv = onRecv.replace(/^this\./, "");
+            const emitterLike = mqev.emitters.has(onRecv) || mqev.emitters.has(leafRecv) || EMITTER_NAME_RE.test(leafRecv);
             if (event && emitterLike && !NOT_A_CHANNEL_RE.test(root) && !(fnName !== "emit" && mqArgs.length < 2)) {
-              sources.push(this.ds({ kind: fnName === "emit" ? "queue-publish" : "queue-consume", name: `EventEmitter: ${fnName}`, target: event, line }));
+              // A subscription is on the line of its own `.on` (each link of a chain has its own).
+              const at = fnName !== "emit" ? (fn.childForFieldName("property")?.startPosition.row ?? line - 1) + 1 : line;
+              sources.push(this.ds({ kind: fnName === "emit" ? "queue-publish" : "queue-consume", name: `EventEmitter: ${fnName}`, target: event, line: at }));
               return;
             }
             // A typed manager subscribing to several events at once: `events.on({ ClubUpdate: refresh, AuthLogout: () => … })`.
