@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, statSync } from "fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { escapeRegex } from "../plugins/shared/path-utils.js";
 
@@ -26,8 +26,17 @@ const IMPORT_EXTS = ["", ".ts", ".mts", ".js", ".mjs", ".cjs", "/index.ts", "/in
 
 /** The bundler configs in `dir` (`vite.config.ts`, `webpack.config.js`, …). */
 export function bundlerConfigsIn(dir: string): string[] {
+  // One listing of the directory instead of a stat per candidate name (24 of them, for every
+  // directory an import's alias lookup passes through); a listed name is still checked to exist.
+  let names: Set<string>;
+  try {
+    names = new Set(readdirSync(dir));
+  } catch {
+    return [];
+  }
   const out: string[] = [];
   for (const stem of CONFIG_STEMS) for (const ext of CONFIG_EXTS) {
+    if (!names.has(stem + ext)) continue;
     const p = join(dir, stem + ext);
     if (existsSync(p)) out.push(p);
   }

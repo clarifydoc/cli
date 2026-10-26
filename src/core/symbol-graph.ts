@@ -53,7 +53,19 @@ export function strongerFirst(a: Confidence, b: Confidence): number {
  * project's symbol links, de-duplicating parallel edges. Behavior is identical
  * to the inline builder trace-impact.ts previously used.
  */
+/** One adjacency per links array (and length): the trace impact and the finding and pattern entries read the same links. */
+const ADJACENCY = new WeakMap<readonly SymbolLink[], { length: number; adjacency: SymbolAdjacency }>();
+
+/** The links' adjacency, built once per array; callers read it and never change it. */
 export function buildSymbolAdjacency(symbolLinks: readonly SymbolLink[]): SymbolAdjacency {
+  const hit = ADJACENCY.get(symbolLinks);
+  if (hit && hit.length === symbolLinks.length) return hit.adjacency;
+  const adjacency = buildAdjacency(symbolLinks);
+  ADJACENCY.set(symbolLinks, { length: symbolLinks.length, adjacency });
+  return adjacency;
+}
+
+function buildAdjacency(symbolLinks: readonly SymbolLink[]): SymbolAdjacency {
   const forward = new Map<string, string[]>();
   const reverse = new Map<string, string[]>();
   const symbolsByFile = new Map<string, Set<string>>();

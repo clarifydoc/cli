@@ -121,9 +121,24 @@ function bareTypeName(type: string): string {
  * @returns A new array; the survivors keep their first-seen position
  */
 export function dedupSymbolLinks(links: SymbolLink[]): SymbolLink[] {
-  const seen = new Map<string, number>();
-  const result: SymbolLink[] = [];
+  return dedupInto([], new Map(), links);
+}
 
+/** The key map of each array `dedupSymbolLinks` returned, so links appended to it are deduped without re-keying it. */
+const SEEN = new WeakMap<SymbolLink[], { length: number; seen: Map<string, number> }>();
+
+/**
+ * `dedupSymbolLinks([...deduped, ...extra])`, where `deduped` is what an earlier
+ * call returned: the earlier keys are reused rather than rebuilt (the analyzer
+ * appends dispatch, API and queue links to tens of thousands of call links).
+ */
+export function dedupSymbolLinksAppend(deduped: SymbolLink[], extra: readonly SymbolLink[]): SymbolLink[] {
+  const memo = SEEN.get(deduped);
+  if (!memo || memo.length !== deduped.length) return dedupSymbolLinks([...deduped, ...extra]);
+  return dedupInto(deduped.slice(), new Map(memo.seen), extra);
+}
+
+function dedupInto(result: SymbolLink[], seen: Map<string, number>, links: readonly SymbolLink[]): SymbolLink[] {
   for (const link of links) {
     // Include sourceSymbol so distinct callers (e.g. route handler vs.
     // helper function in the same file) don't get collapsed into one edge.
@@ -156,5 +171,6 @@ export function dedupSymbolLinks(links: SymbolLink[]): SymbolLink[] {
       result[existingIdx] = link;
     }
   }
+  SEEN.set(result, { length: result.length, seen });
   return result;
 }

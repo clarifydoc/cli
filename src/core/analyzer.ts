@@ -107,7 +107,7 @@ import { computeHealthScore, findCircularDeps } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
-import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
+import { dedupSymbolLinks, dedupSymbolLinksAppend, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { computeParamOrigins } from "./param-origins.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
@@ -1112,7 +1112,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // the component/link graphs and any LSP pass treats them as existing links.
   const dispatchLinks = resolveProjectDispatch(allAnalyses);
   if (dispatchLinks.length > 0) {
-    symbolLinks = dedupSymbolLinks([...symbolLinks, ...dispatchLinks]);
+    symbolLinks = dedupSymbolLinksAppend(symbolLinks, dispatchLinks);
     progress.detail(`  Dispatch links: ${dispatchLinks.length}`);
   }
 
@@ -1368,7 +1368,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses);
   const inheritedLinks = moveInheritedCallsToSubclasses(symbolLinks, apiSymbolLinks, allAnalyses);
   if (apiSymbolLinks.length > 0) {
-    symbolLinks = dedupSymbolLinks([...symbolLinks, ...inheritedLinks, ...apiSymbolLinks]);
+    symbolLinks = dedupSymbolLinksAppend(symbolLinks, [...inheritedLinks, ...apiSymbolLinks]);
     progress.detail(`  API→handler trace links: ${apiSymbolLinks.length}`);
   }
 
@@ -1763,7 +1763,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   const queueSymbolLinks = synthesizeQueueSymbolLinks(symbolDataAccess);
   if (queueSymbolLinks.length > 0) {
-    symbolLinks = dedupSymbolLinks([...symbolLinks, ...queueSymbolLinks]);
+    symbolLinks = dedupSymbolLinksAppend(symbolLinks, queueSymbolLinks);
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
   }
 
