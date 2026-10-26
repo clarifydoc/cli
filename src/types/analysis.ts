@@ -1498,6 +1498,14 @@ export interface DataSourceInfo {
    */
   receiverIsInstance?: boolean;
   /**
+   * For `database`: a related manager queried (`club.players.all()`,
+   * `self.tags.filter(…)`), named after the relation field it reads through.
+   * The field names no table, so `enrichFileDataSources` leaves `entity`
+   * empty; the plugin's project pass sets it to the model the field relates
+   * to, when the project's models say which one.
+   */
+  relatedField?: string;
+  /**
    * For `database`: the table read is the enclosing class's type parameter of
    * this name (`_database.Query<TModel>(…)` inside `BasicRepository<TModel>`).
    * `entity` stays empty; the data-flow reach binds the parameter along each

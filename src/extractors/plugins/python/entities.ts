@@ -48,6 +48,7 @@ export class PythonEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     attributeRepositoryAccesses(analyses, PY_REPOSITORY_KNOBS);
     inheritDjangoModels(analyses);
+    resolveDjangoRelatedManagers(analyses);
   }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
@@ -831,6 +832,70 @@ function pythonTableName(body: string): string | null {
  * the columns it inherits. Bases are found by name among the Python classes —
  * a name two classes share decides nothing.
  */
+/**
+ * A Django related manager queried (`trigger.filter_has_tags.all()`,
+ * `doc.custom_fields.all()`, `self.tags.filter(…)`) reads the model its field
+ * relates to — `DataSourceInfo.relatedField` names the field, never a table.
+ * The field is looked up on the receiver's model when the code states it (a
+ * model's own `self`, a parameter or local typed as a model), else on every
+ * model: a forward relation field, or a reverse accessor (`related_name`, by
+ * default `<model>_set`). Only a model the project declares counts, and only
+ * one: a field several models relate through to different models, or that
+ * relates to a model from a dependency (`user.groups`, `socialaccount_set`),
+ * names no table.
+ */
+function resolveDjangoRelatedManagers(analyses: FileAnalysis[]): void {
+  const python = analyses.filter((a) => a.language === "python");
+  if (!python.some((a) => a.dataSources.some((d) => d.relatedField))) return;
+  const models = new Set<string>();
+  for (const a of python) for (const c of a.classes) if (c.decorators.includes("entity") && c.decorators.includes("django")) models.add(c.name);
+  /** model → accessor → related model; accessor → every related model. */
+  const onModel = new Map<string, Map<string, string>>();
+  const byAccessor = new Map<string, Set<string>>();
+  const add = (owner: string, accessor: string, target: string): void => {
+    (onModel.get(owner) ?? onModel.set(owner, new Map()).get(owner)!).set(accessor, target);
+    (byAccessor.get(accessor) ?? byAccessor.set(accessor, new Set()).get(accessor)!).add(target);
+  };
+  for (const a of python) {
+    for (const r of a.entityRelations ?? []) {
+      if (r.orm !== "django") continue;
+      const from = r.fromEntity.split(".").pop()!;
+      const to = r.toEntity.split(".").pop()!;
+      add(from, r.fromField, to);
+      // The reverse accessor: `related_name`, else `<model>_set` for a foreign key or many-to-many; `+` has none.
+      const reverse = r.inverseField ?? (r.cardinality === "one-to-one" ? null : `${from.toLowerCase()}_set`);
+      if (reverse && reverse !== "+" && !reverse.endsWith("+")) add(to, reverse, from);
+    }
+  }
+  const declared = (m: string | undefined): string | undefined => (m && models.has(m) ? m : undefined);
+  for (const a of python) {
+    for (const ds of a.dataSources) {
+      const field = ds.relatedField;
+      if (!field || ds.entity) continue;
+      const chain = ds.name.split(".");
+      const root = chain.length === 3 ? chain[0]! : chain.length === 4 && chain[0] === "self" ? chain[1]! : null;
+      // The receiver's model, where the code states it.
+      let owner: string | undefined;
+      if (chain.length === 3 && root === "self") {
+        owner = a.classes.find((c) => c.line <= ds.line && ds.line <= c.endLine && models.has(c.name))?.name;
+      } else if (root) {
+        const fn = [...a.functions, ...a.classes.flatMap((c) => c.methods ?? [])].find((f) => f.line <= ds.line && ds.line <= f.endLine);
+        const typed = fn?.params.find((p) => p.name === root)?.type ?? fn?.localTypes?.find((l) => l.name === root && l.type)?.type;
+        const t = typed?.replace(/^Optional\[(.*)\]$/, "$1").split(/[.|[\s]/).filter(Boolean).pop();
+        if (t && models.has(t)) owner = t;
+      }
+      const viaOwner = owner ? onModel.get(owner)?.get(field) : undefined;
+      const anywhere = byAccessor.get(field);
+      const model = declared(viaOwner) ?? (owner && onModel.get(owner)?.has(field) ? undefined : anywhere?.size === 1 ? declared([...anywhere][0]) : undefined);
+      if (model) {
+        // As a manager on the model itself would (`Tag.objects.filter`): the model is the target too.
+        ds.entity = model;
+        ds.target ??= model;
+      }
+    }
+  }
+}
+
 function inheritDjangoModels(analyses: FileAnalysis[]): void {
   const python = analyses.filter((a) => a.language === "python");
   const byName = new Map<string, ClassInfo[]>();

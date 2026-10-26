@@ -295,6 +295,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               instance = !table;
             }
           }
+          // A related manager (`doc.tags.all()`) is named after its relation field, never a table:
+          // the entity pass resolves the field to the model it relates to.
+          const relatedField = !table && !instance && !datastoreChain(fnName) && relatedManager(fnName, leaf) ? parts[parts.length - 2] : undefined;
           sources.push(this.ds({
             kind: "database",
             name: fnName,
@@ -302,6 +305,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             line: node.startPosition.row + 1,
             ...(table ? { entity: table } : {}),
             ...(instance ? { receiverIsInstance: true } : {}),
+            ...(relatedField ? { relatedField } : {}),
             ...(access ? { access } : {}),
           }));
         }
