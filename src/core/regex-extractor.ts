@@ -113,7 +113,8 @@ export function extractWithRegex(
 function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string): FunctionInfo | null {
   const on = spec.topLevelCalls;
   if (!on || (on instanceof RegExp && !on.test(filePath))) return null;
-  const outside = [...lines];
+  // The lines as the call scan reads them (block comments, heredocs blanked), as a function body's are.
+  const outside = [...(spec.callSourceLines?.(lines) ?? lines)];
   for (const span of [...analysis.functions, ...analysis.classes]) {
     for (let i = span.line - 1; i < Math.min(span.endLine, outside.length); i++) outside[i] = "";
   }

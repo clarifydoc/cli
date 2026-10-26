@@ -271,6 +271,9 @@ export const CONTROL_FLOW_KEYWORDS: ReadonlySet<string> = new Set([
   "switch", "case", "when", "unless", "until", "try", "catch", "finally",
   "return", "throw", "sizeof", "typeof", "goto", "with", "using",
   "synchronized", "await", "yield", "defer",
+  // Logical operators spelled as words (Lua, Python, Ruby, Perl, Elixir): `x and (y)` calls nothing;
+  // nor does an anonymous `function (x)` (Lua, JavaScript).
+  "and", "or", "not", "function",
 ]);
 
 /** True when `name` is a control-flow keyword (any casing). */
