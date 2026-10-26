@@ -1,6 +1,7 @@
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractVueInteractiveElements } from "./interactive-elements.js";
+import { screenSwitchFacts } from "./routes/screen-tables.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -43,6 +44,10 @@ export function vuePreprocess(
         analysis.interactiveElements.push(
           ...extractVueInteractiveElements(sfc.template, raw),
         );
+        // `<HomeScreen v-show="screen === 'Home'" />`: the screen a hand-rolled router shows by key.
+        const startLine = raw.slice(0, raw.indexOf(sfc.template)).split("\n").length;
+        const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
+        if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
       for (const comp of sfc.templateComponents) {
         const importSource =

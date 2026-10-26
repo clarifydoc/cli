@@ -1,3 +1,4 @@
+import { collectScreenTables } from "./screen-tables.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
@@ -69,6 +70,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     }
     // Route arrays another file may `.map` into <Route> (react-router-resolver.ts).
     if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
+    // A hand-rolled router's `{ path, screen }` table, joined to the layout showing each screen (screen-tables.ts).
+    if (facts) collectScreenTables(tree.rootNode, sourceText, facts);
 
     if (maybeTanstack) collectTanstackCodeRoutes(tree.rootNode, sourceText, tanstack);
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.

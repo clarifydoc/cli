@@ -1,3 +1,4 @@
+import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
@@ -258,7 +259,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver(), new JobEventResolver()];
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,
