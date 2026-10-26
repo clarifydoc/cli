@@ -549,6 +549,12 @@ const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
 // service sends on the bus and its reply (`PurgePersonRequest`, `…Response`) … The
 // suffix fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
 export const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
+/**
+ * The container's own lifecycle events (`@EventListener(ApplicationReadyEvent.class)`, a Micronaut
+ * `StartupEvent`): a hook run at startup or shutdown, not a message any code of the project publishes.
+ */
+const LIFECYCLE_EVENT_RE =
+  /^(?:Application(?:Ready|Started|Starting|Prepared|Failed|EnvironmentPrepared|ContextInitialized)Event|Context(?:Refreshed|Started|Stopped|Closed)Event|(?:Servlet|Reactive)?WebServerInitializedEvent|AvailabilityChangeEvent|(?:Server)?(?:Startup|Shutdown)Event)$/;
 /** Base payload types, which say nothing about the event: protobuf's `Message`, Spring's `ApplicationEvent`. */
 export const GENERIC_EVENT_TYPE_RE = /^(?:Message|MessageLite|AbstractMessage|GeneratedMessage(?:V3)?|Event|ApplicationEvent|BaseEvent|DomainEvent|Command|Notification)$/;
 
@@ -719,7 +725,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (node.type === "class_declaration") {
       const event = /\bApplicationListener\s*<\s*([\w.]+)/.exec(node.childForFieldName("interfaces")?.text ?? "")?.[1]?.split(".").pop();
       const handler = event ? node.childForFieldName("body")?.namedChildren.find((m) => m.type === "method_declaration" && m.childForFieldName("name")?.text === "onApplicationEvent") : undefined;
-      if (event && handler) {
+      if (event && handler && !LIFECYCLE_EVENT_RE.test(event)) {
         sources.push(this.ds({ kind: "queue-consume", name: "ApplicationListener", target: event, line: (handler.childForFieldName("name") ?? handler).startPosition.row + 1 }));
       }
     }
@@ -760,7 +766,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       if (evtListener && !listener) {
         const annClass = text.match(EVENT_ANN_CLASS_RE)?.[1]?.split(".").pop();
         const target = annClass ?? handlerFirstParamType(node);
-        if (target) {
+        if (target && !LIFECYCLE_EVENT_RE.test(target)) {
           sources.push(this.ds({
             kind: "queue-consume",
             name: `@${evtListener[1]}`,

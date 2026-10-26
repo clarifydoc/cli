@@ -794,6 +794,20 @@ describe("Spring application listeners", () => {
     expect(rows.map((d) => `${d.name} ${d.target} @${d.line}`)).toEqual(["ApplicationListener MatchFinishedEvent @3"]);
   });
 
+  it("never consume the container's own lifecycle events — a startup hook is no message (real-repo FP)", async () => {
+    const java = `class FixturePoller implements ApplicationListener<ContextRefreshedEvent> {
+  @EventListener(ApplicationReadyEvent.class)
+  public void scheduleStartupLoad() { executor.schedule(this::poll, 5, SECONDS); }
+  @Override
+  public void onApplicationEvent(ContextRefreshedEvent event) { warmUp(); }
+  @EventListener
+  public void onFinished(MatchFinishedEvent event) { poll(); }
+}`;
+    const tree = await parseSource(java, "java", "FixturePoller.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "queue-consume");
+    expect(rows.map((d) => `${d.name} ${d.target}`)).toEqual(["@EventListener MatchFinishedEvent"]);
+  });
+
   it("publish the event a method of the file builds and returns", async () => {
     const java = `class StandingsReconciler {
   private final ApplicationEventPublisher eventPublisher;
