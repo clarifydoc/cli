@@ -30,7 +30,7 @@ import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
 import { jvmPackages } from "./packages.js";
 import { JavaKotlinExtractor } from "./functions-classes.js";
 import { JavaKotlinImportExportExtractor } from "./imports-exports.js";
-import { JavaKotlinDataSourceExtractor } from "./data-sources.js";
+import { JavaKotlinDataSourceExtractor, extractJavaPathArgCalls } from "./data-sources.js";
 import { JavaKotlinMutationExtractor } from "./data-mutations.js";
 import { JavaKotlinEntityExtractor } from "./entities.js";
 import { javaKotlinRouteExtractor } from "./routes/index.js";
@@ -133,6 +133,8 @@ function jvmMeta(language: Language, opts: {
       taint: language === "java" ? javaTaint : kotlinTaint,
       // `@Scheduled` methods and Quartz jobs: entry points a clock runs.
       entryPoints: (_tree, sourceText) => extractJvmScheduledJobs(sourceText, language === "kotlin" ? "kotlin" : "java"),
+      // `post("/auth", body)` into a helper requesting `apiUrl + API_PATH + path`.
+      ...(language === "java" ? { pathArgCalls: (tree: Parameters<typeof extractJavaPathArgCalls>[0], sourceText: string) => (/"\/|"[\w.-]+\//.test(sourceText) ? extractJavaPathArgCalls(tree) : []) } : {}),
     },
     calls: opts.calls,
     securityRules: JVM_SECURITY_RULES,

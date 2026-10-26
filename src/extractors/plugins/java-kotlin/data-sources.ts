@@ -2,7 +2,7 @@ import { constantString } from "./constant-expr.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
-import type { CallBaseRef, DataSourceInfo, Language } from "../../../types/analysis.js";
+import type { CallBaseRef, DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
 import { kotlinNameAndType } from "./functions-classes.js";
@@ -262,6 +262,9 @@ const REQUEST_BUILDER_RE = /\bHttpRequest\s*\.\s*newBuilder\b|\bRequest\s*\.\s*B
  * declared before the call in the enclosing function. Null when nothing in it
  * is written out.
  */
+/** The string constants of the file being read, which a URL expression may name. */
+let fileStringConsts: ReadonlyMap<string, string> = new Map();
+
 function urlExpression(expr: Node, at: Node, depth: number): string | null {
   if (depth > 3) return null;
   switch (expr.type) {
@@ -306,7 +309,8 @@ function urlExpression(expr: Node, at: Node, depth: number): string | null {
     case "identifier":
     case "simple_identifier": {
       const init = localInitializer(at, expr.text);
-      return init ? urlExpression(init, at, depth + 1) : null;
+      // …or a string constant of the file (`private static final String API_PATH = "/v6"`).
+      return init ? urlExpression(init, at, depth + 1) : (fileStringConsts.get(expr.text) ?? null);
     }
     default:
       return null;
@@ -683,6 +687,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const prepass = buildFilePrepass(tree.rootNode);
     this.tableAliases = prepass.tableAliases;
     this.stringConsts = prepass.stringConsts;
+    fileStringConsts = prepass.stringConsts;
     this.fieldTypes = prepass.fieldTypes;
     this.configFields = prepass.configFields;
     const text = tree.rootNode.text;
@@ -2091,4 +2096,35 @@ function stringLiteralValue(node: Node | null): string | null {
   const raw = node.text;
   if (raw.includes("$")) return null; // interpolated — not a stable table name
   return raw.replace(/^["']+|["']+$/g, "");
+}
+
+/**
+ * Calls handing a path literal to a method of the same object
+ * (`post("/auth", body)`, `this.get("/clubs/" + id)`), each argument as the
+ * URL it states or null (`FileAnalysis.pathArgCalls`): the core fills a
+ * helper's `${path}` hole (`String url = apiUrl + API_PATH + path; http.doPost(url)`)
+ * with it at every call site.
+ */
+export function extractJavaPathArgCalls(tree: Tree): PathArgCall[] {
+  const out: PathArgCall[] = [];
+  fileStringConsts = buildFilePrepass(tree.rootNode).stringConsts;
+  for (const inv of tree.rootNode.descendantsOfType("method_invocation")) {
+    if (!inv) continue;
+    const object = inv.childForFieldName("object");
+    if (object && object.type !== "this") continue;
+    const callee = inv.childForFieldName("name")?.text;
+    const argList = inv.childForFieldName("arguments");
+    if (!callee || !argList) continue;
+    const argNodes = argList.namedChildren.filter((a): a is Node => !!a && a.type !== "comment");
+    const args = argNodes.map((a) => {
+      if (a.type !== "string_literal" && a.type !== "additive_expression" && a.type !== "binary_expression") return null;
+      const url = urlExpression(a, inv, 0);
+      return url && /^\/|^[\w.-]+\//.test(url) ? url : null;
+    });
+    if (args.some((a) => a !== null)) {
+      const argNames = argNodes.map((a) => (a.type === "identifier" ? a.text : null));
+      out.push({ callee, args, ...(argNames.some((n) => n !== null) ? { argNames } : {}), line: inv.startPosition.row + 1 });
+    }
+  }
+  return out;
 }
