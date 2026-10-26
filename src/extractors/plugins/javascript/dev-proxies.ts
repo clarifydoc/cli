@@ -48,6 +48,41 @@ function targetOf(node: Node | undefined): string | null {
   return t && isHttpTarget(t) ? t : null;
 }
 
+/**
+ * The target a local helper's returned options state for one call
+ * (`function serviceProxy(service, port, target = env.X) { return { target: target || \`http://localhost:${port}\` } }`
+ * called as `serviceProxy("clubs", 8084)` → `http://localhost:8084`): its parameters filled with
+ * the call's literal arguments; a runtime value `||`-ed with a literal states the literal.
+ */
+function helperTarget(call: Node, root: Node): string | null {
+  const name = call.childForFieldName("function")?.text;
+  if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return null;
+  const fn = root.descendantsOfType("function_declaration").find((f) => f?.childForFieldName("name")?.text === name);
+  const body = fn?.childForFieldName("body");
+  const ret = body?.namedChildren.find((c) => c?.type === "return_statement")?.namedChildren[0];
+  if (!fn || ret?.type !== "object") return null;
+  const target = pairsOf(ret).get("target");
+  if (!target) return null;
+  const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+  const params = (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p): p is Node => !!p);
+  const values = new Map<string, string>();
+  params.forEach((p, i) => {
+    const id = p.type === "identifier" ? p : p.childForFieldName("pattern") ?? p.childForFieldName("left") ?? p.namedChildren.find((c) => c?.type === "identifier");
+    const arg = args[i];
+    const lit = arg ? (arg.type === "number" ? arg.text : stringValue(arg)) : null;
+    if (id && lit !== null) values.set(id.text, lit);
+  });
+  // Fill `${port}` holes and bare parameter names with the call's literals.
+  let text = target.text.replace(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/g, (m, p: string) => values.get(p) ?? m);
+  const or = /^([\s\S]+?)\s*(?:\|\||\?\?)\s*([\s\S]+)$/.exec(text);
+  if (or && !values.has(or[1]!.trim())) text = or[2]!;
+  else if (values.has(text.trim())) text = JSON.stringify(values.get(text.trim()));
+  if (/\$\{/.test(text)) return null;
+  const ref = jsBaseRefOf(text);
+  const t = ref?.kind === "literal" ? ref.key : ref?.fallback ?? null;
+  return t && isHttpTarget(t) ? t : null;
+}
+
 /** `rewrite: (p) => p.replace(/^\/api/, "")` or `pathRewrite: { "^/api": "" }`, applied to `prefix`. */
 function rewriteOf(options: Map<string, Node>, prefix: string): string | undefined {
   const fn = options.get("rewrite");
@@ -93,6 +128,9 @@ export function extractDevProxyRules(tree: Tree, sourceText: string, filePath: s
         if (v.type === "object") {
           const opts = pairsOf(v);
           push(key, targetOf(opts.get("target")), opts, p);
+        } else if (v.type === "call_expression") {
+          // `"/clubs/": serviceProxy("clubs", 8084)`: a helper of the file returning the options.
+          push(key, helperTarget(v, tree.rootNode), new Map(), p);
         } else push(key, targetOf(v), new Map(), p);
       }
     } else if (value?.type === "array") {

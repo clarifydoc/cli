@@ -34,6 +34,23 @@ export default defineConfig({ server: { proxy: {
     ]);
   });
 
+  it("reads a proxy whose options a local helper returns (real-repo FP)", async () => {
+    expect(await rules(`
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  function serviceProxy(service: string, port: number, target = env.VITE_PROXY_TARGET): ProxyOptions {
+    return { target: target || \`http://localhost:\${port}\`, changeOrigin: true, rewrite: target ? (path) => \`/\${service}\${path}\` : undefined };
+  }
+  return { server: { proxy: {
+    "/club-service/": serviceProxy("club-service", 8083),
+    "/league/service/": serviceProxy("league", 8079, env.VITE_LEAGUE_TARGET),
+  } } };
+});`, "web/vite.config.mts")).toEqual([
+      { pathPrefix: "/club-service", target: "http://localhost:8083", via: "vite" },
+      { pathPrefix: "/league/service", target: "http://localhost:8079", via: "vite" },
+    ]);
+  });
+
   it("reads only config files", async () => {
     expect(await rules(`const x = { proxy: { "/api": "http://localhost:5000" } };`, "src/settings.ts")).toEqual([]);
   });
