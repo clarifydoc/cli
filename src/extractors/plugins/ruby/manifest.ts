@@ -4,12 +4,13 @@ import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
+import { rubyAutoloadedFiles, rubyTypeNamedByReceiver } from "./autoload.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
- * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and the other leaf rules it imports.
  */
 export const rubyManifest: LanguagePluginManifest = {
   migrationFiles: rubyMigrationFiles,
@@ -20,6 +21,9 @@ export const rubyManifest: LanguagePluginManifest = {
   // `Foo.new(…)` runs `initialize`.
   constructorCalls: ["new"],
   importsNameDirectories: true,
+  // Rails loads a constant from the file its name spells: the constants a file names are its imports.
+  autoloadedFiles: rubyAutoloadedFiles,
+  typeNamedByReceiver: rubyTypeNamedByReceiver,
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],
   parsing: "regex",

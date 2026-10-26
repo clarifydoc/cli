@@ -1417,6 +1417,8 @@ interface LinkContext {
   filePathMap: Map<string, string>;
   /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
   directoryFiles?: Map<string, string[]>;
+  /** Analyzed files by file name, built on first use (`autoloadedFiles`). */
+  filesByName?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
   /** What a plugin's import resolver asks of the project, built on first use. */
@@ -1562,11 +1564,29 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
         const f = importPath(ctx, imp.source, analysis.filePath);
         if (f && f !== analysis.filePath) set.add(f);
       }
+      // Files its loader finds by the constants it names (Zeitwerk) count as imported.
+      const autoload = manifestFor(analysis.language as Language)?.autoloadedFiles;
+      if (autoload) for (const f of autoload(analysis, (suffix) => filesEndingWith(ctx, suffix))) if (f !== analysis.filePath) set.add(f);
       forwardThroughBarrels(set, analysis.filePath, ctx);
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
   return set;
+}
+
+/** Analyzed files whose path is `suffix` or ends with `/suffix` (index by file name, built on first use). */
+function filesEndingWith(ctx: LinkContext, suffix: string): readonly string[] {
+  if (!ctx.filesByName) {
+    ctx.filesByName = new Map();
+    for (const a of ctx.analyses) {
+      const name = a.filePath.slice(a.filePath.lastIndexOf("/") + 1);
+      const list = ctx.filesByName.get(name);
+      if (list) list.push(a.filePath);
+      else ctx.filesByName.set(name, [a.filePath]);
+    }
+  }
+  const files = ctx.filesByName.get(suffix.slice(suffix.lastIndexOf("/") + 1)) ?? [];
+  return suffix.includes("/") ? files.filter((f) => f === suffix || f.endsWith(`/${suffix}`)) : files;
 }
 
 /**
@@ -1723,8 +1743,13 @@ function importPath(ctx: LinkContext, source: string, fromFile: string): string 
   return resolveTarget(source, fromFile, ctx.filePathMap);
 }
 
-/** True when the analysis imports nothing the linker can see — by path or by package. */
+/**
+ * True when the analysis imports nothing the linker can see — by path or by
+ * package. Never for a language whose loader states what a file reaches by
+ * the constants it names (`autoloadedFiles`): naming none is evidence too.
+ */
 function importsNothing(analysis: FileAnalysis, ctx: LinkContext): boolean {
+  if (manifestFor(analysis.language as Language)?.autoloadedFiles) return false;
   return importedFilesOf(analysis, ctx).size === 0 && importedProjectsOf(analysis, ctx).size === 0;
 }
 
@@ -3146,10 +3171,14 @@ function resolveCallToDefinition(
         // apart and `lsp:compare` can judge them separately — the weaker branch
         // is the obvious first candidate to drop if it turns out to cost more
         // in conflicts than it earns in recall.
+        // Where locals carry no declared type, the receiver's own name may state
+        // its class (`match_report.close!` → `MatchReport`).
+        const namedType = tgtClass ? manifestFor(analysis.language as Language)?.typeNamedByReceiver?.(head.replace(/\?$/, "")) : null;
         const evidenced =
           sameDir ||
           importsFile(analysis, entry.file, ctx) ||
-          importedStemsOf(analysis, ctx).has(fileStem(entry.file));
+          importedStemsOf(analysis, ctx).has(fileStem(entry.file)) ||
+          (!!namedType && tgtClass!.split(/::|\./).pop() === namedType);
         // A free function is reached through a receiver only when the receiver
         // is its module: `Math.round`, `monkeypatch.setattr` or a `path` local's
         // `read_bytes` never call the project's `round` / `setattr` / `read_bytes`.

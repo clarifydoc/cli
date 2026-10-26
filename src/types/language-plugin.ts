@@ -955,6 +955,21 @@ export interface LanguagePluginManifest {
    */
   importedFile?(importingFile: string, source: string, packages: readonly PackageRoot[]): string | null | undefined;
   /**
+   * The files a file reaches without importing them, for a language whose
+   * loader finds a file by the constant it defines (Rails' Zeitwerk:
+   * `Club::MatchReport` → `club/match_report.rb` under an autoload root): the
+   * files the constants this analysis names are loaded from. The symbol linker
+   * reads them as the file's imports. `filesEndingWith(suffix)` lists the
+   * analyzed files whose path is `suffix` or ends with `/suffix`. Leaf code.
+   */
+  autoloadedFiles?(analysis: FileAnalysis, filesEndingWith: (suffix: string) => readonly string[]): readonly string[];
+  /**
+   * The class a receiver's own name states, in a language whose locals carry
+   * no declared type (Ruby's `match_report.close!` → `MatchReport`): evidence
+   * for a unique-name method link on that class where nothing else is. Leaf code.
+   */
+  typeNamedByReceiver?(receiver: string): string | null;
+  /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null
    * when it cannot say. Used by the impact report ("tests to run").
