@@ -184,9 +184,9 @@ describe("a static import of a class's members is no data-access namespace", () 
     const a: FileAnalysis = {
       ...createEmptyAnalysis("src/main/java/com/example/league/repository/MatchStore.java", "java"),
       imports: [
-        { source: "com.example.league.repository.jcr.LeagueConstants", specifiers: [], line: 3, isWildcard: true },
-        { source: "org.hibernate", specifiers: [], line: 4, isWildcard: true },
-      ] as FileAnalysis["imports"],
+        { source: "com.example.league.repository.jcr.LeagueConstants", specifiers: [], line: 3, isDefault: false, isNamespace: true, isType: false },
+        { source: "org.hibernate", specifiers: [], line: 4, isDefault: false, isNamespace: true, isType: false },
+      ],
       dataSources: [{ kind: "database", name: "save", target: null, calls: [], line: 10 }],
     };
     enrichFileDataSources(a);
