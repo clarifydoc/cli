@@ -4,6 +4,7 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
+import { SWIFT_CODE, TRAILING_CLOSURE_CALL } from "./code.js";
 import { extractSwiftDataSources } from "./data-sources.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
 import {
@@ -114,6 +115,8 @@ export const swiftSpec: RegexLangSpec = {
       pattern: /(?:public|private|internal|fileprivate|open)?\s*(?:static\s+)?(?:class\s+)?func\s+([a-zA-Z_]\w*)\s*[<(]/,
       isExported: (line) => !line.trimStart().startsWith("private") && !line.trimStart().startsWith("fileprivate"),
       isAsync: (line) => line.includes("async "),
+      // Not one in a comment or a string template.
+      accept: SWIFT_CODE.startsInCode,
     },
     {
       // Initialisers. `init` is the member every caller of a type reaches
@@ -122,6 +125,8 @@ export const swiftSpec: RegexLangSpec = {
       pattern: /^\s*(?:(?:public|private|internal|fileprivate|open|required|convenience)\s+)*(init)\s*[?!]?\s*\(/,
       isExported: (line) => !line.trimStart().startsWith("private") && !line.trimStart().startsWith("fileprivate"),
       isAsync: (line) => line.includes("async "),
+      // Not one in a comment or a string template.
+      accept: SWIFT_CODE.startsInCode,
     },
   ],
 
@@ -241,7 +246,9 @@ export const swiftSpec: RegexLangSpec = {
     },
   ],
 
-  callPatterns: swiftDiCallPatterns,
+  callPatterns: [...swiftDiCallPatterns, TRAILING_CLOSURE_CALL],
+  blockEnds: SWIFT_CODE.blockEnds,
+  callSourceLines: SWIFT_CODE.callSourceLines,
   extractLocalTypes: extractSwiftLocalTypes,
   extractDiBindings: (lines) => extractSwiftDiBindings(lines),
 
