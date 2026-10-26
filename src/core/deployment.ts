@@ -1075,7 +1075,8 @@ export async function detectDeployment(
           if (target) addEdge({ from: svc.name, to: target, kind: "http", via: k });
           else if (!isProxy) {
             const display = keyName !== k && keyName.length >= 3 ? keyName : literalHost;
-            addExternal(display, v.match(/https?:\/\/[^\s'";,]+/i)?.[0], svc.name, k);
+            // `${IAM_BASE_URL:-http://iam.example:8182}`: the default ends at the substitution's `}`.
+            addExternal(display, v.match(/https?:\/\/[^\s'";,}]+/i)?.[0], svc.name, k);
           }
           continue;
         }

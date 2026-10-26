@@ -145,6 +145,7 @@ describe("detectDeployment", () => {
       "      ConnectionString: ${BILLING_DB_CONNECTIONSTRING}",
       "      CarsConnectionString: User ID=${DB_User};Server=db;Database=cars;Password=${DB_Password}",
       "      PayPro__BaseUrl: https://api.paypro.example.com/v2",
+      "      LEAGUE_BASE_URL: ${LEAGUE_BASE_URL:-http://league.example.test:8182}",
       "      TokenIssuer: ${IDP_ISSUER}",
       "  shop-spa:",
       "    image: reg.io/org/shop-spa:${TAG}",
@@ -290,6 +291,8 @@ describe("detectDeployment", () => {
     expect(payproEdge).toMatchObject({ from: "billing-api", kind: "external" });
     const paypro = dep!.externals.find((x) => x.id === "ext:paypro")!;
     expect(paypro.url).toBe("https://api.paypro.example.com/v2");
+    // A `${VAR:-default}` default ends at the substitution's brace (real-repo FP).
+    expect(dep!.externals.find((x) => x.id === "ext:league")?.url).toBe("http://league.example.test:8182");
   });
 
   it("returns undefined when no compose files exist", async () => {
