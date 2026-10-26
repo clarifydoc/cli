@@ -374,8 +374,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const out: PathArgCall[] = [];
     for (const inv of root.descendantsOfType("invocation_expression")) {
       const fn = inv.childForFieldName("function");
+      // `_requestProvider.PostAsync(uri, …)` on a field or property of a declared type: that type's method.
+      const object = fn?.type === "member_access_expression" ? fn.childForFieldName("expression") : null;
+      const receiverType = object?.type === "identifier" ? memberDeclaredType(inv, object.text) : null;
       const name = fn?.type === "identifier" || fn?.type === "generic_name" ? fn
-        : fn?.type === "member_access_expression" && /^(?:this|base)$/.test(fn.firstChild?.type ?? "") ? fn.childForFieldName("name")
+        : fn?.type === "member_access_expression" && (/^(?:this|base)$/.test(fn.firstChild?.type ?? "") || receiverType) ? fn.childForFieldName("name")
         : null;
       const callee = name?.text.replace(/<[\s\S]*$/, "");
       if (!callee) continue;
@@ -386,7 +389,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         const v = this.evalUri(text, line, 0);
         return v && v.includes("/") ? memberHoles(v, inv) : null;
       });
-      if (args.some((a) => a !== null)) out.push({ callee, args, line });
+      if (args.some((a) => a !== null)) out.push({ callee, args, line, ...(receiverType ? { receiverType } : {}) });
     }
     return out;
   }
@@ -428,6 +431,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (v === null) return null;
         out += v;
         stated = true;
+      } else if (COMBINE_CALL_RE.test(p) && this.combineCall(p, line, depth, bound) !== null) {
+        out += this.combineCall(p, line, depth, bound)!;
+        stated = true;
       } else if (/^\w+$/.test(p) && this.constStrings.has(p)) {
         out += this.fillHoles(this.constStrings.get(p)!, line, depth + 1);
         stated = true;
@@ -453,6 +459,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (helper && this.pathHelpers.has(helper[1]!) && depth < 4) {
         return this.callHelper(helper[1]!, helper[2]!, line, depth, bound) ?? whole;
       }
+      if (COMBINE_CALL_RE.test(hole.trim()) && depth < 4) return this.combineCall(hole.trim(), line, depth, bound) ?? whole;
       // `$"{uri}&api-version=2.0"`: a string local that states a URI is that URI.
       if (/^\w+$/.test(name) && !bound && depth < 4) {
         const local = this.nearestLocal(name, line);
@@ -461,6 +468,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       }
       return whole;
     });
+  }
+
+  /**
+   * A URI-combining helper (`UriHelper.CombineUri(base, $"{ApiUrlBase}/items")`, wherever it is
+   * declared): its parts joined by one `/`, a part that states nothing a `{hole}`. Null when no
+   * part states a path.
+   */
+  private combineCall(text: string, line: number, depth: number, bound?: Map<string, string>): string | null {
+    const open = text.indexOf("(");
+    const args = splitTopLevelArgs(text.slice(open + 1, text.lastIndexOf(")")));
+    if (args.length < 2) return null;
+    let stated = false;
+    const parts = args.map((arg) => {
+      const v = /^\w+$/.test(arg) && bound?.has(arg) ? bound.get(arg)! : this.evalUri(arg, line, depth + 1, bound);
+      if (v !== null && !/^\{[^{}]*\}$/.test(v)) stated = true;
+      return v ?? `{${arg.replace(/^this\./, "")}}`;
+    });
+    if (!stated) return null;
+    return parts.map((part, i) => (i === 0 ? part.replace(/\/+$/, "") : part.replace(/^\/+|\/+$/g, ""))).join("/");
   }
 
   /**
@@ -1272,6 +1298,56 @@ function parameterType(node: Node, name: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * The declared type of a field or property named `name` of the class around
+ * `node`, generics dropped (`private readonly IRequestProvider _requestProvider;`);
+ * null for a local or parameter of that name, or none.
+ */
+function memberDeclaredType(node: Node, name: string): string | null {
+  if (parameterType(node, name)) return null;
+  let cls: Node | null = node.parent;
+  while (cls && cls.type !== "class_declaration" && cls.type !== "record_declaration" && cls.type !== "struct_declaration") cls = cls.parent;
+  const body = cls?.childForFieldName("body");
+  for (const m of body?.namedChildren ?? []) {
+    if (m?.type === "field_declaration") {
+      const decl = m.namedChildren.find((c) => c?.type === "variable_declaration");
+      if (decl?.namedChildren.some((d) => d?.type === "variable_declarator" && (d.childForFieldName("name") ?? d.namedChildren[0])?.text === name)) {
+        return decl.childForFieldName("type")?.text.replace(/<[\s\S]*$/, "") ?? null;
+      }
+    } else if (m?.type === "property_declaration" && m.childForFieldName("name")?.text === name) {
+      return m.childForFieldName("type")?.text.replace(/<[\s\S]*$/, "") ?? null;
+    }
+  }
+  return null;
+}
+
+/** A call of a URI-combining helper: `UriHelper.CombineUri(…)`, `CombineUrl(…)`. */
+const COMBINE_CALL_RE = /^(?:[\w.]+\.)?Combine(?:Uri|Url)\w*\s*\([\s\S]*\)$/;
+
+/** Arguments of a call's text, split at top-level commas (parentheses and strings kept whole). */
+function splitTopLevelArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      cur += c;
+      if (c === "\\") { cur += text[++i] ?? ""; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    if (c === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
 /** The method, constructor or accessor a node sits in. */

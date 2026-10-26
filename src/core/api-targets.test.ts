@@ -170,3 +170,27 @@ describe("expandRequestFactories", () => {
     expect(expandRequestFactories(calls, [factoryFile, site], index({ createFetchHandler: factoryFile.filePath }))).toBe(0);
   });
 });
+
+describe("expandRequestFactories — a call on an interface-typed field", () => {
+  it("fills the one implementation's factory", () => {
+    const fn = (name: string, line: number, endLine: number, params: string[]) =>
+      ({ name, line, endLine, params: params.map((p) => ({ name: p, type: null, defaultValue: null })), calls: [] }) as unknown as FunctionInfo;
+    const iface = { filePath: "Services/IRequestProvider.cs", functions: [], exports: [], classes: [{ name: "IRequestProvider", kind: "interface", line: 1, endLine: 5, methods: [fn("GetAsync", 2, 2, ["uri"])] }] } as unknown as FileAnalysis;
+    const impl = { filePath: "Services/RequestProvider.cs", functions: [], exports: [], classes: [{ name: "RequestProvider", line: 1, endLine: 40, implements: ["IRequestProvider"], methods: [fn("GetAsync", 10, 20, ["uri"])] }] } as unknown as FileAnalysis;
+    const site = { filePath: "Services/FixtureService.cs", functions: [], exports: [], classes: [],
+      pathArgCalls: [{ callee: "GetAsync", args: ["{base}/api/fixtures/{id}"], line: 8, receiverType: "IRequestProvider" }] } as unknown as FileAnalysis;
+    const ref = (a: FileAnalysis) => ({ filePath: a.filePath, projectId: "p", language: "csharp", cls: a.classes[0]! });
+    const classes = {
+      resolve: (_f: string, t: string) => (t === "IRequestProvider" ? ref(iface) : null),
+      classesIn: (f: string) => [iface, impl].filter((a) => a.filePath === f).map(ref),
+      ancestors: () => [],
+      descendants: (r: { cls: { name: string } }) => (r.cls.name === "IRequestProvider" ? [ref(impl)] : []),
+    } as unknown as ClassIndex;
+    const calls: Array<DataSourceInfo & { filePath: string }> = [
+      { kind: "api-call", name: "GetAsync", target: "${uri}", line: 12, calls: [], filePath: impl.filePath },
+    ];
+    const index: ImportIndex = { localFor: () => null, sourceFor: () => null, namespacesFor: () => [] };
+    expect(expandRequestFactories(calls, [iface, impl, site], index, classes)).toBe(1);
+    expect(calls[1]).toMatchObject({ filePath: "Services/FixtureService.cs", target: "{base}/api/fixtures/{id}" });
+  });
+});

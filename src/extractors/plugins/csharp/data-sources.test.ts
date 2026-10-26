@@ -574,6 +574,25 @@ public class LeagueDataV2HttpClient : BaseHttpClient {
   });
 });
 
+describe("C# calls through a typed field into a request provider, with a combined URI (real-repo FP)", () => {
+  it("hands the provider the combined path, on the field's declared type", async () => {
+    const src = `namespace League;
+public class FixtureService {
+  private const string ApiUrlBase = "api/fixtures";
+  private readonly IRequestProvider _requestProvider;
+  private readonly ISettingsService _settingsService;
+  public async Task<Fixture> GetFixture(int id) {
+    var uri = $"{UriHelper.CombineUri(_settingsService.GatewayFixturesBase, $"{ApiUrlBase}/{id}")}?{ApiVersion}";
+    return await _requestProvider.GetAsync<Fixture>(uri, token);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "FixtureService.cs");
+    expect(extractCsharpPathArgCalls(tree, src)).toEqual([
+      { callee: "GetAsync", args: ["{_settingsService.GatewayFixturesBase}/api/fixtures/{id}?${this.ApiVersion}", null], line: 8, receiverType: "IRequestProvider" },
+    ]);
+  });
+});
+
 describe("C# consumers that filter on the routing key", () => {
   it("consume the key they compare against (real-repo FP)", async () => {
     const src = `namespace League;

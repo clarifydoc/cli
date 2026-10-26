@@ -296,7 +296,12 @@ export function expandRequestFactories(
         if (receiver && classes) {
           const chain = [receiver, ...classes.ancestors(receiver).flatMap((s) => (s.ref ? [s.ref] : []))];
           const owner = chain.find((c) => c.cls.methods.some((m) => m.name === site.callee));
-          const rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
+          let rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
+          // An interface (`IRequestProvider _requestProvider`): the one implementation whose method is the factory.
+          if (!rows) {
+            const impls = classes.descendants(receiver).filter((d) => factories.has(`${d.filePath}::${site.callee}`));
+            if (impls.length === 1) rows = factories.get(`${impls[0]!.filePath}::${site.callee}`);
+          }
           if (rows) expandSite(produced, a.filePath, site, rows, known);
         }
         continue;
