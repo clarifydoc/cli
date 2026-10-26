@@ -178,3 +178,18 @@ describe("an API label is not a call chain", () => {
     expect(a.dataSources.map((d) => d.entity)).toEqual([undefined, undefined, "Player"]);
   });
 });
+
+describe("a static import of a class's members is no data-access namespace", () => {
+  it("does not name a constants class as the datastore of an unresolved database call (real-repo FP)", () => {
+    const a: FileAnalysis = {
+      ...createEmptyAnalysis("src/main/java/com/example/league/repository/MatchStore.java", "java"),
+      imports: [
+        { source: "com.example.league.repository.jcr.LeagueConstants", specifiers: [], line: 3, isWildcard: true },
+        { source: "org.hibernate", specifiers: [], line: 4, isWildcard: true },
+      ] as FileAnalysis["imports"],
+      dataSources: [{ kind: "database", name: "save", target: null, calls: [], line: 10 }],
+    };
+    enrichFileDataSources(a);
+    expect(a.dataSources[0]!.target).toBe("org.hibernate");
+  });
+});

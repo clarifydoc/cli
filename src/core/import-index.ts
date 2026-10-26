@@ -329,6 +329,8 @@ function isEntityCandidate(s: string): boolean {
 
 /** Whether an opened namespace belongs to a database/ORM package. */
 function matchesDbNamespace(ns: string): boolean {
+  // `import static com.example.league.repository.Constants.*`: a class's static members, no namespace.
+  if (/\.[A-Z][\w$]*(?:\.\*)?$/.test(ns) && /[a-z]\.[a-z]/.test(ns)) return false;
   const lower = ns.toLowerCase();
   return DB_NAMESPACE_MARKERS.some((m) => lower.includes(m));
 }
