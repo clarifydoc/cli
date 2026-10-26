@@ -366,6 +366,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       if (r.params) row.params = r.params;
       if (r.requestSchema) row.requestSchema = r.requestSchema;
       if (r.webhook) row.webhook = r.webhook;
+      if (r.consumed) row.consumed = true;
       return row;
     }),
     /** Outbound HTTP calls — surfaced alongside routes in the Routes tab, each with the route it reaches. */

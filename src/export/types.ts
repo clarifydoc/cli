@@ -37,6 +37,8 @@ export interface Route {
   line: number;
   filePath?: string | null;
   middleware?: string[];
+  /** A contract operation the project only calls: served elsewhere. */
+  consumed?: true;
 }
 
 export interface ApiRouteLink {

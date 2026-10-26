@@ -488,7 +488,7 @@ export function flowsDoc(summary: Summary): string {
   );
 
   const chains = routeChains(summary);
-  const allApiRoutes = (summary.routeMap ?? []).filter((route) => route.kind === "api").length;
+  const allApiRoutes = (summary.routeMap ?? []).filter((route) => route.kind === "api" && !route.consumed).length;
   const screenFiles = new Set((summary.screens ?? []).map((screen) => screen.filePath));
 
   if (chains.length === 0) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clientProxyCalls, proxiedOnlyTypes } from "./client-proxies.js";
+import { clientProxyCalls, markConsumedContracts, proxiedOnlyTypes } from "./client-proxies.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const call = (name: string, line: number) => ({ name, kind: "cross-file" as const, target: null, line });
@@ -88,5 +88,27 @@ describe("proxiedOnlyTypes", () => {
     const server = { ...caller, filePath: "src/main/java/com/acme/billing/LeagueApiImpl.java", classes: [{ name: "LeagueApiImpl", extends: null, implements: ["LeagueApi"], methods: [], properties: [] }] } as unknown as FileAnalysis;
     expect([...proxiedOnlyTypes([leagueRegistry, caller, server])]).toEqual(["com.acme.api.PersonApi"]);
     expect([...proxiedOnlyTypes([caller])]).toEqual([]);
+  });
+});
+
+describe("markConsumedContracts", () => {
+  type Row = { kind: string; path: string; filePath: string; contract?: { type: string; method: string }; consumed?: true };
+  const wsdl = (type: string, method: string): Row => ({ kind: "api", path: `/${method}`, filePath: "src/main/resources/wsdl/fixtures.wsdl", contract: { type, method } });
+  const isContract = (r: Row) => r.filePath.endsWith(".wsdl") || r.filePath.endsWith(".yaml");
+
+  it("marks the bundled document's operations a project only calls through getPort (real-repo FP)", () => {
+    const getFixture = wsdl("FixturesPort", "getFixture");
+    const served = wsdl("LeaguePort", "getTable");
+    const code: Row = { kind: "api", path: "/clubs", filePath: "src/ClubController.java", contract: { type: "com.acme.FixturesPort", method: "x" } };
+    const n = markConsumedContracts([getFixture, served, code], new Set(["com.acme.fixtures.FixturesPort"]), isContract, () => false);
+    expect(n).toBe(1);
+    expect([getFixture.consumed, served.consumed, code.consumed]).toEqual([true, undefined, undefined]);
+  });
+
+  it("keeps an operation a code route implements, and a qualified type of another package", () => {
+    const implemented = wsdl("FixturesPort", "getFixture");
+    const otherPackage = { ...wsdl("com.acme.other.FixturesPort", "getFixture"), filePath: "api/openapi.yaml" };
+    markConsumedContracts([implemented, otherPackage], new Set(["com.acme.fixtures.FixturesPort"]), isContract, (r) => r === implemented);
+    expect([implemented.consumed, otherPackage.consumed]).toEqual([undefined, undefined]);
   });
 });

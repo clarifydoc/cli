@@ -233,6 +233,37 @@ export function proxiedOnlyTypes(analyses: readonly FileAnalysis[]): Set<string>
 }
 
 /**
+ * The API-contract rows (a WSDL, an OpenAPI document) a project only consumes:
+ * the row's contract type is one the project reaches only through a client
+ * proxy (`proxiedOnlyTypes` — a `getPort(X.class)`, a generated client no class
+ * implements), and no code route implements the row (`implemented`: its code
+ * twin or the spec join of its own sub-project). The document is bundled so
+ * the client has the binding; the operation is served elsewhere. The rows are
+ * kept — the project's contract calls join them — and marked `consumed`, so
+ * nothing counts them as routes the project serves. Returns how many it marked.
+ */
+export function markConsumedContracts<R extends { kind: string; contract?: { type: string; method: string }; consumed?: true }>(
+  routes: readonly R[],
+  proxiedOnly: ReadonlySet<string>,
+  isContract: (route: R) => boolean,
+  implemented: (route: R) => boolean,
+): number {
+  if (proxiedOnly.size === 0) return 0;
+  const simple = (t: string) => t.slice(t.lastIndexOf(".") + 1);
+  const bySimple = new Set([...proxiedOnly].map(simple));
+  // The same rule as the linker's contract join: a qualified type names
+  // exactly; a document that states no package (a WSDL portType) by its name.
+  const consumedType = (t: string) => proxiedOnly.has(t) || (!t.includes(".") && bySimple.has(t));
+  let marked = 0;
+  for (const r of routes) {
+    if (r.kind !== "api" || !r.contract || !isContract(r) || !consumedType(r.contract.type) || implemented(r)) continue;
+    r.consumed = true;
+    marked++;
+  }
+  return marked;
+}
+
+/**
  * A call through a client proxy is a request, not also a database access: a
  * plugin that reads a repository-named receiver (`personRepository.findPersons(…)`)
  * as a data-access row cannot see per file that the receiver is a REST proxy.

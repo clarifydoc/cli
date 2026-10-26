@@ -924,6 +924,13 @@ describe("linkApiCallsToRoutes — the service a call names", () => {
     expect(links[0]).toMatchObject({ target: "shop-api/ItemsController.cs", confidence: "EXTRACTED", matchedVia: "service:shop-server" });
   });
 
+  it("never counts a contract operation the named service only consumes as served there", () => {
+    const consumed = { ...legacy, consumed: true as const };
+    const { links, stats } = linkApiCallsToRoutesDetailed([toward("legacy", "EXTRACTED")], [fleet, consumed]);
+    expect(links).toEqual([]);
+    expect(stats.refused.originMismatch).toBe(1);
+  });
+
   it("ignores an origin that could not choose between services", () => {
     const call = { ...apiCall("cars/FleetClient.cs", "GetFromJsonAsync", "/api/items"), origin: { confidence: "AMBIGUOUS" as const, evidence: [] } };
     expect(linkApiCallsToRoutes([call], [fleet, legacy])[0]!.confidence).toBe("AMBIGUOUS");

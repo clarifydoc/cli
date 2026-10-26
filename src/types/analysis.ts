@@ -1090,6 +1090,16 @@ export interface RouteInfo {
    * reaches is known and nothing does, absent when that cannot be told.
    */
   webhook?: { provider?: string; verified?: boolean; via?: string };
+  /**
+   * API-contract rows only (a WSDL, an OpenAPI document): the project only
+   * CALLS this operation — through a client proxy of the contract's type
+   * (`getPort(X.class)`, a generated client) that no class of the project
+   * implements, and no code route implements the row. The row stays so the
+   * project's contract calls still join it, but it is no route the project
+   * serves: route counts, uncalled-route gaps, the API export and an origin
+   * that names this project all leave it out (`core/client-proxies.ts`).
+   */
+  consumed?: true;
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express

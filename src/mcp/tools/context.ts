@@ -154,7 +154,9 @@ export function freshnessBanner(store: AnalysisStore, ttlMs = 10_000): () => Pro
 export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore): Promise<string> {
   const { summary } = loaded;
   const routes = summary.routeMap ?? [];
-  const apiRoutes = routes.filter((r) => r.kind === "api");
+  // Routes served here: a contract operation the project only calls is counted apart.
+  const apiRoutes = routes.filter((r) => r.kind === "api" && !r.consumed);
+  const consumedContracts = routes.filter((r) => r.kind === "api" && r.consumed).length;
   const frontendRoutes = routes.filter((r) => r.kind === "frontend");
   const security = summary.securityIssues ?? [];
   const severities = tally(security, (s) => s.severity);
@@ -225,6 +227,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
     `map: ${countMap(
       {
         "api routes": apiRoutes.length,
+        "consumed contract operations": consumedContracts,
         "frontend routes": frontendRoutes.length,
         screens: (summary.screens ?? []).length,
         "outbound api calls": (summary.apiCalls ?? []).length,

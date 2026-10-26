@@ -128,7 +128,7 @@ import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-
 import { applyRouteBases } from "./route-bases.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
-import { clientProxyCalls, dropProxiedDatabaseRows, proxiedOnlyTypes } from "./client-proxies.js";
+import { clientProxyCalls, dropProxiedDatabaseRows, markConsumedContracts, proxiedOnlyTypes } from "./client-proxies.js";
 import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
@@ -436,7 +436,7 @@ function resultOf(summary: ProjectAnalysis, outputDir: string): AnalyzeResult {
     files: [...summary.files],
     outputDir,
     interactiveElementCount: summary.interactiveElements?.length ?? 0,
-    routeCount: summary.routeMap?.length ?? 0,
+    routeCount: summary.routeMap?.filter((r) => !r.consumed).length ?? 0,
     linkCount: summary.linkGraph?.length ?? 0,
     screenCount: summary.screens?.length ?? 0,
     symbolLinkCount: summary.symbolLinks?.length ?? 0,
@@ -1335,13 +1335,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const isContractRoute = (r: { filePath: string }) =>
     isApiContractLanguage(analysisByPath.get(r.filePath)?.language ?? "");
   const contractTwins = pairContractTwins(allRoutes, symbolLinks, isContractRoute);
+  const implementedContractRows = implementedContracts(allRoutes, symbolLinks, isContractRoute, (f) => analysisByPath.get(f)?.projectId);
+  // A contract document the project only calls through a client proxy (a bundled WSDL behind
+  // `getPort`) keeps its rows for those calls to join, marked as no route it serves.
+  const consumedContracts = markConsumedContracts(allRoutes, proxiedOnly, isContractRoute,
+    (r) => contractTwins.has(r) || implementedContractRows.has(r));
+  if (consumedContracts > 0) progress.detail(`  Consumed contract operations: ${consumedContracts}`);
   const { links: apiRouteLinks, stats: apiRouteLinkStats } = linkApiCallsToRoutesDetailed(allApiCalls, allRoutes, {
     isContract: isContractRoute,
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     servedBy: projectServesClosure(componentGraph, (f) => analysisByPath.get(f)?.projectId),
     contractTwins,
     // A vendored copy of a contract (a client's own `.proto`) yields to the copy its service implements.
-    implementedContracts: implementedContracts(allRoutes, symbolLinks, isContractRoute, (f) => analysisByPath.get(f)?.projectId),
+    implementedContracts: implementedContractRows,
   });
   if (apiRouteLinks.length > 0) {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
@@ -1584,7 +1590,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if ((link.sourceRole ?? "production") === "production" && link.targetProject !== undefined) calledProjects.add(link.targetProject);
     }
     const uncalled = allRoutes.filter((r) =>
-      r.kind === "api" && isJoinableRoutePath(r.path) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
+      r.kind === "api" && !r.consumed && isJoinableRoutePath(r.path) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
       // A webhook receiver is called by its sender, never by the repository.
       !r.webhook && calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
     if (uncalled.length > 0) {
@@ -2291,7 +2297,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     files: allAnalyses.map((a) => a.filePath),
     outputDir,
     interactiveElementCount: allInteractiveElements.length,
-    routeCount: allRoutes.length,
+    // Routes the project serves: a consumed contract operation is served elsewhere.
+    routeCount: allRoutes.filter((r) => !r.consumed).length,
     linkCount: linkGraph.length,
     screenCount: allScreens.length,
     symbolLinkCount: symbolLinks.length,

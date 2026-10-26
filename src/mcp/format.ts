@@ -233,8 +233,11 @@ export function routeGuardNote(route: {
   deprecatedVersions?: string[];
   filters?: Array<{ kind: string; enabled?: false }>;
   testCoverage?: { covered: number; total: number };
+  consumed?: true;
 }): string {
   const parts: string[] = [];
+  // A contract operation the project only calls: served elsewhere.
+  if (route.consumed) parts.push("consumed contract");
   const a = route.auth;
   if (a) {
     if (a.anonymous) parts.push("anonymous");
