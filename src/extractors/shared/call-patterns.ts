@@ -11,15 +11,35 @@ import type { Language } from "../../types/analysis.js";
 
 const API_ROOTS = new Map<Language, readonly string[]>();
 const DB_ROOTS = new Map<Language, readonly string[]>();
+const DB_ROOT_TYPES = new Map<Language, Readonly<Record<string, RegExp>>>();
 
 /** Called by the registry while aggregating plugin metas. */
 export function registerCallPatterns(
   language: Language,
   apiRoots: readonly string[] | undefined,
   dbRoots: readonly string[] | undefined,
+  dbRootTypes?: Readonly<Record<string, RegExp>>,
 ): void {
   if (apiRoots) API_ROOTS.set(language, apiRoots);
   if (dbRoots) DB_ROOTS.set(language, dbRoots);
+  if (dbRootTypes) DB_ROOT_TYPES.set(language, dbRootTypes);
+}
+
+/** Whether the language constrains some DB roots by declared type (`dbRootTypes`). */
+export function hasDbRootTypes(language: Language): boolean {
+  return DB_ROOT_TYPES.has(language);
+}
+
+/**
+ * A receiver named like a DB root whose declared type says it is something
+ * else (`KeycloakSession session` where only Hibernate's `Session` is one):
+ * neither its root nor its method names are database evidence.
+ */
+export function dbRootRefused(root: string, declaredType: string, language: Language): boolean {
+  const re = DB_ROOT_TYPES.get(language)?.[root.toLowerCase()];
+  if (!re) return false;
+  const simple = declaredType.replace(/<.*$/s, "").replace(/\?$/, "").split(/[.\\$]/).pop()!.trim();
+  return !re.test(simple);
 }
 
 /**

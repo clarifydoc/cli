@@ -256,7 +256,7 @@ function registerMeta(meta: LanguagePluginMeta): void {
   BY_LANGUAGE.set(meta.language, meta);
   if (meta.builtinTypes) registerBuiltinTypes(meta.language, meta.builtinTypes);
   registerTransparentTypeWrappers(meta.language, meta.transparentTypeWrappers);
-  registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots);
+  registerCallPatterns(meta.language, meta.apiCallRoots, meta.dbCallRoots, meta.dbRootTypes);
   registerCallExtraction(meta.language, meta.calls);
   if (meta.securityRules && meta.securityRules.length > 0) {
     SECURITY_RULES_BY_LANGUAGE.set(meta.language, [...meta.securityRules].sort((a, b) => a.priority - b.priority));

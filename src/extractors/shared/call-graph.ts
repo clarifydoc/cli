@@ -1,7 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { Language, CallInfo, ImportInfo } from "../../types/analysis.js";
 import type { CallExtractionHooks } from "../../types/language-plugin.js";
-import { isApiCall, isDatabaseCall } from "./call-patterns.js";
+import { dbRootRefused, isApiCall, isDatabaseCall } from "./call-patterns.js";
 
 /**
  * Generic call extraction & classification. Everything language-specific —
@@ -434,6 +434,8 @@ export function classifyCalls(
    * a file-level `const club = useClub()` binding of another function.
    */
   ownBindings?: ReadonlySet<string>,
+  /** The declared type of each receiver the caller can see (parameters, locals, fields), as written. */
+  receiverTypes?: ReadonlyMap<string, string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -550,6 +552,8 @@ export function classifyCalls(
     // name alone — that is the class's own method or field, which the linker
     // can follow. A known DB client root still is.
     const ownInstance = call.name.includes(".") && OWN_INSTANCE_RECEIVERS.has(root);
+    const declared = receiverTypes?.get(root);
+    if (declared && dbRootRefused(root, declared, language)) continue;
     if (isDatabaseCall(call.name, language, !ownInstance)) {
       call.kind = "database";
       call.confidence = "EXTRACTED";

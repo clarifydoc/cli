@@ -68,6 +68,8 @@ const KOTLIN_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 const JVM_DB_ROOTS = ["JdbcTemplate", "entityManager", "session", "repository"];
+/** `session` is Hibernate's (or MyBatis', Mongo's) only when declared so: a framework's `FooSession session` is not. */
+const JVM_DB_ROOT_TYPES = { session: /^(?:Session|StatelessSession|SqlSession|ClientSession)$/ };
 
 // Domain extractors — ONE instance each, shared by the java and kotlin metas
 // (instance identity = run-once in project-level passes).
@@ -117,6 +119,7 @@ function jvmMeta(language: Language, opts: {
     knownPackages: jvmPackages,
     apiCallRoots: opts.apiCallRoots,
     dbCallRoots: JVM_DB_ROOTS,
+    dbRootTypes: JVM_DB_ROOT_TYPES,
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).

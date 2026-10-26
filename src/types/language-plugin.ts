@@ -1276,6 +1276,15 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
   apiCallRoots?: readonly string[];
   /** Call roots that indicate a database/ORM object (call-graph classification). */
   dbCallRoots?: readonly string[];
+  /**
+   * A DB root that is also a common variable name counts only when the
+   * receiver's declared type, where the code states one, is a database type:
+   * `{ session: /^(?:Session|StatelessSession)$/ }` keeps Hibernate's
+   * `session.save(x)` and drops a `FooSession session` whose `session.users()`
+   * is no query. Keys are lower-case roots; the type is matched without its
+   * package and type arguments.
+   */
+  dbRootTypes?: Readonly<Record<string, RegExp>>;
 
   /** AST/source-level extractor hooks. */
   ast?: AstExtractorHooks;

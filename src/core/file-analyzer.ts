@@ -13,6 +13,7 @@ import { extractRoutes } from "../extractors/routes/index.js";
 import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
+import { hasDbRootTypes } from "../extractors/shared/call-patterns.js";
 import { dirname, relative } from "path";
 import { applyAliases, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
@@ -25,7 +26,7 @@ import { isGeneratedSource } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { VariableAliasBinding } from "../types/language-plugin.js";
-import type { CallInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
+import type { CallInfo, ClassInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
   inferExpoRouterRoutes,
@@ -503,12 +504,22 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`).
     const paramNames = (fn: FunctionInfo): Set<string> | undefined =>
       variableAliases && fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
+    // Declared receiver types, for a language whose DB roots are constrained by type (`dbRootTypes`).
+    const typed = hasDbRootTypes(language);
+    const receiverTypes = (fn: FunctionInfo, cls?: ClassInfo): Map<string, string> | undefined => {
+      if (!typed) return undefined;
+      const out = new Map<string, string>();
+      for (const p of cls?.properties ?? []) if (p.type) out.set(p.name, p.type);
+      for (const p of fn.params) if (p.type) out.set(p.name, p.type);
+      for (const l of fn.localTypes ?? []) if (l.type) out.set(l.name, l.type);
+      return out;
+    };
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn));
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn));
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method));
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls));
       }
     }
     for (const route of analysis.routes) {
