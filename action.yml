@@ -1,5 +1,5 @@
 name: ClarifyDoc
-description: Map screen → endpoint → table, and fail a pull request only on the findings and API breaks it introduces.
+description: Maps screens → API routes → database tables, and fails a pull request only on the findings and API breaks it introduces.
 author: ClarifyDoc
 branding:
   icon: map

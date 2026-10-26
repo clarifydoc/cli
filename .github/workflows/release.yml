@@ -11,7 +11,7 @@ name: Release to npm
 # reviewers, holding the secret NPM_TOKEN (an npm automation token).
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"] # not the floating major tag (v1) the Marketplace action is referenced by
   workflow_dispatch: # package and smoke-test without publishing
 
 permissions:
