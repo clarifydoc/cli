@@ -178,7 +178,12 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     const parts = from.replace(/\(\)/g, "").split(".");
     if (parts.some((p) => !/^[\w$]+$/.test(p))) return null;
     const receiver = parts.length === 1 ? owner?.name ?? null : bare(resolveChain(parts.slice(1, -1), headType(parts[0]!, fn, owner, depth)));
-    const declared = returnTypeOf(receiver, parts[parts.length - 1]!);
+    let declared = returnTypeOf(receiver, parts[parts.length - 1]!);
+    // A free function (`db = get_repositories(session)`): what every declaration of that name returns.
+    if (!declared && parts.length === 1) {
+      const returns = [...new Set((functionsNamed.get(parts[0]!) ?? []).map((f) => written(f.returnType)).filter((t): t is string => !!t))];
+      if (returns.length === 1) declared = returns[0]!;
+    }
     return written(awaited ? awaitedType(declared) : declared);
   };
 

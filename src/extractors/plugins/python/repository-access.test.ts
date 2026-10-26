@@ -43,6 +43,21 @@ describe("Python generic repository access", () => {
     expect(fn.dataSources.map((d) => d.entity)).toEqual(["RecipeModel"]);
   });
 
+  it("types a local by the free function that builds it (real-repo FP)", () => {
+    const model = file("db/models/player.py", [cls("PlayerModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("RepositoryPlayers", { extends: "RepositoryGeneric[PlayerOut, PlayerModel]" })]);
+    const factory = file("repos/repository_factory.py", [cls("AllRepositories", { methods: [method("players", [], "RepositoryPlayers")] })]);
+    // `def get_repositories(session): return AllRepositories(session)` — its return type read off the body.
+    const builder = file("repos/all_repositories.py", [], [method("get_repositories", [], "AllRepositories")]);
+    const route = method("validate_player", ["get_repositories", "db.players.get_one"]);
+    route.localTypes = [{ name: "db", type: "", from: "get_repositories()" }];
+    const fn = file("routes/validators.py", [], [route]);
+
+    new PythonEntityExtractor().reconcileProject([model, generic, factory, builder, fn]);
+
+    expect(fn.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([["db.players.get_one", "PlayerModel", "read"]]);
+  });
+
   it("types a computed member by the chain it returns, and follows a repository handed to a wrapper's constructor", () => {
     const model = file("db/models/club.py", [cls("ClubModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
     const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("GroupRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
