@@ -21,17 +21,62 @@ function resolveJvmCallName(node: Node): string | null {
     const nameNode = node.childForFieldName("name");
     const obj = node.childForFieldName("object");
     if (nameNode) {
-      return obj ? `${obj.text}.${nameNode.text}` : nameNode.text;
+      return obj ? `${compactChain(obj.text)}.${nameNode.text}` : nameNode.text;
     }
   }
   if (node.type === "call_expression") {
     const callee = node.child(0);
     if (callee && (callee.type === "navigation_expression" || callee.type === "simple_identifier")) {
       // Collapse whitespace so a multiline fluent chain yields a clean dotted name.
-      return callee.text.replace(/\s+/g, "");
+      return compactChain(callee.text).replace(/\s+/g, "");
     }
   }
   return genericResolveCallName(node);
+}
+
+/**
+ * A receiver chain with every argument list or trailing block that holds a
+ * lambda or a block cut to `(…)` / `{…}`, and whitespace collapsed:
+ * `repo.findById(id).filter(x -> { … }).map` names the call, not the 1,000
+ * characters of the lambdas it was handed. Plain arguments stay as written.
+ */
+export function compactChain(text: string): string {
+  if (!/->|\{/.test(text)) return text.replace(/\s*\n\s*/g, "");
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '"' || ch === "'") {
+      // Copy a string or char literal as written.
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch) j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    if (ch !== "(" && ch !== "{") {
+      out += ch;
+      continue;
+    }
+    const close = ch === "(" ? ")" : "}";
+    let depth = 0;
+    let j = i;
+    for (; j < text.length; j++) {
+      const c = text[j]!;
+      if (c === '"' || c === "'") {
+        let k = j + 1;
+        while (k < text.length && text[k] !== c) k += text[k] === "\\" ? 2 : 1;
+        j = k;
+      } else if (c === "(" || c === "{") depth++;
+      else if (c === ")" || c === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    const inner = text.slice(i + 1, j);
+    out += ch === "{" || /->|\{/.test(inner) ? `${ch}…${close}` : `${ch}${inner}${close}`;
+    i = j;
+  }
+  return out.replace(/\s*\n\s*/g, "");
 }
 
 /** Instance variable → imported type (userService → UserService). */

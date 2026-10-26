@@ -147,6 +147,26 @@ class C {
   });
 });
 
+describe("JVM chained call names", () => {
+  it("names a chain after its calls, not the lambdas handed along it (real-repo FP)", async () => {
+    const m = await methodOf(`class C {
+  Club m(long id) {
+    return repository.findByIdAndLeague(id, ctx.get().getLeague())
+        .filter(existing -> {
+          existing.setName("x");
+          return existing.isActive();
+        })
+        .map(existing -> mapper.toDto(existing))
+        .orElseThrow();
+  }
+}`, "java", "m");
+    const names = m.calls.map((c) => c.name);
+    expect(names).toContain("repository.findByIdAndLeague(id, ctx.get().getLeague()).filter(…).map(…).orElseThrow");
+    expect(names).toContain("mapper.toDto");
+    expect(names.every((n) => n.length < 120)).toBe(true);
+  });
+});
+
 describe("Kotlin extension functions", () => {
   it("reports the receiver as an implicit first parameter", async () => {
     const f = await methodOf(`package x
