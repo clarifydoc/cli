@@ -31,6 +31,12 @@ const ESBUILD_HELPER_RE = /^var __(?:commonJS|esm|toESM|toCommonJS|require) = /m
 /** esbuild names each bundled module in a comment line: `// node_modules/axios/index.js`, `// src/api/clubs.ts`. */
 const ESBUILD_MODULE_COMMENT_RE = /^\/\/ [\w@.\-/]+\.(?:[cm]?[jt]sx?|vue|svelte|json)$/gm;
 
+/**
+ * Rolldown (Vite 7+) names each bundled module in a region comment: `//#region resources/js/service-worker.ts`
+ * … `//#endregion`. An editor region is named in words, never by a module path.
+ */
+const ROLLDOWN_REGION_RE = /^\/\/#region [\w@.\-/]+\.(?:[cm]?[jt]sx?|vue|svelte|json)$/m;
+
 /** Block and line comments (and blank lines) at the top of a file. */
 const LEADING_COMMENTS_RE = /^(?:\s+|\/\*[\s\S]*?\*\/|\/\/[^\n]*)*/;
 
@@ -52,6 +58,7 @@ export function bundlerOf(sourceText: string): string | null {
   if (PARCEL_RE.test(head)) return "Parcel";
   if (BROWSERIFY_RE.test(head.trimStart())) return "browserify";
   if (ESBUILD_HELPER_RE.test(head) && (sourceText.match(ESBUILD_MODULE_COMMENT_RE)?.length ?? 0) >= 2) return "esbuild";
+  if (ROLLDOWN_REGION_RE.test(head) && /^\/\/#endregion\b/m.test(sourceText)) return "Rolldown";
   return null;
 }
 

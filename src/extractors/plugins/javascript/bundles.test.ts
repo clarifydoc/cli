@@ -22,12 +22,14 @@ describe("built bundles", () => {
       "// src/api/clubs.ts",
       "var clubs = [];",
     ].join("\n"))).toBe("esbuild");
+    expect(bundlerOf("//#region resources/assets/js/service-worker.ts\nvar GARAGE_CACHE = 'garage-v1';\n//#endregion\n" + filler)).toBe("Rolldown");
   });
 
   it("leaves authored source alone, even when it mentions a bundler", () => {
     expect(bundlerOf("// webpackBootstrap is what the old build emitted\nimport axios from 'axios';" + filler)).toBeNull();
     expect(bundlerOf("module.exports = { output: { chunkLoadingGlobal: 'webpackChunkgarage' } };" + filler)).toBeNull();
     expect(bundlerOf("var __commonJS = 1;\n// src/one.ts\nexport const car = 1;")).toBeNull();
+    expect(bundlerOf("//#region Garage helpers\nexport const car = 1;\n//#endregion\n" + filler)).toBeNull();
     expect(bundlerOf("/******/\n// a banner of stars\nexport const club = 'x';")).toBeNull();
   });
 
