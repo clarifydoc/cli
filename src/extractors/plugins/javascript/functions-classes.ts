@@ -499,7 +499,8 @@ export function extractUrlTemplates(
     // `let endpoint; if (home) endpoint = `/badges/${id}/home`; else endpoint = …; return `${endpoint}?kit=1``
     // — one template per value the local is given (each arm of a ternary one).
     const branchLocal = locals.assigned.size > 0 ? [...locals.assigned.keys()].find((n) => new RegExp(`(?<![\\w$.])${escapeRegex(n)}(?![\\w$])`).test(ret.text)) : undefined;
-    for (const branch of ternaryArms(ret, 0)) {
+    for (const arm of ternaryArms(ret, 0)) {
+      const branch = decoratedPath(arm) ?? arm;
       if (!branchLocal) {
         if (push(fold(astToValueExpr(branch)))) return templates;
         continue;
@@ -512,6 +513,23 @@ export function extractUrlTemplates(
     }
   }
   return templates;
+}
+
+/** Calls that make a request rather than decorate a path. */
+const REQUEST_CALLEE = /^(?:fetch|request|get|post|put|patch|delete|head|axios|ajax|send|open)$/i;
+
+/**
+ * The path a returned call decorates: `createUrl(`/assets/${id}/thumbnail`, params)`
+ * (a project helper adding the base and query string) gives that first
+ * argument, when it is a `/`-led literal or template; a request call does not.
+ */
+function decoratedPath(expr: Node): Node | null {
+  if (expr.type !== "call_expression") return null;
+  const fn = expr.childForFieldName("function");
+  if (fn?.type !== "identifier" || REQUEST_CALLEE.test(fn.text)) return null;
+  const first = expr.childForFieldName("arguments")?.namedChildren[0];
+  if (first?.type !== "string" && first?.type !== "template_string") return null;
+  return /^['"`]\//.test(first.text) ? first : null;
 }
 
 /** `x` in `ref(x)` replaced by `by` throughout a value expression. */

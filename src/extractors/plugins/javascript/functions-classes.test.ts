@@ -26,6 +26,15 @@ async function templatesOf(src: string, name: string): Promise<string[]> {
 }
 
 describe("URL-builder template extraction", () => {
+  it("reads the path a returned helper call decorates, never a request call", async () => {
+    const SRC = `export const getMatchStreamUrl = (id: string, sessionId: string) => {
+      return createUrl(\`/matches/\${id}/stream/\${sessionId}\`, authManager.params);
+    };
+    export const loadMatch = (id: string) => fetch(\`/matches/\${id}\`);`;
+    expect(await templateOf(SRC, "getMatchStreamUrl")).toBe("/matches/{id}/stream/{sessionId}");
+    expect(await templateOf(SRC, "loadMatch")).toBeUndefined();
+  });
+
   it("builds a template from a concat chain, dropping env base and runtime vars", async () => {
     const SRC = `export function requestUri(endpoint: string, version = 'v2'): string {
       const id = useStore().selectedInstitutionId;

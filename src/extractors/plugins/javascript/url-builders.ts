@@ -81,8 +81,9 @@ function substitute(template: string, params: ParamInfo[], args: string[]): stri
     // A variable argument stands for one path segment — when the template
     // stays specific without it: literal path follows it (`/documents/{}/notes/`),
     // or a base is still to resolve. In `/api/v2/institution/{}/{endpoint}`
-    // the variable names the endpoint itself, and `{}` would join any route.
-    if (value === null && i < args.length && !NULLISH.test(args[i]!.trim()) && specificWithout(out, token)) value = "{}";
+    // the variable names the endpoint itself, and `{}` would join any route — unless the
+    // parameter is named for a record's key (`sessionId`, `slug`): that is a value, never an endpoint.
+    if (value === null && i < args.length && !NULLISH.test(args[i]!.trim()) && (specificWithout(out, token) || KEY_PARAM.test(p.name))) value = "{}";
     if (value === null) return null;
     out = out.split(token).join(value);
   }
@@ -90,6 +91,8 @@ function substitute(template: string, params: ParamInfo[], args: string[]): stri
 }
 
 const NULLISH = /^(?:null|undefined|''|""|``)$/;
+/** A parameter holding a record's key: `id`, `sessionId`, `club_id`, `uuid`, `slug`. */
+const KEY_PARAM = /^(?:id|uuid|guid|slug)$|(?:Id|_id|Uuid|Slug)$/;
 
 /** `{ slug, host: this.url, kind: 'live' }` → its `key: value` pairs (shorthands name a runtime value: left out). */
 function objectArgument(arg: string): Map<string, string> | null {

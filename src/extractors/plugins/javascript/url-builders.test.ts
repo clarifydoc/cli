@@ -169,6 +169,16 @@ describe("resolveUrlBuilders", () => {
     expect(calls[1]!.target).toBe("/api/v2/institution/{}/x");
   });
 
+  it("fills a trailing parameter named for a record key with a wildcard", () => {
+    const stream = fn("getMatchStreamUrl", "/matches/{id}/stream/{sessionId}", [
+      { name: "id", type: "string", defaultValue: null },
+      { name: "sessionId", type: "string", defaultValue: null },
+    ]);
+    const calls = [apiCall("getMatchStreamUrl(session.matchId, session.id)", "delete")];
+    expect(resolveUrlBuilders(calls, [analysis([stream])])).toBe(1);
+    expect(calls[0]!.target).toBe("/matches/{}/stream/{}");
+  });
+
   it("is a no-op when the project defines no URL builders", () => {
     const calls = [apiCall("requestUri('x', 'v4')")];
     expect(resolveUrlBuilders(calls, [analysis([])])).toBe(0);
