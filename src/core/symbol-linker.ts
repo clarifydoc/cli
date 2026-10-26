@@ -2951,7 +2951,11 @@ function resolveCallToDefinition(
         // is its module: `Math.round`, `monkeypatch.setattr` or a `path` local's
         // `read_bytes` never call the project's `round` / `setattr` / `read_bytes`.
         const freeTargetVetoed = tgtClass === null && !moduleReceiver(analysis, head.replace(/\?$/, ""), entry.file, ctx);
-        if (!contradicted && !freeTargetVetoed && (evidenced || importsNothing(analysis, ctx))) {
+        // A receiver that is itself a call's result (`time.Unix().In`) has a type
+        // only its declared return could say; Strategy 2 followed that and failed,
+        // so a match by name alone needs the target to be in scope.
+        const callReceiver = parts.slice(1, -1).some((p) => p.includes("("));
+        if (!contradicted && !freeTargetVetoed && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,
             entry.def.name,

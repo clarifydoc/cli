@@ -947,7 +947,8 @@ export function extractCallsFromBody(
 
   function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string; key?: string }) {
     // A pattern returns no name for a match that calls nothing (a CSS built-in).
-    if (!name || isControlFlowKeyword(shortName)) return;
+    // A keyword names no call (`if (x)`); after a dot it is a member name (`cond.And(`, `p.then(`).
+    if (!name || (!/[.:>]/.test(name) && isControlFlowKeyword(shortName))) return;
     // Calls of one name with different keys stay separate (two templates rendered).
     const seenKey = receiver?.key ? `${name}\0${receiver.key}` : name;
     if (seen.has(seenKey)) return;
