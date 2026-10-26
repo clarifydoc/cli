@@ -87,6 +87,15 @@ describe("scoreCandidate tiers", () => {
     expect(scoreOf(c, "report create")).toBe(30);
   });
 
+  it("20 — every word that says something is in the doc comment, below any name or path match", () => {
+    const fn = candidate({ kind: "symbol", name: "settleTransfer", path: "src/club/transfers.ts", doc: "Pays the selling club once the player's medical is passed." });
+    expect(scoreCandidate(fn, parseQuery("what pays the selling club"))).toEqual({ score: 20, via: "doc" });
+    // A name or path match still wins; a query of question words alone matches no doc.
+    expect(scoreOf(fn, "transfers settle")).toBe(30);
+    expect(scoreOf(fn, "where is the")).toBe(0);
+    expect(scoreOf(fn, "selling garage")).toBe(0);
+  });
+
   it("10 — a partial word the tokenizer cannot see", () => {
     expect(scoreOf(candidate({ name: "Authentication" }), "authent")).toBe(10);
   });

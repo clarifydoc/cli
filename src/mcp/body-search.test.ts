@@ -79,6 +79,13 @@ describe("clarifydoc_search — bodies and signatures (sample-backend)", () => {
     expect(text).toMatch(/\[fn\] verifyPassword\(\) \(services\/authService\.ts:12\) · L13: return bcrypt\.compare/);
   });
 
+  it("ranks a function by its doc comment when nothing is named for the query, and says why", async () => {
+    const text = await search({ query: "handler declared away from its route", body: true });
+    expect(text).toMatch(/- \[symbol\] register\(\) \(controllers\/authController\.ts:7\) .* · doc: A handler declared away/);
+    // Without `body` the doc comments are not read.
+    expect(await search({ query: "handler declared away from its route" })).not.toMatch(/doc: A handler/);
+  });
+
   it("narrows to what throws a type, and to a declared signature", async () => {
     expect(await search({ query: "credentials", throws: "Error" })).toMatch(/\[fn\] authenticate\(\)/);
     const typed = await search({ query: "password", signature: "Promise<boolean>" });

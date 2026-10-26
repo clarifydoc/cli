@@ -30,8 +30,8 @@ import { byOrdinal } from "../core/ordinal.js";
 
 export type SearchKind = "route" | "screen" | "file" | "symbol" | "entity" | "api-call";
 
-/** Which field a score came from. `name` for a route is its URL path. */
-export type MatchField = "name" | "aka" | "path";
+/** Which field a score came from. `name` for a route is its URL path; `doc` is a function's or class's doc comment. */
+export type MatchField = "name" | "aka" | "path" | "doc";
 
 /** One rankable thing, flattened from whichever summary section produced it. */
 export interface Candidate {
@@ -48,6 +48,12 @@ export interface Candidate {
   isEndpoint?: boolean;
   /** Extra text that should match but is not the name: a route handler, an entity column. */
   aka?: string[];
+  /**
+   * The first sentence of its doc comment, for a function or class. Matched
+   * below every name and path tier: what a symbol is FOR answers a search
+   * only when nothing is CALLED what was asked for.
+   */
+  doc?: string;
   /** Where it lives; null when the source has no file. */
   path: string | null;
   /** Line within `path`, when known. A locatable row outranks a bare path at equal score. */
@@ -200,9 +206,21 @@ export function scoreCandidate(candidate: Candidate, q: QueryShape): Match {
     return { score: 30, via: "path" };
   }
 
+  // 20 — every word of the query that says something is in the doc comment.
+  if (candidate.doc) {
+    const words = q.tokens.filter((t) => !DOC_STOP.has(t));
+    if (words.length && hasAllTokens(splitTokens(candidate.doc), words)) return { score: 20, via: "doc" };
+  }
+
   // 10 — a raw substring the tokenizer could not see (a partial word).
   return substring() ?? NO_MATCH;
 }
+
+/** Words a question is phrased with that a doc comment need not contain. */
+const DOC_STOP = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "i", "in", "is", "it", "of",
+  "on", "or", "that", "the", "this", "to", "we", "what", "where", "which", "who", "with",
+]);
 
 /**
  * Score every candidate and order them.

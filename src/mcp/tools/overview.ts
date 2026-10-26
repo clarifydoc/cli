@@ -143,7 +143,7 @@ function kindTag(kind: SearchKind): string {
  * worth it on a hit; on a result with nothing in it, a hint carrying a real
  * count is the cheapest thing this server can offer.
  */
-function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string): Candidate[] {
+function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string, docs?: DocLookup): Candidate[] {
   const { summary, index } = loaded;
   const weightOf = (path: string | null | undefined): number =>
     (path ? index.byFile.get(path)?.blast?.impactScore : 0) ?? 0;
@@ -203,6 +203,7 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
         candidates.push({
           kind: "symbol",
           name: fn.functionName,
+          doc: fn.line ? docs?.get(file.filePath)?.get(fn.line) : undefined,
           path: file.filePath,
           line: fn.line ?? null,
           weight: weightOf(file.filePath),
@@ -218,6 +219,7 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
       candidates.push({
         kind: "symbol",
         name: node.name,
+        doc: docs?.get(node.filePath)?.get(node.name),
         path: node.filePath,
         line: null,
         weight: weightOf(node.filePath),
@@ -327,7 +329,10 @@ export function searchTool(ctx: ToolContext): McpTool {
       const { summary } = loaded;
       const signatureFilter = signatureText !== null;
       // A signature filter is about functions: only symbols can pass it.
-      const candidates = searchCandidates(loaded, signatureFilter ? new Set<SearchKind>(["symbol"]) : kinds, query);
+      // A body search also ranks functions and classes by their doc comments, one tier below every name match;
+      // reading them costs a pass over the per-file analyses, which a body search pays for its index anyway.
+      const docs = wantBody ? await docLookupFor(loaded, ctx) : undefined;
+      const candidates = searchCandidates(loaded, signatureFilter ? new Set<SearchKind>(["symbol"]) : kinds, query, docs);
 
       // Strict first: every term must be present. Only when that finds nothing at
       // all does a looser any-term pass run, so a multi-word query degrades to
@@ -417,7 +422,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           header,
           "",
           ...note,
-          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}`, { offset }),
+          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}`, { offset }),
           ...(wantBody
             ? ["", `## In function bodies and docs`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further body or doc matches)"]), "", bodyNote ?? ""]
             : []),
@@ -432,6 +437,42 @@ function bodyLines(hits: readonly BodyHit[]): string[] {
   return hits.map((h) => h.doc.kind === "doc"
     ? `- [doc] ${h.doc.name} (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`
     : `- [fn] ${h.doc.name}() (${h.doc.file}:${h.doc.line}) · L${h.best.n}: ${h.best.text}`);
+}
+
+/** Per file: a function's doc comment by its line, a class's by its name. */
+type DocLookup = Map<string, Map<number | string, string>>;
+
+/** One doc lookup per loaded analysis, read from the per-file analyses of the files that declare functions. */
+const DOC_LOOKUPS = new WeakMap<object, Promise<DocLookup>>();
+
+function docLookupFor(loaded: LoadedAnalysis, ctx: ToolContext): Promise<DocLookup> {
+  let lookup = DOC_LOOKUPS.get(loaded.summary);
+  if (!lookup) {
+    const files = new Set<string>();
+    for (const f of loaded.summary.complexity ?? []) if (f.functions.length) files.add(f.filePath);
+    for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && n.filePath) files.add(n.filePath);
+    lookup = (async () => {
+      const out: DocLookup = new Map();
+      const queue = [...files].sort();
+      const worker = async () => {
+        for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+          const a = await ctx.store.fileAnalysis(file);
+          if (!a) continue;
+          const docs = new Map<number | string, string>();
+          for (const fn of a.functions) if (fn.doc) docs.set(fn.line, fn.doc);
+          for (const cls of a.classes) {
+            if (cls.doc) docs.set(cls.name, cls.doc);
+            for (const m of cls.methods ?? []) if (m.doc) docs.set(m.line, m.doc);
+          }
+          if (docs.size) out.set(file, docs);
+        }
+      };
+      await Promise.all(Array.from({ length: 8 }, worker));
+      return out;
+    })();
+    DOC_LOOKUPS.set(loaded.summary, lookup);
+  }
+  return lookup;
 }
 
 /** One body index per loaded analysis (a reload is a new summary object, so a new index). */
