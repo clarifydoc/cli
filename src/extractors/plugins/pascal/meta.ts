@@ -12,6 +12,7 @@ import { PascalUiBridgeResolver } from "./ui-bridge.js";
 import { dfmEntityExtractor } from "./dfm-entities.js";
 import { pascalReachability } from "./reachability.js";
 import { pascalDiBindings } from "./di.js";
+import { pascalDirectivePreprocess } from "./directives.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
   "Integer", "Cardinal", "Word", "Byte", "ShortInt", "SmallInt", "LongInt",
@@ -32,6 +33,8 @@ export const pascalMeta: LanguagePluginMeta = {
   reachability: pascalReachability,
   ...pascalManifest,
   routes: pascalRouteExtractor,
+  // `{$IFDEF X}inline;{$ENDIF}` after a routine header, which the grammar cannot place.
+  preprocess: pascalDirectivePreprocess,
   functionsClasses: new PascalExtractor(),
   importsExports: new PascalImportExportExtractor(),
   dataSources: new PascalDataSourceExtractor(),
