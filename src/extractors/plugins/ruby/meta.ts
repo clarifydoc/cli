@@ -1,3 +1,4 @@
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { rubySpec } from "./index.js";
@@ -15,6 +16,7 @@ export const rubyMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: rubyReachability,
   ...rubyManifest,
+  docComments: HASH_DOCS,
   regexSpec: rubySpec,
   knownPackages: rubygemsPackages,
   entities: new RubyEntityExtractor(),

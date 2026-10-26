@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
 import { extractRetrofitClients } from "./retrofit.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
@@ -96,6 +97,7 @@ function jvmMeta(language: Language, opts: {
 }): LanguagePluginMeta {
   return {
     ...(language === "java" ? javaManifest : kotlinManifest),
+    docComments: C_STYLE_DOCS,
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.

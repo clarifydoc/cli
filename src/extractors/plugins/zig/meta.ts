@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { zigManifest } from "./manifest.js";
@@ -13,6 +14,7 @@ export const zigMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: zigReachability,
   ...zigManifest,
+  docComments: C_STYLE_DOCS,
   // A file that declares fields is a struct named after the file (`Order.zig`
   // → `Order`); the extractor cannot see the path, so it is renamed here.
   preprocess(rawSource, filePath) {

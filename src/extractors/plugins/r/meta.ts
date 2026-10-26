@@ -1,3 +1,4 @@
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { rManifest } from "./manifest.js";
@@ -14,6 +15,7 @@ export const rMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: rReachability,
   ...rManifest,
+  docComments: HASH_DOCS,
   functionsClasses: new RExtractor(),
   importsExports: new RImportExportExtractor(),
   dataSources: new RDataSourceExtractor(),

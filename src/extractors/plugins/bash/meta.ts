@@ -1,3 +1,4 @@
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { bashManifest } from "./manifest.js";
 import { bashCallHooks } from "./call-hooks.js";
@@ -10,6 +11,7 @@ export const bashMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: bashReachability,
   ...bashManifest,
+  docComments: HASH_DOCS,
   functionsClasses: new BashFunctionExtractor(),
   importsExports: new BashImportExtractor(),
   dataSources: new BashDataSourceExtractor(),

@@ -1,3 +1,4 @@
+import { DASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { luaSpec } from "./index.js";
@@ -10,6 +11,7 @@ export const luaMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: luaReachability,
   ...luaManifest,
+  docComments: DASH_DOCS,
   regexSpec: luaSpec,
   // Control flow from source: keyword-delimited blocks (see control-flow.ts).
   regexControlFlow: LUA_REGEX_CONTROL_FLOW,

@@ -1,3 +1,4 @@
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { splitLines } from "../../shared/source-lines.js";
@@ -12,6 +13,7 @@ export const crystalMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: crystalReachability,
   ...crystalManifest,
+  docComments: HASH_DOCS,
   // Heredoc bodies are blanked for extraction (an SQL block is no code, and
   // its indentation would end the block around it); their SQL is read from
   // the raw source afterwards, as is SQL in ordinary strings.

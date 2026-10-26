@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { goRouterFnResolver } from "./router-fn-resolver.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
@@ -37,6 +38,7 @@ export const goMeta: LanguagePluginMeta = {
     { quotes: ['"', "`"], multilineStrings: true },
   ),
   ...goManifest,
+  docComments: C_STYLE_DOCS,
   regexSpec: goSpec,
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,

@@ -1,3 +1,4 @@
+import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { extractPythonTypeAliases } from "./type-aliases.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
@@ -145,6 +146,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
 
 export const pythonMeta: LanguagePluginMeta = {
   ...pythonManifest,
+  docComments: PYTHON_DOCS,
   knownPackages: pypiPackages,
   routes: pythonRouteExtractor,
   routeResolvers: [djangoUrlconfResolver],

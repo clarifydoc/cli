@@ -1,3 +1,4 @@
+import { DASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { haskellSpec } from "./index.js";
@@ -9,6 +10,7 @@ export const haskellMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: haskellReachability,
   ...haskellManifest,
+  docComments: DASH_DOCS,
   regexSpec: haskellSpec,
   builtinTypes: new Set<string>([
     ...COMMON_PRIMITIVES,

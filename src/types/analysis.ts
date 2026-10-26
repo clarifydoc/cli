@@ -792,6 +792,8 @@ export interface FunctionInfo {
   calls: CallInfo[];
   line: number;
   endLine: number;
+  /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
+  doc?: string;
   /**
    * Local variables whose type this body states: assigned a constructed
    * instance (`$x = new Foo()` → `{ name: "x", type: "Foo" }`), declared with
@@ -896,6 +898,8 @@ export interface PropertyInfo {
 
 export interface ClassInfo {
   name: string;
+  /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
+  doc?: string;
   /**
    * The physical table an ORM entity maps to, where the code names one that
    * differs from the class (`@Table(name = "app_users")`, `__tablename__`,

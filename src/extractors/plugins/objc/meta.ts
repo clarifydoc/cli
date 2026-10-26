@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -24,6 +25,7 @@ export const objcMeta: LanguagePluginMeta = {
     { match: /^@try\b/, type: "try_statement" },
   ], { catch: /^\}?\s*@?catch\b/, finally: /^\}?\s*@?finally\b/ }),
   ...objcManifest,
+  docComments: C_STYLE_DOCS,
   regexSpec: objcSpec,
   builtinTypes: OBJC_BUILTINS,
   knownPackages: objcPackages,

@@ -326,6 +326,18 @@ export interface SecurityRule {
   judge?: (source: string, at: number) => SecurityJudgement | undefined;
 }
 
+/** How a language writes the comment that documents a declaration. */
+export interface DocCommentSpec {
+  /** Line-comment prefixes whose consecutive lines just above a declaration document it, most specific first (`///`, `//`). */
+  line?: readonly string[];
+  /** Block comments `[open, close]` ending just above a declaration (`/**` … `*\/`), most specific first. */
+  block?: ReadonlyArray<readonly [string, string]>;
+  /** The first statement of the body is a string literal that documents it (a Python docstring). */
+  docstring?: boolean;
+  /** Lines between the comment and the declaration that belong to the declaration: decorators, attributes, annotations. */
+  attribute?: RegExp;
+}
+
 /** What a rule's `judge` decided about one match. */
 export interface SecurityJudgement {
   /** Not a finding after all. */
@@ -1274,6 +1286,13 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * `controlFlow` is set, since a parse tree is always the better answer.
    */
   regexControlFlow?: LanguageRegexControlFlowSpec;
+
+  /**
+   * How the language documents a function or class, so its first sentence
+   * becomes `FunctionInfo.doc` / `ClassInfo.doc` (core/doc-comments.ts).
+   * Shared shapes live in `extractors/shared/doc-comment-specs.ts`.
+   */
+  docComments?: DocCommentSpec;
 
   /** Language-specific security rules (see SecurityRule.priority). */
   securityRules?: readonly SecurityRule[];

@@ -1,3 +1,4 @@
+import { VB_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { vbSpec } from "./index.js";
@@ -20,6 +21,7 @@ export const vbMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: vbReachability,
   ...vbManifest,
+  docComments: VB_DOCS,
   regexSpec: vbSpec,
   // Control flow from source: keyword-delimited blocks (see control-flow.ts).
   regexControlFlow: VB_REGEX_CONTROL_FLOW,

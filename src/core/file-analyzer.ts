@@ -20,6 +20,7 @@ import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/sha
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
+import { attachDocComments } from "./doc-comments.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
 import { isSuppressed } from "./security-rules.js";
 import { isGeneratedSource } from "./generated-file-detector.js";
@@ -336,6 +337,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (vendored) analysis.vendored = true;
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
+      attachDocComments(analysis, rawSource, pluginFor(analysis.language)?.docComments);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
       const regexTypeRefs = extractTypeReferences(analysis, file.language);
@@ -393,6 +395,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (vendored) analysis.vendored = true;
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
+      attachDocComments(analysis, rawSource, pluginFor(analysis.language)?.docComments);
       const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
       const fallbackTypeRefs = extractTypeReferences(analysis, file.language);
@@ -659,6 +662,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const astLevelTypeRefs = hooks?.typeReferences?.(tree, file.relativePath) ?? [];
     const combinedTypeRefs = mergeTypeRefs(fileLevelTypeRefs, astLevelTypeRefs);
     if (combinedTypeRefs.length > 0) analysis.typeReferences = combinedTypeRefs;
+    // Read from the source as written: a container's preprocess keeps its lines in place.
+    attachDocComments(analysis, rawSource, pluginFor(language)?.docComments);
 
     await writeFileAnalysis(analysis, outputOpts);
 

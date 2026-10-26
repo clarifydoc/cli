@@ -1,3 +1,4 @@
+import { ML_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { ocamlManifest } from "./manifest.js";
@@ -13,6 +14,7 @@ export const ocamlMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: ocamlReachability,
   ...ocamlManifest,
+  docComments: ML_DOCS,
   // The file is the module of its capitalized name (`order_repo.ml` →
   // `Order_repo`); the extractor cannot see the path, so it is renamed here.
   preprocess(rawSource, filePath) {

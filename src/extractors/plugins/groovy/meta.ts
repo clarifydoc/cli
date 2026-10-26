@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { groovySpec } from "./index.js";
@@ -19,6 +20,7 @@ export const groovyMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: groovyReachability,
   ...groovyManifest,
+  docComments: C_STYLE_DOCS,
   // Multi-line strings are blanked for extraction (an SQL block is no code);
   // their SQL is read from the raw source afterwards.
   preprocess(rawSource) {

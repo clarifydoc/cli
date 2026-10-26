@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -31,6 +32,7 @@ export const rustMeta: LanguagePluginMeta = {
   // adds is `?` as an exit and the lifetime tick, which is not a string quote.
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
+  docComments: C_STYLE_DOCS,
   regexSpec: rustSpec,
   routeResolvers: [rocketMountResolver],
   // Multi-line strings, and one-line strings declaring a Rust item, are blanked so

@@ -1,3 +1,4 @@
+import { PASCAL_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { parseDfm } from "../../../parsers/dfm-parser.js";
@@ -32,6 +33,7 @@ export const pascalMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: pascalReachability,
   ...pascalManifest,
+  docComments: PASCAL_DOCS,
   routes: pascalRouteExtractor,
   // `{$IFDEF X}inline;{$ENDIF}` after a routine header, which the grammar cannot place.
   preprocess: pascalDirectivePreprocess,

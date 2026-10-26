@@ -1,3 +1,4 @@
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import { extractPhpScheduledJobs } from "./scheduled-jobs.js";
 import { phpTaint } from "./taint.js";
@@ -41,6 +42,7 @@ export const phpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: phpReachability,
   ...phpManifest,
+  docComments: C_STYLE_DOCS,
   routes: phpRouteExtractor,
   // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
   routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver],
