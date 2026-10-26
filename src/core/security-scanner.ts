@@ -371,10 +371,19 @@ export function scanSecurity(
         after.includes("config.") || after.includes("settings.") ||
         /(?:^|[^\w])KEY_\w*\s*[=:]/.test(line)) return;
     }
+    let severity = rule.severity;
+    let message = rule.message;
+    if (rule.judge && !rule.raw) {
+      lineStarts ??= startsOfLines(effectiveSource);
+      const verdict = rule.judge(effectiveSource, lineStarts[i]! + col);
+      if (verdict?.drop) return;
+      if (verdict?.severity) severity = verdict.severity;
+      if (verdict?.message) message = verdict.message;
+    }
     const issue: SecurityIssue = {
       category: rule.category,
-      severity: rule.severity,
-      message: rule.message,
+      severity,
+      message,
       filePath,
       line: i + 1,
       snippet: snippetOf(originalLines[i] ?? line, rule.category),

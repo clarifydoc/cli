@@ -316,6 +316,24 @@ export interface SecurityRule {
   files?: RegExp;
   /** The CWE a finding is an instance of, when the category's default is not it (`CWE-295` for TLS turned off). */
   cwe?: string;
+  /**
+   * A second look at a match the pattern alone cannot judge: handed the
+   * scanned source (after `securityPreprocess`) and the offset the match
+   * starts at, it may drop the finding or re-grade it with its own message —
+   * an `innerHTML` template whose every interpolated value passes an escaper.
+   * `undefined` keeps the finding as the rule states it. Not for `raw` rules.
+   */
+  judge?: (source: string, at: number) => SecurityJudgement | undefined;
+}
+
+/** What a rule's `judge` decided about one match. */
+export interface SecurityJudgement {
+  /** Not a finding after all. */
+  drop?: boolean;
+  /** The severity it carries instead of the rule's. */
+  severity?: SecuritySeverity;
+  /** The message it carries instead of the rule's — saying why it was re-graded. */
+  message?: string;
 }
 
 /** Node types / operators that count toward cyclomatic complexity. */

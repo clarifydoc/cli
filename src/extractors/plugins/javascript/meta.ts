@@ -59,6 +59,7 @@ import { javascriptTaint } from "./taint.js";
 import { reactRouterResolver } from "./routes/react-router-resolver.js";
 import { angularRouterResolver } from "./routes/angular-router-resolver.js";
 import { jsGrpcStub } from "../shared/grpc-stubs.js";
+import { judgeHtmlAssignment } from "./html-escapes.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -100,6 +101,8 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     message: "Direct innerHTML assignment can lead to XSS. Sanitize user input.",
     priority: 20,
     excludeTest: true,
+    // Re-graded low when every interpolated value passes an escaper (html-escapes.ts).
+    judge: judgeHtmlAssignment,
   },
   {
     category: "xss",

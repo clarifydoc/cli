@@ -88,6 +88,50 @@ describe("scanSecurity — xss innerHTML rule", () => {
   it("skips test files", () => {
     expect(cats("el.innerHTML = userInput;", "src/Foo.spec.ts")).not.toContain("xss");
   });
+
+  // Real-repo FP: a stats table rendered through `esc()` / `Number()` was a high XSS.
+  const xss = (src: string) => scanSecurity(src, "src/ui/table.ts", "typescript").filter((i) => i.category === "xss");
+
+  it("grades an assignment low when every interpolated value passes an escaper", () => {
+    const table = [
+      "body.innerHTML = clubs",
+      "  .map((c) => `<tr><td>${esc(c.name)}</td><td>${Number(c.points)}</td><td>${c.goals.toFixed(1)}</td></tr>`)",
+      "  .join(\"\");",
+    ].join("\n");
+    expect(xss(table).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(table)[0]!.message).toContain("escaper");
+    expect(xss("el.innerHTML = '<b>' + escapeHtml(name) + '</b>';").map((i) => i.severity)).toEqual(["low"]);
+    expect(xss("el.innerHTML = `<p>${DOMPurify.sanitize(bio)}</p>`;").map((i) => i.severity)).toEqual(["low"]);
+    expect(xss("el.innerHTML = `<ul>${squad.map((p) => `<li>${esc(p.name)}</li>`).join('')}</ul>`;").map((i) => i.severity)).toEqual(["low"]);
+  });
+
+  it("follows a callback's locals, a constant table and number-only helpers", () => {
+    const rows = (colour: string) => [
+      "document.getElementById('league').innerHTML = sorted.map(([club, points]) => {",
+      "  const pct = Math.round(Number(points) / max * 100);",
+      `  const col = ${colour};`,
+      "  return '<div class=\"row\">'",
+      "    + '<span style=\"background:' + col + '\"></span>'",
+      "    + '<span>' + esc(club) + '</span>'",
+      "    + '<div style=\"width:' + pct + '%\"></div>'",
+      "    + '<span>' + fmt(Number(points)) + '</span>'",
+      "    + '</div>';",
+      "}).join('');",
+    ].join("\n");
+    expect(xss(rows("Object.prototype.hasOwnProperty.call(KIT_COLOURS, club) ? KIT_COLOURS[club] : '#888'")).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(rows("club.colour")).map((i) => i.severity)).toEqual(["high"]);
+  });
+
+  it("keeps it high when one value is raw or nothing is visible to judge", () => {
+    expect(xss("el.innerHTML = `<td>${esc(c.name)}</td><td>${c.coach}</td>`;").map((i) => i.severity)).toEqual(["high"]);
+    expect(xss("el.innerHTML = '<b>' + escapeHtml(name) + '</b>' + note;").map((i) => i.severity)).toEqual(["high"]);
+    expect(xss("el.innerHTML = html;").map((i) => i.severity)).toEqual(["high"]);
+    expect(xss("el.innerHTML = render(match);").map((i) => i.severity)).toEqual(["high"]);
+    // An escaper's result is not the whole hole.
+    expect(xss("el.innerHTML = `<b>${esc(a) + b}</b>`;").map((i) => i.severity)).toEqual(["high"]);
+    // A call handed only a string literal reads what it names; it escapes nothing.
+    expect(xss('this.innerHTML = `<span>${this.getAttribute("score")}</span>`;').map((i) => i.severity)).toEqual(["high"]);
+  });
 });
 
 // ─── Hardcoded secrets: route paths and key-name constants (pit-stop FPs) ────
