@@ -1,3 +1,4 @@
+import { constantString } from "./constant-expr.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
@@ -529,6 +530,7 @@ const MQ_TEMPLATE_TYPE_RE = /^(?:[\w.]+\.)?(?:RabbitTemplate|AmqpTemplate|Rabbit
 // @JmsListener(destination = "d"). Kotlin writes arrays as ["t"].
 const MQ_LISTENER_RE = /@(RabbitListener|KafkaListener|JmsListener)\b/;
 const MQ_LISTENER_DEST_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*"([^"]+)"/;
+const MQ_LISTENER_REF_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*([A-Z]\w*(?:\.[A-Za-z_]\w*)*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)\s*[,)\]}]/;
 
 // ─── Typed application/domain events ─────────────────────────────────────────
 // Frameworks that route messages by EVENT TYPE rather than a named queue:
@@ -750,10 +752,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // the annotated method is the broker's entry point into this file.
       const listener = text.match(MQ_LISTENER_RE);
       if (listener) {
+        // `topics = Topics.CLUB_EVENTS`: another class's constant, which the project pass reads.
+        const ref = text.match(MQ_LISTENER_DEST_RE) ? undefined : MQ_LISTENER_REF_RE.exec(text)?.[1];
         sources.push(this.ds({
           kind: "queue-consume",
           name: `@${listener[1]}`,
-          target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? null,
+          target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? ref ?? null,
+          ...(ref ? { targetRef: ref } : {}),
           line: node.startPosition.row + 1,
         }));
       }
@@ -1076,10 +1081,12 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // destination; a string literal is unquoted, any other expression's source
     // text is kept as a join label.
     if (MQ_TEMPLATE_PUBLISH.has(method) && this.isMqTemplate(node, receiver)) {
+      const ref = constantRef(call.firstArg);
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
         target: destinationLabel(call.firstArg),
+        ...(ref ? { targetRef: ref } : {}),
         line,
       }));
       return;
@@ -1092,6 +1099,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         kind: method === "basicPublish" ? "queue-publish" : "queue-consume",
         name: `MQ: ${method}`,
         target: destinationLabel(call.firstArg),
+        ...(constantRef(call.firstArg) ? { targetRef: constantRef(call.firstArg)! } : {}),
         line,
       }));
       return;
@@ -1472,6 +1480,13 @@ function parameterArgTypes(at: Node, name: string): string[] {
  * literal's unquoted value, or any other expression's source text
  * (`RabbitConfig.ORDERS_EXCHANGE`) — still a usable join key.
  */
+/** A destination named by a constant (`Topics.CLUB_EVENTS`, `CLUB_EVENTS`): the name, for the project pass to read. */
+function constantRef(arg: Node | null): string | null {
+  const t = constantString(arg);
+  const m = t ? /^\$\{([^{}]+)\}$/.exec(t) : null;
+  return m ? m[1]! : null;
+}
+
 function destinationLabel(arg: Node | null): string | null {
   if (!arg) return null;
   const text = /string/.test(arg.type)

@@ -1345,6 +1345,8 @@ const NAME_DECLARATIONS: ReadonlyMap<string, string> = new Map([
  * passes to `base(…)`). Holes naming a parameter or local stay runtime values.
  */
 function memberHoles(uri: string, call: Node): string {
+  // `{ApiRoutes.Clubs}`: a type's constant — a hole the project pass fills from the class declaring it.
+  uri = uri.replace(/(?<!\$)\{([A-Z]\w*(?:\.[A-Za-z_]\w*)*\.[A-Za-z_]\w*)\}/g, (_whole, name: string) => `\${${name}}`);
   if (!/(?<!\$)\{(?:this\.)?[A-Za-z_]\w*\}/.test(uri)) return uri;
   let scope: Node | null = call.parent;
   while (scope && !MEMBER_SCOPES.has(scope.type)) scope = scope.parent;

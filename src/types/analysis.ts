@@ -1100,6 +1100,15 @@ export interface RouteInfo {
    * that names this project all leave it out (`core/client-proxies.ts`).
    */
   consumed?: true;
+  /**
+   * The path as written when it names constants the file does not define
+   * (`@GetMapping(ApiPaths.CLUB)`, `[HttpGet(ApiRoutes.Club)]`,
+   * `@app.route(CLUBS_URL + "/<id>")`): the full path with each such name a
+   * `${…}` hole. A project pass (`core/module-values.ts` `resolveRouteTemplates`)
+   * sets `path` from it when the defining modules state every hole; otherwise
+   * `path` stays what the plugin could read alone.
+   */
+  pathTemplate?: string;
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express

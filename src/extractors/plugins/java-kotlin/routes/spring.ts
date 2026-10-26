@@ -1,3 +1,4 @@
+import { constantString } from "../constant-expr.js";
 import type { Node } from "web-tree-sitter";
 import type { RouteResponseInfo, RouteInfo, CallInfo } from "../../../../types/analysis.js";
 import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/node-helpers.js";
@@ -294,17 +295,20 @@ function walkForJavaKotlinRoutes(
   classPrefix: string,
   suppress: boolean,
   classGuards: readonly GuardAttr[],
+  classTemplate: string | null = null,
 ) {
   // Check for class-level @RequestMapping to capture prefix. A Java interface is its own node type:
   // its prefix applies to the controllers implementing it, and a `@FeignClient` one is outbound.
   if (node.type === "class_declaration" || node.type === "class_definition" || node.type === "interface_declaration") {
     const prefix = extractClassRequestMappingPath(node);
+    // `@RequestMapping(ApiPaths.BASE)`: another class's constant, kept as a hole for the project pass.
+    const template = prefix ? null : classRequestMappingTemplate(node);
     // @FeignClient methods are *outbound* HTTP calls, not inbound routes — skip them.
     const childSuppress = suppress || declarationHasAnnotation(node, "FeignClient");
     // Class-level @PreAuthorize/@Secured/@RolesAllowed guard every handler in the class.
     const guards = [...classGuards, ...guardsOn(node)];
     for (const child of node.children) {
-      walkForJavaKotlinRoutes(child, routes, prefix || classPrefix, childSuppress, guards);
+      walkForJavaKotlinRoutes(child, routes, prefix || classPrefix, childSuppress, guards, prefix ? null : template ?? classTemplate);
     }
     return;
   }
@@ -325,7 +329,7 @@ function walkForJavaKotlinRoutes(
 
     const responses = springResponses(node);
     const emit = (ann: Node): void => {
-      for (const route of parseSpringAnnotation(ann, methodName, bodyCalls, classPrefix)) {
+      for (const route of parseSpringAnnotation(ann, methodName, bodyCalls, classPrefix, classTemplate)) {
         if (responses) route.responses = responses;
         applyRouteMeta(route, {
           inheritedGuards: classGuards,
@@ -381,7 +385,7 @@ function walkForJavaKotlinRoutes(
   }
 
   for (const child of node.children) {
-    walkForJavaKotlinRoutes(child, routes, classPrefix, suppress, classGuards);
+    walkForJavaKotlinRoutes(child, routes, classPrefix, suppress, classGuards, classTemplate);
   }
 }
 
@@ -481,6 +485,32 @@ function extractRequestMappingPath(node: Node): string | null {
   return args ? extractAnnotationPath(args) ?? constantPathArg(args) : null;
 }
 
+/** A mapping annotation's path argument that is no literal — a constant expression — as a `${…}` template. */
+function constantPathTemplate(args: Node): string | null {
+  for (const a of args.namedChildren) {
+    let v: Node | null = a;
+    if (a.type === "element_value_pair" || a.type === "value_argument") {
+      const key = a.type === "value_argument" ? kotlinArgKey(a) : a.childForFieldName("key")?.text ?? null;
+      if (key !== null && key !== "value" && key !== "path") continue;
+      v = a.type === "value_argument" ? a.namedChildren[a.namedChildren.length - 1] ?? null : a.childForFieldName("value");
+    }
+    const t = constantString(v);
+    if (t !== null && t.includes("${")) return t;
+  }
+  return null;
+}
+
+/** The class's `@RequestMapping` path when it is another class's constant, as a template. */
+function classRequestMappingTemplate(classNode: Node): string | null {
+  const anns = [...classNode.children, ...classNode.children.filter((c) => c.type === "modifiers").flatMap((m) => m.children)];
+  for (const ann of anns) {
+    if (!isAnnotationNode(ann) || annotationSimpleName(ann) !== "RequestMapping") continue;
+    const args = annotationArgsNode(ann);
+    return args ? constantPathTemplate(args) : null;
+  }
+  return null;
+}
+
 /**
  * `@RequestMapping(KitUploadApi.PATH)` / `(PATH)` / `(value = PATH)`: the value of
  * that `static final String` declared in this file.
@@ -507,6 +537,7 @@ function parseSpringAnnotation(
   handler: string | null,
   calls: CallInfo[],
   classPrefix: string,
+  classTemplate: string | null = null,
 ): RouteInfo[] {
   const annotationName = annotationSimpleName(node);
   if (!annotationName) return [];
@@ -518,6 +549,11 @@ function parseSpringAnnotation(
   // `|| "/"` (not `??`) so an explicit empty path "" also falls back to the prefix.
   const declared = args ? extractAnnotationPaths(args) : [];
   const paths = [...new Set((declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classPrefix, p || "/")))];
+  // A path (or class prefix) that is another class's constant: the template the project pass fills.
+  const methodTemplate = declared.length === 0 && args ? constantPathTemplate(args) : null;
+  const templates = classTemplate !== null || methodTemplate !== null
+    ? (methodTemplate !== null ? [methodTemplate] : declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classTemplate ?? classPrefix, p || "/"))
+    : null;
 
   let methods: string[];
   if (httpMethod === null) {
@@ -528,8 +564,9 @@ function parseSpringAnnotation(
     methods = [httpMethod];
   }
 
-  return methods.flatMap((m) => paths.map((path) => ({
+  return methods.flatMap((m) => paths.map((path, i) => ({
     path,
+    ...(templates?.[i] !== undefined && templates[i]!.includes("${") ? { pathTemplate: templates[i]! } : {}),
     httpMethod: m,
     kind: "api" as const,
     handler,

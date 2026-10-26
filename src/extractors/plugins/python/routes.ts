@@ -2,6 +2,7 @@ import { azureFunctionPath } from "../shared/azure-functions.js";
 import type { Node } from "web-tree-sitter";
 import type { CallInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { pythonStringTemplate } from "./module-values.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../shared/route-metadata.js";
 import { HTTP_METHODS } from "../../routes/base.js";
 import type { RouteExtractor } from "../../routes/base.js";
@@ -311,6 +312,8 @@ interface RouteDecorator {
   receiver: string | null;
   methods: string[];
   path: string;
+  /** The path when it names module values (`CLUBS_URL + "/<id>"`), as a `${…}` template. */
+  pathTemplate: string | null;
   /** `dependencies=[…]` on the decorator. */
   guards: GuardAttr[];
   /** `response_model=User`, `status_code=201` / `status.HTTP_201_CREATED`. */
@@ -348,8 +351,14 @@ function routeDecorator(dec: Node): RouteDecorator | null {
   }
 
   let path = "/";
+  let pathTemplate: string | null = null;
   const first = args ? firstPositionalArg(args) : null;
   if (first) path = stripQuotes(first.text);
+  // `@app.route(CLUBS_URL + "/<int:club_id>")`: names the project pass reads from the module defining them.
+  if (first && first.type !== "string") {
+    const t = pythonStringTemplate(first);
+    if (t !== null && t.includes("${")) pathTemplate = t;
+  }
   else if (args) {
     const named = literalKeywordArg(args, "path") ?? literalKeywordArg(args, "rule");
     if (named !== null) path = named;
@@ -362,6 +371,7 @@ function routeDecorator(dec: Node): RouteDecorator | null {
     receiver,
     methods,
     path,
+    pathTemplate,
     guards: deps ? guardsFromDependencies(deps) : [],
     responseModel: model && model.text !== "None" ? model.text : null,
     statusCode: Number.isFinite(statusCode) ? statusCode : null,
@@ -430,6 +440,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
         for (const method of rd.methods) {
           const route: RouteInfo = {
             path,
+            ...(rd.pathTemplate && !azure ? { pathTemplate: joinPrefix(router?.prefix ?? "", rd.pathTemplate) } : {}),
             httpMethod: method,
             kind: "api",
             handler,

@@ -127,7 +127,7 @@ function topLevelComma(text: string): number {
 }
 
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines), ...sqlStrings(lines), ...ectoPreloads(lines)];
+  const out: DataSourceInfo[] = [...obanJobs(lines), ...pubSubTopics(lines), ...httpCalls(lines), ...sqlStrings(lines), ...ectoPreloads(lines)];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -322,6 +322,137 @@ function obanJobs(lines: string[]): DataSourceInfo[] {
   return out;
 }
 
+const PUBSUB_RE = /\bPhoenix\.PubSub\.(broadcast!?|broadcast_from!?|local_broadcast|local_broadcast_from|direct_broadcast!?|subscribe|unsubscribe)\s*\(/;
+
+/**
+ * Phoenix PubSub topics: `Phoenix.PubSub.broadcast(App.PubSub, topic, msg)`
+ * publishes to the topic, `subscribe(App.PubSub, topic)` consumes it. The
+ * topic is a literal, a module attribute of the file (`@topic "scheduler"`),
+ * a zero-arity function of the module (`topic()`), or another module's
+ * (`App.Scheduler.topic()`) — then a `targetRef` the project pass reads from
+ * that module's values (`elixirModuleValues`).
+ */
+function pubSubTopics(lines: string[]): DataSourceInfo[] {
+  const text = lines.join("\n");
+  if (!text.includes("PubSub")) return [];
+  const own = elixirModuleValues(lines);
+  const attrs = moduleAttributes(lines);
+  const out: DataSourceInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = PUBSUB_RE.exec(lines[i]!);
+    if (!m) continue;
+    if (m[1] === "unsubscribe") continue;
+    // The call's arguments, which may run onto the next lines.
+    let args = lines[i]!.slice(m.index + m[0].length);
+    for (let j = i + 1; j < lines.length && j - i <= 3 && !/\)/.test(args); j++) args += " " + lines[j]!.trim();
+    const parts = splitTopLevel(args);
+    const topicArg = (/_from/.test(m[1]!) ? parts[2] : parts[1])?.trim();
+    if (!topicArg) continue;
+    let target: string | null = null;
+    let ref: string | undefined;
+    const lit = /^"([^"#]*)"$/.exec(topicArg);
+    const attr = /^@([a-z_]\w*)$/.exec(topicArg);
+    const call = /^((?:[A-Z][\w]*\.)*[A-Z][\w]*\.)?([a-z_]\w*)(?:\(\s*\))?$/.exec(topicArg);
+    if (lit) target = lit[1]!;
+    else if (attr) target = attrs.get(attr[1]!) ?? null;
+    else if (call && call[1]) {
+      ref = `${call[1]}${call[2]}`;
+      target = own[ref] ?? ref;
+    } else if (call) {
+      const mod = moduleAt(lines, i);
+      target = (mod && own[`${mod}.${call[2]}`]) || null;
+    }
+    if (!target) continue;
+    out.push({
+      kind: m[1] === "subscribe" ? "queue-consume" : "queue-publish",
+      name: `Phoenix.PubSub.${m[1]}`,
+      target,
+      ...(ref && target === ref ? { targetRef: ref } : {}),
+      calls: [],
+      line: i + 1,
+    });
+  }
+  return out;
+}
+
+/** `@topic "scheduler"` module attributes holding a plain string, by name; one set twice is left out. */
+function moduleAttributes(lines: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const clash = new Set<string>();
+  for (const line of lines) {
+    const m = /^\s*@([a-z_]\w*)\s+"([^"#\\]*)"\s*$/.exec(line);
+    if (!m || m[1] === "moduledoc" || m[1] === "doc") continue;
+    if (out.has(m[1]!) && out.get(m[1]!) !== m[2]) clash.add(m[1]!);
+    out.set(m[1]!, m[2]!);
+  }
+  for (const k of clash) out.delete(k);
+  return out;
+}
+
+/** The innermost `defmodule` enclosing line `i`, by indentation. */
+function moduleAt(lines: string[], i: number): string | null {
+  for (let j = i; j >= 0; j--) {
+    const m = /^(\s*)defmodule\s+([A-Z][\w.]*)/.exec(lines[j]!);
+    if (m && m[1]!.length < (/^\s*/.exec(lines[i]!)?.[0].length ?? 0)) return m[2]!;
+  }
+  return null;
+}
+
+/** Top-level comma-separated arguments up to the call's closing paren. */
+function splitTopLevel(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote = false;
+  for (const ch of args) {
+    if (ch === '"') quote = !quote;
+    if (!quote) {
+      if (ch === "(" || ch === "{" || ch === "[") depth++;
+      else if (ch === ")" || ch === "}" || ch === "]") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) {
+        out.push(cur);
+        cur = "";
+        continue;
+      }
+    }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+/**
+ * A module's zero-arity functions that return a plain string, by
+ * `Module.function` → `FileAnalysis.moduleValues`: `def topic, do: @topic`
+ * (an attribute of the module), `def topic, do: "flags"`, or a `do … end`
+ * body holding only that. What another module's `App.Storage.topic()` reads.
+ */
+export function elixirModuleValues(lines: string[]): Record<string, string> {
+  if (!lines.some((l) => /^\s*def\s+[a-z_]\w*\s*(?:\(\s*\))?\s*(?:,\s*do:|do\s*$)/.test(l))) return {};
+  const attrs = moduleAttributes(lines);
+  const out: Record<string, string> = {};
+  const valueOf = (expr: string): string | null => {
+    const e = expr.trim();
+    const lit = /^"([^"#\\]*)"$/.exec(e);
+    if (lit) return lit[1]!;
+    const attr = /^@([a-z_]\w*)$/.exec(e);
+    return attr ? attrs.get(attr[1]!) ?? null : null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const inline = /^\s*def\s+([a-z_]\w*)\s*(?:\(\s*\))?\s*,\s*do:\s*(.+?)\s*$/.exec(lines[i]!);
+    const block = inline ? null : /^\s*def\s+([a-z_]\w*)\s*(?:\(\s*\))?\s+do\s*$/.exec(lines[i]!);
+    let value: string | null = null;
+    if (inline) value = valueOf(inline[2]!);
+    else if (block && /^\s*end\s*$/.test(lines[i + 2] ?? "")) value = valueOf(lines[i + 1] ?? "");
+    const name = (inline ?? block)?.[1];
+    const mod = name ? moduleAt(lines, i) : null;
+    if (name && mod && value !== null) out[`${mod}.${name}`] = value;
+  }
+  return out;
+}
+
 /** The module a pipeline starts from (`Club\n |> where(…)\n |> Repo.all()`, `Club |> Repo.get!(id)`), or null. */
 function pipedSchema(lines: string[], i: number): string | null {
   const head = (text: string): string | null => {
@@ -450,6 +581,8 @@ export const elixirSpec: RegexLangSpec = {
 
   extractRoutes: (lines) => extractPhoenixRoutes(lines),
   extractDataSources: (lines) => extractElixirDataSources(lines),
+  /** `App.Storage.topic()` → the string the module's zero-arity function returns (see `elixirModuleValues`). */
+  extractModuleValues: (lines) => elixirModuleValues(lines),
   /** Ecto `belongs_to` / `has_many` / `has_one` / `many_to_many` → entity relations (see `phoenix.ts`). */
   extractEntityRelations: (lines, classes, imports) => extractEctoRelations(lines, classes, imports),
 };

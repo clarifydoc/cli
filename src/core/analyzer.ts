@@ -142,7 +142,7 @@ import { expandChannelFactories } from "./channel-factories.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
-import { buildModuleValueLookup, resolveTargetRefs } from "./module-values.js";
+import { buildModuleValueLookup, resolveRouteTemplates, resolveTargetRefs } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
@@ -1056,10 +1056,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
-  const moduleValue = buildModuleValueLookup(allAnalyses, importIndex);
+  const classIndex = buildClassIndex(allAnalyses, importIndex);
+  const moduleValue = buildModuleValueLookup(allAnalyses, importIndex, classIndex);
   const projectContext: ProjectContext = {
     importIndex,
-    classes: buildClassIndex(allAnalyses, importIndex),
+    classes: classIndex,
     resolveModule: (fromFile, specifier) => resolveImportSource(fromFile, specifier, knownFiles),
     fileOf: (path) => analysisByPath.get(path),
     projectRootOf: (id) => subProjectRoots.get(id) ?? null,
@@ -1071,6 +1072,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A channel or target named by another module's constant (`Topic: kafka.Topic`).
   const valueRefCount = resolveTargetRefs(allAnalyses, moduleValue);
   if (valueRefCount > 0 && verbose) progress.detail(`  targets named by another module's value: ${valueRefCount}`);
+  // A route path naming another module's constant (`@GetMapping(ApiPaths.CLUB)`).
+  const routeTemplateCount = resolveRouteTemplates(allAnalyses, moduleValue);
+  if (routeTemplateCount > 0 && verbose) progress.detail(`  route paths named by another module's value: ${routeTemplateCount}`);
 
   // Plugin route passes that need other files: an inherited controller route
   // template, a urlconf include, a router registration whose handler class

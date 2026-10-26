@@ -1,3 +1,4 @@
+import { constantString } from "./constant-expr.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
@@ -345,6 +346,11 @@ export class CSharpExtractor extends FunctionClassExtractor {
           const name = d.childForFieldName("name")?.text;
           const init = d.namedChildren.find((c) => c.type === "string_literal" || c.type === "verbatim_string_literal");
           if (name && init) note(name, plainString(init));
+          // `const string Club = Clubs + "/{id}"`: a constant built from others, the names kept as holes.
+          else if (name && /\bconst\b/.test(member.namedChildren.filter((c) => c.type === "modifier").map((c) => c.text).join(" "))) {
+            const built = constantString(d.namedChildren[d.namedChildren.length - 1] ?? null);
+            if (built !== null && built.includes("${")) note(name, built);
+          }
         }
       } else if (member.type === "constructor_declaration") {
         const paramList = member.childForFieldName("parameters");

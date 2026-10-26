@@ -1,3 +1,4 @@
+import { constantString } from "./constant-expr.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
@@ -781,14 +782,22 @@ function typeAliasClass(node: Node): ClassInfo | null {
  */
 function stringConstants(body: Node): Record<string, string> | null {
   const out: Record<string, string> = {};
-  const literal = (n: Node | null | undefined): string | null => {
-    if (!n || n.type !== "string_literal") return null;
-    const text = n.text;
-    return /^"[^"\\$]*"$/.test(text) ? text.slice(1, -1) : null;
-  };
+  const literal = (n: Node | null | undefined): string | null => constantString(n);
   const visit = (container: Node): void => {
     for (const member of container.namedChildren) {
       if (member.type === "enum_body_declarations") visit(member);
+      // Kotlin: `const val CLUBS = "/api/v2/clubs"` in an object or a companion object.
+      else if (member.type === "companion_object") {
+        const inner = member.namedChildren.find((c) => c.type === "class_body");
+        if (inner) visit(inner);
+      } else if (member.type === "property_declaration") {
+        const mods = member.namedChildren.find((c) => c.type === "modifiers")?.text ?? "";
+        if (!/\bconst\b/.test(mods)) continue;
+        const { name } = kotlinNameAndType(member);
+        const eq = member.children.findIndex((c) => c.type === "=");
+        const value = eq >= 0 ? literal(member.children[eq + 1]) : null;
+        if (name && value !== null) out[name] = value;
+      }
       else if (member.type === "field_declaration" || member.type === "constant_declaration") {
         const mods = member.namedChildren.find((c) => c.type === "modifiers")?.text ?? "";
         if (member.type === "field_declaration" && !(/\bstatic\b/.test(mods) && /\bfinal\b/.test(mods))) continue;

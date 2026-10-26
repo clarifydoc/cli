@@ -1,3 +1,4 @@
+import { constantString } from "../constant-expr.js";
 import type { Node } from "web-tree-sitter";
 import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
@@ -45,6 +46,8 @@ const CSHARP_HTTP_ATTRIBUTES: Record<string, string> = {
  */
 interface ControllerScope {
   prefix: string | null;
+  /** The class-level template when it is a constant declared elsewhere (`[Route(ApiRoutes.Base)]`), as `${…}` holes. */
+  prefixTemplate?: string | null;
   controllerName: string | null;
   /** The declaring class's own name (`SeriesController`) — every row's `owner`. */
   className: string | null;
@@ -159,11 +162,14 @@ function walkForCsharpRoutes(
     const attrs = attributesOf(node);
     if (facts && name && /Attribute$/.test(name)) attributeDefFact(node, name, baseTypes(node), facts);
     const ownTemplate = classRoutePrefix(attrs);
+    // `[Route(ApiRoutes.Base)]`: a constant the project pass reads from the class declaring it.
+    const ownConstant = ownTemplate === null ? classRouteConstant(attrs) : null;
     const ownApiController = attrs.some((a) => attributeName(a) === "ApiController");
     const ownGuards = guardAttributes(attrs);
     // ASP.NET strips the conventional "Controller" suffix for the [controller] token.
     const inner: ControllerScope = {
       prefix: ownTemplate ?? scope.prefix,
+      prefixTemplate: ownTemplate !== null ? null : ownConstant ?? scope.prefixTemplate ?? null,
       controllerName: name ? name.replace(/Controller$/, "") : scope.controllerName,
       className: name ?? scope.className,
       apiController: scope.apiController || ownApiController,
@@ -181,13 +187,14 @@ function walkForCsharpRoutes(
     // demands attribute routes) offers its plain actions to the route table.
     // An abstract base's are kept too: every controller deriving from it serves them.
     const ownConventional: CsConventionalAction[] | undefined =
-      ownTemplate === null && !ownApiController && /Controller$/.test(name ?? "") ? [] : undefined;
+      ownTemplate === null && ownConstant === null && !ownApiController && /Controller$/.test(name ?? "") ? [] : undefined;
     for (const child of node.children) {
       walkForCsharpRoutes(child, routes, inner, facts, own, ownCandidates, ownConventional);
     }
     const controllerish =
       own.length > 0 ||
       ownTemplate !== null ||
+      ownConstant !== null ||
       ownApiController ||
       attrs.some((a) => attributeName(a) === "Controller") ||
       /Controller$/.test(name ?? "");
@@ -303,24 +310,28 @@ function parseMethodRoutes(
   // First pass: a method-level [Route("…")] supplies the template for an
   // [HttpGet] that carries no template of its own (`[HttpGet][Route("x")]`).
   let routeAttrTemplate: string | null = null;
+  let routeAttrConstant: string | null = null;
   let routeAttrLine = 0;
   let actionName: string | null = null;
-  const verbAttrs: { verb: string | null; template: string | null; line: number }[] = [];
+  const verbAttrs: { verb: string | null; template: string | null; constant?: string | null; line: number }[] = [];
   const mapToVersions: string[] = [];
 
   for (const attr of attrs) {
     const name = attributeName(attr);
     if (name === "Route") {
-      if (routeAttrTemplate === null) {
+      if (routeAttrTemplate === null && routeAttrConstant === null) {
         routeAttrTemplate = attributeRouteTemplate(attr);
+        routeAttrConstant = routeAttrTemplate === null ? attributeConstantTemplate(attr) : null;
         routeAttrLine = attr.startPosition.row + 1;
       }
     } else if (name === "ActionName") {
       actionName = positionalString(attr);
     } else if (name && CSHARP_HTTP_ATTRIBUTES[name]) {
+      const template = attributeRouteTemplate(attr);
       verbAttrs.push({
         verb: CSHARP_HTTP_ATTRIBUTES[name]!,
-        template: attributeRouteTemplate(attr),
+        template,
+        constant: template === null ? attributeConstantTemplate(attr) : null,
         line: attr.startPosition.row + 1,
       });
     } else if (name === "MapToApiVersion") {
@@ -329,8 +340,8 @@ function parseMethodRoutes(
     }
   }
   // `[Route("x")]` alone routes every verb — Web API 2 picks the one the name starts with.
-  if (verbAttrs.length === 0 && routeAttrTemplate !== null) {
-    verbAttrs.push({ verb: scope.webApi && methodName ? webApiVerb(methodName) : null, template: routeAttrTemplate, line: routeAttrLine });
+  if (verbAttrs.length === 0 && (routeAttrTemplate !== null || routeAttrConstant !== null)) {
+    verbAttrs.push({ verb: scope.webApi && methodName ? webApiVerb(methodName) : null, template: routeAttrTemplate, constant: routeAttrConstant, line: routeAttrLine });
   }
   if (verbAttrs.length === 0) {
     if (conventional && methodName && isPlainAction(methodNode, attrs)) {
@@ -360,7 +371,7 @@ function parseMethodRoutes(
   const auth = buildAuth(scope.guards, methodGuards);
   const versions = resolveVersions(scope, mapToVersions);
 
-  for (const { verb, template: own, line } of verbAttrs) {
+  for (const { verb, template: own, constant, line } of verbAttrs) {
     actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
     const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
     const params = parameterBindings(methodNode, path, scope.apiController);
@@ -375,6 +386,11 @@ function parseMethodRoutes(
       line,
       ...(shorter && shorter !== path ? { aliases: [shorter] } : {}),
     };
+    // A template (or class template) that is a constant declared elsewhere: the project pass reads it.
+    const methodConstant = constant ?? (own === null ? routeAttrConstant : null);
+    if (methodConstant || scope.prefixTemplate) {
+      route.pathTemplate = buildPath(scope.prefixTemplate ?? scope.prefix, methodConstant ?? own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
+    }
     if (scope.className) route.owner = scope.className;
     if (auth) route.auth = auth;
     if (versions) {
@@ -700,6 +716,33 @@ function attributeRouteTemplate(attr: Node): string | null {
     const str = findChildByType(arg, "string_literal")
       ?? findChildByType(arg, "verbatim_string_literal");
     if (str) return stringLiteralText(str);
+  }
+  return null;
+}
+
+/**
+ * An attribute's first positional argument when it is a constant expression
+ * rather than a literal — `[HttpGet(ApiRoutes.Club)]`, `[Route(Routes.Base + "/clubs")]`
+ * — with each constant a `${…}` hole (an attribute argument is always a
+ * compile-time constant, so any name in it is one). Null without one.
+ */
+function attributeConstantTemplate(attr: Node): string | null {
+  const argList = findChildByType(attr, "attribute_argument_list");
+  if (!argList) return null;
+  for (const arg of argList.children) {
+    if (arg.type !== "attribute_argument") continue;
+    if (arg.namedChildren.some((c) => c.type === "name_equals" || c.type === "name_colon" || c.type === "assignment_expression")) continue;
+    const t = constantString(arg.namedChildren[0] ?? null);
+    return t !== null && t.includes("${") ? t : null;
+  }
+  return null;
+}
+
+/** First class-level `[Route(…)]` / `[RoutePrefix(…)]` whose template is a constant expression. */
+function classRouteConstant(attrs: Node[]): string | null {
+  for (const attr of attrs) {
+    const name = attributeName(attr);
+    if (name === "Route" || name === "RoutePrefix") return attributeConstantTemplate(attr);
   }
   return null;
 }

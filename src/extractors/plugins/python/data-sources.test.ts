@@ -324,7 +324,8 @@ describe("Python api-call — a base the file states", () => {
       '    requests.get(f"{GARAGE_URL}/tyres")',
     ].join("\n"))).toEqual([
       "get /api/cars @ https://garage.example.com",
-      "get {PITS_URL}/stops",
+      // Two values: a hole the project pass leaves for the call-origin pass.
+      "get ${PITS_URL}/stops",
       "get {GARAGE_URL}/tyres",
     ]);
   });

@@ -266,6 +266,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // statement names the table and says whether it reads or writes —
           // read from a literal or a local assigned one.
           let table: string | null = null;
+          // The table is a module value (`"INSERT INTO " + TABLE_NAME + " …"`): its name, for the project pass to read.
+          let tableRef: string | null = null;
           if (SQL_TEXT_LEAVES.has(leaf) || leaf === "callproc") {
             let arg = positional(node)[0];
             if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
@@ -276,9 +278,12 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               sources.push(this.ds({ kind: "database", name: fnName, target: routine, routine: true, line: node.startPosition.row + 1 }));
               return;
             }
-            const hit = sql ? tableFrom(sql.replace(/\{[^}]*\}/g, "x")) : null;
+            const refs: string[] = [];
+            const hit = sql ? tableFrom(sql.replace(/\$\{([^}]*)\}|\{[^}]*\}/g, (_m, ref: string | undefined) => (ref ? `hole${refs.push(ref) - 1}__` : "x"))) : null;
             if (hit) {
-              table = hit.table;
+              const hole = /^hole(\d+)__$/.exec(hit.table);
+              if (hole) tableRef = refs[Number(hole[1])] ?? null;
+              else if (!/hole\d+__/.test(hit.table)) table = hit.table;
               access ??= sqlVerbAccess(hit.verb);
             }
           }
@@ -303,9 +308,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           sources.push(this.ds({
             kind: "database",
             name: fnName,
-            target: table,
+            target: table ?? tableRef,
             line: node.startPosition.row + 1,
-            ...(table ? { entity: table } : {}),
+            ...(table ? { entity: table } : tableRef ? { entity: tableRef, targetRef: tableRef } : {}),
             ...(instance ? { receiverIsInstance: true } : {}),
             ...(relatedField ? { relatedField } : {}),
             ...(access ? { access } : {}),
@@ -650,7 +655,8 @@ function keywordArg(call: Node, keyword: string): Node | null {
  * string, or to a relative path.
  */
 function statedBase(target: string, at: Node): { origin: string; target: string } | null {
-  const m = /^\{(self\.)?([A-Za-z_]\w*)\}/.exec(target);
+  // `{self.base}`, or a module value's `${BASE}` hole.
+  const m = /^\$?\{(self\.)?([A-Za-z_]\w*)\}/.exec(target);
   if (!m) return null;
   const rest = target.slice(m[0].length);
   if (rest && !/^[/?#]/.test(rest)) return null;
@@ -807,13 +813,17 @@ function pyStringValue(node: Node, at: Node, depth = 0): string | null {
     // An f-string's `{name}` hole naming a local the function builds as a string
     // (`base = f"/api/clubs/{club['id']}"`, then `f"{base}/players"`) holds that text.
     if (text === null || !/^[a-zA-Z]*[fF]/.test(node.text)) return text;
-    // Only a function's own local: a module constant is a base the call-origin pass reads (`baseRef`).
+    // A function's own local holds its text; a module's value or an imported one
+    // (`{CLUBS_URL}`, `{urls.BASE}`) is a `${…}` hole the project pass fills
+    // from the module defining it — or splits off as the base when none does.
     let fn: Node | null = at.parent;
     while (fn && fn.type !== "function_definition" && fn.type !== "module") fn = fn.parent;
-    if (fn?.type !== "function_definition") return text;
-    return text.replace(/\{([A-Za-z_]\w*)\}/g, (hole, name: string) => {
-      const value = singleAssignment(name, at);
-      return (value && pyStringValue(value, value, depth + 1)) ?? hole;
+    const inFunction = fn?.type === "function_definition";
+    return text.replace(/\{([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}/g, (hole, name: string) => {
+      const value = inFunction && !name.includes(".") ? singleAssignment(name, at) : null;
+      const local = value ? pyStringValue(value, value, depth + 1) : null;
+      if (local !== null) return local;
+      return moduleBound(name, at) ? `\${${name}}` : hole;
     });
   }
   if (node.type === "concatenated_string") {
@@ -832,9 +842,71 @@ function pyStringValue(node: Node, at: Node, depth = 0): string | null {
   }
   if (node.type === "identifier") {
     const value = singleAssignment(node.text, at);
-    return value ? pyStringValue(value, value, depth + 1) : null;
+    if (value) return pyStringValue(value, value, depth + 1);
+    return moduleBound(node.text, at) ? `\${${node.text}}` : null;
+  }
+  // `Paths.MATCHES`, `urls.BASE`: a value another module (or a class) defines.
+  if (node.type === "attribute" && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(node.text)) {
+    return moduleBound(node.text, at) ? `\${${node.text}}` : null;
   }
   return null;
+}
+
+/** The names each parsed module binds at its top level, per tree. */
+const boundByTree = new WeakMap<object, Set<string>>();
+
+/**
+ * Whether a name (its head, for `urls.BASE`) is one the module binds — a
+ * module-level assignment, an import, a class — and nothing in the enclosing
+ * function rebinds: then its value is the module's (or the imported
+ * module's), which the project pass reads. `self.x` and a parameter never are.
+ */
+function moduleBound(name: string, at: Node): boolean {
+  const head = name.split(".")[0]!;
+  if (head === "self" || head === "cls") return false;
+  let names = boundByTree.get(at.tree);
+  if (!names) {
+    names = new Set<string>();
+    const root = at.tree.rootNode;
+    for (const stmt of root.namedChildren) {
+      if (stmt.type === "class_definition") {
+        const n = stmt.childForFieldName("name")?.text;
+        if (n) names.add(n);
+      } else if (stmt.type === "import_from_statement" || stmt.type === "import_statement") {
+        const moduleName = stmt.childForFieldName("module_name");
+        for (const c of stmt.namedChildren) {
+          if (stmt.type === "import_from_statement" && moduleName && c.startIndex === moduleName.startIndex) continue;
+          if (c.type === "aliased_import") {
+            const alias = c.childForFieldName("alias")?.text;
+            if (alias) names.add(alias);
+          } else if (c.type === "dotted_name") names.add(c.text.split(".")[0]!);
+        }
+      } else if (stmt.type === "expression_statement") {
+        const a = stmt.namedChild(0);
+        const left = a?.type === "assignment" ? a.childForFieldName("left") : null;
+        if (left?.type === "identifier") names.add(left.text);
+      }
+    }
+    boundByTree.set(at.tree, names);
+  }
+  if (!names.has(head)) return false;
+  // A parameter or local of an enclosing function shadows the module's name.
+  for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
+    if (fn.type !== "function_definition" && fn.type !== "lambda") continue;
+    const params = fn.childForFieldName("parameters");
+    if (params && new RegExp(`(?:^|[(,*\\s])${head}\\s*(?:[:=,)]|$)`).test(params.text)) return false;
+    let rebound = false;
+    const visit = (n: Node): void => {
+      if (rebound) return;
+      if (n !== fn && (n.type === "function_definition" || n.type === "class_definition")) return;
+      if ((n.type === "assignment" || n.type === "augmented_assignment" || n.type === "for_statement") && n.childForFieldName("left")?.text === head) rebound = true;
+      for (const c of n.namedChildren) visit(c);
+    };
+    const body = fn.childForFieldName("body");
+    if (body) visit(body);
+    if (rebound) return false;
+  }
+  return true;
 }
 
 /** The value `name` is assigned in the function enclosing `at`, when it is assigned exactly once there (else null). */
