@@ -153,6 +153,8 @@ describe("C# HTTP-client detection — receiver gating", () => {
   it("still trusts HttpClient-specific JSON helpers without a receiver check", async () => {
     const json = await apiCallsOf(`    var x = await _client.GetFromJsonAsync<Owner>("/owners/1");`);
     expect(json.some((s) => s.name === "GetFromJsonAsync")).toBe(true);
+    // A bare call is the class's own method (an extension calling its overload — real-repo FP).
+    expect(await apiCallsOf(`    return GetStreamAsync(OneOf<FileInfo, string>.FromT0(input.AsT1), storage, ct);`)).toEqual([]);
   });
 });
 

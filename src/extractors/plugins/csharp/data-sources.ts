@@ -1111,7 +1111,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // trusted without a receiver check.
     if (HTTP_CLIENT_METHODS.has(method)) {
       const httpish = HTTP_RECEIVER_RE.test(root) || HTTP_RECEIVER_RE.test(receiver);
-      if (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish) {
+      // A bare `GetStreamAsync(…)` is a method of the class itself (an overload, an extension's own
+      // helper), never HttpClient's, which is always called on an instance.
+      const ownMethod = !receiver || receiver === "this" || receiver === "base";
+      if (!ownMethod && (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish)) {
         // Which registered client the call goes through — its base address
         // says which service the relative URI is relative to.
         const client = csharpCallClient(node, root);
