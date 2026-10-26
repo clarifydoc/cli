@@ -108,4 +108,33 @@ pub fn select_car(conn: &mut Conn, id: &str) -> Result<Car> {
       "diesel: delete engine_table write @11",
     ]);
   });
+
+  it("read the table a query's column paths name when its source comes from a helper (real-repo FP)", () => {
+    const src = `use league_schema_file::schema::{match_report, club_actions};
+use league_views_sql::match_report_joins;
+
+impl MatchReportView {
+  pub async fn read(pool: &mut DbPool<'_>, id: MatchReportId) -> Result<Self> {
+    let res = match_report_joins(id)
+      .filter(match_report::id.eq(id))
+      .filter(match_report::resolved.eq(false))
+      .select(MatchReportView::as_select())
+      .first(conn)
+      .await?;
+    res
+  }
+  pub fn from_cursor(query: Query, kind: char, id: i32) -> Query {
+    match kind {
+      'C' => query.filter(match_report::club_report_id.eq(id)),
+      _ => query.filter(club_actions::club_id.eq(id)),
+    }
+  }
+}`;
+    const rows = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access} @${r.line}`)).toEqual([
+      "diesel match_report read @7",
+      "diesel match_report read @16",
+      "diesel club_actions read @17",
+    ]);
+  });
 });
