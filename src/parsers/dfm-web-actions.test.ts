@@ -35,3 +35,18 @@ end
     ]);
   });
 });
+
+describe("an Indy HTTP server on a form", () => {
+  it("answers every path in its OnCommandGet handler", () => {
+    const a = parseDfm(`object ScoreForm: TScoreForm
+  Caption = 'Scores'
+  object IdHTTPServer1: TIdHTTPServer
+    Bindings = <>
+    DefaultPort = 8081
+    OnCommandGet = IdHTTPServer1CommandGet
+  end
+end
+`, "Scores/fMain.fmx");
+    expect(a.routes.map((r) => `${r.httpMethod ?? "*"} ${r.path} ${r.handler}`)).toEqual(["* /** TScoreForm.IdHTTPServer1CommandGet"]);
+  });
+});

@@ -389,6 +389,24 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
     }
   }
 
+  // An Indy HTTP server component (`object IdHTTPServer1: TIdHTTPServer … OnCommandGet = …`) answers every
+  // path in its handler: a catch-all route on the form's method.
+  for (const obj of allObjects) {
+    if (!/^TId(?:Custom)?HTTPServer$/.test(obj.type)) continue;
+    for (const ev of obj.events) {
+      if (!/^OnCommand(?:Get|Other)$/.test(ev.event)) continue;
+      analysis.routes.push({
+        path: "/**",
+        httpMethod: null,
+        kind: "api",
+        handler: rootObject ? `${rootObject.type}.${ev.handler.trim()}` : ev.handler.trim(),
+        calls: [],
+        middleware: [],
+        line: ev.line,
+      });
+    }
+  }
+
   // Export the root form object as a class
   if (rootObject) {
     const properties: PropertyInfo[] = rootObject.props.map((p) => ({
