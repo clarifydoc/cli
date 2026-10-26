@@ -1066,6 +1066,40 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         else if (isModuleExports && right!.type === "object") this.extractObjectMembers(null, right!, functions, true, 0);
       }
 
+      // A script that wraps itself in an IIFE (`(function () { … })();`) declares at the top of that body;
+      // a function assigned to a namespace or a prototype there (`YAHOO.app.DatePicker = function (…)`,
+      // `DatePicker.prototype._onShow = function (…)`) is a function of its own.
+      const scriptLevel = moduleLevel || IIFE_BODIES.has(node.id);
+      if (scriptLevel && child.type === "expression_statement") {
+        const expr = child.namedChild(0);
+        const iife = expr?.type === "call_expression" ? expr.childForFieldName("function") : null;
+        const fn = iife?.type === "parenthesized_expression" ? iife.namedChild(0) : iife;
+        if (moduleLevel && (fn?.type === "function_expression" || fn?.type === "arrow_function")) {
+          const body = fn.childForFieldName("body");
+          if (body?.type === "statement_block") {
+            IIFE_BODIES.add(body.id);
+            this.extractJsFunctions(body, functions, false);
+            IIFE_BODIES.delete(body.id);
+          }
+        }
+        if (expr?.type === "assignment_expression") {
+          const left = expr.childForFieldName("left");
+          const right = expr.childForFieldName("right");
+          const path = left?.type === "member_expression" ? left.text.replace(/\s+/g, "") : "";
+          if (path && right && (right.type === "function_expression" || right.type === "arrow_function") &&
+            !/^(?:module\.)?exports\b|^this\./.test(path) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(path)) {
+            const parts = path.split(".");
+            const proto = parts.lastIndexOf("prototype");
+            const name = proto > 0 ? `${parts[proto - 1]}.${parts.slice(proto + 1).join(".")}` : parts[parts.length - 1]!;
+            if (name && !name.endsWith(".")) {
+              functions.push(this.parseJsArrowOrExpr(name, right, false));
+              const body = right.childForFieldName("body");
+              if (body?.type === "statement_block") this.extractJsFunctions(body, functions, false);
+            }
+          }
+        }
+      }
+
       if (
         child.type === "function_declaration" ||
         child.type === "generator_function_declaration"
@@ -1937,6 +1971,9 @@ function parseTsEnum(node: Node, isExported: boolean): ClassInfo {
 /** The field values that were stated once, for `ClassInfo.fieldValues`; nothing when there are none. */
 /** Nodes whose `this` is not the instance's: a nested function or class. */
 const OWN_THIS_SCOPES = new Set(["function_expression", "function_declaration", "generator_function", "generator_function_declaration", "class", "class_declaration"]);
+
+/** The bodies of the module-level IIFEs being read: their statements are the script's own. */
+const IIFE_BODIES = new Set<number>();
 
 /**
  * Fields a method other than the constructor creates: `init() { this.repo =

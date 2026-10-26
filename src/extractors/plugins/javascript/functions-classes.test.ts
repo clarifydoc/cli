@@ -534,3 +534,23 @@ export const settings = function () {
     expect(names).toEqual(["ClubsApiAxiosParamCreator@1", "ClubsApiAxiosParamCreator.createClub@3", "ClubsApiAxiosParamCreator.deleteClub@7", "settings@13"]);
   });
 });
+
+describe("legacy widgets declared by assignment inside an IIFE (real-repo FP)", () => {
+  it("records a namespace function and its prototype methods as functions", async () => {
+    const src = `(function() {
+  LEAGUE.app.widget.KickoffPicker = function(containerId, targetId) {
+    this.targetId = targetId;
+    this.hide();
+  }
+  LEAGUE.app.widget.KickoffPicker.prototype._onShow = function(type, args) {
+    LEAGUE.util.Dom.setXY(this.containerId, xy);
+  }
+})();
+function init() { window.onload = function () { start(); }; }`;
+    const tree = await parseSource(src, "javascript" as any, "kickoff-picker.js");
+    const names = new JavaScriptExtractor().extractFunctions(tree, src).map((f) => f.name);
+    expect(names).toEqual(expect.arrayContaining(["KickoffPicker", "KickoffPicker._onShow", "init"]));
+    // An assignment inside a function body stays that function's callback.
+    expect(names).not.toContain("onload");
+  });
+});
