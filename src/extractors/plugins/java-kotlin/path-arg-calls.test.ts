@@ -47,4 +47,31 @@ describe("Java request helpers handed a path", () => {
     expect(expandRequestFactories(calls, [a], buildImportIndex([a]))).toBe(2);
     expect(calls.map((c) => `${c.name} ${c.target}`).slice(1)).toEqual(["POST ${apiUrl}/rp/v2/assign", "POST ${apiUrl}/rp/v2/cancel"]);
   });
+
+  it("follows a URL local into openConnection and a URL local handed to the helper", async () => {
+    const src = `package com.example.league;
+
+public class StandingsApi {
+    public List<Row> table(String season) throws IOException {
+        String url = baseUrl() + "/api/standings/" + season + "?page=1";
+        return read(getContent(url));
+    }
+
+    private Object getContent(String urlString) throws IOException {
+        URL url = URI.create(urlString).toURL();
+        URLConnection connection = url.openConnection();
+        return connection.getContent();
+    }
+}
+`;
+    const tree = await parseSource(src, "java" as never, "StandingsApi.java");
+    const a = createEmptyAnalysis("src/main/java/com/example/league/StandingsApi.java", "java");
+    a.classes = new JavaKotlinExtractor().extractClasses(tree, src);
+    a.dataSources = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    a.pathArgCalls = extractJavaPathArgCalls(tree);
+    const calls = a.dataSources.filter((d) => d.kind === "api-call").map((d) => ({ ...d, filePath: a.filePath })) as Array<DataSourceInfo & { filePath: string }>;
+    expect(calls.map((c) => c.target)).toEqual(["${urlString}"]);
+    expect(expandRequestFactories(calls, [a], buildImportIndex([a]))).toBe(1);
+    expect(calls[1]!.target).toBe("${baseUrl()}/api/standings/${season}?page=1");
+  });
 });

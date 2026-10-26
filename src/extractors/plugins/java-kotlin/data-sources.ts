@@ -221,7 +221,12 @@ const HTTP_SEND_METHODS = new Set(["execute", "enqueue", "send", "sendAsync", "g
  */
 /** The URL argument of the `URI.create(x)` / `new URL(x)` an `openConnection()` chain starts from. */
 function findUrlArg(node: Node): Node | null {
-  let cur: Node | null = node.childForFieldName("object");
+  return urlArgFrom(node.childForFieldName("object"));
+}
+
+/** The URL argument of the `URI.create(x)` / `new URL(x)` an expression (`URI.create(x).toURL()`) starts from. */
+function urlArgFrom(start: Node | null): Node | null {
+  let cur: Node | null = start;
   for (let i = 0; cur && i < 4; i++) {
     if (cur.type === "object_creation_expression" && /^(?:URL|URI)$/.test(simpleTypeName(cur.childForFieldName("type")?.text) ?? "")) return firstJavaArg(cur.childForFieldName("arguments"));
     if (cur.type === "method_invocation" && cur.childForFieldName("name")?.text === "create" && cur.childForFieldName("object")?.text === "URI") return firstJavaArg(cur.childForFieldName("arguments"));
@@ -1155,11 +1160,15 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // — OkHttp `Request.Builder().url("…")`, `HttpRequest.newBuilder(URI.create("…"))`
     // / `.uri(URI.create("…"))` — and its verb from the rest of the chain.
     // `URI.create(url).toURL().openConnection()` / `new URL(url).openConnection()`: java.net's own client.
-    if (method === "openConnection" && /\.toURL\s*\(\s*\)$|^new\s+URL\s*\(/.test(receiver.trim())) {
-      const inner = /^(?:URI\.create|new\s+URL|new\s+URI)\s*\(([\s\S]*)\)(?:\.toURL\s*\(\s*\))?$/.exec(receiver.trim());
-      const argNode = inner ? findUrlArg(node) : null;
+    // …or `URL url = URI.create(urlString).toURL(); … url.openConnection()`.
+    const URL_START_RE = /^(?:URI\.create|new\s+URL|new\s+URI)\s*\(([\s\S]*)\)(?:\.toURL\s*\(\s*\))?$/;
+    const urlLocal = method === "openConnection" && /^\w+$/.test(receiver.trim()) ? localInitializer(node, receiver.trim()) : null;
+    if (method === "openConnection" && (/\.toURL\s*\(\s*\)$|^new\s+URL\s*\(/.test(receiver.trim()) || (urlLocal && URL_START_RE.test(urlLocal.text.trim())))) {
+      const argNode = urlLocal ? urlArgFrom(urlLocal) : URL_START_RE.test(receiver.trim()) ? findUrlArg(node) : null;
       const url = argNode ? urlExpression(argNode, node, 0) : null;
-      sources.push(this.ds({ kind: "api-call", name: "GET", target: url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null, line }));
+      // A URL the method is handed (`getContent(String urlString)`): its parameter, as a hole each caller fills.
+      const param = !url && argNode?.type === "identifier" && enclosingParamNames(node).has(argNode.text) ? `\${${argNode.text}}` : null;
+      sources.push(this.ds({ kind: "api-call", name: "GET", target: param ?? (url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null), line }));
       return;
     }
     // Spring `WebClient` / `RestClient`: `web.get().uri("/clubs/{id}", id).retrieve()` sends to the
@@ -1463,6 +1472,14 @@ function ownMethodReturnType(from: Node, name: string): string | null {
     if (t) types.add(t);
   }
   return types.size === 1 ? [...types][0]! : null;
+}
+
+/** The parameter names of the method or constructor enclosing `node`. */
+function enclosingParamNames(node: Node): Set<string> {
+  let m: Node | null = node.parent;
+  while (m && m.type !== "method_declaration" && m.type !== "constructor_declaration") m = m.parent;
+  const params = m?.childForFieldName("parameters")?.namedChildren ?? [];
+  return new Set(params.map((p) => p?.childForFieldName("name")?.text).filter((n): n is string => !!n));
 }
 
 /** The type an argument builds: Java `new X(...)`, Kotlin `X(...)`, a builder chain rooted at it (`X.newBuilder()…`). */
@@ -2126,9 +2143,10 @@ export function extractJavaPathArgCalls(tree: Tree): PathArgCall[] {
     if (!callee || !argList) continue;
     const argNodes = argList.namedChildren.filter((a): a is Node => !!a && a.type !== "comment");
     const args = argNodes.map((a) => {
-      if (a.type !== "string_literal" && a.type !== "additive_expression" && a.type !== "binary_expression") return null;
+      if (a.type !== "string_literal" && a.type !== "additive_expression" && a.type !== "binary_expression" && a.type !== "identifier") return null;
       const url = urlExpression(a, inv, 0);
-      return url && /^\/|^[\w.-]+\//.test(url) ? url : null;
+      // A local holding the URL (`String url = baseUrl() + "/api/queues/" + vHost(); get(url)`).
+      return url && (/^\/|^[\w.-]+\//.test(url) || (a.type === "identifier" && /^(?:\$\{[^{}]*\})+\/\w/.test(url))) ? url : null;
     });
     if (args.some((a) => a !== null)) {
       const argNames = argNodes.map((a) => (a.type === "identifier" ? a.text : null));
