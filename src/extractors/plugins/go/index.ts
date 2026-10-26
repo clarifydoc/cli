@@ -1,3 +1,4 @@
+import { extractGoPathArgCalls } from "./path-arg-calls.js";
 import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import type { ParamInfo } from "../../../types/analysis.js";
@@ -102,6 +103,8 @@ export const goSpec: RegexLangSpec = {
   extractDataSources: (lines) => extractGoDataSources(lines),
   // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
   extractModuleValues: extractGoModuleValues,
+  // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).
+  extractPathArgCalls: extractGoPathArgCalls,
   extractRequestAccess: extractGoRequestAccess,
   extractResponses: extractGoResponses,
 };

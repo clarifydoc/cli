@@ -1207,6 +1207,12 @@ export interface PathArgCall {
   callee: string;
   /** Each positional argument: a string literal's content, else null. */
   args: Array<string | null>;
+  /**
+   * Each positional argument that is a bare name, as written (`url` in
+   * `NewClientRequest(method, url)`), else null: where it is a parameter of
+   * the function making the call, that function is itself a factory.
+   */
+  argNames?: Array<string | null>;
   line: number;
   /**
    * The project class the call is made on, as written (`ApiConnection` in

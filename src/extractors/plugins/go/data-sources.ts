@@ -1,6 +1,7 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { argValue, callArgs, consumeDestination, publishDestination } from "./mq-destinations.js";
 import { stringConstants } from "./routes.js";
+import { goFunctions, goRequestFactoryRows } from "./path-arg-calls.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
@@ -135,6 +136,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
   let constants: Map<string, string> | undefined;
   let kvClient: boolean | undefined;
+  let functions: ReturnType<typeof goFunctions> | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -174,7 +176,10 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
     if (newReq) {
-      const target = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
+      let target = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
+      // `http.NewRequest("GET", url, nil)` with the URL its function's parameter: a factory each call site fills.
+      const urlArg = /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(line.slice(newReq.index! + newReq[0].length))?.[1];
+      if (target === null && urlArg && (functions ??= goFunctions(lines)).some((f) => !f.testHelper && f.start <= i && i <= f.end && f.params.includes(urlArg))) target = `\${${urlArg}}`;
       sources.push({ kind: "api-call", name: (newReq[1] ?? newReq[2]!).toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }
@@ -263,6 +268,10 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       });
     }
   }
+
+  // Request factories built from their parameters (`http.Request{Method: method}`): path-arg-calls.ts.
+  const stated = new Set(sources.filter((d) => d.kind === "api-call").map((d) => d.line));
+  for (const d of goRequestFactoryRows(lines)) if (!stated.has(d.line)) sources.push(d);
 
   // xorm sessions (gitea): the entity is the terminal verb's argument (xorm.ts).
   const gormLines = new Set(sources.filter((d) => d.name.startsWith("GORM:")).map((d) => d.line));

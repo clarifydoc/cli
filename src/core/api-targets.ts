@@ -1,6 +1,8 @@
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 import { buildModuleValueLookup } from "./module-values.js";
+import { buildImportDirectoryResolver } from "./import-directories.js";
+import { importsNameDirectories, pluginFor } from "../extractors/registry.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -176,8 +178,6 @@ export function expandRequestFactories(
   const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
   if (!analyses.some((a) => a.pathArgCalls?.length)) return 0;
 
-  // Factory rows per (file, function name).
-  const factories = new Map<string, FactoryRow[]>();
   const fnsOf = new Map<string, FunctionInfo[]>();
   const functionsIn = (file: string): FunctionInfo[] => {
     let fns = fnsOf.get(file);
@@ -188,7 +188,10 @@ export function expandRequestFactories(
     }
     return fns;
   };
-  for (const row of calls) {
+  /** Factory rows per (file, function name): the rows whose URL holes are their function's parameters. */
+  const factoriesOf = (rows: readonly ApiCall[]): Map<string, FactoryRow[]> => {
+  const factories = new Map<string, FactoryRow[]>();
+  for (const row of rows) {
     if (row.kind !== "api-call" || !row.target) continue;
     const holes = new Set<string>();
     for (const url of [row.target, ...(row.targetAlternatives ?? [])]) for (const m of url.matchAll(HOLE)) holes.add((m[1] ?? m[2])!);
@@ -210,6 +213,9 @@ export function expandRequestFactories(
       factories.set(key, list);
     }
   }
+  return factories;
+  };
+  let factories = factoriesOf(calls);
   if (factories.size === 0) return 0;
 
   /**
@@ -248,7 +254,13 @@ export function expandRequestFactories(
   };
 
   const known = new Set(calls.filter((c) => c.kind === "api-call" && c.target).map((c) => `${c.filePath}:${c.line}:${c.target}`));
+  let importDirectory: ((source: string, fromFile: string) => string | null) | null = null;
+  const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
   let added = 0;
+  // A factory calling a factory: a site handing on its own function's parameter
+  // (`argNames`) makes that function a factory of the next level.
+  for (let level = 0; level < 6 && factories.size > 0; level++) {
+  const produced: Array<{ row: ApiCall; onward: boolean }> = [];
   for (const a of analyses) {
     for (const site of a.pathArgCalls ?? []) {
       const ownKey = `${a.filePath}::${site.callee}`;
@@ -261,17 +273,24 @@ export function expandRequestFactories(
           const chain = [receiver, ...classes.ancestors(receiver).flatMap((s) => (s.ref ? [s.ref] : []))];
           const owner = chain.find((c) => c.cls.methods.some((m) => m.name === site.callee));
           const rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
-          if (rows) added += expandSite(calls, a.filePath, site, rows, known);
+          if (rows) expandSite(produced, a.filePath, site, rows, known);
         }
         continue;
       }
       // `signedUrlService.fetch(url)`: the method of that object, in its own module or the one it is imported from.
-      const objectRows = site.receiver
+      let objectRows = site.receiver
         ? factories.get(`${importIndex.localFor(a.filePath, site.receiver) ?? a.filePath}::${site.receiver}.${site.callee}`)
         : undefined;
+      // `httplib.NewClientRequest(method, url)`: a function of the package directory the import names.
+      if (!objectRows && site.receiver && importsNameDirectories(a.language)) {
+        const imp = (a.imports ?? []).find((i) => i.specifiers.includes(site.receiver!));
+        const dir = imp ? (importDirectory ??= buildImportDirectoryResolver(analyses))(imp.source, a.filePath) : null;
+        const hits = dir === null ? [] : [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`) && dirOf(k.slice(0, k.indexOf("::"))) === dir);
+        if (hits.length === 1) objectRows = factories.get(hits[0]!);
+      }
       // A site naming its object joins that object's method only, never a same-named function elsewhere.
       if (site.receiver) {
-        if (objectRows) added += expandSite(calls, a.filePath, site, objectRows, known);
+        if (objectRows) expandSite(produced, a.filePath, site, objectRows, known);
         continue;
       }
       const source = importIndex.localFor(a.filePath, site.callee);
@@ -282,7 +301,15 @@ export function expandRequestFactories(
       const chain = rows || source || imported ? null : inherited(a.filePath, site.line);
       if (chain?.inClass) {
         rows = chain.find(site.callee);
-      } else if (!rows && !source) {
+      } else if (!rows && !source && pluginFor(a.language)?.directoryScope) {
+        // A function of another file of the caller's own package (Go): that one, or nothing.
+        const dir = dirOf(a.filePath);
+        const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`) && dirOf(k.slice(0, k.indexOf("::"))) === dir);
+        if (named.length === 1) rows = factories.get(named[0]!);
+      }
+      // A bare call in a package-scoped language (Go) never reaches another package.
+      const packageScoped = pluginFor(a.language)?.directoryScope && importsNameDirectories(a.language);
+      if (!rows && !source && !chain?.inClass && !packageScoped) {
         // An import the index cannot resolve — a bundler's source-root path
         // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
         // the project with that name, or nothing.
@@ -297,14 +324,23 @@ export function expandRequestFactories(
         const fnName = def ? functionsIn(source).find((f) => f.line === def.line)?.name : undefined;
         if (fnName) rows = factories.get(`${source}::${fnName}`);
       }
-      if (rows) added += expandSite(calls, a.filePath, site, rows, known);
+      if (rows) expandSite(produced, a.filePath, site, rows, known);
     }
+  }
+  const onward = produced.filter((p) => p.onward).map((p) => p.row);
+  for (const p of produced) {
+    if (p.onward) continue;
+    calls.push(p.row);
+    known.add(`${p.row.filePath}:${p.row.line}:${p.row.target}`);
+    added++;
+  }
+  factories = factoriesOf(onward);
   }
   return added;
 }
 
 /** The rows one call site of a factory adds: each factory row with the site's literals in its holes. */
-function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows: FactoryRow[], known: ReadonlySet<string>): number {
+function expandSite(calls: Array<{ row: ApiCall; onward: boolean }>, filePath: string, site: PathArgCall, rows: FactoryRow[], known: ReadonlySet<string>): number {
   let chosen = rows;
   let method: string | null = null;
   if (site.method && VERBS.has(site.method)) {
@@ -319,6 +355,8 @@ function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows:
   const seen = new Set<string>();
   let added = 0;
   for (const f of chosen) {
+    // A hole handed the caller's own parameter (`argNames`) stays a hole of that name: the row is the next level's factory.
+    let onward = false;
     const fill = (url: string): string | null => {
       let ok = true;
       const out = url.replace(HOLE, (whole, js: string | undefined, php: string | undefined) => {
@@ -326,6 +364,11 @@ function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows:
         if (i === undefined) return whole;
         const arg = site.args[i];
         if (arg === null || arg === undefined) {
+          const name = site.argNames?.[i];
+          if (name) {
+            onward = true;
+            return `\${${name}}`;
+          }
           ok = false;
           return whole;
         }
@@ -342,14 +385,17 @@ function expandSite(calls: ApiCall[], filePath: string, site: PathArgCall, rows:
     if (known.has(`${filePath}:${site.line}:${target}`)) continue;
     const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
     calls.push({
-      ...f.row,
-      // A row named by its verb is what the route linker reads the method from.
-      ...(method ? { name: method } : {}),
-      filePath,
-      line: site.line,
-      target,
-      ...(alternatives.length ? { targetAlternatives: alternatives } : {}),
-      via: site.callee,
+      row: {
+        ...f.row,
+        // A row named by its verb is what the route linker reads the method from.
+        ...(method ? { name: method } : {}),
+        filePath,
+        line: site.line,
+        target,
+        ...(alternatives.length ? { targetAlternatives: alternatives } : {}),
+        via: site.callee,
+      },
+      onward,
     });
     added++;
   }
