@@ -302,6 +302,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               instance = !table;
             }
           }
+          // A manager on a model held in a variable (`model.objects.filter`, `self.Meta.model.objects.all`):
+          // the model is a run-time value, and the manager's name is no table either.
+          if (!table && !instance && /(?:^|\.)objects\.[A-Za-z_]\w*$/.test(fnName.replace(/\([^()]*\)/g, "()"))) instance = true;
           // A related manager (`doc.tags.all()`) is named after its relation field, never a table:
           // the entity pass resolves the field to the model it relates to.
           const relatedField = !table && !instance && !datastoreChain(fnName) && relatedManager(fnName, leaf) ? parts[parts.length - 2] : undefined;
