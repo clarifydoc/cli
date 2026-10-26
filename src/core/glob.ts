@@ -125,11 +125,21 @@ function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links,
  *
  * @returns Matching paths, relative to `cwd` unless `absolute` is set
  */
-export function glob(patterns: string | readonly string[], options: GlobOptions): Promise<string[]> {
-  return tinyGlob(patterns, toEngine(options));
+export async function glob(patterns: string | readonly string[], options: GlobOptions): Promise<string[]> {
+  return sorted(await tinyGlob(patterns, toEngine(options)));
 }
 
 /** Synchronous `glob`, for callers that cannot await. */
 export function globSync(patterns: string | readonly string[], options: GlobOptions): string[] {
-  return tinyGlobSync(patterns, toEngine(options));
+  return sorted(tinyGlobSync(patterns, toEngine(options)));
+}
+
+/**
+ * Results in code-point order. The async walk lists directories as their reads
+ * complete, so two runs over one tree returned the same paths in different
+ * orders — and every caller that keeps the first of several (a manifest a
+ * `limit` cuts, the first declaration of a package) wrote different output.
+ */
+function sorted(paths: string[]): string[] {
+  return paths.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }

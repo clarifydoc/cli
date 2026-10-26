@@ -199,11 +199,11 @@ export function analyzeBlastRadius(
           name,
           usedByCount: callers.length,
           callers: callers
-            .sort((a, b) => byOrdinal(a.file, b.file))
+            .sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line)
             .slice(0, CALLERS_LIST_CAP),
         });
       }
-      exportedSymbols.sort((a, b) => b.usedByCount - a.usedByCount);
+      exportedSymbols.sort((a, b) => b.usedByCount - a.usedByCount || byOrdinal(a.name, b.name));
     }
 
     // ── Centrality ──
@@ -245,8 +245,9 @@ export function analyzeBlastRadius(
     });
   }
 
-  // Sort by impact score descending
-  results.sort((a, b) => b.impactScore - a.impactScore);
+  // Sort by impact score descending; ties by path, so a cold and an incremental
+  // run (whose files arrive in different orders) write the same rows in the same order.
+  results.sort((a, b) => b.impactScore - a.impactScore || byOrdinal(a.filePath, b.filePath));
 
   return results;
 }
