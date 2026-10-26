@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clientProxyCalls } from "./client-proxies.js";
+import { clientProxyCalls, proxiedOnlyTypes } from "./client-proxies.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const call = (name: string, line: number) => ({ name, kind: "cross-file" as const, target: null, line });
@@ -76,5 +76,17 @@ describe("clientProxyCalls", () => {
       }],
     } as unknown as FileAnalysis;
     expect(clientProxyCalls([registry, helper]).map((c) => [c.line, c.name])).toEqual([[40, "PersonApi.getPerson"]]);
+  });
+});
+
+describe("proxiedOnlyTypes", () => {
+  it("names a proxied API interface no class of the project implements (real-repo FP)", () => {
+    const leagueRegistry = { ...registry, httpClientRegistrations: [
+      ...registry.httpClientRegistrations!,
+      { client: "com.acme.api.LeagueApi", scope: "project", proxyOf: "com.acme.api.LeagueApi", line: 9 },
+    ] } as FileAnalysis;
+    const server = { ...caller, filePath: "src/main/java/com/acme/billing/LeagueApiImpl.java", classes: [{ name: "LeagueApiImpl", extends: null, implements: ["LeagueApi"], methods: [], properties: [] }] } as unknown as FileAnalysis;
+    expect([...proxiedOnlyTypes([leagueRegistry, caller, server])]).toEqual(["com.acme.api.PersonApi"]);
+    expect([...proxiedOnlyTypes([caller])]).toEqual([]);
   });
 });

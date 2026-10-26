@@ -127,7 +127,7 @@ import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-
 import { applyRouteBases } from "./route-bases.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
-import { clientProxyCalls, dropProxiedDatabaseRows } from "./client-proxies.js";
+import { clientProxyCalls, dropProxiedDatabaseRows, proxiedOnlyTypes } from "./client-proxies.js";
 import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
@@ -1180,6 +1180,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // controller-action convention) into one richest entry, so the route map and
   // the cross-tier linker don't double-count or pick a code-less handler.
   const languageByPath = new Map(allAnalyses.map((a) => [a.filePath, a.language]));
+  // An API interface the project only reaches through a client proxy declares the remote
+  // service's endpoints, not routes served here: its calls stay the remote's to join.
+  const proxiedOnly = proxiedOnlyTypes(allAnalyses);
+  if (proxiedOnly.size > 0) {
+    for (const a of allAnalyses) {
+      if (isApiContractLanguage(a.language)) continue;
+      a.routes = a.routes.filter((r) => !(r.contract && proxiedOnly.has(r.contract.type)));
+    }
+  }
   const allRoutes = dedupeRoutes(
     allAnalyses.flatMap((a) =>
       a.routes.map((r) => ({ ...r, filePath: a.filePath, projectId: a.projectId ?? "root" })),

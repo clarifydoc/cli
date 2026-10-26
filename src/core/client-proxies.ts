@@ -215,6 +215,24 @@ function helperCall(name: string): { fn: string; method: string } | null {
 }
 
 /**
+ * The API interfaces a project only calls: each type a client-proxy registration
+ * names (`HttpClientRegistration.proxyOf`) that no class of the project
+ * implements or extends. Its routes are the remote service's endpoints, which
+ * this project reaches through the proxy — not routes it serves.
+ */
+export function proxiedOnlyTypes(analyses: readonly FileAnalysis[]): Set<string> {
+  const proxied = new Set<string>();
+  for (const a of analyses) for (const r of a.httpClientRegistrations ?? []) if (r.proxyOf) proxied.add(r.proxyOf);
+  if (proxied.size === 0) return proxied;
+  const simple = (t: string) => t.replace(/<.*$/s, "").trim().split(".").pop()!;
+  const implemented = new Set<string>();
+  for (const a of analyses) {
+    for (const c of a.classes) for (const t of [...(c.implements ?? []), ...(c.extends ? [c.extends] : [])]) implemented.add(simple(t));
+  }
+  return new Set([...proxied].filter((t) => !implemented.has(simple(t))));
+}
+
+/**
  * A call through a client proxy is a request, not also a database access: a
  * plugin that reads a repository-named receiver (`personRepository.findPersons(…)`)
  * as a data-access row cannot see per file that the receiver is a REST proxy.
