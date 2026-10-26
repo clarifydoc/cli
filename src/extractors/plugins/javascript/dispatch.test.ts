@@ -91,6 +91,45 @@ describe("JsComponentEmitResolver", () => {
     const [link] = new JsComponentEmitResolver().resolve([kebabParent, camelChild]);
     expect(link?.targetSymbol).toBe("onItemClick");
     expect(link?.sourceSymbol).toBe("<template>"); // no containing fn at the emit line
+    // Named as the child emits it, so the child's `emit('itemClick')` click finds the parent's handler.
+    expect(link?.callName).toBe("emit:itemClick");
+  });
+
+  it("names the link as the child's markup emits it (real-repo FP)", () => {
+    const kebabParent = fa("src/pages/Garage.vue", {
+      functions: [fn("clearSelectedCar", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@cancel-car-selection", handler: "clearSelectedCar", line: 4, component: "CarPicker" }],
+      subComponents: [{ name: "CarPicker", importSource: "../components/CarPicker.vue", props: [], line: 4 }],
+    });
+    const child = fa("src/components/CarPicker.vue", {
+      events: [{ name: "cancelCarSelection", params: [], line: 3 }],
+      interactiveElements: [{ element: "button", event: "@click", handler: "emit('cancelCarSelection')", line: 12 }],
+    });
+    const [link] = new JsComponentEmitResolver().resolve([kebabParent, child]);
+    expect(link).toMatchObject({ callName: "emit:cancelCarSelection", targetSymbol: "clearSelectedCar" });
+  });
+
+  it("follows a parent that only passes the event on to its own parent's handler, from each function emitting it (real-repo FP)", () => {
+    const page = fa("src/pages/Garage.vue", {
+      functions: [fn("createCar", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@create", handler: "createCar", line: 4, component: "CarEditor" }],
+      subComponents: [{ name: "CarEditor", importSource: "../components/CarEditor.vue", props: [], line: 4 }],
+    });
+    const editor = fa("src/components/CarEditor.vue", {
+      interactiveElements: [{ element: "custom", event: "@create", handler: "(data) => $emit('create', data)", line: 6, component: "CarDialog" }],
+      subComponents: [{ name: "CarDialog", importSource: "./CarDialog.vue", props: [], line: 6 }],
+      events: [{ name: "create", params: [], line: 6 }],
+    });
+    const dialog = fa("src/components/CarDialog.vue", {
+      functions: [fn("handleSubmit", 40, 60)],
+      // Declared, then emitted from handleSubmit.
+      events: [{ name: "create", params: [], line: 3 }, { name: "create", params: [], line: 55 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, editor, dialog]);
+    expect(links.map((l) => `${l.sourceFile}:${l.sourceSymbol} ${l.callName} -> ${l.targetFile}:${l.targetSymbol}`).sort()).toEqual([
+      "src/components/CarDialog.vue:handleSubmit emit:create -> src/pages/Garage.vue:createCar",
+      "src/components/CarEditor.vue:<template> emit:create -> src/pages/Garage.vue:createCar",
+    ]);
   });
 
   it("creates nothing for events the child never declares (native fallthrough)", () => {
@@ -170,7 +209,7 @@ describe("component-emit through a Nuxt project's auto-imported components", () 
     } as Partial<FileAnalysis>);
     const links = new JsComponentEmitResolver().resolve([config, page, card]);
     expect(links.map((l) => `${l.sourceFile}:${l.callName} -> ${l.targetSymbol}`)).toEqual([
-      "web/app/components/Domain/Club/ClubDataPage.vue:emit:delete-one -> handleDelete",
+      "web/app/components/Domain/Club/ClubDataPage.vue:emit:deleteOne -> handleDelete",
     ]);
   });
 

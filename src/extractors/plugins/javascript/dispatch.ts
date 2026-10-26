@@ -27,15 +27,19 @@ export class JsComponentEmitResolver implements DispatchResolver {
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
-    const links: SymbolLink[] = [];
     const globals = globalComponentFiles(analyses, filePathMap);
     const autoImported = autoImportedComponents(analyses);
+    const spanCache = new Map<FileAnalysis, SymbolSpan[]>();
+    const spans = (a: FileAnalysis) => spanCache.get(a) ?? spanCache.set(a, spansOf(a)).get(a)!;
 
+    // Every binding of a child's event on its tag: child file → event key → bindings.
+    interface Binding { parent: FileAnalysis; handler: string; child: FileAnalysis; event: string }
+    const bindings = new Map<string, Map<string, Binding[]>>();
     for (const parent of analyses) {
-      const bindings = (parent.interactiveElements ?? []).filter(
+      const els = (parent.interactiveElements ?? []).filter(
         (el) => el.element === "custom" && el.component && el.handler && el.event.startsWith("@"),
       );
-      if (bindings.length === 0) continue;
+      if (els.length === 0) continue;
 
       // Tag → child import source, tolerant of kebab-vs-Pascal (<my-button> / MyButton);
       // a tag the file does not import is the component registered app-wide under that name,
@@ -46,49 +50,91 @@ export class JsComponentEmitResolver implements DispatchResolver {
         if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       }
       if (subByKey.size === 0) continue;
-
-      let parentSpans: SymbolSpan[] | null = null;
-
-      for (const el of bindings) {
-        const handlerName = cleanHandler(el.handler!);
-        if (!handlerName) continue; // inline expression, not a named handler
-        const eventName = el.event.slice(1).split(".")[0]!; // strip @ + modifiers
-
+      for (const el of els) {
         const importSource = subByKey.get(tagKey(el.component!));
         if (!importSource) continue;
         const childFile = resolveTarget(importSource, parent.filePath, filePathMap);
         const child = childFile ? byPath.get(childFile) : undefined;
         if (!child) continue; // external/library component — nothing to wire
+        const event = el.event.slice(1).split(".")[0]!; // strip @ + modifiers
+        const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
+        const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
+        list.push({ parent, handler: el.handler!, child, event });
+      }
+    }
 
-        // Declared, or emitted straight from the child's markup (`@click="$emit('delete')"`).
-        const declared = (child.events ?? []).find((e) => tagKey(e.name) === tagKey(eventName)) ?? markupEmit(child, eventName);
-        if (!declared) continue; // child never emits this event (native fallthrough)
+    /**
+     * The functions an event of `file` reaches: each parent's named handler, and
+     * where the parent only passes it on (`@save="(car) => $emit('save', car)"`),
+     * the handlers its own parents bind to that event, up to four levels.
+     */
+    const targetsOf = (file: string, key: string, depth: number, seen: Set<string>): Array<{ file: string; span: SymbolSpan }> => {
+      const at = `${file}#${key}`;
+      if (depth > 4 || seen.has(at)) return [];
+      seen.add(at);
+      const out: Array<{ file: string; span: SymbolSpan }> = [];
+      for (const b of bindings.get(file)?.get(key) ?? []) {
+        const reEmit = REEMIT.exec(b.handler.trim());
+        if (reEmit) {
+          out.push(...targetsOf(b.parent.filePath, tagKey(reEmit[1]!), depth + 1, seen));
+          continue;
+        }
+        const name = cleanHandler(b.handler);
+        if (!name) continue; // inline expression, not a named handler
+        const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+        if (span) out.push({ file: b.parent.filePath, span });
+      }
+      return out;
+    };
 
-        parentSpans ??= spansOf(parent);
-        const handler = parentSpans.find(
-          (sp) => sp.symbol === handlerName || sp.symbol.endsWith(`.${handlerName}`),
-        );
-        if (!handler) continue;
-
-        // Anchor the child side at the function containing the emit; a
-        // template-inline or setup-level emit has no span — a synthetic
-        // `<template>` symbol keeps the edge (the report joins by callName).
-        const emitFn = innermostAt(spansOf(child), declared.line);
-        links.push({
-          sourceFile: child.filePath,
-          sourceSymbol: emitFn?.symbol ?? "<template>",
-          sourceLine: declared.line,
-          callName: `emit:${eventName}`,
-          targetFile: parent.filePath,
-          targetSymbol: handler.symbol,
-          targetLine: handler.line,
-          confidence: "INFERRED",
-        });
+    const links: SymbolLink[] = [];
+    const seenLink = new Set<string>();
+    for (const [childFile, byEvent] of bindings) {
+      const child = byPath.get(childFile)!;
+      for (const [key, list] of byEvent) {
+        // Declared or emitted in the child's script, or emitted straight from its markup (`@click="$emit('delete')"`).
+        const markup = markupEmit(child, list[0]!.event);
+        const sites = (child.events ?? []).filter((e) => tagKey(e.name) === key);
+        if (sites.length === 0 && !markup) continue; // child never emits this event (native fallthrough)
+        const targets = targetsOf(childFile, key, 0, new Set()).slice(0, 8);
+        if (targets.length === 0) continue;
+        // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
+        // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
+        const callName = `emit:${markup?.name ?? sites[0]!.name}`;
+        // Anchor the child side at each function that emits it; a template-inline or
+        // setup-level emit has no span — a synthetic `<template>` symbol keeps the edge
+        // (the report joins by callName).
+        const anchors = new Map<string, number>();
+        for (const site of sites) {
+          const fn = innermostAt(spans(child), site.line);
+          if (fn && !anchors.has(fn.symbol)) anchors.set(fn.symbol, site.line);
+        }
+        if (anchors.size === 0) anchors.set("<template>", sites[0]?.line ?? markup!.line);
+        for (const [symbol, line] of anchors) {
+          for (const t of targets) {
+            const k = `${symbol}\u0000${callName}\u0000${t.file}\u0000${t.span.symbol}`;
+            if (seenLink.has(`${childFile}\u0000${k}`)) continue;
+            seenLink.add(`${childFile}\u0000${k}`);
+            links.push({
+              sourceFile: childFile,
+              sourceSymbol: symbol,
+              sourceLine: line,
+              callName,
+              targetFile: t.file,
+              targetSymbol: t.span.symbol,
+              targetLine: t.span.line,
+              confidence: "INFERRED",
+            });
+          }
+        }
       }
     }
     return links;
   }
 }
+
+/** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */
+const REEMIT = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(\s*['"]([\w:-]+)['"][^;]*\)$/;
 
 /**
  * React's emit: a callback handed down as a prop. `<AddNewMovie
@@ -253,10 +299,10 @@ function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string,
 }
 
 /** An event the child's markup emits itself (`@click="$emit('delete', club.id)"`), at that element's line. */
-function markupEmit(child: FileAnalysis, eventName: string): { line: number } | null {
+function markupEmit(child: FileAnalysis, eventName: string): { name: string; line: number } | null {
   for (const el of child.interactiveElements ?? []) {
     for (const m of el.handler?.matchAll(/(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:-]+)['"]/g) ?? []) {
-      if (tagKey(m[1]!) === tagKey(eventName)) return { line: el.line };
+      if (tagKey(m[1]!) === tagKey(eventName)) return { name: m[1]!, line: el.line };
     }
   }
   return null;
