@@ -1,3 +1,4 @@
+import { prismaMigrationFiles } from "./migration-files.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { prismaFrameworkRules } from "./frameworks.js";
 
@@ -8,6 +9,7 @@ import { prismaFrameworkRules } from "./frameworks.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const prismaManifest: LanguagePluginManifest = {
+  migrationFiles: prismaMigrationFiles,
   language: "prisma",
   parsing: "regex",
   extensions: [".prisma"],

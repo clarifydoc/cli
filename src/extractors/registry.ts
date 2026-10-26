@@ -12,6 +12,7 @@ import type {
   SecurityRule,
   AstExtractorHooks,
   FrameworkRule,
+  MigrationFileRule,
 } from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
@@ -354,6 +355,9 @@ const DIRECTORY_IMPORT_LANGUAGES: ReadonlySet<string> = new Set(
 export function importsNameDirectories(language: string): boolean {
   return DIRECTORY_IMPORT_LANGUAGES.has(language);
 }
+
+/** Every manifest's migration-file rules (`LanguagePluginManifest.migrationFiles`), whatever language was discovered. */
+export const MIGRATION_FILE_RULES: readonly MigrationFileRule[] = ALL_MANIFESTS.flatMap((m) => m.migrationFiles ?? []);
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);

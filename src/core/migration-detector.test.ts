@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectMigrations } from "./migration-detector.js";
+import { MIGRATION_FILE_RULES } from "../extractors/registry.js";
 
 describe("detectMigrations — EF Core dedup", () => {
   it("counts an EF migration once, ignoring its .Designer companion and the ModelSnapshot", () => {
@@ -57,5 +58,30 @@ describe("detectMigrations — Liquibase", () => {
       "src/main/resources/applicationContext.xml",
     ]).map((m) => `${m.ecosystem} ${m.name}`);
     expect(found).toEqual(["liquibase changelog-cup-master", "liquibase db.changelog-1.0", "liquibase fixtures"]);
+  });
+});
+
+describe("detectMigrations — plugin rules", () => {
+  const samples: Record<string, string> = {
+    "prisma/migrations/20240101_init/migration.sql": "prisma",
+    "migrations/2024-01-01-000000_create_clubs/up.sql": "diesel",
+    "src/main/resources/db/changelog/db.changelog-master.xml": "liquibase",
+    "src/main/resources/db/migration/V1__clubs.sql": "flyway",
+    "db/migrate/20240101120000_create_players.rb": "rails",
+    "alembic/versions/3f2a9c1b_add_garage.py": "alembic",
+    "league/migrations/0001_initial.py": "django",
+    "Infrastructure/Migrations/20250101000000_Initial.cs": "ef-core",
+    "src/Migrations/Version20240101000000.php": "doctrine",
+    "db/migrations/20240101120000_create_clubs.go": "gorm",
+    "src/migrations/1700000000000-AddCars.ts": "typeorm",
+    "migrations/20240101120000-create-match.js": "sequelize",
+  };
+
+  it("classifies each ecosystem's convention through exactly one rule", () => {
+    for (const [path, ecosystem] of Object.entries(samples)) {
+      const hits = MIGRATION_FILE_RULES.map((rule) => rule(path)).filter((h) => h !== null);
+      expect(hits.map((h) => h!.ecosystem), path).toEqual([ecosystem]);
+    }
+    expect(detectMigrations(Object.keys(samples)).length).toBe(Object.keys(samples).length);
   });
 });

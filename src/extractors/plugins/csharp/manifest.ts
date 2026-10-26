@@ -1,3 +1,4 @@
+import { csharpMigrationFiles } from "./migration-files.js";
 import { dotnetProjectCommands } from "./project-commands.js";
 import { dotnetTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -12,6 +13,7 @@ import { csharpServiceConfig } from "./service-config.js";
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const csharpManifest: LanguagePluginManifest = {
+  migrationFiles: csharpMigrationFiles,
   testCommand: dotnetTestCommand,
   projectCommands: dotnetProjectCommands,
   language: "csharp",

@@ -1,3 +1,4 @@
+import { jsMigrationFiles } from "./migration-files.js";
 import { jsProjectCommands } from "./project-commands.js";
 import { jsTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -152,6 +153,7 @@ export const typescriptManifest: LanguagePluginManifest = {
 };
 
 export const javascriptManifest: LanguagePluginManifest = {
+  migrationFiles: jsMigrationFiles,
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
   language: "javascript",

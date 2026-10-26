@@ -1,3 +1,4 @@
+import { goMigrationFiles } from "./migration-files.js";
 import { goProjectCommands } from "./project-commands.js";
 import { goTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -11,6 +12,7 @@ import { goPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const goManifest: LanguagePluginManifest = {
+  migrationFiles: goMigrationFiles,
   testCommand: goTestCommand,
   projectCommands: goProjectCommands,
   language: "go",

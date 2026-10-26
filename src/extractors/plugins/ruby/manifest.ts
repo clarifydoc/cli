@@ -1,3 +1,4 @@
+import { rubyMigrationFiles } from "./migration-files.js";
 import { rubyProjectCommands } from "./project-commands.js";
 import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -11,6 +12,7 @@ import { rubygemsPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rubyManifest: LanguagePluginManifest = {
+  migrationFiles: rubyMigrationFiles,
   testCommand: rubyTestCommand,
   projectCommands: rubyProjectCommands,
   language: "ruby",

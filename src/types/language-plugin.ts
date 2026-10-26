@@ -23,6 +23,7 @@ import type {
   HttpClientRegistration,
   ProxyRule,
   GeneratedClientConfig,
+  MigrationInfo,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -1235,6 +1236,14 @@ export interface LanguagePluginManifest {
    * the importer uses.
    */
   importsNameDirectories?: boolean;
+  /**
+   * Migration files of this ecosystem's tools, recognised by path convention
+   * (`db/migrate/<version>_<name>.rb`, Flyway's `V2__x.sql`): each rule names
+   * the ecosystem and the migration, or returns null. Read for every
+   * discovered file whatever language owns it (a Prisma `migration.sql` is
+   * the SQL plugin's file), so rules of different plugins must not overlap.
+   */
+  migrationFiles?: readonly MigrationFileRule[];
 }
 
 /**
@@ -1581,3 +1590,5 @@ export interface ProjectCommand {
   source: string;
 }
 
+/** A migration file recognised by its path: its ecosystem and the migration's name, or null. */
+export type MigrationFileRule = (path: string) => { ecosystem: MigrationInfo["ecosystem"]; name: string } | null;

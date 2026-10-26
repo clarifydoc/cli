@@ -1,3 +1,4 @@
+import { pythonMigrationFiles } from "./migration-files.js";
 import { pythonProjectCommands } from "./project-commands.js";
 import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -12,6 +13,7 @@ import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const pythonManifest: LanguagePluginManifest = {
+  migrationFiles: pythonMigrationFiles,
   blockingCalls: /^(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|urllib\.request\.urlopen|urlopen|subprocess\.(?:run|call|check_call|check_output))$/,
   testCommand: pythonTestCommand,
   projectCommands: pythonProjectCommands,

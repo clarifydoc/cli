@@ -1,3 +1,4 @@
+import { phpMigrationFiles } from "./migration-files.js";
 import { phpProjectCommands } from "./project-commands.js";
 import { phpTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -11,6 +12,7 @@ import { composerPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const phpManifest: LanguagePluginManifest = {
+  migrationFiles: phpMigrationFiles,
   testCommand: phpTestCommand,
   projectCommands: phpProjectCommands,
   language: "php",

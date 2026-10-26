@@ -1,3 +1,4 @@
+import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
@@ -85,6 +86,7 @@ const JVM_BUILTIN_MEMBERS = [
 ];
 
 export const javaManifest: LanguagePluginManifest = {
+  migrationFiles: jvmMigrationFiles,
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
