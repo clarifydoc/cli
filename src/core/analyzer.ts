@@ -136,6 +136,7 @@ import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
+import { expandChannelFactories } from "./channel-factories.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -1671,6 +1672,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // datastore/entity nodes carry physical table names and merge with accesses
   // that spell the table literally.
   resolveDataSourceStringConstants(allAnalyses);
+
+  // A wrapper publishing on the channel its caller names: a row at each call site handing it a literal.
+  const channelRows = expandChannelFactories(allAnalyses, symbolLinks);
+  if (channelRows > 0) progress.detail(`  Channel wrapper call sites: ${channelRows}`);
 
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),

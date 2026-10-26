@@ -98,6 +98,12 @@ export const typescriptCallHooks: CallExtractionHooks = {
   noOverloads: true,
 };
 
+/** A function sending an event it is handed: `clientSend`, `broadcastToClub`, `publishEvent`, `notifyAll`. */
+const SENDER = /send|emit|broadcast|publish|notify/i;
+/** The emitters themselves, whose literal is read where they are called. */
+const BARE_SENDER = new Set(["send", "emit", "$emit", "publish", "notify", "broadcast"]);
+const EVENT_NAME = /^['"][\w.:-]+['"]$/;
+
 /** Function-like nodes whose parameters an argument may name. */
 const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
 
@@ -111,9 +117,17 @@ const FUNCTION_NODES = new Set(["function_declaration", "generator_function_decl
  * all that counts.
  */
 function handedArgs(node: Node): string[] | null {
-  if (node.type !== "call_expression" || node.childForFieldName("function")?.type !== "identifier") return null;
+  if (node.type !== "call_expression") return null;
   const args = node.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
   if (args.length === 0 || args.length > 8) return null;
+  const fn = node.childForFieldName("function");
+  // A project wrapper sending the event its caller names (`this.socket.clientSend("match_update", room)`):
+  // the literal, quoted as written, for core to fill the wrapper's channel parameter with.
+  const leaf = fn?.type === "identifier" ? fn.text : fn?.type === "member_expression" ? fn.childForFieldName("property")?.text ?? "" : "";
+  if (SENDER.test(leaf) && !BARE_SENDER.has(leaf) && args[0]!.type === "string" && EVENT_NAME.test(args[0]!.text)) {
+    return args.map((a, i) => (i === 0 ? a.text : ""));
+  }
+  if (fn?.type !== "identifier") return null;
   let params: Set<string> | null = null;
   const param = (name: string) => (params ??= enclosingParams(node)).has(name);
   // A chain the function holds itself (`api.clubs` off a local): one rooted in

@@ -1319,8 +1319,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // Socket.IO: socket.emit("event", …) publishes; socket.on("event", handler) consumes.
           if (fnName === "emit" || fnName === "on" || fnName === "once") {
             // `socket.on("a", f).on("b", g)`: each link of the chain listens on the same socket.
-            const root = memberRoot(fn) ?? onChainRoot(fn);
+            const root = memberRoot(fn) ?? onChainRoot(fn) ?? (fnName === "emit" ? socketTarget(fn) : null);
             const event = literalString(mqArgs[0] ?? null);
+            // A wrapper emitting the event its caller names (`clientSend(event, room) { this.server.to(room).emit(event) }`):
+            // the channel is that parameter, filled at each call site by core.
+            const channelParameter = !event && fnName === "emit" && mqArgs[0]?.type === "identifier" && enclosingParameters(node).has(mqArgs[0].text) ? mqArgs[0].text : null;
+            if (root && channelParameter && SOCKET_RECEIVER_RE.test(root) && (this.mq ??= mqEvidence(this.sourceText)).socketIo) {
+              sources.push(this.ds({ kind: "queue-publish", name: "Socket.IO: emit", target: null, channelParameter, line }));
+              return;
+            }
             if (root && event && SOCKET_RECEIVER_RE.test(root) && !SOCKET_IO_RESERVED.has(event) && (this.mq ??= mqEvidence(this.sourceText)).socketIo) {
               sources.push(this.ds({
                 kind: fnName === "emit" ? "queue-publish" : "queue-consume",
@@ -2194,6 +2201,34 @@ function onChainRoot(fn: Node): string | null {
     obj = inner.childForFieldName("object");
   }
   return obj?.type === "identifier" ? obj.text : null;
+}
+
+/**
+ * The socket a server-side emit is made on, past the room selectors: `this.server?.to(room).emit` → `server`,
+ * `this.io.in(room).except(id).emit` → `io`.
+ */
+function socketTarget(fn: Node): string | null {
+  let obj = fn.childForFieldName("object");
+  while (obj?.type === "call_expression") {
+    const inner = obj.childForFieldName("function");
+    if (inner?.type !== "member_expression" || !/^(?:to|in|of|except|volatile|compress|timeout)$/.test(inner.childForFieldName("property")?.text ?? "")) return null;
+    obj = inner.childForFieldName("object");
+  }
+  if (obj?.type === "member_expression" && obj.childForFieldName("object")?.type === "this") return obj.childForFieldName("property")?.text ?? null;
+  return obj?.type === "identifier" ? obj.text : null;
+}
+
+/** The names the innermost enclosing function binds as plain parameters. */
+function enclosingParameters(node: Node): Set<string> {
+  let fn: Node | null = node.parent;
+  while (fn && !FUNCTION_SCOPES.has(fn.type)) fn = fn.parent;
+  const out = new Set<string>();
+  const params = fn?.childForFieldName("parameters") ?? fn?.childForFieldName("parameter");
+  for (const p of params?.type === "identifier" ? [params] : params?.namedChildren ?? []) {
+    const name = p.type === "identifier" ? p : p.childForFieldName("pattern") ?? p.childForFieldName("left");
+    if (name?.type === "identifier") out.add(name.text);
+  }
+  return out;
 }
 
 function memberRoot(fn: Node): string | null {

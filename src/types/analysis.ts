@@ -1499,6 +1499,14 @@ export interface DataSourceInfo {
    */
   entityTypeParameter?: string;
   /**
+   * For `queue-publish`/`queue-consume`: the channel is this parameter of the
+   * enclosing function (`clientSend(event, room) { server.to(room).emit(event) }`);
+   * `target` stays null. Core adds a row at each call site that hands the
+   * function a literal there (`clientSend("match_update", room)`), through the
+   * call's resolved link and its `CallInfo.args`.
+   */
+  channelParameter?: string;
+  /**
    * For `queue-consume`: the function or method of this file that handles the
    * message (`Class.method`), when it is not the one the registration sits in —
    * `events.RegisterListener(name, &SendNotification{})` is consumed by
