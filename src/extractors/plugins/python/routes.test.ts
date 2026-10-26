@@ -347,7 +347,7 @@ def list_crests():
 });
 
 describe("FastAPI dependencies the route runs", () => {
-  it("calls a dependency named as a callable before the handler, never a dependency factory's result", async () => {
+  it("calls a dependency named as a callable before the handler, and a dependency factory that hands one out", async () => {
     const routes = await routesOf(`
 router = APIRouter()
 
@@ -355,6 +355,6 @@ router = APIRouter()
 async def retrieve_club(club: Club = Depends(get_club_from_path), user: User = Depends(get_current_user_authorizer()), repo: Annotated[ClubsRepo, Depends(deps.get_clubs_repo)] = None):
     return ClubInResponse(club=club)
 `);
-    expect(routes[0]!.calls.map((c) => c.name)).toEqual(["get_club_from_path", "deps.get_clubs_repo"]);
+    expect(routes[0]!.calls.map((c) => c.name)).toEqual(["get_club_from_path", "get_current_user_authorizer", "deps.get_clubs_repo"]);
   });
 });

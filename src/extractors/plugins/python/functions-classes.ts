@@ -202,6 +202,13 @@ export class PythonExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    // A dependency factory (`return _get_current_user if required else _get_optional`): what
+    // it hands out is called by whoever asked for it — FastAPI's `Depends(get_authorizer())`.
+    if (body && /\breturn\b/.test(bodyText)) {
+      for (const returned of returnedModuleFunctions(body)) {
+        if (!fn.calls.some((c) => c.name === returned.name)) fn.calls.push({ name: returned.name, kind: "internal", target: null, line: returned.line });
+      }
+    }
     // `*args` / `**kwargs` (bare or annotated) take what the listed parameters do not.
     if (paramsNode?.namedChildren.some((p) => SPLAT_TYPES.has(p.type) || (p.type === "typed_parameter" && SPLAT_TYPES.has(p.namedChild(0)?.type ?? "")))) fn.variadic = true;
     // Flask/Django views bind nothing through the signature; what they read
@@ -600,4 +607,52 @@ function producedClass(body: Node, yields = true): string | null {
   };
   visit(body);
   return !other && made.size === 1 ? [...made][0]! : null;
+}
+
+/** The module-level function names of a tree, once per tree. */
+const moduleFunctionNames = new WeakMap<object, Set<string>>();
+function moduleFunctionsOf(root: Node): Set<string> {
+  let names = moduleFunctionNames.get(root.tree as unknown as object);
+  if (!names) {
+    names = new Set();
+    for (const child of root.namedChildren) {
+      const def = child?.type === "decorated_definition" ? child.childForFieldName("definition") : child;
+      if (def?.type === "function_definition") {
+        const n = def.childForFieldName("name")?.text;
+        if (n) names.add(n);
+      }
+    }
+    moduleFunctionNames.set(root.tree as unknown as object, names);
+  }
+  return names;
+}
+
+/**
+ * The module-level functions a body returns by name — `return _get_user`, or
+ * either arm of `return _get_user if required else _get_optional_user` — not
+ * looking into nested functions.
+ */
+function returnedModuleFunctions(body: Node): Array<{ name: string; line: number }> {
+  const module = moduleFunctionsOf(body.tree.rootNode);
+  if (module.size === 0) return [];
+  const out: Array<{ name: string; line: number }> = [];
+  const names = (e: Node | null): void => {
+    if (!e) return;
+    if (e.type === "identifier") {
+      if (module.has(e.text)) out.push({ name: e.text, line: e.startPosition.row + 1 });
+    } else if (e.type === "conditional_expression") {
+      const parts = e.namedChildren;
+      names(parts[0] ?? null);
+      names(parts[2] ?? null);
+    } else if (e.type === "parenthesized_expression") names(e.namedChild(0));
+  };
+  const visit = (n: Node): void => {
+    for (const c of n.namedChildren) {
+      if (!c || c.type === "function_definition" || c.type === "class_definition" || c.type === "lambda") continue;
+      if (c.type === "return_statement") names(c.namedChild(0));
+      else visit(c);
+    }
+  };
+  visit(body);
+  return out;
 }

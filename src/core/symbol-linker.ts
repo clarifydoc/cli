@@ -388,6 +388,7 @@ export function buildSymbolLinks(
   }
 
   links.push(...ctx.extraLinks);
+  links.push(...inheritedHandlerLinks(analyses, ctx));
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
   links.push(...handedClientLinks(links, ctx));
 
@@ -1368,6 +1369,47 @@ function buildDirTailIndex(
     arr.push(filePath);
   }
   return map;
+}
+
+/**
+ * A template's event handler that names a method its component class inherits
+ * (`(click)="cancel()"` in a dialog extending a base dialog that declares
+ * `cancel`): the click runs the base class's method. Linked from the file's
+ * `<component>` anchor — the markup has no function of its own — so the trace
+ * and the screen's reach follow it. A method the file declares itself needs
+ * no link: the handler names it in place.
+ */
+function inheritedHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext): SymbolLink[] {
+  const out: SymbolLink[] = [];
+  for (const a of analyses) {
+    if (!a.interactiveElements?.length || !a.classes.some((c) => c.extends)) continue;
+    const own = new Set([...a.functions.map((f) => f.name), ...a.classes.flatMap((c) => [...c.methods.map((m) => m.name), ...c.properties.map((p) => p.name)])]);
+    const done = new Set<string>();
+    for (const el of a.interactiveElements) {
+      const name = el.handler ? /^\s*(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:\(|$)/.exec(el.handler)?.[1] : undefined;
+      if (!name || own.has(name) || done.has(name)) continue;
+      done.add(name);
+      for (const cls of a.classes) {
+        if (!cls.extends) continue;
+        const hit = findMethodInClass(ctx, cls.name, a.filePath, name);
+        if (!hit || (hit.file === a.filePath && hit.symbol.startsWith(`${cls.name}.`))) continue;
+        out.push({
+          sourceFile: a.filePath,
+          sourceSymbol: "<component>",
+          sourceLine: el.line,
+          callName: name,
+          targetFile: hit.file,
+          targetSymbol: hit.symbol,
+          targetLine: hit.line,
+          confidence: "EXTRACTED",
+          strategy: "inheritance",
+          relation: relationForStrategy("inheritance"),
+        });
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */

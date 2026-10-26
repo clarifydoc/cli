@@ -24,6 +24,25 @@ async def create(player_id: int, body: PlayerCreate, q: str | None = Query(None)
     ]);
   });
 
+  it("calls the module function a dependency factory hands out by name, never a local it returns", async () => {
+    const { functions } = await extract(`
+def get_current_player_authorizer(*, required: bool = True):
+    return _get_current_player if required else _get_optional_player
+
+def get_squad(size):
+    squad = make_squad(size)
+    return squad
+
+def _get_current_player(token: str):
+    return token
+
+def _get_optional_player(token: str):
+    return None
+`);
+    expect(functions.find((f) => f.name === "get_current_player_authorizer")!.calls.map((c) => c.name)).toEqual(["_get_current_player", "_get_optional_player"]);
+    expect(functions.find((f) => f.name === "get_squad")!.calls.map((c) => c.name)).toEqual(["make_squad"]);
+  });
+
   it("drops self/cls and records what the body reads off request", async () => {
     const { classes, functions } = await extract(`
 class ReportView(View):

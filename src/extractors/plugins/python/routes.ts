@@ -557,11 +557,15 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
         if (guard && (mk === "Security" || AUTH_DEPENDENCY.test(guard.policies![0]!))) guards.push(guard);
         // The framework calls a dependency named as a callable before the
         // handler runs (`Depends(get_club_from_path)`), so the route reaches
-        // what it reads. A factory call (`Depends(get_repo(Clubs))`) is not one.
+        // what it reads. A factory call (`Depends(get_authorizer())`) hands it
+        // the dependency it returns: the route reaches what the factory hands
+        // out (a module function it returns by name is a call of the factory).
         const args = marker!.childForFieldName("arguments");
         const dep = args ? firstPositionalArg(args) : null;
-        if (dep && (dep.type === "identifier" || dep.type === "attribute")) {
-          dependencies.push({ name: dep.text, kind: "internal", target: null, line: dep.startPosition.row + 1 });
+        const factory = dep?.type === "call" ? dep.childForFieldName("function") : null;
+        const named = dep && (dep.type === "identifier" || dep.type === "attribute") ? dep : factory && (factory.type === "identifier" || factory.type === "attribute") ? factory : null;
+        if (named) {
+          dependencies.push({ name: named.text, kind: "internal", target: null, line: named.startPosition.row + 1 });
         }
       }
       continue;
