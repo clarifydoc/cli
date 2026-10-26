@@ -77,8 +77,57 @@ const ECTO_VAR_READ_RE = /\b\w*Repo\.(all|one!?|exists\?|aggregate|stream)\s*\(\
  * reaches. A read handed a query variable is a read of unknown entity (the
  * `from(…)` that built it has its own row).
  */
+/** `Repo.preload(x, …)` / `|> Repo.preload(…)`: the call's argument text on its line. */
+const ECTO_PRELOAD_RE = /(\|>\s*)?\b(?:[A-Z]\w*\.)*\w*Repo\.preload\s*\(/g;
+
+/**
+ * `Repo.preload(site, :team)`, `|> Repo.preload([:owners, team: :members])`:
+ * a read of each association it names. The association's schema is declared
+ * on whichever schema has it, so the row only names the association
+ * (`Repo.preload(:team)`) and `ElixirEntityExtractor.reconcileProject` types it.
+ */
+export function ectoPreloads(lines: string[]): DataSourceInfo[] {
+  const out: DataSourceInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!line.includes("preload")) continue;
+    for (const m of line.matchAll(ECTO_PRELOAD_RE)) {
+      // The argument text, to the paren that closes the call (or the line's end).
+      let depth = 1;
+      let j = m.index! + m[0].length;
+      for (; j < line.length && depth > 0; j++) {
+        if ("([{".includes(line[j]!)) depth++;
+        else if (")]}".includes(line[j]!)) depth--;
+      }
+      const args = line.slice(m.index! + m[0].length, depth === 0 ? j - 1 : j);
+      // Unpiped, the first argument is the struct: `Repo.preload(Site, …)` is a schema read of its own.
+      let spec = args;
+      if (!m[1]) {
+        const comma = topLevelComma(args);
+        if (comma < 0 || /^\s*[A-Z]/.test(args)) continue;
+        spec = args.slice(comma + 1);
+      }
+      const names = new Set<string>();
+      for (const a of spec.replace(/"[^"]*"/g, "").matchAll(/(?<![\w:]):([a-z_]\w*)|\b([a-z_]\w*):(?!:)/g)) names.add((a[1] ?? a[2])!);
+      for (const name of names) out.push({ kind: "database", name: `Repo.preload(:${name})`, target: null, calls: [], line: i + 1, access: "read" });
+    }
+  }
+  return out;
+}
+
+function topLevelComma(text: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) return i;
+  }
+  return -1;
+}
+
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines), ...sqlStrings(lines)];
+  const out: DataSourceInfo[] = [...obanJobs(lines), ...httpCalls(lines), ...sqlStrings(lines), ...ectoPreloads(lines)];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();

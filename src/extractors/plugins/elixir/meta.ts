@@ -7,6 +7,7 @@ import { elixirRequestSchema } from "./request-schema.js";
 import { elixirReachability } from "./reachability.js";
 import { PhoenixEventResolver } from "./phoenix-event-resolver.js";
 import { ELIXIR_REGEX_CONTROL_FLOW } from "./control-flow.js";
+import { ElixirEntityExtractor } from "./entities.js";
 
 const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -21,6 +22,8 @@ export const elixirMeta: LanguagePluginMeta = {
   reachability: elixirReachability,
   ...elixirManifest,
   regexSpec: elixirSpec,
+  // Project-level: `Repo.preload(:assoc)` rows typed by the schemas declaring the association.
+  entities: new ElixirEntityExtractor(),
   // Control flow from source: keyword-delimited blocks (see control-flow.ts).
   regexControlFlow: ELIXIR_REGEX_CONTROL_FLOW,
   builtinTypes: ELIXIR_BUILTINS,

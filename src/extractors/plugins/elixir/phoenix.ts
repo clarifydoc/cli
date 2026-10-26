@@ -20,6 +20,8 @@ const PHX_PIPE_THROUGH_RE = /^\s*pipe_through\s*(?:\((.+)\)|\s(.+?))\s*$/;
 // A plug as the endpoint (`get("/openapi", OpenApiSpex.Plug.RenderSpec, [])`) has options where an action would be.
 const PHX_ROUTE_RE = /^\s*(get|post|put|patch|delete|head|options)\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)\s*(?:,\s*:([a-z_]\w*))?/;
 const PHX_RESOURCES_RE = /^\s*resources\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(.*)$/;
+/** `forward "/admin", AdminPlug` — every request under the path goes to the plug. */
+const PHX_FORWARD_RE = /^\s*forward\s*\(?\s*"([^"]*)"\s*,\s*([A-Z][\w.]*)/;
 const PHX_LIVE_RE = /^\s*live\s*\(?\s*"([^"]+)"\s*,\s*([A-Za-z_][\w.]*)(?:\s*,\s*:(\w+))?/;
 
 /**
@@ -209,6 +211,13 @@ export function extractPhoenixRoutes(source: string[]): RouteInfo[] {
       if (/\bdo\s*$/.test(trimmed)) {
         stack.push({ prefix: `${path}/:${memberParam(path!)}`, guards: [], middleware: [], kind: "resources" });
       }
+      continue;
+    }
+    const fwd = line.match(PHX_FORWARD_RE);
+    if (fwd) {
+      // Any method, the rest of the path the plug's own: a greedy `*path` under the mount.
+      emit({ path: join(`${fwd[1]!.replace(/\/$/, "")}/*path`), httpMethod: null, kind: "api", handler: fwd[2]!, calls: [], middleware: [], line: ln });
+      if (/\bdo\s*$/.test(trimmed)) stack.push({ prefix: "", guards: [], middleware: [], kind: "other" });
       continue;
     }
     const live = line.match(PHX_LIVE_RE);

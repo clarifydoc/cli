@@ -320,3 +320,25 @@ end`;
     expect(rels[3]!.joinTable).toBe("sites_tags");
   });
 });
+
+describe("Phoenix forward", () => {
+  it("mounts a plug under every path below the forward, any method", () => {
+    const src = `
+defmodule LeagueWeb.Router do
+  use Phoenix.Router
+
+  scope "/dev" do
+    forward "/mailbox", Plug.Swoosh.MailboxPreview
+  end
+  scope "/flags" do
+    forward "/", FlagsUI.Router, namespace: "flags"
+  end
+  get "/clubs", ClubController, :index
+end`;
+    expect(routes(src).map(sig)).toEqual([
+      "null /dev/mailbox/*path -> Plug.Swoosh.MailboxPreview",
+      "null /flags/*path -> FlagsUI.Router",
+      "GET /clubs -> ClubController.index",
+    ]);
+  });
+});
