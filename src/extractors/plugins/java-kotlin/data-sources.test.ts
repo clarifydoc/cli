@@ -655,6 +655,15 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(db(split)).toEqual([["createNamedQuery", null]]);
   });
 
+  it("types a write of a same-class factory's result by its declared return type", async () => {
+    const tree = await parseSource(`class ClubService {
+  void move(Club c) { em.persist(copyClub(c)); em.merge(this.copyClub(c)); }
+  private Club copyClub(Club c) { return new Club(c); }
+}`, "java" as any, "ClubService.java");
+    const ds = new JavaKotlinDataSourceExtractor().extract(tree, tree.rootNode.text);
+    expect(db(ds)).toEqual([["persist", "Club"], ["merge", "Club"]]);
+  });
+
   it("reads the JPQL's from-entity over a projection's result class, and no type parameter (real-repo FP)", async () => {
     const rows = await sourcesOf(`
     String q = "select new com.example.league.ClubRow(c.id, c.name) from Club c where c.active = true";

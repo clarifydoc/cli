@@ -1348,6 +1348,11 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // `em.persist(new MatchReport(…))`: the object built in place states its type.
     const built = constructedType(arg);
     if (built) return /^[A-Z]\w/.test(built) && !NOT_AN_ENTITY_LITERAL.has(built) ? built : null;
+    // `em.persist(createAddress(original))`: a method of the same class, by its declared return type.
+    if (arg.type === "method_invocation" && (!arg.childForFieldName("object") || arg.childForFieldName("object")?.type === "this")) {
+      const own = ownMethodReturnType(arg, arg.childForFieldName("name")?.text ?? "");
+      return own && /^[A-Z]\w/.test(own) && !NOT_AN_ENTITY_LITERAL.has(own) ? own : null;
+    }
     const text = arg.text.replace(/^this\./, "");
     const opt = /^(\w+)\.(?:get|orElseThrow|orElse)\s*\(/.exec(text)?.[1];
     if (opt) {
@@ -1427,6 +1432,21 @@ function typedQueryEntity(call: Node): string | null {
   const m = type ? /^(?:TypedQuery|Query|NativeQuery|SelectionQuery)\s*<\s*([A-Z]\w*)\s*>$/.exec(type) : null;
   // `TypedQuery<T>` in a generic DAO names a type parameter, no entity.
   return m && !NOT_AN_ENTITY_LITERAL.has(m[1]!) && !/^(?:Long|Integer|String|Object|Tuple|Boolean|Double|[A-Z]\d?)$/.test(m[1]!) ? m[1]! : null;
+}
+
+/** The one declared return type of the enclosing class's methods named `name`, generics dropped; null for none or several. */
+function ownMethodReturnType(from: Node, name: string): string | null {
+  if (!name) return null;
+  let body: Node | null = from.parent;
+  while (body && body.type !== "class_body" && body.type !== "enum_body") body = body.parent;
+  if (!body) return null;
+  const types = new Set<string>();
+  for (const m of body.namedChildren) {
+    if (m.type !== "method_declaration" || m.childForFieldName("name")?.text !== name) continue;
+    const t = simpleTypeName(m.childForFieldName("type")?.text?.replace(/<[\s\S]*$/, ""));
+    if (t) types.add(t);
+  }
+  return types.size === 1 ? [...types][0]! : null;
 }
 
 /** The type an argument builds: Java `new X(...)`, Kotlin `X(...)`, a builder chain rooted at it (`X.newBuilder()…`). */
