@@ -144,6 +144,7 @@ import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from ".
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { buildModuleValueLookup, resolveTargetRefs } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
+import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
 import {
@@ -1064,6 +1065,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectRootOf: (id) => subProjectRoots.get(id) ?? null,
     moduleValue,
   };
+  // Requests through a URL in a markup attribute a page script reads (`data-update-url`).
+  const attributeRequests = applyAttributeRequests(allAnalyses);
+  if (attributeRequests.kept + attributeRequests.dropped > 0 && verbose) progress.detail(`  attribute URL requests: ${attributeRequests.kept} kept, ${attributeRequests.dropped} no script reads`);
   // A channel or target named by another module's constant (`Topic: kafka.Topic`).
   const valueRefCount = resolveTargetRefs(allAnalyses, moduleValue);
   if (valueRefCount > 0 && verbose) progress.detail(`  targets named by another module's value: ${valueRefCount}`);

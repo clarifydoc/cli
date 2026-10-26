@@ -62,6 +62,8 @@ const ROUTE_MARK = "/__route__/";
 /** The marked name, without what the template appends after the tag (`{% url 'x' %}{% querystring %}`). */
 const namedTarget = (target: string): string =>
   target.startsWith(ROUTE_MARK) ? `route:${/^[\w.~-]*/.exec(target.slice(ROUTE_MARK.length))![0].replace(/~/g, ":")}` : target;
+/** An element carrying a URL in a `data-*url` attribute. */
+const DATA_URL_RE = /<([a-zA-Z][\w-]*)\b([^>]*\bdata-[\w-]*url\s*=[^>]*)>/gi;
 /** htmx requests an element sends: `hx-post="{% url 'clubs:add' %}"`, `hx-get="/clubs"`. */
 const HTMX_RE = /<([a-zA-Z][\w-]*)\b[^>]*?\bhx-(get|post|put|patch|delete)\s*=\s*["']([^"']*)["']/g;
 
@@ -121,6 +123,24 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
     elements.push({ element: isForm ? "form" : "link", event: isForm ? "submit" : "click", handler, line, request: { method, target } });
     component(target, tag, isForm ? "container" : "navigation", line, [`${isForm ? "submit" : "click"}: ${handler}`]);
     if (!isForm && method === "GET") navigatesTo.add(target);
+  }
+
+  // A URL a page script reads off the element and requests (`data-update-url="{{AppSubUrl}}/x"`,
+  // `data-url="{% url 'clubs:detail' %}"`): the verb is the element's `data-method`, else the
+  // readers' (core/attribute-requests.ts), and it stands only where a script reads it.
+  for (const d of marked.matchAll(DATA_URL_RE)) {
+    const attrs = d[2]!;
+    for (const a of attrs.matchAll(/(?:^|\s)(data-[\w-]*url)\s*=\s*["']([^"']*)["']/gi)) {
+      const path = literalPath(a[2]);
+      if (!path) continue;
+      const target = namedTarget(path);
+      const method = (attr(attrs, "data-method") ?? "").toUpperCase();
+      const line = lineAt(marked, d.index! + d[0].indexOf(a[0]));
+      const handler = handlerOf(method || "REQUEST", target.replace(/^route:/, "/").replace(/:/g, "/"));
+      const tag = d[1]!.toLowerCase();
+      const element: InteractiveElementInfo["element"] = tag === "form" ? "form" : tag === "a" ? "link" : tag === "input" || tag === "select" || tag === "textarea" ? tag : "button";
+      elements.push({ element, event: element === "form" ? "submit" : element === "button" || element === "link" ? "click" : "change", handler, line, request: { method, target, attribute: a[1]!.toLowerCase() } });
+    }
   }
 
   if (dialect === "django") {

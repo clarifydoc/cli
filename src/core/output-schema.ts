@@ -33,6 +33,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   domBindings: "optional",
   instantiations: "optional",
   moduleValues: "optional",
+  attributeReads: "optional",
   dataSources: "required",
   dataMutations: "required",
   stringConstants: "optional",

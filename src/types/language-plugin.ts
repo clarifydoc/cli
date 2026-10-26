@@ -654,6 +654,8 @@ export interface AstExtractorHooks {
   instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
   moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
+  /** URL-holding markup attributes the file's scripts read → `FileAnalysis.attributeReads`. */
+  attributeReads?(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }>;
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →

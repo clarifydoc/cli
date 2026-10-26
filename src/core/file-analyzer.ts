@@ -575,6 +575,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (instantiations && instantiations.length > 0) analysis.instantiations = instantiations;
     const moduleValues = hooks?.moduleValues?.(tree, sourceText);
     if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
+    const attributeReads = hooks?.attributeReads?.(tree, sourceText);
+    if (attributeReads && attributeReads.length > 0) analysis.attributeReads = attributeReads;
 
     // Paths named as string data the toolchain loads (glob imports, worker
     // URLs, config-file script paths) — dead-code reachability follows them.

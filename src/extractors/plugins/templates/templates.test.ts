@@ -107,3 +107,22 @@ describe("server templates", () => {
     expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}:${l.targetLine}`)).toEqual(["post_Account_Login -> AccountController.Login:40"]);
   });
 });
+
+describe("URLs a page script reads off an element", () => {
+  it("reads a data-*url attribute holding an app path or a route name as the element's request, its verb from data-method", () => {
+    const a = analysis("templates/club/view.tmpl", "gotemplate");
+    readTemplate(a, `<div>
+<button class="link-action" data-url="{{AppSubUrl}}/clubs/transfer">Transfer</button>
+<button class="ui button" data-update-url="{{AppSubUrl}}/clubs/rename" data-method="put">Rename</button>
+<a class="item" data-url="{{.Link}}/edit">Edit</a>
+</div>`, "gotemplate");
+    expect(a.interactiveElements.filter((e) => e.request).map((e) => e.request)).toEqual([
+      { method: "", target: "/clubs/transfer", attribute: "data-url" },
+      { method: "PUT", target: "/clubs/rename", attribute: "data-update-url" },
+    ]);
+    expect(a.dataSources.map((d) => `${d.name} ${d.urlAttribute}`)).toEqual(["/clubs/transfer data-url", "PUT /clubs/rename data-update-url"]);
+    const d = analysis("league/templates/home.html", "html");
+    readTemplate(d, `<button id="save" data-url="{% url 'league-api:dashboard' %}">Save</button>`, "django");
+    expect(d.interactiveElements.find((e) => e.request)?.request).toEqual({ method: "", target: "route:league-api:dashboard", attribute: "data-url" });
+  });
+});

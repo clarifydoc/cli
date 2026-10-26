@@ -25,8 +25,10 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
     sent.add(key);
     analysis.dataSources.push({
       kind: "api-call",
-      name: `${el.request.method} ${el.request.target}`,
+      // A verb the scripts reading the attribute decide later: no verb yet.
+      name: el.request.method ? `${el.request.method} ${el.request.target}` : el.request.target,
       target: el.request.target,
+      ...(el.request.attribute ? { urlAttribute: el.request.attribute } : {}),
       calls: [],
       line: el.line,
     });

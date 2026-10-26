@@ -1,3 +1,4 @@
+import { extractAttributeReads } from "./attribute-reads.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases } from "./type-aliases.js";
@@ -240,6 +241,7 @@ function astHooks(language: Language): AstExtractorHooks {
     domBindings: extractDomBindings,
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
+    attributeReads: extractAttributeReads,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,

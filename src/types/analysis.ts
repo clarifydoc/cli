@@ -350,6 +350,13 @@ export interface FileAnalysis {
    * channel, not every string.
    */
   moduleValues?: Record<string, string>;
+  /**
+   * URL-holding markup attributes a script reads (`el.getAttribute('data-url')`,
+   * `el.dataset.updateUrl`), with the verb its function requests it with when
+   * the function names one. Markup elements carrying such an attribute make
+   * that request (`InteractiveElementInfo.request.attribute`).
+   */
+  attributeReads?: Array<{ attribute: string; method?: string; line: number }>;
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -1537,6 +1544,12 @@ export interface DataSourceInfo {
    * does; otherwise `target` stays as the plugin wrote it.
    */
   targetRef?: string;
+  /**
+   * An element's request whose URL sits in this markup attribute
+   * (`data-update-url`): it stands only where a project script reads the
+   * attribute (`FileAnalysis.attributeReads`), with the verb those scripts agree on.
+   */
+  urlAttribute?: string;
   calls: CallInfo[];
   line: number;
   /**
@@ -2010,8 +2023,12 @@ export interface InteractiveElementInfo {
    * `button_to`, a link: `method` and `target`, the target a literal app path
    * (`/users/42/edit`) or the framework's route helper (`edit_user_path`) that a
    * plugin resolver maps to a route. Absent for elements that run client code.
+   * `attribute`: the URL sits in a markup attribute a page script reads and
+   * requests (`data-url="{% url 'clubs:detail' %}"`); `method` is then the
+   * element's own `data-method`, or "" until the scripts reading it agree on
+   * one (`core/attribute-requests.ts`).
    */
-  request?: { method: string; target: string };
+  request?: { method: string; target: string; attribute?: string };
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
   /**
