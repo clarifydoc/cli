@@ -37,6 +37,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
     const jvm = analyses.filter((a) => a.language === "java" || a.language === "kotlin");
     statedRepositoryEntities(jvm);
     implementedDaoTables(jvm);
+    projectDaoMethodCalls(jvm);
     handedEntityAccess(jvm);
     helperPublishedEvents(jvm);
     const byName = namedQueryEntities(analyses);
@@ -1005,6 +1006,49 @@ function implementedDaoTables(jvm: readonly FileAnalysis[]): void {
       if (ds.target === ds.entity) ds.target = table!;
       ds.entity = table!;
     }
+  }
+}
+
+/**
+ * A `DAO: findArea` row on a receiver whose declared type is a class of the
+ * project (`GeographicAreaCopyRepository repository; repository.findArea(id)`)
+ * names an entity after the receiver, not after what the method reads: the
+ * method's own body holds the access (`em.createQuery("… from GeoArea a")`),
+ * which the call graph reaches. Such a row whose name is no entity is dropped.
+ */
+function projectDaoMethodCalls(jvm: readonly FileAnalysis[]): void {
+  const entities = new Set(jvm.flatMap((a) => (a.classes ?? []).filter((c) => c.decorators?.includes("entity")).map((c) => c.name)));
+  // Project classes whose method holds a database access of its own, by method name.
+  const accessing = new Map<string, Set<string>>();
+  for (const a of jvm) {
+    const db = (a.dataSources ?? []).filter((ds) => ds.kind === "database" && !ds.name.startsWith("DAO: "));
+    if (db.length === 0) continue;
+    for (const cls of a.classes ?? []) {
+      if (cls.kind === "interface") continue;
+      for (const m of cls.methods) {
+        if (!db.some((ds) => ds.line >= m.line && ds.line <= m.endLine)) continue;
+        (accessing.get(cls.name) ?? accessing.set(cls.name, new Set()).get(cls.name)!).add(m.name);
+      }
+    }
+  }
+  if (accessing.size === 0) return;
+  for (const a of jvm) {
+    if (!(a.dataSources ?? []).some((ds) => ds.name.startsWith("DAO: ") && ds.entity && !entities.has(ds.entity))) continue;
+    const typed = new Map<string, Set<string>>();
+    for (const cls of a.classes ?? []) {
+      for (const m of [...cls.properties, ...cls.methods.flatMap((x) => x.params)]) {
+        const type = m.type?.replace(/<.*$/, "").replace(/^.*\./, "");
+        if (!type || !accessing.has(type)) continue;
+        const name = daoReceiverEntity(m.name, new Map([[m.name, type]]));
+        if (name) (typed.get(name) ?? typed.set(name, new Set()).get(name)!).add(type);
+      }
+    }
+    if (typed.size === 0) continue;
+    a.dataSources = (a.dataSources ?? []).filter((ds) => {
+      if (!ds.name.startsWith("DAO: ") || !ds.entity || entities.has(ds.entity)) return true;
+      const types = typed.get(ds.entity);
+      return !(types?.size === 1 && accessing.get([...types][0]!)!.has(ds.name.slice(5)));
+    });
   }
 }
 

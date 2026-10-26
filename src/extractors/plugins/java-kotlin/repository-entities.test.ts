@@ -122,3 +122,26 @@ describe("a DAO whose implementation's SQL names its table", () => {
     expect(publisher.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["league_event_queue league_event_queue", "Kit Kit"]);
   });
 });
+
+describe("a DAO-named call on a project class that reads the data itself", () => {
+  it("drops the row named after the receiver; the method's own access stands (real-repo FP)", () => {
+    const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
+    const method = (name: string, line: number, endLine: number) => ({ name, line, endLine, params: [], calls: [], isAsync: false, isExported: true });
+    const repo = javaFile("src/main/java/league/StadiumCopyRepository.java", {
+      classes: [{ name: "StadiumCopyRepository", kind: "class", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 40,
+        methods: [method("findStadium", 5, 9), method("evict", 11, 13)] }],
+      dataSources: [{ kind: "database", name: "createQuery", target: "Stadium", entity: "Stadium", access: "read", calls: [], line: 6 }],
+    });
+    const handler = javaFile("src/main/java/league/StadiumEventsHandler.java", {
+      classes: [{ name: "StadiumEventsHandler", kind: "class", extends: null, implements: [], decorators: [], methods: [], isExported: true, line: 1, endLine: 30,
+        properties: [field("repository", "StadiumCopyRepository")] }],
+      dataSources: [
+        { kind: "database", name: "DAO: findStadium", target: "StadiumCopy", entity: "StadiumCopy", access: "read", calls: [], line: 10 },
+        // `evict` holds no access of its own: the row stays.
+        { kind: "database", name: "DAO: evict", target: "StadiumCopy", entity: "StadiumCopy", access: "write", calls: [], line: 12 },
+      ],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([repo, handler]);
+    expect(handler.dataSources.map((d) => d.name)).toEqual(["DAO: evict"]);
+  });
+});
