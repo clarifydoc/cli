@@ -75,4 +75,21 @@ class ClubClientImpl {
     const tree = await parseSource(src, "java" as any, "ClubClientImpl.java");
     expect(extractJavaClientProxies(tree, src).map((r) => [r.proxyOf, r.line])).toEqual([["com.example.league.api.ClubApi", 4]]);
   });
+
+  it("reads a JAX-WS port as a SOAP client of its port type, only in a file using JAX-WS", async () => {
+    const soap = `package com.acme.registry;
+import jakarta.xml.ws.BindingProvider;
+import com.acme.transfers.TransferPortType;
+class TransferClient {
+  private final TransferService service = new TransferService();
+  Transfer lookup(String id) {
+    TransferPortType port = service.getPort(TransferPortType.class);
+    ((BindingProvider) port).getRequestContext().put(BindingProvider.ENDPOINT_ADDRESS_PROPERTY, endpoint);
+    return port.getData(id);
+  }
+}`;
+    const tree = await parseSource(soap, "java" as any, "TransferClient.java");
+    expect(extractJavaClientProxies(tree, soap).map((r) => r.proxyOf)).toEqual(["com.acme.transfers.TransferPortType"]);
+    expect(await proxies(`server.getPort(PersonApi.class);`)).toEqual([]);
+  });
 });

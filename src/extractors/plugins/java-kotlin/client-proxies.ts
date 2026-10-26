@@ -11,6 +11,7 @@ import type { HttpClientRegistration } from "../../../types/analysis.js";
  *   target.proxy(PersonApi.class)                           (RESTEasy)
  *   RestClientBuilder.newBuilder().baseUri(u).build(PersonApi.class)  (MicroProfile)
  *   Feign.builder().target(PersonApi.class, url)            (Feign)
+ *   service.getPort(PersonPortType.class)                   (JAX-WS, in a file using javax/jakarta.xml.ws)
  *
  * Only those shapes, each handed exactly one type literal (`X.class`) — a
  * Hibernate `session.createCriteria(X.class)` or a domain
@@ -49,7 +50,10 @@ export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpCl
     const imported = new RegExp(`^\\s*import\\s+([\\w.]+\\.${type})\\s*;`, "m").exec(sourceText)?.[1];
     return imported ?? (pkg ? `${pkg}.${type}` : null);
   };
-  const isKnown = (name: string, object: string) => KNOWN_FACTORIES.some((f) => f.method.test(name) && f.receiver.test(object));
+  // A JAX-WS `Service` hands out its port (`service.getPort(PortType.class)`): a SOAP client of that port type.
+  const jaxws = /\b(?:javax|jakarta)\.xml\.ws\b/.test(sourceText);
+  const isKnown = (name: string, object: string) =>
+    KNOWN_FACTORIES.some((f) => f.method.test(name) && f.receiver.test(object)) || (jaxws && name === "getPort" && object !== "");
   // The file's own helpers forwarding a `Class<T>` parameter to a known factory: name → that parameter's index.
   const helpers = new Map<string, number>();
   walk(tree.rootNode, (m) => {
