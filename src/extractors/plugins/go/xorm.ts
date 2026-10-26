@@ -136,7 +136,8 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
   const row = (verb: string, entity: string | null, lineNo: number, target: string | null): DataSourceInfo => ({
     kind: "database",
     name: `${spec.label}: ${verb}`,
-    target: entity ?? target,
+    // The argument's text names no store unless it is one (`&ids`, `&results` are the locals filled).
+    target: entity ?? (target && /^"[\w.]+"$|^`[\w.]+`$/.test(target.trim()) ? target.trim().slice(1, -1) : null),
     ...(entity ? { entity } : {}),
     access: READS.has(verb) ? "read" : "write",
     calls: [],

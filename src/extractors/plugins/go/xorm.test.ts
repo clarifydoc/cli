@@ -4,6 +4,19 @@ import { extractXormDataSources } from "./xorm.js";
 const rows = (src: string) => extractXormDataSources(src.split("\n")).map((d) => `${d.line} ${d.name} ${d.entity ?? "-"} ${d.access}`);
 
 describe("xorm data sources", () => {
+  it("names no store after a local the call fills (real-repo FP)", () => {
+    const src = `package squads
+
+import "code.gitea.io/gitea/models/db"
+
+func PlayerIDs(ctx context.Context, clubID int64) ([]int64, error) {
+	ids := make([]int64, 0, 10)
+	return ids, db.GetEngine(ctx).Where("club_id = ?", clubID).Find(&ids)
+}
+`;
+    expect(extractXormDataSources(src.split("\n")).map((d) => `${d.name} ${d.target} ${d.entity ?? "-"}`)).toEqual(["xorm: Find null -"]);
+  });
+
   it("reads engine chains, generic helpers and the argument's entity", () => {
     expect(rows(`package issues
 

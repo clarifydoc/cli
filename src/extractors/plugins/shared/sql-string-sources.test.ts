@@ -228,6 +228,17 @@ Clubs := GetCol("SELECT name FROM " + Quote("league") + "." + Quote("clubs"));
 Q("UPDATE " + Quote("league") + "." + Quote(Table) + " SET name=1");`)).toEqual(["SELECT league.clubs"]);
   });
 
+  it("reads past MySQL's statement modifiers: IGNORE is no table", () => {
+    expect(tables(`db.Exec("UPDATE IGNORE squad_players SET club_id = ? WHERE club_id = ?");
+db.Exec("INSERT IGNORE INTO transfers (player_id) VALUES (?)");
+db.Exec("DELETE LOW_PRIORITY QUICK FROM injuries WHERE healed = 1");`)).toEqual(["UPDATE squad_players", "INSERT INTO transfers", "DELETE FROM injuries"]);
+  });
+
+  it("takes a format verb for a hole, never a table", () => {
+    expect(tables(`db.Exec(fmt.Sprintf("DELETE FROM %s WHERE season < ?", table));
+db.Exec(fmt.Sprintf("INSERT INTO \`new_%s_new\` SELECT * FROM \`%s\`", t, t));`)).toEqual([]);
+  });
+
   it("drops a quoted name in a catalogue schema and SQLite's table-valued pragmas", () => {
     expect(tables(`q("SELECT * FROM INFORMATION_SCHEMA.\`EVENTS\` WHERE EVENT_SCHEMA=%s");
 q("SELECT name FROM pragma_database_list");

@@ -42,9 +42,14 @@ export function asDoubleQuotedLiteral(body: string): string {
 /** A string literal's content, or an ALL-CAPS macro identifier between literals. */
 const LINE_TOKEN_RE = /"((?:[^"\\]|\\.)*)"|\b([A-Z][A-Z0-9_]{2,})\b/g;
 
-/** Statement openers. `INSERT OR REPLACE INTO` (SQLite) folds into INSERT INTO. */
+/**
+ * Statement openers. `INSERT OR REPLACE INTO` (SQLite) folds into INSERT INTO, as do MySQL's
+ * modifiers (`INSERT IGNORE INTO`, `UPDATE IGNORE t`, `DELETE LOW_PRIORITY FROM`): never a table.
+ */
 const SQL_START_RE =
-  /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
+  /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
+/** MySQL's statement modifiers, dropped from the verb. */
+const VERB_MODIFIER_RE = /\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|QUICK|IGNORE)\b/g;
 
 /**
  * A table token: bracketed/quoted/backticked or a bare (possibly dotted) name.
@@ -75,7 +80,7 @@ const COMMA_SOURCE_RE = new RegExp(
   "i",
 );
 const WRITE_RE = new RegExp(
-  String.raw`^(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${TABLE}`,
+  String.raw`^(INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${TABLE}`,
   "i",
 );
 const CREATE_DROP_RE = new RegExp(
@@ -270,6 +275,8 @@ function tableName(name: string | undefined, ctes: Set<string>): string | null {
   if (SYSTEM_RELATION_RE.test(name) || BOOKKEEPING_TABLE_RE.test(name)) return null;
   // `FROM league.{table}`: the schema is written, the name is a hole.
   if (name.endsWith(".")) return null;
+  // `fmt.Sprintf("DELETE FROM %s", table)`, `"new_%s_new"`: a format verb is a hole, never a name.
+  if (/%[-+# 0-9.]*[sdvqTxX]/.test(name)) return null;
   return name;
 }
 
@@ -328,7 +335,7 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
   const start = stmt.match(SQL_START_RE);
   if (!start) return [];
   const sql = stmt.slice(start.index!);
-  const verb = start[1]!.toUpperCase().replace(/\s+/g, " ");
+  const verb = start[1]!.toUpperCase().replace(VERB_MODIFIER_RE, "").replace(/\s+/g, " ");
   const ctes = cteNames(stmt);
 
   const out: SqlStatementAccess[] = [];
