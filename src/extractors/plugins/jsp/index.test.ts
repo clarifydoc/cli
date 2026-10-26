@@ -64,6 +64,26 @@ describe("jspSpec interactive elements", () => {
   });
 });
 
+describe("jspSpec Web Flow events fired from script", () => {
+  it("reads an _eventId_ a listBox's onChange or a script sets as an element with that handler (real-repo FP)", () => {
+    const page = [
+      `<club:form>`,
+      `  <club:listBox bindPath="model.season" onChange="this.form._eventId.name='_eventId_pickSeason';this.form.submit();"/>`,
+      `</club:form>`,
+      `<script>`,
+      `  function mail() { submitEvent("_eventId_sendMail"); }`,
+      `</script>`,
+    ];
+    const els = jspSpec.extractInteractiveElements!(page);
+    expect(els.filter((e) => ["submit", "pickSeason", "sendMail"].includes(e.handler ?? "")).map((e) => `${e.line} ${e.element} ${e.event} ${e.handler}`)).toEqual([
+      // The HTML reader's onChange element names the form's submit; the event it fires is its own element.
+      "2 custom onchange submit",
+      "2 select change pickSeason",
+      "5 custom click sendMail",
+    ]);
+  });
+});
+
 describe("jspSpec screens", () => {
   const screens = jspSpec.extractScreens!(lines, "admin/src/main/webapp/WEB-INF/views/club/clubapplication_list.jsp", []);
 

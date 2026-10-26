@@ -135,6 +135,19 @@ function extractJspInteractiveElements(lines: string[]): InteractiveElementInfo[
       out.push({ ...el, handler: req.handler, request: { method: req.method, target: req.target } });
     } else out.push(el);
   }
+  // A Web Flow event a script fires (`this.form._eventId.name='_eventId_submit'` in a listBox's
+  // `onChange`, `submitEvent("_eventId_sendMail")`): an element whose handler is that event.
+  const fired = new Set(out.map((e) => `${e.line}:${e.handler}`));
+  lines.forEach((line, i) => {
+    if (!line.includes("_eventId_")) return;
+    for (const m of line.matchAll(/(["'])_eventId_([A-Za-z]\w*)\1/g)) {
+      const key = `${i + 1}:${m[2]}`;
+      if (fired.has(key)) continue;
+      fired.add(key);
+      const change = /\bon[Cc]hange\s*=/.test(line.slice(0, m.index));
+      out.push({ element: /<\w+:listBox\b|<select\b/i.test(line) || change ? "select" : "custom", event: change ? "change" : "click", handler: m[2]!, line: i + 1 });
+    }
+  });
   // Struts/Spring form tags the HTML reader does not see (`<html:form>`, `<form:form>`).
   for (const req of requests.values()) {
     out.push({ element: req.form ? "form" : "link", event: req.form ? "submit" : "click", handler: req.handler, line: req.line, request: { method: req.method, target: req.target } });
