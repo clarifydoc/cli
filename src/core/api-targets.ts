@@ -38,8 +38,9 @@ export function finalizeApiTargets(calls: ApiCall[]): number {
     if (call.targetAlternatives) {
       call.targetAlternatives = call.targetAlternatives.map((alt) => splitUnknownBase(alt)?.target ?? alt);
     }
-    // A call expression where the URL would be (`this.previewUrl()`, a service's
-    // `${this.documents}.getDownloadUrl(id)` no helper template resolved): code, not a URL.
+    // A method called on a runtime value where the URL would be (a service's
+    // `${this.matches}.getDownloadUrl(id)` no helper template resolved): code, not a
+    // URL behind a base — split, it read as the path `/.getDownloadUrl(…)`.
     if (isCodeText(call.target)) {
       call.target = null;
       changed++;
@@ -55,11 +56,12 @@ export function finalizeApiTargets(calls: ApiCall[]): number {
   return changed;
 }
 
-/** A method call, after any leading holes, with no path in it: the source of a URL, not one. */
+/** Leading holes, then a method called on them, with no path in it: the source of a URL, not one. */
 function isCodeText(url: string): boolean {
   let s = url.trim();
+  const start = s;
   for (let len = leadingHoleLength(s); len > 0; len = leadingHoleLength(s)) s = s.slice(len);
-  return !s.includes("/") && /^\.?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\(/.test(s);
+  return s !== start && !s.includes("/") && /^\.[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\(/.test(s);
 }
 
 /** A server on this machine: a loopback host. */
