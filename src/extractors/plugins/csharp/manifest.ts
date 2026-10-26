@@ -29,6 +29,8 @@ export const csharpManifest: LanguagePluginManifest = {
   extensions: [".cs", ".csx"],
   // One type spans files here: `partial` classes split one type across files.
   typesSpanFiles: true,
+  // `using League.Clubs;` names a namespace, which any file may declare.
+  importsNamePackages: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
   testFilePatterns: [/(Test|Tests)\.cs$/],
   // WinForms/WPF designers and Roslyn source generators. Case-sensitive so

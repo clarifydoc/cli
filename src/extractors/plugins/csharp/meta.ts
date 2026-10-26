@@ -2,6 +2,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { extractCsharpScheduledJobs } from "./scheduled-jobs.js";
 import { extractAspireResources } from "./aspire.js";
 import { extractCsharpTypeAliases } from "./type-aliases.js";
+import { extractCsharpNamespace } from "./namespace.js";
 import { csharpTaint } from "./taint.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import {
@@ -87,6 +88,8 @@ export const csharpMeta: LanguagePluginMeta = {
     // `services.AddScoped<IRepo, SqlRepo>()`, Autofac `RegisterType<T>().As<I>()`, …
     diBindings: (tree, sourceText) => extractCsharpDiBindings(tree, sourceText),
     typeAliases: (tree) => extractCsharpTypeAliases(tree),
+    // `namespace League.Clubs;` — what a `using League.Clubs;` elsewhere names.
+    packageName: (tree) => extractCsharpNamespace(tree),
     // A .NET Aspire AppHost: the resources it runs, under the names service discovery gives them.
     deployedResources: (_tree, sourceText) => extractAspireResources(sourceText),
     // `AddHttpClient<T>(c => c.BaseAddress = …)`, named clients, `_http.BaseAddress = …`.
