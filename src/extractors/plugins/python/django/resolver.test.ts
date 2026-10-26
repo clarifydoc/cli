@@ -409,6 +409,43 @@ urlpatterns = [path("league/", include("league.urls")), path("cup/", include("cu
     expect(paths.filter((p) => p.startsWith("/cup/"))).toEqual([]);
     expect(paths).toContain("/league/clubs/{pk}/edit/");
   });
+
+  it("mounts a view registered in a loop for every model built on a mixin", async () => {
+    const out = await analyze({
+      ...LEAGUE,
+      "league/models.py": `
+from core.features import JournalingMixin
+
+class Club(JournalingMixin):
+    pass
+
+class Match:
+    pass
+`,
+      "core/features.py": `
+class JournalingMixin:
+    pass
+
+def register_models(*models):
+    from core.views import register_model_view
+    for model in models:
+        if issubclass(model, JournalingMixin):
+            register_model_view(model, "journal", kwargs={"model": model})(
+                "core.generic.ObjectJournalView"
+            )
+`,
+      "core/generic.py": `${LEAGUE["core/generic.py"]}
+class ObjectJournalView:
+    def get(self, request, pk):
+        return None
+`,
+    });
+    const routes = out.flatMap((a) => a.routes).filter((r) => r.kind === "api" && /journal/.test(r.path));
+    // Club is built on the mixin, Match is not.
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.name} ${r.handler}`)).toEqual([
+      "GET /league/clubs/{pk}/journal/ league:club_journal ObjectJournalView.get",
+    ]);
+  });
 });
 
 describe("parseAction", () => {

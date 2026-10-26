@@ -103,7 +103,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       for (const f of a.routeFacts ?? []) {
         if (f.kind === DJ_MODEL_VIEW) {
           const fact = f.data as DjModelViewFact;
-          const model = fact.model.split(".").pop()!.toLowerCase();
+          const model = fact.model.startsWith("@subclass:") ? fact.model : fact.model.split(".").pop()!.toLowerCase();
           (modelViews.get(model) ?? modelViews.set(model, []).get(model)!).push({ ...fact, file: a.filePath, projectId: a.projectId });
         }
         if (f.kind === DJ_APP_NAME) appNames.set(a.filePath, (f.data as { name: string }).name);
@@ -348,11 +348,30 @@ export const djangoUrlconfResolver: RouteResolver = {
       const model = ctx.classes.resolve(reg.file, reg.model.split(".").pop()!);
       return (model ? appOf(model.filePath) : null) ?? appOf(reg.file);
     };
+    /** The mixins (`@subclass:X` keys) the model class of `app` named `model` (lowercased) is built on. */
+    const mixinMemo = new Map<string, string[]>();
+    const mixinKeys = (app: string, model: string): string[] => {
+      const memo = mixinMemo.get(`${app}\0${model}`);
+      if (memo) return memo;
+      const found = mixinKeysOf(app, model);
+      mixinMemo.set(`${app}\0${model}`, found);
+      return found;
+    };
+    const mixinKeysOf = (app: string, model: string): string[] => {
+      const keys = [...modelViews.keys()].filter((k) => k.startsWith("@subclass:"));
+      if (keys.length === 0) return [];
+      const classes = analyses.filter((a) => appOf(a.filePath) === app)
+        .flatMap((a) => a.classes.filter((c) => c.name.toLowerCase() === model).map((c) => ctx.classes.resolve(a.filePath, c.name)))
+        .filter((r): r is ClassRef => !!r);
+      if (classes.length !== 1) return [];
+      const bases = new Set(ctx.classes.ancestors(classes[0]!).map((s) => s.name.split(".").pop()!));
+      return keys.filter((k) => bases.has(k.slice("@subclass:".length)));
+    };
     const mountModelViews = (file: string, path: string, line: number, t: { app: string; model: string; detail: boolean }, marker: string | undefined, ns: readonly string[]) => {
       const project = ctx.fileOf(file)?.projectId;
-      for (const reg of modelViews.get(t.model) ?? []) {
+      for (const reg of [...(modelViews.get(t.model) ?? []), ...mixinKeys(t.app, t.model).flatMap((k) => modelViews.get(k) ?? [])]) {
         if (reg.detail !== t.detail || reg.projectId !== project) continue;
-        const app = registrationApp(reg);
+        const app = reg.model.startsWith("@subclass:") ? t.app : registrationApp(reg);
         if (app !== null && app !== t.app) continue;
         const segment = reg.path ? djangoRoute(`${reg.path}/`, false) : "";
         const name = reg.name ? `${t.model}_${reg.name}` : t.model;

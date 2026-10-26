@@ -96,6 +96,7 @@ export const DJANGO_GATE = /urlpatterns|register_model_view|\.register\(|ROOT_UR
 const URL_FUNCS = new Set(["path", "re_path", "url"]);
 
 export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
+  collectMixinModelViews(root, facts);
   for (const stmt of root.namedChildren) {
     if (stmt.type === "class_definition") {
       classFact(stmt, facts);
@@ -181,6 +182,39 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
         if (entries?.length) facts.push({ kind: DJ_URLPATTERNS, line, owner: obj.text, data: { entries } });
       }
     }
+  }
+}
+
+/**
+ * `if issubclass(model, JournalingMixin): register_model_view(model, "journal")("app.views.JournalView")`
+ * inside a loop over every registered model: the view is registered for each model
+ * class built on that mixin — the fact's model is `@subclass:JournalingMixin`.
+ */
+function collectMixinModelViews(root: Node, facts: RouteFact[]): void {
+  if (!/\bissubclass\s*\(/.test(root.text) || !root.text.includes("register_model_view")) return;
+  for (const call of root.descendantsOfType("call")) {
+    const inner = call?.childForFieldName("function");
+    if (!call || inner?.type !== "call") continue;
+    const reg = modelViewRegistration(inner);
+    const view = positional(call)[0];
+    if (!reg || !view || reg.model.includes(".")) continue;
+    // The class's name: a dotted string (`"app.views.JournalView"`), or the class itself.
+    const viewName = view.type === "string" ? pyString(view.text).split(".").pop()! : view.type === "identifier" || view.type === "attribute" ? view.text : null;
+    if (!viewName || !/^[A-Z]\w*$/.test(viewName.split(".").pop()!)) continue;
+    let mixin: string | null = null;
+    for (let up: Node | null = call.parent; up && !mixin; up = up.parent) {
+      if (up.type !== "if_statement") continue;
+      const cond = up.childForFieldName("condition");
+      const m = cond ? /^issubclass\(\s*(\w+)\s*,\s*([\w.]+)\s*\)$/.exec(cond.text.replace(/\s+/g, " ")) : null;
+      if (m && m[1] === reg.model) mixin = m[2]!.split(".").pop()!;
+    }
+    if (!mixin) continue;
+    facts.push({
+      kind: DJ_MODEL_VIEW,
+      line: call.startPosition.row + 1,
+      owner: viewName,
+      data: { ...reg, model: `@subclass:${mixin}`, view: viewName.split(".").pop()!, viewKind: "class" } satisfies DjModelViewFact,
+    });
   }
 }
 
