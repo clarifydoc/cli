@@ -508,15 +508,83 @@ const TYPED_LOCAL_RE = new RegExp(
   String.raw`^\s*(?:(?:final|late|const)\s+)*(?!(?:${LOCAL_KEYWORDS})\b)(${TYPE_ARG})\s+(?!(?:${LOCAL_KEYWORDS})\b)([A-Za-z_$]\w*)\s*(?:=\s*(.+?))?\s*;\s*$`,
 );
 
-/** One entry per name; a name declared again with a different type or key is dropped. */
+type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
+
+/** One entry per name; a name declared again with a different type, key or initializer is dropped. */
 export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): NonNullable<FunctionInfo["localTypes"]> {
-  const byName = new Map<string, { name: string; type: string; qualifier?: string } | null>();
+  const byName = new Map<string, LocalType | null>();
   for (const e of entries) {
     const prev = byName.get(e.name);
     if (prev === undefined) byName.set(e.name, e);
-    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier)) byName.set(e.name, null);
+    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from)) byName.set(e.name, null);
   }
-  return [...byName.values()].filter((e): e is { name: string; type: string; qualifier?: string } => e !== null);
+  return [...byName.values()].filter((e): e is LocalType => e !== null);
+}
+
+/**
+ * `Club.fromJson(json)`, `league.Club.fromJson(json)` (an import prefix in
+ * front), `await Club.load()`: a class-level call whose type the class states
+ * — a named constructor's own class, a static method's declared return type —
+ * as the `from` chain core types it by. Null for anything else.
+ */
+function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null {
+  const text = rhs.replace(/;\s*$/, "").replace(/!\s*$/, "").trim();
+  const awaited = /^await\s+/.test(text);
+  const body = text.replace(/^await\s+/, "").replace(/^(?:new|const)\s+/, "");
+  const m = /^(?:[a-z_]\w*\s*\.\s*)?([A-Z]\w*)\s*(?:<[^()]*>)?\s*\.\s*([a-z_$]\w*)\s*\(/.exec(body);
+  if (!m || closeOf(body, m[0].length - 1) !== body.length) return null;
+  return { from: `${m[1]}.${m[2]}()`, ...(awaited ? { awaited: true } : {}) };
+}
+
+/** `List<Club>`, `Iterable<Club>?`, `Set<Club>`: the element class; null for anything else. */
+function elementType(type: string | null | undefined): string | null {
+  return /^\s*(?:List|Iterable|Set|Queue|UnmodifiableListView)\s*<\s*([A-Z]\w*)\s*>\s*\??\s*$/.exec(type ?? "")?.[1] ?? null;
+}
+
+/** Calls on a collection that hand each element (and nothing else) to their callback, and those that keep the collection's element type. */
+const ELEMENT_CALLBACKS = new Set(["forEach", "map", "where", "any", "every", "firstWhere", "lastWhere", "singleWhere", "expand", "takeWhile", "skipWhile", "sort", "reduce", "indexWhere", "removeWhere", "retainWhere"]);
+const KEEPS_ELEMENTS = new Set(["where", "toList", "toSet", "skip", "take", "skipWhile", "takeWhile", "sublist", "reversed", "whereNot"]);
+
+/**
+ * The parameters of closures a typed collection hands its elements to —
+ * `clubs.forEach((c) => c.kickOff())`, `clubs.where(…).map((d) { … })`,
+ * `for (final c in clubs)` — typed as the collection's element.
+ */
+function elementParams(body: string, collections: ReadonlyMap<string, string>): LocalType[] {
+  const out: LocalType[] = [];
+  for (const [name, element] of collections) {
+    const re = new RegExp(String.raw`(?<![\w$.])(?:this\.)?${name.replace(/\$/g, "\\$")}\b`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body))) {
+      let at = m.index + m[0].length;
+      for (let hop = 0; hop < 6; hop++) {
+        const seg = /^\s*[?!]?\.\s*([a-zA-Z_]\w*)\s*(?:<[^()<>]*>)?\s*(\()?/.exec(body.slice(at));
+        if (!seg) break;
+        const method = seg[1]!;
+        if (!seg[2]) {
+          if (method === "reversed") { at += seg[0].length; continue; }
+          break;
+        }
+        const open = at + seg[0].length - 1;
+        if (ELEMENT_CALLBACKS.has(method)) {
+          const lambda = /^\(\s*\(\s*(?:final\s+)?(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)(?:\s*,\s*(?:final\s+)?(?:[A-Z]\w*\??\s+)?([a-z_$]\w*))?\s*\)\s*(?:async\s*)?(?:=>|\{)/.exec(body.slice(open));
+          if (lambda) {
+            out.push({ name: lambda[1]!, type: element });
+            // `sort((a, b) …)` / `reduce((a, b) …)` hand two elements.
+            if (lambda[2] && (method === "sort" || method === "reduce")) out.push({ name: lambda[2], type: element });
+          }
+        }
+        if (!KEEPS_ELEMENTS.has(method)) break;
+        const close = closeOf(body, open);
+        if (close < 0) break;
+        at = close;
+      }
+    }
+    for (const f of body.matchAll(new RegExp(String.raw`\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\.)?${name.replace(/\$/g, "\\$")}\s*\)`, "g"))) {
+      out.push({ name: f[1]!, type: element });
+    }
+  }
+  return out;
 }
 
 /**
@@ -524,14 +592,24 @@ export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): 
  * PgRepo();`, `final a = ConcRepo();`, `final r = getIt<UserRepo>();`,
  * `final r = ref.read(repoProvider);` → `FunctionInfo.localTypes`.
  */
-export function extractDartLocalTypes(bodyLines: string[], _fn: { name: string }): NonNullable<FunctionInfo["localTypes"]> {
+export function extractDartLocalTypes(bodyLines: string[], fn: { name: string; params?: readonly { name: string; type: string | null }[] }): NonNullable<FunctionInfo["localTypes"]> {
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
+  // Collections whose element type is stated: parameters and typed locals.
+  const collections = new Map<string, string>();
+  for (const p of fn.params ?? []) {
+    const element = elementType(p.type);
+    if (element) collections.set(p.name.replace(/^this\./, ""), element);
+  }
   // Every declaration this reads either initialises (`=`) or ends `Type name;`.
   for (const line of bodyLines.flatMap((l) => (l.includes("=") || /^\s*[A-Za-z_$][\w$<>?, .]*\s+[A-Za-z_$]\w*\s*;/.test(l) ? statementsOf(l) : []))) {
     const untyped = line.match(UNTYPED_LOCAL_RE);
     if (untyped) {
       const t = dartInitializerType(untyped[2]!);
       if (t) out.push({ name: untyped[1]!, ...t });
+      else {
+        const call = classLevelCall(untyped[2]!);
+        if (call) out.push({ name: untyped[1]!, type: "", ...call });
+      }
       continue;
     }
     const typed = line.match(TYPED_LOCAL_RE);
@@ -540,7 +618,13 @@ export function extractDartLocalTypes(bodyLines: string[], _fn: { name: string }
       const q = typed[3] ? dartInitializerQualifier(typed[3]) : undefined;
       if (q) entry.qualifier = q;
       out.push(entry);
+      const element = elementType(typed[1]);
+      if (element) collections.set(typed[2]!, element);
     }
+  }
+  if (collections.size > 0) {
+    const body = bodyLines.map(codeOf).join("\n");
+    out.push(...elementParams(body, collections));
   }
   return uniqueLocals(out);
 }
@@ -602,6 +686,15 @@ const strip = (s: string): string => s.replace(/\s+/g, "");
  * baseline `name(` matcher cannot see past their type arguments.
  */
 export const dartDiCallPatterns: CallPattern[] = [
+  {
+    // A call through a field path (`player.kit.wash()`, `this.squad.coach.brief()`):
+    // the whole chain, so the receiver is typed field by field, not by its last name.
+    pattern: /(?<![\w$.)\]])((?:this\s*\.\s*)?[a-z_$][\w$]*(?:\s*[?!]?\.\s*[a-z_$][\w$]*){2,})\s*\(/,
+    buildName: (m) => {
+      const name = m[1]!.replace(/\s+/g, "").replace(/[?!]\./g, ".");
+      return { name, leafName: name.split(".").pop()! };
+    },
+  },
   {
     pattern: new RegExp(String.raw`\b(${LOCATOR})\s*(?:\.\s*(get|call|find|resolve)\s*)?<\s*(${TYPE_ARG})\s*>\s*\(([^()]*)\)\s*[!?]?\s*\.\s*([A-Za-z_$]\w*)\s*\(`),
     buildName: (m, rawLine) => {

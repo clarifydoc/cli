@@ -93,7 +93,10 @@ function memberAt(
   spec: RegexLangSpec,
   parseParam: (t: string) => ParamInfo | null,
 ): FunctionInfo | null {
-  const ctor = code.match(new RegExp(LEADING + String.raw`(?:const\s+)?(${cls.name})\s*\(`));
+  // `Club(…)`, `factory Club(…)`, and a named constructor `Club.fromJson(…)` / `factory Club.fromJson(…)` —
+  // a member `fromJson` that makes a `Club` (`Club.fromJson(json)` is a call of it).
+  const named = code.match(new RegExp(LEADING + String.raw`(?:const\s+|factory\s+)?${cls.name}\s*\.\s*([A-Za-z_$]\w*)\s*\(`));
+  const ctor = named ?? code.match(new RegExp(LEADING + String.raw`(?:const\s+|factory\s+)?(${cls.name})\s*\(`));
   const sig = ctor ? null : code.match(SIGNATURE_NAME_RE);
   const m = ctor ?? sig;
   if (!m) return null;
@@ -124,7 +127,7 @@ function memberAt(
   const fn: FunctionInfo = {
     name,
     params: extractParamsFromDeclaration(lines, j, name, parseParam),
-    returnType: sig ? spec.parseReturnType?.(line) ?? null : null,
+    returnType: named ? cls.name : sig ? spec.parseReturnType?.(line) ?? null : null,
     isAsync: /\basync\b/.test(after.slice(0, 8)),
     isExported: !name.startsWith("_"),
     decorators: attributeLinesAbove(lines, j, spec),
@@ -156,5 +159,6 @@ export function isDartInterface(header: string, cls: ClassInfo, lines: string[])
   if (cls.methods.length === 0) return false;
   // The function pattern only takes declarations that open a body on their
   // own line, so a member line without `{`/`=>` is an abstract signature.
-  return cls.methods.every((m) => m.name !== cls.name && !/\{|=>/.test(codeOf(lines[m.line - 1] ?? "")));
+  const constructs = new RegExp(String.raw`^\s*(?:const\s+|factory\s+)?${cls.name}\s*[.(]`);
+  return cls.methods.every((m) => m.name !== cls.name && !constructs.test(codeOf(lines[m.line - 1] ?? "")) && !/\{|=>/.test(codeOf(lines[m.line - 1] ?? "")));
 }
