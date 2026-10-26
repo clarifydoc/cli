@@ -273,11 +273,21 @@ describe("Flutter closure handlers", () => {
     return Column(children: [
       InkWell(onTap: enable ? onTap : null, child: Text('Kit')),
       InkWell(onTap: busy ? null : _save, child: Text('Save')),
+      InkWell(
+        onTap: enable
+            ? _pickKit
+            : null,
+      ),
+      TextButton(
+        onPressed: isActive
+            ? null
+            : () => context.read<KitBloc>(),
+      ),
     ]);
   }
 }`;
     const a = extractWithRegex(src, "lib/kit_button.dart", "dart");
-    expect(a.interactiveElements.map((e) => `${e.event}@${e.line}=${e.handler}`)).toEqual(["onTap@4=onTap", "onTap@5=_save"]);
+    expect(a.interactiveElements.map((e) => `${e.event}@${e.line}=${e.handler}`)).toEqual(["onTap@4=onTap", "onTap@5=_save", "onTap@7=_pickKit", "onPressed@12=context.read"]);
   });
 });
 

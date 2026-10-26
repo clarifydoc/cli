@@ -601,7 +601,15 @@ function extractFlutterInteractiveElements(lines: string[]): InteractiveElementI
     while ((m = FLUTTER_EVENT_RE.exec(line)) !== null) {
       // A declaration (`final VoidCallback? onTap;`, `required this.onTap,`) is no handler.
       if (/\b(?:final|required|this\.|VoidCallback|Function)\b/.test(line.slice(0, m.index + 2))) continue;
-      const handler = closures.get(`${i + 1}:${m.index}`) ?? flutterHandlerName(m[2]!);
+      let expr = m[2]!;
+      // `onTap: enable⏎ ? () async { … }⏎ : null`: a conditional written over lines — its branches.
+      if (/^\s*[A-Za-z_$][\w$.!]*\s*$/.test(expr) && /^\s*\?/.test(lines[i + 1] ?? "")) {
+        const yes = (lines[i + 1] ?? "").replace(/^\s*\?\s*/, "");
+        const elseAt = lines.slice(i + 2, i + 40).findIndex((l) => /^\s*:\s*/.test(l));
+        const no = elseAt >= 0 ? lines[i + 2 + elseAt]!.replace(/^\s*:\s*/, "") : "null";
+        expr = `${expr.trim()} ? ${yes.trim() || "null"} : ${no.trim() || "null"}`;
+      }
+      const handler = closures.get(`${i + 1}:${m.index}`) ?? flutterHandlerName(expr);
       out.push({ element: flutterElementAt(lines, i), event: m[1]!, handler, line: i + 1 });
     }
   }
