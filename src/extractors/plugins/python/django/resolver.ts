@@ -437,6 +437,11 @@ export const djangoUrlconfResolver: RouteResolver = {
       visited.add(start);
       walk(start, conf, "", undefined, 0);
     }
+    // Channels' `websocket_urlpatterns`, which the ASGI application routes from the root.
+    for (const [file, vars] of urlconfs) {
+      const ws = vars.get("websocket_urlpatterns");
+      if (ws) walk(file, ws, "", undefined, 0);
+    }
     // A urlconf with routes no root reaches: its paths are a tail of what callers request.
     for (const [file, vars] of urlconfs) {
       const conf = vars.get("urlpatterns");

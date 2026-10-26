@@ -1912,7 +1912,8 @@ function loaderRequest(node: Node): { url: Node; verb: string } | null {
   if (node.type === "new_expression") {
     const ctor = node.childForFieldName("constructor")?.text;
     if (!args[0]) return null;
-    if (ctor === "EventSource") return { url: args[0], verb: "get" };
+    // A WebSocket opens with an HTTP GET upgrade request to its URL.
+    if (ctor === "EventSource" || ctor === "WebSocket") return { url: args[0], verb: "get" };
     if (ctor === "SSE") {
       const opts = args[1]?.type === "object" ? args[1] : null;
       const method = opts ? literalString(objectPropValue(opts, "method")) : null;

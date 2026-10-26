@@ -378,7 +378,8 @@ function includeTarget(node: Node): IncludeTarget | null {
 function viewRef(node: Node): ViewRef | null {
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
-    if (fn?.type === "attribute" && fn.childForFieldName("attribute")?.text === "as_view") {
+    // `StatusConsumer.as_asgi()`: a Channels consumer, mounted like a class-based view.
+    if (fn?.type === "attribute" && /^as_(?:view|asgi)$/.test(fn.childForFieldName("attribute")?.text ?? "")) {
       const cls = fn.childForFieldName("object")?.text;
       if (!cls) return null;
       const mapping = positional(node)[0];

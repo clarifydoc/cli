@@ -1240,12 +1240,14 @@ const sse = new SSE("/api/clubs/import/stream", { headers, payload: JSON.stringi
 const specUrl = "/specs/league.yaml";
 Redoc.init(specUrl, options, container);
 SwaggerUIBundle({ url: "/specs/kits.json", dom_id: "#ui" });
-const img = new EventSource(blobUrl);`);
+const img = new EventSource(blobUrl);
+const feed = new WebSocket(\`\${wsBase}ws/scores/\`);`);
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
       "get /api/matches/live",
       "post /api/clubs/import/stream",
       "get /specs/league.yaml",
       "get /specs/kits.json",
+      "get ${wsBase}ws/scores/",
     ]);
   });
 });

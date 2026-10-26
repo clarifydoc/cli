@@ -503,3 +503,22 @@ class ClubViewSet(BulkUpdateMixin, ModelViewSet):
     expect(list).toEqual(["GET /api/clubs/ ClubViewSet.list", "POST /api/clubs/ ClubViewSet.create", "PUT /api/clubs/ BulkUpdateMixin.bulk_update"]);
   });
 });
+
+describe("django-urlconf: Channels websocket routes", () => {
+  it("serves websocket_urlpatterns from the root, a consumer as its handler", async () => {
+    const files = await analyze({
+      "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+      "config/urls.py": `
+from django.urls import path
+from scores.consumers import ScoresConsumer
+from scores.views import table
+
+urlpatterns = [path("table/", table)]
+websocket_urlpatterns = [path("ws/scores/", ScoresConsumer.as_asgi())]
+`,
+      "scores/views.py": `def table(request):\n    return None\n`,
+      "scores/consumers.py": `class ScoresConsumer:\n    def connect(self):\n        pass\n`,
+    });
+    expect(rows(files).map((r) => r.replace(/ @.*$/, ""))).toEqual(expect.arrayContaining(["* /table/ table", "* /ws/scores/ ScoresConsumer"]));
+  });
+});
