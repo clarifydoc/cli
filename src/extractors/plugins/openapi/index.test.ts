@@ -528,6 +528,56 @@ describe("OpenAPI request schema through the core pass", () => {
     const bulk = routes.find((r) => r.handler === "shared") as typeof routes[number] & { requestSchema?: { type?: string } };
     expect(bulk.requestSchema?.type).toBe("array");
   });
+
+  it("reads a body that refs an array alias, and an inline object body", () => {
+    const spec = `openapi: 3.0.3
+paths:
+  /clubs/filter:
+    post:
+      operationId: filterClubs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Filters'
+  /matches/{id}:
+    patch:
+      operationId: patchMatch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state:
+                  type: string
+                round:
+                  type: integer
+components:
+  schemas:
+    Filters:
+      type: array
+      items:
+        $ref: '#/components/schemas/Filter'
+    Filter:
+      type: object
+      properties:
+        field: { type: string }
+`;
+    const lines = spec.split("\n");
+    const analysis = createEmptyAnalysis("openapi.yaml", "openapi");
+    analysis.projectId = "root";
+    analysis.classes = extractOpenApiEntities(lines);
+    const routes = extractOpenApiRoutes(lines).map((r) => ({ ...r, filePath: "openapi.yaml", projectId: "root" }));
+    expect(attachRequestSchemas(routes, [analysis])).toBe(2);
+    const schemaOf = (h: string) => (routes.find((r) => r.handler === h) as { requestSchema?: unknown }).requestSchema;
+    expect(schemaOf("filterClubs")).toEqual({ type: "array", items: { type: "object", properties: { field: { type: "string" } } } });
+    expect(schemaOf("patchMatch")).toEqual({
+      type: "object",
+      properties: { state: { type: "string" }, round: { type: "integer" } },
+      additionalProperties: true,
+    });
+  });
 });
 
 describe("OpenAPI relations through a wrapped reference", () => {

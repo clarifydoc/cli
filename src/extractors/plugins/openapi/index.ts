@@ -382,8 +382,19 @@ function paramsOf(root: SpecNode, pathNode: SpecNode, opNode: SpecNode): RoutePa
   const content = body.children.get("content");
   if (content) {
     const first = content.children.values().next().value as SpecNode | undefined;
-    const type = schemaTypeText(first?.children.get("schema"));
-    out.push({ name: "body", type, binding: "body" });
+    const schema = first?.children.get("schema");
+    const target = schema ? resolveRef(root, schema, "schemas") : undefined;
+    // `$ref: Filters` with `Filters: { type: array, items: $ref Filter }`: the body is
+    // that array, which a property-less class of the alias's name cannot say.
+    const alias = target && target !== schema && target.children.get("type")?.value === "array" ? schemaTypeText(target) : null;
+    const inline = schema && !schema.children.has("$ref") ? schema.children.get("properties") : undefined;
+    if (inline && inline.children.size > 0 && !inline.children.has("body")) {
+      // An inline object body (`schema: { type: object, properties: { state: … } }`):
+      // no class names it, so its fields are the body's.
+      for (const [name, prop] of inline.children) out.push({ name, type: schemaTypeText(prop), binding: "body" });
+    } else {
+      out.push({ name: "body", type: alias ?? schemaTypeText(schema), binding: "body" });
+    }
   }
   return out;
 }
