@@ -108,6 +108,7 @@ import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dropNameCollisionReferences } from "./symbol-dedup.js";
+import { computeParamOrigins } from "./param-origins.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols, entityMatcher } from "./data-access-graph.js";
@@ -1369,6 +1370,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // in-memory store) is not database access — the function it calls is.
   // Before the data-access graph, per-symbol attribution and responsibility
   // profiles read the data sources.
+  // Which value feeds each slot of an API call's URL: a screen's route parameter, a literal, through the calls between.
+  const paramOrigins = computeParamOrigins({ analyses: allAnalyses, symbolLinks, apiRouteLinks, routes: allRoutes, screens: allScreens });
+  if (paramOrigins.length > 0) progress.detail(`  Parameter origins: ${paramOrigins.length} (${paramOrigins.filter((p) => p.origin.kind === "route-param").length} from a route parameter)`);
+
   const projectCallSources = demoteProjectCallDataSources(allAnalyses, symbolLinks);
   if (projectCallSources > 0) {
     progress.detail(`  Data sources that are calls into project code: ${projectCallSources}`);
@@ -2193,6 +2198,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     dataFlows: dataFlows.length > 0 ? dataFlows : undefined,
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
+    paramOrigins: paramOrigins.length > 0 ? paramOrigins : undefined,
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
     ...(contractFindings.length > 0 ? { contractFindings } : {}),
     projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,

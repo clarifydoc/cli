@@ -774,6 +774,14 @@ export interface CallInfo {
    */
   args?: string[];
   /**
+   * Where the call's arguments come from, when the plugin can tell for at
+   * least one (`calls.argOriginsOf`): a literal, the calling function's own
+   * parameter, or a value the framework reads off the current URL
+   * (`useParams().id`, `this.props.match.params.username`). The project pass
+   * `paramOrigins` follows these from an API call's URL back to the screen.
+   */
+  argOrigins?: CallArgOrigin[];
+  /**
    * How many arguments the call passes (Java, Kotlin, C#, TypeScript, Python,
    * PHP): in a language with overloading the linker picks `save(Order)` or
    * `save(Order, boolean)` by it; the patch check compares it with the
@@ -781,6 +789,40 @@ export interface CallInfo {
    * hides the count.
    */
   argCount?: number;
+}
+
+/** One argument of a call and where its value comes from (`CallInfo.argOrigins`). */
+export interface CallArgOrigin {
+  /** Position of the argument, 0-based. */
+  index: number;
+  origin:
+    | { kind: "literal"; value: string }
+    /** The calling function's own parameter (`index` among its parameters). */
+    | { kind: "param"; name: string; index: number }
+    /** A route parameter or query-string value of the current URL, by name. */
+    | { kind: "route-param" | "query-param"; name: string };
+  /** One wrapper the value passed through (`Number`, `encodeURIComponent`, a template literal). */
+  transform?: string;
+}
+
+/**
+ * Which value feeds a parameter of an API call's URL (`ProjectAnalysis.paramOrigins`):
+ * the call (`sink`), where its value starts (a route parameter of a screen, a
+ * literal, or unknown), the calls it travels through, and the backend route
+ * parameter it binds when the call is joined to a route.
+ */
+export interface ParamOrigin {
+  /** The API call and the slot of its URL (`${username}`). */
+  sink: { file: string; line: number; url: string; slot: string };
+  origin:
+    | { kind: "route-param" | "query-param"; name: string; file: string; line: number; screen?: string; routePath?: string; inRoutePath?: boolean }
+    | { kind: "literal"; value: string; file: string; line: number }
+    | { kind: "unknown"; file: string; line: number };
+  /** The functions the value is handed through, from the origin towards the call, each with the argument position. */
+  hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
+  /** The backend route parameter the slot binds, when the call is joined to a route. */
+  route?: { file: string; line: number; method: string | null; path: string; param: string; binding?: string; type?: string };
+  confidence: Confidence;
 }
 
 export interface FunctionInfo {
@@ -3181,6 +3223,13 @@ export interface ProjectAnalysis {
    * screen→API→DB chain. Omitted when empty (e.g. pure frontend/backend repos).
    */
   apiRouteLinks?: ApiRouteLink[];
+  /**
+   * For each slot of an API call's URL, where its value comes from: a screen's
+   * route parameter, a literal, or unknown — followed back through the calls
+   * that hand it on (core/param-origins.ts). Capped per call; absent when no
+   * plugin reports argument origins.
+   */
+  paramOrigins?: ParamOrigin[];
   /** What the cross-tier linker did with every call — links, refusals, unmatched, by caller role. */
   apiRouteLinkStats?: ApiRouteLinkStats;
   /** Request bodies that disagree with the route they reach (EXTRACTED links only). */

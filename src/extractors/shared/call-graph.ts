@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { Language, CallInfo, ImportInfo } from "../../types/analysis.js";
+import type { Language, CallInfo, CallArgOrigin, ImportInfo } from "../../types/analysis.js";
 import type { CallExtractionHooks } from "../../types/language-plugin.js";
 import { dbRootRefused, isApiCall, isDatabaseCall } from "./call-patterns.js";
 
@@ -158,6 +158,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const keyOf = hooks.keyOf;
   const argsOf = hooks.argsOf;
   const argCountOf = hooks.argCountOf;
+  const argOriginsOf = hooks.argOriginsOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
@@ -174,6 +175,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     key?: string | null;
     args?: string[] | null;
     argCount?: number | null;
+    argOrigins?: CallArgOrigin[] | null;
   }> = [];
   const boundHere = new Set<string>();
 
@@ -185,8 +187,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     key?: string | null,
     args?: string[] | null,
     argCount?: number | null,
+    argOrigins?: CallArgOrigin[] | null,
   ) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount });
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount, argOrigins });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -209,7 +212,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -254,6 +257,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
+    if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);

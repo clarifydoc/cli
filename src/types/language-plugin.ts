@@ -855,6 +855,13 @@ export interface CallExtractionHooks {
    */
   argCountOf?(node: Node): number | null;
   /**
+   * Where the call's arguments come from, when the plugin can tell for at
+   * least one: a literal, the enclosing function's parameter, a route or
+   * query parameter of the current URL. Sets `CallInfo.argOrigins`; read by
+   * the `paramOrigins` project pass.
+   */
+  argOriginsOf?(node: Node): import("./analysis.js").CallArgOrigin[] | null;
+  /**
    * The language has no overloading — a second definition of a name is an
    * overload signature, a typing stub or a conditional redefinition, not a
    * body to choose (TypeScript, Python, PHP): calls are not split by their

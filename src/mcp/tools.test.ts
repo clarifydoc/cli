@@ -704,3 +704,12 @@ describe("clarifydoc_explain — a budget it overflows", () => {
     expect(r.text).toMatch(/Next \(did not fit maxTokens=500\):\n- clarifydoc_/);
   });
 });
+
+describe("clarifydoc_contract — parameter origins (sample-react)", () => {
+  const { server } = buildMcpServer({ projectRoot: join("test-fixtures", "sample-react"), analysisDir: join("test-output", "sample-react"), allowAnalyze: false, allowColdStart: false });
+  it("says which screen's route parameter feeds a path parameter", async () => {
+    const { text } = await call(server, "clarifydoc_contract", { path: "/api/players/{id}", method: "GET" });
+    expect(text).toContain("parameters fed by:");
+    expect(text).toMatch(/id ← .*route parameter `id` of screen PlayerEditPage \(\/players\/:id\/edit\) at pages\/PlayerEditPage\.tsx:9/);
+  });
+});

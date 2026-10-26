@@ -1454,11 +1454,26 @@ export function contractTool(ctx: ToolContext): McpTool {
         .map((l) => `${loc(l.source, l.sourceLine)}${l.sourceRole ? ` (${l.sourceRole})` : ""}${confidenceNote(l.confidence)}${versionNote(l)}`);
       const project = route.projectId && route.projectId !== "root" ? ` [${projectNames.get(route.projectId) ?? route.projectId}]` : "";
       const { shown: cs, hidden: ch } = cap([...new Set(callers)], 8);
+      // Where each route parameter's value comes from on the calling side (`paramOrigins`).
+      const fedBy = new Map<string, string[]>();
+      for (const o of summary.paramOrigins ?? []) {
+        if (o.route?.file !== route.filePath || o.route.line !== route.line) continue;
+        const from = o.origin.kind === "unknown" ? `unknown (${loc(o.origin.file, o.origin.line)})`
+          : o.origin.kind === "literal" ? `literal "${o.origin.value}" (${loc(o.origin.file, o.origin.line)})`
+          : `${o.origin.kind === "route-param" ? "route parameter" : "query value"} \`${o.origin.name}\`${o.origin.screen ? ` of screen ${o.origin.screen}` : ""}${o.origin.routePath ? ` (${o.origin.routePath}${o.origin.inRoutePath === false ? ", which does not declare it" : ""})` : ""} at ${loc(o.origin.file, o.origin.line)}`;
+        const list = fedBy.get(o.route.param) ?? fedBy.set(o.route.param, []).get(o.route.param)!;
+        if (!list.includes(from)) list.push(from);
+      }
+      const fedLines = [...fedBy].map(([param, from]) => {
+        const { shown, hidden } = cap(from, 4);
+        return `  ${param} ← ${shown.join("; ")}${hidden ? ` … +${hidden}` : ""}`;
+      });
       return {
         text: joinLines([
           `# ${routeLabel(route.httpMethod, route.path)}${route.handler ? ` → ${route.handler}` : ""}${project} (${loc(route.filePath, route.line)})`,
           route.middleware?.length ? `guards: ${route.middleware.join(", ")}${a?.inherited ? " (from controller)" : ""}` : "guards: none declared here",
           cs.length ? `called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}` : "called from: no frontend call linked",
+          ...(fedLines.length ? ["parameters fed by:", ...fedLines] : []),
           "",
           "```json",
           JSON.stringify(operation, null, 2),

@@ -1,3 +1,4 @@
+import { argOriginsOf } from "./arg-origins.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
@@ -74,6 +75,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
   receiverTypeOf: receiverTypeOfCall,
   argsOf: handedArgs,
+  argOriginsOf,
 };
 
 /**
