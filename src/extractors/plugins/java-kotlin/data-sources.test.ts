@@ -612,6 +612,16 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     ]);
   });
 
+  it("takes the entity from an object built in the call (real-repo FP shape)", async () => {
+    const rows = await sourcesOf(`
+    em.persist(new MatchReport(clubId, score));
+    em.merge(new Fixture());`, "java");
+    expect(db(rows)).toEqual([
+      ["persist", "MatchReport"],
+      ["merge", "Fixture"],
+    ]);
+  });
+
   it("counts a query chain once, on the query it builds", async () => {
     const rows = await sourcesOf(`em.createNamedQuery("q", Unit.class).setParameter("a", id).getResultList();`, "java");
     expect(db(rows)).toEqual([["createNamedQuery", "Unit"]]);

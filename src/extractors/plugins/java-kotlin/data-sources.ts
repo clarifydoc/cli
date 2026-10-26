@@ -1317,6 +1317,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   /** The declared type of an instance argument: `person`, `this.order`, `opt.get()` on an `Optional<X>`. */
   private instanceArgType(node: Node, arg: Node | null): string | null {
     if (!arg) return null;
+    // `em.persist(new MatchReport(…))`: the object built in place states its type.
+    const built = constructedType(arg);
+    if (built) return /^[A-Z]\w/.test(built) && !NOT_AN_ENTITY_LITERAL.has(built) ? built : null;
     const text = arg.text.replace(/^this\./, "");
     const opt = /^(\w+)\.(?:get|orElseThrow|orElse)\s*\(/.exec(text)?.[1];
     if (opt) {
