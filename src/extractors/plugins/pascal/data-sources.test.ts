@@ -370,3 +370,15 @@ end.`);
     expect(rows.filter((d) => d.kind === "database").map((d) => d.target)).toEqual(["clubs"]);
   });
 });
+
+describe("Pascal UI controls named for a connection (real-repo FP)", () => {
+  it("reads an action's Execute as no database access, a connection's Open as one", () => {
+    const rows = src(`procedure TMainForm.FormShow(Sender: TObject);
+begin
+  actConnectionProperties.Execute;
+  btnConnectionTest.Execute;
+  LeagueConnection.Open;
+end;`);
+    expect(rows.filter((d) => d.kind === "database").map((d) => d.name)).toEqual(["LeagueConnection.Open"]);
+  });
+});

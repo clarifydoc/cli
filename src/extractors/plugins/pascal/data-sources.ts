@@ -108,6 +108,9 @@ function datasetCall(line: string, declared: Set<string>): { receiver: string; v
 const CONNECTION_RECEIVER =
   /\b((?:\w+\.)?\w*(?:connection|database|conn)\w*)\s*\.\s*(Open|Execute|ExecuteDirect|StartTransaction|Commit)\b/i;
 
+/** A UI control by Delphi's naming convention: an action, button, menu item, … (`actConnectionProperties`, `btnConnect`). */
+const UI_CONTROL_NAME = /^(?:act|btn|mnu|menu|tb|tbtn|lbl|edt|chk|cbo|pnl|pop|frm)[A-Z]/;
+
 /** HTTP client verbs on http/rest-shaped receivers (TIdHTTP, THTTPClient,
  *  TRESTClient, TNetHTTPClient instances: IdHTTP1, HttpClient, RESTRequest1…).
  *  "rest" alone would swallow Restore. `GetURL`/`PostURL` are the wrappers
@@ -480,7 +483,8 @@ export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
       continue;
     }
     const conn = line.match(CONNECTION_RECEIVER);
-    if (conn) {
+    // A UI control named for a connection (`actConnectionProperties.Execute` runs a TAction).
+    if (conn && !UI_CONTROL_NAME.test(conn[1]!.split(".").pop()!)) {
       sources.push({
         kind: "database",
         name: `${conn[1]}.${conn[2]}`,
