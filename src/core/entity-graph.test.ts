@@ -357,6 +357,19 @@ describe("reconcileEntityInheritance", () => {
     expect(sql.classes[1]!.decorators).toEqual(["index"]);
   });
 
+  it("follows the import naming the base, not a same-named entity in another package (real-repo FP)", () => {
+    const entity = { filePath: "src/main/java/com/example/league/domain/Address.java", language: "java", classes: [{ name: "Address", decorators: ["entity", "jpa"], properties: [], line: 1 }] } as unknown as FileAnalysis;
+    const impl = { name: "AddressImpl", extends: "Address", decorators: [] as string[], properties: [], line: 9 };
+    const legacy = { filePath: "src/main/java/com/example/league/api/legacy/AddressImpl.java", language: "java", classes: [impl],
+      imports: [{ source: "com.example.league.api.legacy.Address", specifiers: ["Address"], line: 3 }] } as unknown as FileAnalysis;
+    const sub = { name: "HomeAddress", extends: "Address", decorators: [] as string[], properties: [], line: 5 };
+    const model = { filePath: "src/main/java/com/example/league/domain/HomeAddress.java", language: "java", classes: [sub],
+      imports: [{ source: "com.example.league.domain.Address", specifiers: ["Address"], line: 2 }] } as unknown as FileAnalysis;
+    reconcileEntityInheritance([entity, legacy, model]);
+    expect(impl.decorators).toEqual([]);
+    expect(sub.decorators).toEqual(["entity", "jpa"]);
+  });
+
   it("does not make a test's subclass of a production model an entity (real-repo FP)", () => {
     const model = { filePath: "src/main/java/com/example/league/TrackedEntity.java", language: "java", classes: [{ name: "TrackedEntity", decorators: ["entity", "jpa", "abstract"], properties: [], line: 1 }] } as unknown as FileAnalysis;
     const stub = { name: "StubClub", extends: "TrackedEntity", decorators: [] as string[], properties: [], line: 9 };

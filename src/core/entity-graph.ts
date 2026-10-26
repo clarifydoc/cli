@@ -72,7 +72,7 @@ function bareName(name: string | null): string | null {
 export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
   // Index every class by its bare name (superclass references are usually bare).
   // An API description's schema of the same name is no base class of code: each side inherits within itself.
-  const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean; test: boolean }>>();
+  const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean; test: boolean; filePath: string }>>();
   const testFile = new Map<string, boolean>();
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
@@ -82,7 +82,7 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
       const b = bareName(c.name);
       if (!b) continue;
       const arr = byBare.get(b) ?? [];
-      arr.push({ c, contract, test });
+      arr.push({ c, contract, test, filePath: a.filePath });
       byBare.set(b, arr);
     }
   }
@@ -100,7 +100,12 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
         if ((c.decorators ?? []).some((d) => d === "index" || d === "sequence" || d === "schema")) continue;
         const parentName = bareName(c.extends);
         if (!parentName) continue;
-        const hit = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c));
+        // `import com.example.league.api.Address;` names WHICH `Address` is extended: an entity of
+        // that name in another package is not it.
+        const imported = (a.imports ?? []).find((i) => i.specifiers?.includes(parentName) && /^[\w$]+(?:\.[\w$]+)+$/.test(i.source) && i.source.endsWith(`.${parentName}`));
+        const importedPath = imported ? imported.source.replace(/\./g, "/") : null;
+        const hit = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c) &&
+          (!importedPath || p.filePath.replace(/\.\w+$/, "").endsWith(importedPath)));
         // A test's subclass of a production model (`class StubClub extends Club` to reach
         // its protected hooks) is a test double, not another model.
         if (!hit || (testFile.get(a.filePath) && !hit.test)) continue;
