@@ -50,6 +50,40 @@ def helper(x):
   });
 });
 
+describe("Python nested functions", () => {
+  it("reports a def nested in a function or a method as a function of its own, with its calls (real-repo FP)", async () => {
+    const { functions, classes } = await extract(`
+def repeat_every(seconds):
+    def decorator(func):
+        @wraps(func)
+        async def wrapped():
+            async def loop():
+                await func()
+                await asyncio.sleep(seconds)
+            asyncio.ensure_future(loop())
+        return wrapped
+    return decorator
+
+class Scout:
+    def fetch(self, session):
+        def get_pages():
+            return session.get(CATALOG_URL, timeout=3)
+        if self.enabled:
+            for page in get_pages():
+                yield page
+`);
+    expect(functions.map((f) => `${f.name}@${f.line} ${f.isExported ? "exported" : "-"} ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "repeat_every@2 exported ",
+      "decorator@3 - wraps",
+      "wrapped@5 - asyncio.ensure_future,loop",
+      "loop@6 - func,asyncio.sleep",
+      "get_pages@15 - session.get,CATALOG_URL",
+    ]);
+    expect(functions.find((f) => f.name === "wrapped")!.decorators).toEqual(["wraps(func)"]);
+    expect(classes[0]!.methods.map((m) => m.name)).toEqual(["fetch"]);
+  });
+});
+
 describe("Python classes", () => {
   it("emits annotated attributes as properties with Field(...) kept as a decorator", async () => {
     const { classes } = await extract(`

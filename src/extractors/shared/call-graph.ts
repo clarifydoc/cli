@@ -234,6 +234,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
 
   // A body's parameters live on its function node, outside the walk.
   if (!BINDING_SITES.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere, nested);
+  // A nested function's free names include its enclosing functions' parameters: values handed in
+  // (`seconds`, a decorator's `func`), never a function of the project of that name.
+  for (let p = bodyNode.parent?.parent ?? null; p; p = p.parent) if (nested.has(p.type)) collectBoundNames(p, boundHere, nested);
   walk(bodyNode, true);
 
   const results: CallInfo[] = [];

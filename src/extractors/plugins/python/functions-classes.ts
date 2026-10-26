@@ -79,6 +79,35 @@ export class PythonExtractor extends FunctionClassExtractor {
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     for (const parsed of this.parseFunctionsIn(node)) functions.push(parsed.fn);
+    // A `def` nested in a function (a decorator's `wrapper`, a scheduler's `async def loop()`, a
+    // paginating helper) is a function of its own: its calls are in no enclosing body, so without
+    // it they were in none. Reported under its own name, never exported.
+    if (NESTED_DEF.test(node.text)) this.collectNestedFunctions(node, false, functions);
+  }
+
+  private collectNestedFunctions(node: Node, inFunction: boolean, functions: FunctionInfo[]): void {
+    for (const child of node.namedChildren) {
+      const def = child.type === "function_definition" ? child
+        : child.type === "decorated_definition" ? child.namedChildren.find((c) => c.type === "function_definition") ?? null : null;
+      const cls = child.type === "class_definition" ? child
+        : child.type === "decorated_definition" ? child.namedChildren.find((c) => c.type === "class_definition") ?? null : null;
+      if (def) {
+        if (inFunction) {
+          const parsed = this.parsePythonFunction(def);
+          parsed.fn.isExported = false;
+          if (child !== def) parsed.fn.decorators = child.namedChildren.filter((c) => c.type === "decorator").map((d) => d.text.replace(/^@/, ""));
+          functions.push(parsed.fn);
+        }
+        const body = def.childForFieldName("body");
+        if (body) this.collectNestedFunctions(body, true, functions);
+      } else if (cls) {
+        // A class body's defs are its methods; their bodies hold nested functions again.
+        const body = cls.childForFieldName("body");
+        if (body) this.collectNestedFunctions(body, false, functions);
+      } else {
+        this.collectNestedFunctions(child, inFunction, functions);
+      }
+    }
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
@@ -508,6 +537,9 @@ function collectEnumMembers(body: Node, enumName: string, out: PropertyInfo[]): 
     out.push({ name: left.text, type: enumName, visibility: "public", isStatic: true, isReadonly: true });
   }
 }
+
+/** Cheap gate: some `def` is indented (a method or a nested function). */
+const NESTED_DEF = /\n[ \t]+(?:async[ \t]+)?def[ \t]/;
 
 /** `@pytest.fixture`, `@fixture`, `@pytest.fixture(scope="module")`. */
 export const FIXTURE_DECORATOR = /^(?:pytest\.)?fixture\b/;
