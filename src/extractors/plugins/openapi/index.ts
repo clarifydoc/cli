@@ -536,6 +536,9 @@ function schemaClass(name: string, schema: SpecNode): ClassInfo {
       isReadonly: prop.children.get("readOnly")?.value === "true",
     };
     if (required.has(propName)) info.isRequired = true;
+    // `id: { $ref: '../api-spec/league-api.yaml#/components/schemas/Club/properties/id' }`: a copy of that member.
+    const memberRef = prop.children.get("$ref")?.value;
+    if (memberRef && /#.*\/properties\/[^/]+$/.test(memberRef)) info.ref = memberRef;
     props.push(info);
   }
   // `allOf: [$ref: Base, {…}]` is schema inheritance: the base's properties

@@ -953,6 +953,13 @@ export interface PropertyInfo {
   column?: string;
   /** An ORM entity member the code declares as (part of) the primary key (`@Id`, `@EmbeddedId`). */
   primaryKey?: boolean;
+  /**
+   * The member mirrors another schema's member, as its `$ref` is written
+   * (`../api-spec/league-api.yaml#/components/schemas/Club/properties/id`): an
+   * API contract property copied from the schema it projects. Its type is that
+   * member's, which the file does not state.
+   */
+  ref?: string;
 }
 
 export interface ClassInfo {

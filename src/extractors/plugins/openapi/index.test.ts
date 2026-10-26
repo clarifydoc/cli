@@ -453,6 +453,8 @@ components:
 `.split("\n");
     const event = extractOpenApiEntities(lines).find((e) => e.name === "TransferEvent")!;
     expect(event.properties.map((p) => `${p.name}:${p.type}`)).toEqual(["id:null", "squad:null", "club:Club"]);
+    // The member it mirrors is recorded, for a join to the schema it projects.
+    expect(event.properties.map((p) => p.ref ?? null)).toEqual(["../api-spec/club-api.yaml#/components/schemas/Club/properties/id", null, null]);
     expect(extractOpenApiRelations(lines, extractOpenApiEntities(lines)).map((r) => `${r.fromField}->${r.toEntity}`)).toEqual([]);
   });
 });
