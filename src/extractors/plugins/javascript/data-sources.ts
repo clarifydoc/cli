@@ -2462,7 +2462,8 @@ function isOrmCall(name: string): boolean {
   // A trusted ORM root (`db`, `prisma`, `*Repository`) makes the whole chain DB
   // access regardless of intermediate calls — `db.prepare("sql").all()`,
   // `repo.createQueryBuilder().getMany()`.
-  const trustedRoot = ORM_ROOTS.has(root) || /Repository$/.test(root);
+  // A ref holding the root (`client.value.authorize()`, `db.current.x()`) is whatever the ref holds.
+  const trustedRoot = (ORM_ROOTS.has(root) || /Repository$/.test(root)) && parts[1] !== "value" && parts[1] !== "current";
   // Otherwise the receiver must not be a DOM/builtin object (`navbar.classList.remove`,
   // `document.querySelector(...)`) or a fluent builtin chain (`s.split(' ').map(…)`)
   // — those share verb names with ORM CRUD but are DOM/array manipulation, the
@@ -2500,7 +2501,7 @@ function isOrmCall(name: string): boolean {
   return false;
 }
 
-const NON_ACCESS_LEAVES = new Set(["postMessage", "addEventListener", "removeEventListener", "dispatchEvent", "on", "off", "once", "emit", "focus", "navigate"]);
+const NON_ACCESS_LEAVES = new Set(["postMessage", "addEventListener", "removeEventListener", "dispatchEvent", "on", "off", "once", "emit", "focus", "navigate", "contains"]);
 
 /**
  * Drizzle names the table as the verb's argument — `db.insert(posts).values(…)`,

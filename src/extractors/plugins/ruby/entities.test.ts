@@ -73,6 +73,7 @@ end`, "app/models/player.rb", "ruby");
     TABS.find { |t| t == params[:tab] }
     I18n.exists?("squad.title")
     Stripe::Invoice.create(customer: id)
+    Stripe::Subscription.list(customer: id)
     ActsAsTaggableOn::Tagging.where(taggable: player)
     ActiveStorage::Blob.find_signed(params[:id])
     Player.find(params[:id])
@@ -87,6 +88,9 @@ end`, "app/controllers/squads_controller.rb", "ruby");
   create_table "taggings", force: :cascade do |t|
     t.bigint "tag_id"
   end
+  create_table "notification_subscriptions", force: :cascade do |t|
+    t.bigint "player_id"
+  end
   create_table "active_storage_blobs", force: :cascade do |t|
     t.string "key"
   end
@@ -96,7 +100,7 @@ end`, "db/schema.rb", "ruby"));
     return ctl.dataSources.filter((d) => d.kind === "database").map((d) => d.entity ?? "-");
   };
 
-  it("drops a SCREAMING_CASE constant, and with a schema a class declared nowhere whose table it lacks", () => {
+  it("drops a SCREAMING_CASE constant, and with a schema a class declared nowhere whose table it lacks — a table merely ending in its name is another's", () => {
     expect(files(true)).toEqual(["Tagging", "Blob", "Player"]);
   });
 

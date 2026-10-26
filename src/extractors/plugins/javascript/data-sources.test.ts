@@ -37,13 +37,15 @@ describe("JS ORM read/write classification (access)", () => {
 });
 
 describe("JS messages on a client are no database access", () => {
-  it("reads a service worker's client.postMessage and a handle's event hook as nothing (real-repo FP)", async () => {
+  it("reads a service worker's client.postMessage, a handle's event hook, an IndexedDB store probe and a ref's client as nothing (real-repo FP)", async () => {
     const ds = await dbOf(`
       self.addEventListener("message", async (event) => {
         const client = event.source;
         client.postMessage({ type: "MATCH_CACHED", matchId });
         db.on("error", report);
         await client.query("SELECT * FROM clubs");
+        if (db.objectStoreNames.contains("fixtures")) return;
+        const response = await client.value.generateAuthorization();
       });`);
     expect(ds.map((d) => d.name)).toEqual(["client.query"]);
   });

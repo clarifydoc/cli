@@ -838,20 +838,26 @@ function dropServiceObjectQueries(analyses: FileAnalysis[]): void {
     for (const cls of a.classes) (cls.decorators.includes("entity") ? models : declared).add(cls.name.split("::").pop()!);
   }
   const tables = new Set(analyses.flatMap((a) => (a.railsSchemaTables ?? []).map((t) => t.table)));
-  const inSchema = (name: string) => {
+  // A gem's model's table is prefixed by its namespace (`ActiveStorage::Blob` → `active_storage_blobs`);
+  // another table that merely ends in the name (`notification_subscriptions` for `Stripe::Subscription`) is not its.
+  const inSchema = (name: string, namespace: string[]) => {
     const under = railsUnderscore(name);
     const names = [railsPluralize(under), under];
-    for (const t of tables) if (names.some((n) => t === n || t.endsWith(`_${n}`))) return true;
+    const prefixes = namespace.map((ns) => railsUnderscore(ns));
+    if (namespace.length > 1) prefixes.push(namespace.map((ns) => railsUnderscore(ns)).join("_"));
+    for (const t of tables) if (names.some((n) => t === n || prefixes.some((p) => t === `${p}_${n}`))) return true;
     return false;
   };
-  const notModel = (name: string) =>
+  const notModel = (name: string, namespace: string[]) =>
     (declared.has(name) && !models.has(name)) ||
     /^[A-Z][A-Z\d_]+$/.test(name) ||
-    (tables.size > 0 && !declared.has(name) && !models.has(name) && !inSchema(name));
+    (tables.size > 0 && !declared.has(name) && !models.has(name) && !inSchema(name, namespace));
+  /** `Stripe::BillingPortal::Session.create` → `["Stripe", "BillingPortal"]`. */
+  const namespaceOf = (rowName: string) => rowName.slice(0, rowName.lastIndexOf(".")).replace(/^::/, "").split("::").slice(0, -1);
   for (const a of ruby) {
-    if (!a.dataSources.some((d) => d.kind === "database" && d.entity && notModel(d.entity))) continue;
+    if (!a.dataSources.some((d) => d.kind === "database" && d.entity && notModel(d.entity, namespaceOf(d.name)))) continue;
     a.dataSources = a.dataSources.filter((d) => {
-      if (d.kind !== "database" || !d.entity || !notModel(d.entity)) return true;
+      if (d.kind !== "database" || !d.entity || !notModel(d.entity, namespaceOf(d.name))) return true;
       // Only the `Constant.verb` rows, whose receiver is the class itself.
       return d.name.slice(0, d.name.lastIndexOf(".")).split("::").pop() !== d.entity;
     });
