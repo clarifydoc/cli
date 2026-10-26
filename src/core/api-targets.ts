@@ -327,7 +327,17 @@ export function expandRequestFactories(
       if (rows) expandSite(produced, a.filePath, site, rows, known);
     }
   }
-  const onward = produced.filter((p) => p.onward).map((p) => p.row);
+  // A site whose literal itself names its own function's parameter (`fmt.Sprintf("hook/%s", hookName)`
+  // handed to the factory) is a request as it stands AND the next level's factory, which its
+  // callers' literals fill (`"pre-receive"`).
+  const nextLevel: ApiCall[] = [];
+  for (const p of produced) {
+    if (p.onward) continue;
+    const fns = functionsIn(p.row.filePath).filter((f) => f.line <= p.row.line && p.row.line <= f.endLine);
+    const names = [...p.row.target!.matchAll(HOLE)].map((m) => (m[1] ?? m[2])!);
+    if (names.some((name) => fns.some((f) => f.params.some((x) => x.name === name)))) nextLevel.push(p.row);
+  }
+  const onward = [...produced.filter((p) => p.onward).map((p) => p.row), ...nextLevel];
   for (const p of produced) {
     if (p.onward) continue;
     calls.push(p.row);

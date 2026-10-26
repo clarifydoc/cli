@@ -92,7 +92,7 @@ const KV_CLIENT_IMPORT_RE = /"[^"]*(?:\/go-redis\/|redis\/go-redis|gomodule\/red
 const ENV_RE = /\bos\.(Getenv|LookupEnv)\s*\(\s*["'`]([^"'`]+)["'`]/;
 
 /** MQ publish/consume — generic verbs gated on a broker-shaped receiver. */
-const MQ_RECEIVER_RE = /^(ch(an(nel)?)?|amqp\w*|nats\w*|nc|js|producer|writer|pub\w*|sub\w*|consumer|reader|kafka\w*)$/i;
+const MQ_RECEIVER_RE = /^(ch(an(nel)?)?|amqp\w*|nats\w*|nc|js|producer|writer|pub\w*|sub\w*|consumer|reader|kafka\w*|\w*broker)$/i;
 const MQ_PUBLISH_RE = /\b(\w+)\.\s*(Publish|PublishWithContext|PublishMsg|WriteMessages|SendMessage)\s*\(/;
 const MQ_CONSUME_RE = /\b(\w+)\.\s*(Consume|Subscribe|QueueSubscribe|ChanSubscribe|ReadMessage|FetchMessage|ReceiveMessage)\s*\(/;
 const FIRST_STRING_RE = /["'`]([^"'`]+)["'`]/;

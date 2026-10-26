@@ -68,6 +68,29 @@ func Lookup(ctx context.Context, href string) {
 }
 `;
 
+const HOOKS = `package private
+
+import (
+\t"context"
+\t"fmt"
+
+\t"example.com/league/modules/setting"
+)
+
+func newHookRequest(ctx context.Context, hookName, clubName string) {
+\treqURL := setting.LocalURL + fmt.Sprintf("api/internal/hook/%s/%s", hookName, url.PathEscape(clubName))
+\tnewInternalRequestAPI(ctx, reqURL, "POST")
+}
+
+func HookKickOff(ctx context.Context, clubName string) {
+\tnewHookRequest(ctx, "kick-off", clubName)
+}
+
+func HookFullTime(ctx context.Context, clubName string) {
+\tnewHookRequest(ctx, "full-time", clubName)
+}
+`;
+
 function goFile(filePath: string, src: string): FileAnalysis {
   const lines = src.split("\n");
   const functions = goFunctions(lines).map((f) => ({ name: `fn${f.start}`, line: f.start + 1, endLine: f.end + 1, params: f.params.map((name) => ({ name })) }) as unknown as FunctionInfo);
@@ -109,6 +132,49 @@ describe("Go request factories", () => {
     expect(calls.slice(1).map((c) => `${c.filePath}:${c.line} ${c.name} ${c.target} via ${c.via}`)).toEqual([
       "modules/private/manager.go:12 POST ${setting.LocalURL}api/internal/manager/shutdown via newInternalRequestAPI",
       "modules/private/manager.go:18 PUT ${setting.LocalURL}api/internal/club/${clubID}/transfer via newInternalRequestAPI",
+    ]);
+  });
+
+  it("fills a factory's URL parameter from the literal its callers hand it, though that is no path (real-repo FP)", () => {
+    const analyses = [goFile("modules/httplib/request.go", HTTPLIB), goFile("modules/private/internal.go", INTERNAL), goFile("modules/private/hook.go", HOOKS)];
+    analyses[0]!.functions[0]!.name = "NewClientRequest";
+    analyses[1]!.functions[0]!.name = "NewInternalRequest";
+    analyses[1]!.functions[1]!.name = "newInternalRequestAPI";
+    analyses[2]!.functions[0]!.name = "newHookRequest";
+    expect(analyses[2]!.pathArgCalls!.filter((p) => p.callee === "newHookRequest").map((p) => `${p.line} ${JSON.stringify(p.args)}`)).toEqual([
+      '16 [null,"kick-off",null]',
+      '20 [null,"full-time",null]',
+    ]);
+    const calls = analyses.flatMap((a) => a.dataSources.filter((d) => d.kind === "api-call").map((d) => ({ ...d, filePath: a.filePath }))) as Array<DataSourceInfo & { filePath: string }>;
+    expandRequestFactories(calls, analyses, buildImportIndex(analyses));
+    expect(calls.slice(1).map((c) => `${c.line} ${c.target}`)).toEqual([
+      "12 ${setting.LocalURL}api/internal/hook/${hookName}/{}",
+      "16 ${setting.LocalURL}api/internal/hook/kick-off/{}",
+      "20 ${setting.LocalURL}api/internal/hook/full-time/{}",
+    ]);
+  });
+});
+
+describe("Go in-process broker", () => {
+  it("publishes and subscribes on the topic the same function builds, and on a Sprintf format", () => {
+    const src = `package events
+
+import "example.com/league/services/pubsub"
+
+func publishMatchEvent(clubID int64, b []byte) {
+\tpubsub.DefaultBroker.Publish(pubsub.ClubTopic(clubID), b)
+\tpubsub.DefaultBroker.Publish(fmt.Sprintf("club-%d", clubID), b)
+}
+
+func Serve(clubID int64) {
+\tch, cancel := pubsub.DefaultBroker.Subscribe(pubsub.ClubTopic(clubID))
+\tdefer cancel()
+}
+`;
+    expect(extractGoDataSources(src.split("\n")).filter((d) => d.kind.startsWith("queue")).map((d) => `${d.kind} ${d.target}`)).toEqual([
+      "queue-publish pubsub.ClubTopic()",
+      "queue-publish club-{}",
+      "queue-consume pubsub.ClubTopic()",
     ]);
   });
 });

@@ -43,6 +43,12 @@ export function argValue(arg: string | undefined, constants: ReadonlyMap<string,
   const lit = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/.exec(arg);
   if (lit) return lit[1] ?? lit[2] ?? "";
   if (/^[A-Za-z_]\w*$/.test(arg)) return constants.get(arg) ?? null;
+  // A topic a function builds per subscriber (`pubsub.UserTopic(userID)`): named by that function,
+  // which both ends call; `fmt.Sprintf("user-%d", id)` by its format.
+  const sprintf = /^fmt\.Sprintf\(\s*"([^"\\]*)"\s*,[\s\S]*\)$/.exec(arg);
+  if (sprintf) return sprintf[1]!.replace(/%[-+# 0-9.]*[sdvqx]/g, "{}");
+  const builder = /^((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*(?:Topic|Channel|Subject|Queue|Stream))\s*\([\s\S]*\)$/i.exec(arg);
+  if (builder) return `${builder[1]}()`;
   const queue = QUEUE_NAME_RE.exec(arg)?.[1];
   if (!queue) return null;
   // `q, err := ch.QueueDeclare(name, …)` above the call: the name it declared.

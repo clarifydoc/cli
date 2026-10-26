@@ -23,6 +23,9 @@ import { extractGoImports } from "./imports.js";
  */
 
 interface GoFunction {
+  name: string;
+  /** A method (`func (r *T) Name(…)`): reached through its receiver, never by a bare call. */
+  method: boolean;
   params: string[];
   start: number;
   end: number;
@@ -30,7 +33,7 @@ interface GoFunction {
   testHelper: boolean;
 }
 
-const FUNC_RE = /^func\s+(?:\([^)]*\)\s*)?[A-Za-z_]\w*\s*(?:\[[^\]]*\])?\s*\(([^)]*)\)/;
+const FUNC_RE = /^func\s+(\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*\(([^)]*)\)/;
 const URL_PARAM = /url|uri|path|endpoint|link/i;
 const VERB_LITERAL = /^"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"$|^http\.Method(Get|Post|Put|Patch|Delete|Head|Options)$/;
 const STRING_LIT = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/;
@@ -56,11 +59,11 @@ export function goFunctions(lines: readonly string[]): GoFunction[] {
   for (let i = 0; i < lines.length; i++) {
     const m = FUNC_RE.exec(lines[i]!);
     if (!m) continue;
-    const params = m[1]!.split(",").map((p) => /^\s*([A-Za-z_]\w*)/.exec(p)?.[1]).filter((p): p is string => !!p && p !== "_");
+    const params = m[3]!.split(",").map((p) => /^\s*([A-Za-z_]\w*)/.exec(p)?.[1]).filter((p): p is string => !!p && p !== "_");
     let depth = braceDelta(lines[i]!);
     let k = i;
     while (depth > 0 && k + 1 < lines.length) depth += braceDelta(lines[++k]!);
-    out.push({ params, start: i, end: k, testHelper: /\btesting\.(?:T|TB|B)\b/.test(m[1]!) });
+    out.push({ name: m[2]!, method: !!m[1], params, start: i, end: k, testHelper: /\btesting\.(?:T|TB|B)\b/.test(m[3]!) });
     i = k;
   }
   return out;
@@ -133,7 +136,8 @@ export function extractGoPathArgCalls(lines: string[]): PathArgCall[] {
   if (!/\(/.test(text)) return [];
   const packages = new Set(extractGoImports(lines).flatMap((i) => i.specifiers));
   const out: PathArgCall[] = [];
-  for (const fn of goFunctions(lines)) {
+  const fns = goFunctions(lines);
+  for (const fn of fns) {
     const params = new Set(fn.params);
     const locals = new Map<string, string>();
     for (let i = fn.start + 1; i <= fn.end; i++) {
@@ -174,6 +178,47 @@ export function extractGoPathArgCalls(lines: string[]): PathArgCall[] {
           line: i + 1,
         });
       }
+    }
+  }
+  return [...out, ...literalFactorySites(lines, fns, out)];
+}
+
+/**
+ * Calls of a function of this file that builds a URL from a parameter
+ * (`newInternalRequestAPIForHooks(ctx, hookName, …)` handing on
+ * `fmt.Sprintf("api/internal/hook/%s", hookName)`), with a string literal in
+ * that parameter's place (`"pre-receive"`): a site whose literal fills the
+ * hole, though it is no path itself.
+ */
+function literalFactorySites(lines: string[], fns: readonly GoFunction[], sites: readonly PathArgCall[]): PathArgCall[] {
+  const feeding = new Map<string, Set<number>>();
+  for (const fn of fns) {
+    if (fn.method) continue;
+    for (const s of sites) {
+      if (s.line - 1 < fn.start || s.line - 1 > fn.end) continue;
+      for (const a of s.args) {
+        for (const m of (a ?? "").matchAll(/\$\{([A-Za-z_]\w*)\}/g)) {
+          const i = fn.params.indexOf(m[1]!);
+          if (i >= 0) (feeding.get(fn.name) ?? feeding.set(fn.name, new Set()).get(fn.name)!).add(i);
+        }
+      }
+    }
+  }
+  if (feeding.size === 0) return [];
+  const seen = new Set(sites.map((s) => `${s.line}:${s.callee}`));
+  const out: PathArgCall[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.replace(/\/\/.*$/, "");
+    for (const m of line.matchAll(/(?<![\w.])([A-Za-z_]\w*)\s*\(/g)) {
+      const at = feeding.get(m[1]!);
+      if (!at || seen.has(`${i + 1}:${m[1]}`) || /^\s*func\b/.test(line)) continue;
+      const raw = callArgs(lines, i, m.index! + m[0].length - 1);
+      const args = raw.map((a) => {
+        const lit = STRING_LIT.exec(a.trim());
+        return lit ? lit[1] ?? lit[2] ?? "" : null;
+      });
+      if (![...at].some((k) => args[k] !== null && args[k] !== undefined)) continue;
+      out.push({ callee: m[1]!, args, line: i + 1 });
     }
   }
   return out;
