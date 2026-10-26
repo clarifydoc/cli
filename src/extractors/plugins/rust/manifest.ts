@@ -32,6 +32,9 @@ export const rustManifest: LanguagePluginManifest = {
   // `let m = upgrade_manager(x)?;` holds the `Ok` value: `?`/`.unwrap()` unwrap these
   // as an await unwraps a task (`*Result` = a project alias such as `FlowyResult<T>`).
   asyncResultTypes: ["Result", "Option", "*Result"],
+  // The standard library's iterator, Option/Result and process-status members: a
+  // project method merely sharing the name (`PropertyMap::iter`) is a coincidence.
+  builtinMembers: ["iter", "iter_mut", "into_iter", "success", "is_some", "is_none", "is_ok", "is_err", "unwrap_or_default", "map_err", "ok_or", "ok_or_else", "and_then", "as_str", "to_owned", "as_ref", "as_mut", "take", "borrow", "borrow_mut", "unwrap_or_else", "cloned", "copied"],
   externalModulePrefixes: ["std::", "core::", "alloc::", "serde", "tokio", "actix", "rocket", "hyper", "reqwest", "diesel", "sqlx"],
   frameworkImportHints: { diesel: "diesel", sea_orm: "sea-orm", sqlx: "rust-sqlx" },
   frameworkRules: rustFrameworkRules,

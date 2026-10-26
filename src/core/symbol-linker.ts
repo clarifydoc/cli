@@ -14,6 +14,7 @@ import {
   type RouteInfo,
   type SubProject,
   type GlobalMemberDef,
+  type ImportInfo,
 } from "../types/analysis.js";
 import type { ImportResolveContext, PackageRoot } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
@@ -1564,10 +1565,7 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
       set = packageImportsOf(analysis, ctx);
     } else {
       set = new Set();
-      for (const imp of analysis.imports) {
-        const f = importPath(ctx, imp.source, analysis.filePath);
-        if (f && f !== analysis.filePath) set.add(f);
-      }
+      for (const imp of analysis.imports) for (const f of importFiles(ctx, imp, analysis.filePath)) if (f !== analysis.filePath) set.add(f);
       // Files its loader finds by the constants it names (Zeitwerk) count as imported.
       const autoload = manifestFor(analysis.language as Language)?.autoloadedFiles;
       if (autoload) for (const f of autoload(analysis, (suffix) => filesEndingWith(ctx, suffix))) if (f !== analysis.filePath) set.add(f);
@@ -1576,6 +1574,27 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
   return set;
+}
+
+/**
+ * The files one import names: by the language's own module rules where it has
+ * them (`resolveImport`: Rust `use crate::graph::{Node, Edge}` → the file
+ * declaring each name, through the module's glob re-exports), else by
+ * `importPath`.
+ */
+function importFiles(ctx: LinkContext, imp: ImportInfo, fromFile: string): string[] {
+  const language = ctx.languageOf.get(fromFile) as Language | undefined;
+  const own = language ? manifestFor(language)?.resolveImport : undefined;
+  if (!own) {
+    const f = importPath(ctx, imp.source, fromFile);
+    return f ? [f] : [];
+  }
+  const out = new Set<string>();
+  for (const spec of imp.specifiers.length > 0 ? imp.specifiers : [undefined]) {
+    const f = own(fromFile, imp.source, spec === "*" ? undefined : spec, importResolveContext(ctx));
+    if (f && ctx.filePathMap.get(f) === f) out.add(f);
+  }
+  return [...out];
 }
 
 /** Analyzed files whose path is `suffix` or ends with `/suffix` (index by file name, built on first use). */
@@ -1607,10 +1626,11 @@ function forwardThroughBarrels(set: Set<string>, importer: string, ctx: LinkCont
       const barrel = ctx.analysisByFile.get(file);
       if (!barrel || barrel.functions.some((f) => !f.name.startsWith("<")) || barrel.classes.length > 0) continue;
       for (const imp of barrel.imports) {
-        const f = importPath(ctx, imp.source, file);
-        if (!f || f === importer || set.has(f)) continue;
-        set.add(f);
-        next.push(f);
+        for (const f of importFiles(ctx, imp, file)) {
+          if (f === importer || set.has(f)) continue;
+          set.add(f);
+          next.push(f);
+        }
       }
     }
     frontier = next;
