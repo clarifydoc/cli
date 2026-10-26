@@ -379,3 +379,23 @@ func main() {
     expect(routes.map((r) => r.path)).toEqual(["/league/matches", "/clubs", "/cups", "/league/table"]);
   });
 });
+
+describe("Go route handler receivers built for one type", () => {
+  it("names the types the receiver's function fields return", () => {
+    const src = `func registerAPIRoutes(a *echo.Group) {
+	clubHandler := &handler.WebHandler{
+		EmptyStruct: func() handler.CObject {
+			return &models.Club{}
+		},
+	}
+	a.GET("/clubs", clubHandler.ReadAllWeb)
+	a.GET("/health", health.Check)
+}
+
+func other(a *echo.Group) {
+	a.GET("/clubs/:club", clubHandler.ReadOneWeb)
+}`;
+    const routes = extractGoRoutes(src.split("\n"));
+    expect(routes.map((r) => `${r.path} ${r.handlerTypes?.join(",") ?? "-"}`)).toEqual(["/clubs models.Club", "/health -", "/clubs/:club -"]);
+  });
+});

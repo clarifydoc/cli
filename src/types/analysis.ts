@@ -978,6 +978,13 @@ export interface RouteInfo {
   kind: "frontend" | "api";
   handler: string | null;
   /**
+   * The concrete types the handler's receiver is built to work on, as written:
+   * Go `h := &handler.WebHandler{EmptyStruct: func() CObject { return &models.Club{} }}`
+   * serving `h.ReadOneWeb` names `models.Club`. A generic handler that
+   * dispatches on an interface reaches that type's implementation.
+   */
+  handlerTypes?: string[];
+  /**
    * The interface (or class) method this route IS, when the route is declared
    * on a typed API (`@GET @Path(...)` on `PersonRepository#getPerson`). A
    * client proxy of the same interface calls it whatever URL it is mounted at.

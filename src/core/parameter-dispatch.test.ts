@@ -86,6 +86,34 @@ func playersCreate(in *struct {
 	return handler.DoCreate(&in.Body)
 }
 `,
+  // A v1-style generic web handler: the type it works on is the one its EmptyStruct field returns.
+  "pkg/web/handler/web.go": `package handler
+
+type WebHandler struct {
+	EmptyStruct func() CObject
+}
+
+func (c *WebHandler) CreateWeb(ctx *echo.Context) error {
+	current := c.EmptyStruct()
+	return DoCreate(current)
+}
+`,
+  "pkg/routes/routes.go": `package routes
+
+import (
+	"example.com/league/pkg/models"
+	"example.com/league/pkg/web/handler"
+)
+
+func registerAPIRoutes(a *echo.Group) {
+	playerHandler := &handler.WebHandler{
+		EmptyStruct: func() handler.CObject {
+			return &models.Player{}
+		},
+	}
+	a.PUT("/players", playerHandler.CreateWeb)
+}
+`,
 };
 
 describe("a generic handler dispatching on its caller's type", () => {
@@ -120,6 +148,15 @@ describe("a generic handler dispatching on its caller's type", () => {
       .map((l) => `${l.callName} -> ${l.targetSymbol}`);
     // The promoted method is the embedded interface's own.
     expect(links.sort()).toEqual(["obj.CanCreate -> Permissions.CanCreate", "obj.Create -> Club.Create"]);
+  });
+
+  it("links a route to the implementation its handler's receiver is built for", () => {
+    const route = summary.routeMap?.find((r) => r.path === "/players");
+    expect(route?.handlerTypes).toEqual(["models.Player"]);
+    const links = (summary.symbolLinks ?? [])
+      .filter((l) => l.sourceSymbol === "route:PUT /players" && l.strategy === "interface-redirect")
+      .map((l) => `${l.callName} -> ${l.targetSymbol}`).sort();
+    expect(links).toEqual(["obj.CanCreate -> Player.CanCreate", "obj.Create -> Player.Create"]);
   });
 
   it("never counts an implementation of an interface whose embedded part is unknown", () => {

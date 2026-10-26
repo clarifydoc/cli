@@ -235,6 +235,34 @@ function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr
   return { handler: null, guards };
 }
 
+/** `h := &handler.WebHandler{` / `h = pkg.Handler{` — a local assigned a composite literal (match ends at its `{`). */
+const COMPOSITE_LOCAL_RE = /^\s*(\w+)\s*:?=\s*&?[A-Za-z_][\w.]*\s*\{/;
+
+/**
+ * The concrete types the function fields of a composite literal return
+ * (`func() CObject { return &models.Club{} }` → `models.Club`), read from its
+ * opening brace at (`row`, `col`) to the matching close, at most 40 lines.
+ */
+function literalReturnTypes(lines: readonly string[], row: number, col: number): string[] {
+  let depth = 0;
+  let text = "";
+  for (let r = row; r < Math.min(lines.length, row + 40); r++) {
+    const line = r === row ? lines[r]!.slice(col) : lines[r]!;
+    let end = -1;
+    for (let k = 0; k < line.length; k++) {
+      const ch = line[k]!;
+      if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        end = k;
+        break;
+      }
+    }
+    text += `${end >= 0 ? line.slice(0, end) : line}\n`;
+    if (end >= 0) break;
+  }
+  return [...new Set([...text.matchAll(/\breturn\s+&?([A-Za-z_][\w.]*)\s*\{/g)].map((m) => m[1]!))];
+}
+
 export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   /** Router variables in scope; those rooted at the function's router parameter map to true. */
@@ -274,6 +302,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
       // Registered on the function's router parameter: the path is relative to wherever it is passed.
       ...(recv && routerVars.get(recv) && currentFn ? { owner: `fn:${currentFn}` } : {}),
     };
+    const built = handler ? builtTypes.get(/^(\w+)\.\w+$/.exec(handler)?.[1] ?? "") : undefined;
+    if (built) route.handlerTypes = built;
     const auth = buildAuth(inherited.filter(isAuthGuard), own.filter(isAuthGuard));
     if (auth) route.auth = auth;
     routes.push(route);
@@ -296,6 +326,12 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   };
   /** The top-level function the current line is in (`func GetAlbum(router *gin.RouterGroup) {`). */
   let currentFn: string | null = null;
+  /**
+   * Locals built as a composite literal whose function fields return a concrete
+   * type: `h := &handler.WebHandler{EmptyStruct: func() handler.CObject { return &models.Club{} }}`
+   * → `h` works on `models.Club` (`RouteInfo.handlerTypes` of a route `h.ReadOneWeb` serves).
+   */
+  const builtTypes = new Map<string, string[]>();
   /** The current function returns the router it builds. */
   let returnsRouter = false;
 
@@ -321,6 +357,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
       // A method is its receiver type's: `func (h *FileMigratorWeb) RegisterRoutes(g *echo.Group)` → FileMigratorWeb.RegisterRoutes.
       currentFn = fnDecl[1] ? `${fnDecl[1]}.${fnDecl[2]!}` : fnDecl[2]!;
       routerVars.clear();
+      builtTypes.clear();
       // `func Routes() *web.Router {`: the router it builds is mounted wherever a caller mounts the result.
       returnsRouter = /\)\s*\*?(?:\w+\.)?(?:Router|Mux|ServeMux|Engine|Echo|App|Handler)\s*\{\s*$/.test(line);
       const params = line.slice(fnDecl.index! + fnDecl[0].length - 1);
@@ -330,6 +367,13 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
         varGuards.delete(m[1]!);
       }
     }
+    const composite = COMPOSITE_LOCAL_RE.exec(line);
+    if (composite) {
+      const types = literalReturnTypes(lines, i, composite.index + composite[0].length - 1);
+      if (types.length > 0) builtTypes.set(composite[1]!, types);
+      else builtTypes.delete(composite[1]!);
+    }
+
     const engine = line.match(ENGINE_RE) ?? line.match(PROJECT_ROUTER_RE);
     if (engine) routerVars.set(engine[1]!, returnsRouter);
 

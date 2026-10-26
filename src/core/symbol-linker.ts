@@ -491,11 +491,7 @@ function parameterDispatchLinks(
 
   const out: SymbolLink[] = [];
   const seen = new Set<string>();
-  for (const l of links) {
-    const dispatches = dispatchOf.get(`${l.targetFile}\0${l.targetSymbol}`);
-    const caller = dispatches ? fnAt.get(`${l.sourceFile}\0${l.sourceSymbol}`) : undefined;
-    if (!dispatches || !caller) continue;
-    const mentioned = [...caller.params.map((p) => p.type ?? ""), ...(caller.localTypes ?? []).map((t) => t.type ?? "")].join(" ");
+  const dispatchTo = (l: SymbolLink, dispatches: readonly Dispatch[], mentioned: string): void => {
     for (const d of dispatches) {
       const named = d.iface.impls.filter((impl) => new RegExp(String.raw`(?:^|[^\w])${impl.className}(?![\w])`).test(mentioned));
       if (named.length !== 1) continue;
@@ -518,6 +514,48 @@ function parameterDispatchLinks(
           strategy: "interface-redirect",
           relation: relationForStrategy("interface-redirect"),
         });
+      }
+    }
+  };
+  for (const l of links) {
+    const dispatches = dispatchOf.get(`${l.targetFile}\0${l.targetSymbol}`);
+    const caller = dispatches ? fnAt.get(`${l.sourceFile}\0${l.sourceSymbol}`) : undefined;
+    if (!dispatches || !caller) continue;
+    const mentioned = [...caller.params.map((p) => p.type ?? ""), ...(caller.localTypes ?? []).map((t) => t.type ?? "")].join(" ");
+    dispatchTo(l, dispatches, mentioned);
+  }
+
+  // A route whose handler's receiver is built for one type (`RouteInfo.handlerTypes`: a Go
+  // `WebHandler{EmptyStruct: func() CObject { return &models.Club{} }}` serving `h.ReadOneWeb`)
+  // reaches that type's implementation in every generic handler its handler hands the value
+  // on to, three calls deep (`ReadOneWeb` → `DoReadOne(obj CObject)` → `obj.ReadOne`).
+  const typedRoutes = analyses.flatMap((a) => a.routes.filter((r) => r.handlerTypes?.length).map((r) => ({ a, r })));
+  if (typedRoutes.length > 0) {
+    const forward = new Map<string, SymbolLink[]>();
+    for (const l of links) {
+      if (l.navigational) continue;
+      const k = `${l.sourceFile}\0${l.sourceSymbol}`;
+      (forward.get(k) ?? forward.set(k, []).get(k)!).push(l);
+    }
+    for (const { a, r } of typedRoutes) {
+      const symbol = `route:${r.httpMethod ?? "USE"} ${r.path}`;
+      const mentioned = r.handlerTypes!.join(" ");
+      const visited = new Set<string>();
+      let frontier = [`${a.filePath}\0${symbol}`];
+      for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
+        const next: string[] = [];
+        for (const k of frontier) {
+          for (const l of forward.get(k) ?? []) {
+            const tk = `${l.targetFile}\0${l.targetSymbol}`;
+            if (visited.has(tk)) continue;
+            visited.add(tk);
+            const dispatches = dispatchOf.get(tk);
+            if (dispatches) {
+              dispatchTo({ ...l, sourceFile: a.filePath, sourceSymbol: symbol, sourceLine: r.line }, dispatches, mentioned);
+            } else next.push(tk);
+          }
+        }
+        frontier = next;
       }
     }
   }
