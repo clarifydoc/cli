@@ -181,9 +181,11 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    * other operand a `?` placeholder (`"… WHERE id ='".$id."'"`). Null when
    * it names no table.
    */
-  private sqlText(node: Node): string | null {
-    const arg = node.childForFieldName("arguments")?.children.find((c) => c.type === "argument");
-    const expr = arg?.namedChildren[arg.namedChildren.length - 1];
+  private sqlText(node: Node, index = 0): string | null {
+    const arg = node.childForFieldName("arguments")?.children.filter((c) => c.type === "argument")[index];
+    let expr = arg?.namedChildren[arg.namedChildren.length - 1];
+    // `$sql = "SELECT …"; mysqli_query($link, $sql)`: the statement the variable was given, once, above.
+    if (expr?.type === "variable_name") expr = assignedAbove(expr.text, node) ?? expr;
     if (!expr) return null;
     let text = "";
     const visit = (n: Node): void => {
@@ -203,8 +205,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** One `database` row per table (or routine) the call's SQL text names. */
-  private pushSqlRows(node: Node, callText: string, line: number, sources: DataSourceInfo[]): void {
-    const sql = this.sqlText(node);
+  private pushSqlRows(node: Node, callText: string, line: number, sources: DataSourceInfo[], index = 0): void {
+    const sql = this.sqlText(node, index);
     if (!sql) return;
     for (const hit of statementAccesses(sql)) {
       const access = hit.routine ? undefined : sqlVerbAccess(hit.verb);
@@ -266,6 +268,19 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         return;
       }
       if (fnName.startsWith("curl_")) return; // close/errno/getinfo/… — session plumbing, not requests
+
+      // Procedural database extensions: `mysqli_query($link, "SELECT …")`, `pg_query($conn, $sql)`,
+      // `sqlsrv_query($conn, …)` — a row per table the statement names, or one with no table.
+      const sqlAt = PROCEDURAL_SQL_ARG[fnName.toLowerCase()];
+      if (sqlAt !== undefined) {
+        const args = node.childForFieldName("arguments")?.children.filter((c) => c.type === "argument").length ?? 0;
+        // `pg_query($sql)` / `pg_query_params($sql, $params)`: the connection is optional.
+        const index = sqlAt > 0 && /^pg_/i.test(fnName) && args <= sqlAt ? sqlAt - 1 : sqlAt;
+        const before = sources.length;
+        this.pushSqlRows(node, fnName, line, sources, index);
+        if (sources.length === before) sources.push(this.ds({ kind: "database", name: fnName, target: null, line }));
+        return;
+      }
 
       // file_get_contents doubles as file I/O and a poor man's HTTP client —
       // only a URL-literal argument marks an outbound call.
@@ -551,6 +566,39 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
     t = t.replace(/`/g, ""); // strip backtick identifier quoting
     return /^[A-Za-z_]\w*$/.test(t) ? t : null;
   }
+}
+
+/** Procedural database functions → the position of their SQL argument. */
+const PROCEDURAL_SQL_ARG: Record<string, number> = {
+  mysqli_query: 1, mysqli_real_query: 1, mysqli_multi_query: 1, mysqli_prepare: 1, mysqli_execute_query: 1,
+  mysql_query: 0, mysql_unbuffered_query: 0, mysql_db_query: 1,
+  pg_query: 1, pg_query_params: 1, pg_send_query: 1, pg_prepare: 2,
+  sqlsrv_query: 1, sqlsrv_prepare: 1, mssql_query: 0, oci_parse: 1, odbc_exec: 1, odbc_prepare: 1, db2_exec: 1, db2_prepare: 1,
+  sqlite_query: 1, sqlite_exec: 1,
+};
+
+/**
+ * The expression `name` (a `$variable`) was assigned once in the function (or
+ * file) around `at`, before it: `$sql = "SELECT …"`. Null when it is assigned
+ * more than once or not at all.
+ */
+function assignedAbove(name: string, at: Node): Node | null {
+  let scope: Node | null = at.parent;
+  while (scope && !/^(?:function_definition|method_declaration|anonymous_function|arrow_function|program)$/.test(scope.type)) scope = scope.parent;
+  if (!scope) return null;
+  let found: Node | null = null;
+  let count = 0;
+  const visit = (n: Node): void => {
+    if (count > 1 || n.startIndex > at.startIndex) return;
+    if (n !== scope && /^(?:function_definition|method_declaration|anonymous_function|arrow_function|class_declaration)$/.test(n.type)) return;
+    if ((n.type === "assignment_expression" || n.type === "augmented_assignment_expression") && n.childForFieldName("left")?.text === name) {
+      count += n.type === "assignment_expression" ? 1 : 2;
+      found = n.childForFieldName("right");
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return count === 1 ? found : null;
 }
 
 /** A PDO / mysqli handle or statement by its conventional name: `$pdo->query`, `$stmt->fetchAll()`. */

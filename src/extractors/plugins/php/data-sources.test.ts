@@ -215,3 +215,26 @@ class Cars_model extends CI_Model {
     expect(targets).toEqual(["cars", "pit_stops", "$this->CI->db->update"]);
   });
 });
+
+describe("procedural database functions", () => {
+  it("names the tables of mysqli/pg/sqlsrv statements, inline or held in a variable", async () => {
+    const src = `<?php
+function standings(int $port) {
+    $link = mysqli_connect('localhost', 'root', null, null, $port);
+    $res = mysqli_query($link, "SELECT c.name, t.points FROM club c, league_table t WHERE t.club_id = c.id");
+    $sql = "UPDATE fixture SET played = 1 WHERE id = " . $id;
+    pg_query($conn, $sql);
+    pg_query("DELETE FROM injury WHERE healed = true");
+    sqlsrv_query($conn, $dynamic);
+}`;
+    const tree = await parseSource(src, "php" as any, "standings.php");
+    const rows = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.map((r) => `${r.name} ${r.target} ${r.access ?? "-"} @${r.line}`)).toEqual([
+      "mysqli_query club read @4",
+      "mysqli_query league_table read @4",
+      "pg_query fixture write @6",
+      "pg_query injury write @7",
+      "sqlsrv_query null - @8",
+    ]);
+  });
+});
