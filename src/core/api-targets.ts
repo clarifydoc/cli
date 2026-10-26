@@ -417,9 +417,11 @@ function expandSite(calls: Array<{ row: ApiCall; onward: boolean }>, filePath: s
     };
     const target = fill(f.row.target!);
     if (target === null) continue;
-    // Two branches of one verb (`post(url, data: d)` / `post(url)`) are one request.
-    if (method && seen.has(target)) continue;
-    seen.add(target);
+    // Two branches of one verb (`post(url, data: d)` / `post(url)`), or overloads of one method
+    // that request alike (`PostAsync(uri, data)` / `PostAsync(uri, form)`), are one request.
+    const key = method ? target : `${f.row.name} ${target}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     // A site already read as that request (a configured client pattern) is not a second one.
     if (known.has(`${filePath}:${site.line}:${target}`)) continue;
     const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);

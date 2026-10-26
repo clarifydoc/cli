@@ -190,7 +190,10 @@ describe("expandRequestFactories — a call on an interface-typed field", () => 
       { kind: "api-call", name: "GetAsync", target: "${uri}", line: 12, calls: [], filePath: impl.filePath },
     ];
     const index: ImportIndex = { localFor: () => null, sourceFor: () => null, namespacesFor: () => [] };
+    // An overload of the same method requesting alike is the same request.
+    impl.classes[0]!.methods.push(fn("GetAsync", 22, 30, ["uri"]));
+    calls.push({ kind: "api-call", name: "GetAsync", target: "${uri}", line: 25, calls: [], filePath: impl.filePath });
     expect(expandRequestFactories(calls, [iface, impl, site], index, classes)).toBe(1);
-    expect(calls[1]).toMatchObject({ filePath: "Services/FixtureService.cs", target: "{base}/api/fixtures/{id}" });
+    expect(calls[2]).toMatchObject({ filePath: "Services/FixtureService.cs", target: "{base}/api/fixtures/{id}" });
   });
 });
