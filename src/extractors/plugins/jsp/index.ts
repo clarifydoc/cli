@@ -42,7 +42,7 @@ const ELEMENT_BY_TAG: Array<[RegExp, InteractiveElementInfo["element"]]> = [
   [/button/i, "button"],
   [/(link|anchor|href)/i, "link"],
   [/form/i, "form"],
-  [/(select|combo|dropdown|choice)/i, "select"],
+  [/(select|combo|dropdown|choice|listbox)/i, "select"],
   [/(textarea|textbox|text|input|field|date|check|radio)/i, "input"],
 ];
 
