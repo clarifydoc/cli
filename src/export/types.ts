@@ -39,6 +39,7 @@ export interface Route {
   middleware?: string[];
   /** A contract operation the project only calls: served elsewhere. */
   consumed?: true;
+  auth?: { roles?: string[]; policies?: string[]; schemes?: string[]; anonymous?: boolean } | null;
 }
 
 export interface ApiRouteLink {
@@ -140,7 +141,7 @@ export interface SymbolDataAccess {
   entityMatched?: boolean;
   datastore?: string | null;
   access?: string;
-  sites?: Array<{ name: string; line: number }>;
+  sites?: Array<{ name: string; line: number; access?: string }>;
 }
 
 export interface DataFlow {
@@ -156,10 +157,62 @@ export interface DataFlow {
 export interface Screen {
   name: string;
   formType?: string;
+  caption?: string | null;
   filePath: string;
   routePath?: string | null;
   navigatesTo?: string[];
   startup?: string;
+  codeFiles?: string[];
+}
+
+export interface InteractiveElement {
+  filePath: string;
+  element: string;
+  event: string;
+  handler: string | null;
+  line: number;
+  component?: string;
+  request?: { method: string; target: string };
+  caption?: string;
+}
+
+export interface SymbolLink {
+  sourceFile: string;
+  sourceSymbol: string;
+  sourceLine?: number;
+  callName?: string;
+  targetFile: string;
+  targetSymbol: string;
+  targetLine?: number;
+  relation?: string;
+  navigational?: boolean;
+  confidence?: string;
+}
+
+export interface SymbolReach {
+  file: string;
+  symbol: string;
+  effects: Array<{ kind: string; resource: string; distance?: number; confidence?: string }>;
+}
+
+export interface ComponentUsage {
+  filePath: string;
+  name: string;
+  importSource?: string | null;
+  line?: number;
+}
+
+export interface ComponentLaunch {
+  sourceFile: string;
+  sourceSymbol: string;
+  targetFile: string;
+  launcher: string;
+  line: number;
+}
+
+export interface FileComplexity {
+  filePath: string;
+  functions?: Array<{ functionName: string; line?: number }>;
 }
 
 export interface DeployedService {
@@ -233,6 +286,12 @@ export interface Summary {
   routeMap?: Route[];
   apiRouteLinks?: ApiRouteLink[];
   screens?: Screen[];
+  interactiveElements?: InteractiveElement[];
+  symbolLinks?: SymbolLink[];
+  symbolReach?: SymbolReach[];
+  componentUsage?: ComponentUsage[];
+  componentLaunches?: ComponentLaunch[];
+  complexity?: FileComplexity[];
   entityGraph?: { nodes?: EntityNode[]; edges?: EntityEdge[] } | null;
   classGraph?: { nodes?: ClassNode[]; edges?: ClassEdge[] } | null;
   dataAccessGraph?: { nodes?: DataAccessNode[]; edges?: DataAccessEdge[] } | null;

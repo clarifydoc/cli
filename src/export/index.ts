@@ -8,6 +8,7 @@ import { buildOpenApi } from "../core/openapi-export.js";
 import { toCycloneDx } from "./sbom.js";
 import { entitiesCsv, graphEdgesCsv, graphNodesCsv, routesCsv } from "./csv.js";
 import { obsidianVault, type BundleFile } from "./obsidian.js";
+import { screenSpecs } from "./screen-specs.js";
 
 /**
  * The export catalogue: every artifact an analysis's graph can leave the tool
@@ -163,6 +164,11 @@ export const EXPORT_BUNDLES: readonly ExportBundle[] = [
     name: "obsidian",
     description: "Obsidian vault — a note per route, screen, entity and sub-project, wikilinked screen → route → entity.",
     render: obsidianVault,
+  },
+  {
+    name: "screens",
+    description: "A spec per screen — how users get there, what it loads, what each action sends and changes, where it leads — with the user flows through them and story drafts, as linked Markdown.",
+    render: screenSpecs,
   },
 ];
 
