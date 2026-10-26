@@ -2619,6 +2619,29 @@ export interface PatternInfo {
    * scheduled job does (every message, every run); else `command` when a tool or command does.
    */
   role?: "request" | "background" | "command";
+  /**
+   * `god-object` only: the groups the file's own call graph forms — functions
+   * that never call another group — largest first, with what moving each out
+   * would cost (core/seams.ts). Present when there are at least two.
+   */
+  seams?: FileSeam[];
+}
+
+/** One group a god file could split into, and what moving it out costs. */
+export interface FileSeam {
+  /** Its functions, by declaration line (capped; `functionCount` is the total). */
+  functions: string[];
+  functionCount: number;
+  /** Lines its functions span — what moves. */
+  lines: number;
+  /** Boundaries its functions touch, from the file's responsibility evidence. */
+  boundaries: BoundaryKind[];
+  /** Functions no other file was seen calling: they move without touching another file. */
+  moves: number;
+  /** Functions other files call or import: moving them changes those files. */
+  externalFacing: number;
+  /** Distinct files calling into the group. */
+  callerFiles: number;
 }
 
 /** An entry point whose call chain reaches a pattern's function. */

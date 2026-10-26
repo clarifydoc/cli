@@ -1,5 +1,5 @@
 import type { McpTool } from "../protocol.js";
-import type { ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
+import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
 import { fileChangedNote, requireAnalysis, type ToolContext } from "./context.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
@@ -118,6 +118,8 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         heading = `# ${subject}`;
         home = subject;
         parts.push({ title: "File", get: () => file({ path: subject }), follow: `clarifydoc_file path="${subject}"` });
+        const god = (summary.patterns ?? []).find((p) => p.kind === "god-object" && p.filePath === subject && p.seams?.length);
+        if (god) parts.push({ title: "Seams — groups its call graph forms", get: async () => seamsPart(god.seams!), follow: `clarifydoc_file path="${subject}"` });
         parts.push({ title: "Risk", get: () => blast({ path: subject }), follow: `clarifydoc_blast_radius path="${subject}"` });
       } else {
         heading = `# ${subject}${fileArg ? ` (${fileArg})` : ""}`;
@@ -303,4 +305,17 @@ function cut(section: string, tokens: number): string {
   const head = section.slice(0, max);
   const at = head.lastIndexOf("\n");
   return `${head.slice(0, at > 0 ? at : max)}\n… (cut to fit)`;
+}
+
+/** A god file's seams: each group's functions, what it touches and what moving it out costs. */
+function seamsPart(seams: readonly FileSeam[]): string {
+  return seams
+    .map((s, i) => {
+      const names = s.functions.join(", ") + (s.functionCount > s.functions.length ? `, +${s.functionCount - s.functions.length} more` : "");
+      const cost = s.externalFacing
+        ? `${s.moves} move freely; ${s.externalFacing} are called from ${s.callerFiles} other file(s), which a split must update`
+        : "no caller in another file observed — it moves without touching another file (a framework or a tag may still reach it)";
+      return `${i + 1}. ${s.functionCount} functions, ${s.lines} lines${s.boundaries.length ? `, touches ${s.boundaries.join(", ")}` : ""}: ${names}\n   ${cost}`;
+    })
+    .join("\n");
 }

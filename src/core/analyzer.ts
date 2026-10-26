@@ -69,7 +69,8 @@ import { enrichGraphFromInheritance } from "./inheritance-edges.js";
 import { applyHttpClientBases } from "./http-client-bases.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns, type FileStructure } from "./pattern-detector.js";
-import { buildSiblingGraph, sameFileLinksByFile } from "./sibling-graph.js";
+import { buildSiblingGraph, sameFileLinksByFile, type SiblingGraph } from "./sibling-graph.js";
+import { crossFileCallers, describeSeams, seamsOf } from "./seams.js";
 import { buildResponsibilityProfiles } from "./responsibility-profile.js";
 import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refactor-pressure.js";
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
@@ -1569,9 +1570,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const sameFileLinks = sameFileLinksByFile(symbolLinks);
   const boundariesByFile = new Map(responsibilityProfiles.map((r) => [r.filePath, r.boundaries.length]));
   const fileStructure = new Map<string, FileStructure>();
+  const siblingGraphs = new Map<string, SiblingGraph>();
   for (const a of allAnalyses) {
     const graph = buildSiblingGraph(a, sameFileLinks.get(a.filePath) ?? []);
     if (!graph) continue;
+    siblingGraphs.set(a.filePath, graph);
     fileStructure.set(a.filePath, {
       componentSizes: graph.components.map((c) => c.length),
       participation: graph.participation,
@@ -1582,6 +1585,27 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const patterns = detectPatterns(allAnalyses, frameworks, fileStructure).filter(
     (p) => !isUnauthored(p.filePath) && fileLayerMap[p.filePath] !== "test",
   );
+  // The seam sketch of each god file that holds separable work: the groups its
+  // call graph forms, and what moving each out would cost.
+  {
+    const callers = crossFileCallers(symbolLinks);
+    const analysisOf = new Map(allAnalyses.map((a) => [a.filePath, a]));
+    const profileOf = new Map(responsibilityProfiles.map((r) => [r.filePath, r]));
+    let sketched = 0;
+    for (const p of patterns) {
+      // Only a file graded as holding separable work: a cohesive one has no seam, an unclear one no trustworthy groups.
+      if (p.kind !== "god-object" || p.confidence !== "high") continue;
+      const graph = siblingGraphs.get(p.filePath);
+      const a = analysisOf.get(p.filePath);
+      if (!graph || !a) continue;
+      const seams = seamsOf(a, graph, callers, profileOf.get(p.filePath));
+      if (seams.length < 2) continue;
+      p.seams = seams;
+      p.detail += ` Seams: ${describeSeams(seams)}.`;
+      sketched++;
+    }
+    if (sketched) progress.detail(`  Seam sketches: ${sketched} god file(s)`);
+  }
   progress.status("Detecting communities...");
   const fileList = allAnalyses.map((a) => a.filePath);
   const { communities, cohesion } = detectCommunities(linkGraph, fileList);
