@@ -280,6 +280,9 @@ export function attributeDataAccessToSymbols(
       // A registration naming the handler that runs (`DataSourceInfo.handler`): that handler's.
       const named = ds.handler ? fns.find((f) => f.symbol === ds.handler) : undefined;
       if (named) best = { symbol: named.symbol, line: named.line };
+      // A route's own access (a framework serving each stored resource with no handler function).
+      const ownRoute = ds.handler?.startsWith("route:") && (a.routes ?? []).some((r) => `route:${r.httpMethod ?? "USE"} ${r.path}` === ds.handler);
+      if (ownRoute) best = { symbol: ds.handler!, line: ds.line };
       if (!best) continue;
 
       const raw = (ds.entity ?? "").trim();
@@ -310,7 +313,7 @@ export function attributeDataAccessToSymbols(
         };
         merged.set(key, rec);
       }
-      rec.sites.push({ name: ds.name, line: ds.line });
+      rec.sites.push({ name: ds.name, line: ds.line, ...(ownRoute && ds.access ? { access: ds.access } : {}) });
       if (!rec.datastore && datastore) rec.datastore = datastore;
     }
   }

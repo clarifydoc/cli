@@ -1502,7 +1502,10 @@ export interface DataSourceInfo {
    * For `queue-consume`: the function or method of this file that handles the
    * message (`Class.method`), when it is not the one the registration sits in —
    * `events.RegisterListener(name, &SendNotification{})` is consumed by
-   * `SendNotification.Handle`. The access is attributed to it.
+   * `SendNotification.Handle`. The access is attributed to it. For `database`:
+   * a route of this file whose own access it is (`route:<METHOD> <path>`, the
+   * anchor the symbol linker mints) — a route a framework serves per stored
+   * resource, with no handler function; its `access` is then that route's own.
    */
   handler?: string;
   /**
@@ -2269,7 +2272,8 @@ export interface SymbolDataAccess {
    */
   access?: "queue-publish" | "queue-consume";
   /** Individual DB call sites inside the function, sorted by line. */
-  sites: Array<{ name: string; line: number }>;
+  /** `access`: set where one line holds several routes' own accesses (`DataSourceInfo.handler` naming a route). */
+  sites: Array<{ name: string; line: number; access?: "read" | "write" }>;
 }
 
 /**

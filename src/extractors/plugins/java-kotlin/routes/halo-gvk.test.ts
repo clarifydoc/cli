@@ -25,6 +25,12 @@ public class Club extends AbstractExtension {
     public static final String KIND = "Club";
 }
 `,
+  "src/main/java/com/example/league/content/Kit.java": `package com.example.league.content;
+
+@GVK(group = "", version = "v1alpha1", kind = "Kit", plural = "kits", singular = "kit")
+public class Kit extends AbstractExtension {
+}
+`,
   "src/main/java/com/example/league/endpoint/ClubQueryEndpoint.java": `package com.example.league.endpoint;
 
 import com.example.league.content.Club;
@@ -113,6 +119,25 @@ describe("@GVK CRUD routes whose group is another class's constant", () => {
       "PUT /apis/content.league.example.com/v1alpha1/clubs/{name}",
       "PATCH /apis/content.league.example.com/v1alpha1/clubs/{name}",
       "DELETE /apis/content.league.example.com/v1alpha1/clubs/{name}",
+    ]);
+  });
+
+  it("read or write the extension they are generated from, with no handler function", () => {
+    const flows = (summary.dataFlows ?? []).filter((f) => /\/(?:clubs|kits)/.test(f.entryLabel) && f.entryFile.includes("/content/"))
+      .map((f) => `${f.entryLabel} ${f.effect} ${f.resource} @${f.distance}`).sort();
+    expect(flows).toEqual([
+      "DELETE /api/v1alpha1/kits/{name} db-write Kit @0",
+      "DELETE /apis/content.league.example.com/v1alpha1/clubs/{name} db-write Club @0",
+      "GET /api/v1alpha1/kits db-read Kit @0",
+      "GET /api/v1alpha1/kits/{name} db-read Kit @0",
+      "GET /apis/content.league.example.com/v1alpha1/clubs db-read Club @0",
+      "GET /apis/content.league.example.com/v1alpha1/clubs/{name} db-read Club @0",
+      "PATCH /api/v1alpha1/kits/{name} db-write Kit @0",
+      "PATCH /apis/content.league.example.com/v1alpha1/clubs/{name} db-write Club @0",
+      "POST /api/v1alpha1/kits db-write Kit @0",
+      "POST /apis/content.league.example.com/v1alpha1/clubs db-write Club @0",
+      "PUT /api/v1alpha1/kits/{name} db-write Kit @0",
+      "PUT /apis/content.league.example.com/v1alpha1/clubs/{name} db-write Club @0",
     ]);
   });
 

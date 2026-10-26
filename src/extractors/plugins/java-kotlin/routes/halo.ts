@@ -48,6 +48,25 @@ function crudRoutes(group: string, version: string, plural: string, line: number
   );
 }
 
+/** What each generated CRUD route does to the stored extension. */
+const CRUD_VERBS: Record<string, string> = { GET: "get", POST: "create", PUT: "update", PATCH: "patch", DELETE: "delete" };
+
+/**
+ * The generated routes have no handler function: each reads or writes the extension class itself
+ * (stored through the extension client), so the access is stated on the route's own anchor.
+ */
+function storeAccesses(a: FileAnalysis, cls: string, routes: RouteInfo[]): void {
+  for (const r of routes) {
+    const handler = `route:${r.httpMethod} ${r.path}`;
+    if (a.dataSources.some((d) => d.handler === handler)) continue;
+    const verb = r.httpMethod === "GET" && !r.path.endsWith("/{name}") ? "list" : CRUD_VERBS[r.httpMethod!]!;
+    a.dataSources.push({
+      kind: "database", name: `extension: ${verb}`, target: null, entity: cls,
+      access: r.httpMethod === "GET" ? "read" : "write", line: r.line, handler, calls: [],
+    });
+  }
+}
+
 const apiBase = (group: string, version: string): string => (group ? `/apis/${group}/${version}` : `/api/${version}`);
 
 export function extractHaloExtensionRoutes(source: string, routes: RouteInfo[], facts?: RouteFact[]): void {
@@ -102,6 +121,7 @@ export const haloGvkResolver: RouteResolver = {
         if (g === null || !v) continue;
         if (cls) (gvkOf.get(cls) ?? gvkOf.set(cls, []).get(cls)!).push({ file: a.filePath, group: g, version: v });
         if (!routed && p) a.routes.push(...crudRoutes(g, v, p, fact.line));
+        if (cls && p) storeAccesses(a, cls, crudRoutes(g, v, p, fact.line));
       }
     }
     // A `CustomEndpoint` whose `groupVersion()` is computed: its routes wait for the prefix (see `customEndpointPrefixRef`).
