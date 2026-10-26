@@ -238,3 +238,42 @@ function standings(int $port) {
     ]);
   });
 });
+
+describe("framework bags are no models", () => {
+  it("reads no database row from a request's attributes, a parameter bag, a session or a message bag (real-repo FP)", async () => {
+    const src = `<?php
+namespace League\\Http\\Controllers;
+class FixtureController extends Controller {
+  public function index(Request $request) {
+    $season = $request->attributes->get('season');
+    $start = $this->parameters->get('start');
+    $page = $request->query->get('page');
+    $flash = session()->get('flash');
+    $n = $validator->errors()->count();
+    $clubs = $this->repository->find($season);
+    return Club::where('season', $season)->get();
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "FixtureController.php");
+    const rows = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => d.name);
+    expect(rows).toEqual(["$this->repository->find", "Club::where('season', $season)->get"]);
+  });
+});
+
+describe("Laravel DB facade", () => {
+  it("reads the tables a DB::select statement names and no store from a DB::raw expression", async () => {
+    const src = `<?php
+namespace League\\Repositories;
+class StandingsRepository {
+  public function table() {
+    $rows = DB::select("SELECT club_id, SUM(points) FROM results GROUP BY club_id");
+    $q = Result::query()->select(DB::raw('COUNT(id) as nr_of_matches'));
+    return DB::table('clubs')->get();
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "StandingsRepository.php");
+    const rows = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} ${d.target}`);
+    expect(rows).not.toContain("DB::raw COUNT(id) as nr_of_matches");
+    expect(rows).toContain("DB::select results");
+  });
+});

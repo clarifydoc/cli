@@ -390,6 +390,9 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         if (continuesEloquentChain(node)) return;
         // `$request->all()`, `$request->query('page')`: the HTTP request's input, not a model.
         if (REQUEST_INPUT_VERBS.has(method) && objNode && isHttpRequest(objNode, node)) return;
+        // A parameter bag, session, cache or message bag shares the verbs (`$request->attributes->get('x')`,
+        // `$this->parameters->get('start')`, `$validator->errors()->count()`): no table behind it.
+        if (NON_MODEL_RECEIVER_RE.test(recvText)) return;
         if (!this.namespaced && !PDO_HANDLE_RE.test(callText)) return;
         sources.push(this.ds({
           kind: "database",
@@ -414,6 +417,15 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         return;
       }
 
+      // `DB::raw("COUNT(id) AS n")` is an expression a builder embeds — no access of its own; the SQL a
+      // `DB::select/insert/update/delete/statement` runs names its tables.
+      if (scope === "DB" && name === "raw") return;
+      if (scope === "DB" && DB_SQL_METHODS.has(name)) {
+        const before = sources.length;
+        this.pushSqlRows(node, callText, line, sources);
+        if (sources.length === before) sources.push(this.ds({ kind: "database", name: callText, target: null, line, ...phpAccess(name) }));
+        return;
+      }
       if (scope === "DB" || scope === "Schema" || scope === "Cache" || scope === "Redis") {
         sources.push(this.ds({
           kind: "database",
@@ -600,6 +612,13 @@ function assignedAbove(name: string, at: Node): Node | null {
   visit(scope);
   return count === 1 ? found : null;
 }
+
+/** Laravel `DB::` methods whose first argument is a statement. */
+const DB_SQL_METHODS: ReadonlySet<string> = new Set(["select", "selectOne", "scalar", "cursor", "insert", "update", "delete", "statement", "unprepared", "affectingStatement"]);
+
+/** Receivers that are framework bags and stores, never a model or a query: by their last segment. */
+const NON_MODEL_RECEIVER_RE =
+  /(?:->|^\$)(?:attributes|parameters|headers|cookies|files|server|session|cache|config|messages|bag)$|->(?:query|request)$|->(?:errors|getMessages|getMessageBag|session|cache|config)\(\s*\)$|^(?:session|cache|config)\(\s*\)$/i;
 
 /** A PDO / mysqli handle or statement by its conventional name: `$pdo->query`, `$stmt->fetchAll()`. */
 const PDO_HANDLE_RE = /^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;
