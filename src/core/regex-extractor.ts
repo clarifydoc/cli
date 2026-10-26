@@ -81,6 +81,8 @@ export function extractWithRegex(
   if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
   const pathArgCalls = spec.extractPathArgCalls?.(lines);
   if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
+  const moduleValues = spec.extractModuleValues?.(lines);
+  if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
   if (spec.extractStringConstants) {
     const consts = spec.extractStringConstants(lines);
     if (Object.keys(consts).length > 0) analysis.stringConstants = consts;

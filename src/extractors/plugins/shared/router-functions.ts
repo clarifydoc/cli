@@ -24,6 +24,13 @@ export interface RouterCall {
   prefix: string;
   relative: boolean;
   guards: GuardAttr[];
+  /**
+   * The router handed on is a package-level variable another file sets
+   * (Go `api.CreateSession(APIv1)`): the plugin's resolver puts that
+   * variable's prefix and guards in front before this pass runs, and drops
+   * the call when no one place sets it.
+   */
+  via?: string;
 }
 
 export interface RouterFunctionRules {

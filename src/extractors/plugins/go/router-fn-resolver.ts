@@ -1,6 +1,8 @@
 import type { FileAnalysis } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
-import { resolveRouterFunctions } from "../shared/router-functions.js";
+import type { ProjectContext } from "../../../types/project.js";
+import { ROUTER_CALL, joinRoutePrefix, resolveRouterFunctions, type RouterCall } from "../shared/router-functions.js";
+import { ROUTER_VAR, type RouterVar } from "./routes.js";
 
 /**
  * Go routes registered by a function on the router it is handed.
@@ -68,11 +70,67 @@ function nearestPackage(keys: string[], from: string): string | null {
   return best > 0 && depth.filter((d) => d === best).length === 1 ? keys[depth.indexOf(best)]! : null;
 }
 
+const HOLE = /\$\{([^{}]*)\}/g;
+
+/**
+ * `${config.ApiUri}` in a route path or a router prefix: the value another
+ * package states (`ProjectContext.moduleValue`), or nothing when none does —
+ * a base the deployment sets is not part of the route, as `cfg.Base + "/x"`
+ * is read in the file.
+ */
+function fillHoles(text: string, file: string, ctx: ProjectContext): string {
+  if (!text.includes("${")) return text;
+  const filled = text.replace(HOLE, (_hole, expr: string) => {
+    const v = ctx.moduleValue?.(file, expr.trim());
+    return v !== null && v !== undefined && !v.includes("${") ? v : "";
+  });
+  return "/" + filled.split("/").filter(Boolean).join("/");
+}
+
+/**
+ * Router calls handing on a package-level router variable (`via`) take the
+ * prefix and guards of the one place in the caller's package that sets it;
+ * a variable set in several places, or none, hands on nothing.
+ */
+function applyPackageRouters(analyses: FileAnalysis[]): void {
+  const vars = new Map<string, RouterVar | null>();
+  for (const a of analyses) {
+    for (const f of a.routeFacts ?? []) {
+      if (f.kind !== ROUTER_VAR) continue;
+      const v = f.data as RouterVar;
+      const key = `${dirOf(a.filePath)}#${v.name}`;
+      const prev = vars.get(key);
+      vars.set(key, prev === undefined ? v : prev && prev.prefix === v.prefix ? prev : null);
+    }
+  }
+  for (const a of analyses) {
+    if (!a.routeFacts?.some((f) => f.kind === ROUTER_CALL && (f.data as RouterCall).via)) continue;
+    a.routeFacts = a.routeFacts.flatMap((f) => {
+      const call = f.data as RouterCall;
+      if (f.kind !== ROUTER_CALL || !call.via) return [f];
+      const v = vars.get(`${dirOf(a.filePath)}#${call.via}`);
+      if (!v) return [];
+      const { via: _via, ...rest } = call;
+      return [{ ...f, data: { ...rest, prefix: joinRoutePrefix(v.prefix, call.prefix), guards: [...v.guards, ...call.guards] } satisfies RouterCall }];
+    });
+  }
+}
+
 export const goRouterFnResolver: RouteResolver = {
   id: "go-router-functions",
   languages: ["go"],
   priority: 45,
-  resolve(analyses: FileAnalysis[]): void {
+  resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== ROUTER_CALL && f.kind !== ROUTER_VAR) continue;
+        const d = f.data as { prefix: string };
+        if (d.prefix.includes("${")) f.data = { ...d, prefix: fillHoles(d.prefix, a.filePath, ctx) };
+      }
+      if (!a.routes.some((r) => r.path.includes("${"))) continue;
+      a.routes = a.routes.map((r) => (r.path.includes("${") ? { ...r, path: fillHoles(r.path, a.filePath, ctx) } : r));
+    }
+    applyPackageRouters(analyses);
     resolveRouterFunctions(analyses, { unitOf: dirOf, target: targetOf });
   },
 };

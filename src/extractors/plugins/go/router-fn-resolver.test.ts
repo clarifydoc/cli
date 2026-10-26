@@ -4,6 +4,8 @@ import { ROUTER_CALL } from "../shared/router-functions.js";
 import { goRouterFnResolver } from "./router-fn-resolver.js";
 import { createEmptyAnalysis, type FileAnalysis, type RouteFact } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
+import { buildImportIndex } from "../../../core/import-index.js";
+import { buildModuleValueLookup } from "../../../core/module-values.js";
 
 function file(filePath: string, src: string, imports: Array<[string, string]> = []): FileAnalysis {
   const facts: RouteFact[] = [];
@@ -152,5 +154,66 @@ func (h *FileMigratorWeb) RegisterRoutes(g *echo.Group) {
     goRouterFnResolver.resolve([routes, handler], {} as ProjectContext);
     expect(routes.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/clubs"]);
     expect(handler.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["PUT /api/v1/migration/club-import"]);
+  });
+});
+
+describe("Go route prefixes held in another package", () => {
+  it("serves routes under a package-level router another file sets from another package's constant", () => {
+    const consts = { ...createEmptyAnalysis("internal/config/const.go", "go"), moduleValues: { ApiUri: "/api/v1", DownloadUri: "${ApiUri}/dl" } };
+    const start = file("internal/server/start.go", `package server
+
+import (
+\t"github.com/example/league/internal/config"
+)
+
+func newRouter(conf *config.Config) *gin.Engine {
+\trouter := gin.New()
+\tAPIv1 = router.Group(conf.BaseUri(config.ApiUri), APIMiddleware(conf))
+\treturn router
+}`, [["config", "github.com/example/league/internal/config"]]);
+    const routes = file("internal/server/routes.go", `package server
+
+import (
+\t"github.com/example/league/internal/api"
+\t"github.com/example/league/internal/config"
+)
+
+var APIv1 *gin.RouterGroup
+
+func registerRoutes(router *gin.Engine, conf *config.Config) {
+\tapi.GetClubs(APIv1)
+\tdl := router.Group(config.DownloadUri)
+\tdl.GET("/:hash", api.Download)
+\tunknown := router.Group(config.Elsewhere + "/garage")
+\tunknown.GET("/cars", api.Cars)
+}`, [["api", "github.com/example/league/internal/api"], ["config", "github.com/example/league/internal/config"]]);
+    const clubs = file("internal/api/clubs.go", `package api
+
+func GetClubs(router *gin.RouterGroup) {
+\trouter.GET("/clubs", listClubs)
+}`);
+    const analyses = [consts, start, routes, clubs];
+    const importIndex = buildImportIndex(analyses);
+    goRouterFnResolver.resolve(analyses, { importIndex, moduleValue: buildModuleValueLookup(analyses, importIndex) } as unknown as ProjectContext);
+    expect(clubs.routes.map((r) => `${r.httpMethod} ${r.path} ${r.middleware.join(",")}`)).toEqual(["GET /api/v1/clubs APIMiddleware(conf)"]);
+    // A base no package states is not part of the route, as `cfg.Base + "/x"` is read in the file.
+    expect(routes.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/v1/dl/:hash", "GET /garage/cars"]);
+  });
+
+  it("hands on nothing through a package router no file of the package sets", () => {
+    const routes = file("internal/server/routes.go", `package server
+
+var APIv1 *gin.RouterGroup
+
+func registerRoutes(router *gin.Engine) {
+\tapi.GetClubs(APIv1)
+}`, [["api", "github.com/example/league/internal/api"]]);
+    const clubs = file("internal/api/clubs.go", `package api
+
+func GetClubs(router *gin.RouterGroup) {
+\trouter.GET("/clubs", listClubs)
+}`);
+    goRouterFnResolver.resolve([routes, clubs], {} as ProjectContext);
+    expect(clubs.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /clubs"]);
   });
 });

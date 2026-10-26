@@ -1,5 +1,6 @@
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
+import { buildModuleValueLookup } from "./module-values.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -380,6 +381,7 @@ const ANY_HOLE = /\$\{([^{}]*)\}/g;
  */
 export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly FileAnalysis[], ctx: ProjectContext): number {
   const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
+  const moduleValue = ctx.moduleValue ?? buildModuleValueLookup(analyses, ctx.importIndex);
   const classAt = (file: string, line: number): ClassRef | null => {
     let best: ClassRef | null = null;
     for (const ref of ctx.classes.classesIn(file)) {
@@ -473,9 +475,8 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     }
     const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
     if (!name) return null;
-    const source = ctx.importIndex.localFor(file, name[1]!) ?? file;
-    const v = byFile.get(source)?.moduleValues?.[expr];
-    if (v !== undefined) return resolveValue(v, source, null, depth + 1);
+    const hit = moduleValue.locate(file, expr);
+    if (hit) return resolveValue(hit.value, hit.file, null, depth + 1);
     // `Settings.apiBasePath`: a field value of the project class the name resolves to.
     const member = /^[A-Za-z_$][\w$]*\.([\w$]+)$/.exec(expr)?.[1];
     const owner = member ? ctx.classes.resolve(file, name[1]!) : null;

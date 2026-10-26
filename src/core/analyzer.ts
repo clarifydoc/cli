@@ -142,6 +142,8 @@ import { expandChannelFactories } from "./channel-factories.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
+import { buildModuleValueLookup, resolveTargetRefs } from "./module-values.js";
+import { buildImportDirectoryResolver } from "./import-directories.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
 import {
@@ -1053,13 +1055,18 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
+  const moduleValue = buildModuleValueLookup(allAnalyses, importIndex);
   const projectContext: ProjectContext = {
     importIndex,
     classes: buildClassIndex(allAnalyses, importIndex),
     resolveModule: (fromFile, specifier) => resolveImportSource(fromFile, specifier, knownFiles),
     fileOf: (path) => analysisByPath.get(path),
     projectRootOf: (id) => subProjectRoots.get(id) ?? null,
+    moduleValue,
   };
+  // A channel or target named by another module's constant (`Topic: kafka.Topic`).
+  const valueRefCount = resolveTargetRefs(allAnalyses, moduleValue);
+  if (valueRefCount > 0 && verbose) progress.detail(`  targets named by another module's value: ${valueRefCount}`);
 
   // Plugin route passes that need other files: an inherited controller route
   // template, a urlconf include, a router registration whose handler class
@@ -2941,7 +2948,6 @@ export function buildComponentGraph(
   // every directory path so named: for languages whose imports name a
   // package directory (`importsNameDirectories` — Go, Rust, Ruby).
   const dirPathToFiles = new Map<string, string[]>();
-  const dirsByName = new Map<string, string[]>();
   for (const a of analyses) {
     const baseName = a.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "").toLowerCase();
     push(baseNameToFiles, baseName, a.filePath);
@@ -2965,48 +2971,11 @@ export function buildComponentGraph(
 
     const slash = a.filePath.lastIndexOf("/");
     const dir = slash >= 0 ? a.filePath.slice(0, slash) : "";
-    if (dir && !dirPathToFiles.has(dir)) push(dirsByName, dir.slice(dir.lastIndexOf("/") + 1), dir);
     push(dirPathToFiles, dir, a.filePath);
   }
 
-  // The ONE project directory a package import names: the directory whose
-  // path ends with the longest run of the import's trailing segments
-  // (`code.gitea.io/gitea/modules/setting` → `modules/setting`, never
-  // `routers/web/repo/setting`). Anchored when two or more segments agree, or
-  // the whole directory path does (a root-level `handler/` under a module
-  // path); otherwise only a directory unique by name in the importer's
-  // sub-project. A tie is no directory — fanning one import out across
-  // same-named packages made gitea's graph ~4× its real size.
-  const dirImportCache = new Map<string, string | null>();
-  const resolveImportDirectory = (source: string, fromFile: string): string | null => {
-    const project = projectOf.get(fromFile) ?? "";
-    const key = `${project}\0${source}`;
-    if (dirImportCache.has(key)) return dirImportCache.get(key)!;
-    const segs = source.split(/[/\\.:]+/).filter(Boolean);
-    const dirs = dirsByName.get(segs[segs.length - 1] ?? "") ?? [];
-    const scored = dirs.map((d) => {
-      const dsegs = d.split("/");
-      let k = 0;
-      while (k < dsegs.length && k < segs.length && dsegs[dsegs.length - 1 - k] === segs[segs.length - 1 - k]) k++;
-      return { d, k, anchored: k >= 2 || k === dsegs.length };
-    });
-    const unique = (list: typeof scored): string | null => {
-      if (list.length === 1) return list[0]!.d;
-      const own = list.filter((c) => (projectOf.get(dirPathToFiles.get(c.d)![0]!) ?? "") === project);
-      return own.length === 1 ? own[0]!.d : null;
-    };
-    const anchored = scored.filter((c) => c.anchored);
-    let result: string | null;
-    if (anchored.length > 0) {
-      const best = Math.max(...anchored.map((c) => c.k));
-      result = unique(anchored.filter((c) => c.k === best));
-    } else {
-      const own = scored.filter((c) => (projectOf.get(dirPathToFiles.get(c.d)![0]!) ?? "") === project);
-      result = own.length === 1 ? own[0]!.d : null;
-    }
-    dirImportCache.set(key, result);
-    return result;
-  };
+  // The ONE project directory a package import names (import-directories.ts).
+  const resolveImportDirectory = buildImportDirectoryResolver(analyses);
   // Names each file declares, for narrowing a package import to the files
   // whose names the importer uses.
   const declaredCache = new Map<string, Set<string>>();

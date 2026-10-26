@@ -725,7 +725,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // `const send = (url, options) => fetch(url, options)`: a request wrapper's
       // parameter stays a `${url}` hole, which the request-factory pass fills
       // from each call site (`send(`${API}/clubs`, …)`).
-      return value == null && declaredParamInScope(arg.text, arg) ? { url: `\${${arg.text}}`, confidence: "INFERRED" } : null;
+      if (value == null && declaredParamInScope(arg.text, arg)) return { url: `\${${arg.text}}`, confidence: "INFERRED" };
+      // `axios.get(CHANGELOG_URL)` with the constant imported: a hole the project
+      // pass fills from the module that exports it (core/module-values.ts).
+      return value == null && (this.imports ??= importEvidence(this.sourceText)).names.has(arg.text) ? { url: `\${${arg.text}}`, confidence: "INFERRED" } : null;
     }
     // `this.baseUrl + 'series/' + seriesId` — Angular's dominant spelling
     // (Kavita: 398 of 417 call sites). Rendered the way a template literal is,

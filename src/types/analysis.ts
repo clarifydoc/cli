@@ -340,10 +340,14 @@ export interface FileAnalysis {
    */
   instantiations?: Instantiation[];
   /**
-   * URL-shaped values this module defines at its top level, by name — an
+   * String values this module defines at its top level, by name — an
    * object's members as `name.member` (`environment.apiUrl` →
-   * `http://localhost:5000/api/`). A project pass follows an import here to
-   * resolve `${environment.apiUrl}` in another file's URL.
+   * `http://localhost:5000/api/`), a Go package's constants (`ApiUri` →
+   * `/api/v1`). A value may hold `${…}` holes for names it is built from. A
+   * project pass (`core/module-values.ts`) follows an import here to resolve
+   * `${environment.apiUrl}` in another file's URL, a route prefix or a
+   * `DataSourceInfo.targetRef`. Plugins keep what can name an endpoint or a
+   * channel, not every string.
    */
   moduleValues?: Record<string, string>;
   dataSources: DataSourceInfo[];
@@ -1519,6 +1523,14 @@ export interface DataSourceInfo {
    * name is resolved at runtime; still useful as a label and join key.
    */
   target: string | null;
+  /**
+   * The target is the value of this name, which the file does not define
+   * (`kafka.Topic`, another package's variable; `TOPIC`, a constant another
+   * file of the package declares). The project pass sets `target` to the
+   * value the defining module states (`FileAnalysis.moduleValues`) when one
+   * does; otherwise `target` stays as the plugin wrote it.
+   */
+  targetRef?: string;
   calls: CallInfo[];
   line: number;
   /**

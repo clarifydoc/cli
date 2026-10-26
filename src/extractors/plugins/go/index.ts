@@ -1,3 +1,4 @@
+import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import type { ParamInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
@@ -99,6 +100,8 @@ export const goSpec: RegexLangSpec = {
 
   extractRoutes: (lines, _classes, _file, _fns, facts) => [...extractGoRoutes(lines, facts), ...extractHumaRoutes(lines, facts)],
   extractDataSources: (lines) => extractGoDataSources(lines),
+  // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
+  extractModuleValues: extractGoModuleValues,
   extractRequestAccess: extractGoRequestAccess,
   extractResponses: extractGoResponses,
 };

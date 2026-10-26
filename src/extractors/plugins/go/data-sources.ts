@@ -5,6 +5,9 @@ import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
 
+
+/** A destination named by a constant or variable: `Topic`, `kafka.Topic`. */
+const NAME_REF_RE = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?$/;
 /**
  * Go data sources — raw SQL (database/sql, sqlx, pgx), GORM, HTTP clients,
  * env reads and message queues. Go had NO data-source extraction at all, so
@@ -183,12 +186,19 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     // sarama: a `ProducerMessage{ Topic: … }` is what the producer sends — the publish names its topic.
     if (/\bsarama\.ProducerMessage\s*\{/.test(line)) {
       let topic: string | null = null;
+      let ref: string | undefined;
       for (let k = i; k < Math.min(lines.length, i + 12) && topic === null; k++) {
         const t = /\bTopic\s*:\s*(?:"([^"]+)"|([\w.]+))/.exec(lines[k]!);
-        if (t) topic = t[1] ?? t[2]!;
+        if (t?.[1] !== undefined) topic = t[1];
+        else if (t) {
+          // A name: this file's constant, else another file's or package's (`kafka.Topic`) for the project pass.
+          const local = (constants ??= stringConstants(lines)).get(t[2]!);
+          topic = local ?? t[2]!;
+          if (local === undefined) ref = t[2]!;
+        }
         if (k > i && /^\s*\}/.test(lines[k]!)) break;
       }
-      sources.push({ kind: "queue-publish", name: "MQ: sarama ProducerMessage", target: topic, calls: [], line: lineNo });
+      sources.push({ kind: "queue-publish", name: "MQ: sarama ProducerMessage", target: topic, ...(ref ? { targetRef: ref } : {}), calls: [], line: lineNo });
       continue;
     }
 
@@ -220,13 +230,21 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       }
     }
 
+    // A destination argument that is a name the file does not define: the project pass looks it up.
+    let ref: string | undefined;
+    const value = (a: string | undefined): string | null => {
+      const v = argValue(a, constants ??= stringConstants(lines), lines, i);
+      if (v === null && a !== undefined && NAME_REF_RE.test(a.trim())) ref = a.trim();
+      return v;
+    };
     const pub = line.match(MQ_PUBLISH_RE);
     if (pub && MQ_RECEIVER_RE.test(pub[1]!)) {
-      const stated = publishDestination(pub[2]!, callArgs(lines, i, pub.index! + pub[0].length - 1), (a) => argValue(a, constants ??= stringConstants(lines), lines, i));
+      const stated = publishDestination(pub[2]!, callArgs(lines, i, pub.index! + pub[0].length - 1), value);
       sources.push({
         kind: "queue-publish",
         name: `MQ: ${pub[2]}`,
         target: stated !== undefined ? stated : line.slice(line.indexOf(pub[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
+        ...(stated === null && ref ? { targetRef: ref } : {}),
         calls: [],
         line: lineNo,
       });
@@ -234,11 +252,12 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     }
     const con = line.match(MQ_CONSUME_RE);
     if (con && MQ_RECEIVER_RE.test(con[1]!)) {
-      const stated = consumeDestination(con[2]!, callArgs(lines, i, con.index! + con[0].length - 1), (a) => argValue(a, constants ??= stringConstants(lines), lines, i));
+      const stated = consumeDestination(con[2]!, callArgs(lines, i, con.index! + con[0].length - 1), value);
       sources.push({
         kind: "queue-consume",
         name: `MQ: ${con[2]}`,
         target: stated !== undefined ? stated : line.slice(line.indexOf(con[2]!)).match(FIRST_STRING_RE)?.[1] ?? null,
+        ...(stated === null && ref ? { targetRef: ref } : {}),
         calls: [],
         line: lineNo,
       });

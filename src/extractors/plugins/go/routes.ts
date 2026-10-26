@@ -1,6 +1,7 @@
 import type { RouteFact, RouteInfo } from "../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 import { ROUTER_CALL, type RouterCall } from "../shared/router-functions.js";
+import { extractGoImports } from "./imports.js";
 
 /**
  * Go server routes across the ecosystem's router families:
@@ -120,6 +121,14 @@ const COMBO_RE = /(\w+)\.\s*Combo\s*\(/;
 const VERBS_FIRST_RE = /(\w+)\.\s*Methods\s*\(\s*["'`]/;
 /** gorilla's route builder: `r.Methods("GET").Path("/x").HandlerFunc(h)`, `r.Path("/x").Methods("POST").Handler(h)`. */
 const GORILLA_CHAIN_RE = /(\w+)\.\s*(?:Methods|Path)\s*\(/;
+/** A `router-var` fact: a package-level router variable a function sets (`APIv1 = router.Group("/api/v1")`). */
+export const ROUTER_VAR = "router-var";
+export interface RouterVar {
+  name: string;
+  prefix: string;
+  guards: GuardAttr[];
+}
+
 /** A string constant: `const apiBase = "/league"`, or `apiBase = "/league"` inside a `const (…)` block. */
 const CONST_SINGLE_RE = /^\s*const\s+([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"([^"\\]*)"\s*(?:\/\/.*)?$/;
 const CONST_IN_BLOCK_RE = /^\s*([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"([^"\\]*)"\s*(?:\/\/.*)?$/;
@@ -336,6 +345,26 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   let returnsRouter = false;
 
   const constants = stringConstants(lines);
+  /** Names the file's imports bind: `config` in `config.ApiUri` is a package. */
+  const packages = new Set(extractGoImports(lines).flatMap((i) => i.specifiers));
+  /**
+   * A group prefix held in another package's constant — `config.ApiUri`,
+   * `conf.BaseUri(config.ApiUri)`, `config.ApiUri + "/x"` — as a `${config.ApiUri}`
+   * hole the project pass fills from that package (`goRouterFnResolver`).
+   */
+  const packageValue = (arg: string | undefined): string | null => {
+    let a = arg?.trim() ?? "";
+    const wrapped = /^[A-Za-z_][\w.]*\.(?:Base\w*|\w*Prefix\w*)\s*\(\s*([\s\S]+?)\s*\)$/.exec(a);
+    if (wrapped) a = wrapped[1]!;
+    const m = /^([A-Za-z_]\w*)\.([A-Za-z_]\w*)(?:\s*\+\s*["'`](\/[^"'`]*)["'`])?$/.exec(a);
+    return m && packages.has(m[1]!) ? `\${${m[1]}.${m[2]}}${m[3] ?? ""}` : null;
+  };
+  /** Package-level router variables: `var APIv1 *gin.RouterGroup`, set in one file and handed on in another. */
+  const packageRouters = new Set<string>();
+  for (const l of lines) {
+    const v = /^var\s+([A-Za-z_]\w*)\s+\*?(?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router))\b/.exec(l);
+    if (v) packageRouters.add(v[1]!);
+  }
   const literal = (arg: string | undefined): string | null => {
     // `apiBase + "/matches"` / `apiBase` on a constant the file declares: the constant is part of the path.
     const onConst = arg?.trim().match(CONST_PLUS_PATH_RE);
@@ -395,11 +424,16 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     const group = sub ? null : line.match(GROUP_RE);
     if (group) {
       const { args } = parseArgs(line, group.index! + group[0].length - 1);
-      const prefix = literal(args[0]);
+      const prefix = packageValue(args[0]) ?? literal(args[0]);
       if (prefix !== null) {
         if (routerVars.has(group[2]!)) routerVars.set(group[1]!, routerVars.get(group[2]!)!);
         varPrefix.set(group[1]!, (varPrefix.get(group[2]!) ?? "") + prefix);
         varGuards.set(group[1]!, [...(varGuards.get(group[2]!) ?? []), ...args.slice(1).map(classifyGuard)]);
+        // `APIv1 = router.Group(…)` assigning a package-level variable: other files of the package hand it on.
+        if (facts && !/:=/.test(line.slice(0, group.index! + group[0].length)) && /^\s*[A-Za-z_]\w*\s*=/.test(line)) {
+          const rv: RouterVar = { name: group[1]!, prefix: joinPrefix(prefixOf(group[1]!), ""), guards: inheritedOf(group[1]!) };
+          facts.push({ kind: ROUTER_VAR, line: lineNo, data: rv });
+        }
       }
     }
 
@@ -568,7 +602,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
         }
       }
       // A call handing a router on: `users.Register(v1.Group("/users"))`, `routes.Setup(r)`.
-      if (facts && routerVars.size > 0 && !chiMethod && !handle) {
+      if (facts && (routerVars.size > 0 || packageRouters.size > 0) && !chiMethod && !handle) {
         for (const m of line.matchAll(/(?<![\w.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(/g)) {
           const callee = m[1]!;
           if (ROUTER_METHODS.has(callee.split(".").pop()!) || callee === "func" || NOT_A_REGISTRAR.test(callee)) continue;
@@ -577,6 +611,12 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
             const bare = /^&?(\w+)$/.exec(arg)?.[1];
             const grouped = /^(\w+)\.\s*Group\s*\(\s*["'`]([^"'`]*)["'`]\s*(?:,([\s\S]*))?\)$/.exec(arg);
             const v = bare ?? grouped?.[1];
+            // A package-level router another file sets (`api.CreateSession(APIv1)`): its prefix is that file's.
+            if (v && !routerVars.has(v) && packageRouters.has(v)) {
+              const call: RouterCall = { callee, prefix: grouped?.[2] ?? "", relative: false, guards: [], via: v };
+              facts.push({ kind: ROUTER_CALL, line: lineNo, ...(currentFn ? { owner: currentFn } : {}), data: call });
+              break;
+            }
             if (!v || !routerVars.has(v)) continue;
             const extra = grouped ? parseArgs(`(${grouped[3] ?? ""})`, 0).args.map(classifyGuard) : [];
             const call: RouterCall = {

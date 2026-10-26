@@ -224,6 +224,9 @@ export interface RegexLangSpec {
   /** Named string constants (`#define CUE_TABLE "cues"`) — feeds the project-level
    *  dataSource target/entity macro resolution. */
   extractStringConstants?: (lines: string[]) => Record<string, string>;
+  /** String values the file defines at its top level, by name → `FileAnalysis.moduleValues`
+   *  (another file's `config.ApiUri` resolves here through the import graph). */
+  extractModuleValues?: (lines: string[]) => Record<string, string>;
   /**
    * Module references the toolchain follows that are not imports (Rust's
    * `mod x;`, `#[path]`, `include!`) → `FileAnalysis.pathReferences`, in the

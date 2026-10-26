@@ -72,4 +72,17 @@ export interface ProjectContext {
   fileOf(path: string): FileAnalysis | undefined;
   /** The root directory of a sub-project (`""` for the analysis root), or null for an unknown id. */
   projectRootOf?(projectId: string): string | null;
+  /** The string value a name stands for in a file, followed into the module defining it. */
+  moduleValue?: ModuleValueLookup;
+}
+
+/**
+ * The string value a name stands for in `fromFile` (`config.ApiUri` →
+ * `/api/v1`), followed through the import graph into the module that defines
+ * it (`core/module-values.ts`); null when none, or several differ.
+ */
+export interface ModuleValueLookup {
+  (fromFile: string, expr: string): string | null;
+  /** The value as the defining module states it — holes unresolved — and that module's file. */
+  locate(fromFile: string, expr: string): { value: string; file: string } | null;
 }

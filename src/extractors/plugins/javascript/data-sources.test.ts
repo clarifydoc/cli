@@ -1254,3 +1254,14 @@ describe("JS lookups keyed by a path are no requests (real-repo FP)", () => {
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /api/clubs", "get /assets/app.js"]);
   });
 });
+
+describe("JS request URLs held in an imported constant", () => {
+  it("keeps an imported name as a hole for the project pass, and drops a name the file neither defines nor imports", async () => {
+    const calls = await apiCallsOf(`
+      import axios from 'axios';
+      import { CLUBS_URL } from '../shared/links';
+      export const listClubs = () => axios.get(CLUBS_URL);
+      export const listCars = () => axios.get(GARAGE_URL);`);
+    expect(calls.map((c) => c.target)).toEqual(["${CLUBS_URL}"]);
+  });
+});
