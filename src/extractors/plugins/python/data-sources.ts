@@ -215,6 +215,27 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }));
         }
 
+        // Raw SQL a migration or an ORM annotation states: Django `migrations.RunSQL("…")` (a statement
+        // or a list of them), `RawSQL("SELECT … FROM x")` in an annotation, Alembic `op.execute("UPDATE …")`
+        // (also through `sa.text`). One row per data statement whose table resolves; DDL is the schema.
+        const rawSql = leaf === "RunSQL" || leaf === "RawSQL" ? `Django: ${leaf}` : fnName === "op.execute" && /\balembic\b/.test(this.sourceText) ? "Alembic: execute" : null;
+        if (rawSql) {
+          let arg = positional(node)[0] ?? (node.childForFieldName("arguments")?.namedChildren ?? []).find((a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "sql")?.childForFieldName("value") ?? undefined;
+          if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
+          const statements = arg?.type === "list" || arg?.type === "tuple" ? arg.namedChildren : arg ? [arg] : [];
+          for (const s of statements) {
+            const sql = pyStringValue(s, node);
+            for (const stmt of sql?.split(";") ?? []) {
+              // A hole names no table (`f"UPDATE {table} SET …"`).
+              const hit = tableFrom(stmt.replace(/\{[^}]*\}/g, "hole__"));
+              if (!hit || hit.table.includes("hole__") || !/^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(hit.verb)) continue;
+              const access = sqlVerbAccess(hit.verb);
+              sources.push(this.ds({ kind: "database", name: rawSql, target: hit.table, entity: hit.table, line: node.startPosition.row + 1, ...(access ? { access } : {}) }));
+            }
+          }
+          return;
+        }
+
         // Database patterns — matched on the exact method LEAF, not substring:
         // `RE_CPP_CLASSNAME.findall(...)` (the re module) contains ".find" but
         // is not a DB op, and it was minting phantom regex-constant "entities".

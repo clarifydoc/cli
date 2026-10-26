@@ -143,6 +143,38 @@ describe("Python database calls", () => {
   });
 });
 
+describe("Python raw SQL in migrations and annotations", () => {
+  it("reads the data statements of RunSQL, RawSQL and Alembic op.execute, never their DDL (real-repo FP)", async () => {
+    const src = [
+      "from alembic import op",
+      "import sqlalchemy as sa",
+      "from django.db import migrations",
+      "from django.db.models.expressions import RawSQL",
+      "",
+      "def upgrade():",
+      '    op.execute("UPDATE clubs SET is_relegated = FALSE")',
+      '    op.execute(sa.text("DELETE FROM club_kits WHERE kit_id IS NULL"))',
+      '    op.execute("CREATE INDEX ix_clubs_name ON clubs (name)")',
+      '    op.execute(f"UPDATE {table} SET name = lower(name)")',
+      "",
+      "operations = [",
+      "    migrations.RunSQL(\"INSERT INTO league_group (SELECT id, name, '' AS description FROM auth_group)\"),",
+      '    migrations.RunSQL(["UPDATE players SET captain = false", "DROP TABLE old_players"], reverse_sql=migrations.RunSQL.noop),',
+      "]",
+      "player_count = RawSQL(\"SELECT COUNT(DISTINCT m2m.player_id) FROM league_club_players m2m WHERE m2m.club_id = 1\", ())",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "0006_league_group.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity} ${d.access} @${d.line}`);
+    expect(rows).toEqual([
+      "Alembic: execute clubs write @7",
+      "Alembic: execute club_kits write @8",
+      "Django: RunSQL league_group write @13",
+      "Django: RunSQL players write @14",
+      "Django: RawSQL league_club_players read @16",
+    ]);
+  });
+});
+
 describe("Python URLs and SQL held in locals", () => {
   const rows = async (src: string) => {
     const tree = await parseSource(src, "python" as never, "x.py");
