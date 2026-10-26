@@ -399,3 +399,36 @@ func other(a *echo.Group) {
     expect(routes.map((r) => `${r.path} ${r.handlerTypes?.join(",") ?? "-"}`)).toEqual(["/clubs models.Club", "/health -", "/clubs/:club -"]);
   });
 });
+
+describe("Go in-process event bus keyed by event type", () => {
+  it("publishes the type a dispatch builds and consumes it in the listener's Handle", () => {
+    const src = `package models
+
+func CreateMatch(s *xorm.Session, m *Match) error {
+	events.DispatchOnCommit(s, &MatchCreatedEvent{
+		Match: m,
+	})
+	return events.Dispatch(&league.MatchPlayedEvent{Match: m})
+}
+
+func Replay(event Event) error {
+	return events.Dispatch(event)
+}
+
+type NotifyClub struct{}
+
+func (n *NotifyClub) Handle(msg *message.Message) error { return nil }
+
+func RegisterListeners() {
+	events.RegisterListener((&MatchCreatedEvent{}).Name(), &NotifyClub{})
+	events.RegisterListener((&MatchPlayedEvent{}).Name(), &ElsewhereListener{})
+}`;
+    const rows = extractGoDataSources(src.split("\n")).filter((d) => d.name.startsWith("Event:"));
+    expect(rows.map((d) => `${d.kind} ${d.target} ${d.handler ?? "-"} @${d.line}`)).toEqual([
+      "queue-publish MatchCreatedEvent - @4",
+      "queue-publish MatchPlayedEvent - @7",
+      // A listener this file does not declare names no handler: no row.
+      "queue-consume MatchCreatedEvent NotifyClub.Handle @19",
+    ]);
+  });
+});

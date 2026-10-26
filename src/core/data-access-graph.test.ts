@@ -47,3 +47,20 @@ describe("attributeDataAccessToSymbols — inline route handlers", () => {
     ]);
   });
 });
+
+describe("attributeDataAccessToSymbols — a consume naming its handler", () => {
+  it("gives the access to the handler the registration names, not to the registering function", () => {
+    const listeners = {
+      filePath: "pkg/models/listeners.go",
+      language: "go",
+      functions: [{ name: "RegisterListeners", line: 10, endLine: 13, params: [], calls: [] }],
+      classes: [{ name: "NotifyClub", line: 1, endLine: 8, methods: [{ name: "Handle", line: 3, endLine: 6, params: [], calls: [] }] }],
+      dataSources: [
+        row({ kind: "queue-consume", name: "Event: RegisterListener", target: "MatchCreatedEvent", entity: "MatchCreatedEvent", handler: "NotifyClub.Handle", line: 11 }),
+        row({ kind: "queue-consume", name: "Event: RegisterListener", target: "MatchPlayedEvent", entity: "MatchPlayedEvent", handler: "Elsewhere.Handle", line: 12 }),
+      ],
+    } as unknown as FileAnalysis;
+    const rows = attributeDataAccessToSymbols([listeners], { nodes: [], edges: [] } as never);
+    expect(rows.map((r) => `${r.symbol} ${r.entity}`)).toEqual(["NotifyClub.Handle MatchCreatedEvent", "RegisterListeners MatchPlayedEvent"]);
+  });
+});

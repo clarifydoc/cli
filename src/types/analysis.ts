@@ -1495,6 +1495,13 @@ export interface DataSourceInfo {
    */
   entityTypeParameter?: string;
   /**
+   * For `queue-consume`: the function or method of this file that handles the
+   * message (`Class.method`), when it is not the one the registration sits in —
+   * `events.RegisterListener(name, &SendNotification{})` is consumed by
+   * `SendNotification.Handle`. The access is attributed to it.
+   */
+  handler?: string;
+  /**
    * For `database`: the named query the call runs (`em.createNamedQuery("match.byClub")`),
    * declared elsewhere — a project pass fills `entity` from the query's declaration.
    */

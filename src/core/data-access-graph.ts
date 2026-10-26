@@ -277,6 +277,9 @@ export function attributeDataAccessToSymbols(
       // Module-level code (a `new Worker("q", async (job) => …)` at the top of
       // the file) is the file's `<setup>`, the symbol the call graph gives it.
       if (!best && setup) best = setup;
+      // A registration naming the handler that runs (`DataSourceInfo.handler`): that handler's.
+      const named = ds.handler ? fns.find((f) => f.symbol === ds.handler) : undefined;
+      if (named) best = { symbol: named.symbol, line: named.line };
       if (!best) continue;
 
       const raw = (ds.entity ?? "").trim();

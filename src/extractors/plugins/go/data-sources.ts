@@ -89,6 +89,20 @@ const MQ_RECEIVER_RE = /^(ch(an(nel)?)?|amqp\w*|nats\w*|nc|js|producer|writer|pu
 const MQ_PUBLISH_RE = /\b(\w+)\.\s*(Publish|PublishWithContext|PublishMsg|WriteMessages|SendMessage)\s*\(/;
 const MQ_CONSUME_RE = /\b(\w+)\.\s*(Consume|Subscribe|QueueSubscribe|ChanSubscribe|ReadMessage|FetchMessage|ReceiveMessage)\s*\(/;
 const FIRST_STRING_RE = /["'`]([^"'`]+)["'`]/;
+/**
+ * An in-process event bus keyed by the event's type: `events.Dispatch(&TaskCreatedEvent{…})`,
+ * `events.DispatchOnCommit(s, &x.TaskCreatedEvent{…})` publish the type they build;
+ * `events.RegisterListener((&TaskCreatedEvent{}).Name(), &SendNotification{})` subscribes a
+ * listener type, whose `Handle` method is what runs.
+ */
+const EVENT_DISPATCH_RE = /\b(?:events?|eventBus|bus|dispatcher)\.\s*(Dispatch|DispatchOnCommit|DispatchAsync|Emit|Fire)\s*\(/;
+const EVENT_LISTEN_RE = /\b(?:events?|eventBus|bus|dispatcher)\.\s*(RegisterListener|AddListener|Listen|On)\s*\(/;
+/** The event built as the call's first or second argument: `&TaskCreatedEvent{`, `s, &models.X{`. */
+const EVENT_LITERAL_RE = /^\s*(?:\w+\s*,\s*)?&?(?:\w+\.)?([A-Z]\w*)\s*\{/;
+/** `(&TaskCreatedEvent{}).Name()`, `models.TaskCreatedEvent{}.Name()`. */
+const EVENT_NAME_ARG_RE = /^\(?\s*&?(?:\w+\.)?([A-Z]\w*)\s*\{\s*\}\s*\)?\s*\.\s*Name\s*\(\s*\)$/;
+/** `&SendNotification{}`, `&x.Listener{wsEvent: "…"}`. */
+const LISTENER_ARG_RE = /^&?(?:\w+\.)?([A-Z]\w*)\s*\{/;
 
 /**
  * A URL argument built by concatenation (`cs.shippingAddr+"/get-quote"`), read
@@ -171,6 +185,28 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     if (env) {
       sources.push({ kind: "env", name: `os.${env[1]}`, target: env[2]!, calls: [], line: lineNo });
       continue;
+    }
+
+    const dispatch = EVENT_DISPATCH_RE.exec(line);
+    if (dispatch) {
+      const after = [line.slice(dispatch.index + dispatch[0].length), lines[i + 1] ?? ""].join(" ");
+      const type = EVENT_LITERAL_RE.exec(after)?.[1];
+      if (type) {
+        sources.push({ kind: "queue-publish", name: `Event: ${dispatch[1]}`, target: type, entity: type, calls: [], line: lineNo });
+        continue;
+      }
+    }
+    const listen = EVENT_LISTEN_RE.exec(line);
+    if (listen) {
+      const args = callArgs(lines, i, listen.index + listen[0].length - 1);
+      const type = EVENT_NAME_ARG_RE.exec(args[0] ?? "")?.[1];
+      const listener = LISTENER_ARG_RE.exec(args[1] ?? "")?.[1];
+      // Only a listener whose `Handle` this file declares: that method is the consumer.
+      const declares = listener && new RegExp(String.raw`^func\s*\(\s*\w*\s*\*?${listener}\s*\)\s*Handle\s*\(`, "m").test(lines.join("\n"));
+      if (type && declares) {
+        sources.push({ kind: "queue-consume", name: `Event: ${listen[1]}`, target: type, entity: type, handler: `${listener}.Handle`, calls: [], line: lineNo });
+        continue;
+      }
     }
 
     const pub = line.match(MQ_PUBLISH_RE);
