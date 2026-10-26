@@ -266,6 +266,19 @@ describe("Flutter closure handlers", () => {
     );
     expect(fn("<onTap@10>")?.calls.map((c) => c.name)).toContain("context.pushRoute");
   });
+  it("names the handler branch of a conditional handler, not its condition (real-repo FP)", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `class KitButton extends StatelessWidget {
+  Widget build(BuildContext context) {
+    return Column(children: [
+      InkWell(onTap: enable ? onTap : null, child: Text('Kit')),
+      InkWell(onTap: busy ? null : _save, child: Text('Save')),
+    ]);
+  }
+}`;
+    const a = extractWithRegex(src, "lib/kit_button.dart", "dart");
+    expect(a.interactiveElements.map((e) => `${e.event}@${e.line}=${e.handler}`)).toEqual(["onTap@4=onTap", "onTap@5=_save"]);
+  });
 });
 
 describe("dartSpec — request bodies", () => {

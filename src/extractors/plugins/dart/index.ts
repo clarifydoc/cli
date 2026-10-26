@@ -567,6 +567,12 @@ const FLUTTER_ELEMENT_OF: ReadonlyArray<[RegExp, InteractiveElementInfo["element
 function flutterHandlerName(expr: string): string | null {
   let t = expr.trim().replace(/[,;)\s]+$/, "");
   if (!t || t === "null") return null;
+  // `enable ? onTap : null`, `busy ? null : _save`: the branch that is a handler, not the condition.
+  const ternary = /^[^?:]+\?\s*([^:]+?)\s*:\s*(.+)$/.exec(t);
+  if (ternary && !/=>/.test(ternary[0]!.split("?")[0]!)) {
+    const [yes, no] = [ternary[1]!.trim(), ternary[2]!.trim()];
+    return yes !== "null" ? flutterHandlerName(yes) : no !== "null" ? flutterHandlerName(no) : null;
+  }
   const arrow = t.match(/^\(?[^()]*\)?\s*(?:async\s*)?=>\s*(.*)$/);
   if (arrow) t = arrow[1]!.trim();
   else if (/^\(?[^()]*\)?\s*(?:async\s*)?\{/.test(t)) return null;
