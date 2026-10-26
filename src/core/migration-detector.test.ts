@@ -27,6 +27,20 @@ describe("detectMigrations — EF Core dedup", () => {
   });
 });
 
+describe("detectMigrations — Go", () => {
+  it("counts only versioned files under a migrations directory (real-repo FP)", () => {
+    const files = [
+      "modelmigration/v1_20/v250.go",
+      "modelmigration/v1_20/v250_test.go",
+      "modelmigration/migrations.go",
+      "db/migrations/20240101120000_create_clubs.go",
+      "services/migrations/league_importer.go",
+      "services/migrations/migrate.go",
+    ];
+    expect(detectMigrations(files).map((m) => m.filePath).sort()).toEqual(["db/migrations/20240101120000_create_clubs.go", "modelmigration/v1_20/v250.go"]);
+  });
+});
+
 describe("detectMigrations — version order", () => {
   it("orders Flyway versions numerically, segment by segment", () => {
     const files = ["db/migration/V10__add_index.sql", "db/migration/V2__players.sql", "db/migration/V1_10__b.sql", "db/migration/V1_2__a.sql", "db/migration/V1__init.sql"];

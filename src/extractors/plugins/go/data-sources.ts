@@ -82,6 +82,9 @@ const NEW_REQUEST_RE = /http\.NewRequest(?:WithContext\s*\(\s*[\w.]+(?:\(\s*\))?
 /** `client.Get("url")` — any *client-named receiver with an HTTP verb. */
 const CLIENT_VERB_RE = /\b(\w*[Cc]lient)\.\s*(Get|Post|Put|Patch|Delete|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
 
+/** An import of a cache or key-value store client, whose Get/Delete are no HTTP requests. */
+const KV_CLIENT_IMPORT_RE = /"[^"]*(?:\/go-redis\/|redis\/go-redis|gomodule\/redigo|\/gomemcache\/|\/memcache"|\/bigcache|\/groupcache|\/etcd\/client|hashicorp\/consul\/api|\/ristretto|\/badger)[^"]*"/;
+
 const ENV_RE = /\bos\.(Getenv|LookupEnv)\s*\(\s*["'`]([^"'`]+)["'`]/;
 
 /** MQ publish/consume — generic verbs gated on a broker-shaped receiver. */
@@ -128,6 +131,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
   let constants: Map<string, string> | undefined;
+  let kvClient: boolean | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -154,7 +158,14 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
 
     const helper = line.match(HTTP_HELPER_RE);
     const newReq = helper ? null : line.match(NEW_REQUEST_RE);
-    const clientVerb = helper || newReq ? null : line.match(CLIENT_VERB_RE);
+    let clientVerb = helper || newReq ? null : line.match(CLIENT_VERB_RE);
+    // A cache or key-value client shares the verbs: `c.client.Get(key)` (memcache), `client.Get(ctx, key)`
+    // (redis) — with no URL literal, a context first or a file using such a client says it is no request.
+    if (clientVerb && !clientVerb[3]) {
+      const first = /^\s*([\w.]+)/.exec(line.slice(clientVerb.index! + clientVerb[0].length))?.[1] ?? "";
+      kvClient ??= lines.some((l) => KV_CLIENT_IMPORT_RE.test(l));
+      if (/^(?:ctx|c|context\.\w+)$/.test(first) || kvClient) clientVerb = null;
+    }
     if (helper) {
       sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target: helper[2] ?? null, calls: [], line: lineNo });
       continue;

@@ -126,9 +126,10 @@ function classify(p: string): MigrationInfo | null {
   m = p.match(/(?:^|\/)[Mm]igrations\/(Version\w+)\.php$/);
   if (m) return mk(p, "doctrine", m[1]!);
 
-  // GORM: migrations/*.go
-  m = p.match(/(?:^|\/)migrations\/([^/]+)\.go$/);
-  if (m) return mk(p, "gorm", m[1]!);
+  // Go: a versioned file under a migrations directory — `migrations/20240101_init.go`,
+  // `modelmigration/v1_20/v250.go`. Any other Go file there (an importer, a test, the runner) is none.
+  m = p.match(/(?:^|\/)\w*migrations?\/(?:v[\d_]+\/)?(\d{3,}[_-][^/]*|v\d+(?:_[^/]*)?)\.go$/i);
+  if (m && !/_test$/.test(m[1]!)) return mk(p, "gorm", m[1]!);
 
   // TypeORM (13-digit ms timestamp) vs Sequelize (14-digit datetime), .ts/.js
   m = baseName(p).match(/^(\d{6,})[-_](.+)\.(ts|js)$/);

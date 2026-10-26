@@ -243,6 +243,22 @@ msgs, _ := ch.Consume("cars-queue", "", true, false, false, false, nil)
     expect(s.some((d) => d.kind === "queue-consume" && d.target === "cars-queue")).toBe(true);
   });
 
+  it("reads no HTTP request from a cache client's Get / Delete (real-repo FP)", () => {
+    const api = (src: string) => extractGoDataSources(lines(src)).filter((d) => d.kind === "api-call").map((d) => `${d.name} ${d.target}`);
+    expect(api(`
+import "github.com/bradfitz/gomemcache/memcache"
+func (c *MemcacheCache) Get(key string) (string, bool) {
+	item, err := c.client.Get(key)
+	_ = c.client.Delete(key)
+}`)).toEqual([]);
+    expect(api(`
+func (c *RedisCache) Get(ctx context.Context, key string) string {
+	v, _ := c.client.Get(ctx, key).Result()
+	resp, _ := httpClient.Get(scoreURL)
+	other, _ := c.client.Get("https://league.example.com/table")
+}`)).toEqual(["GET null", "GET https://league.example.com/table"]);
+  });
+
   it("names an AMQP destination by the default exchange's routing key, a constant or a declared queue", () => {
     const s = extractGoDataSources(lines(`
 const transfersQueue = "transfers"
