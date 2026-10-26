@@ -23,12 +23,56 @@ export function argOriginsOf(node: Node): CallArgOrigin[] | null {
   if (args.length === 0 || args.length > 8 || args.some((a) => a.type === "spread_element")) return null;
   const out: CallArgOrigin[] = [];
   args.forEach((arg, index) => {
+    if (arg.type === "object") {
+      fieldOrigins(arg, index, "", 0, out);
+      return;
+    }
     const { node: value, transform } = unwrap(arg);
     const origin = originOf(value, 0);
     if (origin) out.push({ index, origin, ...(transform ? { transform } : {}) });
   });
   // Literals alone say nothing a URL slot needs: kept only beside a parameter or a URL value.
   return out.some((a) => a.origin.kind !== "literal") ? out : null;
+}
+
+/** The keys of a request-options object that carry URL values: hey-api's `path`/`query`, openapi-fetch's `params`. */
+const URL_VALUE_KEYS = new Set(["path", "query", "params"]);
+
+/**
+ * The properties of an object-literal argument whose value is known, by dotted
+ * path, under the keys a generated SDK takes its URL values from
+ * (`getClub({ path: { id } })`, `client.GET(url, { params: { path: { id } } })`).
+ */
+function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, out: CallArgOrigin[]): void {
+  if (depth > 2) return;
+  for (const prop of obj.namedChildren) {
+    if (!prop) continue;
+    if (depth === 0) {
+      // Only the URL-value objects: other options (`body`, `headers`, a payload) feed no URL slot.
+      const key = prop.type === "pair" ? prop.childForFieldName("key") : null;
+      const value = prop.type === "pair" ? prop.childForFieldName("value") : null;
+      const name = key?.type === "property_identifier" ? key.text : stringValue(key);
+      if (name && URL_VALUE_KEYS.has(name) && value?.type === "object") fieldOrigins(value, index, `${name}.`, 1, out);
+      continue;
+    }
+    if (prop.type === "shorthand_property_identifier") {
+      const origin = identifierOrigin(prop, prop.text, 0);
+      if (origin) out.push({ index, origin, field: prefix + prop.text });
+      continue;
+    }
+    if (prop.type !== "pair") continue;
+    const key = prop.childForFieldName("key");
+    const keyText = key?.type === "property_identifier" ? key.text : stringValue(key);
+    const raw = prop.childForFieldName("value");
+    if (!keyText || !/^[\w$]+$/.test(keyText) || !raw) continue;
+    if (raw.type === "object") {
+      fieldOrigins(raw, index, `${prefix}${keyText}.`, depth + 1, out);
+      continue;
+    }
+    const { node: value, transform } = unwrap(raw);
+    const origin = originOf(value, 0);
+    if (origin) out.push({ index, origin, field: prefix + keyText, ...(transform ? { transform } : {}) });
+  }
 }
 
 /** A file that reads no URL values needs no declaration scan: the router's words, once per tree. */
@@ -125,20 +169,23 @@ function originOf(n: Node, depth: number): Origin | null {
       }
       return null;
     }
-    case "identifier": {
-      const name = n.text;
-      const param = paramOf(n, name);
-      if (param) return param;
-      if (!readsUrl(n)) return null;
-      const bound = bindingOf(n, name);
-      if (!bound) return null;
-      if (bound.kind === "value") return originOf(unwrap(bound.value).node, depth + 1);
-      // `const { id } = useParams()` / `const { id: clubId } = this.props.match.params`
-      const kind = paramsObject(bound.value, depth + 1);
-      return kind ? { kind, name: bound.key } : null;
-    }
+    case "identifier":
+      return identifierOrigin(n, n.text, depth);
   }
   return null;
+}
+
+/** A name read at `n`: a parameter of an enclosing function, or a local the router fills. */
+function identifierOrigin(n: Node, name: string, depth: number): Origin | null {
+  const param = paramOf(n, name);
+  if (param) return param;
+  if (!readsUrl(n)) return null;
+  const bound = bindingOf(n, name);
+  if (!bound) return null;
+  if (bound.kind === "value") return originOf(unwrap(bound.value).node, depth + 1);
+  // `const { id } = useParams()` / `const { id: clubId } = this.props.match.params`
+  const kind = paramsObject(bound.value, depth + 1);
+  return kind ? { kind, name: bound.key } : null;
 }
 
 /** `params.id` / `params["id"]` where `params` is a params object of the router. */

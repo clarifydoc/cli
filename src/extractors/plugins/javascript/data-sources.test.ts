@@ -653,6 +653,16 @@ describe("JS request descriptors and positional request()", () => {
     expect(calls.map((c) => [c.name, c.target])).toEqual([["post", "/migration/trello/migrate"]]);
   });
 
+  it("says a generated operation's `{id}` comes from its options' `path` object (hey-api)", async () => {
+    const calls = await apiCallsOf(`
+      export const getClub = <T extends boolean = true>(options: Options<GetClubData, T>) => (options.client ?? client).get({ url: '/clubs/{id}', ...options });
+      export const listClubs = (options?: Options) => (options?.client ?? client).get({ url: '/clubs', ...options });`);
+    expect(calls.map((c) => [c.target, c.pathValues ?? null])).toEqual([
+      ["/clubs/{id}", { index: 0, field: "path" }],
+      ["/clubs", null],
+    ]);
+  });
+
   it("accepts a method-less descriptor passed to a call with request-shaped keys (Radarr)", async () => {
     const calls = await apiCallsOf(`
       const promise = createAjaxRequest({ url: '/calendar', data: { start, end } }).request;

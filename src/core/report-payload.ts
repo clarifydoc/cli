@@ -323,6 +323,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
   const projectName = basename(summary.projectRoot || "project");
   const ref = refEncoder(summary.files ?? []);
   const { table: wireStrings, sym } = stringTable();
+  const feeds = paramFeedsByRoute(s.paramOrigins);
   return {
     projectName,
     // Absolute root the analysis ran against — used client-side to build
@@ -367,6 +368,8 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       if (r.requestSchema) row.requestSchema = r.requestSchema;
       if (r.webhook) row.webhook = r.webhook;
       if (r.consumed) row.consumed = true;
+      const fed = feeds.get(`${r.filePath}:${r.line}`);
+      if (fed) Object.assign(row, fed);
       return row;
     }),
     /** Outbound HTTP calls — surfaced alongside routes in the Routes tab, each with the route it reaches. */
@@ -604,4 +607,44 @@ function routeGapsOf(stats: any): NonNullable<ReportPayload["routeGaps"]> {
     uncalled: stats.uncalled ?? [],
     uncalledCount: stats.uncalledCount ?? (stats.uncalled?.length ?? 0),
   };
+}
+
+/** A route row's client-side parameter sources (`paramOrigins`), as the Routes tab shows them. */
+interface ParamFeeds {
+  /** Each traced value: the route parameter, where it starts (a screen's route or query value, a literal) and the functions it passes. */
+  paramFeeds?: Array<{ param: string; kind: string; name?: string; value?: string; screen?: string; routePath?: string; inRoutePath?: boolean; file: string; line: number; via?: string[] }>;
+  /** Per route parameter: callers that hand the value on through code the analysis does not follow. */
+  paramUntraced?: Record<string, number>;
+}
+
+const PARAM_FEEDS_CAP = 20;
+
+function paramFeedsByRoute(rows: readonly any[] | undefined): Map<string, ParamFeeds> {
+  const out = new Map<string, ParamFeeds>();
+  for (const row of rows ?? []) {
+    if (!row.route) continue;
+    const key = `${row.route.file}:${row.route.line}`;
+    const feeds = out.get(key) ?? out.set(key, {}).get(key)!;
+    const o = row.origin;
+    if (o.kind === "unknown") {
+      (feeds.paramUntraced ??= {})[row.route.param] = (feeds.paramUntraced[row.route.param] ?? 0) + 1;
+      continue;
+    }
+    const list = (feeds.paramFeeds ??= []);
+    if (list.length >= PARAM_FEEDS_CAP || list.some((f) => f.param === row.route.param && f.kind === o.kind && f.file === o.file && f.line === o.line && (f.name ?? f.value) === (o.name ?? o.value))) continue;
+    const via = (row.hops ?? []).map((h: any) => h.symbol);
+    list.push({
+      param: row.route.param,
+      kind: o.kind,
+      ...(o.name !== undefined ? { name: o.name } : {}),
+      ...(o.value !== undefined ? { value: o.value } : {}),
+      ...(o.screen ? { screen: o.screen } : {}),
+      ...(o.routePath ? { routePath: o.routePath } : {}),
+      ...(o.inRoutePath !== undefined ? { inRoutePath: o.inRoutePath } : {}),
+      file: o.file,
+      line: o.line,
+      ...(via.length ? { via } : {}),
+    });
+  }
+  return out;
 }

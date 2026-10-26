@@ -42,6 +42,15 @@ export interface Route {
   auth?: { roles?: string[]; policies?: string[]; schemes?: string[]; anonymous?: boolean } | null;
 }
 
+/** Which value feeds a parameter of an API call's URL (`ProjectAnalysis.paramOrigins`). */
+export interface ParamOrigin {
+  sink: { file: string; line: number; url: string; slot: string };
+  origin: { kind: string; name?: string; value?: string; file: string; line: number; screen?: string; routePath?: string; inRoutePath?: boolean };
+  hops?: Array<{ file: string; symbol: string; line: number; arg: number; field?: string }>;
+  route?: { file: string; line: number; method: string | null; path: string; param: string; binding?: string; type?: string };
+  confidence?: string;
+}
+
 export interface ApiRouteLink {
   source: string;
   sourceLine: number;
@@ -285,6 +294,7 @@ export interface Summary {
   linkGraph?: Link[];
   routeMap?: Route[];
   apiRouteLinks?: ApiRouteLink[];
+  paramOrigins?: ParamOrigin[];
   screens?: Screen[];
   interactiveElements?: InteractiveElement[];
   symbolLinks?: SymbolLink[];

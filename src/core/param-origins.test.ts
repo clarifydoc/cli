@@ -43,6 +43,34 @@ describe("paramOrigins", () => {
     expect(rows.some((r) => r.sink.slot === "url")).toBe(false);
   });
 
+  it("follows a generated SDK operation's `{id}` back through the `path` object its callers hand it", () => {
+    // sdk.gen.ts: `getClub = (options) => client.get({ url: '/clubs/{id}', ...options })`.
+    const sdk = file("web/client/sdk.gen.ts", [fn("getClub", 1, 3, ["options"])], [
+      { kind: "api-call", name: "get", target: "/clubs/{id}", line: 2, calls: [], pathValues: { index: 0, field: "path" } },
+    ]);
+    // queries/clubs.ts: `clubQuery(id)` → `getClub({ path: { id } })`; a mutation hands a value it builds itself.
+    const queries = file("web/client/queries/clubs.ts", [
+      fn("clubQuery", 1, 5, ["id"], [{ name: "getClub", kind: "cross-file", target: null, line: 3, argOrigins: [{ index: 0, field: "path.id", origin: { kind: "param", name: "id", index: 0 } }] }]),
+      fn("deleteClub", 7, 9, [], [{ name: "getClub", kind: "cross-file", target: null, line: 8 }]),
+    ]);
+    const view = file("web/views/ClubView.vue", [
+      fn("<setup>", 1, 9, [], [{ name: "clubQuery", kind: "cross-file", target: null, line: 4, argOrigins: [{ index: 0, origin: { kind: "route-param", name: "clubId" } }] }]),
+    ]);
+    const sdkLinks = [
+      link("web/client/queries/clubs.ts", "clubQuery", 3, "getClub", "web/client/sdk.gen.ts", "getClub"),
+      link("web/client/queries/clubs.ts", "deleteClub", 8, "getClub", "web/client/sdk.gen.ts", "getClub"),
+      link("web/views/ClubView.vue", "<setup>", 4, "clubQuery", "web/client/queries/clubs.ts", "clubQuery"),
+    ];
+    const sdkApiLink = { ...apiLink, source: "web/client/sdk.gen.ts", sourceLine: 2, url: "/clubs/{id}" } as ApiRouteLink;
+    const sdkScreens = [{ name: "ClubView", filePath: "web/views/ClubView.vue", routePath: "/clubs/:clubId" }] as unknown as ScreenInfo[];
+    const rows = computeParamOrigins({ analyses: [sdk, queries, view], symbolLinks: sdkLinks, apiRouteLinks: [sdkApiLink], routes, screens: sdkScreens });
+    expect(rows.map((r) => [r.sink.slot, r.origin.kind, "name" in r.origin ? r.origin.name : "", r.origin.file, r.hops.map((h) => `${h.symbol}#${h.arg}${h.field ? `.${h.field}` : ""}`).join(" > ")])).toEqual([
+      ["id", "route-param", "clubId", "web/views/ClubView.vue", "<setup>#0 > clubQuery#0.path.id"],
+      ["id", "unknown", "", "web/client/queries/clubs.ts", "deleteClub#0.path.id"],
+    ]);
+    expect(rows[0]!.route).toMatchObject({ path: "/api/v2/clubs/{id}", param: "id" });
+  });
+
   it("is empty when no plugin reports argument origins", () => {
     const bare = file("web/api/clubs.ts", [fn("getClub", 1, 3, ["id"])], [{ kind: "api-call", name: "http.get", target: "/clubs/${id}", line: 2, calls: [] }]);
     expect(computeParamOrigins({ analyses: [bare], symbolLinks: [], apiRouteLinks: [], routes: [], screens: [] })).toEqual([]);

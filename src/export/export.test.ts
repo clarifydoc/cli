@@ -22,3 +22,31 @@ describe("exports", () => {
     expect(() => renderExport("nope.txt", summary)).toThrow(/Unknown export/);
   });
 });
+
+describe("FLOWS.md", () => {
+  it("says where each route parameter's value starts on the client", () => {
+    const route = { kind: "api", path: "/api/v2/clubs/{id}", httpMethod: "GET", handler: "Get", line: 20, filePath: "api/ClubsController.cs" };
+    const summary = {
+      routeMap: [route],
+      apiRouteLinks: [{ source: "web/client/sdk.gen.ts", sourceLine: 2, method: "GET", url: "/clubs/{id}", target: "api/ClubsController.cs", targetLine: 20, handler: "Get", routePath: "/api/v2/clubs/{id}", confidence: "EXTRACTED" }],
+      paramOrigins: [
+        {
+          sink: { file: "web/client/sdk.gen.ts", line: 2, url: "/clubs/{id}", slot: "id" },
+          origin: { kind: "route-param", name: "clubId", file: "web/views/ClubView.vue", line: 4, screen: "ClubView", routePath: "/clubs/:clubId", inRoutePath: true },
+          hops: [{ file: "web/views/ClubView.vue", symbol: "<setup>", line: 4, arg: 0 }, { file: "web/client/queries/clubs.ts", symbol: "clubQuery", line: 3, arg: 0, field: "path.id" }],
+          route: { file: "api/ClubsController.cs", line: 20, method: "GET", path: "/api/v2/clubs/{id}", param: "id" },
+        },
+        {
+          sink: { file: "web/client/sdk.gen.ts", line: 2, url: "/clubs/{id}", slot: "id" },
+          origin: { kind: "unknown", file: "web/client/queries/clubs.ts", line: 8 },
+          hops: [{ file: "web/client/queries/clubs.ts", symbol: "deleteClub", line: 8, arg: 0, field: "path.id" }],
+          route: { file: "api/ClubsController.cs", line: 20, method: "GET", path: "/api/v2/clubs/{id}", param: "id" },
+        },
+      ],
+    };
+    const text = renderExport("FLOWS.md", summary as never);
+    expect(text).toContain("**Parameters fed by**");
+    expect(text).toMatch(/\| `id` \| route parameter `clubId` of ClubView \(`\/clubs\/:clubId`\) \| .*ClubView\.vue.*4.* \| <setup> → clubQuery \|/);
+    expect(text).toContain("`id`: 1 caller hands the value on through code the analysis does not follow.");
+  });
+});

@@ -1710,12 +1710,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const client = callFn?.type === "member_expression" ? memberRoot(callFn) : null;
           const descriptorBody = objectPropValue(node, "data") ?? objectPropValue(node, "json") ?? objectPropValue(node, "body");
           const descriptorSchema = descriptorBody ? bodySchema(descriptorBody) : null;
+          const pathValues = spreadPathValues(node, url);
           sources.push(this.ds({
             kind: "api-call",
             name: method ?? "request",
             target: url,
             line: node.startPosition.row + 1,
             ...(descriptorSchema ? { requestBody: descriptorSchema } : {}),
+            ...(pathValues ? { pathValues } : {}),
             ...(urls.length > 1 ? { targetAlternatives: urls.slice(1) } : {}),
             ...(client && !HTTP_ROOTS.has(client.toLowerCase()) && !GLOBAL_RECEIVERS.has(client) ? { client } : {}),
           }));
@@ -1923,6 +1925,26 @@ function loaderRequest(node: Node): { url: Node; verb: string } | null {
   if ((fn === "SwaggerUIBundle" || fn === "SwaggerUI") && args[0]?.type === "object") {
     const url = objectPropValue(args[0], "url");
     return url ? { url, verb: "get" } : null;
+  }
+  return null;
+}
+
+/**
+ * hey-api's generated operation: `getClub = (options) => client.get({ url:
+ * '/clubs/{id}', ...options })` — the descriptor spreads the function's own
+ * parameter, whose `path` object fills the URL's `{id}` (`getClub({ path: { id } })`).
+ */
+function spreadPathValues(descriptor: Node, url: string): { index: number; field: string } | null {
+  if (!/\{[A-Za-z_$][\w$]*\}/.test(url)) return null;
+  const spread = descriptor.namedChildren.find((c) => c?.type === "spread_element")?.namedChild(0);
+  if (spread?.type !== "identifier") return null;
+  for (let fn = descriptor.parent; fn; fn = fn.parent) {
+    if (!FUNCTION_SCOPES.has(fn.type)) continue;
+    const single = fn.childForFieldName("parameter");
+    if (single) return single.type === "identifier" && single.text === spread.text ? { index: 0, field: "path" } : null;
+    const params = fn.childForFieldName("parameters")?.namedChildren.filter((p) => p && p.type !== "comment") ?? [];
+    const at = params.findIndex((p) => (p!.childForFieldName("pattern") ?? p)!.text === spread.text);
+    return at >= 0 ? { index: at, field: "path" } : null;
   }
   return null;
 }

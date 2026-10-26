@@ -49,6 +49,25 @@ export function useMatch() {
     expect(await originsOf(src, "useMatch", "fetchTable")).toEqual([{ index: 0, origin: { kind: "query-param", name: "season" } }]);
   });
 
+  it("reads the properties of an object argument a generated SDK takes its URL values from", async () => {
+    const src = `import { useRoute } from "vue-router";
+export function clubQuery(id: number) {
+  return getClub({ path: { id }, query: { season: "2024" } });
+}
+export function ClubView() {
+  const route = useRoute();
+  return getFixture({ path: { club: route.params.clubId, fixture: 7 } });
+}`;
+    expect(await originsOf(src, "clubQuery", "getClub")).toEqual([
+      { index: 0, origin: { kind: "param", name: "id", index: 0 }, field: "path.id" },
+      { index: 0, origin: { kind: "literal", value: "2024" }, field: "query.season" },
+    ]);
+    expect(await originsOf(src, "ClubView", "getFixture")).toEqual([
+      { index: 0, origin: { kind: "route-param", name: "clubId" }, field: "path.club" },
+      { index: 0, origin: { kind: "literal", value: "7" }, field: "path.fixture" },
+    ]);
+  });
+
   it("reports nothing for a call whose arguments say nothing (literals alone, locals)", async () => {
     const src = `export function Garage() {
   const car = pick();

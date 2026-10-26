@@ -31,6 +31,8 @@ const weakest = (a: Confidence, b: Confidence): Confidence => (RANK[a] <= RANK[b
 
 /** `${id}`, `${encodeURIComponent(slug)}`, `${String(n)}`, `${this.props.match.params.id}`. */
 const SLOT = /\$\{\s*(?:(?:encodeURIComponent|encodeURI|encode|String|Number)\s*\(\s*)?([A-Za-z_$][\w$.]*)\s*\)?\s*\}/g;
+/** An OpenAPI path template's placeholder (`/clubs/{id}`), filled from a request object (`DataSourceInfo.pathValues`). */
+const BRACE_SLOT = /(?<!\$)\{([A-Za-z_$][\w$]*)\}/g;
 /** A slot that reads the router itself: a route parameter (or query value) at the call. */
 const DIRECT = /^(?:this\.)?(?:props\.)?(?:match\.params|\$route\.params)\.([\w$]+)$/;
 const DIRECT_QUERY = /^(?:this\.)?\$route\.query\.([\w$]+)$/;
@@ -86,18 +88,18 @@ export function computeParamOrigins(input: {
   };
 
   type Leaf = { origin: ParamOrigin["origin"]; hops: ParamOrigin["hops"]; confidence: Confidence };
-  /** Every origin of parameter `index` of `target`, through its callers. */
-  const walk = (target: Fn, index: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
-    const key = `${target.file}::${target.symbol}#${index}`;
+  /** Every origin of parameter `index` of `target` — or of its property `field` — through its callers. */
+  const walk = (target: Fn, index: number, field: string | undefined, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
+    const key = `${target.file}::${target.symbol}#${index}${field ? `.${field}` : ""}`;
     if (seen.has(key) || out.length >= MAX_PER_SLOT * 4) return;
     seen.add(key);
     for (const link of (callersOf.get(`${target.file}::${target.symbol}`) ?? []).slice().sort((a, b) => byOrdinal(a.sourceFile, b.sourceFile) || a.sourceLine - b.sourceLine)) {
       const call = callOf(link);
       const conf = weakest(confidence, link.confidence ?? "INFERRED");
-      const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index };
+      const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) };
       // A framework dispatch (an emitted event, a bus message) hands its arguments on by its own rules, not by position.
       const dispatched = link.strategy?.startsWith("dispatch:") ?? false;
-      const arg: CallArgOrigin | undefined = dispatched ? undefined : call?.argOrigins?.find((a) => a.index === index);
+      const arg: CallArgOrigin | undefined = dispatched ? undefined : call?.argOrigins?.find((a) => a.index === index && a.field === field);
       if (!arg) {
         out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         continue;
@@ -110,7 +112,7 @@ export function computeParamOrigins(input: {
           out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
           continue;
         }
-        walk(caller, at, depth + 1, seen, [hop, ...hops], conf, out);
+        walk(caller, at, undefined, depth + 1, seen, [hop, ...hops], conf, out);
         continue;
       }
       if (o.kind === "literal") {
@@ -131,9 +133,21 @@ export function computeParamOrigins(input: {
   };
 
   const rows: ParamOrigin[] = [];
+  const emit = (sink: ParamOrigin["sink"], leaves: Leaf[], route: ParamOrigin["route"] | undefined, link: ApiRouteLink | undefined): void => {
+    if (leaves.length === 0) return;
+    for (const leaf of dedupe(leaves).slice(0, MAX_PER_SLOT)) {
+      rows.push({
+        sink,
+        origin: leaf.origin,
+        hops: leaf.hops,
+        ...(route ? { route } : {}),
+        confidence: link ? weakest(leaf.confidence, link.confidence) : leaf.confidence,
+      });
+    }
+  };
   for (const a of analyses) {
     for (const ds of a.dataSources ?? []) {
-      if (ds.kind !== "api-call" || !ds.target || !ds.target.includes("${")) continue;
+      if (ds.kind !== "api-call" || !ds.target || !(ds.target.includes("${") || ds.pathValues)) continue;
       const fn = innermost(a.filePath, ds.line);
       const link = linkOf.get(`${a.filePath}:${ds.line}`);
       for (const m of ds.target.matchAll(SLOT)) {
@@ -151,18 +165,17 @@ export function computeParamOrigins(input: {
         } else {
           const at = fn && !slot.includes(".") ? fn.fn.params.findIndex((p) => p.name === slot) : -1;
           if (!fn || at < 0) continue; // a local or a member: not followed
-          walk(fn, at, 0, new Set(), [], "EXTRACTED", leaves);
+          walk(fn, at, undefined, 0, new Set(), [], "EXTRACTED", leaves);
         }
-        if (leaves.length === 0) continue;
-        const route = link ? routeParam(link, ds.target, m[0]!, routeAt) : undefined;
-        for (const leaf of dedupe(leaves).slice(0, MAX_PER_SLOT)) {
-          rows.push({
-            sink,
-            origin: leaf.origin,
-            hops: leaf.hops,
-            ...(route ? { route } : {}),
-            confidence: link ? weakest(leaf.confidence, link.confidence) : leaf.confidence,
-          });
+        emit(sink, leaves, link ? routeParam(link, ds.target, m[0]!, routeAt) : undefined, link);
+      }
+      // A generated SDK's operation: `{id}` filled from its argument's `path` object.
+      if (ds.pathValues && fn) {
+        for (const m of ds.target.matchAll(BRACE_SLOT)) {
+          const slot = m[1]!;
+          const leaves: Leaf[] = [];
+          walk(fn, ds.pathValues.index, `${ds.pathValues.field}.${slot}`, 0, new Set(), [], "EXTRACTED", leaves);
+          emit({ file: a.filePath, line: ds.line, url: ds.target, slot }, leaves, link ? routeParam(link, ds.target, m[0]!, routeAt) : undefined, link);
         }
       }
     }

@@ -814,6 +814,12 @@ export interface CallArgOrigin {
     | { kind: "route-param" | "query-param"; name: string };
   /** One wrapper the value passed through (`Number`, `encodeURIComponent`, a template literal). */
   transform?: string;
+  /**
+   * The property of an object-literal argument the value sits at, as a dotted
+   * path (`path.id` of `getClub({ path: { id } })`); absent when the argument
+   * itself is the value.
+   */
+  field?: string;
 }
 
 /**
@@ -829,8 +835,8 @@ export interface ParamOrigin {
     | { kind: "route-param" | "query-param"; name: string; file: string; line: number; screen?: string; routePath?: string; inRoutePath?: boolean }
     | { kind: "literal"; value: string; file: string; line: number }
     | { kind: "unknown"; file: string; line: number };
-  /** The functions the value is handed through, from the origin towards the call, each with the argument position. */
-  hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
+  /** The functions the value is handed through, from the origin towards the call, each with the argument position (and the property of it, for an object argument). */
+  hops: Array<{ file: string; symbol: string; line: number; arg: number; field?: string }>;
   /** The backend route parameter the slot binds, when the call is joined to a route. */
   route?: { file: string; line: number; method: string | null; path: string; param: string; binding?: string; type?: string };
   confidence: Confidence;
@@ -1717,6 +1723,14 @@ export interface DataSourceInfo {
    * empty schema. `additionalProperties: true` when a spread may add more.
    */
   requestBody?: JsonSchemaNode;
+  /**
+   * For `api-call`: where the values of the URL's `{name}` placeholders come
+   * from when the request is built from a parameter of the enclosing function
+   * — that argument's `field` object (a generated SDK's
+   * `getClub = (options) => client.get({ url: '/clubs/{id}', ...options })`
+   * takes `id` from `options.path.id`: `{ index: 0, field: "path" }`).
+   */
+  pathValues?: { index: number; field: string };
   /**
    * For `api-call`: the top-level fields the caller reads off the response
    * body (`const { items } = await res.json()`, `res.data.total`), sorted.

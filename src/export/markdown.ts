@@ -1,4 +1,4 @@
-import type { Summary } from "./types.js";
+import type { ParamOrigin, Summary } from "./types.js";
 import { at, byDesc, cell, codeCell, commentLine, plural, share } from "./text.js";
 import { buildDiagram, routeChains, type Diagram } from "./mermaid.js";
 
@@ -478,6 +478,66 @@ export function dataModelDoc(summary: Summary): string {
 
 // ─── FLOWS.md ────────────────────────────────────────────────────────────────
 
+/** `paramOrigins` rows by the route chain they bind (`routeChains`' key: declaring file, method and path). */
+function paramOriginsByRoute(rows: readonly ParamOrigin[]): Map<string, ParamOrigin[]> {
+  const out = new Map<string, ParamOrigin[]>();
+  for (const row of rows) {
+    if (!row.route) continue;
+    const key = `${row.route.file}|${`${row.route.method ?? ""} ${row.route.path}`.trim()}`;
+    (out.get(key) ?? out.set(key, []).get(key)!).push(row);
+  }
+  return out;
+}
+
+/**
+ * Where each route parameter's value comes from on the client: the screen's
+ * own route or query value, a literal — one row each — and how many callers
+ * hand it on through code the analysis did not follow.
+ */
+function paramOriginLines(rows: readonly ParamOrigin[]): string[] {
+  const traced = rows.filter((row) => row.origin.kind !== "unknown");
+  const untraced = new Map<string, number>();
+  for (const row of rows) if (row.origin.kind === "unknown") untraced.set(row.route!.param, (untraced.get(row.route!.param) ?? 0) + 1);
+  const seen = new Set<string>();
+  const unique = traced.filter((row) => {
+    const k = `${row.route!.param}|${row.origin.kind}|${row.origin.name ?? row.origin.value ?? ""}|${row.origin.file}:${row.origin.line}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const out = ["**Parameters fed by**", ""];
+  if (unique.length > 0) {
+    out.push(
+      ...table(
+        ["Parameter", "Value", "From", "Through"],
+        unique.slice(0, ROW_CAP).map((row) => [
+          codeCell(row.route!.param),
+          originValue(row.origin),
+          at(row.origin.file, row.origin.line),
+          cell((row.hops ?? []).map((hop) => hop.symbol).join(" → ") || "—"),
+        ]),
+      ),
+      ...capNote(Math.min(unique.length, ROW_CAP), unique.length, "source order"),
+    );
+  }
+  const lost = [...untraced].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (lost.length > 0) {
+    out.push(
+      `${lost.map(([param, n]) => `\`${param}\`: ${plural(n, "caller")}`).join(", ")} ${lost.length === 1 && lost[0]![1] === 1 ? "hands" : "hand"} the value on through code the analysis does not follow.`,
+      "",
+    );
+  }
+  return out;
+}
+
+function originValue(origin: ParamOrigin["origin"]): string {
+  if (origin.kind === "literal") return `literal ${codeCell(origin.value ?? "")}`;
+  const what = origin.kind === "query-param" ? "query value" : "route parameter";
+  const where = origin.screen ? ` of ${cell(origin.screen)}${origin.routePath ? ` (${codeCell(origin.routePath)})` : ""}` : "";
+  const missing = origin.inRoutePath === false ? " — not in the screen's route path" : "";
+  return `${what} ${codeCell(origin.name ?? "")}${where}${missing}`;
+}
+
 export function flowsDoc(summary: Summary): string {
   const lines = header(summary, "Cross-tier flows");
   lines.push(
@@ -488,6 +548,7 @@ export function flowsDoc(summary: Summary): string {
   );
 
   const chains = routeChains(summary);
+  const fedBy = paramOriginsByRoute(summary.paramOrigins ?? []);
   const allApiRoutes = (summary.routeMap ?? []).filter((route) => route.kind === "api" && !route.consumed).length;
   const screenFiles = new Set((summary.screens ?? []).map((screen) => screen.filePath));
 
@@ -538,6 +599,9 @@ export function flowsDoc(summary: Summary): string {
         ...capNote(Math.min(chain.callers.length, ROW_CAP), chain.callers.length, "source order"),
       );
     }
+
+    const params = fedBy.get(chain.key) ?? [];
+    if (params.length > 0) lines.push(...paramOriginLines(params));
 
     if (chain.effects.length > 0) {
       lines.push("**Reaches**", "");
