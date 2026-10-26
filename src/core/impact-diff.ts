@@ -87,6 +87,13 @@ export interface ImpactDiffResult {
    */
   missingCoChanges?: Array<{ file: string; with: string; count: number; score: number; hidden?: boolean }>;
   /**
+   * Documents that name a changed file — its path, a route it serves or a
+   * class it declares (`docDrift.links`): the docs to update. At most 20;
+   * `docCount` is the total.
+   */
+  docs?: Array<{ doc: string; line: number; text: string; file: string }>;
+  docCount?: number;
+  /**
    * What the change touches that no test runs, by the analysis's coverage
    * reports: the changed functions (or, without the diff's lines, the changed
    * files) with counted lines and none run. Absent without a coverage report.
@@ -310,6 +317,10 @@ export function computeImpactDiff(
     if (!prev || p.score > prev.score) missing.set(file, { file, with: inA ? p.a : p.b, count: p.count, score: p.score, ...(p.hidden ? { hidden: true } : {}) });
   }
   const missingCoChanges = [...missing.values()].sort((x, y) => y.score - x.score || y.count - x.count || byOrdinal(x.file, y.file)).slice(0, 10);
+  // The documents that name what changed: docs to update.
+  const docHits = (summary.docDrift?.links ?? [])
+    .filter((l) => changedSet.has(l.file))
+    .sort((x, y) => byOrdinal(x.doc, y.doc) || x.line - y.line);
 
   // ── Function-level: callers of what changed ──
   let symbolImpact: ImpactDiffResult["symbolImpact"];
@@ -463,6 +474,7 @@ export function computeImpactDiff(
     testCount: tests.length,
     chains,
     ...(missingCoChanges.length > 0 ? { missingCoChanges } : {}),
+    ...(docHits.length > 0 ? { docs: docHits.slice(0, 20).map(({ doc, line, text, file }) => ({ doc, line, text, file })), docCount: docHits.length } : {}),
     ...(owners.length > 0 ? { owners } : {}),
     ...(symbolImpact ? { symbolImpact } : {}),
     ...(reviewers.length > 0 ? { reviewers } : {}),
@@ -523,6 +535,10 @@ export function renderImpactText(r: ImpactDiffResult): string {
   if (r.missingCoChanges?.length) {
     lines.push("", "Usually changed with, not in this change:");
     for (const m of r.missingCoChanges) lines.push(`  ${m.file}  — with ${m.with} in ${m.count} commits (${Math.round(m.score * 100)}%)${m.hidden ? ", no import joins them" : ""}`);
+  }
+  if (r.docs?.length) {
+    lines.push("", `Docs to update — they name a changed file (${r.docCount ?? r.docs.length}):`);
+    for (const d of r.docs) lines.push(`  ${d.doc}:${d.line}  ${d.text}  → ${d.file}`);
   }
   if (r.symbolImpact) {
     const si = r.symbolImpact;
@@ -595,6 +611,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   if (r.missingCoChanges?.length) {
     row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
   }
+  if (r.docs?.length) row(`Docs to update (${r.docCount ?? r.docs.length})`, [...new Set(r.docs.map((d) => `\`${d.doc}:${d.line}\``))].slice(0, 10).join(", "));
   if (r.symbolImpact) {
     const si = r.symbolImpact;
     row(`Changed functions (${si.changed.length})`, si.changed.map((s) => `\`${s.symbol}\``).join(", ") || "—");

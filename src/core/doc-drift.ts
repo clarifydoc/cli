@@ -35,6 +35,70 @@ export interface DocDriftReport {
   docs: number;
   references: number;
   findings: DocDriftFinding[];
+  /**
+   * The references the tree bears out, resolved to the analyzed file each
+   * names — a path, the file serving a route, the file declaring a class —
+   * so a change to that file can say which documents to update. Capped.
+   */
+  links?: DocLink[];
+}
+
+/** A document naming an analyzed file: by its path, a route it serves, or a member of a class it declares. */
+export interface DocLink {
+  doc: string;
+  line: number;
+  kind: DocReference["kind"];
+  /** The reference as written. */
+  text: string;
+  /** The analyzed file it names. */
+  file: string;
+}
+
+/** What `resolveDocLinks` needs to know of the tree. */
+export interface DocLinkContext {
+  /** Whether a project-relative path is an analyzed file. */
+  isAnalyzed(path: string): boolean;
+  /** The file serving `METHOD normalized-path`, when one route does. */
+  routeFile(key: string): string | undefined;
+  normalize(path: string): string;
+  /** The file declaring a class of that name, when exactly one does. */
+  classFile(name: string): string | undefined;
+}
+
+/** At most this many links are kept: the per-file lists a change reads are short, a sprawling wiki is not. */
+const MAX_DOC_LINKS = 5000;
+
+/**
+ * The references that resolve to an analyzed file: a path (relative to the
+ * document or the root) that is one, a route a file serves, a `Class.member`
+ * a file declares. One link per document, line and file.
+ */
+export function resolveDocLinks(refs: readonly DocReference[], ctx: DocLinkContext): DocLink[] {
+  const out: DocLink[] = [];
+  const seen = new Set<string>();
+  const push = (r: DocReference, file: string | undefined): void => {
+    if (!file || r.doc === file) return;
+    const key = `${r.doc}\u0000${r.line}\u0000${file}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ doc: r.doc, line: r.line, kind: r.kind, text: r.text, file });
+  };
+  for (const r of refs) {
+    if (out.length >= MAX_DOC_LINKS) break;
+    if (r.kind === "path") {
+      const raw = r.text.replace(/:\d+(?::\d+)?$/, "").replace(/#L?\d+.*$/, "").replace(/\/$/, "");
+      const docDir = r.doc.includes("/") ? r.doc.slice(0, r.doc.lastIndexOf("/")) : "";
+      const fromDoc = posix(`${docDir}/${raw}`);
+      const fromRoot = posix(raw.replace(/^\//, ""));
+      push(r, [fromDoc, fromRoot].find((p): p is string => p !== null && ctx.isAnalyzed(p)));
+    } else if (r.kind === "route") {
+      const m = METHOD.exec(r.text);
+      if (m) push(r, ctx.routeFile(`${m[1]} ${ctx.normalize(m[2]!.replace(/[?#].*$/, ""))}`));
+    } else {
+      push(r, ctx.classFile(r.text.split(".")[0]!));
+    }
+  }
+  return out;
 }
 
 /** Build output and dependencies: a path into them describes what a build makes, not the tree. */

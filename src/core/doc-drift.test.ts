@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkDocReferences, docReferences, type DocDriftContext } from "./doc-drift.js";
+import { checkDocReferences, docReferences, resolveDocLinks, type DocDriftContext } from "./doc-drift.js";
 
 const tree = new Set(["src", "src/app.ts", "src/routes", "src/routes/cars.ts", "docs", "docs/guide.md", "README.md"]);
 const ctx = (over: Partial<DocDriftContext> = {}): DocDriftContext => ({
@@ -59,6 +59,31 @@ describe("doc drift", () => {
       "path src/routes/legacy.ts — renamed to src/routes/cars.ts (EXTRACTED)",
       "path src/gone.ts — deleted in abc1234 (EXTRACTED)",
       "path src/never.ts — no such path (INFERRED)",
+    ]);
+  });
+});
+
+describe("resolveDocLinks", () => {
+  it("joins a document to the analyzed file each reference names: a path, a route's file, a class's file", () => {
+    const refs = docReferences(
+      "docs/guide.md",
+      [
+        "See [the app](../src/app.ts) and `src/routes/cars.ts`.",
+        "`POST /api/cars` creates a car; `CarService.create` does the work.",
+        "`src/missing.ts` is gone, and `GET /api/garages` has no route.",
+      ].join("\n"),
+    );
+    const links = resolveDocLinks(refs, {
+      isAnalyzed: (p) => p === "src/app.ts" || p === "src/routes/cars.ts",
+      routeFile: (key) => (key === "POST /api/cars" ? "src/routes/cars.ts" : undefined),
+      normalize: (p) => p.toLowerCase(),
+      classFile: (name) => (name === "CarService" ? "src/services/car-service.ts" : undefined),
+    });
+    expect(links.map((l) => `${l.line} ${l.kind} ${l.file}`)).toEqual([
+      "1 path src/routes/cars.ts",
+      "1 path src/app.ts",
+      "2 route src/routes/cars.ts",
+      "2 member src/services/car-service.ts",
     ]);
   });
 });

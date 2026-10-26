@@ -1349,6 +1349,11 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
           ),
         );
       }
+      // Documents naming this file — by path, a route it serves, a class it declares: what a change leaves stale.
+      const docs = (loaded.summary.docDrift?.links ?? []).filter((l) => l.file === path);
+      if (docs.length) {
+        blocks.push(section(`Docs that name it (${docs.length})`, bulletList(docs, limit, (d) => `${d.doc}:${d.line} — ${d.text}`)));
+      }
       if (b.dependsOn.length) {
         blocks.push(section(`This file depends on (${b.dependsOn.length})`, bulletList(b.dependsOn, limit, (f) => `${f}${movedRow(f)}`)));
       }

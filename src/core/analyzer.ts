@@ -78,7 +78,7 @@ import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
 import { runtimeGraph, typeOnlyEdges } from "./import-kinds.js";
 import { rankDataFlows } from "./flow-criticality.js";
-import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
+import { checkDocReferences, docReferences, resolveDocLinks, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { openLoopShapeCache } from "./loop-shape-cache.js";
@@ -3579,7 +3579,7 @@ async function readTestCoverage(files: readonly string[], analyses: readonly Fil
 async function computeDocDrift(
   projectRoot: string,
   analyses: readonly FileAnalysis[],
-  routes: ReadonlyArray<{ kind?: string; httpMethod?: string | null; path: string }>,
+  routes: ReadonlyArray<{ kind?: string; httpMethod?: string | null; path: string; filePath?: string }>,
   useGit: boolean,
 ): Promise<ProjectAnalysis["docDrift"]> {
   const docs = (await glob("**/*.{md,markdown}", { cwd: projectRoot, ignore: DEFAULT_IGNORE, caseSensitiveMatch: false }))
@@ -3618,7 +3618,29 @@ async function computeDocDrift(
     classMembers,
     ...(history ? { history } : {}),
   });
-  return { docs: docs.length, references: refs.length, findings: findings.slice(0, 500) };
+  // The references the tree bears out, as edges from the document to the file it names.
+  const routeFiles = new Map<string, string | null>();
+  for (const r of api) {
+    if (!r.filePath) continue;
+    const key = `${r.httpMethod!.toUpperCase()} ${normalizeRoutePath(r.path)}`;
+    const prev = routeFiles.get(key);
+    routeFiles.set(key, prev === undefined || prev === r.filePath ? r.filePath : null);
+  }
+  const classFiles = new Map<string, string | null>();
+  for (const a of analyses) {
+    for (const c of a.classes) {
+      const prev = classFiles.get(c.name);
+      classFiles.set(c.name, prev === undefined || prev === a.filePath ? a.filePath : null);
+    }
+  }
+  const analyzed = new Set(analyses.map((a) => a.filePath));
+  const links = resolveDocLinks(refs, {
+    isAnalyzed: (p) => analyzed.has(p),
+    routeFile: (key) => routeFiles.get(key) ?? undefined,
+    normalize: normalizeRoutePath,
+    classFile: (name) => classFiles.get(name) ?? undefined,
+  });
+  return { docs: docs.length, references: refs.length, findings: findings.slice(0, 500), ...(links.length ? { links } : {}) };
 }
 
 /**

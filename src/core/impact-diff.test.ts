@@ -272,3 +272,30 @@ describe("patch coverage", () => {
   });
 });
 
+
+describe("computeImpactDiff — docs to update", () => {
+  it("lists the documents that name a changed file, and renders them", () => {
+    const withDocs = {
+      ...summary,
+      docDrift: {
+        docs: 2,
+        references: 3,
+        findings: [],
+        links: [
+          { doc: "docs/api.md", line: 12, kind: "route", text: "POST /api/cars", file: "srv/routes.ts" },
+          { doc: "README.md", line: 4, kind: "path", text: "srv/service.ts", file: "srv/service.ts" },
+          { doc: "README.md", line: 9, kind: "path", text: "web/api.ts", file: "web/api.ts" },
+        ],
+      },
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(withDocs, ["srv/routes.ts", "srv/service.ts"]);
+    expect(r.docs).toEqual([
+      { doc: "README.md", line: 4, text: "srv/service.ts", file: "srv/service.ts" },
+      { doc: "docs/api.md", line: 12, text: "POST /api/cars", file: "srv/routes.ts" },
+    ]);
+    expect(r.docCount).toBe(2);
+    expect(renderImpactText(r)).toContain("Docs to update — they name a changed file (2):");
+    expect(renderImpactMarkdown(r)).toContain("| Docs to update (2) | `README.md:4`, `docs/api.md:12` |");
+    expect(computeImpactDiff(summary, ["srv/util.ts"]).docs).toBeUndefined();
+  });
+});
