@@ -391,6 +391,8 @@ describe("JS ORM detection recognises Mongoose model statics", () => {
     // `Part.find(p => p._id === id)` is Array.find, not a query — the function
     // first-arg vetoes it (greencart: AppContext/Cart/ProductDetail were false hits).
     expect(await dbSourcesOf(`const p = Part.find((item) => item._id === id);`)).toHaveLength(0);
+    // An Angular signal on a selection model updated with a function (real-repo FP).
+    expect(await dbSourcesOf(`this.selectionModel.includeClubs.update((clubs) => [...clubs, id]);`)).toHaveLength(0);
     // ...but a real query filter (object / id / none) is still a DB op.
     expect((await dbSourcesOf(`Part.find({ inStock: true });`)).map((d) => d.name)).toContain("Part.find");
   });

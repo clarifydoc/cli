@@ -1642,7 +1642,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           !emittedApiCall &&
           ormChain &&
           isOrmCall(ormChain) &&
-          !(fnName === "find" && firstArgIsFunction(node)) &&
+          // `items.find(x => …)` is an array's; `signal.update(v => …)` an Angular signal's (or a store's).
+          !((fnName === "find" || fnName === "update") && firstArgIsFunction(node)) &&
           // A later link of a Kysely chain (`.values(…)`, `.returningAll()`) is the clause verb's access, already read.
           !/\.(?:selectFrom|insertInto|updateTable|deleteFrom|replaceInto|mergeInto)\s*\(/.test(ormChain) &&
           this.hasOrmEvidence(ormChain)
