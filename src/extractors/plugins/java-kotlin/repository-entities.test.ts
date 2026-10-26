@@ -123,8 +123,8 @@ describe("a DAO whose implementation's SQL names its table", () => {
   });
 });
 
-describe("a DAO-named call on a project class that reads the data itself", () => {
-  it("drops the row named after the receiver; the method's own access stands (real-repo FP)", () => {
+describe("a DAO-named call on a project class", () => {
+  it("drops the row named after the receiver; the method's own body stands for it (real-repo FP)", () => {
     const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
     const method = (name: string, line: number, endLine: number) => ({ name, line, endLine, params: [], calls: [], isAsync: false, isExported: true, returnType: null, decorators: [] });
     const repo = javaFile("src/main/java/league/StadiumCopyRepository.java", {
@@ -137,11 +137,13 @@ describe("a DAO-named call on a project class that reads the data itself", () =>
         properties: [field("repository", "StadiumCopyRepository")] }],
       dataSources: [
         { kind: "database", name: "DAO: findStadium", target: "StadiumCopy", entity: "StadiumCopy", access: "read", calls: [], line: 10 },
-        // `evict` holds no access of its own: the row stays.
+        // `evict` holds no access of its own: a getter-like call, no access either.
         { kind: "database", name: "DAO: evict", target: "StadiumCopy", entity: "StadiumCopy", access: "write", calls: [], line: 12 },
+        // A method the class does not declare is no project code: the row stays.
+        { kind: "database", name: "DAO: findAll", target: "StadiumCopy", entity: "StadiumCopy", access: "read", calls: [], line: 14 },
       ],
     });
     new JavaKotlinEntityExtractor().reconcileProject([repo, handler]);
-    expect(handler.dataSources.map((d) => d.name)).toEqual(["DAO: evict"]);
+    expect(handler.dataSources.map((d) => d.name)).toEqual(["DAO: findAll"]);
   });
 });
