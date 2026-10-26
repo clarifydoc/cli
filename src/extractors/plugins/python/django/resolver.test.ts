@@ -459,3 +459,47 @@ describe("parseAction", () => {
     expect(parseAction("login_required")).toBeNull();
   });
 });
+
+describe("django-urlconf: a router class mapping bulk verbs onto the list route", () => {
+  it("serves the mapped verbs on every list path the router registers", async () => {
+    const out = await analyze({
+      "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+      "config/urls.py": `
+from django.urls import include, path
+urlpatterns = [path("api/", include("league.api.urls"))]
+`,
+      "league/routers.py": `
+from rest_framework.routers import DefaultRouter
+
+class LeagueRouter(DefaultRouter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.routes[0].mapping.update({
+            'put': 'bulk_update',
+            'delete': 'bulk_destroy',
+        })
+`,
+      "league/api/urls.py": `
+from league.routers import LeagueRouter
+from . import views
+
+router = LeagueRouter()
+router.register("clubs", views.ClubViewSet)
+urlpatterns = router.urls
+`,
+      "league/api/views.py": `
+from rest_framework.viewsets import ModelViewSet
+
+class BulkUpdateMixin:
+    def bulk_update(self, request):
+        return None
+
+class ClubViewSet(BulkUpdateMixin, ModelViewSet):
+    pass
+`,
+    });
+    const list = rows(out).filter((r) => / \/api\/clubs\/ /.test(r)).map((r) => r.split(" @")[0]);
+    // ModelViewSet has no bulk_destroy, so DELETE on the list path is not served.
+    expect(list).toEqual(["GET /api/clubs/ ClubViewSet.list", "POST /api/clubs/ ClubViewSet.create", "PUT /api/clubs/ BulkUpdateMixin.bulk_update"]);
+  });
+});

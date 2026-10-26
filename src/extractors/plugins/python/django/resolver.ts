@@ -12,6 +12,8 @@ import {
   type DrfSettingsFact,
   DRF_REGISTER,
   DRF_ROUTER,
+  DRF_ROUTER_CLASS,
+  type DrfRouterClassFact,
   type DjViewClassFact,
   type DrfRegisterFact,
   type DrfRouterFact,
@@ -96,6 +98,8 @@ export const djangoUrlconfResolver: RouteResolver = {
     const appNames = new Map<string, string>();
     // DRF's DEFAULT_PERMISSION_CLASSES per sub-project — null where settings files disagree.
     const drfDefaults = new Map<string, string[] | null>();
+    /** Router classes mapping more verbs onto the list route (`DRF_ROUTER_CLASS`), by class name. */
+    const routerClasses = new Map<string, Record<string, string>>();
     /** `@register_model_view` registrations, by lowercased model name. */
     const modelViews = new Map<string, Array<DjModelViewFact & { file: string; projectId: string }>>();
     let any = false;
@@ -107,6 +111,7 @@ export const djangoUrlconfResolver: RouteResolver = {
           (modelViews.get(model) ?? modelViews.set(model, []).get(model)!).push({ ...fact, file: a.filePath, projectId: a.projectId });
         }
         if (f.kind === DJ_APP_NAME) appNames.set(a.filePath, (f.data as { name: string }).name);
+        if (f.kind === DRF_ROUTER_CLASS && f.owner) routerClasses.set(f.owner, (f.data as DrfRouterClassFact).listActions);
         if (f.kind === DJ_URLPATTERNS && f.owner) {
           any = true;
           const vars = urlconfs.get(a.filePath) ?? new Map<string, UrlEntry[]>();
@@ -264,7 +269,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       for (const m of methods) emit(where, { path, httpMethod: m, kind: "api", handler: ref.cls.name, ...auth, ...extra });
     };
 
-    const expandRegistration = (file: string, base: string, reg: DrfRegisterFact & { line: number }, slash: boolean, marker: string | undefined) => {
+    const expandRegistration = (file: string, base: string, reg: DrfRegisterFact & { line: number }, slash: boolean, marker: string | undefined, router?: DrfRouterFact) => {
       const ref = ctx.classes.resolve(file, reg.viewset);
       const urlconf = ctx.fileOf(file);
       const extra = marker ? { prefixUnresolved: marker } : {};
@@ -291,6 +296,8 @@ export const djangoUrlconfResolver: RouteResolver = {
         }
       };
       for (const [action, method] of Object.entries(LIST_ACTIONS)) route(listPath, method, action);
+      // A router class mapping more verbs onto the list route (bulk update / delete).
+      for (const [method, action] of Object.entries((router && routerClasses.get(router.ctor)) ?? {})) route(listPath, method, action);
       for (const [action, method] of Object.entries(DETAIL_ACTIONS)) route(detailPath, method, action);
 
       // `@action(detail=…, methods=[…], url_path=…)` and `@x.mapping.<verb>` along the class chain.
@@ -387,7 +394,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       for (const e of entries) {
         if (e.t === "router") {
           const r = routerIn(file, e.name);
-          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, prefix, reg, r!.entry.router?.trailingSlash ?? true, marker);
+          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, prefix, reg, r!.entry.router?.trailingSlash ?? true, marker, r!.entry.router);
           continue;
         }
         const segment = e.route === null ? "" : djangoRoute(e.route, e.regex);
@@ -417,7 +424,7 @@ export const djangoUrlconfResolver: RouteResolver = {
           if (conf && source) walk(source, conf, path, nextMarker, depth + 1, under(source === file ? null : source));
         } else if (t.kind === "router") {
           const r = routerIn(file, t.name);
-          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker);
+          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker, r!.entry.router);
         } else if (t.kind === "model-views") {
           mountModelViews(file, path, e.line, t, nextMarker, under(null));
         }

@@ -16,6 +16,17 @@ function pyString(text: string): string {
 export const DJ_URLPATTERNS = "dj:urlpatterns";
 export const DJ_ROOT_URLCONF = "dj:root-urlconf";
 export const DRF_ROUTER = "drf:router";
+/**
+ * A router class whose constructor maps more verbs onto the list route
+ * (`self.routes[0].mapping.update({"put": "bulk_update", …})`): every
+ * viewset it registers also answers those verbs on its list path.
+ */
+export const DRF_ROUTER_CLASS = "drf:router-class";
+
+export interface DrfRouterClassFact {
+  /** Verb (upper case) → the viewset action it runs on the list path. */
+  listActions: Record<string, string>;
+}
 export const DRF_REGISTER = "drf:register";
 export const DJ_VIEW_CLASS = "dj:view-class";
 /** `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": [...]}` in settings: what a DRF view states nothing of. */
@@ -91,7 +102,7 @@ export interface DjViewClassFact {
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */
-export const DJANGO_GATE = /urlpatterns|register_model_view|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
+export const DJANGO_GATE = /urlpatterns|register_model_view|routes\[0\]\.mapping|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
 
 const URL_FUNCS = new Set(["path", "re_path", "url"]);
 
@@ -412,6 +423,13 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   }
   if (Object.keys(data).length > 0) {
     facts.push({ kind: DJ_VIEW_CLASS, line: cls.startPosition.row + 1, owner: name, data });
+  }
+  // `self.routes[0].mapping.update({"put": "bulk_update", …})` in a router's methods.
+  const mapping = /\bself\.routes\[0\]\.mapping\.update\(\s*\{([^}]*)\}/.exec(body.text);
+  if (mapping) {
+    const listActions: Record<string, string> = {};
+    for (const m of mapping[1]!.matchAll(/["'](get|post|put|patch|delete)["']\s*:\s*["'](\w+)["']/gi)) listActions[m[1]!.toUpperCase()] = m[2]!;
+    if (Object.keys(listActions).length > 0) facts.push({ kind: DRF_ROUTER_CLASS, line: cls.startPosition.row + 1, owner: name, data: { listActions } satisfies DrfRouterClassFact });
   }
 }
 
