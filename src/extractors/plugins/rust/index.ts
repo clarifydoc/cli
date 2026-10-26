@@ -10,6 +10,47 @@ import { extractEventRegistrations } from "./event-dispatch.js";
 import { extractRustImports } from "./imports.js";
 import { extractRustLocalTypes } from "./locals.js";
 import { extractRustTypeAliases } from "./type-aliases.js";
+import { braceCodeHooks, type BraceLexicon } from "../shared/brace-code.js";
+import { callChainPatterns } from "../shared/call-chains.js";
+
+const RAW_STRING = /(?:b|c)?r(#*)"/y;
+
+/** Rust's literal forms: strings that may span lines, `r#"…"#` raw strings, character literals (a lifetime `'a` is code). */
+const RUST_LEXICON: BraceLexicon = {
+  lineComments: ["//"],
+  blockComment: { open: "/*", close: "*/", nests: true },
+  strings: [{ open: '"', close: '"', escapes: true, multiline: true }],
+  rawString: (text, i) => {
+    const c = text[i];
+    if (c !== "r" && c !== "b" && c !== "c") return -1;
+    RAW_STRING.lastIndex = i;
+    const m = RAW_STRING.exec(text);
+    if (!m) return -1;
+    const close = text.indexOf(`"${m[1]}`, i + m[0].length);
+    return close < 0 ? text.length : close + 1 + m[1]!.length;
+  },
+  charLiterals: true,
+};
+
+/** A turbofish `::<T, Vec<u8>>`, blanked so `x.parse::<T>(` reads as the call `x.parse(`. */
+const TURBOFISH = /::<(?:[^<>()]|<(?:[^<>()]|<[^<>()]*>)*>)*>/g;
+/** Keywords and closure-trait types that read like a call: `let (a, b)`, `match (x, y)`, `impl Fn(u8)`. */
+const KEYWORD_PAREN = /\b(?:let|match|in|as|mut|ref|move|unsafe|loop|where|else|dyn|impl|Fn|FnMut|FnOnce)(?=\s*\()/g;
+
+/**
+ * Block ends counted over code only; the call scan reads code with raw and
+ * multi-line strings, comments, attribute lines (`#[cfg(test)]`), keyword
+ * parentheses and turbofish generics blanked.
+ */
+const RUST_CODE = braceCodeHooks(RUST_LEXICON, (line) => {
+  if (/^\s*#!?\[/.test(line)) return " ".repeat(line.length);
+  let out = line.includes("::<") ? line.replace(TURBOFISH, (t) => " ".repeat(t.length)) : line;
+  out = out.replace(KEYWORD_PAREN, (k) => " ".repeat(k.length));
+  return out;
+});
+
+/** A chain's head: a function, a `Type::function` / `Self::function` path — never the tail of a longer path or selector. */
+const RUST_CHAIN_HEAD = String.raw`(?<![\w.:])((?:[A-Z]\w*\s*::\s*)?[A-Za-z_]\w*)`;
 
 function parseRustReturnType(line: string): string | null {
   const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
@@ -32,8 +73,12 @@ export const rustSpec: RegexLangSpec = {
       pattern: /(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z_]\w*)\s*[<(]/,
       isExported: (line) => line.trimStart().startsWith("pub"),
       isAsync: (line) => line.includes("async "),
+      // Not a commented-out function, nor one in a string.
+      accept: RUST_CODE.startsInCode,
     },
   ],
+  blockEnds: RUST_CODE.blockEnds,
+  callSourceLines: RUST_CODE.callSourceLines,
 
   parseParam: parseRustParam,
   parseReturnType: parseRustReturnType,
@@ -55,7 +100,8 @@ export const rustSpec: RegexLangSpec = {
    */
   callPatterns: [
     {
-      pattern: /\b([A-Z]\w*)::([a-zA-Z_]\w*)\s*\(/g,
+      // `\s*` around `::`: a blanked turbofish leaves spaces there (`Vec::<u8>::new(`).
+      pattern: /\b([A-Z]\w*)\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       // The path names the type, so a noise-named associated function (`Invoice::open`, `Club::new`) is still kept.
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
     },
@@ -63,6 +109,8 @@ export const rustSpec: RegexLangSpec = {
       pattern: /\bSelf::([a-zA-Z_]\w*)\s*\(/g,
       buildName: (m) => ({ name: `Self.${m[1]}`, leafName: m[1]! }),
     },
+    // A method on a call's result, named as the chain: `Club::new(id).register()` is `Club.new().register`.
+    ...callChainPatterns(RUST_CHAIN_HEAD, (head) => head.replace(/\s*::\s*/, ".")),
   ],
 
   /**
@@ -111,9 +159,11 @@ export const rustSpec: RegexLangSpec = {
   extractImports: (lines) => extractRustImports(lines),
 
   extractRoutes: (lines, _classes, _filePath, _fns, facts) => {
+    // Read with comments blanked: a commented-out route serves nothing.
+    const code = RUST_CODE.commentFreeLines(lines) as string[];
     // Rocket mounts, route functions and renames, joined across files by rocketMountResolver.
-    collectRocketFacts(lines, facts);
-    return extractRustRoutes(lines);
+    collectRocketFacts(code, facts);
+    return extractRustRoutes(code);
   },
   extractMessageHandlers: (lines) => extractEventRegistrations(lines),
   extractDataSources: (lines) => extractRustDataSources(lines),

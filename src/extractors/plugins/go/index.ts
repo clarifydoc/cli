@@ -16,6 +16,7 @@ import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
 import { spawnImports } from "../shared/process-spawns.js";
 import { braceCodeHooks, type BraceLexicon } from "../shared/brace-code.js";
+import { callChainPatterns } from "../shared/call-chains.js";
 
 /** Go's literal forms: interpreted strings, runes, and backtick raw strings that may span lines. */
 const GO_LEXICON: BraceLexicon = {
@@ -35,29 +36,8 @@ const GO_LEXICON: BraceLexicon = {
  */
 const GO_CODE = braceCodeHooks(GO_LEXICON, (line) => (line.includes("func") ? line.replace(/\bfunc\b/g, "    ") : line));
 
-/** A call's balanced argument list, one nesting level deep (strings are blanked before patterns run). */
-const ARGS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
-/** The head of a call chain: a function, or a package or variable member — never the tail of a longer selector. */
-const CHAIN_HEAD = String.raw`(?<![\w.])((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)`;
-
-/**
- * A method called on what a call returns — `graceful.GetManager().Shutdown()`,
- * `newAuthService().addSource(ctx)`, two and three calls deep. The baseline
- * drops these (it cannot name the receiver); written as the chain, the linker
- * types each step through the declared return types and binds the method only
- * when every step resolves.
- */
-function chainPattern(depth: number): { pattern: RegExp; buildName: (m: RegExpExecArray) => { name: string; leafName: string } } {
-  const steps = Array.from({ length: depth - 1 }, () => String.raw`\.([A-Za-z_]\w*)\s*` + ARGS).join("");
-  return {
-    pattern: new RegExp(CHAIN_HEAD + String.raw`\s*` + ARGS + steps + String.raw`\.([A-Za-z_]\w*)\s*\(`, "g"),
-    buildName: (m) => {
-      const parts = m.slice(1).filter((x): x is string => x !== undefined);
-      const leafName = parts[parts.length - 1]!;
-      return { name: parts.slice(0, -1).map((p) => `${p}()`).join(".") + `.${leafName}`, leafName };
-    },
-  };
-}
+/** A chain's head: a function, or a package or variable member — never the tail of a longer selector. */
+const GO_CHAIN_HEAD = String.raw`(?<![\w.])((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)`;
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -115,9 +95,7 @@ export const goSpec: RegexLangSpec = {
   // A method called on a call's result, named as the chain — `pb.NewOrderServiceClient(conn).GetOrder(ctx, req)`
   // is `pb.NewOrderServiceClient().GetOrder` (the gRPC stub pass reads that name too).
   callPatterns: [
-    chainPattern(1),
-    chainPattern(2),
-    chainPattern(3),
+    ...callChainPatterns(GO_CHAIN_HEAD),
   ],
   blockEnds: GO_CODE.blockEnds,
   callSourceLines: GO_CODE.callSourceLines,

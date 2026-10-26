@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, findEndLine, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { blockEndLine, extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
 
 /**
  * Rust types as the linker needs them. Methods live in `impl` blocks apart
@@ -40,7 +40,7 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
     if (!IMPL_RE.test(lines[i]!)) continue;
     const head = declarationHead(lines, i);
     const impl = parseImplHead(head);
-    const endLine = findEndLine(lines, i, "brace");
+    const endLine = blockEndLine(lines, i, spec);
     if (impl) {
       const owner = owners.get(impl.type) ?? stubs.get(impl.type) ?? newStub(impl.type, i + 1, endLine, stubs);
       if (impl.trait && !owner.implements.includes(impl.trait)) owner.implements.push(impl.trait);
