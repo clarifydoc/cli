@@ -113,7 +113,9 @@ const BUILTIN_SOURCES = new Set([
  * views, SQLite's `sqlite_master`, the standard `information_schema` and
  * PostgreSQL's `pg_catalog` (its `pg_` relations also unqualified: `pg_class`, `pg_roles`).
  */
-const SYSTEM_RELATION_RE = /^(?:(?:RDB|MON|SEC|G?V)\$|sqlite_(?:master|schema|sequence|temp_master|stat\d)$|information_schema\.|pg_catalog\.|pg_\w+$)/i;
+const SYSTEM_RELATION_RE = /^(?:(?:RDB|MON|SEC|G?V)\$|sqlite_(?:master|schema|sequence|temp_master|stat\d)$|pragma_\w+$|(?:information_schema|pg_catalog|performance_schema|mysql|sys|master|msdb)\.|pg_\w+$)/i;
+/** A quoted name in an engine catalogue schema (`INFORMATION_SCHEMA.\`EVENTS\``), unquoted so the schema stays with it. */
+const SYSTEM_QUALIFIED_RE = /\b(information_schema|pg_catalog|performance_schema|mysql|sys|master|msdb)\s*\.\s*(?:\x60([^\x60]+)\x60|"([^"]+)"|\[([^\]]+)\])/gi;
 
 /**
  * A migration tool's bookkeeping table — what has been applied, not the
@@ -128,6 +130,8 @@ const BOOKKEEPING_TABLE_RE = /^(?:[\w"`[\]]+\.)?["`[]?(?:alembic_version|flyway_
 const NOT_A_TABLE = new Set([
   "WHERE", "SET", "VALUES", "SELECT", "ORDER", "GROUP", "ON", "AS", "AND", "OR",
   "IF", "NOT", "EXISTS", "INTO", "TABLE",
+  // `CROSS JOIN LATERAL …`, `ALTER TABLE ${t} AUTO_INCREMENT = 1`: clause words after a hole.
+  "LATERAL", "AUTO_INCREMENT",
   // Oracle's one-row dummy relation (`SELECT SYSDATE FROM dual`).
   "DUAL",
   // English articles/determiners — UI prose like "Select controls from a list"
@@ -156,18 +160,36 @@ interface PendingStatement {
 function tokenStream(line: string): { text: string; hasString: boolean } {
   const parts: string[] = [];
   let hasString = false;
+  let end = 0;
+  // A qualified name spliced from quoted parts (`FROM '+Quote('league')+'.'+Quote('clubs')`)
+  // stays one name; after a `'.'` followed by a value no literal states (`Quote(Table)`), the
+  // dot stays on the schema — a name still to come.
+  let glue = false;
   for (const m of line.matchAll(LINE_TOKEN_RE)) {
+    const gap = line.slice(end, m.index);
+    end = m.index! + m[0].length;
     if (m[1] !== undefined) {
-      parts.push(m[1]);
       hasString = true;
+      if (m[1] === "." && parts.length > 0) {
+        parts[parts.length - 1] += ".";
+        glue = true;
+        continue;
+      }
+      if (glue && parts.length > 0 && !HOLE_IN_GAP_RE.test(gap)) parts[parts.length - 1] += m[1];
+      else parts.push(m[1]);
+      glue = false;
     } else if (hasString || parts.length === 0) {
       // Macro tokens count only once a string fragment is in play on this line
       // or as the very first token (`PLAYLIST_TRACKS_TABLE` after `from `).
       parts.push(m[2]!);
+      glue = false;
     }
   }
   return { text: parts.join(" "), hasString };
 }
+
+/** A value between two literals: a name that is no callee (`Table` in `+ Quote(Table) +`). */
+const HOLE_IN_GAP_RE = /[A-Za-z_][\w.]*(?![\w.]*\s*\()/;
 
 /** True when the raw line ends its surrounding statement (a `;` outside strings). */
 function endsStatement(line: string): boolean {
@@ -286,8 +308,11 @@ export function routineCalled(text: string, storedProcedure = false): string | n
 
 /** True when `text` opens a statement the scanner reads. */
 function opensStatement(text: string): boolean {
-  return SQL_START_RE.test(text) || procedureCall(text) !== null;
+  return SQL_START_RE.test(text) || CTE_START_RE.test(text) || procedureCall(text) !== null;
 }
+
+/** A statement opening with its CTEs, its SELECT on a later line (`'WITH ndx AS (' + …`). */
+const CTE_START_RE = /^\s*WITH(?:\s+RECURSIVE)?\s+["\x60[]?\w+["\x60\]]?\s*(?:\([^)]*\))?\s+AS\s*\(/i;
 
 /**
  * Every table and routine a statement touches, the statement's own target
@@ -296,7 +321,8 @@ function opensStatement(text: string): boolean {
  * `joined` SELECT. A `FROM name(` source is a routine call (`EXEC`, `routine`).
  * Empty when the text is not SQL with a target.
  */
-export function statementAccesses(stmt: string): SqlStatementAccess[] {
+export function statementAccesses(raw: string): SqlStatementAccess[] {
+  const stmt = raw.replace(SYSTEM_QUALIFIED_RE, (_, schema: string, a?: string, b?: string, c?: string) => `${schema}.${a ?? b ?? c}`);
   const proc = procedureCall(stmt);
   if (proc) return [{ verb: "EXEC", table: proc, routine: true }];
   const start = stmt.match(SQL_START_RE);

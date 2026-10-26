@@ -216,3 +216,33 @@ describe("every table a statement reads", () => {
     ]);
   });
 });
+
+describe("engine catalogues and SQL clause words are no tables (real-repo FP)", () => {
+  const tables = (src: string) => sources(src).map((d) => `${d.name} ${d.target}`);
+
+  it("keeps a name spliced from quoted parts qualified, and drops catalogue schemas", () => {
+    expect(tables(`Uptime := GetVar("SELECT login_time FROM " + Quote("master") + "." + Quote("dbo") + "." + Quote("sysprocesses"));
+Users := GetCol("SELECT name FROM " + Quote("mysql") + "." + Quote("user") + " WHERE x=1");
+Mods := GetVar("SELECT d FROM " + Quote("SYS") + "." + Quote("OBJECTS"));
+Clubs := GetCol("SELECT name FROM " + Quote("league") + "." + Quote("clubs"));
+Q("UPDATE " + Quote("league") + "." + Quote(Table) + " SET name=1");`)).toEqual(["SELECT league.clubs"]);
+  });
+
+  it("drops a quoted name in a catalogue schema and SQLite's table-valued pragmas", () => {
+    expect(tables(`q("SELECT * FROM INFORMATION_SCHEMA.\`EVENTS\` WHERE EVENT_SCHEMA=%s");
+q("SELECT name FROM pragma_database_list");
+q("SELECT * FROM \`league\`.\`matches\`");`)).toEqual(["SELECT matches"]);
+  });
+
+  it("reads a statement whose CTEs open it on an earlier line", () => {
+    expect(tables(`Keys := GetResults("WITH ndx_list AS (" +
+  "    SELECT player_id FROM squads" +
+  "), ndx_cols AS (SELECT * FROM ndx_list) " +
+  "SELECT * FROM ndx_cols JOIN kits ON true");`)).toEqual(["SELECT squads", "SELECT kits"]);
+  });
+
+  it("never reads LATERAL or AUTO_INCREMENT after a hole as a table", () => {
+    expect(tables(`Output("ALTER TABLE " + Target + " AUTO_INCREMENT = 1");
+q("SELECT c.id FROM clubs c CROSS JOIN LATERAL " + Fn + " AS x WHERE 1=1");`)).toEqual(["SELECT clubs"]);
+  });
+});
