@@ -3,17 +3,34 @@ import { analyzeFile } from "../../../core/file-analyzer.js";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { blankRustMultilineStrings } from "./source.js";
+import { blankRustCodeStrings } from "./source.js";
 
-describe("blankRustMultilineStrings", () => {
+describe("blankRustCodeStrings", () => {
   it("blanks multi-line string text and keeps lines, columns and one-line strings", () => {
     const src = 'let a = "/api/x";\nlet s = r#"\nfn fake() {}\n"#;\nlet c = \'"\'; // "not a string\nlet t = "a\nfn also_fake() {}";';
-    const out = blankRustMultilineStrings(src);
+    const out = blankRustCodeStrings(src);
     expect(out.split("\n")).toHaveLength(src.split("\n").length);
     expect(out.length).toBe(src.length);
     expect(out).toContain('"/api/x"');
     expect(out).not.toContain("fake");
     expect(out).toContain("let c = '\"';");
+  });
+
+  it("blanks a one-line string that declares a Rust item, and keeps routes, SQL and format strings (real-repo FP)", () => {
+    const src = [
+      'write(dir, "src/models.rs", "pub struct Player { pub id: u32 }\\n\\nimpl Player {\\n    pub fn new(id: u32) -> Self { Player { id } }\\n}\\n");',
+      'const SAMPLES: &[&str] = &["sign_player: fn sign_player(club: &Club) -> Contract", "kit: struct Kit { colour: u32 }"];',
+      'assert_eq!(cached.code, "fn test() {}");',
+      '.route("/api/v2/clubs/:id", get(club))',
+      'sqlx::query("SELECT id FROM clubs WHERE id = $1")',
+      'println!("{} goals in {} matches\\n", goals, matches);',
+    ].join("\n");
+    const out = blankRustCodeStrings(src);
+    expect(out.length).toBe(src.length);
+    for (const gone of ["Player", "sign_player", "Kit", "fn test"]) expect(out).not.toContain(gone);
+    expect(out).toContain('"/api/v2/clubs/:id"');
+    expect(out).toContain('"SELECT id FROM clubs WHERE id = $1"');
+    expect(out).toContain('"{} goals in {} matches\\n"');
   });
 });
 

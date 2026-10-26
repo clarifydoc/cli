@@ -10,7 +10,7 @@ import { rustRequestSchema } from "./request-schema.js";
 import { rustReachability } from "./reachability.js";
 import { AfDispatchResolver } from "./event-dispatch.js";
 import { splitLines } from "../../shared/source-lines.js";
-import { blankRustMultilineStrings, rustPathHeads } from "./source.js";
+import { blankRustCodeStrings, rustPathHeads } from "./source.js";
 import { extractRustDataSources } from "./data-sources.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -33,10 +33,11 @@ export const rustMeta: LanguagePluginMeta = {
   ...rustManifest,
   regexSpec: rustSpec,
   routeResolvers: [rocketMountResolver],
-  // Multi-line strings are blanked so their code-shaped text is not read as
-  // functions; the data sources (SQL in `r#"…"#`, URLs) come from the raw source.
+  // Multi-line strings, and one-line strings declaring a Rust item, are blanked so
+  // their code-shaped text is not read as functions; the data sources (SQL in
+  // `r#"…"#`, URLs) come from the raw source.
   preprocess(rawSource) {
-    const sourceText = blankRustMultilineStrings(rawSource);
+    const sourceText = blankRustCodeStrings(rawSource);
     const blanked = sourceText !== rawSource;
     return {
       sourceText,

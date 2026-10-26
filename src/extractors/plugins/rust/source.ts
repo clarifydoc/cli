@@ -1,16 +1,19 @@
 /**
  * Rust source preparation for the line-based spec: the text of every string
- * literal that spans lines is blanked, line structure and columns kept. Such a
- * string holds code-shaped text — a test fixture's `fn main() {}`, an embedded
- * script, a SQL statement — that the spec would otherwise read as functions
- * and calls (15 phantom functions in one embedding-quality test file).
+ * literal that spans lines, or that holds a Rust item on one line, is
+ * blanked, line structure and columns kept. Such a string holds code-shaped
+ * text — a test fixture's `fn main() {}`, `"pub struct User { … }\n\nimpl User {…"`,
+ * an embedding sample `"fn authenticate_user(token: &Token) -> …"` — that the
+ * spec would otherwise read as functions, structs and calls (15 phantom
+ * functions in one embedding-quality test file; `main`, `new`, `test` that
+ * then attract links by name).
  *
  * Covers `"…"`, byte strings `b"…"`, and raw strings `r"…"` / `r#"…"#` /
- * `br##"…"##`. One-line strings stay: routes and URLs are read from them.
- * Comments are kept as written (the spec's comment prefixes see `//`); a
- * quote inside a comment or a character literal (`'"'`) opens nothing.
+ * `br##"…"##`. Other one-line strings stay: routes, URLs and SQL are read from
+ * them. Comments are kept as written (the spec's comment prefixes see `//`);
+ * a quote inside a comment or a character literal (`'"'`) opens nothing.
  */
-export function blankRustMultilineStrings(source: string): string {
+export function blankRustCodeStrings(source: string): string {
   if (!source.includes('"')) return source;
   const blank = (s: string): string => s.replace(/[^\r\n]/g, " ");
   let out = "";
@@ -69,9 +72,16 @@ export function blankRustMultilineStrings(source: string): string {
   return out;
 }
 
-/** A literal kept whole on one line; across lines, its delimiters kept and its text blanked. */
+/**
+ * A Rust item declared in a one-line string's text: `fn x(`, `pub struct User {`,
+ * `impl Club`, `enum Kit`. A route (`/api/clubs`), a URL or a SQL statement
+ * never reads this way.
+ */
+const RUST_ITEM_TEXT = /(?:^|[^\w])(?:fn|struct|enum|trait|impl|union|macro_rules!)\s+[A-Za-z_]/;
+
+/** A literal kept whole on one line unless its text declares a Rust item; across lines, its delimiters kept and its text blanked. */
 function literal(text: string, openLen: number, closeLen: number, blank: (s: string) => string): string {
-  if (!/[\r\n]/.test(text)) return text;
+  if (!/[\r\n]/.test(text) && !RUST_ITEM_TEXT.test(text.slice(openLen, text.length - closeLen))) return text;
   return text.slice(0, openLen) + blank(text.slice(openLen, text.length - closeLen)) + text.slice(text.length - closeLen);
 }
 
