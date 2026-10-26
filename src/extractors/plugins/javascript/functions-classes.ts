@@ -1662,6 +1662,29 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
     if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties, setValue);
+    // `this.onSave = (e) => { … }` in the constructor: a React class component's handler bound
+    // as `onSubmit={this.onSave}`, a method in all but syntax — its calls are its own, not the constructor's.
+    if (ctor) {
+      const own = new Set(methods.map((m) => m.name));
+      const spans: Array<[number, number]> = [];
+      for (const stmt of ctor.body.namedChildren) {
+        const assign = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+        if (assign?.type !== "assignment_expression") continue;
+        const left = assign.childForFieldName("left");
+        const value = assign.childForFieldName("right");
+        if (left?.type !== "member_expression" || left.childForFieldName("object")?.type !== "this") continue;
+        if (!value || (value.type !== "arrow_function" && value.type !== "function_expression")) continue;
+        const field = left.childForFieldName("property")?.text;
+        if (!field || own.has(field)) continue;
+        own.add(field);
+        const fn = this.parseJsArrowOrExpr(field, value, false);
+        fn.line = stmt.startPosition.row + 1;
+        methods.push(fn);
+        spans.push([value.startPosition.row + 1, value.endPosition.row + 1]);
+      }
+      const ctorFn = spans.length ? methods.find((m) => m.name === "constructor") : undefined;
+      if (ctorFn) ctorFn.calls = ctorFn.calls.filter((c) => !spans.some(([from, to]) => c.line >= from && c.line <= to));
+    }
     methodAssignedTypes(instanceBodies, ctor?.body ?? null, properties, this.ctx.tokenTypes);
     let superArgs: string[] | undefined;
     for (const stmt of ctor?.body.namedChildren ?? []) {

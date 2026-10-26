@@ -294,6 +294,30 @@ describe("JavaScriptExtractor — arrow class fields", () => {
     expect(cls!.methods.map((m) => `${m.name}@${m.line}`)).toEqual(["onSearchInputChange@3", "render@6"]);
     expect(cls!.methods[0]!.calls.map((c) => c.name)).toEqual(["this.props.onMovieLookupChange"]);
   });
+
+  it("makes `this.onSave = (e) => {…}` in the constructor a method, with its own calls (real-repo FP)", async () => {
+    const src = `class CommentInput extends React.Component {
+  constructor() {
+    super();
+    this.state = { body: '' };
+    this.setBody = ev => {
+      this.setState({ body: ev.target.value });
+    };
+    this.createComment = ev => {
+      ev.preventDefault();
+      const payload = agent.Comments.create(this.props.slug, { body: this.state.body });
+      this.props.onSubmit(payload);
+    };
+    this.label = 'Post';
+  }
+  render() { return null; }
+}`;
+    const tree = await parseSource(src, "javascript" as never, "CommentInput.js");
+    const [cls] = new JavaScriptExtractor().extractClasses(tree, src);
+    expect(cls!.methods.map((m) => `${m.name}@${m.line}`)).toEqual(["constructor@2", "render@15", "setBody@5", "createComment@8"]);
+    expect(cls!.methods.find((m) => m.name === "createComment")!.calls.map((c) => c.name)).toContain("agent.Comments.create");
+    expect(cls!.methods.find((m) => m.name === "constructor")!.calls.map((c) => c.name)).toEqual([]);
+  });
 });
 
 describe("JavaScriptExtractor — connect(…, mapDispatchToProps)", () => {
