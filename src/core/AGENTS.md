@@ -55,7 +55,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 | [health-scorer.ts](health-scorer.ts) | `HealthScore` — model `rates-v2`: each dimension is a RATE over N = max(50, authored non-test files) (files in cycles, god objects, long files, files with >10 non-test importers, severity-weighted security per distinct file+category, duplicate groups, files with layer violations, files holding a function over complexity 20), deducting `cap · r/(r + rHalf)`; caps and `rHalf` live in `HEALTH_MODEL`, calibrated on a 22-repo open-source corpus. Penalty reasons keep the keywords the Health tab routes on | all other analyzers + Tarjan SCC for cycles |
 | [suggestions-engine.ts](suggestions-engine.ts) | `Suggestion[]` | all other analyzers |
 
-**Dependency order matters.** Health and suggestions depend on everything else. `findCircularDeps` is exported from `health-scorer.ts` and reused by suggestions-engine to avoid duplicate work.
+**Dependency order matters.** Health and suggestions depend on everything else. The analyzer computes the import cycles ONCE (`findCircularDeps` over the runtime graph — type-only edges dropped — of authored, non-test files) and hands them to refactor pressure, health and suggestions (`cycles`). A cycle group is a set: print it with `cycleChain` (a path the imports really take), never as its members joined by arrows.
 
 ## Per-file analysis & workers
 

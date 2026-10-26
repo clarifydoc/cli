@@ -75,7 +75,7 @@ import { computeRefactorPressure, resolveRefactorPressureConfig } from "./refact
 import { loadProjectConfig, matchesAnyGlob, resolveArchitectureOverrides } from "./project-config.js";
 import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
-import { typeOnlyEdges } from "./import-kinds.js";
+import { runtimeGraph, typeOnlyEdges } from "./import-kinds.js";
 import { checkDocReferences, docReferences, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
@@ -101,7 +101,7 @@ import { attachRiskVerdicts } from "./risk-verdict.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
 import { analyzeUnusedCode, analyzeReachability, dropVendoredFacts } from "./dead-code.js";
-import { computeHealthScore } from "./health-scorer.js";
+import { computeHealthScore, findCircularDeps } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
@@ -1821,11 +1821,22 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     configWarnings.push(w);
     progress.detail(`  Config: ${w}`);
   });
+  // Import cycles, computed once for refactor pressure, the health grade and
+  // the suggestions: the runtime graph (a cycle only `import type` closes is
+  // none) over authored, non-test files.
+  const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
+  const isCycleCandidate = (f: string): boolean => !isUnauthored(f) && fileLayerMap[f] !== "test";
+  const cycleGraph: Record<string, string[]> = {};
+  for (const [src, targets] of Object.entries(componentGraph)) {
+    if (isCycleCandidate(src)) cycleGraph[src] = targets.filter(isCycleCandidate);
+  }
+  const importCycles = findCircularDeps(runtimeGraph(cycleGraph, typeOnly));
   const refactorPressure = computeRefactorPressure({
     analyses: allAnalyses,
     complexity,
     blastRadius,
     componentGraph,
+    cycles: importCycles,
     layerViolations,
     responsibilityProfiles,
     fileChurn,
@@ -1897,11 +1908,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The route-level findings above are ours too: the same rule ids and settings (idempotent over the rest).
   allSecurityIssues.splice(0, allSecurityIssues.length, ...applySecurityRules(allSecurityIssues, projectConfig.config.security).issues);
 
-  const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
   const healthScore = computeHealthScore({
     analyses: allAnalyses,
     componentGraph,
     typeOnlyEdges: typeOnly,
+    cycles: importCycles,
     patterns,
     // The grade is about this analysis: another tool's findings stay out of it.
     securityIssues: allSecurityIssues.filter((i) => !i.tool),
@@ -1968,6 +1979,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({
     typeOnlyEdges: typeOnly,
+    cycles: importCycles,
     analyses: allAnalyses,
     healthScore,
     patterns,

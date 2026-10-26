@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeHealthScore, dimensionPoints, HEALTH_MODEL } from "./health-scorer.js";
+import { computeHealthScore, cycleChain, dimensionPoints, findCircularDeps, HEALTH_MODEL } from "./health-scorer.js";
 import type {
   DuplicateGroup, FileComplexityInfo, LayerViolation, PatternInfo,
 } from "../types/analysis.js";
@@ -169,3 +169,41 @@ describe("computeHealthScore — rates-v2", () => {
   });
 });
 
+
+describe("cycleChain", () => {
+  it("prints a path the imports take, not the group's members in stack order", () => {
+    // club → squad → player → club, and player → kit → squad: one group of four.
+    const graph = {
+      "club.ts": ["squad.ts"],
+      "squad.ts": ["player.ts"],
+      "player.ts": ["club.ts", "kit.ts"],
+      "kit.ts": ["squad.ts"],
+    };
+    const [group] = findCircularDeps(graph);
+    expect(group).toHaveLength(4);
+    const chain = cycleChain(graph, group!);
+    expect(chain).toEqual(["club.ts", "squad.ts", "player.ts"]);
+    // Every step, and the closing one, is a real edge.
+    for (let i = 0; i < chain.length; i++) {
+      expect(graph[chain[i]! as keyof typeof graph]).toContain(chain[(i + 1) % chain.length]);
+    }
+  });
+
+  it("finds the shortest way back to the first member", () => {
+    const graph = { "a.ts": ["b.ts", "c.ts"], "b.ts": ["c.ts"], "c.ts": ["a.ts"] };
+    expect(cycleChain(graph, ["c.ts", "b.ts", "a.ts"])).toEqual(["a.ts", "c.ts"]);
+  });
+
+  it("counts the cycles a caller computed once instead of recomputing them", () => {
+    const r = computeHealthScore({
+      ...base,
+      analyses: Array.from({ length: 50 }, (_, i) => ({ filePath: `src/f${i}.ts`, language: "typescript" })) as never,
+      componentGraph: {},
+      patterns: [],
+      duplicates: [],
+      complexity: [],
+      cycles: [["src/f0.ts", "src/f1.ts"]],
+    });
+    expect(r.penalties.map((p) => p.reason).join(" ")).toContain("1 circular dependency cycle(s) across 2 file(s)");
+  });
+});

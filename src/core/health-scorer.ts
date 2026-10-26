@@ -10,6 +10,12 @@ interface HealthInput {
   componentGraph: Record<string, string[]>;
   /** Import edges only `import type` states (import-kinds.ts): cycles through them are no runtime cycles. */
   typeOnlyEdges?: Record<string, string[]>;
+  /**
+   * The import cycles, when the caller computed them once for every consumer
+   * (`findCircularDeps` over the runtime graph of authored, non-test files);
+   * otherwise they are computed here.
+   */
+  cycles?: readonly string[][];
   patterns: PatternInfo[];
   securityIssues: SecurityIssue[];
   duplicates: DuplicateGroup[];
@@ -85,6 +91,41 @@ export function findCircularDeps(graph: Record<string, string[]>): string[][] {
   }
 
   return sccs;
+}
+
+/**
+ * One cycle that exists inside a strongly connected group: the shortest path
+ * from the group's first member (code-point order) back to itself, along
+ * edges that stay in the group. A group is a SET — printed member after
+ * member as `A → B → C → A` it may describe a path no import takes; this one
+ * follows real edges. Neighbours are visited in code-point order, so the same
+ * graph always yields the same chain.
+ *
+ * @returns The chain's files, start first (the closing edge back to it is implied)
+ */
+export function cycleChain(graph: Readonly<Record<string, readonly string[]>>, group: readonly string[]): string[] {
+  const members = new Set(group);
+  const ordinal = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const start = [...group].sort(ordinal)[0];
+  if (start === undefined) return [];
+  const prev = new Map<string, string>();
+  const queue = [start];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const v = queue[qi]!;
+    const next = (graph[v] ?? []).filter((w) => members.has(w)).sort(ordinal);
+    for (const w of next) {
+      if (w === start) {
+        const chain = [v];
+        while (chain[chain.length - 1] !== start) chain.push(prev.get(chain[chain.length - 1]!)!);
+        return chain.reverse();
+      }
+      if (w !== start && !prev.has(w)) {
+        prev.set(w, v);
+        queue.push(w);
+      }
+    }
+  }
+  return [...group].sort(ordinal);
 }
 
 /** The graded dimensions of the rates-v2 model. */
@@ -180,12 +221,17 @@ export function computeHealthScore(input: HealthInput): HealthScore {
 
   // 1. Cycles: files in a non-trivial strongly connected component, over the
   // graph with generated and test nodes pruned.
-  const appGraph: Record<string, string[]> = {};
-  for (const [src, targets] of Object.entries(input.componentGraph)) {
-    if (!graded(src)) continue;
-    appGraph[src] = targets.filter(graded);
+  let cycles: string[][];
+  if (input.cycles) {
+    cycles = input.cycles.map((c) => c.filter(graded)).filter((c) => c.length > 1);
+  } else {
+    const appGraph: Record<string, string[]> = {};
+    for (const [src, targets] of Object.entries(input.componentGraph)) {
+      if (!graded(src)) continue;
+      appGraph[src] = targets.filter(graded);
+    }
+    cycles = findCircularDeps(runtimeGraph(appGraph, input.typeOnlyEdges));
   }
-  const cycles = findCircularDeps(runtimeGraph(appGraph, input.typeOnlyEdges));
   const cycleFiles = new Set(cycles.flat()).size;
   grade("cycles", cycleFiles, [{ reason: `${cycles.length} circular dependency cycle(s) across ${cycleFiles} file(s)`, share: 1 }]);
 

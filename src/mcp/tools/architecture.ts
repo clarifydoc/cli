@@ -1,12 +1,27 @@
 import { byOrdinal } from "../../core/ordinal.js";
-import { findCircularDeps } from "../../core/health-scorer.js";
+import { cycleChain, findCircularDeps } from "../../core/health-scorer.js";
 import { runtimeGraph } from "../../core/import-kinds.js";
 import type { McpTool } from "../protocol.js";
 import { bulletList, contains, enumArg, joinLines, numberArg, plural, stringArg } from "../format.js";
 import { noResults } from "../empty.js";
 import { projectName, requireAnalysis, type ToolContext } from "./context.js";
 
-const VIEWS = ["overview", "modules", "communities", "hubs", "cycles", "surprises", "questions", "cochange"] as const;
+/**
+ * One import cycle as a path that exists (`a → b → a`), then the group's other
+ * files when it is larger than that path — a group is a set, and its members
+ * printed as a chain may describe no real path.
+ */
+function chainLine(graph: Readonly<Record<string, readonly string[]>>, group: readonly string[]): string {
+  const chain = cycleChain(graph, group);
+  const inChain = new Set(chain);
+  const others = group.filter((f) => !inChain.has(f)).sort(byOrdinal);
+  const head = `${chain.join(" → ")} → ${chain[0]}`;
+  if (others.length === 0) return head;
+  const shown = others.slice(0, 8);
+  return `${head}; also in this group (${group.length} files): ${shown.join(", ")}${others.length > shown.length ? `, +${others.length - shown.length} more` : ""}`;
+}
+
+const VIEWS = ["overview","modules", "communities", "hubs", "cycles", "surprises", "questions", "cochange"] as const;
 type View = (typeof VIEWS)[number];
 
 /**
@@ -158,10 +173,11 @@ export function architectureTool(ctx: ToolContext): McpTool {
           const rows = cycles();
           const typeOnly = typeOnlyCycles();
           const typeLines = typeOnly.length
-            ? ["", `## Through type-only imports (${typeOnly.length})`, "Closed only by `import type`: no runtime cycle, not counted.", ...bulletList(typeOnly, limit, (c) => `${c.join(" → ")} → ${c[0]}`)]
+            ? ["", `## Through type-only imports (${typeOnly.length})`, "Closed only by `import type`: no runtime cycle, not counted.", ...bulletList(typeOnly, limit, (c) => chainLine(graph, c))]
             : [];
           if (rows.length === 0 && typeOnly.length === 0) return { text: noResults({ headline: file ? "No import cycle names that file." : "No import cycles.", holds: `${plural(Object.keys(graph).length, "file")} with imports.`, next: [] }) };
-          return { text: joinLines([`# Import cycles (${rows.length})`, ...bulletList(rows, limit, (c) => `${c.join(" → ")} → ${c[0]}`), ...typeLines]) };
+          const rgraph = runtimeGraph(graph, summary.typeOnlyEdges);
+          return { text: joinLines([`# Import cycles (${rows.length})`, "Each: one path the imports take around the group; a larger group lists its other files after it.", ...bulletList(rows, limit, (c) => chainLine(rgraph, c)), ...typeLines]) };
         }
         case "surprises": {
           const rows = (summary.surprisingConnections ?? []).filter((s) => !file || contains(s.source, file) || contains(s.target, file));

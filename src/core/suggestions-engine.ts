@@ -4,7 +4,7 @@ import type {
   RefactorPressureInfo, DeadCodeReport,
 } from "../types/analysis.js";
 import { runtimeGraph } from "./import-kinds.js";
-import { findCircularDeps } from "./health-scorer.js";
+import { cycleChain, findCircularDeps } from "./health-scorer.js";
 import { describeDrivers, describeGates } from "./refactor-pressure.js";
 
 /** Extract filename from path */
@@ -49,6 +49,8 @@ interface SuggestionInput {
   componentGraph: Record<string, string[]>;
   /** Import edges only `import type` states: a cycle through them is no runtime cycle. */
   typeOnlyEdges?: Record<string, string[]>;
+  /** The import cycles, when the caller computed them once for every consumer; else computed here. */
+  cycles?: readonly string[][];
   /** Files under a generated/library tree that nothing outside imports (dead code). */
   unusedFiles?: string[];
   /** Authored code no entry point reaches, and unused exports (dead-code.ts). */
@@ -112,15 +114,19 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   }
 
   // ── Critical: Circular dependencies (reuse Tarjan SCC from health-scorer) ──
-  const cycles = findCircularDeps(runtimeGraph(input.componentGraph, input.typeOnlyEdges));
+  const graph = runtimeGraph(input.componentGraph, input.typeOnlyEdges);
+  const cycles = input.cycles ?? findCircularDeps(graph);
   for (const cycle of cycles.slice(0, 5)) {
+    // A path the imports really take, not the group's members in stack order.
+    const chain = cycleChain(graph, cycle);
     // Disambiguate same-basename members (e.g. one `InternalsController.cs` per
     // microservice) so the message doesn't read as a file depending on itself.
-    const names = distinctCycleLabels(cycle);
+    const names = distinctCycleLabels(chain);
+    const rest = cycle.length - chain.length;
     suggestions.push({
       priority: "critical",
       category: "Architecture",
-      message: `Circular dependency: ${names.join(" → ")} → ${names[0]}`,
+      message: `Circular dependency: ${names.join(" → ")} → ${names[0]}${rest > 0 ? ` (one cycle in a group of ${cycle.length} files)` : ""}`,
       actionable: "Extract shared code to a new module or use dependency injection",
     });
   }

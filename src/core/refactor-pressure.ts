@@ -10,6 +10,7 @@ import type {
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 import { findCircularDeps } from "./health-scorer.js";
+import { runtimeGraph } from "./import-kinds.js";
 import { overlayNumbers, type RefactorPressureConfigInput } from "./project-config.js";
 
 /**
@@ -154,6 +155,10 @@ export interface RefactorPressureInput {
   complexity: readonly FileComplexityInfo[];
   blastRadius: readonly BlastRadiusInfo[];
   componentGraph: Record<string, string[]>;
+  /** Import edges only `import type` states: a cycle they close is no runtime cycle. */
+  typeOnlyEdges?: Record<string, string[]>;
+  /** The import cycles, when the caller computed them once for every consumer; else computed here. */
+  cycles?: readonly string[][];
   layerViolations: readonly LayerViolation[];
   responsibilityProfiles?: readonly ResponsibilityProfile[];
   /** Undefined when git history was unavailable — the churn component is then marked unavailable. */
@@ -207,7 +212,8 @@ export function computeRefactorPressure(input: RefactorPressureInput): RefactorP
   const churnByFile = input.fileChurn ? new Map(input.fileChurn.map((c) => [c.file, c])) : null;
 
   const inCycle = new Set<string>();
-  for (const scc of findCircularDeps(input.componentGraph)) for (const f of scc) inCycle.add(f);
+  const cycles = input.cycles ?? findCircularDeps(runtimeGraph(input.componentGraph, input.typeOnlyEdges));
+  for (const scc of cycles) for (const f of scc) inCycle.add(f);
 
   const violationsByFile = new Map<string, number>();
   for (const v of input.layerViolations) {

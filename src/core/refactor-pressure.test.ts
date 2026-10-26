@@ -140,6 +140,18 @@ describe("computeRefactorPressure", () => {
     expect(rows.every((r) => r.evidence.inCycle && r.drivers.includes("dependency_cycle"))).toBe(true);
   });
 
+  it("does not count a cycle only type imports close", () => {
+    const analyses = [file("club.ts", 100), file("player.ts", 100)];
+    const rows = computeRefactorPressure({
+      ...base,
+      analyses,
+      componentGraph: { "club.ts": ["player.ts"], "player.ts": ["club.ts"] },
+      typeOnlyEdges: { "player.ts": ["club.ts"] },
+      complexity: analyses.map((a) => cx(a.filePath, 40, 120, 4)),
+    });
+    expect(rows.some((r) => r.evidence.inCycle)).toBe(false);
+  });
+
   it("falls back to function spans and cyclomatic numbers for artifacts from older extractors", () => {
     const a = file("old.ts");
     a.functions.push({ name: "f", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 640 });
