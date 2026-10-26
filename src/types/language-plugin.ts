@@ -945,6 +945,16 @@ export interface LanguagePluginManifest {
    */
   packageDirectory?(importingFile: string, source: string, packages: readonly PackageRoot[], hasDirectory: (dir: string) => boolean): string | null | undefined;
   /**
+   * The project file an import names by the language's own rules, the path
+   * from the analysis root: through a package of this repository by the name
+   * its manifest declares (Dart `package:league/models/club.dart` → the
+   * `league` package's `lib/models/club.dart`), or relative to the importing
+   * file (`'club.dart'`). Null when the import names no file of the repository
+   * (the SDK, a download), undefined when the rules cannot say and the generic
+   * path rules decide. Asked by the symbol linker. Leaf code.
+   */
+  importedFile?(importingFile: string, source: string, packages: readonly PackageRoot[]): string | null | undefined;
+  /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null
    * when it cannot say. Used by the impact report ("tests to run").

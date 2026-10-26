@@ -1,6 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { dartFrameworkRules } from "./frameworks.js";
-import { pubPackageManager } from "./package-manifests.js";
+import { dartImportedFile, pubPackageManager } from "./package-manifests.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -13,6 +13,8 @@ export const dartManifest: LanguagePluginManifest = {
   family: "dart",
   packageManagers: [pubPackageManager],
   packageEcosystems: ["pub"],
+  // `package:<name>/x.dart` is that package's `lib/x.dart`; any other URI is relative to the file.
+  importedFile: dartImportedFile,
   parsing: "regex",
   extensions: [".dart"],
   // One type spans files here: `part` files and `extension`s add to a type from other files.

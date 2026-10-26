@@ -15,15 +15,15 @@ import {
   type SubProject,
   type GlobalMemberDef,
 } from "../types/analysis.js";
-import type { ImportResolveContext } from "../types/language-plugin.js";
+import type { ImportResolveContext, PackageRoot } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectories, isApiContractLanguage, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
-import { buildImportDirectoryResolver, type ImportDirectoryResolver } from "./import-directories.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
+import { buildImportDirectoryResolver, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
@@ -94,6 +94,8 @@ export function buildSymbolLinks(
     importedFilesCache: new Map(),
     packageProjects: buildPackageProjectIndex(subProjects),
     importDirectory: importDirectory ?? buildImportDirectoryResolver(analyses, subProjects),
+    packageRoots: packageRootsOf(subProjects),
+    packagesByLanguage: new Map(),
     packageImportsCache: new Map(),
     importedProjectsCache: new Map(),
     projectStemsCache: new Map(),
@@ -1447,6 +1449,10 @@ interface LinkContext {
   importedFilesCache: Map<string, Set<string>>;
   /** The project directory a package import names (`import-directories.ts`; Go by its go.mod module path). */
   importDirectory: ImportDirectoryResolver;
+  /** The repository's packages by ecosystem (`import-directories.ts` `packageRootsOf`). */
+  packageRoots: Map<string, PackageRoot[]>;
+  /** Per language: the packages of its ecosystems, built on first use (`importPath`). */
+  packagesByLanguage: Map<Language, PackageRoot[]>;
   /** Per package (directory + test flag): the files of the packages its files import (`packageScoped` languages). */
   packageImportsCache: Map<string, Set<string>>;
   /**
@@ -1511,13 +1517,38 @@ function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
     } else {
       set = new Set();
       for (const imp of analysis.imports) {
-        const f = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
+        const f = importPath(ctx, imp.source, analysis.filePath);
         if (f && f !== analysis.filePath) set.add(f);
       }
+      forwardThroughBarrels(set, analysis.filePath, ctx);
     }
     ctx.importedFilesCache.set(analysis.filePath, set);
   }
   return set;
+}
+
+/**
+ * A file that declares nothing of its own and only imports — a barrel
+ * (`export 'operations/table_style.dart';` lines, an `index.ts` of `export *`)
+ * — hands on what it loads: its imports join the importer's, three barrels deep.
+ */
+function forwardThroughBarrels(set: Set<string>, importer: string, ctx: LinkContext): void {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  let frontier = [...set];
+  for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const file of frontier) {
+      const barrel = ctx.analysisByFile.get(file);
+      if (!barrel || barrel.functions.some((f) => !f.name.startsWith("<")) || barrel.classes.length > 0) continue;
+      for (const imp of barrel.imports) {
+        const f = importPath(ctx, imp.source, file);
+        if (!f || f === importer || set.has(f)) continue;
+        set.add(f);
+        next.push(f);
+      }
+    }
+    frontier = next;
+  }
 }
 
 /**
@@ -1569,7 +1600,7 @@ function importedProjectsOf(analysis: FileAnalysis, ctx: LinkContext): Set<strin
     if (ctx.packageProjects.size > 0) {
       const byDirectory = packageScoped(analysis.language);
       for (const imp of analysis.imports) {
-        if (byDirectory ? ctx.importDirectory(imp.source, analysis.filePath) !== null : resolveTarget(imp.source, analysis.filePath, ctx.filePathMap)) continue;
+        if (byDirectory ? ctx.importDirectory(imp.source, analysis.filePath) !== null : importPath(ctx, imp.source, analysis.filePath)) continue;
         const project = packageProjectOf(imp.source, analysis.language, ctx);
         if (project && project !== analysis.projectId) set.add(project);
       }
@@ -1606,7 +1637,7 @@ function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string
     return dir !== null && targetFile.slice(0, Math.max(0, targetFile.lastIndexOf("/"))) === dir;
   }
   for (const imp of analysis.imports) {
-    const resolved = resolveTarget(imp.source, analysis.filePath, ctx.filePathMap);
+    const resolved = importPath(ctx, imp.source, analysis.filePath);
     if (imp.specifiers.length === 0) {
       if (resolved === targetFile) return true;
       continue;
@@ -1629,6 +1660,25 @@ function headNamesForeignPackage(analysis: FileAnalysis, head: string, ctx: Link
   const imp = analysis.imports.find((i) => i.specifiers.includes(head));
   // Decided by the language's package rule only: a trailing-segment guess that finds no directory proves nothing.
   return !!imp && ctx.importDirectory.exact(imp.source, analysis.filePath) === null;
+}
+
+/**
+ * The project file an import names: by the language's own rules where it has
+ * them (`importedFile`: Dart `package:league/x.dart` → that package's
+ * `lib/x.dart`, `'x.dart'` beside the importer; the SDK and downloads are no
+ * file), else by the generic path rules.
+ */
+function importPath(ctx: LinkContext, source: string, fromFile: string): string | null {
+  const language = ctx.languageOf.get(fromFile) as Language | undefined;
+  const rule = language ? manifestFor(language)?.importedFile : undefined;
+  if (rule) {
+    let packages = ctx.packagesByLanguage.get(language!);
+    if (!packages) ctx.packagesByLanguage.set(language!, (packages = packageEcosystemsFor(language!).flatMap((e) => ctx.packageRoots.get(e) ?? [])));
+    const file = rule(fromFile, source, packages);
+    if (file === null) return null;
+    if (file !== undefined) return ctx.filePathMap.get(file) === file ? file : null;
+  }
+  return resolveTarget(source, fromFile, ctx.filePathMap);
 }
 
 /** True when the analysis imports nothing the linker can see — by path or by package. */
@@ -2905,7 +2955,7 @@ function resolveCallToDefinition(
         if (count === 1 && found) return mkLink(found.file, found.def.name, found.def.line, "INFERRED", "import-dir");
       }
     } else if (imp) {
-      const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
+      const impFile = importPath(ctx, imp.source, sourceFile);
       if (impFile && impFile !== sourceFile) {
         // Import maps to a single file (TS namespace import, Python module)
         const syms = symbolIndex.get(impFile);
@@ -2967,7 +3017,7 @@ function resolveCallToDefinition(
       if (imp.executes) continue;
       const wildcard = isWildcardImport(imp);
       if (!sharesScope && !wildcard) continue;
-      const impFile = resolveTarget(imp.source, sourceFile, filePathMap);
+      const impFile = importPath(ctx, imp.source, sourceFile);
       if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
       const d = symbolIn(ctx, impFile, call.name);
       if (!d || d.name.includes(".")) continue;
@@ -3802,7 +3852,7 @@ function globalMember(ctx: LinkContext, sourceFile: string, name: string): Injec
   if (installs.length !== 1 || extensionFamily(installs[0]!.a.filePath) !== extensionFamily(sourceFile)) return null;
   const { a, g } = installs[0]!;
   const imp = a.imports.find((i) => i.specifiers.includes(g.binding));
-  const file = imp ? resolveTarget(imp.source, a.filePath, ctx.filePathMap) : a.filePath;
+  const file = imp ? importPath(ctx, imp.source, a.filePath) : a.filePath;
   const holder = file ? ctx.analysisByFile.get(file) : undefined;
   if (!holder) return null;
   const local = imp?.isDefault ? holder.exports.find((e) => e.kind === "default")?.sourceName ?? g.binding : g.binding;
@@ -3915,7 +3965,7 @@ function reexportedType(ctx: LinkContext, typeName: string, sourceFile: string):
   let found: { typeName: string; typeFile: string } | null = null;
   for (const imp of ctx.analysisByFile.get(sourceFile)?.imports ?? []) {
     if (!imp.specifiers.includes(typeName)) continue;
-    const barrel = resolveTarget(imp.source, sourceFile, ctx.filePathMap);
+    const barrel = importPath(ctx, imp.source, sourceFile);
     const hit = barrel ? forwardedClass(ctx, barrel, typeName, 0, new Set()) : null;
     if (!hit) continue;
     if (found && (found.typeFile !== hit.typeFile || found.typeName !== hit.typeName)) return null;
@@ -3958,7 +4008,7 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   if (source) {
     const named = source.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName);
     for (const imp of named) {
-      const f = resolveTarget(imp.source, sourceFile, ctx.filePathMap);
+      const f = importPath(ctx, imp.source, sourceFile);
       if (f && f !== sourceFile && declOf(f, typeName)) return f;
     }
   }
