@@ -1,7 +1,7 @@
 import type { EntryPointInfo, FileAnalysis, RouteInfo } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
-import { lambdaClassHandler, lambdaModuleHandler } from "../shared/lambda-handlers.js";
+import { lambdaClassHandler, lambdaModuleHandler, type Hit } from "../shared/lambda-handlers.js";
 
 
 /**
@@ -29,7 +29,7 @@ export const serverlessHandlerAnchor: RouteResolver = {
       const dir = a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")) : "";
       const kept: RouteInfo[] = [];
       for (const r of a.routes) {
-        const hit = r.handler ? (r.handler.includes("::") ? lambdaClassHandler(r.handler, dir, code) : lambdaModuleHandler(r.handler, dir, ctx)) : null;
+        const hit = r.handler ? anchor(r.handler, dir, code, ctx) : null;
         if (!hit) {
           kept.push(r);
           continue;
@@ -48,7 +48,7 @@ export const serverlessHandlerAnchor: RouteResolver = {
       const dir = a.filePath.includes("/") ? a.filePath.slice(0, a.filePath.lastIndexOf("/")) : "";
       const kept: EntryPointInfo[] = [];
       for (const e of a.entryPoints) {
-        const hit = e.handler ? (e.handler.includes("::") ? lambdaClassHandler(e.handler, dir, code) : lambdaModuleHandler(e.handler, dir, ctx)) : null;
+        const hit = e.handler ? anchor(e.handler, dir, code, ctx) : null;
         if (!hit) {
           kept.push(e);
           continue;
@@ -62,3 +62,12 @@ export const serverlessHandlerAnchor: RouteResolver = {
     for (const [a, rows] of movedEntries) a.entryPoints = [...(a.entryPoints ?? []), ...rows];
   },
 };
+
+/** The function a handler names; `a|b|c` lists the runtime's defaults, the first one present wins. */
+function anchor(handler: string, dir: string, code: readonly FileAnalysis[], ctx: ProjectContext): Hit | null {
+  for (const h of handler.split("|")) {
+    const hit = h.includes("::") ? lambdaClassHandler(h, dir, code) : lambdaModuleHandler(h, dir, ctx);
+    if (hit) return hit;
+  }
+  return null;
+}

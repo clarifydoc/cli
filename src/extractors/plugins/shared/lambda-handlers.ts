@@ -12,7 +12,7 @@ import type { ProjectContext } from "../../../types/project.js";
  */
 
 /** The extensions a Lambda runtime loads a handler module from, in the order tried. */
-const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".py", ".rb"];
+const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".py", ".rb", ".csx"];
 /** A bundler's output directory names the compiled copy of `src/`. */
 const BUILD_DIR_RE = /^(?:dist|build|\.build|lib|out)\//;
 
@@ -44,8 +44,13 @@ export function lambdaModuleHandler(handler: string, dir: string, ctx: ProjectCo
   if (BUILD_DIR_RE.test(module)) modules.push(module.replace(BUILD_DIR_RE, "src/"));
   // Python names a package module with dots (`src.api.app`).
   if (!module.includes("/") && module.includes(".")) modules.push(module.replace(/\./g, "/"));
-  for (const m of modules) {
-    const base = joinRelPath(dir, m);
+  const bases = modules.map((m) => joinRelPath(dir, m));
+  // A build output reached through `..` (`../dist/clubs/index` from a function's folder): its source.
+  for (const b of [...bases]) {
+    const src = b.replace(/(^|\/)(?:dist|build|\.build|out)\//, "$1src/");
+    if (src !== b) bases.push(src);
+  }
+  for (const base of bases) {
     for (const path of [...MODULE_EXTENSIONS.map((e) => base + e), ...MODULE_EXTENSIONS.map((e) => `${base}/index${e}`)]) {
       const file = ctx.fileOf(path);
       if (!file) continue;
