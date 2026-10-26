@@ -10,6 +10,8 @@ interface HealthInput {
   componentGraph: Record<string, string[]>;
   /** Import edges only `import type` states (import-kinds.ts): cycles through them are no runtime cycles. */
   typeOnlyEdges?: Record<string, string[]>;
+  /** Import edges only a dynamic `import()` states (import-kinds.ts): a cycle they close is no load-order cycle. */
+  dynamicImportEdges?: Record<string, string[]>;
   /**
    * The import cycles, when the caller computed them once for every consumer
    * (`findCircularDeps` over the runtime graph of authored, non-test files);
@@ -230,7 +232,7 @@ export function computeHealthScore(input: HealthInput): HealthScore {
       if (!graded(src)) continue;
       appGraph[src] = targets.filter(graded);
     }
-    cycles = findCircularDeps(runtimeGraph(appGraph, input.typeOnlyEdges));
+    cycles = findCircularDeps(runtimeGraph(appGraph, input.typeOnlyEdges, input.dynamicImportEdges));
   }
   const cycleFiles = new Set(cycles.flat()).size;
   grade("cycles", cycleFiles, [{ reason: `${cycles.length} circular dependency cycle(s) across ${cycleFiles} file(s)`, share: 1 }]);

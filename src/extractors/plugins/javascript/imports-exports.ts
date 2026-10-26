@@ -222,6 +222,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
             isNamespace: false,
             isType: false,
             line: node.startPosition.row + 1,
+            dynamic: true,
           });
         }
       }

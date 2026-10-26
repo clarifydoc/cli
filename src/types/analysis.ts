@@ -612,6 +612,12 @@ export interface ImportInfo {
    */
   executes?: true;
   /**
+   * Loaded on demand (`import("./x")`, usually lazy loading), not when the
+   * importer loads: a cycle it closes has no load-order consequence.
+   * Absent for a static import.
+   */
+  dynamic?: true;
+  /**
    * A named import bound under another local name (`import { addPlayer as signPlayer }`):
    * local → exported. `specifiers` lists the local name only; the module defines
    * the exported one.
@@ -3200,6 +3206,12 @@ export interface ProjectAnalysis {
    * judged without them.
    */
   typeOnlyEdges?: Record<string, string[]>;
+  /**
+   * Edges of `componentGraph` that only dynamic imports state (`import("./x")`,
+   * core/import-kinds.ts): loaded on demand, not when the importer loads, so
+   * cycles are judged without them, like type-only edges.
+   */
+  dynamicImportEdges?: Record<string, string[]>;
   /** Credentials found in git history's added lines (`analyze --history-secrets`, core/history-secrets.ts), masked. */
   historySecrets?: import("../core/history-secrets.js").HistorySecretsReport;
   /** What the project's Markdown names — paths, routes, class members — that the tree no longer bears out (core/doc-drift.ts). */

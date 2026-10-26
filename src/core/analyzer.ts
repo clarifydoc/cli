@@ -1084,7 +1084,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.step("Building dependency graph...");
   // Edges only `import type` states, refined once the call links are known (import-kinds.ts).
   const typeOnlyImports: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports);
+  // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
+  const dynamicImportEdges: Record<string, string[]> = {};
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges);
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -1876,7 +1878,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   for (const [src, targets] of Object.entries(componentGraph)) {
     if (isCycleCandidate(src)) cycleGraph[src] = targets.filter(isCycleCandidate);
   }
-  const importCycles = findCircularDeps(runtimeGraph(cycleGraph, typeOnly));
+  const importCycles = findCircularDeps(runtimeGraph(cycleGraph, typeOnly, dynamicImportEdges));
   const refactorPressure = computeRefactorPressure({
     analyses: allAnalyses,
     complexity,
@@ -1963,6 +1965,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     analyses: allAnalyses,
     componentGraph,
     typeOnlyEdges: typeOnly,
+    dynamicImportEdges,
     cycles: importCycles,
     patterns,
     // The grade is about this analysis: another tool's findings stay out of it.
@@ -2030,6 +2033,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Generating suggestions...");
   const suggestions = generateSuggestions({
     typeOnlyEdges: typeOnly,
+    dynamicImportEdges,
     cycles: importCycles,
     layerConflicts: layerSplit.conflicts,
     analyses: allAnalyses,
@@ -2080,6 +2084,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     files: allAnalyses.map((a) => a.filePath),
     componentGraph,
     ...(Object.keys(typeOnly).length ? { typeOnlyEdges: typeOnly } : {}),
+    ...(Object.keys(dynamicImportEdges).length ? { dynamicImportEdges } : {}),
     linkGraph,
     interactiveElements: allInteractiveElements,
     componentUsage: allComponentUsage,
@@ -2853,6 +2858,8 @@ export function buildComponentGraph(
   analyses: FileAnalysis[],
   /** Filled with each file's edges that only type-only imports state (`import type`): no runtime dependency. */
   typeOnlyOut?: Record<string, string[]>,
+  /** Filled with each file's edges that only dynamic imports state (`import("./x")`): loaded on demand. */
+  dynamicOut?: Record<string, string[]>,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -3052,6 +3059,8 @@ export function buildComponentGraph(
     const refSet = new Set<string>();
     /** Targets some non-type import reaches; an edge outside it is type-only. */
     const valueRefs = new Set<string>();
+    /** Targets something other than a dynamic `import()` reaches; an edge outside it is dynamic-only. */
+    const staticRefs = new Set<string>();
 
     // Symbols this file actually uses — type-position references plus called
     // names. Gates the bare-namespace fallback (step 3) so a leftover
@@ -3081,6 +3090,7 @@ export function buildComponentGraph(
       const addRef = (target: string) => {
         refSet.add(target);
         if (!imp.isType) valueRefs.add(target);
+        if (!imp.dynamic) staticRefs.add(target);
       };
       // 0. A script it RUNS, named relative to where it runs (`spawn("node", ["tools/import.js"])`,
       // `subprocess.run(["bash", "tools/x.sh"])`): the path under the nearest directory, from the
@@ -3239,6 +3249,7 @@ export function buildComponentGraph(
         if (match && match !== a.filePath && familyCompatible(a.filePath, match)) {
           refSet.add(match);
           valueRefs.add(match); // a rendered component is a runtime dependency
+          staticRefs.add(match);
         }
       }
     }
@@ -3262,6 +3273,7 @@ export function buildComponentGraph(
         if (target) {
           refSet.add(target);
           valueRefs.add(target);
+          staticRefs.add(target);
         }
       }
     }
@@ -3270,6 +3282,8 @@ export function buildComponentGraph(
       graph[a.filePath] = [...refSet];
       const typeOnly = [...refSet].filter((t) => !valueRefs.has(t));
       if (typeOnly.length && typeOnlyOut) typeOnlyOut[a.filePath] = typeOnly;
+      const dynamicOnly = [...refSet].filter((t) => !staticRefs.has(t) && valueRefs.has(t));
+      if (dynamicOnly.length && dynamicOut) dynamicOut[a.filePath] = dynamicOnly.sort();
     }
   }
 

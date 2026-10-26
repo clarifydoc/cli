@@ -49,6 +49,8 @@ interface SuggestionInput {
   componentGraph: Record<string, string[]>;
   /** Import edges only `import type` states: a cycle through them is no runtime cycle. */
   typeOnlyEdges?: Record<string, string[]>;
+  /** Import edges only a dynamic `import()` states (import-kinds.ts): a cycle they close is no load-order cycle. */
+  dynamicImportEdges?: Record<string, string[]>;
   /** The import cycles, when the caller computed them once for every consumer; else computed here. */
   cycles?: readonly string[][];
   /** Files placed by path in a layer their content contradicts (analyzer `layerDisagreements`). */
@@ -116,7 +118,7 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   }
 
   // ── Critical: Circular dependencies (reuse Tarjan SCC from health-scorer) ──
-  const graph = runtimeGraph(input.componentGraph, input.typeOnlyEdges);
+  const graph = runtimeGraph(input.componentGraph, input.typeOnlyEdges, input.dynamicImportEdges);
   const cycles = input.cycles ?? findCircularDeps(graph);
   for (const cycle of cycles.slice(0, 5)) {
     // A path the imports really take, not the group's members in stack order.

@@ -22,13 +22,21 @@ export function typeOnlyEdges(fromImports: Readonly<Record<string, readonly stri
   return out;
 }
 
-/** The import graph without its type-only edges. */
-export function runtimeGraph(graph: Readonly<Record<string, readonly string[]>>, typeOnly: Readonly<Record<string, readonly string[]>> | undefined): Record<string, string[]> {
-  if (!typeOnly || Object.keys(typeOnly).length === 0) return graph as Record<string, string[]>;
+type EdgeMap = Readonly<Record<string, readonly string[]>>;
+
+/**
+ * The import graph a cycle is judged on: without its type-only edges and
+ * without the edges only a dynamic `import()` states — a module loaded on
+ * demand is not loaded with its importer, so nothing in such a cycle
+ * initializes in the wrong order (`ProjectAnalysis.dynamicImportEdges`).
+ */
+export function runtimeGraph(graph: EdgeMap, typeOnly: EdgeMap | undefined, dynamic?: EdgeMap): Record<string, string[]> {
+  const drops = [typeOnly, dynamic].filter((d): d is EdgeMap => !!d && Object.keys(d).length > 0);
+  if (drops.length === 0) return graph as Record<string, string[]>;
   const out: Record<string, string[]> = {};
   for (const [from, tos] of Object.entries(graph)) {
-    const drop = typeOnly[from];
-    out[from] = drop ? tos.filter((t) => !drop.includes(t)) : [...tos];
+    const drop = drops.flatMap((d) => d[from] ?? []);
+    out[from] = drop.length ? tos.filter((t) => !drop.includes(t)) : [...tos];
   }
   return out;
 }

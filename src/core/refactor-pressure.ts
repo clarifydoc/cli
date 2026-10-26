@@ -157,6 +157,8 @@ export interface RefactorPressureInput {
   componentGraph: Record<string, string[]>;
   /** Import edges only `import type` states: a cycle they close is no runtime cycle. */
   typeOnlyEdges?: Record<string, string[]>;
+  /** Import edges only a dynamic `import()` states: a cycle they close is no load-order cycle. */
+  dynamicImportEdges?: Record<string, string[]>;
   /** The import cycles, when the caller computed them once for every consumer; else computed here. */
   cycles?: readonly string[][];
   layerViolations: readonly LayerViolation[];
@@ -212,7 +214,7 @@ export function computeRefactorPressure(input: RefactorPressureInput): RefactorP
   const churnByFile = input.fileChurn ? new Map(input.fileChurn.map((c) => [c.file, c])) : null;
 
   const inCycle = new Set<string>();
-  const cycles = input.cycles ?? findCircularDeps(runtimeGraph(input.componentGraph, input.typeOnlyEdges));
+  const cycles = input.cycles ?? findCircularDeps(runtimeGraph(input.componentGraph, input.typeOnlyEdges, input.dynamicImportEdges));
   for (const scc of cycles) for (const f of scc) inCycle.add(f);
 
   const violationsByFile = new Map<string, number>();

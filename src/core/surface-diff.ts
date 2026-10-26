@@ -62,7 +62,7 @@ export interface SurfaceDiff {
   cycles?: { introduced: string[][]; grown: Array<{ files: string[]; added: string[] }> };
 }
 
-type Summary = Pick<ProjectAnalysis, "routeMap"> & Partial<Pick<ProjectAnalysis, "apiRouteLinks" | "apiCalls" | "dataFlows" | "componentGraph" | "typeOnlyEdges" | "fileLayerMap">>;
+type Summary = Pick<ProjectAnalysis, "routeMap"> & Partial<Pick<ProjectAnalysis, "apiRouteLinks" | "apiCalls" | "dataFlows" | "componentGraph" | "typeOnlyEdges" | "dynamicImportEdges" | "fileLayerMap">>;
 
 /** The import cycles of an analysis, each a sorted file list. */
 function cyclesOf(s: Summary): string[][] {
@@ -70,7 +70,7 @@ function cyclesOf(s: Summary): string[][] {
   const isTest = (f: string) => s.fileLayerMap?.[f] === "test" || isTestFile(f);
   const graph: Record<string, string[]> = {};
   for (const [from, tos] of Object.entries(s.componentGraph)) if (!isTest(from)) graph[from] = tos.filter((t) => !isTest(t));
-  return findCircularDeps(runtimeGraph(graph, s.typeOnlyEdges)).map((c) => [...c].sort());
+  return findCircularDeps(runtimeGraph(graph, s.typeOnlyEdges, s.dynamicImportEdges)).map((c) => [...c].sort());
 }
 
 /** Cycles the head introduced or grew, judged against the base's. */

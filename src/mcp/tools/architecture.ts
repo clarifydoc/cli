@@ -64,12 +64,14 @@ export function architectureTool(ctx: ToolContext): McpTool {
       const names = (fs: readonly string[]) => (file ? fs.some((f) => contains(f, file)) : true);
 
       const order = (a: string[], b: string[]) => a.length - b.length || byOrdinal(a[0] ?? "", b[0] ?? "");
-      // Runtime cycles; a cycle only type imports close is listed apart, never counted.
-      const cycles = () => findCircularDeps(runtimeGraph(graph, summary.typeOnlyEdges)).filter(names).sort(order);
-      const typeOnlyCycles = () => {
-        const runtime = new Set(cycles().map((c) => [...c].sort().join("\u0000")));
-        return findCircularDeps(graph).filter(names).filter((c) => !runtime.has([...c].sort().join("\u0000"))).sort(order);
-      };
+      // Runtime cycles; a cycle only dynamic `import()`s or type imports close is listed apart, never counted.
+      const keyOf = (c: readonly string[]) => [...c].sort().join("\u0000");
+      const cycles = () => findCircularDeps(runtimeGraph(graph, summary.typeOnlyEdges, summary.dynamicImportEdges)).filter(names).sort(order);
+      const lazyGraph = () => runtimeGraph(graph, summary.typeOnlyEdges);
+      const lazyCycles = (runtime: ReadonlySet<string>) =>
+        findCircularDeps(lazyGraph()).filter(names).filter((c) => !runtime.has(keyOf(c))).sort(order);
+      const typeOnlyCycles = (seen: ReadonlySet<string>) =>
+        findCircularDeps(graph).filter(names).filter((c) => !seen.has(keyOf(c))).sort(order);
 
       switch (view) {
         case "overview": {
@@ -171,13 +173,18 @@ export function architectureTool(ctx: ToolContext): McpTool {
         }
         case "cycles": {
           const rows = cycles();
-          const typeOnly = typeOnlyCycles();
+          const runtime = new Set(rows.map(keyOf));
+          const lazy = lazyCycles(runtime);
+          const typeOnly = typeOnlyCycles(new Set([...runtime, ...lazy.map(keyOf)]));
+          const lazyLines = lazy.length
+            ? ["", `## Through dynamic imports (${lazy.length})`, "Closed only by a dynamic `import()` (loaded on demand, usually lazy loading): no load-order cycle, not counted.", ...bulletList(lazy, limit, (c) => chainLine(lazyGraph(), c))]
+            : [];
           const typeLines = typeOnly.length
             ? ["", `## Through type-only imports (${typeOnly.length})`, "Closed only by `import type`: no runtime cycle, not counted.", ...bulletList(typeOnly, limit, (c) => chainLine(graph, c))]
             : [];
-          if (rows.length === 0 && typeOnly.length === 0) return { text: noResults({ headline: file ? "No import cycle names that file." : "No import cycles.", holds: `${plural(Object.keys(graph).length, "file")} with imports.`, next: [] }) };
-          const rgraph = runtimeGraph(graph, summary.typeOnlyEdges);
-          return { text: joinLines([`# Import cycles (${rows.length})`, "Each: one path the imports take around the group; a larger group lists its other files after it.", ...bulletList(rows, limit, (c) => chainLine(rgraph, c)), ...typeLines]) };
+          if (rows.length === 0 && lazy.length === 0 && typeOnly.length === 0) return { text: noResults({ headline: file ? "No import cycle names that file." : "No import cycles.", holds: `${plural(Object.keys(graph).length, "file")} with imports.`, next: [] }) };
+          const rgraph = runtimeGraph(graph, summary.typeOnlyEdges, summary.dynamicImportEdges);
+          return { text: joinLines([`# Import cycles (${rows.length})`, "Each: one path the imports take around the group; a larger group lists its other files after it.", ...bulletList(rows, limit, (c) => chainLine(rgraph, c)), ...lazyLines, ...typeLines]) };
         }
         case "surprises": {
           const rows = (summary.surprisingConnections ?? []).filter((s) => !file || contains(s.source, file) || contains(s.target, file));

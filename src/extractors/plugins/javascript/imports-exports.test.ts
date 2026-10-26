@@ -97,3 +97,12 @@ describe("JS/TS import aliases", () => {
     expect(imp).toMatchObject({ specifiers: ["signPlayers", "getSquad"], aliases: { signPlayers: "addPlayersToSquad" } });
   });
 });
+
+describe("JS/TS dynamic imports", () => {
+  it("marks an import() as dynamic, a static import not", async () => {
+    const src = `import { Router } from "./router";\nconst routes = [{ path: "/squad", component: () => import("./SquadPage.vue") }];`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imports.map((i) => [i.source, i.dynamic ?? false])).toEqual([["./router", false], ["./SquadPage.vue", true]]);
+  });
+});

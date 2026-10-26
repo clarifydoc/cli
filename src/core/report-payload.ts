@@ -385,6 +385,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     ...(summary.communityNames ? { communityNames: summary.communityNames } : {}),
     // The viewer counts cycles as the health score does: without these.
     ...(summary.typeOnlyEdges ? { typeOnlyEdges: summary.typeOnlyEdges } : {}),
+    ...(summary.dynamicImportEdges ? { dynamicImportEdges: summary.dynamicImportEdges } : {}),
     healthScore: summary.healthScore ?? null,
     patterns: summary.patterns ?? [],
     securityIssues: summary.securityIssues ?? [],

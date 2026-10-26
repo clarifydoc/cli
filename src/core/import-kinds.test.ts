@@ -5,10 +5,10 @@ import { findCircularDeps } from "./health-scorer.js";
 import { classifyFileLayers } from "./layer-analyzer.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
-const file = (filePath: string, imports: Array<{ source: string; isType?: boolean }>): FileAnalysis =>
+const file = (filePath: string, imports: Array<{ source: string; isType?: boolean; dynamic?: true }>): FileAnalysis =>
   ({
     filePath, language: "typescript", projectId: "root",
-    imports: imports.map((i) => ({ source: i.source, specifiers: ["X"], isDefault: false, isNamespace: false, isType: !!i.isType, line: 1 })),
+    imports: imports.map((i) => ({ source: i.source, specifiers: ["X"], isDefault: false, isNamespace: false, isType: !!i.isType, line: 1, ...(i.dynamic ? { dynamic: true } : {}) })),
     exports: [{ name: "X", kind: "class", line: 1 }], functions: [], classes: [], subComponents: [], routes: [], dataSources: [], dataMutations: [],
   }) as unknown as FileAnalysis;
 
@@ -30,6 +30,25 @@ describe("type-only import edges", () => {
   it("keeps an edge a call goes along, whatever the import says", () => {
     const link = { sourceFile: "src/b.ts", sourceSymbol: "run", sourceLine: 3, targetFile: "src/a.ts", targetSymbol: "X", targetLine: 1, callName: "X" } as never;
     expect(typeOnlyEdges({ "src/b.ts": ["src/a.ts"] }, [link])).toEqual({});
+  });
+});
+
+describe("dynamic import edges", () => {
+  it("records an edge only a dynamic import() states, and judges cycles without it", () => {
+    const typeOnly: Record<string, string[]> = {};
+    const dynamic: Record<string, string[]> = {};
+    const graph = buildComponentGraph([
+      // The router loads the squad page on demand, and the page imports the router: lazy loading.
+      file("src/router.ts", [{ source: "./squad-page", dynamic: true }]),
+      file("src/squad-page.ts", [{ source: "./router" }]),
+      // A static import beside the dynamic one keeps the edge a load-order edge.
+      file("src/garage.ts", [{ source: "./car", dynamic: true }, { source: "./car" }]),
+      file("src/car.ts", [{ source: "./garage" }]),
+    ], typeOnly, dynamic);
+    expect(dynamic).toEqual({ "src/router.ts": ["src/squad-page.ts"] });
+    expect(typeOnly).toEqual({});
+    expect(findCircularDeps(graph)).toHaveLength(2);
+    expect(findCircularDeps(runtimeGraph(graph, typeOnly, dynamic))).toEqual([expect.arrayContaining(["src/garage.ts", "src/car.ts"])]);
   });
 });
 
