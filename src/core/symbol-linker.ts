@@ -1897,6 +1897,24 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
   const computed = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.properties
     .filter((p) => p.from && !p.type)
     .map((prop) => ({ a, cls, prop }))));
+  // Top-level functions by name → the classes their declared return type names (`fn()` heads).
+  let returning: Map<string, Array<{ file: string; type: string }>> | null = null;
+  const returnedClass = (fn: string, near: string): { name: string; file: string } | null => {
+    if (!returning) {
+      returning = new Map();
+      for (const x of analyses) {
+        for (const f of x.functions) {
+          const type = receiverTypeName(f.returnType, x.language);
+          if (type) (returning.get(f.name) ?? returning.set(f.name, []).get(f.name)!).push({ file: x.filePath, type });
+        }
+      }
+    }
+    const defs = (returning.get(fn) ?? []).filter((d) => sameTypeSpace(near, languageOfFile.get(near) ?? "", d.file, languageOfFile.get(d.file) ?? ""));
+    if (defs.length !== 1) return null;
+    const file = fileOf(defs[0]!.type, defs[0]!.file);
+    return file ? { name: defs[0]!.type, file } : null;
+  };
+  const computedAt = new Set<string>();
   for (let round = 0; round < 3 && computed.length > 0; round++) {
     let progressed = false;
     for (const { a, cls, prop } of computed) {
@@ -1904,8 +1922,16 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       const name = nameKey(a.language, prop.name);
       if (out.get(key)?.has(name)) continue;
       const segs = prop.from!.split(".");
-      if (!SELF_HEADS.has(segs[0]!)) continue;
-      let cur: InjectionPoint | null = { typeName: cls.name, typeFile: a.filePath, member: "", consumer: cls.name };
+      // A chain on a function's result (`get_repositories().recipes`): starts at the class it returns.
+      const fnHead = /^(\w+)\(\)$/.exec(segs[0]!)?.[1];
+      let cur: InjectionPoint | null;
+      if (fnHead) {
+        const returned = returnedClass(fnHead, a.filePath);
+        if (!returned) continue;
+        cur = { typeName: returned.name, typeFile: returned.file, member: "", consumer: cls.name };
+      } else if (SELF_HEADS.has(segs[0]!)) {
+        cur = { typeName: cls.name, typeFile: a.filePath, member: "", consumer: cls.name };
+      } else continue;
       for (const seg of segs.slice(1)) {
         if (!cur?.typeFile) break;
         cur = out.get(memberKey(cur.typeFile, cur.typeName))?.get(nameKey(languageOfFile.get(cur.typeFile), seg)) ?? null;
@@ -1913,9 +1939,32 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       if (!cur?.typeFile || !cur.typeName) continue;
       if (!out.has(key)) out.set(key, new Map());
       out.get(key)!.set(name, { typeName: cur.typeName, typeFile: cur.typeFile, member: prop.name, consumer: cls.name });
+      computedAt.add(key);
       progressed = true;
     }
     if (!progressed) break;
+  }
+  // A computed member is its subclasses' too (`self.group_recipes` set in a base `__init__`).
+  if (computedAt.size > 0) {
+    for (const a of analyses) {
+      for (const cls of a.classes) {
+        const seen = new Set<string>([memberKey(a.filePath, cls.name)]);
+        let base = bareClassName(cls.extends);
+        let baseFile = base ? fileOf(base, a.filePath) : null;
+        while (base && baseFile && !seen.has(memberKey(baseFile, base))) {
+          const baseKey = memberKey(baseFile, base);
+          seen.add(baseKey);
+          if (computedAt.has(baseKey)) {
+            const own = out.get(memberKey(a.filePath, cls.name)) ?? new Map<string, InjectionPoint>();
+            for (const [n, point] of out.get(baseKey)!) if (!own.has(n)) own.set(n, { ...point, consumer: cls.name });
+            out.set(memberKey(a.filePath, cls.name), own);
+          }
+          const baseCls = declAt.get(baseKey);
+          base = bareClassName(baseCls?.extends);
+          baseFile = base ? fileOf(base, baseFile) : null;
+        }
+      }
+    }
   }
   return out;
 }

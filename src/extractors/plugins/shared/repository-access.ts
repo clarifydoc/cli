@@ -53,6 +53,8 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     }
   }
   if (classes.size === 0) return;
+  const functionsNamed = new Map<string, FunctionInfo[]>();
+  for (const a of own) for (const f of a.functions ?? []) (functionsNamed.get(f.name) ?? functionsNamed.set(f.name, []).get(f.name)!).push(f);
   const bare = (type: string | null | undefined): string | null => receiverTypeName(type, knobs.language);
   const basesOf = (name: string): string[] =>
     (classes.get(name) ?? []).flatMap((cls) => [cls.extends ?? "", ...(cls.implements ?? [])]).filter(Boolean);
@@ -77,6 +79,12 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         if (!found && prop?.from) {
           const [head, ...rest] = prop.from.split(".");
           if (knobs.selfHeads.has(head!) && rest.every((s) => /^[\w$]+$/.test(s))) found = resolveChain(rest, className, depth + 1);
+          // A chain on a function's result (`get_repositories().recipes`): from the class it returns.
+          const fn = /^(\w+)\(\)$/.exec(head!)?.[1];
+          if (fn && rest.every((s) => /^[\w$]+$/.test(s))) {
+            const returns = [...new Set((functionsNamed.get(fn) ?? []).map((f) => written(f.returnType)).filter((t): t is string => !!t))];
+            if (returns.length === 1) found = resolveChain(rest, returns[0]!, depth + 1);
+          }
         }
         if (!found) {
           const method = cls.methods.find((m) => m.name === member);

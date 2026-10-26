@@ -139,9 +139,13 @@ def typed() -> Club:
 
 def not_a_fixture():
     return Player()
+
+def generator():
+    yield Player()
 `);
     const rt = Object.fromEntries(functions.map((f) => [f.name, f.returnType]));
-    expect(rt).toEqual({ player: "Player", db: "models.Database", mixed: null, typed: "Club", not_a_fixture: null });
+    // Any unannotated function returning one class is typed by it; only a fixture's `yield` is what it gives.
+    expect(rt).toEqual({ player: "Player", db: "models.Database", mixed: null, typed: "Club", not_a_fixture: "Player", generator: null });
   });
 });
 

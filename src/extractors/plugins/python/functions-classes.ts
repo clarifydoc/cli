@@ -11,6 +11,7 @@ import {
   collectLocalTypes,
   fillParamTypesFromComments,
   injectionToken,
+  resultChainText,
   type MethodSource,
 } from "./di.js";
 
@@ -123,7 +124,9 @@ export class PythonExtractor extends FunctionClassExtractor {
     const paramsNode = node.childForFieldName("parameters");
     const params: ParamInfo[] = paramsNode ? pythonParams(paramsNode, this.aliases) : [];
 
-    const returnType = node.childForFieldName("return_type")?.text ?? null;
+    const body0 = node.childForFieldName("body");
+    // Unannotated: the one class every `return` constructs (`return AllRepositories(session)`).
+    const returnType = node.childForFieldName("return_type")?.text ?? (body0 ? producedClass(body0, false) : null);
     const isAsync = node.previousSibling?.type === "async" || node.text.startsWith("async ");
     const body = node.childForFieldName("body");
     const bodyText = body?.text ?? "";
@@ -317,6 +320,8 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
       const own = /^self\.(\w+)$/.exec(returned.text)?.[1];
       type = own ? typed.get(own) ?? null : null;
       if (!type) from = returned.text;
+    } else if (!type && returned?.type === "attribute") {
+      from = resultChainText(returned) ?? undefined;
     }
     if (!type && !from) continue;
     const prop: PropertyInfo = { name: p.fn.name, type: type ?? null, visibility: p.fn.name.startsWith("_") ? "private" : "public", isStatic: false, isReadonly: true };
@@ -513,12 +518,14 @@ export const FIXTURE_DECORATOR = /^(?:pytest\.)?fixture\b/;
  * they differ or any is something else. Nested functions and classes are not
  * this body.
  */
-function producedClass(body: Node): string | null {
+function producedClass(body: Node, yields = true): string | null {
   const made = new Set<string>();
   let other = false;
   const visit = (n: Node): void => {
     if (n.type === "function_definition" || n.type === "class_definition" || n.type === "lambda") return;
-    if (n.type === "return_statement" || n.type === "yield") {
+    // A generator returns no instance of what it yields.
+    if (n.type === "yield" && !yields) other = true;
+    else if (n.type === "return_statement" || n.type === "yield") {
       const value = n.namedChildren[0];
       const callee = value?.type === "call" ? value.childForFieldName("function") : null;
       const name = callee && (callee.type === "identifier" || callee.type === "attribute") ? callee.text : null;

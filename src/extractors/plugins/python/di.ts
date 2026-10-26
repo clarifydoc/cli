@@ -566,6 +566,8 @@ export function collectInstanceAttributes(
   typeComments: boolean,
 ): PropertyInfo[] {
   const table = new FactTable();
+  // `self.recipes = get_repositories(session).recipes`: no type stated, a chain the project pass types.
+  const chains = new Map<string, string | null>();
   for (const { node, fn, selfName } of methods) {
     if (!selfName) continue;
     const body = node.childForFieldName("body");
@@ -598,6 +600,8 @@ export function collectInstanceAttributes(
         }
         const right = a.childForFieldName("right");
         table.assign(name, right ? valueFact(right, scope) : UNKNOWN);
+        const chain = right ? resultChainText(right) : null;
+        chains.set(name, chains.has(name) && chains.get(name) !== chain ? null : chain);
       },
     });
   }
@@ -605,18 +609,38 @@ export function collectInstanceAttributes(
   for (const name of table.names()) {
     if (skip.has(name)) continue;
     const fact = table.get(name);
-    if (!fact) continue;
+    const chain = chains.get(name);
+    if (!fact && !chain) continue;
     const prop: PropertyInfo = {
       name,
-      type: fact.type || null,
+      type: fact?.type || null,
       visibility: name.startsWith("_") ? "private" : "public",
       isStatic: false,
       isReadonly: false,
     };
-    if (fact.qualifier) prop.qualifier = fact.qualifier;
+    if (fact?.qualifier) prop.qualifier = fact.qualifier;
+    if (!prop.type && chain) prop.from = chain;
     out.push(prop);
   }
   return out;
+}
+
+/**
+ * A member chain rooted in a function's result, as the project pass reads it:
+ * `get_repositories(session, group_id=g).recipes` → `get_repositories().recipes`.
+ * Null for anything else (a chain on a name, a method call's result).
+ */
+export function resultChainText(node: Node): string | null {
+  const names: string[] = [];
+  let cur: Node | null = node;
+  while (cur?.type === "attribute") {
+    const attr = cur.childForFieldName("attribute")?.text;
+    if (!attr) return null;
+    names.unshift(attr);
+    cur = cur.childForFieldName("object");
+  }
+  const fn = cur?.type === "call" ? cur.childForFieldName("function") : null;
+  return names.length > 0 && fn?.type === "identifier" ? `${fn.text}().${names.join(".")}` : null;
 }
 
 // ─── Parameter types from docstrings and type comments ───────────────────────
