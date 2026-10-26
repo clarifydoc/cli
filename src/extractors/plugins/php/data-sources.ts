@@ -616,9 +616,15 @@ function assignedAbove(name: string, at: Node): Node | null {
 /** Laravel `DB::` methods whose first argument is a statement. */
 const DB_SQL_METHODS: ReadonlySet<string> = new Set(["select", "selectOne", "scalar", "cursor", "insert", "update", "delete", "statement", "unprepared", "affectingStatement"]);
 
-/** Receivers that are framework bags and stores, never a model or a query: by their last segment. */
+/**
+ * Receivers that are framework bags and stores, never a model or a query: by their last segment.
+ * Also a filesystem disk (`$disk->exists($path)`), a collection already fetched
+ * (`$collection->count()`), the signed-in user `auth()` hands back, and a project
+ * service or factory (`$this->journalService->destroy($j)`), whose own code
+ * carries the access it makes.
+ */
 const NON_MODEL_RECEIVER_RE =
-  /(?:->|^\$)(?:attributes|parameters|headers|cookies|files|server|session|cache|config|messages|bag)$|->(?:query|request)$|->(?:errors|getMessages|getMessageBag|session|cache|config)\(\s*\)$|^(?:session|cache|config)\(\s*\)$/i;
+  /(?:->|^\$)(?:attributes|parameters|headers|cookies|files|server|session|cache|config|messages|bag|disk|storage|filesystem|collection|collections|service|factory)$|(?:->|^\$)\w*(?:Service|Factory)$|->(?:query|request)$|->(?:errors|getMessages|getMessageBag|session|cache|config)\(\s*\)$|^(?:session|cache|config|auth)\(\s*\)$/i;
 
 /** A PDO / mysqli handle or statement by its conventional name: `$pdo->query`, `$stmt->fetchAll()`. */
 const PDO_HANDLE_RE = /^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;

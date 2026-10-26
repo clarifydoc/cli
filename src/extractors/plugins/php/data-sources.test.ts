@@ -258,6 +258,24 @@ class FixtureController extends Controller {
     const rows = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => d.name);
     expect(rows).toEqual(["$this->repository->find", "Club::where('season', $season)->get"]);
   });
+  it("reads no database row from a disk, a fetched collection, the signed-in user or a project service or factory (real-repo FP)", async () => {
+    const src = `<?php
+namespace League\\Http\\Controllers;
+class TransferController extends Controller {
+  public function store(Request $request) {
+    $exists = $disk->exists('squad.csv');
+    $n = $collection->count();
+    $user = auth()->user();
+    $clubs = auth()->user()->clubs()->get();
+    $this->transferService->destroy($transfer);
+    $match = $factory->create($data);
+    return Club::where('season', 2024)->get();
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "TransferController.php");
+    const rows = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => d.name);
+    expect(rows).toEqual(["auth()->user()->clubs()->get", "Club::where('season', 2024)->get"]);
+  });
 });
 
 describe("Laravel DB facade", () => {
