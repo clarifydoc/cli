@@ -1,4 +1,5 @@
-import type { FileAnalysis, DuplicateGroup } from "../types/analysis.js";
+import type { FileAnalysis, DuplicateGroup, Language } from "../types/analysis.js";
+import { BUILTIN_MEMBERS_BY_LANGUAGE } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
 
@@ -27,6 +28,12 @@ const IDIOMATIC_NAMES = new Set([
   "main", "configure", "register", "upgrade", "downgrade",
   "<setup>",
 ]);
+
+/** Calls into code a function needs before its shape is compared. */
+const MIN_SHAPE_CALLS = 3;
+
+/** How alike, by `shapeSimilarity`, a structural duplicate must be to the first of its bucket. */
+const STRUCTURAL_SHAPE_MIN = 0.8;
 
 /** Build a structural fingerprint for a function based on its calls */
 function buildFingerprint(
@@ -60,6 +67,78 @@ function callSimilarity(
 
   const union = new Set([...set1, ...set2]).size;
   return union > 0 ? intersection / union : 0;
+}
+
+/** The words of an identifier, lower-cased and singular: `fetchOperatorCredits` → fetch, operator, credit. */
+function wordsOf(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w.toLowerCase().replace(/(?<=..)s$/, ""));
+}
+
+/**
+ * The shape of a call: its kind and its leaf name without the words of the
+ * entity the function is about — the words of the function's own name and of
+ * its file's. `updatePost` calling `postService.updatePost(…)` and
+ * `updateUser` calling `userService.updateUser(…)` both make a
+ * `cross-file:update` call: two copies of one routine written for different
+ * entities differ in every name and in nothing else.
+ */
+function callShape(call: { name: string; kind: string }, entityWords: ReadonlySet<string>): string {
+  const leaf = call.name.split(/::|->|[.:#]/).pop() ?? call.name;
+  const words = wordsOf(leaf.replace(/^new\s+/, ""));
+  // Each entity word reads `*`: `ClubsAPI.getPlayers` in `getPlayers` and
+  // `LeaguesAPI.getMatches` in `getMatches` are both `*`.
+  const shape = words.map((w) => (entityWords.has(w) ? "*" : w)).join("-").replace(/\*(?:-\*)+/g, "*");
+  return `${call.kind}:${shape}`;
+}
+
+/** The entity words of a function: those of its name and its file's base name. */
+function entityWordsOf(fnName: string, filePath: string): Set<string> {
+  const base = filePath.slice(filePath.lastIndexOf("/") + 1).replace(/\.[^.]*$/, "");
+  return new Set([...wordsOf(fnName), ...wordsOf(base)]);
+}
+
+/** Longest common subsequence of two token lists. */
+function lcsLength(a: readonly string[], b: readonly string[]): number {
+  let prev = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const row = new Array<number>(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = a[i - 1] === b[j - 1] ? prev[j - 1]! + 1 : Math.max(prev[j]!, row[j - 1]!);
+    }
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * How alike two functions' call sequences are by shape (`callShape`), in
+ * order: the longest common subsequence over the longer sequence. Names are
+ * not compared, so the measure finds the copy made for another entity and is
+ * not fooled by shared incidental calls (`console.log`, `JSON.stringify`)
+ * that made unrelated functions look alike by name.
+ */
+function shapeSimilarity(a: readonly string[], b: readonly string[]): number {
+  if (a.length === 0 || b.length === 0) return a.length === b.length ? 1 : 0;
+  return lcsLength(a, b) / Math.max(a.length, b.length);
+}
+
+/**
+ * A function's call shapes, in order — only its calls into code (a leaf the
+ * language lists as a builtin member, `includes`, `push`, `then`, is
+ * evidence of nothing). Null when fewer than three remain: two functions that
+ * each call `includes` twice, or two one-line wrappers forwarding to a store
+ * (`getStore().save(…)`), share no shape worth reporting.
+ */
+function shapesOf(fn: { name: string; calls: { name: string; kind: string }[] }, filePath: string, language: Language): string[] | null {
+  const builtins = BUILTIN_MEMBERS_BY_LANGUAGE.get(language);
+  const entity = entityWordsOf(fn.name, filePath);
+  const calls = fn.calls.filter((c) => !builtins?.has(c.name.split(/::|->|[.:#]/).pop() ?? c.name));
+  return calls.length >= MIN_SHAPE_CALLS ? calls.map((c) => callShape(c, entity)) : null;
 }
 
 /**
@@ -122,7 +201,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   }
 
   // ── Structural fingerprint duplication ──
-  const fingerprints = new Map<string, { filePath: string; name: string; line: number; fn: FileAnalysis["functions"][0] }[]>();
+  const fingerprints = new Map<string, { filePath: string; language: Language; name: string; line: number; fn: FileAnalysis["functions"][0] }[]>();
 
   for (const a of authored) {
     for (const fn of a.functions) {
@@ -132,7 +211,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
 
       const fp = buildFingerprint(fn);
       const existing = fingerprints.get(fp) ?? [];
-      existing.push({ filePath: a.filePath, name: fn.name, line: fn.line, fn });
+      existing.push({ filePath: a.filePath, language: a.language, name: fn.name, line: fn.line, fn });
       fingerprints.set(fp, existing);
     }
   }
@@ -140,11 +219,18 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   for (const [_fp, fns] of fingerprints) {
     if (fns.length < 2) continue;
 
-    // Same fingerprint bucket ≠ same code — keep only members whose calls
-    // actually overlap with the first one's.
-    const similar = [fns[0], ...fns.slice(1).filter(
-      (f) => callSimilarity(fns[0].fn.calls, f.fn.calls) > 0.7,
-    )];
+    // Same fingerprint bucket ≠ same code — keep only members that make the
+    // first one's calls in the same order by shape (kind + leaf without the
+    // entity's words: the copy written for another entity), or the same
+    // calls by name.
+    const anchorShape = shapesOf(fns[0].fn, fns[0].filePath, fns[0].language);
+    const similarity = (f: (typeof fns)[number]): number => {
+      const shape = shapesOf(f.fn, f.filePath, f.language);
+      const byShape = anchorShape && shape ? shapeSimilarity(anchorShape, shape) : 0;
+      const byName = callSimilarity(fns[0].fn.calls, f.fn.calls);
+      return Math.max(byShape >= STRUCTURAL_SHAPE_MIN ? byShape : 0, byName > 0.7 ? byName : 0);
+    };
+    const similar = [fns[0], ...fns.slice(1).filter((f) => similarity(f) > 0)];
     if (similar.length < 2) continue;
     const uniqueFiles = new Set(similar.map((f) => f.filePath));
     if (uniqueFiles.size < 2) continue;
@@ -160,7 +246,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
       occurrences: similar.map((f) => ({
         filePath: f.filePath,
         line: f.line,
-        similarity: Math.round(callSimilarity(fns[0].fn.calls, f.fn.calls) * 100),
+        similarity: Math.round(similarity(f) * 100),
       })),
       kind: "structural",
     });

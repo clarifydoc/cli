@@ -99,3 +99,31 @@ describe("detectDuplicates — structural", () => {
     expect(groups.some((g) => g.kind === "structural")).toBe(true);
   });
 });
+
+describe("detectDuplicates — structural duplicates by shape", () => {
+  it("finds the copy written for another entity, whose every call name differs (real-repo case)", () => {
+    const groups = detectDuplicates([
+      file("store/clubs.ts", [fn("getPlayers", ["commit", "ClubsAPI.getPlayers", "commit", "camelcaseKeys", "throwErrorMessage"])]),
+      file("store/leagues.ts", [fn("getMatches", ["commit", "LeaguesAPI.getMatches", "commit", "camelcaseKeys", "throwErrorMessage"])]),
+    ]);
+    const g = groups.find((x) => x.kind === "structural");
+    expect(g?.functionName).toBe("getPlayers, getMatches");
+    expect(g?.occurrences.map((o) => o.similarity)).toEqual([100, 100]);
+  });
+
+  it("does not pair functions whose shared calls are only builtin members", () => {
+    const groups = detectDuplicates([
+      file("kit/colours.ts", [fn("kitKind", ["[HOME, AWAY].includes", "[THIRD].includes"])]),
+      file("match/events.ts", [fn("shouldNotify", ["Object.keys(changes).includes", "Object.keys(x).includes"])]),
+    ]);
+    expect(groups.filter((x) => x.kind === "structural")).toHaveLength(0);
+  });
+
+  it("does not pair functions whose calls into code differ in what they do", () => {
+    const groups = detectDuplicates([
+      file("club/transfer.ts", [fn("signPlayer", ["validateContract", "ClubsAPI.register", "notifyAgent"])]),
+      file("match/report.ts", [fn("publishReport", ["renderReport", "MatchesAPI.upload", "emailReferee"])]),
+    ]);
+    expect(groups.filter((x) => x.kind === "structural")).toHaveLength(0);
+  });
+});
