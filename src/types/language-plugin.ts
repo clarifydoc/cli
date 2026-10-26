@@ -1148,6 +1148,14 @@ export interface LanguagePluginManifest {
    */
   sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }>;
   /**
+   * Files a default ignore skips that are this ecosystem's SOURCE where a
+   * marker says so: below each `marker` file whose text `markerIs` accepts,
+   * the files matching `pattern` — which must be the very default ignore the
+   * rule lifts — are read too. TypeScript's hand-written types package:
+   * `{ marker: "package.json", pattern: "**\/*.d.ts", markerIs: <a types-only manifest> }`.
+   */
+  readmitFiles?: ReadonlyArray<{ marker: string; pattern: string; markerIs(text: string): boolean }>;
+  /**
    * A file named with this prefix is also importable without it — Sass's
    * partials: `@use "buttons"` loads `_buttons.scss` (and `@use "theme"`
    * a `theme/_index.scss`). Import resolution tries the prefixed name.

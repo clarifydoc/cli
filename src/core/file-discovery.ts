@@ -4,7 +4,7 @@ import { basename, dirname, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
-import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, SOURCE_DIRS } from "../extractors/registry.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, READMIT_FILES, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
@@ -241,6 +241,22 @@ export async function discoverFiles(
       for (const e of inner) {
         const path = `${dir}/${e}`;
         if (!seen.has(path)) { seen.add(path); entries.push(path); }
+      }
+    }
+  }
+
+  // Files a default ignore skips that a plugin's marker says are source (a hand-written types package).
+  if (!options.include?.length) {
+    const seen = new Set(entries);
+    for (const rule of READMIT_FILES) {
+      const lifted = ignore.filter((p) => p !== rule.pattern);
+      for (const m of await glob(`**/${rule.marker}`, { cwd: root, ignore: lifted, caseSensitiveMatch: false, links, prune })) {
+        if (!rule.markerIs(readText(resolve(root, m)))) continue;
+        const dir = m.slice(0, m.length - rule.marker.length).replace(/\/$/, "");
+        for (const e of await glob(rule.pattern, { cwd: resolve(root, dir || "."), ignore: lifted, caseSensitiveMatch: false, links, prune })) {
+          const path = dir ? `${dir}/${e}` : e;
+          if (!seen.has(path)) { seen.add(path); entries.push(path); }
+        }
       }
     }
   }

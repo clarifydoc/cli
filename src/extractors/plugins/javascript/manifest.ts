@@ -101,6 +101,22 @@ export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as c
 /** Files that make a sub-project's exports global without an import. */
 const JS_IMPORTS_BIND_NAMES = { autoImport: /(?:^|\/)(?:nuxt\.config\.[cm]?[jt]s|auto-imports\.d\.ts|\.nuxt\/imports\.d\.ts)$/ };
 
+/**
+ * A hand-written types package: its `package.json` names a `.d.ts` as its
+ * `types` and ships no code (no `main`, `module`, `exports` or `bin`), so its
+ * declaration files are its source, not a compiler's output.
+ */
+export function isTypesOnlyPackage(text: string): boolean {
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const types = pkg.types ?? pkg.typings;
+  return typeof types === "string" && /\.d\.ts$/.test(types) && !["main", "module", "exports", "bin", "browser"].some((k) => k in pkg);
+}
+
 export const typescriptManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   testCommand: jsTestCommand,
@@ -113,6 +129,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   serviceConfig: jsServiceConfig,
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
+  // `*.d.ts` is skipped as compiler output, except in a hand-written types package.
+  readmitFiles: [{ marker: "package.json", pattern: "**/*.d.ts", markerIs: isTypesOnlyPackage }],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   moduleLocalsInScope: true,

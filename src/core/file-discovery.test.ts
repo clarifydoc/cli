@@ -137,3 +137,25 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("App/bin/Debug/Gen.cs");
   });
 });
+
+describe("discoverFiles — a hand-written types package", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "clarifydoc-dts-"));
+    mkdirSync(join(root, "types"), { recursive: true });
+    writeFileSync(join(root, "types", "package.json"), JSON.stringify({ name: "@league/match-events", types: "index.d.ts" }));
+    writeFileSync(join(root, "types", "index.d.ts"), "export * from './Match';\n");
+    writeFileSync(join(root, "types", "Match.d.ts"), "export interface Match { id: string }\n");
+    mkdirSync(join(root, "app", "dist"), { recursive: true });
+    writeFileSync(join(root, "app", "package.json"), JSON.stringify({ name: "league-app", main: "dist/index.js", types: "dist/index.d.ts" }));
+    writeFileSync(join(root, "app", "club.ts"), "export const club = 1;\n");
+    writeFileSync(join(root, "app", "club.d.ts"), "export declare const club: number;\n");
+    writeFileSync(join(root, "app", "dist", "index.d.ts"), "export {};\n");
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("reads the declaration files of a package that ships only types, never a compiled package's", async () => {
+    const files = (await discoverFiles(root)).files.filter((f) => !f.relativePath.endsWith(".json")).map((f) => `${f.relativePath} ${f.language}`);
+    expect(files).toEqual(["app/club.ts typescript", "types/Match.d.ts typescript", "types/index.d.ts typescript"]);
+  });
+});

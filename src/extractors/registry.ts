@@ -357,6 +357,8 @@ export function importsNameDirectories(language: string): boolean {
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
+/** Files a default ignore skips that a marker says are source (`readmitFiles`). */
+export const READMIT_FILES: ReadonlyArray<{ marker: string; pattern: string; markerIs(text: string): boolean }> = ALL_MANIFESTS.flatMap((m) => m.readmitFiles ?? []);
 
 /**
  * Languages whose manifest names a family — programming languages, as opposed
