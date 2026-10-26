@@ -96,9 +96,12 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     write("src/app/admin/manage-club-tokens/manage-club-tokens.component.html", "<button>Revoke</button>\n");
     write("migrations/2020-01-01-000000_password-reset-token/up.sql", "CREATE TABLE password_reset (id INT);\n");
     write("deploy/secrets/league.json", "{}\n");
+    // An Angular component's template named for the one password it changes.
+    write("src/app/account/password/password.html", "<form>New password</form>\n");
     const r = await discoverFiles(root);
     expect(r.files.map((f) => f.relativePath)).toEqual([
       "migrations/2020-01-01-000000_password-reset-token/up.sql",
+      "src/app/account/password/password.html",
       "src/app/admin/manage-club-tokens/manage-club-tokens.component.html",
       "templates/email/password-reset.html",
       "templates/forgot-password.html",

@@ -36,6 +36,9 @@ const SENSITIVE_DIR = /^\.?(?:credential|secret|private_key)s?$/i;
 /** A component's template (`manage-user-tokens.component.html`): the screen of a flow, not a store of what it handles. */
 const PAGE_TEMPLATE = /\.(?:component|page|view|modal|dialog|partial)\.(?:html?|hbs|handlebars|erb|cshtml|razor|jspx?|liquid|twig|mustache|njk|ejs|pug)$/i;
 
+/** Markup named for one secret (an Angular `password.html` beside its `password.ts`) is a page; `passwords.html` may be an export of them. */
+const SINGULAR_MARKUP = /^(?!.*\b(?:credential|secret|passwd|password|token)s\b)[^/]*\.(?:html?|hbs|handlebars|erb|cshtml|razor|jspx?|liquid|twig|mustache|njk|ejs|pug)$/i;
+
 /**
  * Whether a path looks like it holds a credential. A `.env`, a key or a
  * certificate never is read, whatever it is; a file named `secret`/`password`/
@@ -51,7 +54,7 @@ export function isSensitive(relativePath: string, language?: Language): boolean 
   const segments = relativePath.split(/[\\/]/);
   if (segments.slice(0, -1).some((d) => SENSITIVE_DIR.test(d))) return true;
   const base = segments[segments.length - 1]!;
-  if (PAGE_TEMPLATE.test(base)) return false;
+  if (PAGE_TEMPLATE.test(base) || SINGULAR_MARKUP.test(base)) return false;
   // `password-reset.html`, `forgot_password.json`: a flow about a password, not one stored. The file's
   // own name decides — a migration directory named `…_password-reset-token/` holds a schema change.
   const name = base.replace(PASSWORD_FLOW, "");
