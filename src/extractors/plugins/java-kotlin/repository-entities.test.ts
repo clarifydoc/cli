@@ -126,7 +126,7 @@ describe("a DAO whose implementation's SQL names its table", () => {
 describe("a DAO-named call on a project class that reads the data itself", () => {
   it("drops the row named after the receiver; the method's own access stands (real-repo FP)", () => {
     const field = (name: string, type: string) => ({ name, type, visibility: "private" as const, isStatic: false, isReadonly: true });
-    const method = (name: string, line: number, endLine: number) => ({ name, line, endLine, params: [], calls: [], isAsync: false, isExported: true });
+    const method = (name: string, line: number, endLine: number) => ({ name, line, endLine, params: [], calls: [], isAsync: false, isExported: true, returnType: null, decorators: [] });
     const repo = javaFile("src/main/java/league/StadiumCopyRepository.java", {
       classes: [{ name: "StadiumCopyRepository", kind: "class", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 40,
         methods: [method("findStadium", 5, 9), method("evict", 11, 13)] }],

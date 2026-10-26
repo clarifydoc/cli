@@ -1333,6 +1333,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
     // A handle declared as one (`private JdbcTemplate template`) is one whatever it is called.
     if (declared && JDBC_RECEIVER_RE.test(declared) && !NON_DB_SESSION_RE.test(declared)) return true;
+    // A plain JDBC statement (`Statement statement = connection.createStatement()`).
+    if (declared && /^(?:Prepared|Callable)?Statement$/.test(declared)) return true;
     // A query chain on a handle (`em.createQuery(…).getResultList()`) is still that handle's.
     if (!JDBC_RECEIVER_RE.test(leaf) && !/^(?:this\.)?(?:em|entityManager|session)\s*\./i.test(receiver)) return false;
     if (SERVICE_LAYER_NAME_RE.test(leaf) || NON_DB_SESSION_RE.test(leaf)) return false;
@@ -1848,6 +1850,9 @@ function localDeclaredType(node: Node, name: string, raw = false): string | null
           return simple(n.childForFieldName("type")?.text);
         }
       }
+    } else if (n.type === "resource") {
+      // `try (Statement statement = connection.createStatement())`
+      if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
     } else if (n.type === "enhanced_for_statement") {
       // `for (UnitGroupRateCategory c : categories)`
       if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);

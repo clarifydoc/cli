@@ -655,6 +655,14 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(db(split)).toEqual([["createNamedQuery", null]]);
   });
 
+  it("reads a plain JDBC statement declared as a try resource", async () => {
+    const rows = await sourcesOf(`
+    try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+      statement.execute("insert into club (id, name) " + "select 1, 'x'");
+    }`, "java");
+    expect(db(rows)).toEqual([["execute", "club"]]);
+  });
+
   it("types a write of a same-class factory's result by its declared return type", async () => {
     const tree = await parseSource(`class ClubService {
   void move(Club c) { em.persist(copyClub(c)); em.merge(this.copyClub(c)); }
