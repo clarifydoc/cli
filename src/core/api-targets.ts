@@ -627,6 +627,14 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
         if (!m || !passThrough.has(m[1]!)) continue;
         const first = splitArgs(m[2]!)[0]?.trim();
         if (first && /^\/|^\$\{|^https?:/.test(first)) { call.target = first; changed++; }
+        // A module's URL table handed on (`route(routes.clubsBase, query)`, `route(routes.club(id))`), or a
+        // template built on one (`` route(`${routes.club(id)}/players`) ``): what that resolves to.
+        else if (first) {
+          const candidate = /^`[^`]*`$/.test(first) ? first.slice(1, -1)
+            : /^[A-Za-z_$][\w$]*\.[\w$]+(?:\([^()]*(?:\([^()]*\)[^()]*)*\))?$/.test(first) ? `\${${first}}` : null;
+          const value = candidate ? resolveValue(candidate, call.filePath, classAt(call.filePath, call.line), 0) : null;
+          if (value && /^\/|^https?:/.test(value)) { call.target = value; changed++; }
+        }
       }
     }
   }

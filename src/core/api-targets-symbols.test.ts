@@ -333,6 +333,27 @@ export class AdminGroupsApi extends BaseCRUDAPI {
       "/api/admin/groups/{}/duplicate",
     ]);
   });
+
+  it("requests the entry of a module's URL table a pass-through helper is handed (real-repo FP)", async () => {
+    const targets = await project({
+      "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {
+  const url = new URL(parts.prefix + rest, parts.host);
+  return url.toString();
+}`,
+      "src/clubs.ts": `
+import { route } from "./base/route";
+const prefix = "/api";
+const routes = {
+  clubsBase: \`\${prefix}/clubs\`,
+  clubsSuggestions: \`\${prefix}/clubs/suggestions\`,
+};
+export class ClubsApi {
+  async search(q: Record<string, string>) { return await this.requests.get(route(routes.clubsBase, q)); }
+  async suggest(q: Record<string, string>) { return await this.requests.get(route(routes.clubsSuggestions, { ...q })); }
+}`,
+    });
+    expect(targets.map((t) => t[0]).sort()).toEqual(["/api/clubs", "/api/clubs/suggestions"]);
+  });
 });
 
 
