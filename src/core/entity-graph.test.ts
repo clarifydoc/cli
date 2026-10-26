@@ -356,6 +356,17 @@ describe("reconcileEntityInheritance", () => {
     reconcileEntityInheritance([sql]);
     expect(sql.classes[1]!.decorators).toEqual(["index"]);
   });
+
+  it("does not make a test's subclass of a production model an entity (real-repo FP)", () => {
+    const model = { filePath: "src/main/java/com/example/league/TrackedEntity.java", language: "java", classes: [{ name: "TrackedEntity", decorators: ["entity", "jpa", "abstract"], properties: [], line: 1 }] } as unknown as FileAnalysis;
+    const stub = { name: "StubClub", extends: "TrackedEntity", decorators: [] as string[], properties: [], line: 9 };
+    const sub = { name: "Club", extends: "TrackedEntity", decorators: [] as string[], properties: [], line: 3 };
+    const test = { filePath: "src/test/java/com/example/league/TrackedEntityTest.java", language: "java", classes: [stub] } as unknown as FileAnalysis;
+    const main = { filePath: "src/main/java/com/example/league/Club.java", language: "java", classes: [sub] } as unknown as FileAnalysis;
+    reconcileEntityInheritance([model, test, main]);
+    expect(stub.decorators).toEqual([]);
+    expect(sub.decorators).toEqual(["entity", "jpa"]);
+  });
 });
 
 describe("buildEntityGraph — a schema table in a sub-project of its own", () => {

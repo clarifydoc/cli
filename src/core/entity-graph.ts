@@ -72,14 +72,17 @@ function bareName(name: string | null): string | null {
 export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
   // Index every class by its bare name (superclass references are usually bare).
   // An API description's schema of the same name is no base class of code: each side inherits within itself.
-  const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean }>>();
+  const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean; test: boolean }>>();
+  const testFile = new Map<string, boolean>();
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
+    const test = isTestFile(a.filePath, a.language);
+    testFile.set(a.filePath, test);
     for (const c of a.classes ?? []) {
       const b = bareName(c.name);
       if (!b) continue;
       const arr = byBare.get(b) ?? [];
-      arr.push({ c, contract });
+      arr.push({ c, contract, test });
       byBare.set(b, arr);
     }
   }
@@ -97,8 +100,11 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
         if ((c.decorators ?? []).some((d) => d === "index" || d === "sequence" || d === "schema")) continue;
         const parentName = bareName(c.extends);
         if (!parentName) continue;
-        const parent = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c))?.c;
-        if (!parent) continue;
+        const hit = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c));
+        // A test's subclass of a production model (`class StubClub extends Club` to reach
+        // its protected hooks) is a test double, not another model.
+        if (!hit || (testFile.get(a.filePath) && !hit.test)) continue;
+        const parent = hit.c;
         const orm = ormOf(parent.decorators ?? []) ?? "active-record";
         // jOOQ tables have no real STI — their subclasses are generated
         // artifacts (`XPath`, `XRecord`), not entities. Don't propagate.
