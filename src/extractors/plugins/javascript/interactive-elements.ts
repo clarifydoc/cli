@@ -233,6 +233,19 @@ export function extractVueInteractiveElements(
       });
     }
 
+    // A function handed to a component as a prop (`:add="(club) => create.mutateAsync(club)"`):
+    // the child calls it as `props.add(…)`, as it would emit an event bound with `@add`.
+    if (resolveVueElementType(tagName) === "custom" && attrs.includes("=>")) {
+      const bindRegex = /(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)=(?:"([^"]*)"|'([^']*)')/g;
+      let bindMatch: RegExpExecArray | null;
+      while ((bindMatch = bindRegex.exec(attrs)) !== null) {
+        const value = (bindMatch[2] ?? bindMatch[3] ?? "").trim();
+        // Vue's own attributes are no props: a function `:ref` receives the element.
+        if (!INLINE_FUNCTION.test(value) || VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
+        elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+      }
+    }
+
     // Find v-model
     if (attrs.includes("v-model")) {
       const vmodelTag = tagName.toLowerCase();
@@ -250,6 +263,12 @@ export function extractVueInteractiveElements(
 
   return elements;
 }
+
+/** Attributes Vue handles itself, never passed to the component as props. */
+const VUE_RESERVED_ATTRS = new Set(["ref", "key", "is", "class", "style", "slot"]);
+
+/** An arrow or function expression as written in markup: `(a, b) => …`, `club => …`, `async () => …`. */
+const INLINE_FUNCTION = /^(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>|^(?:async\s+)?function\b/;
 
 function resolveVueElementType(tagName: string): InteractiveElementInfo["element"] {
   const lower = tagName.toLowerCase();

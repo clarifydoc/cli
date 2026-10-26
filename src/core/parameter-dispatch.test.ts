@@ -85,6 +85,15 @@ func playersCreate(in *struct {
 }) error {
 	return handler.DoCreate(&in.Body)
 }
+
+// A composite literal handed straight to the handler names its type, whatever the caller's own types say.
+func clubsImport(in *struct {
+	Body models.Player
+}) error {
+	return handler.DoCreate(&models.Club{
+		Name: in.Body.Name,
+	})
+}
 `,
   // A v1-style generic web handler: the type it works on is the one its EmptyStruct field returns.
   "pkg/web/handler/web.go": `package handler
@@ -147,6 +156,13 @@ describe("a generic handler dispatching on its caller's type", () => {
       .filter((l) => l.sourceSymbol === "clubsCreate" && l.strategy === "interface-redirect")
       .map((l) => `${l.callName} -> ${l.targetSymbol}`);
     // The promoted method is the embedded interface's own.
+    expect(links.sort()).toEqual(["obj.CanCreate -> Permissions.CanCreate", "obj.Create -> Club.Create"]);
+  });
+
+  it("binds the handler to the type of a composite literal the call hands it", () => {
+    const links = (summary.symbolLinks ?? [])
+      .filter((l) => l.sourceSymbol === "clubsImport" && l.strategy === "interface-redirect")
+      .map((l) => `${l.callName} -> ${l.targetSymbol}`);
     expect(links.sort()).toEqual(["obj.CanCreate -> Permissions.CanCreate", "obj.Create -> Club.Create"]);
   });
 

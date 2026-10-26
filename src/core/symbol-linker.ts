@@ -534,7 +534,15 @@ function parameterDispatchLinks(
     const caller = dispatches ? fnAt.get(`${l.sourceFile}\0${l.sourceSymbol}`) : undefined;
     if (!dispatches || !caller) continue;
     const mentioned = [...caller.params.map((p) => p.type ?? ""), ...(caller.localTypes ?? []).map((t) => t.type ?? "")].join(" ");
-    dispatchTo(l, dispatches, mentioned);
+    // A composite literal the call hands the dispatching parameter names its type outright
+    // (`DoReadAll(ctx, &models.Club{}, a)`), whatever else the caller's types mention.
+    const site = caller.calls.find((c) => c.line === l.sourceLine && c.name === l.callName && c.args);
+    const handler = site ? fnAt.get(`${l.targetFile}\0${l.targetSymbol}`) : undefined;
+    for (const d of dispatches) {
+      const arg = handler ? site!.args![handler.params.findIndex((p) => p.name === d.param)] : undefined;
+      const literal = arg ? /^&?([\w.]+)\{/.exec(arg)?.[1] : undefined;
+      dispatchTo(l, [d], literal ?? mentioned);
+    }
   }
 
   // A route whose handler's receiver is built for one type (`RouteInfo.handlerTypes`: a Go

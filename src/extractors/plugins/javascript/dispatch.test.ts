@@ -215,6 +215,43 @@ describe("JsPropCallbackResolver — React callback props", () => {
   });
 });
 
+describe("JsPropCallbackResolver — Vue function props", () => {
+  it("links a child's props.x() call to the inline function the parent's markup binds (real-repo FP)", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const { markupFunctions } = await import("./markup-calls.js");
+    const { extractVueInteractiveElements } = await import("./interactive-elements.js");
+    const template = `<template>
+  <ClubShareList
+    :club-id="clubId"
+    :add="(clubId, player) => createShare.mutateAsync({clubId, name: player.name})"
+    :update-role="(clubId, share, role) => updateShare.mutateAsync({clubId, role})"
+    :ref="(el) => setListRef(el)"
+  />
+</template>`;
+    const elements = extractVueInteractiveElements(template, template);
+    expect(elements.map((e) => e.event)).toEqual([":add", ":update-role"]);
+    const fns = markupFunctions(elements, "src/ClubSharing.vue");
+    expect(fns.map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "<ClubShareList:add@2>: createShare.mutateAsync",
+      "<ClubShareList:update-role@2>: updateShare.mutateAsync",
+    ]);
+    const parent = fa("src/ClubSharing.vue", {
+      functions: fns,
+      interactiveElements: elements,
+      subComponents: [{ name: "ClubShareList", importSource: "./ClubShareList.vue", props: [], line: 2 }],
+    });
+    const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line });
+    const child = fa("src/ClubShareList.vue", {
+      functions: [{ ...fn("addSelected", 10, 14), calls: [call("props.add", 12)] }, { ...fn("changeRole", 16, 20), calls: [call("props.updateRole", 18)] }],
+    });
+    const links = new JsPropCallbackResolver().resolve([parent, child]);
+    expect(links.map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol}`).sort()).toEqual([
+      "addSelected -props.add-> <ClubShareList:add@2>",
+      "changeRole -props.updateRole-> <ClubShareList:update-role@2>",
+    ]);
+  });
+});
+
 describe("component-emit through a Nuxt project's auto-imported components", () => {
   it("joins a tag the parent never imports to the component file of that name, and an emit made in the child's markup", () => {
     const config = fa("web/nuxt.config.ts", { projectId: "web" } as Partial<FileAnalysis>);

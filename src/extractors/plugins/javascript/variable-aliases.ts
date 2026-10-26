@@ -12,6 +12,8 @@ import { containerLookup } from "./di.js";
  *   - constructed:   `const prisma = new PrismaClient()` → prisma → "@prisma/client"
  *   - whole object:  `const userStore = useUserStore()` → userStore → "../stores/users"
  *     (lets `userStore.save()` classify as a cross-file call into that module)
+ *   - typed member:  `actions: ReturnType<typeof useShopCart>["actions"]` (a prop)
+ *     → "actions" → the factory's module, as if destructured from its call
  *   - destructured:  `const { refreshCart, updateCartItemQuantity } = useShopCart()`
  *     → each member name → "../composables/useShopCart"
  *     (the calls are BARE names afterwards — without this they read as
@@ -56,6 +58,17 @@ export function extractJsVariableAliases(
   }
 
   function walk(node: Node) {
+    // A member typed as what a factory returns — a component prop
+    // `actions: ReturnType<typeof useMatches>["actions"]` — is that factory's
+    // object as much as `const { actions } = useMatches()` would be: a template's
+    // `actions.createOne($event)` is a call into the factory's module.
+    if (node.type === "property_signature") {
+      const name = node.childForFieldName("name");
+      const type = node.childForFieldName("type")?.text.replace(/^:\s*/, "");
+      const m = type?.match(/^ReturnType<\s*typeof\s+([A-Za-z_$][\w$]*)\s*>(?:\s*\[\s*["'][\w$]+["']\s*\])?$/);
+      // `typeof useMatches` may name a type-only import of the factory: it still names its module.
+      if (name?.type === "property_identifier" && m) bind(name.text, importMap.get(m[1]!) ?? imports.find((i) => i.specifiers.includes(m[1]!))?.source ?? "", m[1]!);
+    }
     // Match: const/let/var <pattern> = importedFn()
     if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
       for (const decl of node.children) {

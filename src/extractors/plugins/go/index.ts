@@ -1,6 +1,7 @@
 import { extractGoPathArgCalls } from "./path-arg-calls.js";
 import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
+import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
 import type { ParamInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -112,6 +113,9 @@ export const goSpec: RegexLangSpec = {
    */
   classPatterns: [],
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
+  // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
+  postProcessFunctions: withCompositeArgs,
+  postProcessClasses: withCompositeArgsInClasses,
 
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),

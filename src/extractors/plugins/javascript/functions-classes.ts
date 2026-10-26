@@ -32,6 +32,8 @@ interface ScanContext {
   tokenTypes: ReadonlyMap<string, string>;
   /** Props `connect(…, mapDispatchToProps)` binds to action creators (see `dispatchPropsOf`). */
   dispatchProps: ReadonlyMap<string, string>;
+  /** Names `connect(…, x)` is handed as its dispatch mapper (see `dispatchMappersOf`). */
+  dispatchMappers: ReadonlySet<string>;
   /** Top-level `const x = 'literal'` of the file (see `moduleStringConstants`). */
   moduleStrings: ReadonlyMap<string, string>;
 }
@@ -319,7 +321,7 @@ function declaredLocal(
  * file sees when its own scope does not bind the name.
  */
 export function topLevelLocalTypes(tree: Tree, sourceText: string): LocalType[] {
-  const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), moduleStrings: new Map() };
+  const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map() };
   const locals = scanBody(tree.rootNode, new Set(), ctx).localTypes;
   return sourceText.includes("new ") ? [...locals, ...objectPathTypes(tree.rootNode)] : locals;
 }
@@ -895,7 +897,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * `extractClasses` are each called once per file, synchronously — the one
    * instance is shared by the typescript and javascript metas).
    */
-  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), moduleStrings: new Map() };
+  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map() };
   private ctxTree: Tree | null = null;
   /** Whether the file defines a Pinia store (a substring gate, see `piniaStoreOf`). */
   private pinia = false;
@@ -998,6 +1000,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
       dispatchProps: sourceText.includes("connect(") ? dispatchPropsOf(tree.rootNode) : new Map(),
+      dispatchMappers: sourceText.includes("connect(") ? dispatchMappersOf(tree.rootNode) : new Set(),
       moduleStrings: sourceText.includes("class ") ? moduleStringConstants(tree.rootNode) : new Map(),
     };
   }
@@ -1141,6 +1144,10 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // it builds belongs to that operation, not to the factory.
               const members = !built && moduleLevel && isExported ? functionObjectReturned(value) : null;
               if (members) this.extractObjectMembers(name, members, functions, false, 0);
+              // react-redux's function-form `mapDispatchToProps = dispatch => ({ onSave: … })`: each
+              // member is the prop a component calls (`this.props.onSave(club)`), a function of its own.
+              const mapped = !built && !members && moduleLevel && this.ctx.dispatchMappers.has(name) ? factoryObject(value) : null;
+              if (mapped) this.extractObjectMembers(name, mapped, functions, false, 0);
             } else if (name && wrapped) {
               // `const save = useCallback(async () => {…}, [deps])`,
               // `const Row = memo((props) => …)` — the wrapper returns the
@@ -2036,19 +2043,31 @@ function knownFieldValues(values: ReadonlyMap<string, string | null>): { fieldVa
  * react-redux `connect(mapStateToProps, mapDispatchToProps)`: an object of
  * action creators, as a variable or inline — `{ lookupMovie, dispatchFetchX: fetchX }`
  * → `lookupMovie → lookupMovie`, `dispatchFetchX → fetchX`. The component calls
- * them as `this.props.lookupMovie()`, a name nothing defines.
+ * them as `this.props.lookupMovie()`, a name nothing defines. The function form,
+ * `const mapDispatchToProps = dispatch => ({ onSave: club => dispatch(…) })`,
+ * binds each member of the object it returns: `onSave → mapDispatchToProps.onSave`,
+ * the function its member is extracted as (`dispatchMappersOf`).
  */
 function dispatchPropsOf(root: Node): Map<string, string> {
   const out = new Map<string, string>();
   const objects = new Map<string, Node>();
+  const mappers = new Map<string, Node>();
   for (const decl of root.descendantsOfType("variable_declarator")) {
     const name = decl.childForFieldName("name");
     const value = decl.childForFieldName("value");
     if (name?.type === "identifier" && value?.type === "object") objects.set(name.text, value);
+    if (name?.type === "identifier" && (value?.type === "arrow_function" || value?.type === "function_expression")) mappers.set(name.text, value);
   }
   for (const call of root.descendantsOfType("call_expression")) {
     if (call.childForFieldName("function")?.text !== "connect") continue;
     const arg = call.childForFieldName("arguments")?.namedChildren[1];
+    const mapper = arg?.type === "identifier" ? mappers.get(arg.text) : undefined;
+    const built = mapper ? factoryObject(mapper) : null;
+    for (const member of built?.namedChildren ?? []) {
+      const key = objectKeyName(member.type === "method_definition" ? member.childForFieldName("name") : member.childForFieldName("key"));
+      const isFn = member.type === "method_definition" || /^(?:arrow_function|function_expression)$/.test(member.childForFieldName("value")?.type ?? "");
+      if (key && isFn) out.set(key, `${arg!.text}.${key}`);
+    }
     const obj = arg?.type === "object" ? arg : arg?.type === "identifier" ? objects.get(arg.text) : undefined;
     for (const entry of obj?.namedChildren ?? []) {
       if (entry.type === "shorthand_property_identifier") out.set(entry.text, entry.text);
@@ -2058,6 +2077,17 @@ function dispatchPropsOf(root: Node): Map<string, string> {
         if (key && value?.type === "identifier") out.set(key, value.text);
       }
     }
+  }
+  return out;
+}
+
+/** The function-form dispatch mappers `connect(…)` is handed: their returned members are functions of their own. */
+function dispatchMappersOf(root: Node): Set<string> {
+  const out = new Set<string>();
+  for (const call of root.descendantsOfType("call_expression")) {
+    if (call.childForFieldName("function")?.text !== "connect") continue;
+    const arg = call.childForFieldName("arguments")?.namedChildren[1];
+    if (arg?.type === "identifier") out.add(arg.text);
   }
   return out;
 }

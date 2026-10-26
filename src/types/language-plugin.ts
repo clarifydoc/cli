@@ -614,6 +614,13 @@ export interface AstExtractorHooks {
    */
   markupCalls?(elements: readonly InteractiveElementInfo[], filePath: string): import("./analysis.js").CallInfo[];
   /**
+   * Functions the markup itself defines: an inline function handed to a child
+   * component as a prop (Vue `:add="(club) => create.mutateAsync(club)"`) runs
+   * when the child calls the prop, so it is a function of its own — named
+   * `<Tag:prop@line>` — whose calls core classifies like the script's.
+   */
+  markupFunctions?(elements: readonly InteractiveElementInfo[], filePath: string): import("./analysis.js").FunctionInfo[];
+  /**
    * UI screens for tree-sitter languages with designer/markup code embedded in
    * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use
    * `RegexLangSpec.extractScreens` instead.

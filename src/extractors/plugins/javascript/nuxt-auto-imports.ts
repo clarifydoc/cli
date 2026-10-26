@@ -50,7 +50,8 @@ export function nuxtAutoImports(analyses: FileAnalysis[]): number {
       const wanted = new Map<string, { source: string; line: number }>();
       const calls = [...a.functions, ...a.classes.flatMap((c) => c.methods)].flatMap((fn) => fn.calls);
       for (const call of calls) {
-        if (call.kind !== "internal") continue;
+        // A member of what a project composable returned is no ORM call, whatever its verb (`actions.updateOne`).
+        if (call.kind !== "internal" && !(call.kind === "database" && call.via)) continue;
         // `useGarage()` itself, and a member of what it returned (`park()` from `const { park } = useGarage()`).
         const direct = /^[A-Za-z_$][\w$]*$/.test(call.name) ? moduleOf(call.name) : null;
         const source = direct ?? moduleOf(call.via);

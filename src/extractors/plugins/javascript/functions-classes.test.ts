@@ -347,6 +347,27 @@ export default connect(createMapStateToProps, mapDispatchToProps)(AddNewMovieCon
   });
 });
 
+describe("JavaScriptExtractor — function-form mapDispatchToProps", () => {
+  it("extracts each returned member and adds it to a `this.props.x()` call", async () => {
+    const src = `import agent from '../agent';
+const mapDispatchToProps = dispatch => ({
+  onSaveClub: club => dispatch({ type: CLUB_SAVED, payload: agent.Clubs.save(club) }),
+  onLeave: () => dispatch({ type: LEAVE }),
+});
+class ClubSettings extends React.Component {
+  submit(club) { this.props.onSaveClub(club); }
+}
+export default connect(mapStateToProps, mapDispatchToProps)(ClubSettings);`;
+    const tree = await parseSource(src, "javascript" as never, "ClubSettings.js");
+    const extractor = new JavaScriptExtractor();
+    const fns = extractor.extractFunctions(tree, src);
+    expect(fns.map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toContain("mapDispatchToProps.onSaveClub: dispatch,agent.Clubs.save");
+    expect(fns.map((f) => f.name)).toContain("mapDispatchToProps.onLeave");
+    const [cls] = extractor.extractClasses(tree, src);
+    expect(cls!.methods[0]!.calls.map((c) => c.name)).toEqual(["this.props.onSaveClub", "mapDispatchToProps.onSaveClub"]);
+  });
+});
+
 describe("TypeScript namespaces", () => {
   it("extracts the classes a namespace block holds, nested or exported", async () => {
     const classes = await classesOf(`

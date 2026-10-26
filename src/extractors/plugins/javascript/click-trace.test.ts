@@ -158,6 +158,21 @@ function two() { const query = useLaps(); query.refetch(); }`;
     expect(aliases.get("query")).toEqual({ source: "./laps", factory: "useLaps" });
   });
 
+  it("binds a prop typed as what a factory returns to that factory, through a type-only import (real-repo FP)", async () => {
+    const imports = [{ source: "~/composables/use-fixtures", specifiers: ["useFixtures"], line: 1, isType: true }] as unknown as ImportInfo[];
+    const src = `import type { useFixtures } from "~/composables/use-fixtures";
+interface Props {
+  actions: ReturnType<typeof useFixtures>["actions"];
+  standings: ReturnType<typeof useStandings>;
+  day: Date;
+}`;
+    const tree = await parse(src, "x.ts");
+    const aliases = extractJsVariableAliases(tree, imports);
+    expect(aliases.get("actions")).toEqual({ source: "~/composables/use-fixtures", factory: "useFixtures" });
+    expect(aliases.get("standings")).toEqual({ source: "", factory: "useStandings" });
+    expect(aliases.has("day")).toBe(false);
+  });
+
   it("drops a name bound to DIFFERENT sources (ambiguous) rather than guessing", async () => {
     const imports = [
       { source: "./a", specifiers: ["useA"], line: 1 },

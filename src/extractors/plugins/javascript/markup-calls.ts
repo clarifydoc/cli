@@ -1,4 +1,4 @@
-import type { CallInfo, InteractiveElementInfo } from "../../../types/analysis.js";
+import type { CallInfo, FunctionInfo, InteractiveElementInfo } from "../../../types/analysis.js";
 
 /** Single-file components whose template sits outside every script function. */
 const SFC = /\.(?:vue|svelte)$/;
@@ -25,13 +25,47 @@ export function markupCalls(elements: readonly InteractiveElementInfo[], filePat
   };
   for (const el of elements) {
     const handler = el.handler?.trim();
-    if (!handler) continue;
+    // A function handed down as a prop is its own function (`markupFunctions`).
+    if (!handler || isPropFunction(el)) continue;
     const bare = handler.replace(/^(?:void|await)\s+/, "");
     if (CHAIN.test(bare)) {
       add(bare, el.line);
       continue;
     }
     for (const m of handler.matchAll(CALLEE)) add(m[1]!, el.line);
+  }
+  return out;
+}
+
+/** A function the markup hands a component as a prop (`:add="(club) => …"`). */
+function isPropFunction(el: InteractiveElementInfo): boolean {
+  return el.element === "custom" && !!el.component && el.event.startsWith(":");
+}
+
+/** The name of the function a prop binding defines: `<ClubList:add@14>`. */
+export function propFunctionName(component: string, event: string, line: number): string {
+  return `<${component}${event}@${line}>`;
+}
+
+/**
+ * The functions a Vue/Svelte template hands components as props: each inline
+ * function is a function of its own, named for its tag, prop and line, holding
+ * the calls its body spells — what runs when the child calls the prop.
+ */
+export function markupFunctions(elements: readonly InteractiveElementInfo[], filePath: string): FunctionInfo[] {
+  if (!SFC.test(filePath)) return [];
+  const out: FunctionInfo[] = [];
+  for (const el of elements) {
+    if (!isPropFunction(el) || !el.handler) continue;
+    const calls: CallInfo[] = [];
+    const seen = new Set<string>();
+    for (const m of el.handler.matchAll(CALLEE)) {
+      const name = m[1]!;
+      if (SKIP.test(name) || name.startsWith("$") || seen.has(name)) continue;
+      seen.add(name);
+      calls.push({ name, kind: "internal", target: null, line: el.line });
+    }
+    out.push({ name: propFunctionName(el.component!, el.event, el.line), params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls, line: el.line, endLine: el.line });
   }
   return out;
 }

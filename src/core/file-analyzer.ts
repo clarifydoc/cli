@@ -612,6 +612,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       }
       setup.calls.push(...classified);
     }
+    for (const fn of hooks?.markupFunctions?.(analysis.interactiveElements, file.relativePath) ?? []) {
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
+      analysis.functions.push(fn);
+    }
 
     // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
     // comes from where the file sits. Skipped for test files, same as

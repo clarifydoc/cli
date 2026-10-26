@@ -1,6 +1,7 @@
 import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
+import { propFunctionName } from "./markup-calls.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -174,8 +175,10 @@ function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
  * element on the child's TAG binds prop `onX` to a handler → the tag's import
  * resolves to the child's file → the child references `onX`. A parent handler
  * that is itself a prop (drilled through) is followed up its own parents, up to
- * four levels. Only `on[A-Z]…` props: React's convention for callbacks, which
- * keeps data props out. One link per child function calling the prop (callName
+ * four levels. Only `on[A-Z]…` props — React's convention for callbacks, which
+ * keeps data props out — and Vue props the parent's markup binds to an inline
+ * function (`:add="(club) => create.mutateAsync(club)"`, extracted as its own
+ * function by `markupFunctions`), which the child calls as `props.add(…)`. One link per child function calling the prop (callName
  * as written, so the report resolves `onPress={onModalClose}` through it), or
  * from `<template>` when only the markup uses it.
  */
@@ -190,10 +193,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const globals = globalComponentFiles(analyses, filePathMap);
     const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
-    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string }>>>();
+    // `bound`: the function a Vue template's inline prop function is extracted as.
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string }>>>();
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
-        (el) => el.element === "custom" && el.component && el.handler && PROP_CALLBACK.test(el.event),
+        (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event)),
       );
       if (els.length === 0) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
@@ -203,8 +207,10 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
         if (!childFile || !byPath.has(childFile)) continue;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
-        const list = byProp.get(el.event) ?? byProp.set(el.event, []).get(el.event)!;
-        list.push({ parent, handler: el.handler! });
+        // Vue's `:update-permission="…"` is the child's `props.updatePermission`.
+        const prop = VUE_PROP.test(el.event) ? camelProp(el.event.slice(1)) : el.event;
+        const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
+        list.push({ parent, handler: el.handler!, ...(VUE_PROP.test(el.event) ? { bound: propFunctionName(el.component!, el.event, el.line) } : {}) });
       }
     }
     if (bindings.size === 0) return [];
@@ -219,6 +225,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
       seen.add(key);
       const out: Array<{ file: string; span: SymbolSpan }> = [];
       for (const b of bindings.get(file)?.get(prop) ?? []) {
+        const inline = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
+        if (inline) {
+          out.push({ file: b.parent.filePath, span: inline });
+          continue;
+        }
         const name = cleanHandler(b.handler);
         if (!name) continue;
         const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
@@ -265,6 +276,13 @@ export class JsPropCallbackResolver implements DispatchResolver {
 
 /** React's callback-prop convention: `onPress`, `onModalClose`. */
 const PROP_CALLBACK = /^on[A-Z]\w*$/;
+/** A Vue prop bound to a function in markup (`:add="(club) => …"`, see `markupFunctions`). */
+const VUE_PROP = /^:[a-zA-Z][\w-]*$/;
+
+/** `update-permission` → `updatePermission`: how the child's script names a prop the template kebab-cases. */
+function camelProp(prop: string): string {
+  return prop.replace(/-([a-z\d])/g, (_, c: string) => c.toUpperCase());
+}
 
 interface SymbolSpan {
   symbol: string;

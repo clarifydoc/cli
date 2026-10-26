@@ -3,7 +3,7 @@ import { extractAttributeReads } from "./attribute-reads.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases } from "./type-aliases.js";
-import { markupCalls } from "./markup-calls.js";
+import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nestPrefixResolver } from "./routes/nestjs.js";
@@ -227,6 +227,7 @@ function astHooks(language: Language): AstExtractorHooks {
     },
     events: (sourceText) => extractEvents(sourceText, language),
     markupCalls,
+    markupFunctions,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),
