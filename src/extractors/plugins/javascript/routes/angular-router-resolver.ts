@@ -13,6 +13,7 @@ import { ANGULAR_LOAD_CHILDREN_FACT, joinChild } from "./vue-router.js";
  * imports it; a module loaded by a module is composed after its loader, so
  * the chain reads outermost first. A module two records load takes the first.
  * A loader row whose module serves its own path (`path: ''`) yields to it.
+ * A module that only lists imported records composes the files they come from.
  */
 export const angularRouterResolver: RouteResolver = {
   id: "angular-load-children",
@@ -29,6 +30,18 @@ export const angularRouterResolver: RouteResolver = {
       }
     }
     if (loads.length === 0) return;
+    // A module whose records are imported route objects (`const accountRoutes: Routes = [registerRoute,
+    // settingsRoute]` with each record in a file of its own): those files are loaded with it.
+    for (const load of [...loads]) {
+      if (load.target.routes.some((r) => r.kind === "frontend")) continue;
+      for (const imp of load.target.imports) {
+        const file = ctx.resolveModule(load.target.filePath, imp.source);
+        const records = file && file !== load.target.filePath ? ctx.fileOf(file) : undefined;
+        if (records?.routes.some((r) => r.kind === "frontend") && !loads.some((l) => l.target === records)) {
+          loads.push({ a: load.a, line: load.line, target: records });
+        }
+      }
+    }
     const loaded = new Set(loads.map((l) => l.target));
     const composed = new Set<FileAnalysis>();
     for (let round = 0; round < 6; round++) {

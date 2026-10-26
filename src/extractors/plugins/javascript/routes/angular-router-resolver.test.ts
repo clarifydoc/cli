@@ -18,8 +18,23 @@ const routes: Routes = [
   { path: '', loadComponent: () => import('./home/home') },
   { path: 'admin', loadChildren: () => import('./admin/admin.routes') },
   { path: '', loadChildren: () => import('./entities/entity.routes') },
+  { path: 'account', loadChildren: () => import('./account/account.route') },
 ];
 export default routes;
+`,
+  "src/app/account/account.route.ts": `import { Routes } from '@angular/router';
+import registerRoute from './register/register.route';
+import settingsRoute from './settings/settings.route';
+const accountRoutes: Routes = [registerRoute, settingsRoute];
+export default accountRoutes;
+`,
+  "src/app/account/register/register.route.ts": `import { Route } from '@angular/router';
+const registerRoute: Route = { path: 'register', loadComponent: () => import('./register') };
+export default registerRoute;
+`,
+  "src/app/account/settings/settings.route.ts": `import { Route } from '@angular/router';
+const settingsRoute: Route = { path: 'settings', loadComponent: () => import('./settings') };
+export default settingsRoute;
 `,
   "src/app/admin/admin.routes.ts": `import { Routes } from '@angular/router';
 const routes: Routes = [
@@ -70,7 +85,7 @@ describe("Angular loadChildren", () => {
 
   it("serves each lazy module's routes under the record that loads it, through two levels", () => {
     const paths = (summary.routeMap ?? [])
-      .filter((r) => r.kind === "frontend" && /\/(?:club|player|admin)\//.test(r.filePath ?? ""))
+      .filter((r) => r.kind === "frontend" && /\/(?:club|player|admin|register|settings)\//.test(r.filePath ?? ""))
       .map((r) => `${(r.filePath ?? "").split("/").slice(-2).join("/")} ${r.path}`)
       .sort();
     expect(paths).toEqual([
@@ -81,6 +96,9 @@ describe("Angular loadChildren", () => {
       "player/player.routes.ts player",
       "player/player.routes.ts player/:id/view",
       "player/player.routes.ts player/new",
+      // A module that lists records imported from their own files.
+      "register/register.route.ts account/register",
+      "settings/settings.route.ts account/settings",
     ]);
   });
 });
