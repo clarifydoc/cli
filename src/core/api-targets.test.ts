@@ -57,6 +57,16 @@ describe("finalizeApiTargets", () => {
     expect(rows[0]).toMatchObject({ target: "/series/${id}", baseExpr: "this.baseUrl" });
     expect(rows[1]!.target).toBe("${y}z");
   });
+
+  it("states no URL for a method call where the URL would be (real-repo FP)", () => {
+    const rows = [
+      { kind: "api-call", name: "get", target: "this.previewUrl()", line: 1, calls: [], filePath: "a.ts" },
+      { kind: "api-call", name: "get", target: "${this.matches}.getDownloadUrl( this.matchId(), false )", line: 2, calls: [], filePath: "a.ts" },
+      { kind: "api-call", name: "get", target: "${this.api}clubs/${id}", line: 3, calls: [], filePath: "a.ts" },
+    ] as (DataSourceInfo & { filePath: string })[];
+    expect(finalizeApiTargets(rows)).toBe(3);
+    expect(rows.map((r) => r.target)).toEqual([null, null, "/clubs/${id}"]);
+  });
 });
 
 describe("expandRequestFactories", () => {
