@@ -132,6 +132,7 @@ import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
+import { applyAutoImports } from "../extractors/imports-exports/auto-imports.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
@@ -1043,6 +1044,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // One project-wide import index, shared across the router mount resolver and
   // every serial builder that resolves cross-file references (screens, type
   // blast, class graph). Building it once avoids re-iterating all imports.
+  // Names a framework puts in scope without an import line, as the imports they stand for.
+  const autoImportCount = applyAutoImports(allAnalyses);
+  if (autoImportCount > 0 && verbose) progress.detail(`  auto-imported names: ${autoImportCount}`);
+
   const importIndex = buildImportIndex(allAnalyses);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));

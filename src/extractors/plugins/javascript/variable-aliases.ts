@@ -68,7 +68,25 @@ export function extractJsVariableAliases(
         if (!isCtor && valueNode.type !== "call_expression") continue;
         const fnNode = valueNode.childForFieldName(isCtor ? "constructor" : "function");
         const fnName = fnNode?.text;
-        if (!fnName || !importMap.has(fnName)) continue;
+        if (!fnName) continue;
+        // A factory the file calls by a bare name it does not import (`useGarage()` in a Nuxt page,
+        // whose framework imports it): the binding keeps the factory with no source, so a member
+        // call remembers it (`CallInfo.via`) for the project pass that knows the module.
+        if (!importMap.has(fnName)) {
+          if (!isCtor && /^[A-Za-z_$][\w$]*$/.test(fnName)) {
+            if (nameNode.type === "identifier") bind(nameNode.text, "", fnName);
+            else if (nameNode.type === "object_pattern") {
+              for (const prop of nameNode.namedChildren) {
+                if (prop.type === "shorthand_property_identifier_pattern") bind(prop.text, "", fnName);
+                else if (prop.type === "pair_pattern") {
+                  const local = prop.childForFieldName("value");
+                  if (local?.type === "identifier") bind(local.text, "", fnName);
+                }
+              }
+            }
+          }
+          continue;
+        }
         // `const svc = inject(UserService)` is an instance of UserService, not
         // something `@angular/core` exports: binding it to the injector's
         // module made `svc.countUsers()` a call into an external package. The

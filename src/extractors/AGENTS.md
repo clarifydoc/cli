@@ -57,6 +57,10 @@ them; core runs every pass generically and never names a framework:
 - `dataSources.resolveProject` — rewrite api-call targets across the project
   (the JS URL-builder pass lives here).
 - `entities.reconcileProject`, `dispatchResolvers` — as before.
+- `autoImports` ([imports-exports/auto-imports.ts](imports-exports/auto-imports.ts)) — names a framework
+  puts in scope without an import line (Nuxt's `composables/` and `utils/`): add the `ImportInfo` the file
+  would have written and classify those calls cross-file, before the import index and the linker. In memory
+  only. A member of an unimported factory's result carries the factory in `CallInfo.via` for it.
 
 Each receives a `ProjectContext` ([../types/project.ts](../types/project.ts)):
 the import index, a class index (`resolve`, `supertypes`, `ancestors`,

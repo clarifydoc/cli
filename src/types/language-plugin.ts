@@ -1356,6 +1356,15 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    */
   dispatchResolvers?: readonly DispatchResolver[];
   /**
+   * Names a framework puts in scope without an import line (Nuxt's
+   * `composables/` and `utils/` exports): a project pass, run once before the
+   * import index and the linker, that adds to each file the `ImportInfo` it
+   * would have written for every such name it calls, so the call resolves as
+   * an imported one. In memory only, never into the per-file JSON. Returns how
+   * many imports it added. Shared by a family's metas (run once by identity).
+   */
+  autoImports?: (analyses: FileAnalysis[]) => number;
+  /**
    * Project-level route passes this plugin contributes (inherited controller
    * route templates, urlconf includes, router registrations). Each sees the
    * analyses of its `languages` plus the `ProjectContext`, and rewrites

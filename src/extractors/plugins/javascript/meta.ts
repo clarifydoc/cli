@@ -61,6 +61,7 @@ import { reactRouterResolver } from "./routes/react-router-resolver.js";
 import { angularRouterResolver } from "./routes/angular-router-resolver.js";
 import { jsGrpcStub } from "../shared/grpc-stubs.js";
 import { judgeHtmlAssignment } from "./html-escapes.js";
+import { nuxtAutoImports } from "./nuxt-auto-imports.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -268,6 +269,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   entities,
   dispatchResolvers,
   routeResolvers,
+  autoImports: nuxtAutoImports,
   // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
   preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"),
@@ -298,6 +300,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   entities,
   dispatchResolvers,
   routeResolvers,
+  autoImports: nuxtAutoImports,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
   preprocess: (raw) => bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"),

@@ -493,7 +493,11 @@ export function classifyCalls(
       const ownFunction = !call.name.includes(".") && localSymbols?.has(call.name);
       const shadowed = ownBindings?.has(call.name.includes(".") ? root : call.name);
       const alias = ownFunction || shadowed ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
-      if (alias) {
+      // A binding from a factory the file does not import (no source): only the factory is
+      // remembered, for a project pass that knows where the framework imports it from.
+      if (alias && typeof alias !== "string" && alias.source === "") {
+        if (alias.factory) call.via = alias.factory;
+      } else if (alias) {
         call.kind = "cross-file";
         call.target = typeof alias === "string" ? alias : alias.source;
         // Tracked through a const = importedFn() assignment — one indirection from source
