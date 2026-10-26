@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clientProxyCalls, markConsumedContracts, proxiedOnlyTypes } from "./client-proxies.js";
+import { clientProxyCalls, dropProxiedDatabaseRows, markConsumedContracts, proxiedOnlyTypes } from "./client-proxies.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const call = (name: string, line: number) => ({ name, kind: "cross-file" as const, target: null, line });
@@ -134,5 +134,19 @@ describe("clientProxyCalls — a proxy held by another object", () => {
       classes: [{ name: "ClubRepository", properties: [{ name: "_service", type: "LeagueService" }], methods: [{ name: "load", params: [], calls: [call("_service.clubsApi.getClub", 9), call("_service.other.getClub", 10)] }] }],
     } as unknown as FileAnalysis;
     expect(clientProxyCalls([apiDart("lib/services/league.service.dart"), server, repo]).filter((c) => c.filePath === repo.filePath).map((c) => [c.line, c.name])).toEqual([[9, "ClubsApi.getClub"]]);
+  });
+});
+
+describe("dropProxiedDatabaseRows — a gRPC stub call", () => {
+  it("drops the database row a stub call on the same line shadows, whatever the rpc's case", () => {
+    const a = { filePath: "src/standings/client.js", dataSources: [
+      { kind: "database", name: "client.getStandings", target: null, line: 54, calls: [] },
+      { kind: "database", name: "db.query", target: null, line: 60, calls: [] },
+    ] } as unknown as FileAnalysis;
+    const dropped = dropProxiedDatabaseRows([a], [
+      { kind: "api-call", name: "POST /league.StandingsService/GetStandings", target: "/league.StandingsService/GetStandings", line: 54, calls: [], filePath: "src/standings/client.js" },
+    ]);
+    expect(dropped).toBe(1);
+    expect(a.dataSources.map((d) => d.name)).toEqual(["db.query"]);
   });
 });

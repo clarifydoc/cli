@@ -1264,6 +1264,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Calls through gRPC stubs (`client.GetOrder(ctx, req)` on a `pb.NewOrderServiceClient(conn)`): the rpc they invoke.
   const grpcCalls = grpcClientCalls(allAnalyses, allRoutes);
   allApiCalls.push(...grpcCalls);
+  // A stub call a plugin also read as a database row (a receiver named `client`) is the rpc only.
+  dropProxiedDatabaseRows(allAnalyses, grpcCalls);
   if (grpcCalls.length > 0) progress.detail(`  Calls through gRPC stubs: ${grpcCalls.length}`);
   // Plugin project passes over the api-call targets — URL-builder helper calls
   // (`axios.get(requestUri('teamtalk','v4'))` → `/api/v4/institution/{}/teamtalk`)

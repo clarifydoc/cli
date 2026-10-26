@@ -289,9 +289,11 @@ export function markConsumedContracts<R extends { kind: string; contract?: { typ
 export function dropProxiedDatabaseRows(analyses: readonly FileAnalysis[], proxyCalls: readonly ApiCall[]): number {
   const shadowed = new Map<string, Set<string>>();
   for (const c of proxyCalls) {
-    if (!c.contract) continue;
+    // A contract call names its operation; a gRPC stub call's path ends with its rpc (`/pkg.Svc/Convert`).
+    const method = c.contract?.method ?? (c.target ? /\/([A-Za-z_]\w*)$/.exec(c.target)?.[1] : undefined);
+    if (!method) continue;
     const key = `${c.filePath}\0${c.line}`;
-    (shadowed.get(key) ?? shadowed.set(key, new Set()).get(key)!).add(c.contract.method);
+    (shadowed.get(key) ?? shadowed.set(key, new Set()).get(key)!).add(method.toLowerCase());
   }
   if (shadowed.size === 0) return 0;
   let dropped = 0;
@@ -301,7 +303,8 @@ export function dropProxiedDatabaseRows(analyses: readonly FileAnalysis[], proxy
       if (ds.kind !== "database") return true;
       const methods = shadowed.get(`${a.filePath}\0${ds.line}`);
       const method = /([A-Za-z_$][\w$]*)\s*$/.exec(ds.name)?.[1];
-      if (!methods || !method || !methods.has(method)) return true;
+      // gRPC stubs name an rpc in the language's case (`client.convert` for `Convert`).
+      if (!methods || !method || !methods.has(method.toLowerCase())) return true;
       dropped++;
       return false;
     });
