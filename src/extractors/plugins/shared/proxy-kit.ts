@@ -54,13 +54,16 @@ export function isHttpTarget(target: string): boolean {
  * `proxy_pass` naming an `upstream` forwards to its first `server`; one with
  * a URI part (`http://api/v1/`) replaces the matched location with it, as
  * nginx does. Regex and named locations, and targets built from nginx's own
- * runtime `$variables`, state no fixed rule and are skipped; an envsubst
+ * runtime `$variables`, state no fixed rule and are skipped — except a variable
+ * right after the host name, a DNS suffix (`http://portal$dns_suffix:8080` is
+ * `portal`'s); an envsubst
  * template's `${VAR}` (the official image's `templates/*.template`) is kept
  * for core to fill from the image's environment.
  */
 export const nginxProxy: ProxySourceSpec = {
   files: ["**/nginx.conf", "**/default.conf", "**/*.conf.template", "**/nginx/**/*.conf", "**/conf.d/*.conf"],
-  glob: { deep: 3, limit: 10 },
+  // Three directories down: a Maven module's `src/main/docker/nginx.conf`.
+  glob: { deep: 4, limit: 10 },
   parse(text) {
     if (!text.includes("proxy_pass")) return [];
     const code = text.replace(/#[^\n]*/g, (c) => " ".repeat(c.length));
@@ -80,8 +83,12 @@ export const nginxProxy: ProxySourceSpec = {
       }
       const body = code.slice(open + 1, end);
       const pass = /(?:^|[\s;])proxy_pass\s+([^\s;]+)\s*;/.exec(body);
-      if (!pass || /\$(?!\{)/.test(pass[1]!)) continue;
-      const url = /^(https?):\/\/([^/]+)(\/.*)?$/.exec(pass[1]!);
+      if (!pass) continue;
+      // `http://portal$dns_suffix:8080`: a variable right after the host name only qualifies it (a DNS
+      // suffix, set so nginx resolves per request) — the service is the name before it.
+      const passed = pass[1]!.replace(/^(https?:\/\/[\w-]+)\$[A-Za-z_]\w*(?=[:/]|$)/, "$1");
+      if (/\$(?!\{)/.test(passed)) continue;
+      const url = /^(https?):\/\/([^/]+)(\/.*)?$/.exec(passed);
       if (!url) continue;
       const host = upstreams.get(url[2]!) ?? url[2]!;
       const pathPrefix = prefixOfPattern(m[2]!);
