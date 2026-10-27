@@ -263,7 +263,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         const djangoManager = /\.objects\./.test(fnName) && managerModel(fnName) !== null;
         const isQuery =
           PY_DB_LEAVES.has(leaf) || djangoManager ||
-          (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf)));
+          (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf))) ||
+          (PY_SESSION_STATEMENT_LEAVES.has(leaf) && !fnName.includes("(") && PY_DB_RECEIVER_RE.test(receiver));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
           let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS) ?? (djangoManager ? (DJANGO_WRITE_LEAVES.has(leaf) ? "write" : "read") : undefined);
           // Raw SQL (`cursor.execute(sql)`, `session.execute(text(q))`): the
@@ -312,6 +313,16 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // A related manager (`doc.tags.all()`) is named after its relation field, never a table:
           // the entity pass resolves the field to the model it relates to.
           const relatedField = !table && !instance && !datastoreChain(fnName) && relatedManager(fnName, leaf) ? parts[parts.length - 2] : undefined;
+          // SQLAlchemy names the model in the statement handed over, not in the chain:
+          // `session.execute(select(Club)…)`, a local assigned one, `session.query(Club)`.
+          // `select(self.model)` names an attribute of the instance, which the project pass resolves.
+          let entityAttribute: string | undefined;
+          if (!table && !tableRef && !instance && !relatedField) {
+            const stated = statementModel(node);
+            if (stated?.model) table = stated.model;
+            else if (stated?.attribute) entityAttribute = stated.attribute;
+            if (stated) access ??= stated.access;
+          }
           sources.push(this.ds({
             kind: "database",
             name: fnName,
@@ -320,6 +331,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(table ? { entity: table } : tableRef ? { entity: tableRef, targetRef: tableRef } : {}),
             ...(instance ? { receiverIsInstance: true } : {}),
             ...(relatedField ? { relatedField } : {}),
+            ...(entityAttribute ? { entityAttribute } : {}),
             ...(access ? { access } : {}),
           }));
         }
@@ -365,6 +377,97 @@ const DJANGO_WRITE_LEAVES = new Set([
 
 /** DB verbs that are also ordinary method names — trusted only on a datastore-shaped chain. */
 const PY_GENERIC_DB_LEAVES = new Set(["query", "execute", "find", "filter", "all", "first", "aggregate"]);
+
+/**
+ * A session handed a statement (`session.scalars(select(Club))`, SQLModel
+ * `session.exec(…)`): a datastore call only on the session itself — inside a
+ * chain (`session.execute(q).scalars()`) it reads the result already counted.
+ */
+const PY_SESSION_STATEMENT_LEAVES = new Set(["exec", "scalars", "scalar"]);
+
+/** Datastore calls handed a SQLAlchemy statement (`execute`, `scalars`, SQLModel `exec`) or a model (`query`). */
+const PY_STATEMENT_LEAVES = new Set(["execute", "exec", "scalars", "scalar", "query"]);
+
+/**
+ * The model a SQLAlchemy call reaches, as the statement handed to the session
+ * names it — anywhere down the chain (`session.execute(q).scalars().all()`):
+ * `session.query(Club)`, `session.execute(select(Club).where(…))`, a local the
+ * function assigns such a statement (every assignment that builds one must
+ * agree), `update(Club)` / `delete(Club)` / `insert(Club)` writing. A model
+ * held by an attribute of the instance (`select(self.model)`) is returned as
+ * that attribute, for the project pass to resolve.
+ */
+function statementModel(call: Node): { model?: string; attribute?: string; access: "read" | "write" } | null {
+  let cur: Node | null = call;
+  let handed: Node | null = null;
+  while (cur?.type === "call") {
+    const fn = cur.childForFieldName("function");
+    if (fn?.type !== "attribute") break;
+    if (PY_STATEMENT_LEAVES.has(fn.childForFieldName("attribute")?.text ?? "") && datastoreChain(fn.text)) handed = cur;
+    cur = fn.childForFieldName("object");
+  }
+  if (!handed) return null;
+  const arg = positional(handed)[0];
+  if (!arg) return null;
+  if (handed.childForFieldName("function")!.childForFieldName("attribute")!.text === "query") {
+    const model = modelExpression(arg);
+    return model ? { ...model, access: "read" } : null;
+  }
+  const found = new Map<string, { model?: string; attribute?: string; access: "read" | "write" }>();
+  for (const value of arg.type === "identifier" ? assignedValues(arg.text, handed) : [arg]) {
+    const stmt = rootStatement(value);
+    if (stmt) found.set(`${stmt.model ?? ""}|${stmt.attribute ?? ""}|${stmt.access}`, stmt);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+/** `select(Club).where(…).order_by(…)` → the model `select` is given; null for any other expression. */
+function rootStatement(expr: Node): { model?: string; attribute?: string; access: "read" | "write" } | null {
+  let cur: Node = expr;
+  while (cur.type === "call") {
+    const fn = cur.childForFieldName("function");
+    const inner = fn?.type === "attribute" ? fn.childForFieldName("object") : null;
+    if (inner?.type !== "call") break;
+    cur = inner;
+  }
+  if (cur.type !== "call") return null;
+  const verb = /^(?:[a-z_]\w*\.)*(select|insert|update|delete)$/.exec(cur.childForFieldName("function")?.text ?? "")?.[1];
+  const first = verb ? positional(cur)[0] : undefined;
+  const model = first ? modelExpression(first) : null;
+  return model ? { ...model, access: verb === "select" ? "read" : "write" } : null;
+}
+
+/** `Club`, `models.Club`, `Club.id` → the class; `self.model` / `self.model.id` → the attribute. */
+function modelExpression(node: Node): { model?: string; attribute?: string } | null {
+  if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(node.text)) return null;
+  const parts = node.text.split(".");
+  if ((parts[0] === "self" || parts[0] === "cls") && parts.length >= 2 && parts.length <= 3 && /^[a-z_]/.test(parts[1]!)) return { attribute: parts[1]! };
+  const at = parts.findIndex((p) => /^[A-Z]/.test(p));
+  // A module path before the class (`models.Club`), a column after it (`Club.id`) — never a member of a member.
+  if (at < 0 || parts.slice(0, at).some((p) => !/^[a-z_]/.test(p)) || parts.length - at > 2) return null;
+  return { model: parts[at]! };
+}
+
+/** Every value the function enclosing `at` assigns to `name` (nested functions aside); none when it rebinds it otherwise. */
+function assignedValues(name: string, at: Node): Node[] {
+  let scope: Node | null = at.parent;
+  while (scope && scope.type !== "function_definition" && scope.type !== "module") scope = scope.parent;
+  if (!scope) return [];
+  const out: Node[] = [];
+  let other = false;
+  const visit = (n: Node): void => {
+    if (n !== scope && (n.type === "function_definition" || n.type === "class_definition")) return;
+    if (n.type === "assignment" && n.childForFieldName("left")?.text === name) {
+      const right = n.childForFieldName("right");
+      if (right) out.push(right);
+    } else if ((n.type === "augmented_assignment" || n.type === "for_statement") && n.childForFieldName("left")?.text === name) {
+      other = true;
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return other ? [] : out;
+}
 
 /** A receiver segment that names a datastore handle or an ORM query. */
 const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|con|conn|connection|cursor|cur|engine|collection|coll|database|queryset|qs)$/i;
@@ -810,7 +913,7 @@ function pyStringLiteral(node: Node | undefined): string | null {
 }
 
 /** DB-API / SQLAlchemy calls whose first argument is the SQL text. */
-const SQL_TEXT_LEAVES = new Set(["execute", "executemany", "executescript", "raw"]);
+const SQL_TEXT_LEAVES = new Set(["execute", "executemany", "executescript", "raw", "exec"]);
 
 /** A call's positional arguments, in order. */
 function positional(call: Node): Node[] {

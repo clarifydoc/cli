@@ -521,7 +521,7 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
 }
 
 /** Builtins whose result the project never declares — no point carrying them as initializers. */
-const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
+export const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
   "len", "str", "int", "float", "bool", "bytes", "list", "dict", "set", "tuple", "frozenset",
   "sorted", "reversed", "range", "enumerate", "zip", "map", "filter", "open", "repr", "type",
   "getattr", "isinstance", "sum", "min", "max", "abs", "round", "any", "all", "iter", "next",
@@ -622,6 +622,35 @@ export function collectInstanceAttributes(
     if (!prop.type && chain) prop.from = chain;
     out.push(prop);
   }
+  return out;
+}
+
+/**
+ * The parameters a constructor assigns unchanged to instance attributes
+ * (`self.model = model` → model ← model); an attribute assigned twice, or
+ * from anything else as well, is left out.
+ */
+export function constructorParamAttributes({ node, fn, selfName }: MethodSource): Map<string, string> {
+  const out = new Map<string, string>();
+  const body = node.childForFieldName("body");
+  if (!body || !selfName) return out;
+  const params = new Set(fn.params.map((p) => p.name));
+  const mixed = new Set<string>();
+  walkStatements(body, {
+    statement(stmt) {
+      const a = stmt.namedChild(0);
+      if (a?.type !== "assignment") return;
+      const left = a.childForFieldName("left");
+      if (left?.type !== "attribute" || left.childForFieldName("object")?.text !== selfName) return;
+      const name = left.childForFieldName("attribute")?.text;
+      if (!name) return;
+      const right = a.childForFieldName("right");
+      const param = right?.type === "identifier" && params.has(right.text) ? right.text : null;
+      if (!param || (out.has(name) && out.get(name) !== param)) mixed.add(name);
+      else out.set(name, param);
+    },
+  });
+  for (const name of mixed) out.delete(name);
   return out;
 }
 

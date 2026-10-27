@@ -968,6 +968,13 @@ export interface PropertyInfo {
    */
   constructedWith?: string[];
   /**
+   * The constructor parameter the member is assigned, when it holds a class
+   * (`def __init__(self, model: type[Club]): self.model = model` → `model`):
+   * what lets a project pass read the class an instance holds off the
+   * arguments each construction passes.
+   */
+  assignedFrom?: string;
+  /**
    * The physical column an ORM entity maps the member to, where the code names
    * one that differs from the member (`@Column(name = "first_name")`).
    */
@@ -1625,6 +1632,14 @@ export interface DataSourceInfo {
    * to, when the project's models say which one.
    */
   relatedField?: string;
+  /**
+   * For `database`: the statement names the model an attribute of the
+   * enclosing instance holds (`select(self.model)`, `session.query(self.model)`).
+   * `entity` stays empty; the plugin's project pass sets it to the model every
+   * construction of the class and its subclasses hands that attribute, when
+   * they agree on one.
+   */
+  entityAttribute?: string;
   /**
    * For `database`: the table read is the enclosing class's type parameter of
    * this name (`_database.Query<TModel>(…)` inside `BasicRepository<TModel>`).

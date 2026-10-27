@@ -422,3 +422,64 @@ describe("Python rows saved through the variable holding them", () => {
     ]);
   });
 });
+
+describe("Python SQLAlchemy statements", () => {
+  const rowsOf = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database")
+      .map((d) => [d.name, d.entity ?? d.entityAttribute ?? null, d.access ?? null]);
+  };
+
+  it("names the model the statement handed to the session selects or writes", async () => {
+    expect(await rowsOf([
+      "import sqlalchemy as sa",
+      "from sqlalchemy import select, update",
+      "def clubs(session):",
+      "    return session.scalars(select(Club).where(Club.id == 1)).all()",
+      "def rename(session):",
+      "    session.execute(update(models.Club).values(name='x'))",
+      "def players(db):",
+      "    return db.query(Player.id).all()",
+    ].join("\n"))).toEqual([
+      ["session.scalars(select(Club).where(Club.id == 1)).all", "Club", "read"],
+      ["session.scalars", "Club", "read"],
+      ["session.execute", "Club", "write"],
+      ["db.query(Player.id).all", "Player", "read"],
+      ["db.query", "Player", "read"],
+    ]);
+  });
+
+  it("follows a local the function builds the statement in, and refuses two models", async () => {
+    expect(await rowsOf([
+      "def search(self, params):",
+      "    q = sa.select(Match).filter(Match.played.is_(True))",
+      "    q = q.filter_by(league=params.league)",
+      "    q = self._order(q, params)",
+      "    return self.session.execute(q).scalars().all()",
+      "def mixed(self, home):",
+      "    q = select(Club) if home else select(Player)",
+      "    stmt = select(Club)",
+      "    if home:",
+      "        stmt = select(Player)",
+      "    return self.session.execute(stmt)",
+    ].join("\n")).then((rows) => rows.filter((r) => /execute/.test(r[0]!)))).toEqual([
+      ["self.session.execute(q).scalars().all", "Match", "read"],
+      ["self.session.execute", "Match", "read"],
+      ["self.session.execute", null, null],
+    ]);
+  });
+
+  it("reports a model held by an attribute of the instance as that attribute", async () => {
+    expect(await rowsOf([
+      "class Repo:",
+      "    def all(self):",
+      "        return self.session.execute(sa.select(self.model).filter(self.model.active)).scalars().all()",
+      "    def one(self, db, id):",
+      "        return db.query(self.model).get(id)",
+    ].join("\n"))).toEqual([
+      ["self.session.execute(sa.select(self.model).filter(self.model.active)).scalars().all", "model", "read"],
+      ["self.session.execute", "model", "read"],
+      ["db.query", "model", "read"],
+    ]);
+  });
+});

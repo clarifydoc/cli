@@ -1,6 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
-import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
  * Extracts ORM entities + relations from Python source for the major
@@ -47,6 +47,7 @@ export class PythonEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     attributeRepositoryAccesses(analyses, PY_REPOSITORY_KNOBS);
+    resolveEntityAttributes(analyses);
     inheritDjangoModels(analyses);
     resolveDjangoRelatedManagers(analyses);
   }
@@ -824,6 +825,147 @@ function pythonTableName(body: string): string | null {
   const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
   const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
   return inMeta?.[1] ?? null;
+}
+
+/** A class named as written, module path and type arguments dropped (`models.Club`, `Generic[A, B]`). */
+const classNamed = (written: string): string => written.replace(/\[.*$/s, "").trim().split(".").pop() ?? "";
+/** An argument naming a class: `Club`, `models.Club`. */
+const CLASS_ARG = /^(?:[a-z_]\w*\.)*[A-Z]\w*$/;
+
+/**
+ * A statement on the model an attribute of the instance holds
+ * (`select(self.model)` in a generic repository, or in a mixin of one —
+ * `DataSourceInfo.entityAttribute`). The model is what each construction of
+ * the class, or of a subclass, hands the constructor parameter the attribute
+ * is assigned from (`PropertyInfo.assignedFrom`, followed through
+ * `super().__init__(…)`), read off the construction's arguments
+ * (`CallInfo.args`); a class-level `model: type[Club]` states it outright.
+ * Every class of the hierarchy that is constructed must name a project entity,
+ * and all the same one: a base that each repository constructs with its own
+ * model names none (those calls are attributed where the repository is used).
+ */
+function resolveEntityAttributes(analyses: FileAnalysis[]): void {
+  const python = analyses.filter((a) => a.language === "python");
+  if (!python.some((a) => a.dataSources?.some((d) => d.entityAttribute))) return;
+  const classes = new Map<string, ClassInfo[]>();
+  const entities = new Set<string>();
+  const subclasses = new Map<string, Set<string>>();
+  const basesOf = (c: ClassInfo): string[] => [c.extends ?? "", ...(c.implements ?? [])].map(classNamed).filter(Boolean);
+  for (const a of python) {
+    for (const c of a.classes ?? []) {
+      (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push(c);
+      if (c.decorators?.includes("entity")) entities.add(c.name);
+      for (const b of basesOf(c)) (subclasses.get(b) ?? subclasses.set(b, new Set()).get(b)!).add(c.name);
+    }
+  }
+  const constructions = new Map<string, string[][]>();
+  const visit = (fn: FunctionInfo): void => {
+    for (const c of fn.calls ?? []) {
+      const name = c.args ? classNamed(c.name) : "";
+      if (name && classes.has(name)) (constructions.get(name) ?? constructions.set(name, []).get(name)!).push(c.args!);
+    }
+  };
+  for (const a of python) {
+    for (const fn of a.functions ?? []) visit(fn);
+    for (const c of a.classes ?? []) for (const m of c.methods ?? []) visit(m);
+  }
+
+  const ctorOf = (name: string, depth = 0): { cls: ClassInfo; init: FunctionInfo } | null => {
+    if (depth > 8) return null;
+    for (const c of classes.get(name) ?? []) {
+      const init = c.methods.find((m) => m.name === "__init__");
+      if (init) return { cls: c, init };
+    }
+    for (const c of classes.get(name) ?? []) {
+      for (const b of basesOf(c)) {
+        const found = ctorOf(b, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  /** Where the class `attr` holds comes from when `name` is constructed: a positional argument, or a class a constructor passes itself. */
+  const sourceOf = (name: string, attr: string, depth = 0): { index: number } | { model: string } | null => {
+    const ctor = depth > 8 ? null : ctorOf(name);
+    if (!ctor) return null;
+    const prop = ctor.cls.properties.find((p) => p.name === attr && p.assignedFrom);
+    if (prop) {
+      const i = ctor.init.params.findIndex((p) => p.name === prop.assignedFrom);
+      return i >= 0 ? { index: i } : null;
+    }
+    // Handed on to the base: `super().__init__(session, model)`, `Base.__init__(self, session, model)`.
+    const forward = ctor.init.calls?.find((c) => c.args && /^(?:super\(\)|[A-Z]\w*)\.__init__$/.test(c.name));
+    const explicit = forward ? /^([A-Z]\w*)\.__init__$/.exec(forward.name)?.[1] : undefined;
+    const base = explicit ?? basesOf(ctor.cls)[0];
+    const up = forward && base ? sourceOf(base, attr, depth + 1) : null;
+    if (!up || "model" in up) return up;
+    const arg = forward!.args![up.index + (explicit ? 1 : 0)];
+    if (!arg) return null;
+    const i = ctor.init.params.findIndex((p) => p.name === arg);
+    if (i >= 0) return { index: i };
+    return CLASS_ARG.test(arg) ? { model: classNamed(arg) } : null;
+  };
+  /** A class-level `attr: type[Club]` on the class or a base. */
+  const declaredOn = (name: string, attr: string, depth = 0): string | null => {
+    if (depth > 8) return null;
+    for (const c of classes.get(name) ?? []) {
+      const m = /^(?:typing\.)?[Tt]ype\s*\[\s*([\w.]+)\s*\]$/.exec(c.properties.find((p) => p.name === attr && !p.assignedFrom)?.type ?? "");
+      if (m && entities.has(classNamed(m[1]!))) return classNamed(m[1]!);
+    }
+    for (const c of classes.get(name) ?? []) {
+      for (const b of basesOf(c)) {
+        const found = declaredOn(b, attr, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  /** The models constructions of `name` put in `attr`; null when one cannot be told, empty when it is never constructed. */
+  const modelsOf = (name: string, attr: string): Set<string> | null => {
+    const builds = constructions.get(name) ?? [];
+    if (builds.length === 0) return new Set();
+    const declared = declaredOn(name, attr);
+    if (declared) return new Set([declared]);
+    const source = sourceOf(name, attr);
+    if (!source) return null;
+    if ("model" in source) return entities.has(source.model) ? new Set([source.model]) : null;
+    const out = new Set<string>();
+    for (const args of builds) {
+      const arg = args[source.index];
+      if (!arg || !CLASS_ARG.test(arg) || !entities.has(classNamed(arg))) return null;
+      out.add(classNamed(arg));
+    }
+    return out;
+  };
+  const resolved = new Map<string, string | null>();
+  const modelFor = (owner: string, attr: string): string | null => {
+    const key = `${owner}\0${attr}`;
+    if (resolved.has(key)) return resolved.get(key)!;
+    const family = new Set([owner]);
+    for (const name of family) for (const sub of subclasses.get(name) ?? []) if (family.size < 500) family.add(sub);
+    const models = new Set<string>();
+    let known = true;
+    for (const name of family) {
+      const found = modelsOf(name, attr);
+      if (!found) { known = false; break; }
+      for (const m of found) models.add(m);
+    }
+    const model = known && models.size === 1 ? [...models][0]! : null;
+    resolved.set(key, model);
+    return model;
+  };
+
+  for (const a of python) {
+    for (const d of a.dataSources ?? []) {
+      if (!d.entityAttribute || d.entity) continue;
+      let owner: ClassInfo | null = null;
+      for (const c of a.classes ?? []) if (c.line <= d.line && d.line <= c.endLine && (!owner || c.line > owner.line)) owner = c;
+      const model = owner ? modelFor(owner.name, d.entityAttribute) : null;
+      if (!model) continue;
+      d.entity = model;
+      d.target = model;
+    }
+  }
 }
 
 /**

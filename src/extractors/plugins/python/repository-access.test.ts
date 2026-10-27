@@ -95,3 +95,49 @@ describe("Python generic repository access", () => {
     ]);
   });
 });
+
+/** `select(self.model)` in a generic repository or a mixin of one: the model each construction hands the constructor. */
+describe("Python model held by an instance attribute", () => {
+  const ctor = (params: string[], calls: Array<[string, string[]]> = []): any => ({
+    ...method("__init__", [], null, params.map((p) => ({ name: p, type: null, defaultValue: null }))),
+    calls: calls.map(([name, args], i) => ({ name, kind: "internal", target: null, line: 5 + i, args })),
+  });
+  const at = (c: any, line: number, endLine: number) => Object.assign(c, { line, endLine });
+  const row = (line: number): any => ({ kind: "database", name: "self.session.execute", target: null, entityAttribute: "model", access: "read", calls: [], line });
+  const build = (repos: Array<[string, string]>) => {
+    const models = file("db/models.py", [
+      cls("MatchModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+      cls("ClubModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+    ]);
+    const base = cls("RepositoryGeneric", { methods: [ctor(["session", "primary_key", "sql_model", "schema"])] });
+    base.properties.push({ name: "model", type: "type[Model]", visibility: "public", isStatic: false, isReadonly: false, assignedFrom: "sql_model" });
+    const league = cls("LeagueRepositoryGeneric", {
+      extends: "RepositoryGeneric[Schema, Model]",
+      methods: [ctor(["session", "primary_key", "sql_model", "schema", "league_id"], [["super().__init__", ["session", "primary_key", "sql_model", "schema"]]])],
+    });
+    const generic = file("repos/generic.py", [at(base, 1, 40), at(league, 41, 60)]);
+    generic.dataSources = [row(30)];
+    const mixin = file("repos/_suggestions.py", [at(cls("MatchSuggestionMixin"), 1, 80)]);
+    mixin.dataSources = [row(50)];
+    const concrete = file("repos/matches.py", repos.map(([name, model], i) =>
+      at(cls(name, { extends: model === "MatchModel" ? "MatchSuggestionMixin" : null, implements: [`LeagueRepositoryGeneric[Out, ${model}]`] }), 1 + i * 10, 9 + i * 10)));
+    const factory = file("repos/factory.py", [cls("AllRepositories", {
+      methods: repos.map(([name, model]) => ({ ...method(name.toLowerCase(), [], name), calls: [{ name, kind: "cross-file", target: null, line: 70, args: ["self.session", "PK_ID", model, "Out"] }] })),
+    })]);
+    const all = [models, generic, mixin, concrete, factory];
+    new PythonEntityExtractor().reconcileProject(all);
+    return { generic, mixin };
+  };
+
+  it("names the model every construction of the mixin's repository passes, through the base constructor it is handed on to", () => {
+    const { generic, mixin } = build([["RepositoryMatches", "MatchModel"], ["RepositoryClubs", "ClubModel"]]);
+    expect(mixin.dataSources.map((d) => d.entity)).toEqual(["MatchModel"]);
+    // The base every repository is built from holds a different model per repository: none.
+    expect(generic.dataSources.map((d) => d.entity ?? null)).toEqual([null]);
+  });
+
+  it("names it in the base too when only one model is ever passed", () => {
+    const { generic } = build([["RepositoryMatches", "MatchModel"]]);
+    expect(generic.dataSources.map((d) => d.entity)).toEqual(["MatchModel"]);
+  });
+});

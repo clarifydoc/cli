@@ -1,3 +1,4 @@
+import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { pythonReceiverTypeOf } from "./di.js";
@@ -78,4 +79,31 @@ export const pythonCallHooks: CallExtractionHooks = {
     return n;
   },
   noOverloads: true,
+  argsOf: pythonClassArgs,
 };
+
+/**
+ * The positional arguments of a call that hands a class on — a construction
+ * given one (`ClubRepo(session, Club)`, `CRUDBase[Club](Club)`) — or of a
+ * base constructor call (`super().__init__(session, model)`): what lets the
+ * project pass read the class an instance attribute holds. Every other call
+ * reports none.
+ */
+function pythonClassArgs(node: Node): string[] | null {
+  if (node.type !== "call") return null;
+  let fn = node.childForFieldName("function");
+  if (fn?.type === "subscript") fn = fn.childForFieldName("value");
+  if (!fn || (fn.type !== "identifier" && fn.type !== "attribute")) return null;
+  const leaf = fn.type === "attribute" ? fn.childForFieldName("attribute")?.text ?? "" : fn.text;
+  const base = leaf === "__init__";
+  if (!base && !/^[A-Z]/.test(leaf)) return null;
+  const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
+  const positional: string[] = [];
+  for (const a of args) {
+    if (a.type === "keyword_argument" || a.type === "dictionary_splat") break;
+    if (a.type === "list_splat") return null;
+    positional.push(a.text);
+  }
+  const handsClass = positional.some((t) => /^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(t));
+  return (base ? positional.some((t) => /^[A-Za-z_]\w*$/.test(t)) : handsClass) ? positional : null;
+}

@@ -282,3 +282,20 @@ class LeagueController(BaseController):
     expect(classes[0]!.properties.find((p) => p.name === "mixins")?.constructedWith).toEqual(["self.repo", "self.logger"]);
   });
 });
+
+describe("Python constructor parameters held as classes", () => {
+  it("records the parameter a class-typed attribute is assigned from, and nothing for instances", async () => {
+    const { classes } = await extract(`
+class ClubRepository:
+    def __init__(self, session: Session, model: type[Club], schema: Type[ClubOut]):
+        self.session = session
+        self.model = model
+        self.schema = schema
+`);
+    expect(classes[0]!.properties.map((p) => [p.name, p.assignedFrom ?? null])).toEqual([
+      ["session", null],
+      ["model", "model"],
+      ["schema", "schema"],
+    ]);
+  });
+});

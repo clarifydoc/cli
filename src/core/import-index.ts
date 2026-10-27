@@ -209,7 +209,7 @@ export function enrichFileDataSources(
   // those, leaving the SQL flow (table already in `target`) untouched.
   const delphi = a.language === "pascal" || a.language === "dfm";
   for (const ds of a.dataSources ?? []) {
-    if (ds.kind !== "database" || ds.entity || ds.receiverIsInstance || ds.relatedField || ds.entityTypeParameter) continue;
+    if (ds.kind !== "database" || ds.entity || ds.receiverIsInstance || ds.relatedField || ds.entityTypeParameter || ds.entityAttribute) continue;
     // Delphi: `Query.FieldByName` / `dsPlayers.Open` is `component.method`, NOT
     // the `Model.findOne` shape `entitySegment` is reading it as. The receiver
     // is a dataset variable or form component, so naming it as the entity both

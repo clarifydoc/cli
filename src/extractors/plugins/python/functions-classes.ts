@@ -9,8 +9,10 @@ import {
   annotationToken,
   collectInstanceAttributes,
   collectLocalTypes,
+  constructorParamAttributes,
   fillParamTypesFromComments,
   injectionToken,
+  PY_BUILTIN_CALLS,
   resultChainText,
   type MethodSource,
 } from "./di.js";
@@ -317,6 +319,17 @@ export class PythonExtractor extends FunctionClassExtractor {
           properties.push(...collectInstanceAttributes(sources, declared, assigning.some((p) => p.typeComments)));
         }
         properties.push(...propertyMembers(parsed, properties));
+        // `def __init__(self, model: type[Club]): self.model = model`: the class an instance
+        // holds is the one each construction passes — the project pass reads it there.
+        const init = parsed.find((p) => p.fn.name === "__init__");
+        const selfName = init ? instanceParam(init) : null;
+        if (init && selfName && properties.some((p) => CLASS_TYPED.test(p.type ?? ""))) {
+          const from = constructorParamAttributes({ node: init.node, fn: init.fn, selfName });
+          for (const prop of properties) {
+            const param = from.get(prop.name);
+            if (param && CLASS_TYPED.test(prop.type ?? "")) prop.assignedFrom = param;
+          }
+        }
       }
     }
 
@@ -390,6 +403,10 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
       if (!type) from = returned.text;
     } else if (!type && returned?.type === "attribute") {
       from = resultChainText(returned) ?? undefined;
+    } else if (!type && returned?.type === "call" && returned.childForFieldName("function")?.type === "identifier") {
+      // A free function's result (`return get_repositories(self.session)`): typed by what it returns.
+      const fn = returned.childForFieldName("function")!.text;
+      if (!PY_BUILTIN_CALLS.has(fn)) from = `${fn}()`;
     }
     if (!type && !from) continue;
     const prop: PropertyInfo = { name: p.fn.name, type: type ?? null, visibility: p.fn.name.startsWith("_") ? "private" : "public", isStatic: false, isReadonly: true };
@@ -399,6 +416,9 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
   }
   return out;
 }
+
+/** A type that holds a class, not an instance: `type[Club]`, `Type[ModelType]`, `typing.Type[T]`. */
+const CLASS_TYPED = /^(?:typing\.)?[Tt]ype\s*\[/;
 
 /** The instance parameter of a method (`self`), or null for a static/class method. */
 function instanceParam(p: ParsedFunction): string | null {
