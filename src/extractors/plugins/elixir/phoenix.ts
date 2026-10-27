@@ -353,7 +353,10 @@ export function attachEctoSchema(lines: string[], cls: ClassInfo): void {
   // A module with a `schema "table"` block IS the table's model: an entity of
   // the Ecto ORM, carrying its table as Rails models do. An `embedded_schema`
   // is a value type, not a table.
-  if (table && !cls.decorators.includes("entity")) cls.decorators.push("entity", "ecto", `table:${table}`);
+  if (table && !cls.decorators.includes("entity")) {
+    cls.decorators.push("entity", "ecto", `table:${table}`);
+    cls.tableName ??= table;
+  }
   const properties: PropertyInfo[] = [];
   const indent = (lines[start]!.match(/^\s*/) ?? [""])[0]!.length;
   for (let i = start + 1; i < Math.min(cls.endLine, lines.length); i++) {

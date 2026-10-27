@@ -275,7 +275,10 @@ export class CSharpEntityExtractor extends EntityExtractor {
         decs.push("entity", orm);
         // The mapper names the table too (`Entity<Movie>("Movies")`): carried as Rails and Ecto do.
         const table = orm === "marr" ? marrTables.get(cls.name) : undefined;
-        if (table) decs.push(`table:${table}`);
+        if (table) {
+          decs.push(`table:${table}`);
+          cls.tableName ??= table;
+        }
       }
     }
 

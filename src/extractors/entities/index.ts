@@ -26,7 +26,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   python:
     /\bmodels\.(?:Model|[A-Z]\w*Field|ForeignKey|OneToOneField|ManyToManyField)|__tablename__|\bmapped_column\b|\bMapped\s*\[|\brelationship\s*\(|\bColumn\s*\(|\bdb\.Entity\b|\bForeignKeyField\b|\bDeclarativeBase\b|\bDeferredForeignKey\b|\bfields\.(?:ForeignKeyField|OneToOneField|ManyToManyField)|\bPrimaryKey\s*\(|\bRequired\s*\(|\bDeclarative_base\b|\bdeclarative_base\b/,
   csharp:
-    /\bDbSet\s*<|\[\s*(?:Table|Column|Key|ForeignKey|Class)\b|\bmodelBuilder\b|\.HasOne\s*\(|\.HasMany\s*\(|\.WithMany\s*\(/,
+    /\bDbSet\s*<|\[\s*(?:Table|Column|Key|ForeignKey|Class)\b|\bmodelBuilder\b|\.HasOne\s*\(|\.HasMany\s*\(|\.WithMany\s*\(|\b(?:Create|Rename|Delete)\.Table/,
   go: /\bgorm\b|gorm:"|\bent\.Schema\b|\bRegisterModel\s*\(|orm:"/,
   dart: /\bextends\s+Table\b|@[cC]ollection\b|@[eE]ntity\b|@HiveType\b|\bIsarLinks?</,
   rust: /\btable!\s*\{|\bdiesel\b|\bQueryable\b|\bInsertable\b|\bDeriveEntityModel\b|\bsea_orm\b/,

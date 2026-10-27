@@ -459,6 +459,7 @@ describe("generic repository access + Marr table mapping (project-level)", () =>
       ["_movieRepository.Insert", "Movie", "write"],
     ]);
     expect(movie.classes[0]!.decorators).toEqual(["entity", "marr", "table:Movies"]);
+    expect(movie.classes[0]!.tableName).toBe("Movies");
   });
 
   it("follows a local the method initializes from a call, typed by what the callee declares it returns", () => {
