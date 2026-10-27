@@ -4,6 +4,7 @@ import { extractAspireResources } from "./aspire.js";
 import { extractCsharpTypeAliases } from "./type-aliases.js";
 import { extractCsharpNamespace } from "./namespace.js";
 import { csharpTaint } from "./taint.js";
+import { yarpForwarders } from "./forwarders.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import {
   extendControlFlow,
@@ -94,6 +95,7 @@ export const csharpMeta: LanguagePluginMeta = {
     deployedResources: (_tree, sourceText) => extractAspireResources(sourceText),
     // `AddHttpClient<T>(c => c.BaseAddress = …)`, named clients, `_http.BaseAddress = …`.
     httpClientRegistrations: extractCsharpHttpClientRegistrations,
+    proxyRules: (_tree, sourceText, filePath) => yarpForwarders(sourceText, filePath),
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
     topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
     // `await Get<T>(uri)` on a helper that requests its `uri` parameter: the path each call hands over.
