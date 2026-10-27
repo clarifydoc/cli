@@ -326,6 +326,44 @@ func GetAlbum(router *gin.RouterGroup) {
   });
 });
 
+describe("Go routes: several closures in one registering function", () => {
+  it("gives each closure route its own body's calls, not the registering function as handler (real-repo FP)", async () => {
+    const { goSpec } = await import("./index.js");
+    const src = `func registerLeagueRoutes(m *web.Router) {
+	m.Get("/change-password", func(ctx *context.Context) {
+		ctx.Redirect(setting.AppSubURL + "/club/settings")
+	})
+	m.Group("/scout", func() {
+		m.Get("", func(ctx *context.Context) {
+			ctx.Redirect(setting.AppSubURL + "/scout/players")
+		})
+		m.Get("/players", scout.Players)
+		m.Get("/fixtures", func(ctx *context.Context) {
+			if fixtures.Disabled() {
+				ctx.NotFound(nil)
+			}
+		}, scout.Fixtures)
+		m.Get("/stadiums", func(ctx *context.Context) {
+			if stadium.Disabled() {
+				ctx.NotFound(nil)
+				return
+			}
+			scout.Stadiums(ctx)
+		})
+	})
+}`;
+    const routes = goSpec.extractRoutes!(lines(src), [], "routers/web/web.go", [], []);
+    const view = routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => c.name).join(", ")}]`);
+    expect(view).toEqual([
+      "GET /change-password -> null [ctx.Redirect]",
+      "GET /scout -> null [ctx.Redirect]",
+      "GET /scout/players -> scout.Players []",
+      "GET /scout/fixtures -> scout.Fixtures []",
+      "GET /scout/stadiums -> null [stadium.Disabled, ctx.NotFound, scout.Stadiums]",
+    ]);
+  });
+});
+
 describe("a router built by groups of closures (gitea style)", () => {
   it("composes Group prefixes and reads Combo chains, verb-first Methods, empty and suffix paths (real-repo FP: ~98 of ~1,420 routes right)", () => {
     const src = `func registerWebRoutes(m *web.Router) {

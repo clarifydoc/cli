@@ -570,6 +570,11 @@ export function computeDataFlows(
     const synthetic = keyOf(route.filePath, `route:${route.httpMethod ?? "USE"} ${route.path}`);
     if (reachByKey.has(synthetic)) {
       key = synthetic;
+    } else if (!route.handler && (route.calls?.length ?? 0) > 0) {
+      // A route carrying its own body's calls (an inline closure among several
+      // a registrar declares) reaches what those calls reach, or nothing: the
+      // function around its line is the registrar, not its handler.
+      continue;
     } else {
       const at = innermostAt(spans, route.line);
       if (at) {

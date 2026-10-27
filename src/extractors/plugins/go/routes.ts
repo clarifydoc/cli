@@ -1,4 +1,4 @@
-import type { RouteFact, RouteInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 import { ROUTER_CALL, type RouterCall } from "../shared/router-functions.js";
 import { extractGoImports } from "./imports.js";
@@ -272,8 +272,41 @@ function literalReturnTypes(lines: readonly string[], row: number, col: number):
   return [...new Set([...text.matchAll(/\breturn\s+&?([A-Za-z_][\w.]*)\s*\{/g)].map((m) => m[1]!))];
 }
 
-export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
+/**
+ * Where the closure registered on line `row` opens and ends: the `{` after its
+ * `func(…)` signature, on that line or one of the next few, to the matching
+ * close (row indexes, 0-based).
+ */
+function closureSpan(lines: readonly string[], row: number): { row: number; column: number; endRow: number; endColumn: number } | null {
+  for (let r = row; r < Math.min(lines.length, row + 12); r++) {
+    const m = /\bfunc\s*\([^)]*\)[^{]*\{/.exec(lines[r]!);
+    if (!m) continue;
+    const column = m.index + m[0].length - 1;
+    let depth = 0;
+    for (let k = r; k < Math.min(lines.length, r + 400); k++) {
+      const text = lines[k]!;
+      for (let c = k === r ? column : 0; c < text.length; c++) {
+        if (text[c] === "{") depth++;
+        else if (text[c] === "}" && --depth === 0) return { row: r, column, endRow: k, endColumn: c };
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * The calls a closure body makes, from its opening line (`inline`: the text
+ * after the `{`) through the rows below it; supplied by the plugin, which owns
+ * the call patterns.
+ */
+export type ClosureCalls = (startRow: number, endRow: number, inline: { line: number; column: number }) => CallInfo[];
+
+export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCalls?: ClosureCalls): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  /** Routes an inline closure handles, with the function that registers them. */
+  const inlineRoutes: Array<{ route: RouteInfo; fn: string | null }> = [];
+  let lastInline = false;
   /** Router variables in scope; those rooted at the function's router parameter map to true. */
   const routerVars = new Map<string, boolean>();
   /** Router variable → composed path prefix (Group / PathPrefix chains). */
@@ -316,6 +349,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     const auth = buildAuth(inherited.filter(isAuthGuard), own.filter(isAuthGuard));
     if (auth) route.auth = auth;
     routes.push(route);
+    if (lastInline) inlineRoutes.push({ route, fn: currentFn });
   };
 
   /** Registration args after the path: middleware in the middle, the handler last. */
@@ -330,7 +364,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     // has no name of its own, but the function declaring the route does, and
     // its body — the closure included — is where the handling lives. Anchor
     // the route there so the trace continues into that body's calls.
-    const handler = last.handler ?? (/^func\s*\(/.test(lastArg.trim()) && currentFn ? currentFn : null);
+    lastInline = !last.handler && /^func\s*\(/.test(lastArg.trim());
+    const handler = last.handler ?? (lastInline && currentFn ? currentFn : null);
     return { handler, guards: [...guards, ...last.guards] };
   };
   /** The top-level function the current line is in (`func GetAlbum(router *gin.RouterGroup) {`). */
@@ -380,6 +415,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
+    lastInline = false;
 
     const fnDecl = line.match(/^func\s+(?:\((?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
     if (fnDecl) {
@@ -636,6 +672,36 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[]): RouteInfo
     while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) {
       routeStack.pop();
     }
+  }
+
+  // A function registering several closures (`m.Get("/explore", func(ctx) {…})`
+  // beside dozens of named handlers) is no route's handler: anchored there, each
+  // closure route would reach what every other closure calls. Such a route
+  // carries its own closure's calls instead; a function registering one
+  // closure stays its route's anchor.
+  // A closure followed by more arguments is middleware (`m.Get("/code", func(ctx) {…}, explore.Code)`):
+  // the handler is the last argument after its close.
+  const closuresOf = new Map<string | null, Set<number>>();
+  const spans = new Map<RouteInfo, ReturnType<typeof closureSpan>>();
+  for (const { route, fn } of inlineRoutes) {
+    const span = closureSpan(lines, route.line - 1);
+    spans.set(route, span);
+    const after = span ? lines[span.endRow]!.slice(span.endColumn + 1) : "";
+    const rest = /^\s*,(.*)$/.exec(after);
+    const trailing = rest ? parseArgs(`(${rest[1]!}`, 0).args : [];
+    const named = trailing.length > 0 ? unwrapHandler(trailing[trailing.length - 1]!).handler : null;
+    if (named) {
+      route.handler = named;
+      spans.delete(route);
+      continue;
+    }
+    (closuresOf.get(fn) ?? closuresOf.set(fn, new Set()).get(fn)!).add(route.line);
+  }
+  for (const [route, span] of spans) {
+    const fn = inlineRoutes.find((x) => x.route === route)!.fn;
+    if (fn !== null && closuresOf.get(fn)!.size < 2) continue;
+    route.handler = null;
+    if (span && closureCalls) route.calls = closureCalls(span.row + 1, span.endRow + 1, { line: span.row, column: span.column + 1 });
   }
 
   return routes;

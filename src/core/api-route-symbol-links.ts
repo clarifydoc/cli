@@ -179,7 +179,9 @@ export function synthesizeApiRouteSymbolLinks(
     // Express `setupRoutes(app)` — it is the registrar, which never calls the
     // handler. The route's own `route:<METHOD> <path>` symbol links to what it
     // runs, so anchor there.
-    if (tgt && link.handler && tgt.symbol.split(".").pop() !== link.handler.split(".").pop()) {
+    // A route with no handler that carries its own body's calls (an inline
+    // closure among several a registrar declares) is that route symbol too.
+    if (tgt && (link.handler ? tgt.symbol.split(".").pop() !== link.handler.split(".").pop() : (routeRow()?.calls?.length ?? 0) > 0)) {
       const route = routeRow();
       if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
     }

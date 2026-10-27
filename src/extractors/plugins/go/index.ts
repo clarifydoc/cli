@@ -3,9 +3,9 @@ import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
 import type { ParamInfo } from "../../../types/analysis.js";
-import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
-import { extractGoRoutes } from "./routes.js";
+import { extractGoRoutes, type ClosureCalls } from "./routes.js";
 import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoRequestAccess } from "./request-access.js";
@@ -130,7 +130,10 @@ export const goSpec: RegexLangSpec = {
   // Read with comments blanked: a commented-out registration serves nothing.
   extractRoutes: (lines, _classes, _file, _fns, facts) => {
     const code = GO_CODE.commentFreeLines(lines) as string[];
-    return [...extractGoRoutes(code, facts), ...extractHumaRoutes(code, facts)];
+    // A closure handling one of several routes a function registers carries its own body's calls.
+    const callLines = GO_CODE.callSourceLines(lines) as string[];
+    const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
+    return [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
   },
   extractDataSources: (lines) => extractGoDataSources(lines),
   // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
