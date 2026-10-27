@@ -309,7 +309,18 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }
           // A manager on a model held in a variable (`model.objects.filter`, `self.Meta.model.objects.all`):
           // the model is a run-time value, and the manager's name is no table either.
-          if (!table && !instance && /(?:^|\.)objects\.[A-Za-z_]\w*$/.test(fnName.replace(/\([^()]*\)/g, "()"))) instance = true;
+          // Also further down its chain (`self.child_model.objects.restrict(user).filter(…)`).
+          if (!table && !instance && /(?:^|\.)objects\.[A-Za-z_]\w*/.test(fnName.replace(/\([^()]*\)/g, "()"))) instance = true;
+          // A queryset held in a variable or attribute (`self.queryset.filter(…)` in a generic view,
+          // `qs.count()`): its model is what it was assigned — a class attribute
+          // `queryset = Club.objects.all()` included — else a run-time value, never a table named `queryset`.
+          if (!table && !instance && parts.length >= 2 && /^(?:queryset|qs)$|_(?:queryset|qs)$/i.test(parts[parts.length - 2]!)) {
+            const held = parts.slice(0, -1).join(".");
+            if (/^(?:self\.)?[a-z_]\w*$/.test(held)) {
+              table = heldModel(held, this.sourceText) ?? (held.startsWith("self.") ? heldModel(held.slice(5), this.sourceText) : null);
+              instance = !table;
+            }
+          }
           // A related manager (`doc.tags.all()`) is named after its relation field, never a table:
           // the entity pass resolves the field to the model it relates to.
           const relatedField = !table && !instance && !datastoreChain(fnName) && relatedManager(fnName, leaf) ? parts[parts.length - 2] : undefined;

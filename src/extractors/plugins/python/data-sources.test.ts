@@ -423,6 +423,35 @@ describe("Python rows saved through the variable holding them", () => {
   });
 });
 
+describe("Python querysets held in a variable or attribute", () => {
+  it("takes the model the queryset was assigned, and never names a table `queryset` (real-repo FP)", async () => {
+    const src = [
+      "class BulkEditView:",
+      "    queryset = None",
+      "    def post(self, request):",
+      "        objs = self.queryset.filter(pk__in=request.POST.getlist('pk'))",
+      "class ClubListView:",
+      "    queryset = Club.objects.all()",
+      "    def get(self, request):",
+      "        return self.queryset.filter(active=True)",
+      "def fixtures_of(league):",
+      "    fixture_qs = Fixture.objects.filter(league=league)",
+      "    return fixture_qs.filter(played=False)",
+      "class SquadView:",
+      "    def get_children(self, request, parent):",
+      "        return self.child_model.objects.restrict(request.user, 'view').filter(club=parent)",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && !/^[A-Z]\w*\.objects\./.test(d.name));
+    expect(rows.map((d) => [d.name, d.entity ?? null, d.receiverIsInstance ?? false])).toEqual([
+      ["self.queryset.filter", null, true],
+      ["self.queryset.filter", null, true],
+      ["fixture_qs.filter", "Fixture", false],
+      ["self.child_model.objects.restrict(request.user, 'view').filter", null, true],
+    ]);
+  });
+});
+
 describe("Python SQLAlchemy statements", () => {
   const rowsOf = async (src: string) => {
     const tree = await parseSource(src, "python" as never, "x.py");
