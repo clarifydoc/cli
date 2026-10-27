@@ -252,6 +252,60 @@ describe("JsPropCallbackResolver — Vue function props", () => {
   });
 });
 
+describe("JsComponentEmitResolver — an emit bound to an expression", () => {
+  it("joins the child's emit to what the parent's binding calls (real-repo FP)", async () => {
+    const { markupFunctions, markupCalls } = await import("./markup-calls.js");
+    const { extractVueInteractiveElements } = await import("./interactive-elements.js");
+    const template = `<template>
+  <ClubDataPage
+    @delete-one="clubActions.deleteOne"
+    @save="actions.updateOne($event)"
+    @restore="(id) => actions.restoreOne(id)"
+    @rename="onRename"
+    @transfer="transferPlayer"
+    @close="$emit('close')"
+    @pick="picked = $event"
+  />
+</template>`;
+    const elements = extractVueInteractiveElements(template, template);
+    // `onRename` is the page's own function; `transferPlayer` is destructured from a composable.
+    const declared = new Set(["onRename"]);
+    const fns = markupFunctions(elements, "src/pages/clubs.vue", declared);
+    expect(fns.map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "<ClubDataPage@delete-one@2>: clubActions.deleteOne",
+      "<ClubDataPage@save@2>: actions.updateOne",
+      "<ClubDataPage@restore@2>: actions.restoreOne",
+      "<ClubDataPage@transfer@2>: transferPlayer",
+    ]);
+    // The binding's calls live in its own function, not in <setup> as well.
+    expect(markupCalls(elements, "src/pages/clubs.vue", declared).map((c) => c.name)).toEqual(["onRename"]);
+    const page = fa("src/pages/clubs.vue", {
+      functions: [...fns, fn("onRename", 20, 24)],
+      interactiveElements: elements,
+      subComponents: [{ name: "ClubDataPage", importSource: "../components/ClubDataPage.vue", props: [], line: 2 }],
+    });
+    const child = fa("src/components/ClubDataPage.vue", {
+      functions: [fn("confirmDelete", 10, 14), fn("submit", 16, 20)],
+      events: [
+        { name: "deleteOne", params: [], line: 12 },
+        { name: "save", params: [], line: 18 },
+        { name: "restore", params: [], line: 19 },
+        { name: "rename", params: [], line: 19 },
+        { name: "pick", params: [], line: 19 },
+        { name: "transfer", params: [], line: 19 },
+      ],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, child]);
+    expect(links.map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol}`).sort()).toEqual([
+      "confirmDelete -emit:deleteOne-> <ClubDataPage@delete-one@2>",
+      "submit -emit:rename-> onRename",
+      "submit -emit:restore-> <ClubDataPage@restore@2>",
+      "submit -emit:save-> <ClubDataPage@save@2>",
+      "submit -emit:transfer-> <ClubDataPage@transfer@2>",
+    ]);
+  });
+});
+
 describe("component-emit through a Nuxt project's auto-imported components", () => {
   it("joins a tag the parent never imports to the component file of that name, and an emit made in the child's markup", () => {
     const config = fa("web/nuxt.config.ts", { projectId: "web" } as Partial<FileAnalysis>);

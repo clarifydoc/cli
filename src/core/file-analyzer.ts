@@ -602,7 +602,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // Merge container-format data back in (e.g. Vue template elements/components)
     postExtract?.(analysis, rawSource);
     // What the markup's handlers call, in the component scope the template closes over.
-    const markupCalls = hooks?.markupCalls?.(analysis.interactiveElements, file.relativePath) ?? [];
+    const declared = new Set([...analysis.functions.map((f) => f.name), ...analysis.classes.flatMap((c) => c.methods.map((m) => m.name))]);
+    const markupCalls = hooks?.markupCalls?.(analysis.interactiveElements, file.relativePath, declared) ?? [];
     if (markupCalls.length > 0) {
       const classified = classifyCalls(markupCalls, analysis.imports, language, variableAliases, localSymbols);
       let setup = analysis.functions.find((f) => f.name === "<setup>");
@@ -616,7 +617,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (propBindings && propBindings.length > 0) analysis.propBindings = propBindings;
     const subscriptions = hooks?.componentSubscriptions?.(tree, sourceText);
     if (subscriptions && subscriptions.length > 0) analysis.componentSubscriptions = subscriptions;
-    for (const fn of hooks?.markupFunctions?.(analysis.interactiveElements, file.relativePath) ?? []) {
+    for (const fn of hooks?.markupFunctions?.(analysis.interactiveElements, file.relativePath, declared) ?? []) {
       fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
       analysis.functions.push(fn);
     }
