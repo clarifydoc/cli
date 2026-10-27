@@ -9,6 +9,9 @@ import {
 } from "../shared/regex-base.js";
 import { closeOf, codeOf } from "./di.js";
 
+/** A redirecting factory's target after its parameters: `factory Event.select({…}) = _Select;`. */
+const REDIRECT_RE = /^=\s*[A-Za-z_$][\w$.]*(?:<[^;]*>)?\s*;/;
+
 /**
  * Members the declaration-shaped function pattern cannot see, read only at a
  * class body's own depth — where `Name(` can only be a constructor and
@@ -93,10 +96,10 @@ function memberAt(
   spec: RegexLangSpec,
   parseParam: (t: string) => ParamInfo | null,
 ): FunctionInfo | null {
-  // `Club(…)`, `factory Club(…)`, and a named constructor `Club.fromJson(…)` / `factory Club.fromJson(…)` —
+  // `Club(…)`, `factory Club(…)`, and a named constructor `Club.fromJson(…)` / `const factory Club.fromJson(…)` —
   // a member `fromJson` that makes a `Club` (`Club.fromJson(json)` is a call of it).
-  const named = code.match(new RegExp(LEADING + String.raw`(?:const\s+|factory\s+)?${cls.name}\s*\.\s*([A-Za-z_$]\w*)\s*\(`));
-  const ctor = named ?? code.match(new RegExp(LEADING + String.raw`(?:const\s+|factory\s+)?(${cls.name})\s*\(`));
+  const named = code.match(new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?${cls.name}\s*\.\s*([A-Za-z_$]\w*)\s*\(`));
+  const ctor = named ?? code.match(new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?(${cls.name})\s*\(`));
   const sig = ctor ? null : code.match(SIGNATURE_NAME_RE);
   const m = ctor ?? sig;
   if (!m) return null;
@@ -116,7 +119,7 @@ function memberAt(
     // Only a bodiless signature or a wrapped one: a method with a body is the
     // function pattern's, and anything else (`foo(…),`) is no declaration.
     if (!after.startsWith(";") && !wraps) return null;
-  } else if (!hasBody && !after.startsWith(";") && !after.startsWith(":")) return null;
+  } else if (!hasBody && !after.startsWith(";") && !after.startsWith(":") && !REDIRECT_RE.test(after)) return null;
 
   const endLine = findEndLine(lines, j, "brace");
   const line = lines[j]!;
@@ -135,6 +138,7 @@ function memberAt(
     line: j + 1,
     endLine: sig && !wraps ? j + 1 + (text.slice(0, close).match(/\n/g)?.length ?? 0) : endLine,
   };
+  if (ctor) fn.isConstructor = true;
   if (hasBody && spec.extractLocalTypes) {
     const body = lines.slice(j + 1, Math.min(endLine, lines.length));
     if (inline >= 0) body.unshift(line.slice(inline));
@@ -159,6 +163,6 @@ export function isDartInterface(header: string, cls: ClassInfo, lines: string[])
   if (cls.methods.length === 0) return false;
   // The function pattern only takes declarations that open a body on their
   // own line, so a member line without `{`/`=>` is an abstract signature.
-  const constructs = new RegExp(String.raw`^\s*(?:const\s+|factory\s+)?${cls.name}\s*[.(]`);
+  const constructs = new RegExp(String.raw`^\s*(?:const\s+)?(?:factory\s+)?${cls.name}\s*[.(]`);
   return cls.methods.every((m) => m.name !== cls.name && !constructs.test(codeOf(lines[m.line - 1] ?? "")) && !/\{|=>/.test(codeOf(lines[m.line - 1] ?? "")));
 }

@@ -966,6 +966,11 @@ export interface FunctionInfo {
    */
   variadic?: boolean;
   returnType: string | null;
+  /**
+   * Builds its class: reached through the type (`Club(…)`, `Club.fromJson(…)`), never through a value of it or by
+   * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
+   */
+  isConstructor?: true;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];

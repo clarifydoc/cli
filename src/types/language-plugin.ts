@@ -1367,6 +1367,8 @@ export interface ParsedFunctionSpan {
   endLine: number;
   /** Absent when the language's function pattern decides it from the declaration line. */
   isExported?: boolean;
+  /** A constructor, where its name does not say so (`FunctionInfo.isConstructor`). */
+  isConstructor?: true;
   calls: CallInfo[];
 }
 

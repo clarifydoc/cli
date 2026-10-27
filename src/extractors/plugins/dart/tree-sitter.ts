@@ -86,7 +86,8 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk): void 
       if (name) {
         calls = [];
         const end = (body ?? child).endPosition.row + 1;
-        walk.functions.push({ span: { name: name.text, line: name.startPosition.row + 1, endLine: end }, calls });
+        const isConstructor = sig.type !== "function_signature";
+        walk.functions.push({ span: { name: name.text, line: name.startPosition.row + 1, endLine: end, ...(isConstructor ? { isConstructor: true as const } : {}) }, calls });
       }
       // An initializer list (`: _repo = Repo()`) is the constructor's; its parameters call nothing.
       for (const part of namedChildren(child)) if (part !== sig) visit(part, calls, walk);

@@ -1095,24 +1095,25 @@ export const dartSpec: RegexLangSpec = {
 
   extractRequestAccess: extractDartRequestAccess,
 
+  // A name may hold `$` (`_$UserImpl`, `$Intent$NullableType` in generated code), as Dart allows.
   classPatterns: [
     {
       pattern:
-        /^\s*(?:@[\w.]+\s*)*(?:abstract\s+|sealed\s+|base\s+|interface\s+|final\s+|mixin\s+)*class\s+([A-Za-z_$]\w*)/,
+        /^\s*(?:@[\w.]+\s*)*(?:abstract\s+|sealed\s+|base\s+|interface\s+|final\s+|mixin\s+)*class\s+([A-Za-z_$][\w$]*)/,
       getExtends: (line) => {
         const m = line.match(/\bextends\s+([A-Za-z_$][\w$]*)/);
         return m ? m[1]! : null;
       },
     },
     {
-      pattern: /^\s*mixin\s+([A-Za-z_$]\w*)/,
+      pattern: /^\s*mixin\s+([A-Za-z_$][\w$]*)/,
       getExtends: (line) => {
         const m = line.match(/\bon\s+([A-Za-z_$][\w$]*)/);
         return m ? m[1]! : null;
       },
     },
-    { pattern: /^\s*extension\s+([A-Za-z_$]\w*)\s+on\b/, getExtends: () => null },
-    { pattern: /^\s*enum\s+([A-Za-z_$]\w*)/, getExtends: () => null },
+    { pattern: /^\s*extension\s+([A-Za-z_$][\w$]*)\s+on\b/, getExtends: () => null },
+    { pattern: /^\s*enum\s+([A-Za-z_$][\w$]*)/, getExtends: () => null },
   ],
 
   extractClasses: (lines, fns) => extractDartClasses(lines, fns),

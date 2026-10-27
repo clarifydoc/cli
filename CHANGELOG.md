@@ -20,6 +20,11 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Dart named constructors stay with their type.** A named or factory constructor (`SquadEvent.selectPlayer`) is
+  marked `isConstructor` and is no longer a candidate for a call through a value of the same name
+  (`coach.selectPlayer()`), which it captured whenever that name was otherwise unique. The patterns now read
+  `const factory X.y(…) = _Y;` redirecting factories and class names holding `$` (`_$UserImpl`), as generated code
+  writes them.
 - **Dart is read by tree-sitter.** Dart's functions and calls come from tree-sitter-dart (Dart 3, pinned to an upstream
   commit) under the `tree-sitter` feature, with the per-file fallback (`no-tree-sitter:dart` keeps the patterns).
   Functions whose parameters hold function types, functions without a return type, local functions and every

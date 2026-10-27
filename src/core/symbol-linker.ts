@@ -724,8 +724,10 @@ function buildSymbolIndex(
           endLine: method.endLine,
           returnType: overloadReturn(prev, method.returnType),
         });
-        // Also store unqualified as fallback (if not already taken by a function)
-        if (!fileSymbols.has(method.name)) {
+        // Also store unqualified as fallback (if not already taken by a function). A constructor
+        // its name does not mark (Dart's `Event.openPage`) is reached through its type only: by its
+        // bare name it would be a candidate for every `x.openPage()` on a value.
+        if (!fileSymbols.has(method.name) && !method.isConstructor) {
           fileSymbols.set(method.name, {
             name: qualified,
             line: method.line,
