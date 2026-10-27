@@ -116,6 +116,18 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
   }
 }
 
+/**
+ * The fields a data statement's filter object compares with a value whose
+ * origin is known (`{ username: name }`, `{ slug }`, `{ author: { id } }` →
+ * `author.id`), literals left out. Null when there is none.
+ */
+export function filterOrigins(obj: Node): Array<{ field: string; origin: Origin; transform?: string }> | null {
+  const out: CallArgOrigin[] = [];
+  fieldOrigins(obj, 0, "", 1, out);
+  const known = out.filter((o) => o.origin.kind !== "literal" && o.field);
+  return known.length > 0 ? known.map((o) => ({ field: o.field!, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) })) : null;
+}
+
 /** A file that reads no URL values needs no declaration scan: the router's words, once per tree. */
 const READS_URL = new WeakMap<object, boolean>();
 const URL_WORDS = /params|query|\$route|paramMap|useParams|useRoute|useSearchParams|props|defineProps/;
@@ -282,8 +294,8 @@ function paramsObject(n: Node, depth: number): "route-param" | "query-param" | n
   if (n.type === "member_expression") {
     const prop = n.childForFieldName("property")?.text;
     const owner = n.childForFieldName("object")!;
-    if (prop === "params" && routeObject(owner, depth + 1)) return "route-param";
-    if (prop === "query" && (routeObject(owner, depth + 1) || routerObject(owner))) return "query-param";
+    if (prop === "params" && (routeObject(owner, depth + 1) || requestObject(owner))) return "route-param";
+    if (prop === "query" && (routeObject(owner, depth + 1) || routerObject(owner) || requestObject(owner))) return "query-param";
     return null;
   }
   if (n.type === "identifier") {
@@ -307,6 +319,29 @@ function routeObject(n: Node, depth: number): boolean {
   if (n.type === "identifier" && !paramOf(n, n.text)) {
     const bound = bindingOf(n, n.text);
     return !!bound && bound.kind === "value" && routeObject(unwrap(bound.value).node, depth + 1);
+  }
+  return false;
+}
+
+/**
+ * A server handler's request (its `params` are the matched route's, its `query`
+ * the request's query string): a parameter of an enclosing function named
+ * `req`/`request` (Express, Fastify), Koa's `ctx`, or one typed as a request
+ * (`(r: FastifyRequest) =>`, `NextApiRequest`).
+ */
+function requestObject(n: Node): boolean {
+  if (n.type !== "identifier") return false;
+  for (let fn: Node | null = n.parent; fn; fn = fn.parent) {
+    if (!FUNCTION_NODES.has(fn.type)) continue;
+    const single = fn.childForFieldName("parameter");
+    const params = single ? [single] : fn.childForFieldName("parameters")?.namedChildren.filter((p): p is Node => !!p && p.type !== "comment") ?? [];
+    for (const p of params) {
+      const id = p.childForFieldName("pattern") ?? p;
+      if (id.type !== "identifier" || id.text !== n.text) continue;
+      if (/^(?:req|request|ctx)$/.test(n.text)) return true;
+      const type = p.childForFieldName("type")?.text.replace(/^:\s*/, "") ?? "";
+      return /^(?:\w+\.)?\w*Request\b/.test(type);
+    }
   }
   return false;
 }

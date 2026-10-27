@@ -94,6 +94,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   typeOnlyEdges: "optional",
   dynamicImportEdges: "optional",
   paramOrigins: "optional",
+  paramColumns: "optional",
   communityNames: "optional",
   fileLayerReasons: "optional",
   fileLayerAlternates: "optional",

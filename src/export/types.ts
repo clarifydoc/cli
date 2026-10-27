@@ -51,6 +51,15 @@ export interface ParamOrigin {
   confidence?: string;
 }
 
+/** A route parameter a data statement filters on (`ProjectAnalysis.paramColumns`). */
+export interface ParamColumn {
+  route: { file: string; line: number; method: string | null; path: string; param: string; binding?: string };
+  column: { entity: string | null; field: string; file: string; line: number; access?: string; call: string };
+  hops?: Array<{ file: string; symbol: string; line: number; arg: number }>;
+  transform?: string;
+  confidence?: string;
+}
+
 export interface ApiRouteLink {
   source: string;
   sourceLine: number;
@@ -295,6 +304,7 @@ export interface Summary {
   routeMap?: Route[];
   apiRouteLinks?: ApiRouteLink[];
   paramOrigins?: ParamOrigin[];
+  paramColumns?: ParamColumn[];
   screens?: Screen[];
   interactiveElements?: InteractiveElement[];
   symbolLinks?: SymbolLink[];

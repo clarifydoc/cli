@@ -1317,3 +1317,30 @@ export async function clubs() {
     expect(rows.map((r) => r.name)).toEqual(["client.findMany"]);
   });
 });
+
+describe("JS ORM filter fields (whereFields)", () => {
+  it("reads the fields a filter compares with a parameter or a request value, literals left out", async () => {
+    const src = `import prisma from "./db";
+export async function getClub(slug: string, season: number) {
+  return prisma.club.findUnique({ where: { slug, season: Number(season), active: true }, include: { players: true } });
+}
+export async function clubsOfLeague(leagueId: string) {
+  return clubRepository.findOneBy({ leagueId });
+}
+export const removeMatch = (req, res) => prisma.match.delete({ where: { id: req.params.id } });
+export async function listClubs(page: number) {
+  return prisma.club.findMany({ skip: page, take: 20 });
+}`;
+    const rows = (await dbOf(src)).map((d) => [d.name, d.whereFields ?? null]);
+    expect(rows).toEqual([
+      ["prisma.club.findUnique", [
+        { field: "slug", origin: { kind: "param", name: "slug", index: 0 } },
+        { field: "season", origin: { kind: "param", name: "season", index: 1 }, transform: "Number" },
+      ]],
+      ["clubRepository.findOneBy", [{ field: "leagueId", origin: { kind: "param", name: "leagueId", index: 0 } }]],
+      ["prisma.match.delete", [{ field: "id", origin: { kind: "route-param", name: "id" } }]],
+      ["prisma.club.findMany", null],
+    ]);
+  });
+});
+

@@ -1,4 +1,4 @@
-import type { ParamOrigin, Summary } from "./types.js";
+import type { ParamColumn, ParamOrigin, Summary } from "./types.js";
 import { at, byDesc, cell, codeCell, commentLine, plural, share } from "./text.js";
 import { buildDiagram, routeChains, type Diagram } from "./mermaid.js";
 
@@ -530,6 +530,34 @@ function paramOriginLines(rows: readonly ParamOrigin[]): string[] {
   return out;
 }
 
+/** `paramColumns` rows by the route chain they start at (`routeChains`' key). */
+function paramColumnsByRoute(rows: readonly ParamColumn[]): Map<string, ParamColumn[]> {
+  const out = new Map<string, ParamColumn[]>();
+  for (const row of rows) {
+    const key = `${row.route.file}|${`${row.route.method ?? ""} ${row.route.path}`.trim()}`;
+    (out.get(key) ?? out.set(key, []).get(key)!).push(row);
+  }
+  return out;
+}
+
+/** Which field of which table each route parameter is compared with, and the functions it is handed through. */
+function paramColumnLines(rows: readonly ParamColumn[]): string[] {
+  return [
+    "**Parameters filter on**",
+    "",
+    ...table(
+      ["Parameter", "Field", "Statement", "Through"],
+      rows.slice(0, ROW_CAP).map((row) => [
+        codeCell(row.route.param),
+        codeCell(row.column.entity ? `${row.column.entity}.${row.column.field}` : row.column.field),
+        `${codeCell(row.column.call)}${row.column.access ? ` (${row.column.access})` : ""} ${at(row.column.file, row.column.line)}`,
+        cell((row.hops ?? []).map((hop) => hop.symbol).join(" → ") || "—"),
+      ]),
+    ),
+    ...capNote(Math.min(rows.length, ROW_CAP), rows.length, "source order"),
+  ];
+}
+
 function originValue(origin: ParamOrigin["origin"]): string {
   if (origin.kind === "literal") return `literal ${codeCell(origin.value ?? "")}`;
   const what = origin.kind === "query-param" ? "query value" : "route parameter";
@@ -549,6 +577,7 @@ export function flowsDoc(summary: Summary): string {
 
   const chains = routeChains(summary);
   const fedBy = paramOriginsByRoute(summary.paramOrigins ?? []);
+  const filtersOn = paramColumnsByRoute(summary.paramColumns ?? []);
   const allApiRoutes = (summary.routeMap ?? []).filter((route) => route.kind === "api" && !route.consumed).length;
   const screenFiles = new Set((summary.screens ?? []).map((screen) => screen.filePath));
 
@@ -602,6 +631,8 @@ export function flowsDoc(summary: Summary): string {
 
     const params = fedBy.get(chain.key) ?? [];
     if (params.length > 0) lines.push(...paramOriginLines(params));
+    const columns = filtersOn.get(chain.key) ?? [];
+    if (columns.length > 0) lines.push(...paramColumnLines(columns));
 
     if (chain.effects.length > 0) {
       lines.push("**Reaches**", "");

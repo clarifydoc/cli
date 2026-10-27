@@ -171,4 +171,30 @@ function helper({ clubId }) { loadClub(clubId); }`;
     // The two sites reading the route parameter each stay; literal-only sites still collapse into the first plain call.
     expect(calls.map((c) => [c.line, c.argOrigins?.length ?? 0])).toEqual([[3, 2], [5, 1], [7, 0]]);
   });
+
+  it("reads a server handler's route parameters and query values off its request", async () => {
+    const src = `export async function players(req: Request, res: Response) {
+  const { season } = req.query;
+  res.json(await listPlayers(req.params.clubId, season));
+}
+export async function show(request: FastifyRequest) {
+  return findMatch(Number(request.params.matchId));
+}
+export function other(params: Record<string, string>) {
+  return findMatch(params.matchId);
+}`;
+    const tree = await parseSource(src, "typescript" as never, "x.ts");
+    const x = new JavaScriptExtractor();
+    const fns = x.extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "players")?.calls.find((c) => c.name === "listPlayers")?.argOrigins).toEqual([
+      { index: 0, origin: { kind: "route-param", name: "clubId" } },
+      { index: 1, origin: { kind: "query-param", name: "season" } },
+    ]);
+    expect(fns.find((f) => f.name === "show")?.calls.find((c) => c.name === "findMatch")?.argOrigins).toEqual([
+      { index: 0, origin: { kind: "route-param", name: "matchId" }, transform: "Number" },
+    ]);
+    // A parameter called params is no request's: a property read off it says nothing.
+    expect(fns.find((f) => f.name === "other")?.calls.find((c) => c.name === "findMatch")?.argOrigins).toBeUndefined();
+  });
 });
+

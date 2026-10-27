@@ -49,4 +49,21 @@ describe("FLOWS.md", () => {
     expect(text).toMatch(/\| `id` \| route parameter `clubId` of ClubView \(`\/clubs\/:clubId`\) \| .*ClubView\.vue.*4.* \| <setup> → clubQuery \|/);
     expect(text).toContain("`id`: 1 caller hands the value on through code the analysis does not follow.");
   });
+
+  it("says which table field each route parameter filters on", () => {
+    const route = { kind: "api", path: "/clubs/:slug", httpMethod: "GET", handler: null, line: 3, filePath: "api/routes/clubs.ts" };
+    const summary = {
+      routeMap: [route],
+      apiRouteLinks: [{ source: "web/api.ts", sourceLine: 2, method: "GET", url: "/clubs/${slug}", target: "api/routes/clubs.ts", targetLine: 3, handler: null, routePath: "/clubs/:slug", confidence: "EXTRACTED" }],
+      paramColumns: [{
+        route: { file: "api/routes/clubs.ts", line: 3, method: "GET", path: "/clubs/:slug", param: "slug", binding: "route" },
+        column: { entity: "club", field: "slug", file: "api/services/clubs.ts", line: 7, access: "read", call: "prisma.club.findUnique" },
+        hops: [{ file: "api/services/clubs.ts", symbol: "getClub", line: 1, arg: 0 }],
+        confidence: "EXTRACTED",
+      }],
+    };
+    const text = renderExport("FLOWS.md", summary as never);
+    expect(text).toContain("**Parameters filter on**");
+    expect(text).toMatch(/\| `slug` \| `club\.slug` \| `prisma\.club\.findUnique` \(read\) .*clubs\.ts.*7.* \| getClub \|/);
+  });
 });

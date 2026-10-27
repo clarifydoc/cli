@@ -705,6 +705,15 @@ describe("clarifydoc_explain — a budget it overflows", () => {
   });
 });
 
+describe("clarifydoc_contract — parameters filtering data (sample-backend)", () => {
+  const { server } = buildMcpServer({ projectRoot: join("test-fixtures", "sample-backend"), analysisDir: join("test-output", "sample-backend"), allowAnalyze: false, allowColdStart: false });
+  it("says which table field a route parameter is compared with, through the service it is handed to", async () => {
+    const { text } = await call(server, "clarifydoc_contract", { path: "/api/players/:id", method: "GET" });
+    expect(text).toContain("parameters filter on:");
+    expect(text).toContain("id → player.id (prisma.player.findUnique, read at services/playerService.ts:17) via getPlayerById");
+  });
+});
+
 describe("clarifydoc_contract — parameter origins (sample-react)", () => {
   const { server } = buildMcpServer({ projectRoot: join("test-fixtures", "sample-react"), analysisDir: join("test-output", "sample-react"), allowAnalyze: false, allowColdStart: false });
   it("says which screen's route parameter feeds a path parameter", async () => {

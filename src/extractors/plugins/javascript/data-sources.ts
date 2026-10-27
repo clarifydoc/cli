@@ -16,6 +16,7 @@ import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
 import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-clients.js";
 import { tableFrom } from "../shared/sql-string-sources.js";
 import { sqlVerbAccess } from "../shared/db-access.js";
+import { filterOrigins } from "./arg-origins.js";
 
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
@@ -1663,6 +1664,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         ) {
           const access = fnName ? ormAccessKind(fnName) : undefined;
           const table = drizzleTable(node, fnName);
+          const whereFields = ormWhereFields(node, fnName);
           sources.push(this.ds({
             kind: "database",
             name: ormChain,
@@ -1670,6 +1672,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             ...(table ? { entity: table } : {}),
             line: node.startPosition.row + 1,
             ...(access ? { access } : {}),
+            ...(whereFields ? { whereFields } : {}),
           }));
         }
       }
@@ -2194,6 +2197,37 @@ function resolveTemplateUrl(tpl: Node, lookup: (name: string) => ResolvedUrl | n
  * `Array.prototype.find(predicate)` (callback) from a Mongoose `Model.find(filter)`
  * (object/id/none) when the receiver is PascalCase and could be either.
  */
+/** The options an ORM query object takes besides its filter: such an object is no filter itself. */
+const QUERY_OPTION_KEYS = new Set(["where", "select", "include", "data", "orderBy", "order", "skip", "take", "cursor", "distinct", "relations", "limit", "offset", "attributes", "create", "update"]);
+
+/**
+ * The fields an ORM statement filters on with a value of known origin: the
+ * `where` object of its first argument (Prisma, TypeORM, Sequelize), or the
+ * first argument itself where the method takes a bare filter (TypeORM's
+ * `findOneBy({ slug })`, a document model's `findOne({ slug })`).
+ */
+function ormWhereFields(callNode: Node, fnName: string | null): DataSourceInfo["whereFields"] | undefined {
+  const first = callNode.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+  if (!first || first.type !== "object" || !fnName) return undefined;
+  let filter: Node | null = null;
+  for (const prop of first.namedChildren) {
+    if (prop?.type !== "pair") continue;
+    const key = prop.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+    if (key === "where") {
+      const value = prop.childForFieldName("value");
+      filter = value?.type === "object" ? value : null;
+      if (!filter) return undefined;
+      break;
+    }
+  }
+  if (!filter) {
+    const options = first.namedChildren.some((p) => p?.type === "pair" && QUERY_OPTION_KEYS.has(p.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "") ?? ""));
+    if (options || !/^(?:find|findOne|findBy|findOneBy|findOneByOrFail|findOneOrFail|count|countBy|countDocuments|exists|existsBy|exist|delete|deleteOne|deleteMany|updateOne|updateMany|findOneAndUpdate|findOneAndDelete|findOneAndReplace|replaceOne)$/.test(fnName)) return undefined;
+    filter = first;
+  }
+  return filterOrigins(filter) ?? undefined;
+}
+
 function firstArgIsFunction(callNode: Node): boolean {
   const a = callNode.childForFieldName("arguments")?.namedChild(0);
   return (

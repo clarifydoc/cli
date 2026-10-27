@@ -894,6 +894,23 @@ export interface ParamOrigin {
   confidence: Confidence;
 }
 
+/**
+ * A route parameter a data statement filters on (`ProjectAnalysis.paramColumns`):
+ * the route and its parameter, the statement and the field its filter compares
+ * the value with (`where: { username }` → `username`), and the functions the
+ * value is handed through on the way. The backend half of `ParamOrigin`.
+ */
+export interface ParamColumn {
+  route: { file: string; line: number; method: string | null; path: string; param: string; binding?: string };
+  /** The statement: the entity it names (as written, when it names one), the filtered field (dotted when nested), where it is, and what it does. */
+  column: { entity: string | null; field: string; file: string; line: number; access?: "read" | "write"; call: string };
+  /** The functions the value is handed through, from the route towards the statement, each with the argument position it arrives at. */
+  hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
+  /** One wrapper the value passed through on the last step (`Number`). */
+  transform?: string;
+  confidence: Confidence;
+}
+
 export interface FunctionInfo {
   name: string;
   params: ParamInfo[];
@@ -1812,6 +1829,13 @@ export interface DataSourceInfo {
    * cannot follow.
    */
   responseReads?: string[];
+  /**
+   * For `database`: the fields the statement's filter compares with a value
+   * whose origin is known — a parameter of the enclosing function, or a value
+   * of the request (`where: { username: name }`, `findOneBy({ slug })`), by
+   * dotted path. Literal comparisons are left out. Absent when there is none.
+   */
+  whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string }>;
   /**
    * For an api-call: the URL's leading base was a runtime value no pass could
    * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it
@@ -3408,6 +3432,12 @@ export interface ProjectAnalysis {
    * plugin reports argument origins.
    */
   paramOrigins?: ParamOrigin[];
+  /**
+   * Which route parameters a data statement filters on, followed from the
+   * route through the calls that hand the value on (core/param-columns.ts).
+   * Absent when no plugin reports filter fields.
+   */
+  paramColumns?: ParamColumn[];
   /** What the cross-tier linker did with every call — links, refusals, unmatched, by caller role. */
   apiRouteLinkStats?: ApiRouteLinkStats;
   /** Request bodies that disagree with the route they reach (EXTRACTED links only). */

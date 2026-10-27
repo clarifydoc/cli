@@ -1381,8 +1381,8 @@ export function contractTool(ctx: ToolContext): McpTool {
     description:
       "One API endpoint as a self-contained OpenAPI-shaped operation — its security (schemes, roles, policies, or " +
       "anonymous), API versions and deprecation, every parameter with where it binds (path, query, header), and the " +
-      "request body schema flattened from the handler's DTO — plus who calls it. For an agent that intends to CALL " +
-      "the endpoint rather than read about it. Narrow with `method`, `project` or `file` when the path matches several routes.",
+      "request body schema flattened from the handler's DTO — plus who calls it and the table field each parameter filters. " +
+      "For an agent about to CALL it. Narrow with `method`, `project` or `file` when the path matches several routes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1468,12 +1468,26 @@ export function contractTool(ctx: ToolContext): McpTool {
         const { shown, hidden } = cap(from, 4);
         return `  ${param} ← ${shown.join("; ")}${hidden ? ` … +${hidden}` : ""}`;
       });
+      // Which field each route parameter is compared with on the way to the data (`paramColumns`).
+      const filters = new Map<string, string[]>();
+      for (const c of summary.paramColumns ?? []) {
+        if (c.route.file !== route.filePath || c.route.line !== route.line) continue;
+        const via = c.hops.length ? ` via ${c.hops.map((h) => h.symbol).join(" → ")}` : "";
+        const text = `${c.column.entity ? `${c.column.entity}.` : ""}${c.column.field} (${c.column.call}${c.column.access ? `, ${c.column.access}` : ""} at ${loc(c.column.file, c.column.line)})${via}`;
+        const list = filters.get(c.route.param) ?? filters.set(c.route.param, []).get(c.route.param)!;
+        if (!list.includes(text)) list.push(text);
+      }
+      const filterLines = [...filters].map(([param, on]) => {
+        const { shown, hidden } = cap(on, 4);
+        return `  ${param} → ${shown.join("; ")}${hidden ? ` … +${hidden}` : ""}`;
+      });
       return {
         text: joinLines([
           `# ${routeLabel(route.httpMethod, route.path)}${route.handler ? ` → ${route.handler}` : ""}${project} (${loc(route.filePath, route.line)})`,
           route.middleware?.length ? `guards: ${route.middleware.join(", ")}${a?.inherited ? " (from controller)" : ""}` : "guards: none declared here",
           cs.length ? `called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}` : "called from: no frontend call linked",
           ...(fedLines.length ? ["parameters fed by:", ...fedLines] : []),
+          ...(filterLines.length ? ["parameters filter on:", ...filterLines] : []),
           "",
           "```json",
           JSON.stringify(operation, null, 2),

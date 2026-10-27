@@ -109,6 +109,7 @@ import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dedupSymbolLinksAppend, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { computeParamOrigins } from "./param-origins.js";
+import { computeParamColumns } from "./param-columns.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols, entityMatcher } from "./data-access-graph.js";
@@ -1407,6 +1408,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (projectCallSources > 0) {
     progress.detail(`  Data sources that are calls into project code: ${projectCallSources}`);
   }
+  // Which route parameters a data statement filters on, through the calls between.
+  const paramColumns = computeParamColumns({ analyses: allAnalyses, symbolLinks, routes: allRoutes });
+  if (paramColumns.length > 0) progress.detail(`  Route parameters filtering data: ${paramColumns.length}`);
 
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
@@ -2228,6 +2232,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,
     paramOrigins: paramOrigins.length > 0 ? paramOrigins : undefined,
+    paramColumns: paramColumns.length > 0 ? paramColumns : undefined,
     apiRouteLinkStats: apiRouteLinkStats.calls > 0 ? apiRouteLinkStats : undefined,
     ...(contractFindings.length > 0 ? { contractFindings } : {}),
     projectDependencies: projectDependencies.length > 0 ? projectDependencies : undefined,
