@@ -159,6 +159,9 @@ export class PythonEntityExtractor extends EntityExtractor {
     // Hard reject: known non-ORM bases (pydantic, dataclasses, plain object).
     const lastBaseSeg = (base.split(".").pop() ?? base).trim();
     if (flags.nonOrmBases.has(lastBaseSeg)) return null;
+    // A Django migration (`class Migration(migrations.Migration)`) names model fields in its
+    // operations (`field=models.DecimalField(…)`), but is no model.
+    if (/^migrations\.Migration$/.test(base.trim())) return null;
     if (/\bBaseModel\b/.test(bases)) return null; // pydantic / starlette / FastAPI
 
     // Pony: subclasses `db.Entity` (the db instance name varies → match *.Entity).

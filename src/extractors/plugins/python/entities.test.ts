@@ -58,3 +58,23 @@ class Game(db.Model):
     expect((a.entityRelations ?? []).map((r) => `${r.fromEntity} -> ${r.toEntity}`)).toEqual(expect.arrayContaining(["Scout -> Game"]));
   });
 });
+
+describe("Python entities — Django migrations", () => {
+  it("does not take a migration whose operations name model fields for a model (real-repo FP)", async () => {
+    const a = await analyze(`from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+    dependencies = [("league", "0044_club_groups")]
+
+    operations = [
+        migrations.AddField(
+            model_name="club",
+            name="capacity",
+            field=models.IntegerField(blank=True, null=True),
+        ),
+    ]
+`, "league/migrations/0045_club_capacity.py");
+    expect(entities(a)).toEqual([]);
+  });
+});
