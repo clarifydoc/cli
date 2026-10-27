@@ -130,6 +130,34 @@ function concatUrl(rest: string): string | null {
   return parts.map((p) => (/^["`]/.test(p) ? p.slice(1, -1) : `\${${p}}`)).join("");
 }
 
+/**
+ * The URL a local holds where a request reads it: its latest `name := …` / `name = …`
+ * in the function above line `i`, built by concatenation with a literal
+ * (`"http://" + fe.ordersAddr`). A field of the method's receiver is named by
+ * the receiver's type (`${frontendServer.ordersAddr}`), which the project's
+ * module values resolve wherever the program sets the field.
+ */
+function localUrl(lines: readonly string[], i: number, name: string): string | null {
+  const assign = new RegExp(String.raw`^\s*${name}\s*:?=\s*(.+)$`);
+  let receiver: { name: string; type: string } | null = null;
+  let value: string | null = null;
+  for (let k = i - 1; k >= 0 && i - k < 80; k--) {
+    const l = lines[k]!;
+    const fn = /^func\s*(?:\(\s*([A-Za-z_]\w*)\s+\*?([A-Za-z_]\w*)\s*\))?/.exec(l);
+    if (fn && /^func\b/.test(l)) {
+      if (fn[1]) receiver = { name: fn[1], type: fn[2]! };
+      break;
+    }
+    if (value === null) {
+      const m = assign.exec(l);
+      if (m) value = concatUrl(m[1]!);
+      if (m && value === null) return null;
+    }
+  }
+  if (value === null) return null;
+  return receiver ? value.replace(new RegExp(String.raw`\$\{${receiver.name}\.`, "g"), `\${${receiver.type}.`) : value;
+}
+
 export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   // Raw SQL first (multi-line aware), then per-line pattern scans.
   const normLines = normalizeRawStrings(lines.join("\n")).split("\n");
@@ -172,14 +200,17 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       if (/^(?:ctx|c|context\.\w+)$/.test(first) || kvClient) clientVerb = null;
     }
     if (helper) {
-      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target: helper[2] ?? null, calls: [], line: lineNo });
+      const urlArg = helper[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(line.slice(helper.index! + helper[0].length))?.[1];
+      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target: helper[2] ?? (urlArg ? localUrl(lines, i, urlArg) : null), calls: [], line: lineNo });
       continue;
     }
     if (newReq) {
-      let target = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
+      let target: string | null = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
       // `http.NewRequest("GET", url, nil)` with the URL its function's parameter: a factory each call site fills.
       const urlArg = /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(line.slice(newReq.index! + newReq[0].length))?.[1];
       if (target === null && urlArg && (functions ??= goFunctions(lines)).some((f) => !f.testHelper && f.start <= i && i <= f.end && f.params.includes(urlArg))) target = `\${${urlArg}}`;
+      // `url := "http://" + fe.ordersAddr` above it: the URL the local was built as.
+      if (target === null && urlArg) target = localUrl(lines, i, urlArg);
       sources.push({ kind: "api-call", name: (newReq[1] ?? newReq[2]!).toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }

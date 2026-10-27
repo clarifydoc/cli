@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { goFrameworkRules } from "./frameworks.js";
 import { goPackageManager } from "./package-manifests.js";
 import { goPackageDirectory } from "./package-directory.js";
+import { goServiceConfig } from "./service-config.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -36,4 +37,6 @@ export const goManifest: LanguagePluginManifest = {
   frameworkImportHints: { "gorm.io/gorm": "gorm", "github.com/jmoiron/sqlx": "sqlx", "entgo.io/ent": "ent", "github.com/beego/beego": "beego-orm", "github.com/astaxie/beego": "beego-orm", "github.com/Masterminds/squirrel": "squirrel" },
   frameworkRules: goFrameworkRules,
   activationFiles: ["go.mod"],
+  // An address read from the environment (`os.Getenv("ORDERS_ADDR")`), valued from the deployment.
+  serviceConfig: goServiceConfig,
 };

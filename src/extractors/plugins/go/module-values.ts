@@ -63,7 +63,69 @@ function terms(expr: string): string[] {
   return out;
 }
 
+/** `func mustMapEnv(target *string, envKey string) {` — a function handed a string field to set. */
+const SETTER_DECL = /^func\s+([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s+\*string\s*,\s*([A-Za-z_]\w*)\s+string\s*\)/;
+/** `X := new(T)`, `X := &T{`, `X := T{`, `var X T`, `var X *T`. */
+const LOCAL_TYPE = (name: string) => new RegExp(String.raw`\b${name}\s*:=\s*(?:new\(\s*\*?([A-Za-z_]\w*)\s*\)|&?([A-Za-z_]\w*)\s*\{)|\bvar\s+${name}\s+\*?([A-Za-z_]\w*)\b`);
+
+/**
+ * Struct fields the program sets from the environment, as `Type.field` →
+ * `${os.Getenv("NAME")}`: `mustMapEnv(&svc.ordersAddr, "ORDERS_ADDR")` through a
+ * function of this file that stores `os.Getenv(key)` in its pointer argument, or
+ * `svc.ordersAddr = os.Getenv("ORDERS_ADDR")`, with `svc := new(frontendServer)`.
+ * A handler reading `fe.ordersAddr` on a `*frontendServer` receiver names that
+ * value; the call-origin pass reads the variable from the deployment.
+ */
+function envFieldValues(lines: string[]): Record<string, string> {
+  const text = lines.join("\n");
+  if (!/\bos\.(?:Getenv|LookupEnv)\(/.test(text)) return {};
+  const setters = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = SETTER_DECL.exec(lines[i]!);
+    if (!m) continue;
+    const [, fn, target, key] = m;
+    let depth = braceDelta(lines[i]!);
+    let reads = false;
+    let stores = false;
+    for (let k = i + 1; k < lines.length && depth > 0; k++) {
+      const l = lines[k]!;
+      if (new RegExp(String.raw`\bos\.(?:Getenv|LookupEnv)\(\s*${key}\s*\)`).test(l)) reads = true;
+      if (new RegExp(String.raw`\*${target}\s*=`).test(l)) stores = true;
+      depth += braceDelta(l);
+    }
+    if (reads && stores) setters.add(fn!);
+  }
+  const out: Record<string, string> = {};
+  const typeOf = (name: string, at: number): string | null => {
+    const re = LOCAL_TYPE(name);
+    for (let k = at; k >= 0 && at - k < 200; k--) {
+      const m = re.exec(lines[k]!);
+      if (m) return m[1] ?? m[2] ?? m[3] ?? null;
+      if (/^func\b/.test(lines[k]!)) break;
+    }
+    return null;
+  };
+  const bind = (recv: string, field: string, env: string, at: number) => {
+    const type = typeOf(recv, at);
+    if (type && /^[A-Za-z_]\w*$/.test(type)) out[`${type}.${field}`] = `\${os.Getenv("${env}")}`;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!;
+    for (const m of l.matchAll(/\b([A-Za-z_]\w*)\(\s*&([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*,\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\)/g)) {
+      if (setters.has(m[1]!)) bind(m[2]!, m[3]!, m[4]!, i);
+    }
+    const direct = /^\s*([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*=\s*os\.Getenv\(\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\)\s*$/.exec(l);
+    if (direct) bind(direct[1]!, direct[2]!, direct[3]!, i);
+  }
+  return out;
+}
+
 export function extractGoModuleValues(lines: string[]): Record<string, string> {
+  const fields = envFieldValues(lines);
+  return { ...extractPackageValues(lines), ...fields };
+}
+
+function extractPackageValues(lines: string[]): Record<string, string> {
   const text = lines.join("\n");
   if (!/^(?:const|var)\b/m.test(text)) return {};
 

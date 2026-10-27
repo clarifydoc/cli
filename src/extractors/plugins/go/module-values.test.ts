@@ -68,3 +68,34 @@ const Car = "/garage"
 `))).toEqual({ Car: "/garage" });
   });
 });
+
+describe("Go struct fields the program sets from the environment (real-repo FP)", () => {
+  it("names the variable a field is set from, through a setter handed the field or an assignment", () => {
+    const lines = `package main
+
+type frontendServer struct {
+	scoutSvcAddr  string
+	ticketSvcAddr string
+}
+
+func main() {
+	svc := new(frontendServer)
+	mustMapEnv(&svc.scoutSvcAddr, "SCOUT_SERVICE_ADDR")
+	svc.ticketSvcAddr = os.Getenv("TICKET_SERVICE_ADDR")
+	mustMapEnv(&other.addr, "OTHER_ADDR")
+}
+
+func mustMapEnv(target *string, envKey string) {
+	v := os.Getenv(envKey)
+	if v == "" {
+		panic("unset")
+	}
+	*target = v
+}
+`.split("\n");
+    expect(extractGoModuleValues(lines)).toEqual({
+      "frontendServer.scoutSvcAddr": '${os.Getenv("SCOUT_SERVICE_ADDR")}',
+      "frontendServer.ticketSvcAddr": '${os.Getenv("TICKET_SERVICE_ADDR")}',
+    });
+  });
+});
