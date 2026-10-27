@@ -1,10 +1,11 @@
 import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
-import { readFile } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 import { PACKAGE_MANAGERS } from "../extractors/registry.js";
+import type { SelfNameContext } from "../types/language-plugin.js";
 
 /**
  * Sub-project detection.
@@ -193,10 +194,28 @@ async function declaredPackages(
 ): Promise<{ names: Array<{ name: string; ecosystem: PackageEcosystem }>; local: Array<{ name: string; ecosystem: PackageEcosystem; root: string }> }> {
   const out: Array<{ name: string; ecosystem: PackageEcosystem }> = [];
   const local: Array<{ name: string; ecosystem: PackageEcosystem; root: string }> = [];
+  const dir = join(root, project.root);
+  let entries: string[] | null = null;
   for (const manager of PACKAGE_MANAGERS) {
     let named = out.some((p) => p.ecosystem === manager.ecosystem);
     for (const spec of manager.manifests) {
-      if ((!spec.selfName && !spec.localPackages) || spec.glob) continue;
+      if (!spec.selfName && !spec.localPackages) continue;
+      if (spec.glob) {
+        // A format spread over many files names its package in the ONE file at the project's root that names one.
+        if (!spec.selfName || named) continue;
+        entries ??= await readdir(dir).catch(() => []);
+        const names = new Set<string>();
+        for (const file of entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))) {
+          const text = await readFile(join(dir, file), "utf-8").catch(() => null);
+          const name = text === null ? null : await spec.selfName(text, selfNameContext(root, project.root, file));
+          if (name) names.add(name);
+        }
+        if (names.size === 1) {
+          out.push({ name: [...names][0]!, ecosystem: manager.ecosystem });
+          named = true;
+        }
+        continue;
+      }
       for (const file of spec.files) {
         let text: string;
         try {
@@ -204,7 +223,7 @@ async function declaredPackages(
         } catch {
           continue;
         }
-        const name = named ? null : spec.selfName?.(text);
+        const name = named || !spec.selfName ? null : await spec.selfName(text, selfNameContext(root, project.root, file));
         if (name) {
           out.push({ name, ecosystem: manager.ecosystem });
           named = true;
@@ -218,6 +237,34 @@ async function declaredPackages(
     }
   }
   return { names: out, local };
+}
+
+/** The file-name part of a `**\/*.csproj`-style pattern as a regex over a directory entry. */
+function basenameGlob(pattern: string): RegExp {
+  const base = pattern.slice(pattern.lastIndexOf("/") + 1);
+  const body = base.replace(/[.+^$(){}|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
+  return new RegExp("^" + body + "$", "i");
+}
+
+/** What a manifest's own-name reader may look at around it: its directory, and the directories above up to the analysis root. */
+function selfNameContext(root: string, projectRoot: string, file: string): SelfNameContext {
+  const dir = posix.dirname(posix.join(projectRoot.replace(/\\/g, "/"), file));
+  const rel = dir === "." ? "" : dir;
+  const read = (path: string) => readFile(join(root, path), "utf-8").catch(() => null);
+  return {
+    fileName: posix.basename(file),
+    dirName: rel ? posix.basename(rel) : null,
+    readSibling: (name) => read(posix.join(rel, name)),
+    readAncestors: async (name) => {
+      const out: string[] = [];
+      for (let d = rel; d; ) {
+        d = posix.dirname(d) === "." ? "" : posix.dirname(d);
+        const text = await read(posix.join(d, name));
+        if (text !== null) out.push(text);
+      }
+      return out;
+    },
+  };
 }
 
 /** True when this CMakeLists.txt declares a project (`project(...)` call). */

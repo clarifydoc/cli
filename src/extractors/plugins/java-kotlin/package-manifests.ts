@@ -1,5 +1,5 @@
 import type { PackageScope } from "../../../types/analysis.js";
-import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
+import type { DeclaredPackage, PackageManagerSpec, SelfNameContext } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 import { withoutXmlComments } from "../shared/xml-scan.js";
 
@@ -142,18 +142,113 @@ export function parseGradle(text: string, declaredIn: string, catalog: VersionCa
   return out;
 }
 
+/** The sections of a POM whose `<groupId>`/`<artifactId>` are another project's, not its own. */
+const FOREIGN_POM_SECTIONS = /<(parent|dependencies|dependencyManagement|build|reporting|profiles|distributionManagement|pluginRepositories|repositories|exclusions)\b[^>]*>[\s\S]*?<\/\1>/gi;
+
+/**
+ * The coordinates a POM publishes, `groupId:artifactId`: its own `<groupId>`,
+ * else the one its `<parent>` names (Maven's inheritance); a `${...}` value
+ * filled from the POM's `<properties>` or the parent's, else no name.
+ */
+export function pomSelfName(raw: string): string | null {
+  const text = withoutXmlComments(raw);
+  const own = text.replace(FOREIGN_POM_SECTIONS, "");
+  const parent = /<parent>([\s\S]*?)<\/parent>/i.exec(text)?.[1] ?? "";
+  const tag = (body: string, name: string) => new RegExp(`<${name}>\\s*([^<]+?)\\s*</${name}>`, "i").exec(body)?.[1];
+  const props = new Map<string, string>();
+  for (const block of own.matchAll(/<properties>([\s\S]*?)<\/properties>/gi)) {
+    for (const p of block[1]!.matchAll(/<([\w.-]+)>\s*([^<]*?)\s*<\/\1>/g)) props.set(p[1]!, p[2]!);
+  }
+  const parentGroup = tag(parent, "groupId");
+  if (parentGroup) props.set("project.parent.groupId", parentGroup).set("parent.groupId", parentGroup);
+  const fill = (v: string | undefined) => {
+    const filled = v?.replace(/\$\{([\w.-]+)\}/g, (all, k: string) => props.get(k) ?? all);
+    return filled && !filled.includes("${") ? filled : null;
+  };
+  const artifact = fill(tag(own.replace(/<properties>[\s\S]*?<\/properties>/gi, ""), "artifactId"));
+  const group = fill(tag(own.replace(/<properties>[\s\S]*?<\/properties>/gi, ""), "groupId") ?? parentGroup);
+  return artifact && group ? `${group}:${artifact}` : null;
+}
+
 // A Java/Kotlin import names a package, never an artifact: usage stays unknown.
 export const mavenPackageManager: PackageManagerSpec = {
   ecosystem: "maven",
-  manifests: [{ files: ["pom.xml"], parse: (text, file) => parsePom(text, file.declaredIn) }],
+  manifests: [{ files: ["pom.xml"], parse: (text, file) => parsePom(text, file.declaredIn), selfName: pomSelfName }],
 };
+
+/** `group = "x"` / `group 'x'` / `group.set("x")`, and the like for another property. */
+const assigned = (name: string) => new RegExp(String.raw`(?:^|[{;])\s*(?:project\.)?${name}(?:\s*=\s*|\s+|\.set\s*\(\s*)["']([^"'$]+)["']`, "m");
+
+/** The `name { … }` blocks of a build script, braces balanced: where each body starts and ends. */
+function blockSpans(text: string, name: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  for (const m of text.matchAll(new RegExp(String.raw`(?:^|[\s;])${name}\s*(?:\(\s*\))?\s*\{`, "g"))) {
+    let depth = 1;
+    let i = m.index! + m[0].length;
+    const start = i;
+    for (; i < text.length && depth > 0; i++) {
+      if (text[i] === "{") depth++;
+      else if (text[i] === "}") depth--;
+    }
+    out.push({ start, end: i - 1 });
+  }
+  return out;
+}
+
+const blockBodies = (text: string, name: string): string[] => blockSpans(text, name).map((s) => text.slice(s.start, s.end));
+
+/** The script without the bodies of `names` blocks (a `subprojects` group is its children's, a dependency's `group =` another package's). */
+function withoutBlocks(text: string, names: readonly string[]): string {
+  const spans = names.flatMap((n) => blockSpans(text, n));
+  const outer = spans.filter((s) => !spans.some((o) => o !== s && o.start <= s.start && s.end <= o.end)).sort((a, b) => b.start - a.start);
+  let out = text;
+  for (const span of outer) out = out.slice(0, span.start) + out.slice(span.end);
+  return out;
+}
+
+/**
+ * The coordinates a Gradle build publishes, `group:name`: the artifact is a
+ * `maven-publish` publication's `artifactId`, else `base.archivesName` /
+ * `archivesBaseName`, else the project's name — `rootProject.name` in the
+ * settings beside it, else (below the analysis root) its directory's. The group
+ * is its own `group`, else one an enclosing build sets for it in
+ * `allprojects`/`subprojects`, else `group=` in a `gradle.properties`.
+ */
+export async function gradleSelfName(text: string, file: SelfNameContext): Promise<string | null> {
+  const value = (body: string, name: string) => assigned(name).exec(body)?.[1] ?? null;
+  const publication = blockBodies(text, "publishing").join("\n");
+  let artifact = value(publication, "artifactId")
+    ?? value(text, "archivesBaseName")
+    ?? value(text, "base\\.archivesName")
+    ?? blockBodies(text, "base").map((b) => value(b, "archivesName")).find(Boolean)
+    ?? null;
+  if (!artifact) {
+    const settings = (await file.readSibling("settings.gradle.kts")) ?? (await file.readSibling("settings.gradle"));
+    artifact = (settings ? value(settings, "rootProject\\.name") : null) ?? file.dirName;
+  }
+  let group = value(publication, "groupId") ?? value(withoutBlocks(text, ["subprojects", "dependencies", "publishing"]), "group");
+  if (!group) {
+    for (const build of [...await file.readAncestors("build.gradle.kts"), ...await file.readAncestors("build.gradle")]) {
+      group = [...blockBodies(build, "allprojects"), ...blockBodies(build, "subprojects")].map((b) => value(b, "group")).find(Boolean) ?? null;
+      if (group) break;
+    }
+  }
+  if (!group) {
+    const properties = [(await file.readSibling("gradle.properties")) ?? "", ...await file.readAncestors("gradle.properties")];
+    group = properties.map((p) => /^\s*group\s*[=:]\s*(\S+)\s*$/m.exec(p)?.[1]).find(Boolean) ?? null;
+  }
+  return artifact && group ? `${group}:${artifact}` : null;
+}
 
 export const gradlePackageManager: PackageManagerSpec = {
   ecosystem: "gradle",
+  // Gradle resolves from Maven repositories: its coordinates are Maven's.
+  registry: "maven",
   manifests: [
     {
       files: ["build.gradle.kts", "build.gradle"],
       firstOnly: true,
+      selfName: gradleSelfName,
       parse: async (text, file) => {
         const toml = /\blibs\./.test(text) ? await file.readAbove?.("gradle/libs.versions.toml") : null;
         const properties = text.includes("$") ? (await file.readAbove?.("gradle.properties")) ?? null : null;

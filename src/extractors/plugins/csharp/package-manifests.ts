@@ -1,4 +1,4 @@
-import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
+import type { DeclaredPackage, PackageManagerSpec, SelfNameContext } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 
 /**
@@ -32,6 +32,22 @@ function parseCsproj(text: string, declaredIn: string): DeclaredPackage[] {
   return out;
 }
 
+/**
+ * The package a .NET project file publishes: its `<PackageId>`, else its
+ * `<AssemblyName>`, else the file's own name — what `dotnet pack` calls it.
+ * None for a file that is no project (`Directory.Packages.props`,
+ * `packages.config`), one marked `<IsPackable>false</IsPackable>`, or a test
+ * project (the test SDK makes it unpackable). A `$(…)` value names nothing.
+ */
+export function projectFileSelfName(text: string, file: SelfNameContext): string | null {
+  const stem = /^(.+)\.(?:cs|fs|vb)proj$/i.exec(file.fileName)?.[1];
+  if (!stem) return null;
+  const property = (name: string) => new RegExp(`<${name}>\\s*([^<]+?)\\s*</${name}>`, "i").exec(text)?.[1];
+  if (/^false$/i.test(property("IsPackable") ?? "") || /<PackageReference\s+Include\s*=\s*"Microsoft\.NET\.Test\.Sdk"/i.test(text)) return null;
+  const name = property("PackageId") ?? property("AssemblyName") ?? stem;
+  return name.includes("$(") ? null : name;
+}
+
 export const nugetPackageManager: PackageManagerSpec = {
   ecosystem: "nuget",
   manifests: [
@@ -40,6 +56,7 @@ export const nugetPackageManager: PackageManagerSpec = {
       files: ["**/*.csproj", "**/*.fsproj", "**/*.vbproj", "**/Directory.Packages.props", "**/packages.config"],
       glob: { deep: 3, limit: 50 },
       parse: (text, file) => parseCsproj(text, file.declaredIn),
+      selfName: projectFileSelfName,
     },
   ],
   // The full namespace (`Microsoft.EntityFrameworkCore.Metadata`): it extends

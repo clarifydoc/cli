@@ -737,6 +737,17 @@ export function packageKeyOf(ecosystem: PackageEcosystem, name: string): string 
   return PACKAGE_MATCHING.get(ecosystem)?.packageKey?.(name) ?? name.toLowerCase();
 }
 
+/**
+ * The ecosystem whose registry `ecosystem`'s names resolve from — Gradle's are
+ * Maven's (`PackageManagerSpec.registry`); itself otherwise. Two names compare
+ * as one package only within one registry.
+ */
+export function packageRegistryOf(ecosystem: PackageEcosystem): PackageEcosystem {
+  return PACKAGE_REGISTRY.get(ecosystem) ?? ecosystem;
+}
+
+const PACKAGE_REGISTRY: ReadonlyMap<PackageEcosystem, PackageEcosystem> = new Map(PACKAGE_MANAGERS.flatMap((m) => (m.registry ? [[m.ecosystem, m.registry] as const] : [])));
+
 /** The package ecosystems a language's imports are matched against. */
 export function packageEcosystemsFor(language: Language): readonly PackageEcosystem[] {
   return MANIFEST_BY_LANGUAGE.get(language)?.packageEcosystems ?? [];

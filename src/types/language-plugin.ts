@@ -83,18 +83,34 @@ export interface PackageManifestSpec {
   parse(text: string, file: ManifestFileContext): DeclaredPackage[] | Promise<DeclaredPackage[]>;
   /**
    * The package this manifest itself declares (Cargo `[package] name`, go.mod
-   * `module`, package.json `name`), when the format has one: what a sibling
-   * sub-project imports it by. Read at each sub-project root into
+   * `module`, package.json `name`, a pom's `groupId:artifactId`), when the
+   * format has one: what a sibling sub-project imports it by, and what another
+   * repository depends on it by. Read at each sub-project root into
    * `SubProject.packageName`; the linker treats an import naming it as an
-   * import of that sub-project.
+   * import of that sub-project. For a `glob` format only the ONE matching file
+   * directly at the root is read (a project's `.csproj`). `file` reaches the
+   * files a name is inherited from (a Gradle build's `group` set by the root
+   * build's `allprojects`).
    */
-  selfName?(text: string): string | null;
+  selfName?(text: string, file: SelfNameContext): string | null | Promise<string | null>;
   /**
    * Packages the manifest maps to a directory of this repository instead of a
    * download (go.mod `replace example.com/kit => ./kit`): `path` relative to
    * the manifest's directory. Recorded on `SubProject.packages` with that root.
    */
   localPackages?(text: string): Array<{ name: string; path: string }>;
+}
+
+/** Where a manifest read for its own name sits (`PackageManifestSpec.selfName`). */
+export interface SelfNameContext {
+  /** The manifest's file name (`Cars.Api.csproj`). */
+  fileName: string;
+  /** The name of the directory holding it; null at the root of the analysis, whose directory name is the checkout's, not the project's. */
+  dirName: string | null;
+  /** Another file in the manifest's own directory; null when absent. */
+  readSibling(name: string): Promise<string | null>;
+  /** Every copy of `name` from the manifest's PARENT directory up to the analysis root, nearest first. */
+  readAncestors(name: string): Promise<string[]>;
 }
 
 /** A package of this repository by the name its importers write: its manifest's own name and the directory it is rooted at. */
@@ -202,6 +218,12 @@ export interface ConfigEntry {
 export interface PackageManagerSpec {
   ecosystem: PackageEcosystem;
   manifests: readonly PackageManifestSpec[];
+  /**
+   * The ecosystem whose registry this manager's names resolve from, when it is
+   * another's (Gradle reads Maven repositories): a name it publishes or depends
+   * on is the same package as that ecosystem's. Default: its own.
+   */
+  registry?: PackageEcosystem;
   /**
    * Import source as written → the key packages are matched on (`@scope/pkg`
    * of `@scope/pkg/sub`); null when the import names no package (a relative
