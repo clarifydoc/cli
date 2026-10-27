@@ -284,11 +284,12 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               return;
             }
             const refs: string[] = [];
-            const hit = sql ? tableFrom(sql.replace(/\$\{([^}]*)\}|\{[^}]*\}/g, (_m, ref: string | undefined) => (ref ? `hole${refs.push(ref) - 1}__` : "x"))) : null;
+            // An f-string's `{…}` is a run-time value: in a table's place (`FROM {model.__tablename__}`) it names none.
+            const hit = sql ? tableFrom(sql.replace(/\$\{([^}]*)\}|\{[^}]*\}/g, (_m, ref: string | undefined) => (ref ? `hole${refs.push(ref) - 1}__` : "holef__"))) : null;
             if (hit) {
               const hole = /^hole(\d+)__$/.exec(hit.table);
               if (hole) tableRef = refs[Number(hole[1])] ?? null;
-              else if (!/hole\d+__/.test(hit.table)) table = hit.table;
+              else if (!/hole\d+__|holef__/.test(hit.table)) table = hit.table;
               access ??= sqlVerbAccess(hit.verb);
             }
           }

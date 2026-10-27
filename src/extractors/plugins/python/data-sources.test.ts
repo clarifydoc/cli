@@ -538,3 +538,17 @@ def test_standings():
     ]);
   });
 });
+
+describe("Python raw SQL — an f-string's value in a table's place (real-repo FP)", () => {
+  it("names no table `x` for `FROM {model.__tablename__}`, and keeps a literal table beside a value hole", async () => {
+    const src = [
+      "def duplicates(session, model):",
+      "    session.execute(sa.text(f\"SELECT id, name FROM {model.__tablename__}\"))",
+      "def club(session, club_id):",
+      "    session.execute(sa.text(f\"SELECT name FROM clubs WHERE id = {club_id}\"))",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && d.name === "session.execute");
+    expect(rows.map((d) => d.entity ?? null)).toEqual([null, "clubs"]);
+  });
+});
