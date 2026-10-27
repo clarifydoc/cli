@@ -3134,6 +3134,7 @@ export type SubProjectKind =
   | "ruby"
   | "swift"
   | "dart"
+  | "elixir"
   | "root";
 
 export interface SubProject {

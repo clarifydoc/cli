@@ -41,6 +41,7 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/Gemfile", kind: "ruby" },
   { pattern: "**/Package.swift", kind: "swift" },
   { pattern: "**/pubspec.yaml", kind: "dart" },
+  { pattern: "**/mix.exs", kind: "elixir" },
   // Only a CMakeLists.txt containing a project() call marks a project root —
   // most CMakeLists are per-directory source lists (add_subdirectory targets)
   // and treating them as markers would fragment the repo under innermost-wins.
@@ -80,6 +81,7 @@ const KIND_PRIORITY: SubProjectKind[] = [
   "lazarus",
   "dotnet",
   "dart",
+  "elixir",
   "java-maven",
   "java-gradle",
   "rust",
