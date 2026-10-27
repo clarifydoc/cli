@@ -71,7 +71,8 @@ describe("Python outbound HTTP calls", () => {
     ].join("\n");
     const tree = await parseSource(src, "python" as never, "x.py");
     const rows = new PythonDataSourceExtractor().extract(tree, src).map((d) => `${d.kind} ${d.name} ${d.target}`);
-    expect(rows).toEqual(["api-call get null"]);
+    // The settings URL is another module's value: a hole the project pass fills.
+    expect(rows).toEqual(["api-call get ${settings.LEAGUE_TABLE_URL}"]);
   });
 
   it("is not fooled by text that merely contains a client module's name", async () => {
@@ -509,6 +510,31 @@ describe("Python SQLAlchemy statements", () => {
       ["self.session.execute(sa.select(self.model).filter(self.model.active)).scalars().all", "model", "read"],
       ["self.session.execute", "model", "read"],
       ["db.query", "model", "read"],
+    ]);
+  });
+});
+
+describe("Python api-call — a TestClient handed to a test (real-repo FP)", () => {
+  it("reads the verbs of a parameter annotated TestClient and of a local built by TestClient(app), a module's URL as a hole", async () => {
+    const calls = await apiCallsOf(`from fastapi.testclient import TestClient
+from tests.utils import api_routes
+
+
+def test_create_club(api_client: TestClient, unique_user):
+    response = api_client.post(api_routes.clubs_create_url, json={"name": "Rovers"})
+    api_client.get(api_routes.clubs_slug("rovers"), headers=unique_user.token)
+    api_client.delete("/api/clubs/rovers")
+
+
+def test_standings():
+    client = TestClient(app)
+    client.get("/api/standings")
+`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
+      "post ${api_routes.clubs_create_url}",
+      "get null",
+      "delete /api/clubs/rovers",
+      "get /api/standings",
     ]);
   });
 });

@@ -683,15 +683,36 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
   // function or one it is nested in — whatever the URL argument is.
   if (PY_HTTP_VERBS.has(leaf) && obj.type === "identifier") {
     const made = boundValue(recv, call);
-    if (made?.type === "call" && PY_HTTP_CLIENT_CTOR.test(made.childForFieldName("function")?.text ?? "")) {
-      return { name: leaf, target: args[0] ? pyStringValue(args[0], call) : null };
+    const typed = made ? null : annotatedParam(recv, call);
+    if ((made?.type === "call" && PY_HTTP_CLIENT_CTOR.test(made.childForFieldName("function")?.text ?? "")) || (typed && PY_HTTP_CLIENT_TYPE.test(typed))) {
+      return { name: leaf, target: args[0] ? pyStringValue(args[0], call) ?? moduleValueHole(args[0]) : null };
     }
   }
   return null;
 }
 
+/** An HTTP client's type as a parameter annotates it: Starlette / FastAPI `TestClient`, `httpx.Client`. */
+const PY_HTTP_CLIENT_TYPE = /^(?:[\w.]+\.)?(?:TestClient|Client|AsyncClient|ClientSession|Session)$/;
+
+/** The annotation of the parameter `name` of the function `at` sits in (`api_client: TestClient`), as written. */
+function annotatedParam(name: string, at: Node): string | null {
+  let fn: Node | null = at.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  for (const p of fn?.childForFieldName("parameters")?.namedChildren ?? []) {
+    if ((p.type === "typed_parameter" || p.type === "typed_default_parameter") && (p.namedChild(0)?.text ?? p.childForFieldName("name")?.text) === name) {
+      return p.childForFieldName("type")?.text.trim() ?? null;
+    }
+  }
+  return null;
+}
+
+/** A URL another module defines, named by the argument (`api_routes.recipes_url`): a `${…}` hole the project pass fills. */
+function moduleValueHole(arg: Node): string | null {
+  return (arg.type === "attribute" || arg.type === "identifier") && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){0,2}$/.test(arg.text) ? `\${${arg.text}}` : null;
+}
+
 /** The constructors of an HTTP client object. */
-const PY_HTTP_CLIENT_CTOR = /^(?:requests\.(?:Session|session)|httpx\.(?:Client|AsyncClient)|aiohttp\.ClientSession|Session|ClientSession)$/;
+const PY_HTTP_CLIENT_CTOR = /^(?:requests\.(?:Session|session)|httpx\.(?:Client|AsyncClient)|aiohttp\.ClientSession|Session|ClientSession|TestClient)$/;
 
 /**
  * The value `name` is bound to where `at` reads it: its one assignment in the
