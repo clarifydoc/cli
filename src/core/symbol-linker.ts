@@ -317,9 +317,9 @@ export function buildSymbolLinks(
             const ownerNamespace = ownerParts && ownerParts[ownerParts.length - 1] === classPart ? ownerParts.slice(0, -1).join("\\").toLowerCase() : null;
             let declared: { filePath: string; def: { name: string; line: number } } | null = null;
             let declaredCount = 0;
-            for (const [filePath, syms] of symbolIndex) {
-              const def = syms.get(handlerName);
-              if (!def) continue;
+            for (const filePath of filesDefining(ctx, handlerName)) {
+              const syms = symbolIndex.get(filePath)!;
+              const def = syms.get(handlerName)!;
               const tgtFamily = extensionFamily(filePath);
               if (srcFamily && tgtFamily && srcFamily !== tgtFamily) continue;
               if (classPart) {
@@ -1430,6 +1430,8 @@ interface LinkContext {
   packageFiles?: Map<string, string[]>;
   /** Per file, the files it sees by package (`importsNamePackages`). */
   packageScopeCache?: Map<string, Set<string>>;
+  /** Symbol name → the files whose symbols include it, in `symbolIndex` order (built on first use). */
+  filesBySymbol?: Map<string, string[]>;
   /** Analyzed files by file name, built on first use (`autoloadedFiles`). */
   filesByName?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
@@ -1603,6 +1605,21 @@ function importFiles(ctx: LinkContext, imp: ImportInfo, fromFile: string): strin
     if (f && ctx.filePathMap.get(f) === f) out.add(f);
   }
   return [...out];
+}
+
+/** The files whose symbols include `name`, in `symbolIndex` order (an index over every name, built on first use). */
+function filesDefining(ctx: LinkContext, name: string): readonly string[] {
+  if (!ctx.filesBySymbol) {
+    ctx.filesBySymbol = new Map();
+    for (const [file, syms] of ctx.symbolIndex) {
+      for (const key of syms.keys()) {
+        const list = ctx.filesBySymbol.get(key);
+        if (list) list.push(file);
+        else ctx.filesBySymbol.set(key, [file]);
+      }
+    }
+  }
+  return ctx.filesBySymbol.get(name) ?? [];
 }
 
 /** Analyzed files whose path is `suffix` or ends with `/suffix` (index by file name, built on first use). */
