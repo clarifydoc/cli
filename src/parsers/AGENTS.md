@@ -66,6 +66,9 @@ retypes the tokens instead (`cpp/CppTypes.ts`: `TemplateLess`/`TemplateGreater`,
 types the lexer grammar declares and never matches) and the grammar reads them syntactically. The widest decisions
 (C++'s statement, declaration and member) are settled from tokens before prediction runs (`CPP14ParserBase.prepare`
 wraps `adaptivePredict`; the alternatives are found by the sub-rule each reaches in the ATN, never by number).
+A lexer predicate is worse still: it turns off the lexer's DFA, and a predicate re-reading text from each token's
+start makes lexing quadratic (C++ raw strings took minutes on a large file). What only a predicate could lex is
+rewritten by the reader before lexing instead, lines and columns kept (`plugins/cpp/antlr.ts` blanks raw strings).
 Profile a cold parse by wrapping `adaptivePredict` per decision: a warm one hides it. Profile a slow grammar with `parser.setProfile(true)` and `getParseInfo()` — the decision
 with the longest lookahead (`sllMaxLookEvent` gives its text) is the one to restructure. `grammars/antlr/README.md`
 records upstream commits and every local change.

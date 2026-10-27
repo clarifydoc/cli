@@ -15,6 +15,7 @@ import {
   NoPointerDeclaratorContext,
   PostfixExpressionContext,
   PrimaryExpressionContext,
+  TemplateArgumentContext,
   UnqualifiedIdContext,
 } from "../../../parsers/antlr/cpp/CPP14Parser.js";
 import { SPECIFIER_KEYWORDS, TYPE_KEYWORDS } from "../../../parsers/antlr/cpp/CppTypes.js";
@@ -54,7 +55,29 @@ const CPP_TOKENS: TokenKinds = {
  * tokens, as are a `#define` inside a function's.
  */
 export function readCpp(source: string): ParsedStructure {
-  return readWithBranches(normalizeSource(source), true, read);
+  return readWithBranches(blankRawStrings(normalizeSource(source)), true, read);
+}
+
+/** A raw string's start: an optional encoding prefix, `R"`, a delimiter of up to 16 characters, `(`. */
+const RAW_STRING = /(?<![\w\\"'])(?:u8|u|U|L)?R"([^ ()\\\t\v\f\n"]{0,16})\(/g;
+
+/**
+ * Raw strings as `""` and spaces, newlines kept so lines and columns stay the file's: their text holds anything,
+ * `)"`, `#if` lines and all, which only its closing delimiter ends — what the lexer cannot match without a predicate.
+ */
+function blankRawStrings(text: string): string {
+  if (!text.includes('R"')) return text;
+  let out = "";
+  let at = 0;
+  for (const m of text.matchAll(RAW_STRING)) {
+    if (m.index < at) continue;
+    const close = text.indexOf(`)${m[1]}"`, m.index + m[0].length);
+    if (close < 0) continue;
+    const end = close + m[1]!.length + 2;
+    out += text.slice(at, m.index) + '""' + text.slice(m.index + 2, end).replace(/[^\n]/g, " ");
+    at = end;
+  }
+  return out + text.slice(at);
 }
 
 /** A function the walk found: its span and, as a call owner, the calls it makes and the lines it covers. */
@@ -64,6 +87,7 @@ interface Found extends CallOwner {
 
 function read(text: string, also?: string): ParsedStructure {
   let stream: Token[] = [];
+  let isType: (name: string) => boolean = () => false;
   const { tree, errors } = parseWithAntlr(
     text,
     (input) => new CPP14Lexer(input),
@@ -71,6 +95,7 @@ function read(text: string, also?: string): ParsedStructure {
       const parser = new CPP14Parser(tokens);
       parser.prepare(tokens);
       stream = tokens.getTokens();
+      isType = (name) => parser.isTypeName(name);
       return parser;
     },
     (parser) => parser.translationUnit(),
@@ -78,7 +103,7 @@ function read(text: string, also?: string): ParsedStructure {
     { firstError: true },
   );
   if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors };
-  const found = walk(tree, stream, text);
+  const found = walk(tree, stream, text, isType);
   defineCalls(stream, CPP_TOKENS, found);
   if (also) leftOutCalls(also, CPP_TOKENS, found);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
@@ -86,7 +111,7 @@ function read(text: string, also?: string): ParsedStructure {
   return { functions, topLevelCalls: [], syntaxErrors: errors };
 }
 
-function walk(root: ParseTree, stream: readonly Token[], text: string): Found[] {
+function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean): Found[] {
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const found: Found[] = [];
   const own = (name: { text: string; line: number }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
@@ -101,6 +126,8 @@ function walk(root: ParseTree, stream: readonly Token[], text: string): Found[] 
     const ctx = node as ParserRuleContext;
     let into = calls;
     if (ctx instanceof FunctionDefinitionContext) {
+      // `Club() = default;` defines nothing the file states.
+      if (ctx.functionBody().Assign()) continue;
       const name = declaredName(ctx.declarator());
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
@@ -120,6 +147,15 @@ function walk(root: ParseTree, stream: readonly Token[], text: string): Found[] 
       const args = ctx.macroArguments();
       if (args) macroArgumentCalls(args, stream, calls);
       continue;
+    } else if (calls && ctx instanceof TemplateArgumentContext && ctx.theTypeId()) {
+      // `make_seq<laps()>`: without the headers a call reads as a function type; a name the file never uses as a type
+      // is called, as the patterns read it.
+      const first = ctx.start;
+      const next = first && stream[first.tokenIndex + 1];
+      if (first?.type === CPP14Lexer.Identifier && next?.type === CPP14Lexer.LeftParen && !isType(first.text ?? "") && ctx.stop) {
+        tokenCalls(stream.slice(first.tokenIndex, ctx.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL), CPP_TOKENS, calls);
+        continue;
+      }
     } else if (calls && ctx instanceof NewExpression_Context) {
       newCall(ctx, calls, text);
     } else if (calls && ctx instanceof MemInitializerContext) {
@@ -154,7 +190,8 @@ function macroArgumentCalls(args: MacroArgumentsContext, stream: readonly Token[
 
 /** The name a declarator declares, as the patterns name a definition: its last name, `~Club`, `operator==`. */
 function declaredName(declarator: DeclaratorContext | null): { text: string; line: number } | null {
-  let direct: NoPointerDeclaratorContext | null = declarator?.pointerDeclarator()?.noPointerDeclarator() ?? null;
+  // `auto kick() -> bool` declares through the trailing-return form, with no pointer declarator.
+  let direct: NoPointerDeclaratorContext | null = declarator?.pointerDeclarator()?.noPointerDeclarator() ?? declarator?.noPointerDeclarator() ?? null;
   while (direct) {
     const id = direct.declaratorId()?.idExpression();
     if (id) {

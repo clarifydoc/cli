@@ -48,6 +48,7 @@ primaryExpression
     | This
     | LeftParen expression RightParen
     | FoldLeftParen foldExpression RightParen // [ClarifyDoc] C++17, the `(` retyped by the first pass
+    | requiresExpression // [ClarifyDoc] C++20
     | idExpression bracedInitList
     | idExpression
     | MacroName macroArguments // [ClarifyDoc] a macro whose arguments no expression reads: `SIGNAL(moved(Club *))`
@@ -78,7 +79,7 @@ nestedNameSpecifier
     ;
 
 lambdaExpression
-    : lambdaIntroducer lambdaDeclarator? compoundStatement
+    : lambdaIntroducer (TemplateLess templateParameterList TemplateGreater requiresClause?)? lambdaDeclarator? compoundStatement // [ClarifyDoc] C++20
     ;
 
 lambdaIntroducer
@@ -114,7 +115,7 @@ initCapture
     ;
 
 lambdaDeclarator
-    : LeftParen parameterDeclarationClause? RightParen Mutable? exceptionSpecification? attributeSpecifierSeq? trailingReturnType?
+    : LeftParen parameterDeclarationClause? RightParen (Mutable | Constexpr | Consteval | Static)* exceptionSpecification? attributeSpecifierSeq? trailingReturnType? requiresClause? // [ClarifyDoc] C++20
     ;
 
 postfixExpression
@@ -238,7 +239,7 @@ binaryExpression
 
 binaryOperator
     : Star | Div | Mod | Plus | Minus | Greater Greater | Less Less | Less | Greater | LessEqual | GreaterEqual
-    | Equal | NotEqual | And | Caret | Or | AndAnd | OrOr
+    | LessEqualGreater | Equal | NotEqual | And | Caret | Or | AndAnd | OrOr
     ;
 
 // [ClarifyDoc] The same in a template argument, where `>` closes the list: `Fixture<kRounds - 1>`. Upstream left it
@@ -248,8 +249,8 @@ templateArgumentExpression
     ;
 
 templateArgumentOperator
-    : Star | Div | Mod | Plus | Minus | Less Less | Less | LessEqual | GreaterEqual | Equal | NotEqual | And | Caret
-    | Or | AndAnd | OrOr
+    : Star | Div | Mod | Plus | Minus | Less Less | Less | LessEqual | GreaterEqual | LessEqualGreater | Equal | NotEqual
+    | And | Caret | Or | AndAnd | OrOr
     ;
 
 conditionalExpression
@@ -322,7 +323,8 @@ statementSeq
     ;
 
 selectionStatement
-    : If Constexpr? LeftParen initStatement? condition RightParen statement (Else statement)? // [ClarifyDoc] C++17
+    : If (Constexpr | MacroName)? LeftParen initStatement? condition RightParen statement (Else statement)? // [ClarifyDoc] C++17; `if CONSTEXPR20 (`
+    | If Not? Consteval compoundStatement (Else statement)? // [ClarifyDoc] C++23
     | Switch LeftParen initStatement? condition RightParen statement
     ;
 
@@ -398,6 +400,8 @@ declarationSeq
 declaration
     : macroFunctionDefinition // [ClarifyDoc]
     | topLevelMacro // [ClarifyDoc]
+    | moduleDeclaration // [ClarifyDoc] C++20 modules
+    | exportDeclaration
     | attributeSpecifierSeq? declSpecifierSeq? (functionDefinition | declarationTail)
     | otherBlockDeclaration
     | templateDeclaration
@@ -422,6 +426,11 @@ otherBlockDeclaration
     | staticAssertDeclaration
     | aliasDeclaration
     | opaqueEnumDeclaration
+    | usingEnumDeclaration // [ClarifyDoc] C++20
+    ;
+
+usingEnumDeclaration
+    : Using Enum nestedNameSpecifier? (simpleTemplateId | Identifier) Semi
     ;
 
 aliasDeclaration
@@ -459,6 +468,8 @@ declSpecifier
     | Friend
     | Typedef
     | Constexpr
+    | Consteval // [ClarifyDoc] C++20
+    | Constinit
     ;
 
 declSpecifierSeq
@@ -519,6 +530,7 @@ simpleTypeSignednessModifier
 // [ClarifyDoc] The keyword types alone, for what converts or is passed as a macro's type argument.
 keywordTypeSpecifier
     : Char
+    | Char8
     | Char16
     | Char32
     | Wchar
@@ -538,6 +550,7 @@ simpleTypeSpecifier
     : nestedNameSpecifier? theTypeName
     | nestedNameSpecifier Template simpleTemplateId
     | Char
+    | Char8 // [ClarifyDoc] C++20
     | Char16
     | Char32
     | Wchar
@@ -801,7 +814,7 @@ parameterDeclaration
 
 // [ClarifyDoc] The declarator and body only: its specifiers are the declaration's around it.
 functionDefinition
-    : declarator virtualSpecifierSeq? functionBody
+    : declarator virtualSpecifierSeq? requiresClause? functionBody // [ClarifyDoc] C++20 trailing requires
     ;
 
 // [ClarifyDoc] A macro at file scope that no declaration reads: `TEST_MAIN(Squad)`, `REGISTER(int, 1);`,
@@ -809,6 +822,21 @@ functionDefinition
 topLevelMacro
     : {this.IsTopLevelMacro() && this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) ((Arrow | Dot) Identifier macroArguments)* Semi
     | {this.IsTopLevelMacro() && !this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) ((Arrow | Dot) Identifier macroArguments)*
+    ;
+
+// [ClarifyDoc] C++20 modules: `module league;`, `export module league.cup:stats;`, `import <vector>;`, `export { … }`.
+// `module` and `import` are names elsewhere, keywords only where the first pass says a declaration starts with them.
+moduleDeclaration
+    : Export? {this.IsModuleKeyword()}? Identifier (moduleName (Colon moduleName)?)? attributeSpecifierSeq? Semi
+    | Export? {this.IsImportKeyword()}? Identifier (moduleName | Colon moduleName | TemplateLess ~TemplateGreater* TemplateGreater | Less ~Greater* Greater | StringLiteral) attributeSpecifierSeq? Semi
+    ;
+
+moduleName
+    : Identifier (Dot Identifier)*
+    ;
+
+exportDeclaration
+    : Export (LeftBrace declarationSeq? RightBrace | declaration)
     ;
 
 // [ClarifyDoc] A macro the file does not expand that defines a function: `TEST(Cache, Hit) { … }`.
@@ -919,6 +947,7 @@ memberDeclaration
     : memberMacro // [ClarifyDoc]
     | attributeSpecifierSeq? declSpecifierSeq? (functionDefinition | memberDeclaratorList? Semi) // [ClarifyDoc] as above
     | usingDeclaration
+    | usingEnumDeclaration // [ClarifyDoc] C++20
     | staticAssertDeclaration
     | templateDeclaration
     | aliasDeclaration
@@ -1034,7 +1063,44 @@ literalOperatorId
 /*Templates*/
 
 templateDeclaration
-    : Template TemplateLess templateParameterList TemplateGreater declaration
+    : Template TemplateLess templateParameterList TemplateGreater requiresClause? (declaration | conceptDefinition) // [ClarifyDoc] C++20
+    ;
+
+// [ClarifyDoc] C++20 concepts and constraints (from grammars-v4's C++23 grammar).
+conceptDefinition
+    : Concept Identifier attributeSpecifierSeq? Assign binaryExpression Semi
+    ;
+
+requiresClause
+    : Requires constraintExpression
+    ;
+
+constraintExpression
+    : constraintPrimary ((AndAnd | OrOr) constraintPrimary)*
+    ;
+
+// The primaries a constraint is made of, never through `idExpression`: after `requires X` a declaration may start
+// with `::`, and under SLL's merged contexts that made `std ::` ambiguous in every expression. A qualified name first,
+// where SLL cannot tell `std` from `std::integral<T>`.
+constraintPrimary
+    : qualifiedId
+    | unqualifiedId
+    | LeftParen expression RightParen
+    | FoldLeftParen foldExpression RightParen // `requires (Comparable<Ts> && ...)`
+    | requiresExpression
+    | literal
+    | Not constraintPrimary
+    ;
+
+requiresExpression
+    : Requires (LeftParen parameterDeclarationClause? RightParen)? LeftBrace requirement* RightBrace
+    ;
+
+requirement
+    : LeftBrace expression RightBrace Noexcept? (Arrow theTypeId)? Semi // compound
+    | Typename_ (qualifiedId | unqualifiedId) Semi // type, the qualified name first as in constraintPrimary
+    | Requires binaryExpression Semi // nested: any logical-or expression, `requires sizeof(T) == 16;`
+    | expression Semi // simple
     ;
 
 templateParameterList
@@ -1044,6 +1110,7 @@ templateParameterList
 templateParameter
     : typeParameter
     | parameterDeclaration
+    | {this.IsMacroParameter()}? (Identifier | MacroName) macroArguments // [ClarifyDoc] `ENABLE_IF(cond)` standing for one
     ;
 
 typeParameter
@@ -1140,6 +1207,7 @@ noExceptSpecification
 
 theOperator
     : Co_await // [ClarifyDoc] C++20
+    | LessEqualGreater
     | New (LeftBracket RightBracket)?
     | Delete (LeftBracket RightBracket)?
     | Plus

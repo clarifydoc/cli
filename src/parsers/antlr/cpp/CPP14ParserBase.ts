@@ -76,6 +76,7 @@ interface StatementAlts {
 }
 
 interface DeclarationAlts {
+  module: number;
   macroFunction: number;
   topLevelMacro: number;
   simple: number;
@@ -138,9 +139,10 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
     declaration: altReaching(atn, s, declarationStatement),
     expression: altReaching(atn, s, expressionStatement),
   };
-  const [declaration, macroFunctionDefinition, topLevelMacro, declarationTail] = ["declaration", "macroFunctionDefinition", "topLevelMacro", "declarationTail"].map(rule) as [number, number, number, number];
+  const [declaration, macroFunctionDefinition, topLevelMacro, declarationTail, moduleDeclaration] = ["declaration", "macroFunctionDefinition", "topLevelMacro", "declarationTail", "moduleDeclaration"].map(rule) as [number, number, number, number, number];
   const d = decisionOf(atn, declaration, [macroFunctionDefinition, topLevelMacro, declarationTail]);
   const declarationAlts: DeclarationAlts = {
+    module: altReaching(atn, d, moduleDeclaration),
     macroFunction: altReaching(atn, d, macroFunctionDefinition),
     topLevelMacro: altReaching(atn, d, topLevelMacro),
     simple: altReaching(atn, d, declarationTail),
@@ -174,6 +176,11 @@ export abstract class CPP14ParserBase extends Parser {
 
   constructor(input: TokenStream) {
     super(input);
+  }
+
+  /** Whether the first pass saw `name` used as a type. */
+  isTypeName(name: string): boolean {
+    return this.facts.types.has(name);
   }
 
   /** The first pass over the tokens the parse is about to read, and the decisions it settles. */
@@ -226,6 +233,7 @@ export abstract class CPP14ParserBase extends Parser {
   settleDeclaration(alts: DeclarationAlts): number {
     const t = this.lt(1).type;
     if (t === CPP14Lexer.MacroName) return this.IsMacroFunction() ? alts.macroFunction : alts.topLevelMacro;
+    if (t === CPP14Lexer.Identifier && (this.IsModuleKeyword() || this.IsImportKeyword())) return alts.module;
     if (t === CPP14Lexer.Identifier) {
       if (this.IsMacroFunction()) return alts.macroFunction;
       if (this.IsTopLevelMacro()) return alts.topLevelMacro;
@@ -321,6 +329,8 @@ export abstract class CPP14ParserBase extends Parser {
     const path = this.pathAt(start);
     if (!path) return false;
     const after = this.typeAt(path.after);
+    // `CONSTEXPR20 auto r = …`: a specifier macro before a declaration's keyword.
+    if (this.macro(path.last) && path.last === start && DECLARATION_KEYWORDS.has(after)) return true;
     // `Club c`, `Club const &c`.
     if (after === CPP14Lexer.Identifier || after === CPP14Lexer.Const || after === CPP14Lexer.Volatile) return true;
     if (after === CPP14Lexer.Star || after === CPP14Lexer.And || after === CPP14Lexer.AndAnd) {
@@ -370,6 +380,8 @@ export abstract class CPP14ParserBase extends Parser {
     const first = this.following(open.tokenIndex);
     const t = this.typeAt(first);
     if (t === CPP14Lexer.RightParen || t === CPP14Lexer.Ellipsis || TYPE_KEYWORDS.has(t) || SPECIFIER_KEYWORDS.has(t) || CLASS_KEYWORDS.has(t)) return true;
+    // `main([[maybe_unused]] int argc)`: an attribute, which no argument starts with.
+    if (t === CPP14Lexer.LeftBracket && this.typeAt(this.following(first)) === CPP14Lexer.LeftBracket) return true;
     const path = this.pathAt(first);
     if (!path) return false;
     const after = this.typeAt(path.after);
@@ -414,7 +426,8 @@ export abstract class CPP14ParserBase extends Parser {
     if (!this.macroAt(t)) return false;
     if ((this.lt(2).type === CPP14Lexer.LeftParen) !== withArguments) return false;
     const after = this.typeAt(this.afterMacro(t.tokenIndex));
-    return after === CPP14Lexer.Identifier || DECLARATION_KEYWORDS.has(after);
+    // `EXPORT ~Club();`: a destructor's name.
+    return after === CPP14Lexer.Identifier || DECLARATION_KEYWORDS.has(after) || after === CPP14Lexer.Tilde;
   }
 
   /** `(*)`, `(&)`, `(Club::*)` open a nested abstract declarator, not a parameter list. */
@@ -500,6 +513,28 @@ export abstract class CPP14ParserBase extends Parser {
       after = this.afterMacro(this.following(after));
     }
     return this.typeAt(after) === CPP14Lexer.Semi;
+  }
+
+  /** `ENABLE_IF(cond)` among template parameters: a macro standing for one, before `,` or `>`. */
+  protected IsMacroParameter(): boolean {
+    const t = this.lt(1);
+    if (!this.macroAt(t) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
+    const after = this.typeAt(this.afterMacro(t.tokenIndex));
+    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater;
+  }
+
+  /** `module league;`, `module;`, `export module league:stats;`: `module` as a keyword. */
+  protected IsModuleKeyword(): boolean {
+    const t = this.lt(1);
+    const next = this.lt(2).type;
+    return t.text === "module" && (next === CPP14Lexer.Identifier || next === CPP14Lexer.Semi || next === CPP14Lexer.Colon);
+  }
+
+  /** `import league;`, `import <vector>;`, `import "club.h";`, `import :stats;`: `import` as a keyword. */
+  protected IsImportKeyword(): boolean {
+    const t = this.lt(1);
+    const next = this.lt(2).type;
+    return t.text === "import" && [CPP14Lexer.Identifier, CPP14Lexer.Colon, CPP14Lexer.Less, CPP14Lexer.TemplateLess, CPP14Lexer.StringLiteral].includes(next);
   }
 
   /** Qt's `signals`, `slots` before `:`. */

@@ -68,6 +68,17 @@ Char16: 'char16_t';
 
 Char32: 'char32_t';
 
+// [ClarifyDoc] C++20 keywords.
+Char8: 'char8_t';
+
+Concept: 'concept';
+
+Consteval: 'consteval';
+
+Constinit: 'constinit';
+
+Requires: 'requires';
+
 Class: 'class';
 
 Const: 'const';
@@ -268,6 +279,9 @@ Equal: '==';
 
 NotEqual: '!=';
 
+// [ClarifyDoc] C++20 three-way comparison.
+LessEqualGreater: '<=>';
+
 LessEqual: '<=';
 
 GreaterEqual: '>=';
@@ -389,7 +403,9 @@ fragment Encodingprefix: 'u8' | 'u' | 'U' | 'L';
 
 fragment Schar: ~ ["\\\r\n] | Escapesequence | Universalcharactername;
 
-// [ClarifyDoc] The text may hold `)`: it ends at the first `)`, delimiter, `"`.
+// [ClarifyDoc] The text may hold `)`: it ends at the first `)`, delimiter, `"`. The reader blanks raw strings before the
+// parse (plugins/cpp/antlr.ts), since only a predicate could match the closing delimiter to the opening one, and a
+// lexer predicate keeps every path through it out of the DFA.
 fragment Rawstring: 'R"' ~[ ()\\\r\n"]* '(' .*? ')' ~[ ()\\\r\n"]* '"';
 
 UserDefinedIntegerLiteral:

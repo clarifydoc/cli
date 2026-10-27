@@ -118,7 +118,7 @@ per target at its `// Insert here @header` marker.
 - **C++: what upstream refused.** A unary operator's operand is a cast expression (`*(Club *) p`), an abstract
   declarator may start with `[]`, a variadic `(...)` parameter list, C++17 nested namespaces, `if`/`switch` init
   statements, `if constexpr`, structured bindings, `static_assert` without a message, C++20 designated initializers
-  and coroutines, `operator ""_x`, enumerators with attributes, raw strings holding `)`.
+  and coroutines, `operator ""_x`, enumerators with attributes.
 - **C++: unexpanded macros** as in C, plus class-head and declarator attribute macros (`class EXPORT Club`,
   `GUARDED_BY(mu)`), class-body macros (`Q_OBJECT`, `Q_PROPERTY(…)`, Qt's `signals:`/`slots`), test macros defining
   a function (`TEST(Cache, Hit) { … }`) or a block (`SECTION("x") { … }`), macros at file scope, macros listing
@@ -128,9 +128,19 @@ per target at its `// Insert here @header` marker.
 - **C++: C++17 fold expressions** (`(std::cout << ... << args)`, the `(` retyped `FoldLeftParen` where `...` stands
   beside an operator), `final`/`override` as member names, template-template parameters, logical operators in the
   arguments of a qualified template (`std::enable_if<!A::value && B>`).
+- **C++: C++20 and C++23**, the rules of the same directory's `CPP20Parser.g4`/`CPP23Parser.g4` ported onto this
+  grammar rather than used as they are (unchanged they left 35–69% of files failing at 0.03 MB/s): concepts, requires
+  clauses and expressions (a clause's constraint a conjunction of primaries, so a declaration starting with `::` after
+  it is not read into it), template lambdas, `<=>`, `char8_t`, `consteval`/`constinit`, `if consteval`, `using enum`,
+  module, import and export declarations (`module`/`import` stay identifiers, recognised by what follows them),
+  constrained template parameters, `[[attributes]]` on parameters, call operators given template arguments, variable
+  templates' members and elements (`names_v<T>.size()`). Raw strings are blanked by the reader (`R"x(…)x"` becomes
+  `""` and spaces, lines kept) before lexing: their text holds anything up to the delimiter, which the lexer could
+  match only with a predicate, and a lexer predicate turns off the lexer's DFA.
 
-  On four real C++ repositories 0–1% of files keep the patterns' reading. Cold, the parse runs at 0.5–0.8 MB/s, warm
-  about 1.2 MB/s.
+  On seven real C++ repositories 0–16% of files keep the patterns' reading (the C++20 ones 3–16%, mostly C++26
+  reflection and explicit `operator()<T>` calls on a member). Cold, the parse runs at 0.4–0.8 MB/s, warm about 1.2
+  MB/s.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL
 prediction succeed on all but 2 of its files, with no file failing to parse.

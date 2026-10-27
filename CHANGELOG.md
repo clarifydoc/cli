@@ -14,6 +14,11 @@ recorded in the git history only.
 
 ### Added
 
+- **C++20 and C++23 are read by the parser.** Concepts, requires clauses, template lambdas, `<=>`, `consteval`,
+  `if consteval`, `using enum`, modules and raw strings no longer send a file back to the patterns: of three C++20
+  repositories 3–16% of files keep their reading (was 10–47%). A definition with a trailing return type
+  (`auto kick() -> bool { … }`) is a function again — the parser's reading had missed every one — a call inside
+  template arguments (`make_seq<laps()>`) is read, and `Club() = default;` is no longer a function.
 - **C and C++: fewer files left to the patterns.** Of six real C repositories 1–11% of files now keep the patterns'
   reading (was 5–22%), of four C++ ones 0–1% (was 1–11%). The parsers now read calling conventions (`BOOL WINAPI f(`),
   macros joined to strings (`"Server: " VERSION CRLF`), macros alone on a line (`PARSER_BEGIN`, `BEGIN_NAMESPACE`),

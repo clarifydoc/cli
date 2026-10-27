@@ -19,14 +19,14 @@ export function typesOf(texts: readonly string[]): ReadonlySet<number> {
 
 /** Keywords that are a type by themselves. */
 export const TYPE_KEYWORDS = typesOf([
-  "void", "char", "char16_t", "char32_t", "wchar_t", "bool", "short", "int", "long", "float", "double", "signed",
+  "void", "char", "char8_t", "char16_t", "char32_t", "wchar_t", "bool", "short", "int", "long", "float", "double", "signed",
   "unsigned", "auto", "decltype",
 ]);
 
 /** Keywords a declaration may start with besides a type: storage classes, qualifiers, function specifiers. */
 export const SPECIFIER_KEYWORDS = typesOf([
   "const", "volatile", "static", "extern", "mutable", "register", "thread_local", "inline", "virtual", "explicit",
-  "friend", "constexpr", "typedef", "typename",
+  "friend", "constexpr", "consteval", "constinit", "typedef", "typename",
 ]);
 
 /** `class`, `struct`, `union`, `enum`: what follows names a type. */
@@ -39,7 +39,21 @@ const AFTER_TEMPLATE: ReadonlySet<number> = new Set([
   CPP14Lexer.Ellipsis, CPP14Lexer.RightBracket, CPP14Lexer.Assign, CPP14Lexer.Colon, CPP14Lexer.Const,
   // `ready_v<T> == false`, `is_same_v<T, U> || …`: no comparison goes on with these after `>`.
   CPP14Lexer.Equal, CPP14Lexer.NotEqual, CPP14Lexer.OrOr, CPP14Lexer.Question,
+  // `struct from<Cup, T> final {`.
+  CPP14Lexer.Final, CPP14Lexer.Override,
+  // A variable template's member or element, `names_v<T>.size()`, `ids_v<T>[0]`; an attribute after a requires clause.
+  CPP14Lexer.Dot, CPP14Lexer.LeftBracket,
 ]);
+
+/** A declaration's keywords, which follow a template only: `requires Kickable<T> void play(`. */
+const AFTER_TEMPLATE_KEYWORDS = typesOf([
+  "void", "char", "char8_t", "char16_t", "char32_t", "wchar_t", "bool", "short", "int", "long", "float", "double",
+  "signed", "unsigned", "auto", "const", "volatile", "static", "extern", "inline", "virtual", "explicit", "friend",
+  "constexpr", "consteval", "constinit", "typename", "class", "struct", "union", "enum", "template", "requires",
+]);
+
+/** What a template lambda's parameter list starts with: `<typename T>`, `<auto I>`, `<size_t N>`. */
+const TEMPLATE_PARAMETER_START: ReadonlySet<number> = new Set([CPP14Lexer.Typename_, CPP14Lexer.Class, CPP14Lexer.Auto, CPP14Lexer.Identifier, CPP14Lexer.Int, CPP14Lexer.Bool, CPP14Lexer.Char, CPP14Lexer.Unsigned, CPP14Lexer.Long]);
 
 /** Casts whose `<` opens a type: brackets nested in a template's arguments. */
 const CASTS: ReadonlySet<number> = new Set([CPP14Lexer.Static_cast, CPP14Lexer.Dynamic_cast, CPP14Lexer.Reinterpret_cast, CPP14Lexer.Const_cast]);
@@ -74,6 +88,9 @@ const OPENS: ReadonlyMap<number, number> = new Map([
 /** What no expression holds directly: a type keyword (but `int(x)`), a specifier, a block or a statement. */
 const NON_EXPRESSION: ReadonlySet<number> = new Set([...TYPE_KEYWORDS, ...SPECIFIER_KEYWORDS, CPP14Lexer.LeftBrace, CPP14Lexer.Semi]);
 
+/** The keywords whose parenthesized header a statement follows. */
+const CONTROL_HEADER: ReadonlySet<number> = new Set([CPP14Lexer.If, CPP14Lexer.While, CPP14Lexer.For, CPP14Lexer.Switch]);
+
 /** What a cast's operand starts with: `(Club *) p`, `(int) -x`. */
 const OPERAND_START: ReadonlySet<number> = new Set([
   CPP14Lexer.Identifier, CPP14Lexer.IntegerLiteral, CPP14Lexer.FloatingLiteral, CPP14Lexer.CharacterLiteral,
@@ -82,6 +99,7 @@ const OPERAND_START: ReadonlySet<number> = new Set([
   CPP14Lexer.Plus, CPP14Lexer.Doublecolon, CPP14Lexer.This, CPP14Lexer.New, CPP14Lexer.Sizeof, CPP14Lexer.Nullptr,
   CPP14Lexer.PlusPlus, CPP14Lexer.MinusMinus, CPP14Lexer.Static_cast, CPP14Lexer.Dynamic_cast,
   CPP14Lexer.Reinterpret_cast, CPP14Lexer.Const_cast,
+  CPP14Lexer.Operator,
 ]);
 
 /** An operand no expression in parentheses can be followed by, so the parentheses hold a type: `(Method) id`. */
@@ -90,6 +108,7 @@ const CAST_ONLY_OPERAND: ReadonlySet<number> = new Set([
   CPP14Lexer.StringLiteral, CPP14Lexer.BooleanLiteral, CPP14Lexer.PointerLiteral, CPP14Lexer.Not, CPP14Lexer.Tilde,
   CPP14Lexer.This, CPP14Lexer.New, CPP14Lexer.Sizeof, CPP14Lexer.Nullptr, CPP14Lexer.Doublecolon,
   CPP14Lexer.Static_cast, CPP14Lexer.Dynamic_cast, CPP14Lexer.Reinterpret_cast, CPP14Lexer.Const_cast,
+  CPP14Lexer.Operator,
 ]);
 
 /** What a cast's `(` may follow: an operator, an opening bracket or separator, a keyword taking an operand. */
@@ -185,23 +204,31 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   const shift = (i: number) =>
     (type(i + 1) === CPP14Lexer.Less && tokens[i + 1]!.start === tokens[i]!.stop + 1) || (type(i - 1) === CPP14Lexer.Less && tokens[i - 1]!.stop + 1 === tokens[i]!.start);
   for (let i = 0; i < n; i++) {
-    if (type(i) !== CPP14Lexer.Less || shift(i) || !(isId(i - 1) || type(i - 1) === CPP14Lexer.Template || type(i - 1) === CPP14Lexer.Operator)) continue;
+    // `[&]<auto I>(…)`: a template lambda's parameters, after the introducer's `]`.
+    const lambda = type(i - 1) === CPP14Lexer.RightBracket && TEMPLATE_PARAMETER_START.has(type(i + 1));
+    // `f.template operator()<I>()`: a call operator's template arguments.
+    const callOperator = type(i - 1) === CPP14Lexer.RightParen && type(i - 2) === CPP14Lexer.LeftParen && type(i - 3) === CPP14Lexer.Operator;
+    if (type(i) !== CPP14Lexer.Less || shift(i) || !(isId(i - 1) || type(i - 1) === CPP14Lexer.Template || type(i - 1) === CPP14Lexer.Operator || lambda || callOperator)) continue;
     let depth = 1;
     // `std::enable_if<!A::value && B>`: after a qualified name the `<` is a template's, whose constant arguments may
     // hold logical operators; elsewhere `&&` ends the scan (`if (a < b && c > d)`).
-    const qualified = type(i - 2) === CPP14Lexer.Doublecolon;
+    // So may a template's parameters, `template <class T, bool B = A<T>::value && C>`.
+    const qualified = type(i - 2) === CPP14Lexer.Doublecolon || type(i - 1) === CPP14Lexer.Template;
+    // `bool_constant<is_integral<T>::value && …>`: a template's member constant before the operator.
+    const constant = (j: number) => isId(j - 1) && type(j - 2) === CPP14Lexer.Doublecolon && type(j - 3) === CPP14Lexer.Greater;
     for (let j = i + 1; j < n; j++) {
       const t = type(j);
-      if (OPENS.has(t) && t !== CPP14Lexer.LeftBrace) {
+      // `write<Opts{.indent = 2}>(…)`: a braced initializer among the arguments; any other `{` ends the scan.
+      if (OPENS.has(t) && (t !== CPP14Lexer.LeftBrace || isId(j - 1) || type(j - 1) === CPP14Lexer.Greater)) {
         if (close[j] < 0) break;
         j = close[j]!;
       } else if (t === CPP14Lexer.Less && !shift(j) && (isId(j - 1) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;
       else if (t === CPP14Lexer.Greater && --depth === 0) {
         // `template <…>` opens a parameter list whatever follows it.
-        if (AFTER_TEMPLATE.has(type(j + 1)) || j + 1 === n || type(i - 1) === CPP14Lexer.Template) angle[i] = j;
+        if (AFTER_TEMPLATE.has(type(j + 1)) || AFTER_TEMPLATE_KEYWORDS.has(type(j + 1)) || j + 1 === n || type(i - 1) === CPP14Lexer.Template) angle[i] = j;
         break;
-      } else if (t === CPP14Lexer.AndAnd && (qualified || RVALUE_SUFFIX.has(type(j + 1)))) continue;
-      else if (t === CPP14Lexer.OrOr && qualified) continue;
+      } else if (t === CPP14Lexer.AndAnd && (qualified || constant(j) || RVALUE_SUFFIX.has(type(j + 1)))) continue;
+      else if (t === CPP14Lexer.OrOr && (qualified || constant(j))) continue;
       else if (ENDS_TEMPLATE.has(t)) break;
     }
   }
@@ -285,8 +312,9 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const prev = type(i - 1);
     // `operator++(int)`, `operator<<(…)`: an operator's parameters.
     if ([1, 2, 3].some((back) => type(i - back) === CPP14Lexer.Operator)) continue;
-    // `(int)(long) x`: a cast's `)` may precede another.
-    if (i > 0 && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)) && !(prev === CPP14Lexer.RightParen && cast[open_(i - 1)] === 1)) continue;
+    // `(int)(long) x`: a cast's `)` may precede another, and a statement starts after a control header's,
+    // `for (…) (void)kick(…);`.
+    if (i > 0 && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)) && !(prev === CPP14Lexer.RightParen && castAfterParen(i - 1))) continue;
     let j = i + 1;
     // `(const Club *)`, `(struct sockaddr *)`.
     while (SPECIFIER_KEYWORDS.has(type(j)) || CLASS_KEYWORDS.has(type(j))) j++;
@@ -325,19 +353,28 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   // `BENCHMARK_LOOP {`, `SET_SOURCE_PATH return …`, `BEGIN_NAMESPACE class …`: a bare macro where a statement or
   // declaration starts, before what only starts another — a name alone there would be an expression.
   for (let i = 0; i < n; i++) {
-    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || (i > 0 && !BARE_MACRO_AFTER.has(type(i - 1)))) continue;
+    // After another bare macro too: `BEGIN_NAMESPACE BEGIN_EXPORT template …`.
+    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || (i > 0 && !BARE_MACRO_AFTER.has(type(i - 1)) && macroCall[i - 1] !== 1)) continue;
     const next = type(i + 1);
     if (BARE_MACRO_BEFORE.has(next) || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
   }
+  // `if CONSTEXPR20 (…)`: a macro standing for `constexpr`.
+  for (let i = 1; i < n; i++) if (type(i - 1) === CPP14Lexer.If && isId(i) && MACRO_NAME.test(names[i]!) && type(i + 1) === CPP14Lexer.LeftParen) macroCall[i] = 1;
   // `(std::cout << ... << args)`, `(check(args) && ...)`: a fold, its `...` beside an operator at the parentheses' depth.
   const fold = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     // A fold's own parentheses stand where an operand may start; after a name they are a call's or a parameter list's
-    // (`run(Args &&...args)`).
-    if (type(i) !== CPP14Lexer.LeftParen || close[i]! < 0 || (i > 0 && (!BEFORE_CAST.has(type(i - 1)) || closesTemplate.has(i - 1)))) continue;
+    // (`run(Args &&...args)`); after `requires` they hold a constraint, `requires (Comparable<Ts> && ...)`.
+    const prev = type(i - 1);
+    if (type(i) !== CPP14Lexer.LeftParen || close[i]! < 0 || (i > 0 && prev !== CPP14Lexer.Requires && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)))) continue;
     for (let j = i + 1; j < close[i]!; j++) {
       if (OPENS.has(type(j)) && close[j]! >= 0) {
         j = close[j]!;
+        continue;
+      }
+      // `(make_seq<Ts...>{})` expands a pack in template arguments.
+      if (angle[j]! >= 0) {
+        j = angle[j]!;
         continue;
       }
       // `void log(const char *fmt, ...)` is a variadic parameter list: a comma folds only after a call, `(kick(p), ...)`.
@@ -349,6 +386,12 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     }
   }
   return facts(all, tokens, names, types, close, angle, cast, macroCall, fold);
+
+  /** Whether a cast may follow the `)` at `i`: another cast's, or a control header's. */
+  function castAfterParen(i: number): boolean {
+    const open = open_(i);
+    return open >= 0 && (cast[open] === 1 || CONTROL_HEADER.has(type(open - 1)));
+  }
 
   /** The `(` a `)` at `i` closes. */
   function open_(i: number): number {
@@ -381,12 +424,18 @@ function facts(
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
   };
-  // The innermost open `(` at each token: a type keyword or block there is not an expression's.
+  // The innermost open `(` at each token: a type keyword or block there is not an expression's — a `{` after a name or
+  // template arguments is a braced temporary, `(Seq<Ts...>{})`.
+  const closesTemplate = new Set<number>();
+  angle.forEach((c) => c >= 0 && closesTemplate.add(c));
   const parens: number[] = [];
-  tokens.forEach((t) => {
+  tokens.forEach((t, i) => {
     if (t.type === CPP14Lexer.LeftParen) parens.push(t.tokenIndex);
     else if (t.type === CPP14Lexer.RightParen) parens.pop();
-    else if (parens.length > 0 && (NON_EXPRESSION.has(t.type))) out.nonExpression[parens.at(-1)!] = 1;
+    else if (parens.length > 0 && NON_EXPRESSION.has(t.type)) {
+      const braced = t.type === CPP14Lexer.LeftBrace && i > 0 && (tokens[i - 1]!.type === CPP14Lexer.Identifier || closesTemplate.has(i - 1));
+      if (!braced) out.nonExpression[parens.at(-1)!] = 1;
+    }
   });
   tokens.forEach((t, i) => {
     const k = t.tokenIndex;

@@ -159,6 +159,67 @@ END_NAMESPACE
     expect(read(source).functions).toEqual([["doTest", 1, ["kick", "UNLIKELY", "restart", "CHECK"]]]);
   });
 
+  it("reads C++20: concepts, requires clauses, template lambdas, `<=>`, `using enum` and `if consteval`", () => {
+    const source = `template <typename T>
+concept Kickable = requires(T ball) { { ball.kick() } -> std::same_as<void>; typename T::Size; };
+template <Kickable T> requires(!std::is_const_v<T>) && Inflated<T>
+constexpr void shoot(T &ball) noexcept { ball.kick(); }
+struct Score { auto operator<=>(const Score &) const = default; };
+template <class... Ts> struct from<Cup, Ts...> final {};
+consteval int laps() { return count_laps(); }
+void race(Car &car) {
+  using enum Gear;
+  if consteval { warm(); } else { idle(car); }
+  if (car.score() <=> best > 0) celebrate();
+  [&]<size_t... Is>(std::index_sequence<Is...>) { (tune(car, Is), ...); }(std::make_index_sequence<laps()>{});
+}
+`;
+    expect(read(source)).toEqual({
+      errors: 0,
+      functions: [
+        ["shoot", 4, ["ball.kick"]],
+        ["laps", 7, ["count_laps"]],
+        ["race", 8, ["warm", "idle", "car.score", "celebrate", "tune", "laps"]],
+      ],
+    });
+  });
+
+  it("reads attributes on parameters, call operators given template arguments and variable templates' members", () => {
+    const source = `class EXPORT Garage {
+  EXPORT ~Garage();
+};
+template <class T>
+concept Wrapped = requires(T car) { requires sizeof(car) == 16; requires T::wrapped == true; };
+template <class... Cars> requires(std::movable<Cars> && ...)
+int park([[maybe_unused]] int bay, Lift &lift) {
+  for (int i = 0; i < 3; ++i) (void)lift.hoist(i);
+  lift.template operator()<0>();
+  if (lift.level() >= levels_v<Cars...>.size()) lower(lift);
+  return ids_v<Lift>[0];
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["park", 7, ["lift.hoist", "lift.level", "levels_v.size", "lower"]]] });
+  });
+
+  it("reads a definition with a trailing return type", () => {
+    const source = "auto main() -> int { return kickoff(); }\nauto Club::size() const noexcept -> std::size_t { return count(); }\n";
+    expect(read(source).functions).toEqual([["main", 1, ["kickoff"]], ["Club::size", 2, ["count"]]]);
+  });
+
+  it("reads module declarations and raw strings, whatever their text holds", () => {
+    const source = `export module league.table;
+import std;
+import :standings;
+export namespace league {
+void print(Table &t) {
+  auto header = R"pitch(  } ( " not code  )pitch";
+  render(t, header);
+}
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["print", 5, ["render"]]] });
+  });
+
   it("counts a syntax error and reads nothing more of the file, so core keeps the patterns' reading", () => {
     expect(readCpp("int f() { return (1; }\n")).toMatchObject({ functions: [] });
     expect(readCpp("int f() { return (1; }\n").syntaxErrors).toBeGreaterThan(0);
@@ -167,14 +228,13 @@ END_NAMESPACE
 
 /**
  * Where the two readings of a fixture differ, and why the parser's is the one to keep: `file → [only the patterns,
- * only the parser]`, as `[name, line, calls]`. The patterns miss a template call and an inline destructor.
+ * only the parser]`, as `[name, line, calls]`. The patterns miss a template call.
  */
 const KNOWN: Record<string, [unknown[], unknown[]]> = {
   "test-fixtures/sample-cpp-app/main.cpp": [
     [["main", 16, ["repo.add", "repo.find", "repo.size"]]],
     [["main", 16, ["repo.add", "make_shared", "repo.find", "repo.size"]]],
   ],
-  "test-fixtures/sample-cpp-app/Player.h": [[], [["Player::~Player", 10, []]]],
 };
 
 describe("C++: ANTLR and the patterns agree on the fixtures", () => {
