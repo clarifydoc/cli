@@ -1,6 +1,6 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { join } from "path";
-import { EXTRACTOR_VERSION, type ManifestEntry } from "./manifest.js";
+import { extractorStamp, type ManifestEntry } from "./manifest.js";
 import { loopShapes, type LoopShape } from "./query-in-loop.js";
 
 /**
@@ -8,7 +8,7 @@ import { loopShapes, type LoopShape } from "./query-in-loop.js";
  * file's content hash (the manifest's `sha256`). `findQueriesInLoops` builds a
  * control-flow graph of every file holding a database call — most of its
  * time, and the same answer for a file whose bytes did not change. The cache
- * lives beside the manifest, is stamped with `EXTRACTOR_VERSION` like it, and
+ * lives beside the manifest, is stamped with `extractorStamp()` like it, and
  * keeps only the files this run asked about.
  */
 const CACHE_NAME = ".loop-shapes.json";
@@ -27,7 +27,7 @@ export async function openLoopShapeCache(
   let previous: CacheFile["files"] = {};
   try {
     const parsed = JSON.parse(await readFile(path, "utf-8")) as Partial<CacheFile>;
-    if (parsed.extractorVersion === EXTRACTOR_VERSION && parsed.files && typeof parsed.files === "object") previous = parsed.files;
+    if (parsed.extractorVersion === extractorStamp() && parsed.files && typeof parsed.files === "object") previous = parsed.files;
   } catch {
     // No cache yet, or unreadable: every graph is built.
   }
@@ -45,7 +45,7 @@ export async function openLoopShapeCache(
       return shapes;
     },
     async save() {
-      const body: CacheFile = { extractorVersion: EXTRACTOR_VERSION, files: next };
+      const body: CacheFile = { extractorVersion: extractorStamp(), files: next };
       const tmp = `${path}.${process.pid}.tmp`;
       await writeFile(tmp, JSON.stringify(body), "utf-8");
       await rename(tmp, path);

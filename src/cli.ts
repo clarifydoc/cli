@@ -1,4 +1,5 @@
 import { Command, InvalidArgumentError } from "commander";
+import { enableFeatures, KNOWN_FEATURES } from "./core/feature-flags.js";
 import { TOOL_VERSION } from "./core/version.js";
 import { resolve, relative, join, basename, dirname } from "path";
 import { existsSync } from "fs";
@@ -71,7 +72,12 @@ program
     "--stable-output",
     "Write a fixed timestamp and a relative project root, so repeated runs produce identical artifacts (for committed fixtures)",
   )
+  .option(
+    "--feature <names...>",
+    `Extraction paths to switch (also CLARIFYDOC_FEATURES): ${Object.entries(KNOWN_FEATURES).map(([n, f]) => `${n} (${f.default ? "on" : "off"} by default) — ${f.description}`).join("; ")}. \`no-antlr\` switches one off, \`antlr:go\` names one language`,
+  )
   .action(async (path: string, options) => {
+    if (options.feature) enableFeatures(options.feature as string[]);
     const projectRoot = resolve(path);
     const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
     const outputDir = resolve(options.output, projectName);

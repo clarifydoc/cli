@@ -9,7 +9,7 @@ import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./fil
 import { seedFromMainWorktree } from "./worktree-seed.js";
 import { runFingerprints } from "./run-fingerprint.js";
 import {
-  EXTRACTOR_VERSION,
+  extractorStamp,
   loadManifest,
   saveManifest,
   cleanupStaleArtifacts,
@@ -806,7 +806,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const fingerprints = options.incremental && !dryRun && !options.osv
     ? await runFingerprints(projectRoot, {
         options: {
-          extractor: EXTRACTOR_VERSION,
+          extractor: extractorStamp(),
           include: options.include ?? [],
           exclude: options.exclude ?? [],
           maxFiles: options.maxFiles ?? null,
@@ -2183,7 +2183,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(codeOwners ? { codeOwners } : {}),
     hotspots,
     provenance: {
-      extractorVersion: EXTRACTOR_VERSION,
+      extractorVersion: extractorStamp(),
       schemaVersion: SCHEMA_VERSION,
       toolVersion: TOOL_VERSION,
       incremental: options.incremental === true,
@@ -2291,7 +2291,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (options.incremental) {
     const manifest: Manifest = {
       version: 1,
-      extractorVersion: EXTRACTOR_VERSION,
+      extractorVersion: extractorStamp(),
       entries: newManifestEntries,
       ...(Object.keys(newSkipped).length ? { skipped: newSkipped } : {}),
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),

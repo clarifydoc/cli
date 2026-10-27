@@ -14,6 +14,13 @@ recorded in the git history only.
 
 ### Added
 
+- **Go and Lua are read by a parser.** The functions and calls of Go and Lua files come from their ANTLR4 grammars
+  (antlr4ng) instead of line patterns: exact function extents (a Lua function ends at its `end`), calls written over
+  several lines or without parentheses (`require "x"`, `db.Get[User](ctx)`), and nothing read from comments, strings
+  or type conversions. Routes, data access and every other extractor still read the lines. A file the grammar cannot
+  read keeps the pattern reading, and each file's `frontEnd` says which reading it got. `--feature no-antlr` (or
+  `CLARIFYDOC_FEATURES=no-antlr`; `no-antlr:go` for one language) switches back to the patterns, which stay in place;
+  `scripts/ab-features.mjs` compares the two on a tree. On large Go codebases the parse adds a few percent to the run.
 - **A package that installs anywhere.** `npm run pack:standalone` builds the npm tarball with its
   dependencies bundled — grammars as WASM only, no install scripts — so `npm install clarifydoc` will
   compile nothing and need no Docker; `npm run smoke:tarball` installs it into an empty directory and

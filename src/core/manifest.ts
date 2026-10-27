@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { join, resolve, sep } from "path";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { headCommit, listGitFiles } from "./source-revision.js";
+import { featureStamp } from "./feature-flags.js";
 
 /**
  * Bump whenever extractor logic changes in a way that would produce different
@@ -11,7 +12,17 @@ import { headCommit, listGitFiles } from "./source-revision.js";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.568.0";
+export const EXTRACTOR_VERSION = "1.569.0";
+
+/**
+ * What a cache written by this run is stamped with: `EXTRACTOR_VERSION`, and
+ * the features switched away from their defaults (`1.569.0+-antlr`), so a run
+ * reading files another way re-extracts instead of reusing its JSON.
+ */
+export function extractorStamp(): string {
+  const features = featureStamp();
+  return features ? `${EXTRACTOR_VERSION}+${features}` : EXTRACTOR_VERSION;
+}
 
 /**
  * What the manifest remembers about one analyzed file, enough to tell
@@ -75,7 +86,7 @@ export async function loadManifest(outputDir: string): Promise<Manifest | null> 
     const raw = await readFile(path, "utf-8");
     const parsed = JSON.parse(raw) as Partial<Manifest>;
     if (parsed.version !== 1) return null;
-    if (parsed.extractorVersion !== EXTRACTOR_VERSION) return null;
+    if (parsed.extractorVersion !== extractorStamp()) return null;
     if (!parsed.entries || typeof parsed.entries !== "object") return null;
     return parsed as Manifest;
   } catch {
@@ -180,7 +191,7 @@ export async function assessFreshness(
 ): Promise<FreshnessReport> {
   const manifest = await loadManifestRaw(outputDir);
   if (!manifest) return { state: "unknown", changed: [], removed: [], added: [], checked: 0, sampled: false };
-  if (manifest.extractorVersion !== EXTRACTOR_VERSION) {
+  if (manifest.extractorVersion !== extractorStamp()) {
     return { state: "extractor-changed", changed: [], removed: [], added: [], checked: 0, sampled: false };
   }
 

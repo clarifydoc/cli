@@ -2,6 +2,7 @@ import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type Languag
 import { splitLines } from "../extractors/shared/source-lines.js";
 import {
   extractFunctionsWithSpec,
+  extractFunctionsFromParse,
   extractClassesWithSpec,
   extractImportsWithSpec,
   extractCallsFromBody,
@@ -9,6 +10,7 @@ import {
   type RegexLangSpec,
 } from "../extractors/plugins/shared/regex-base.js";
 import { regexSpecFor } from "../extractors/registry.js";
+import type { ParsedStructure } from "../types/language-plugin.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { isTestFile } from "./test-file-detector.js";
 
@@ -16,6 +18,9 @@ import { isTestFile } from "./test-file-detector.js";
  * Regex-based file analysis for languages without tree-sitter support,
  * or as a fallback when tree-sitter parsing fails. The per-language
  * `RegexLangSpec` comes from the plugin registry (`meta.regexSpec`).
+ * `parsed`, from the language's ANTLR front end when that feature is on,
+ * supplies the functions and their calls in place of the patterns; every
+ * other extractor of the spec still reads the lines.
  */
 export function extractWithRegex(
   sourceText: string,
@@ -23,6 +28,7 @@ export function extractWithRegex(
   language: Language,
   /** The source already split by `splitLines`, when the caller has it. */
   presplit?: string[],
+  parsed?: ParsedStructure,
 ): FileAnalysis {
   const analysis = createEmptyAnalysis(filePath, language);
   const spec = regexSpecFor(language);
@@ -30,7 +36,7 @@ export function extractWithRegex(
 
   const lines = presplit ?? splitLines(sourceText);
 
-  analysis.functions = extractFunctionsWithSpec(lines, spec);
+  analysis.functions = parsed ? extractFunctionsFromParse(lines, spec, parsed.functions) : extractFunctionsWithSpec(lines, spec);
   analysis.classes = spec.extractClasses
     ? spec.extractClasses(lines, analysis.functions)
     : extractClassesWithSpec(lines, spec);
@@ -67,7 +73,7 @@ export function extractWithRegex(
   if (spec.postProcessClasses) {
     analysis.classes = spec.postProcessClasses(lines, analysis.classes);
   }
-  const setup = topLevelSetup(lines, analysis, spec, filePath);
+  const setup = topLevelSetup(lines, analysis, spec, filePath, parsed);
   if (setup) analysis.functions.unshift(setup);
   const pathRefs = spec.extractPathReferences?.(lines);
   if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
@@ -116,7 +122,7 @@ export function extractWithRegex(
  * run top-level code for this file, or those lines neither call anything nor
  * touch data.
  */
-function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string): FunctionInfo | null {
+function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string, parsed?: ParsedStructure): FunctionInfo | null {
   const on = spec.topLevelCalls;
   if (!on || (on instanceof RegExp && !on.test(filePath))) return null;
   // The lines as the call scan reads them (block comments, heredocs blanked), as a function body's are.
@@ -133,7 +139,8 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   // declaration below it: it is not a statement the script runs.
   const attribute = spec.attributeLine?.pattern;
   if (attribute) for (let i = 0; i < outside.length; i++) if (attribute.test(outside[i]!)) outside[i] = "";
-  const calls = extractCallsFromBody(outside, 0, outside.length, spec.lineCommentPrefixes, spec.callPatterns);
+  // A parse already knows which calls no function holds.
+  const calls = parsed?.topLevelCalls ?? extractCallsFromBody(outside, 0, outside.length, spec.lineCommentPrefixes, spec.callPatterns);
   // Top-level statements that call nothing still run when they read or write
   // data (a view's `json.goals player.goals.count`): that access is `<setup>`'s.
   if (calls.length === 0 && !analysis.dataSources.some((d) => (outside[d.line - 1] ?? "").trim())) return null;
@@ -143,3 +150,4 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   if (locals.length > 0) setup.localTypes = locals;
   return setup;
 }
+

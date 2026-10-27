@@ -26,7 +26,8 @@ import { isSuppressed } from "./security-rules.js";
 import { isGeneratedSource } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
-import type { VariableAliasBinding } from "../types/language-plugin.js";
+import type { ParsedStructure, VariableAliasBinding } from "../types/language-plugin.js";
+import { featureEnabled } from "./feature-flags.js";
 import type { CallInfo, ClassInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
@@ -126,6 +127,29 @@ export interface FileResult {
  * grammar paths, so they would leak machine state into the artifact and churn
  * fixtures; the class of failure is what a reader needs.
  */
+/**
+ * The language's ANTLR front end's reading of a regex-language file, when the
+ * `antlr` feature covers it (`antlr` or `antlr:<grammar>`). `parsed` is
+ * absent — the patterns read the file — when the parse had syntax errors or
+ * the reader threw: a recovered tree can give a function the next one's calls.
+ */
+async function readWithAntlr(
+  language: Language,
+  source: string,
+): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
+  const frontEnd = pluginFor(language)?.antlr;
+  if (!frontEnd || !featureEnabled(`antlr:${frontEnd.grammar}`)) return null;
+  const grammar = frontEnd.grammar;
+  try {
+    const read = await frontEnd.load();
+    const parsed = read(source);
+    if (parsed.syntaxErrors > 0) return { frontEnd: { parser: "antlr", grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors } };
+    return { parsed, frontEnd: { parser: "antlr", grammar } };
+  } catch {
+    return { frontEnd: { parser: "antlr", grammar, fallback: "parser-error" } };
+  }
+}
+
 function fallbackReason(err: unknown): "grammar-unavailable" | "null-tree" | "parser-error" {
   const message = err instanceof Error ? err.message : String(err);
   if (/grammar|\.wasm|registered|load/i.test(message)) return "grammar-unavailable";
@@ -327,7 +351,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (pre?.language && pre.language !== file.language) await ensureLanguagesLoaded([pre.language]);
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
-      const analysis = extractWithRegex(regexSource, file.relativePath, pre?.language ?? file.language, regexLines);
+      const regexLanguage = pre?.language ?? file.language;
+      const antlr = await readWithAntlr(regexLanguage, regexSource);
+      const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, antlr?.parsed);
+      if (antlr) analysis.frontEnd = antlr.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;
       restoreTypedReceiverCalls(analysis, caseInsensitive);
       importedNameCalls(analysis);

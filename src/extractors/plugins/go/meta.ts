@@ -50,6 +50,8 @@ export const goMeta: LanguagePluginMeta = {
   ...goManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: goSpec,
+  // Functions and calls read by the grammars-v4 Go grammar, while the `antlr:go` feature is on (antlr.ts).
+  antlr: { grammar: "go", load: () => import("./antlr.js").then((m) => m.readGo) },
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,
   entities: new GoEntityExtractor(),

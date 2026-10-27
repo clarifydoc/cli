@@ -1,6 +1,7 @@
 import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo, UiComponentInfo } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
+import type { ParsedFunctionSpan } from "../../../types/language-plugin.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -462,6 +463,36 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
     }
   }
   return fns;
+}
+
+/**
+ * The functions a parser read (`ParsedStructure`), built as `extractFunctionsWithSpec` builds the ones its
+ * patterns find: the span and the calls are the parser's, and the rest — parameters, return type, exported,
+ * attributes, request access, local types — is read off the lines by the same spec hooks, so the two
+ * readings differ only where the parser and the patterns disagree on what is a function and a call.
+ */
+export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, spans: readonly ParsedFunctionSpan[]): FunctionInfo[] {
+  return spans.map((span) => {
+    const i = span.line - 1;
+    const line = lines[i] ?? "";
+    const pattern = spec.functionPatterns.find((p) => p.pattern.test(line));
+    const at = line.indexOf(span.name);
+    const inline = at >= 0 ? inlineBodyColumn(line, at + span.name.length) : -1;
+    const fn: FunctionInfo = {
+      name: span.name,
+      params: extractParamsFromDeclaration(lines, i, span.name, spec.parseParam),
+      returnType: spec.parseReturnType?.(line) ?? null,
+      isAsync: pattern?.isAsync?.(line, lines, i) ?? false,
+      isExported: span.isExported ?? pattern?.isExported?.(line, span.name) ?? true,
+      decorators: attributeLinesAbove(lines, i, spec),
+      calls: span.calls,
+      line: span.line,
+      endLine: span.endLine,
+    };
+    attachRequestAccess(fn, lines, span.line, span.endLine, spec);
+    attachLocalTypes(fn, lines, i, inline, span.endLine, spec);
+    return fn;
+  });
 }
 
 /** Stacked own-line attributes immediately above line `i` (nearest last). */
@@ -940,23 +971,23 @@ function keepInterpolations(body: string, braceHoles = false): string {
  */
 const BASELINE_CALL_RE = /\b([a-zA-Z_]\w*(?:[?!]?\.[a-zA-Z_]\w*)?)\s*\(/g;
 
-/**
- * Extract function calls from a body region using regex. `inline` adds the
- * text of a declaration line from `column` on — a one-line body.
- */
-export function extractCallsFromBody(
-  lines: string[],
-  startLine: number,
-  endLine: number,
-  commentPrefixes: string[],
-  extraCallPatterns: CallPattern[] = [],
-  inline?: { line: number; column: number },
-): CallInfo[] {
-  const calls: CallInfo[] = [];
-  const seen = new Set<string>();
-  const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
+/** A call as a scan found it: its name, the name's last segment, where it starts, and what a pattern says of its receiver. */
+export type CallRecorder = (
+  name: string,
+  shortName: string,
+  line: number,
+  column: number,
+  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string },
+) => void;
 
-  function add(name: string, shortName: string, line: number, column: number, receiver?: { receiverType?: string; receiverQualifier?: string; key?: string }) {
+/**
+ * Records calls into `calls` the way a body scan does: a keyword is no call, each name is kept once (its
+ * first occurrence), and a stdlib-noise name stays only as a member call held for its receiver's type. The
+ * regex scan and an ANTLR front end's walk both record through this, so the two read calls by one rule.
+ */
+export function callRecorder(calls: CallInfo[]): CallRecorder {
+  const seen = new Set<string>();
+  return (name, shortName, line, column, receiver) => {
     // A pattern returns no name for a match that calls nothing (a CSS built-in).
     // A keyword names no call (`if (x)`); after a dot it is a member name (`cond.And(`, `p.then(`).
     if (!name || (!/[.:>]/.test(name) && isControlFlowKeyword(shortName))) return;
@@ -983,7 +1014,24 @@ export function extractCallsFromBody(
       return;
     }
     calls.push({ name, kind: "internal", target: null, line, column });
-  }
+  };
+}
+
+/**
+ * Extract function calls from a body region using regex. `inline` adds the
+ * text of a declaration line from `column` on — a one-line body.
+ */
+export function extractCallsFromBody(
+  lines: string[],
+  startLine: number,
+  endLine: number,
+  commentPrefixes: string[],
+  extraCallPatterns: CallPattern[] = [],
+  inline?: { line: number; column: number },
+): CallInfo[] {
+  const calls: CallInfo[] = [];
+  const add = callRecorder(calls);
+  const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
 
   const scanLine = (raw: string, i: number, offset: number): void => {
     const line = blankStringLiterals(raw, commentPrefixes);

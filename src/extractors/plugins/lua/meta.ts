@@ -13,6 +13,8 @@ export const luaMeta: LanguagePluginMeta = {
   ...luaManifest,
   docComments: DASH_DOCS,
   regexSpec: luaSpec,
+  // Functions and calls read by the grammars-v4 Lua grammar, while the `antlr:lua` feature is on (antlr.ts).
+  antlr: { grammar: "lua", load: () => import("./antlr.js").then((m) => m.readLua) },
   // Control flow from source: keyword-delimited blocks (see control-flow.ts).
   regexControlFlow: LUA_REGEX_CONTROL_FLOW,
   knownPackages: luaPackages,

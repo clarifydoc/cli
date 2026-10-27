@@ -24,6 +24,7 @@ import type {
   ProxyRule,
   GeneratedClientConfig,
   MigrationInfo,
+  CallInfo,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -1353,6 +1354,46 @@ export interface LanguagePluginManifest {
 }
 
 /**
+ * A function an ANTLR parser read in a regex language's file: its exact span and the calls in it, spelled as
+ * that language's regex call patterns spell them, so everything downstream reads them as it reads the regex
+ * path's.
+ */
+export interface ParsedFunctionSpan {
+  /** As the language's function pattern names it (`M:connect`, `ServeHTTP`). */
+  name: string;
+  /** 1-based line the declaration starts on. */
+  line: number;
+  /** 1-based line its body ends on. */
+  endLine: number;
+  /** Absent when the language's function pattern decides it from the declaration line. */
+  isExported?: boolean;
+  calls: CallInfo[];
+}
+
+/** What an ANTLR front end reads from one file. */
+export interface ParsedStructure {
+  /** The functions, in source order; a nested one owns its calls, an anonymous one gives them to its owner. */
+  functions: ParsedFunctionSpan[];
+  /** Calls outside every function: the file's own statements, `<setup>` for a spec with `topLevelCalls`. */
+  topLevelCalls: CallInfo[];
+  /** Syntax errors the parser recovered from. Any makes core keep the regex reading of the file. */
+  syntaxErrors: number;
+}
+
+/**
+ * An ANTLR4 (antlr4ng) parser for a `parsing: "regex"` language, used while the `antlr` feature is on (the
+ * default; core/feature-flags.ts). It replaces the regex path's function spans and calls; every other extractor
+ * of the language's `regexSpec` still reads the lines, and a file it reads with a syntax error keeps the
+ * regex reading.
+ */
+export interface AntlrFrontEnd {
+  /** The grammar's name, as the feature names it (`antlr:go`). */
+  grammar: string;
+  /** Loaded on first use: the generated parsers are large and most runs never need them. */
+  load(): Promise<(source: string) => ParsedStructure>;
+}
+
+/**
  * Per-language plugin metadata — the LAZY tier: everything the static
  * manifest doesn't carry (domain extractors, regex specs, AST/call hooks,
  * security rules, package knowledge). One meta per Language; a plugin
@@ -1408,6 +1449,11 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * `controlFlow` is set, since a parse tree is always the better answer.
    */
   regexControlFlow?: LanguageRegexControlFlowSpec;
+  /**
+   * A parser for a regex language's functions and calls, tried before the regex patterns when the `antlr`
+   * feature is on. A file it reads with a syntax error keeps the regex reading.
+   */
+  antlr?: AntlrFrontEnd;
 
   /**
    * How the language documents a function or class, so its first sentence
