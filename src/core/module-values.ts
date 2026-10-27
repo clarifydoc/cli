@@ -120,7 +120,16 @@ export function buildModuleValueLookup(
     if (!target || extensionFamily(target.filePath) !== extensionFamily(a.filePath)) return null;
     if (!isTestFile(a.filePath, a.language) && isTestFile(target.filePath, target.language)) return null;
     const v = target.moduleValues?.[`${ref.cls.name}.${member}`] ?? ref.cls.fieldValues?.[member];
-    return v === undefined ? null : { value: v, file: target.filePath };
+    if (v !== undefined) return { value: v, file: target.filePath };
+    // A type whose declaration and methods sit in several files of its package (Go): the
+    // value is in whichever of them states it (`frontendServer.ordersAddr`, set in main.go).
+    if (!pluginFor(target.language)?.typesSpanFiles) return null;
+    for (const f of filesIn(dirOf(target.filePath))) {
+      if (f.filePath === target.filePath || !f.classes.some((c) => c.name === ref.cls.name)) continue;
+      const w = f.moduleValues?.[`${ref.cls.name}.${member}`];
+      if (w !== undefined) return { value: w, file: f.filePath };
+    }
+    return null;
   };
 
   const find = (fromFile: string, expr: string): { value: string; file: string } | null => {

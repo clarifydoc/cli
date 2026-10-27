@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createEmptyAnalysis, type FileAnalysis, type ImportInfo, type Language } from "../types/analysis.js";
 import { buildImportIndex } from "./import-index.js";
 import { buildModuleValueLookup, resolveTargetRefs } from "./module-values.js";
+import { buildClassIndex } from "./class-index.js";
+import "../extractors/registry.js";
 
 function file(filePath: string, language: Language, values: Record<string, string> | null, imports: Array<Partial<ImportInfo> & { source: string; specifiers: string[] }> = []): FileAnalysis {
   return {
@@ -36,6 +38,16 @@ describe("module values across files", () => {
     const get = lookup([routes, test]);
     expect(get("tests/integration/test_clubs.py", "api_routes.clubs_create_url")).toBe("/api/clubs/create");
     expect(get("tests/integration/test_clubs.py", "api_routes.players_url")).toBeNull();
+  });
+
+  it("reads a type's member value from the file of its package that states it (a Go type spanning files)", () => {
+    const cls = (name: string) => ({ name, extends: null, implements: [], decorators: [], methods: [], properties: [], isExported: false, line: 1, endLine: 3 });
+    const main = { ...file("cmd/league/main.go", "go", { "leagueServer.scoutAddr": '${os.Getenv("SCOUT_ADDR")}' }), classes: [cls("leagueServer")] } as FileAnalysis;
+    const handlers = { ...file("cmd/league/handlers.go", "go", null), classes: [cls("leagueServer")] } as FileAnalysis;
+    const analyses = [main, handlers];
+    const idx = buildImportIndex(analyses);
+    const get = buildModuleValueLookup(analyses, idx, buildClassIndex(analyses, idx));
+    expect(get("cmd/league/handlers.go", "leagueServer.scoutAddr")).toBe('${os.Getenv("SCOUT_ADDR")}');
   });
 
   it("reads a Go package by the directory its import path ends with, and resolves the value's own holes there", () => {
