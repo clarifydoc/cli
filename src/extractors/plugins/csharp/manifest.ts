@@ -32,7 +32,8 @@ export const csharpManifest: LanguagePluginManifest = {
   // `using League.Clubs;` names a namespace, which any file may declare.
   importsNamePackages: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
-  testFilePatterns: [/(Test|Tests)\.cs$/],
+  // `ClubTests.cs`, and anything in a .NET test project (`League.Core.Test/`, `League.Api.IntegrationTests/`).
+  testFilePatterns: [/(Test|Tests)\.cs$/, /(^|[\\/])[\w.]+\.(?:Unit|Integration|Functional|Acceptance)?Tests?[\\/]/],
   // WinForms/WPF designers and Roslyn source generators. Case-sensitive so
   // `ReportDesigner.cs` — a hand-written class — is not swept up.
   generatedFilePatterns: [/\.Designer\.cs$/, /\.g\.cs$/, /\.g\.i\.cs$/],

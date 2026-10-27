@@ -95,3 +95,12 @@ describe("isTestFile — per-language filename conventions", () => {
     expect(isTestFile("foo_test.go", "typescript")).toBe(false);
   });
 });
+
+describe("isTestFile — a .NET test project", () => {
+  it("treats a file anywhere in a *.Test / *.Tests project as a test, not one merely named Test-something", async () => {
+    await import("../extractors/registry.js").then((r) => r.ensureLanguagesLoaded(["csharp"]));
+    expect(isTestFile("src/League.Core.Test/Datastore/Migration/238_kitsFixture.cs", "csharp")).toBe(true);
+    expect(isTestFile("src/League.Api.IntegrationTests/ClubsFixture.cs", "csharp")).toBe(true);
+    expect(isTestFile("src/League.Core/Testing/KitService.cs", "csharp")).toBe(false);
+  });
+});
