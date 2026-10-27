@@ -153,6 +153,8 @@ describe("C# HTTP-client detection — receiver gating", () => {
   it("still trusts HttpClient-specific JSON helpers without a receiver check", async () => {
     const json = await apiCallsOf(`    var x = await _client.GetFromJsonAsync<Owner>("/owners/1");`);
     expect(json.some((s) => s.name === "GetFromJsonAsync")).toBe(true);
+    // A SignalR hub pushing to its clients is no HTTP request (real-repo FP).
+    expect(await apiCallsOf(`    await Clients.All.SendAsync("receiveMessage", message);`)).toEqual([]);
     // A bare call is the class's own method (an extension calling its overload — real-repo FP).
     expect(await apiCallsOf(`    return GetStreamAsync(OneOf<FileInfo, string>.FromT0(input.AsT1), storage, ct);`)).toEqual([]);
   });
@@ -835,5 +837,19 @@ describe("C# stored procedures — the routine a command runs", () => {
       "EF: ExecuteSqlRawAsync dbo.usp_CloseWindow routine",
       "Dapper: QueryAsync usp_NotARoutine",
     ]);
+  });
+});
+
+describe("C# a generic method's type parameter", () => {
+  it("names no table (real-repo FP)", async () => {
+    const src = `namespace League.Data {
+  public static class SqlMapperExtensions {
+    public static IEnumerable<T> Query<T>(this IDatabase db, string sql) => db.Query<T>(sql);
+    public static TChild One<TChild>(IDatabase db, SqlBuilder b) => db.Query<TChild>(b).SingleOrDefault();
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as never, "SqlMapperExtensions.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database");
+    expect(rows.filter((d) => d.entity === "T" || d.entity === "TChild")).toEqual([]);
   });
 });

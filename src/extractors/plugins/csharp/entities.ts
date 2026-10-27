@@ -1,7 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
 import { extensionFamily } from "../shared/path-utils.js";
-import type { CallInfo, ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
 
 /**
  * Entity-Framework-Core (and lightly, NHibernate) entity extractor for C#.
@@ -32,6 +32,12 @@ export class CSharpEntityExtractor extends EntityExtractor {
   private static readonly LINE_COMMENT = ["//"] as const;
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
+    const result = this.extractModels(ctx);
+    const schemaOps = fluentMigratorOps(ctx.sourceText ?? "");
+    return schemaOps.length ? { ...result, schemaOps } : result;
+  }
+
+  private extractModels(ctx: EntityExtractContext): EntityExtractResult {
     const entities: ClassInfo[] = [];
     const relations: EntityRelation[] = [];
 
@@ -1334,3 +1340,22 @@ const CSHARP_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   verbs: /^(Get|Find|All|Single|First|Query|Where|Count|Exists|Paged|Insert|Add|Update|Set|Upsert|Save|Delete|Remove|Purge|Clear)\w*$/,
   writeVerbs: /^(Insert|Add|Update|Set|Upsert|Save|Delete|Remove|Purge|Clear)/,
 };
+
+/**
+ * FluentMigrator schema changes (`Create.Table("Clubs")` / `Create.TableForModel("Clubs")`,
+ * `Rename.Table("Teams").To("Clubs")`, `Delete.Table("Teams")`): the tables a migration
+ * creates, renames and drops (`FileAnalysis.schemaOps`), so a table a later migration
+ * renamed away is no table of the schema the project ends with.
+ */
+export function fluentMigratorOps(sourceText: string): SchemaOp[] {
+  if (!/\b(?:Create|Rename|Delete)\.Table/.test(sourceText)) return [];
+  const out: SchemaOp[] = [];
+  const lineOf = (index: number) => sourceText.slice(0, index).split("\n").length;
+  for (const m of sourceText.matchAll(/\b(Create\.Table(?:ForModel)?|Delete\.Table|Rename\.Table)\(\s*"([^"]+)"\s*\)(?:\s*\.\s*To\(\s*"([^"]+)"\s*\))?/g)) {
+    const line = lineOf(m.index!);
+    if (m[1]!.startsWith("Create")) out.push({ op: "create-table", table: m[2]!, line });
+    else if (m[1] === "Delete.Table") out.push({ op: "drop-table", table: m[2]!, line });
+    else if (m[3]) out.push({ op: "rename-table", table: m[2]!, to: m[3], line });
+  }
+  return out;
+}

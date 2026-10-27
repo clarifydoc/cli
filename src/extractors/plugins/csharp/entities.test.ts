@@ -485,3 +485,17 @@ describe("generic repository access + Marr table mapping (project-level)", () =>
     ]);
   });
 });
+
+describe("FluentMigrator schema changes", () => {
+  it("records the tables a migration creates, renames and drops", async () => {
+    const { fluentMigratorOps } = await import("./entities.js");
+    const ops = fluentMigratorOps(`public class rename_teams : LeagueMigrationBase {
+  protected override void MainDbUpgrade() {
+    Create.TableForModel("Fixtures").WithColumn("Kickoff").AsDateTime();
+    Rename.Table("Teams").To("Clubs");
+    Delete.Table("Scouts");
+  }
+}`);
+    expect(ops.map((o) => `${o.op} ${o.table}${o.to ? ` ${o.to}` : ""}`)).toEqual(["create-table Fixtures", "rename-table Teams Clubs", "drop-table Scouts"]);
+  });
+});

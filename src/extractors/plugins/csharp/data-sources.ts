@@ -1158,7 +1158,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       // A bare `GetStreamAsync(…)` is a method of the class itself (an overload, an extension's own
       // helper), never HttpClient's, which is always called on an instance.
       const ownMethod = !receiver || receiver === "this" || receiver === "base";
-      if (!ownMethod && (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish)) {
+      // A SignalR hub's `Clients.All.SendAsync("receiveMessage", …)` pushes to connected browsers.
+      const hubPush = (root === "Clients" || /(?:^|\.)Clients$/.test(parts.slice(0, -2).join("."))) &&
+        /^(?:All|Caller|Others|Group|Groups|Client|Clients|User|Users|AllExcept|OthersInGroup|GroupExcept)\b/.test(receiver);
+      if (!ownMethod && !hubPush && (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish)) {
         // Which registered client the call goes through — its base address
         // says which service the relative URI is relative to.
         const client = csharpCallClient(node, root);
@@ -1386,6 +1389,8 @@ function cleanEntityName(raw: string | null): string | null {
   if (dot >= 0) s = s.slice(dot + 1);
   // `volumes.SelectMany(…).ToList()`: a LINQ operator on a local list is no entity set.
   if (!s || NON_DBSET_MEMBERS.has(s) || LINQ_OPERATORS.has(s) || EF_READ_METHODS.has(s) || EF_WRITE_METHODS.has(s)) return null;
+  // `db.Query<T>(…)`, `Query<TChild>` in a generic mapper: a type parameter, no table.
+  if (/^T(?:[A-Z][a-z]\w*)?$/.test(s)) return null;
   return s;
 }
 
