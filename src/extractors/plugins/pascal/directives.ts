@@ -42,6 +42,14 @@ const DECLARATIONS_GROUP = new RegExp(
 );
 
 /**
+ * A multi-line group with an `{$ELSE}` branch (`{$IFDEF UNICODE} begin … end; {$ELSE} while … do … {$ENDIF}`):
+ * both branches side by side are often no Pascal — two statements in one
+ * `case` arm, two headers for one type — so the first branch is kept and
+ * the `{$ELSE}` branch blanked. Innermost groups first (no directive inside).
+ */
+const ELSE_GROUP = /\{\$IF(?:N?DEF|OPT)?\b[^}]*\}((?:(?!\{\$)[\s\S])*?)(\{\$ELSE\}(?:(?!\{\$)[\s\S])*?)(\{\$(?:ENDIF|IFEND)\b[^}]*\})/gi;
+
+/**
  * Blank such a group's two directives, keeping the directives they guard
  * (`inline;` is a valid routine directive whether the symbol is defined or
  * not), a one-line group's `{$ELSE}` branch and a strings-only group. Every
@@ -53,9 +61,18 @@ export function pascalDirectivePreprocess(rawSource: string, relativePath: strin
   ONE_LINE_ELSE.lastIndex = 0;
   STRINGS_ONLY_GROUP.lastIndex = 0;
   DECLARATIONS_GROUP.lastIndex = 0;
-  if (!DIRECTIVE_GROUP.test(rawSource) && !ONE_LINE_ELSE.test(rawSource) && !STRINGS_ONLY_GROUP.test(rawSource) && !DECLARATIONS_GROUP.test(rawSource)) return null;
+  ELSE_GROUP.lastIndex = 0;
+  if (!DIRECTIVE_GROUP.test(rawSource) && !ONE_LINE_ELSE.test(rawSource) && !STRINGS_ONLY_GROUP.test(rawSource) && !DECLARATIONS_GROUP.test(rawSource) && !ELSE_GROUP.test(rawSource)) return null;
   const blank = (s: string) => s.replace(/[^\n]/g, " ");
-  const sourceText = rawSource
+  // Nested groups resolve from the inside out: an outer group sees no directive once its inner one is blanked.
+  let unnested = rawSource;
+  for (let round = 0; round < 4; round++) {
+    ELSE_GROUP.lastIndex = 0;
+    const next = unnested.replace(ELSE_GROUP, (m, kept: string, other: string, close: string) => blank(m.slice(0, m.length - kept.length - other.length - close.length)) + kept + blank(other) + blank(close));
+    if (next === unnested) break;
+    unnested = next;
+  }
+  const sourceText = unnested
     .replace(STRINGS_ONLY_GROUP, blank)
     .replace(DECLARATIONS_GROUP, (_m, header: string, open: string, decls: string, close: string) => header + blank(open) + decls + blank(close))
     .replace(DIRECTIVE_GROUP, (m, kept: string) => {
