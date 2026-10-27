@@ -2972,11 +2972,22 @@ function resolveCallToDefinition(
   // `MonitorsAPI.update(id)` where './monitors' declares `class MonitorsAPI
   // extends ApiClient` (and exports its instance) without its own `update`:
   // the member is the base class's.
-  if (!def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile && ctx.classAt.has(memberKey(targetFile, parts[0]!))) {
-    const inherited = findMethodInClass(ctx, parts[0]!, targetFile, leafName);
+  // The binding may name the module's exported instance rather than its class:
+  // `import AgentAPI from './agents'` where './agents' ends `export default new Agents()`.
+  const instanceClass = (): string | undefined => {
+    if (!targetFile || ctx.classAt.has(memberKey(targetFile, parts[0]!))) return parts[0];
+    const imported = analysis.imports.find((i) => i.isDefault && i.specifiers[0] === parts[0]);
+    if (!imported) return undefined;
+    const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(targetFile);
+    const cls = target?.exports.find((e) => e.kind === "default")?.instanceOf;
+    return cls && ctx.classAt.has(memberKey(targetFile, cls)) ? cls : undefined;
+  };
+  const headClass = !def && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile ? instanceClass() : undefined;
+  if (headClass) {
+    const inherited = findMethodInClass(ctx, headClass, targetFile!, leafName);
     if (inherited) {
       const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
-      if (!inherited.symbol.startsWith(`${parts[0]}.`)) Object.assign(link, { viaType: parts[0], viaTypeFile: targetFile });
+      if (!inherited.symbol.startsWith(`${headClass}.`)) Object.assign(link, { viaType: headClass, viaTypeFile: targetFile });
       return link;
     }
   }

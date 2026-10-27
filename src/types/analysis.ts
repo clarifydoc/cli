@@ -718,6 +718,11 @@ export interface ExportInfo {
    * local binding a renamed local export stands for (`export { del as delete }` → "del").
    */
   sourceName?: string;
+  /**
+   * The class whose instance the module exports under this name: `export default new Agents()` → "Agents".
+   * A call through the binding that imports it (`import AgentAPI from './agents'`, `AgentAPI.get()`) is a call on that class.
+   */
+  instanceOf?: string;
 }
 
 /** A type alias a file declares: `name` stands for `type`, as written. */

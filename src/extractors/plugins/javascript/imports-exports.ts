@@ -389,7 +389,9 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         // The module's own name for it: `export default Club;`, `export default class Club …`.
         const value = child.childForFieldName("value") ?? child.childForFieldName("declaration");
         const local = value?.type === "identifier" ? value.text : value && /^(?:class|function_declaration|abstract_class_declaration|class_declaration)$/.test(value.type) ? value.childForFieldName("name")?.text : undefined;
-        exports.push({ name: "default", kind: "default", line, ...(local ? { sourceName: local } : {}) });
+        // `export default new Agents()`: the module's default is an instance of its class.
+        const instanceOf = value?.type === "new_expression" ? value.childForFieldName("constructor") : null;
+        exports.push({ name: "default", kind: "default", line, ...(local ? { sourceName: local } : {}), ...(instanceOf?.type === "identifier" ? { instanceOf: instanceOf.text } : {}) });
         continue;
       }
 
