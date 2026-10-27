@@ -1224,8 +1224,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ),
     (r) => isApiContractLanguage(languageByPath.get(r.filePath) ?? ""),
   );
+  // A test (or a component story, which the plugins' test patterns name) renders a
+  // component with stubs: its buttons are no click of the app.
   const allInteractiveElements = allAnalyses.flatMap((a) =>
-    a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
+    a.interactiveElements.length && isTestFile(a.filePath, a.language) ? [] : a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
   );
   const allEvents = allAnalyses.flatMap((a) =>
     a.events.map((ev) => ({ ...ev, filePath: a.filePath })),

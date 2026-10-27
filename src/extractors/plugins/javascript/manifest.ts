@@ -1,6 +1,6 @@
 import { jsMigrationFiles } from "./migration-files.js";
 import { jsProjectCommands } from "./project-commands.js";
-import { jsTestCommand } from "./test-command.js";
+import { STORY_FILE, jsTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { javascriptFrameworkRules } from "./frameworks.js";
@@ -44,11 +44,17 @@ const JS_BUILTIN_MEMBERS = [...new Set([
  * conventions: `_spec.js`/`-spec.ts` (Cypress integration specs), `.cy.ts`
  * (Cypress component tests), and `_test.js`. Extension class covers
  * js/jsx/ts/tsx and the m/c (ESM/CJS) variants.
+ *
+ * Component stories (Storybook `*.stories.tsx`, Histoire `*.story.vue`) are
+ * a tool's harness like a test: they render a component with stub data, so
+ * they are no screen and their buttons are no click of the app — while what
+ * they import stays alive for dead code, as a test's does.
  */
 const JS_TEST_PATTERNS: readonly RegExp[] = [
   /[._-]spec\.[cm]?[jt]sx?$/i,
   /[._-]test\.[cm]?[jt]sx?$/i,
   /\.cy\.[cm]?[jt]sx?$/i,
+  STORY_FILE,
 ];
 
 /** npm import source → framework id (shared by the ts and js manifests). */
