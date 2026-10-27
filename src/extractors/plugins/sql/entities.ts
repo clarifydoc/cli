@@ -187,7 +187,8 @@ export function schemaOpsOf(lines: string[]): SchemaOp[] {
       }
       continue;
     }
-    const drop = /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*$/i.exec(text);
+    // A dropped view leaves the schema as a dropped table does (one namespace in the database).
+    const drop = /^DROP\s+(?:TABLE|(?:MATERIALIZED\s+)?VIEW)\s+(?:IF\s+EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*$/i.exec(text);
     if (drop) {
       for (const t of drop[1]!.split(",")) ops.push({ op: "drop-table", table: unquote(t.trim()), line });
       continue;

@@ -19,6 +19,7 @@ ALTER TABLE cars CHANGE COLUMN remark remarks TEXT; -- MySQL
 ALTER TABLE cars RENAME TO used_cars;
 RENAME TABLE a TO b;
 DROP TABLE IF EXISTS x, y CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS match_mview, club_view CASCADE;
 /* ALTER TABLE ghosts ADD COLUMN boo int; */
 `.split("\n")).map((o) => [o.op, o.table, o.column ?? "", o.to ?? ""].join(" ").trim());
     expect(ops).toEqual([
@@ -33,6 +34,8 @@ DROP TABLE IF EXISTS x, y CASCADE;
       "rename-table a  b",
       "drop-table x",
       "drop-table y",
+      "drop-table match_mview",
+      "drop-table club_view",
     ]);
   });
 
