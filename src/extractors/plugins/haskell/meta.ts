@@ -12,6 +12,8 @@ export const haskellMeta: LanguagePluginMeta = {
   ...haskellManifest,
   docComments: DASH_DOCS,
   regexSpec: haskellSpec,
+  // Functions and calls read by tree-sitter-haskell while the `tree-sitter:haskell` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "haskell", load: () => import("./tree-sitter.js").then((m) => m.loadHaskellReader()) },
   builtinTypes: new Set<string>([
     ...COMMON_PRIMITIVES,
     "Int", "Integer", "Float", "Double", "Bool", "Char", "String", "Text",

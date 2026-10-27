@@ -20,6 +20,14 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Haskell is read by tree-sitter.** Haskell's functions and calls come from tree-sitter-haskell under the
+  `tree-sitter` feature, with the per-file fallback (`no-tree-sitter:haskell` keeps the patterns). Haskell applies a
+  function without parentheses (`query db sql`), which the patterns could only read as `f (x)`: applications,
+  qualified names (`T.pack`) and names used infix (`` x `orElse` y ``) are now read, a signature and all its
+  equations are one function, and a `where` definition's calls are its owner's; types in signatures
+  (`IO (Maybe Club)`) are no longer calls. A function defined without a signature is read too, a signature under
+  `#if` starts its function, and instance and type-class methods are read under their type's name (`Club.toJSON`,
+  `Ranked.rank`), so they never catch a call of the bare method name.
 - **Objective-C is read by tree-sitter.** Objective-C's functions and calls come from tree-sitter-objc under the
   `tree-sitter` feature, with the per-file fallback (`no-tree-sitter:objc` keeps the patterns; files with macro forms
   the grammar refuses, such as `typedef NS_ENUM(…)`, keep them). The patterns read a message send only on a plain

@@ -13,6 +13,8 @@ export const haskellManifest: LanguagePluginManifest = {
   packageManagers: [hackagePackageManager],
   packageEcosystems: ["hackage"],
   parsing: "regex",
+  // Read by the `tree-sitter:haskell` front end only (meta.treeSitter).
+  grammar: { variants: { haskell: { pkg: "tree-sitter-haskell", wasm: "tree-sitter-haskell.wasm" } } },
   extensions: [".hs", ".lhs"],
   testFilePatterns: [/Spec\.hs$/, /Test\.hs$/],
   externalModulePrefixes: ["Data.", "Control.", "System.", "GHC.", "Text.", "Network.", "Prelude"],
