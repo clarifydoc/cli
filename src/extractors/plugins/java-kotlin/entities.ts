@@ -1237,10 +1237,12 @@ function namedQueryEntity(declaration: string): string | undefined {
   return /\b(?:from|FROM|From)\s+([A-Z]\w*)\b/.exec(query.replace(/"\s*\+\s*"/g, ""))?.[1] ?? resultClass;
 }
 
+const JDK_VALUE_TYPES = /^(?:java\.lang\.)?(?:String|Object|Void|Integer|Long|Short|Byte|Boolean|Double|Float|Character|Number)$/;
+
 /**
  * A write whose object another class's method produces (`DataSourceInfo.entityProducer`):
  * the method's declared return type, a `Mono<X>`/`Flux<X>`/`Optional<X>`/`List<X>`
- * unwrapped, when the one class of that name declares one.
+ * unwrapped (or a record component's type), when the one class of that name declares one.
  */
 function producedObjectEntities(jvm: readonly FileAnalysis[]): void {
   if (!jvm.some((a) => a.dataSources?.some((d) => d.entityProducer))) return;
@@ -1251,11 +1253,20 @@ function producedObjectEntities(jvm: readonly FileAnalysis[]): void {
       if (!ds.entityProducer || ds.entity) continue;
       const types = new Set<string>();
       for (const cls of byName.get(ds.entityProducer.type) ?? []) {
-        for (const m of cls.methods) {
-          if (m.name !== ds.entityProducer.method || !m.returnType) continue;
-          const ret = m.returnType.replace(/\s+/g, "");
+        const declared = cls.methods.filter((m) => m.name === ds.entityProducer!.method).map((m) => m.returnType);
+        // A record's component is its own accessor (`profile.user()` on `record CurrentProfile(User user)`):
+        // a public read-only field of that name, when the class declares no such method.
+        if (declared.length === 0) {
+          const component = cls.properties?.find((p) => p.name === ds.entityProducer!.method && p.isReadonly && !p.isStatic && p.visibility === "public");
+          if (component) declared.push(component.type);
+        }
+        for (const returnType of declared) {
+          if (!returnType) continue;
+          const ret = returnType.replace(/\s+/g, "");
           const inner = /^(?:Mono|Flux|Optional|List|Set|Collection|Uni|CompletableFuture)<([A-Z][\w.]*)>$/.exec(ret)?.[1] ?? ret;
-          if (/^[A-Z][\w.]*$/.test(inner)) types.add(inner.split(".").pop()!);
+          // A JDK value is no entity: `profile.name()` hands over a String.
+          // A type variable (`<E extends Extension> Mono<E> get(Class<E> type, …)`) names no class.
+          if (/^[A-Z][\w.]*$/.test(inner) && !JDK_VALUE_TYPES.test(inner) && !/^[A-Z]\d?$/.test(inner)) types.add(inner.split(".").pop()!);
         }
       }
       if (types.size !== 1) continue;

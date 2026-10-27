@@ -1986,7 +1986,7 @@ function heldEntityType(node: Node, name: string): string | null {
   return lambdaParamClass(node, name);
 }
 
-/** The type a `var` is initialized to: `new X(…)`, or a same-file method's declared return type (`Mono<X>` → `X`). */
+/** The type a `var` is initialized to: `new X(…)`, an object-mapper conversion to `X.class`, or a same-file method's declared return type (`Mono<X>` → `X`). */
 function initializerType(node: Node, name: string): string | null {
   let fn: Node | null = node.parent;
   while (fn && !/^(method_declaration|constructor_declaration|lambda_expression)$/.test(fn.type)) fn = fn.parent;
@@ -1994,6 +1994,13 @@ function initializerType(node: Node, name: string): string | null {
     if (decl?.childForFieldName("name")?.text !== name) continue;
     const value = decl.childForFieldName("value");
     if (value?.type === "object_creation_expression") return simpleTypeName(value.childForFieldName("type")?.text);
+    const converted = value ? convertedClass(value) : null;
+    if (converted) return converted;
+    // A fetch by class literal, unwrapped: `client.get(Club.class, name).block()`.
+    const head = value ? chainHead(value) : null;
+    const fetched = head?.type === "method_invocation" && /^(?:get|fetch)$/.test(head.childForFieldName("name")?.text ?? "")
+      ? /^([A-Z]\w*)\.class$/.exec(head.childForFieldName("arguments")?.namedChildren[0]?.text ?? "")?.[1] : undefined;
+    if (fetched && head!.id !== value!.id) return fetched;
     if (value?.type === "method_invocation" && !value.childForFieldName("object")) {
       const callee = value.childForFieldName("name")?.text;
       const method = node.tree.rootNode.descendantsOfType("method_declaration").find((m) => m?.childForFieldName("name")?.text === callee);
@@ -2004,6 +2011,26 @@ function initializerType(node: Node, name: string): string | null {
     return null;
   }
   return null;
+}
+
+/**
+ * The class a typed object-mapper conversion produces: `mapper.convertValue(u, Setting.class)`,
+ * `readValue(json, Setting.class)`, `treeToValue(node, Setting.class)` — also as the `.map(u -> …)`
+ * step of a chain, past the steps that unwrap it (`….findFirst().map(u -> convertValue(u, X.class)).orElseThrow()`).
+ */
+function convertedClass(value: Node): string | null {
+  let at: Node = value;
+  while (at.type === "method_invocation" && UNWRAPPING_STEPS.test(at.childForFieldName("name")?.text ?? "") && at.childForFieldName("object")?.type === "method_invocation") {
+    at = at.childForFieldName("object")!;
+  }
+  if (at.type === "method_invocation" && at.childForFieldName("name")?.text === "map") {
+    const body = at.childForFieldName("arguments")?.namedChildren[0]?.childForFieldName("body");
+    if (body?.type !== "method_invocation") return null;
+    at = body;
+  }
+  if (at.type !== "method_invocation" || !/^(?:convertValue|readValue|treeToValue)$/.test(at.childForFieldName("name")?.text ?? "")) return null;
+  const args = at.childForFieldName("arguments")?.namedChildren ?? [];
+  return /^([A-Z]\w*)\.class$/.exec(args[args.length - 1]?.text ?? "")?.[1] ?? null;
 }
 
 function localDeclaredType(node: Node, name: string, raw = false): string | null {
@@ -2315,17 +2342,36 @@ function receiverMethod(call: Node, fieldType: (name: string) => string | null):
   return /^[A-Z][\w]*$/.test(declared) ? { type: declared, method } : null;
 }
 
+/** Steps that collect or unwrap what they are handed without changing its element: `collectList()`, `blockOptional(…)`, `orElseGet(List::of)`. */
+const UNWRAPPING_STEPS = /^(?:collectList|collectSortedList|block|blockOptional|blockFirst|blockLast|orElse|orElseGet|orElseThrow|toList|toStream|toIterable|asList)$/;
+
+/** The producing call of a chain, past the steps that keep or unwrap its element: `svc.roles(s).collectList().blockOptional(t).orElseGet(List::of)` → `svc.roles(s)`. */
+function chainHead(value: Node): Node {
+  let root: Node = value;
+  while (root.type === "method_invocation" && root.childForFieldName("object")?.type === "method_invocation") {
+    const step = root.childForFieldName("name")?.text ?? "";
+    if (!KEEPING_STEPS.test(step) && !UNWRAPPING_STEPS.test(step)) break;
+    root = root.childForFieldName("object")!;
+  }
+  return root;
+}
+
 /**
  * The method of another class whose result an extension-client write hands over: the argument
  * itself (`client.update(profile.user())`), the stream a lambda parameter is the element of
- * (`fetcher.getConfigMap().flatMap(cm -> client.update(cm))`), or a local's initializer.
+ * (`fetcher.getConfigMap().flatMap(cm -> client.update(cm))`, or a local holding it:
+ * `var roles = svc.roles(s).collectList().block(); roles.forEach(r -> client.update(r))`),
+ * or a local's initializer.
  */
 function objectProducer(node: Node, arg: Node, fieldType: (name: string) => string | null): { type: string; method: string } | null {
   const direct = receiverMethod(arg, fieldType);
   if (direct || arg.type !== "identifier") return direct;
-  const name = arg.text;
+  return localProducer(node, arg.text, fieldType, true);
+}
+
+function localProducer(node: Node, name: string, fieldType: (name: string) => string | null, lambdas: boolean): { type: string; method: string } | null {
   for (let at: Node | null = node.parent; at; at = at.parent) {
-    if (at.type === "lambda_expression") {
+    if (at.type === "lambda_expression" && lambdas) {
       const params = at.childForFieldName("parameters");
       const names = params ? (params.type === "identifier" ? [params.text] : params.descendantsOfType("identifier").map((n) => n?.text)) : [];
       if (!names.includes(name)) continue;
@@ -2335,13 +2381,15 @@ function objectProducer(node: Node, arg: Node, fieldType: (name: string) => stri
       while (root?.type === "method_invocation" && KEEPING_STEPS.test(root.childForFieldName("name")?.text ?? "") && root.childForFieldName("object")?.type === "method_invocation") {
         root = root.childForFieldName("object");
       }
+      // A local holding the stream or its collected elements: its initializer's producing call.
+      if (root?.type === "identifier") return localProducer(step, root.text, fieldType, false);
       return root ? receiverMethod(root, fieldType) : null;
     }
     if (/^(method_declaration|constructor_declaration)$/.test(at.type)) {
       for (const decl of at.descendantsOfType("variable_declarator")) {
         if (decl?.childForFieldName("name")?.text !== name) continue;
         const value = decl.childForFieldName("value");
-        return value ? receiverMethod(value, fieldType) : null;
+        return value ? receiverMethod(chainHead(value), fieldType) : null;
       }
       return null;
     }

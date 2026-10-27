@@ -164,4 +164,28 @@ describe("an extension-client write of an object another class's method produces
     new JavaKotlinEntityExtractor().reconcileProject([fetcher, endpoint]);
     expect(endpoint.dataSources.map((d) => d.entity ?? null)).toEqual(["ConfigMap", null]);
   });
+
+  it("takes a record component's type for its accessor, a Flux's element for a collected list, never a JDK value or a type variable", () => {
+    const component = (name: string, type: string) => ({ name, type, visibility: "public" as const, isStatic: false, isReadonly: true });
+    const profile = javaFile("src/main/java/league/CurrentProfile.java", {
+      classes: [{ name: "CurrentProfile", kind: "class", extends: null, implements: [], decorators: [], properties: [component("coach", "Coach"), component("name", "String")], methods: [], isExported: true, line: 1, endLine: 1 }],
+    });
+    const service = javaFile("src/main/java/league/LeagueService.java", {
+      classes: [{ name: "LeagueService", kind: "interface", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 3,
+        methods: [
+          { name: "listSquads", params: [], returnType: "Flux<Squad>", isAsync: false, isExported: true, decorators: [], calls: [], line: 2, endLine: 2 },
+          { name: "fetchAny", params: [], returnType: "Mono<E>", isAsync: false, isExported: true, decorators: [], calls: [], line: 3, endLine: 3 },
+        ] }],
+    });
+    const endpoint = javaFile("src/main/java/league/LeagueSettingsEndpoint.java", {
+      dataSources: [
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 7, entityProducer: { type: "CurrentProfile", method: "coach" } },
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 8, entityProducer: { type: "LeagueService", method: "listSquads" } },
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 9, entityProducer: { type: "CurrentProfile", method: "name" } },
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 10, entityProducer: { type: "LeagueService", method: "fetchAny" } },
+      ],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([profile, service, endpoint]);
+    expect(endpoint.dataSources.map((d) => d.entity ?? null)).toEqual(["Coach", "Squad", null, null]);
+  });
 });

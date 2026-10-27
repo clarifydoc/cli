@@ -629,6 +629,14 @@ class CoachServiceImpl {
   }
   Mono<Void> seed() { return client.create(createKit("home")).then(); }
   private Kit createKit(String name) { return new Kit(); }
+  void load(Unstructured manifest, List<Unstructured> loaded) {
+    var badge = MAPPER.convertValue(manifest, Badge.class);
+    client.create(badge);
+    var trophy = loaded.stream().findFirst().map(u -> MAPPER.convertValue(u, Trophy.class)).orElseThrow();
+    client.fetch(Trophy.class, "cup").ifPresentOrElse(old -> client.update(trophy), () -> client.create(trophy));
+    var stored = client.get(Medal.class, "gold").block();
+    client.update(stored).block();
+  }
   Mono<Void> renamed(Mono<String> name) {
     return name.map(n -> n.trim()).flatMap(n -> client.delete(n)).then();
   }
@@ -640,6 +648,10 @@ class CoachServiceImpl {
       "client.update Club",
       "client.update Fixture",
       "client.create Kit",
+      "client.create Badge",
+      "client.update Trophy",
+      "client.create Trophy",
+      "client.update Medal",
       "client.delete -",
     ]);
   });
@@ -651,11 +663,14 @@ describe("extension-client writes of an object another class's method produces (
 class LeagueSettingsEndpoint {
   private final ReactiveExtensionClient client;
   private final LeagueConfigFetcher configFetcher;
+  private final LeagueService leagueService;
   Mono<Void> save(String group, Profile profile) {
     configFetcher.getConfigMap().flatMap(cm -> { cm.setGroup(group); return client.update(cm); });
     client.update(profile.coach());
     var squad = configFetcher.squadOf(group);
     client.create(KitUtils.defaultKit(group));
+    var squads = leagueService.listSquads(group).collectList().blockOptional(TIMEOUT).orElseGet(List::of);
+    squads.forEach(squad -> client.update(squad));
     return client.create(squad).then();
   }
 }`;
@@ -665,6 +680,7 @@ class LeagueSettingsEndpoint {
       "client.update - LeagueConfigFetcher#getConfigMap",
       "client.update - Profile#coach",
       "client.create - KitUtils#defaultKit",
+      "client.update - LeagueService#listSquads",
       "client.create - LeagueConfigFetcher#squadOf",
     ]);
   });
