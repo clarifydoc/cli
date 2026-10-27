@@ -621,6 +621,13 @@ export interface AstExtractorHooks {
    */
   markupFunctions?(elements: readonly InteractiveElementInfo[], filePath: string): import("./analysis.js").FunctionInfo[];
   /**
+   * Values the file's markup binds to child components' props whose origin the
+   * file shows (`<ClubCard clubId={id} />`, `<ClubCard :club-id="clubId" />`):
+   * `FileAnalysis.propBindings`. `rawSource` is the file before preprocessing
+   * (a Vue SFC's template is blanked out of `sourceText`).
+   */
+  propBindings?(tree: Tree, sourceText: string, rawSource: string, filePath: string): import("./analysis.js").PropBinding[];
+  /**
    * UI screens for tree-sitter languages with designer/markup code embedded in
    * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use
    * `RegexLangSpec.extractScreens` instead.

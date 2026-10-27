@@ -1,4 +1,4 @@
-import type { ApiRouteLink, CallArgOrigin, CallInfo, Confidence, FileAnalysis, FunctionInfo, ParamOrigin, RouteInfo, ScreenInfo, SymbolLink } from "../types/analysis.js";
+import type { ApiRouteLink, CallArgOrigin, CallInfo, Confidence, FileAnalysis, FunctionInfo, ParamOrigin, PropBinding, RouteInfo, ScreenInfo, SymbolLink } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -36,6 +36,8 @@ const BRACE_SLOT = /(?<!\$)\{([A-Za-z_$][\w$]*)\}/g;
 /** A slot that reads the router itself: a route parameter (or query value) at the call. */
 const DIRECT = /^(?:this\.)?(?:props\.)?(?:match\.params|\$route\.params)\.([\w$]+)$/;
 const DIRECT_QUERY = /^(?:this\.)?\$route\.query\.([\w$]+)$/;
+/** A slot that reads the component's own prop (`${props.clubId}`). */
+const DIRECT_PROP = /^(?:this\.)?props\.([\w$]+)$/;
 
 export function computeParamOrigins(input: {
   analyses: readonly FileAnalysis[];
@@ -43,6 +45,8 @@ export function computeParamOrigins(input: {
   apiRouteLinks: readonly ApiRouteLink[];
   routes: ReadonlyArray<RouteInfo & { filePath?: string }>;
   screens: readonly ScreenInfo[];
+  /** File → the files it imports: where a markup binding's component tag resolves. */
+  componentGraph?: Readonly<Record<string, readonly string[]>>;
 }): ParamOrigin[] {
   const { analyses } = input;
   if (!analyses.some((a) => hasOrigins(a))) return [];
@@ -78,6 +82,23 @@ export function computeParamOrigins(input: {
   for (const l of input.apiRouteLinks) if (!linkOf.has(`${l.source}:${l.sourceLine}`)) linkOf.set(`${l.source}:${l.sourceLine}`, l);
   const routeAt = new Map<string, RouteInfo & { filePath?: string }>();
   for (const r of input.routes) if (r.filePath) routeAt.set(`${r.filePath}:${r.line}`, r);
+
+  // A component's props: what each parent's markup binds them to, and what the route rendering it hands them.
+  const rendering = new Map<string, Array<RouteInfo & { filePath?: string }>>();
+  for (const r of input.routes) {
+    if (r.kind !== "frontend" || !r.propsFromRoute || !r.componentPath) continue;
+    // The component as a file, or as the router file imports it (`component: ClubView`).
+    const router = r.filePath ? byFile.get(r.filePath) : undefined;
+    const file = byFile.has(r.componentPath) ? r.componentPath : router ? childFile(router, r.componentPath.replace(/^.*\//, "").replace(/\.\w+$/, ""), input.componentGraph?.[router.filePath] ?? []) : null;
+    if (file) (rendering.get(file) ?? rendering.set(file, []).get(file)!).push(r);
+  }
+  const boundTo = new Map<string, Array<{ file: string; binding: PropBinding }>>();
+  for (const a of analyses) {
+    for (const b of a.propBindings ?? []) {
+      const child = childFile(a, b.component, input.componentGraph?.[a.filePath] ?? []);
+      if (child) (boundTo.get(`${child}\0${b.prop}`) ?? boundTo.set(`${child}\0${b.prop}`, []).get(`${child}\0${b.prop}`)!).push({ file: a.filePath, binding: b });
+    }
+  }
 
   /** The call of `link` in its source function, by line and name. */
   const callOf = (link: SymbolLink): CallInfo | undefined => {
@@ -117,6 +138,10 @@ export function computeParamOrigins(input: {
       }
       if (o.kind === "literal") {
         out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        continue;
+      }
+      if (o.kind === "prop") {
+        propOrigins(link.sourceFile, o.name, link.sourceLine, depth + 1, seen, [hop, ...hops], conf, out);
         continue;
       }
       if (o.kind === "invoked") {
@@ -167,6 +192,7 @@ export function computeParamOrigins(input: {
           if (at >= 0 && depth < MAX_DEPTH) walk(caller, at, whole ? field : undefined, depth + 1, seen, [hop, ...hops], conf, out);
           else out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         } else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        else if (o.kind === "prop") propOrigins(link.sourceFile, o.name, link.sourceLine, depth + 1, seen, [hop, ...hops], conf, out);
         else if (o.kind === "invoked") out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         else out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
         continue;
@@ -176,6 +202,42 @@ export function computeParamOrigins(input: {
       const caller = fnNamed(link.sourceFile, link.sourceSymbol);
       if (caller) invoked(caller, via, index, field, up + 1, depth, seen, [{ file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) }, ...hops], conf, out);
     }
+  };
+
+  /**
+   * Prop `prop` of the component in `file`: the URL value the route rendering
+   * it hands that prop (Vue Router `props`), and the value each parent's markup
+   * binds to it — followed further up when that is the parent's own prop.
+   */
+  const propOrigins = (file: string, prop: string, line: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
+    const key = `${file}::prop:${prop}`;
+    if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_SLOT * 4) return;
+    seen.add(key);
+    let found = false;
+    for (const r of rendering.get(file) ?? []) {
+      const given = r.propsFromRoute === true
+        ? (namesParam(r.path, prop) ? { kind: "route-param" as const, name: prop } : undefined)
+        : r.propsFromRoute?.find((e) => e.prop === prop);
+      if (!given) continue;
+      found = true;
+      const screen = (screensOf.get(file) ?? []).find((s) => s.routePath === r.path) ?? screensOf.get(file)?.[0];
+      out.push({
+        origin: { kind: given.kind, name: given.name, file, line, ...(screen ? { screen: screen.name } : {}), routePath: r.path, ...(given.kind === "route-param" ? { inRoutePath: namesParam(r.path, given.name) } : {}) },
+        hops: [{ file: r.filePath ?? file, symbol: `route:${r.path}`, line: r.line, arg: 0, field: prop }, ...hops],
+        confidence,
+      });
+    }
+    for (const { file: parent, binding } of (boundTo.get(`${file}\0${prop}`) ?? []).slice().sort((a, b) => byOrdinal(a.file, b.file) || a.binding.line - b.binding.line)) {
+      found = true;
+      const hop = { file: parent, symbol: `<${binding.component}>`, line: binding.line, arg: 0, field: prop };
+      const conf = weakest(confidence, "INFERRED");
+      const o = binding.origin;
+      if (o.kind === "prop") propOrigins(parent, o.name, binding.line, depth + 1, seen, [hop, ...hops], conf, out);
+      else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: parent, line: binding.line }, hops: [hop, ...hops], confidence: conf });
+      else if (o.kind === "route-param" || o.kind === "query-param") out.push({ origin: urlOrigin(o.kind, o.name, parent, binding.line), hops: [hop, ...hops], confidence: conf });
+      else out.push({ origin: { kind: "unknown", file: parent, line: binding.line }, hops: [hop, ...hops], confidence: conf });
+    }
+    if (!found) out.push({ origin: { kind: "unknown", file, line }, hops, confidence });
   };
 
   /** A route or query value read in `file`, with the screen that file is and whether its route path names it. */
@@ -215,7 +277,10 @@ export function computeParamOrigins(input: {
         const sink = { file: a.filePath, line: ds.line, url: ds.target, slot };
         const leaves: Leaf[] = [];
         const direct = DIRECT.exec(slot) ?? DIRECT_QUERY.exec(slot);
-        if (direct) {
+        const ownProp = direct ? null : DIRECT_PROP.exec(slot);
+        if (ownProp) {
+          propOrigins(a.filePath, ownProp[1]!, ds.line, 0, new Set(), [], "EXTRACTED", leaves);
+        } else if (direct) {
           leaves.push({ origin: urlOrigin(DIRECT.test(slot) ? "route-param" : "query-param", direct[1]!, a.filePath, ds.line), hops: [], confidence: "EXTRACTED" });
         } else {
           const at = fn && !slot.includes(".") ? fn.fn.params.findIndex((p) => p.name === slot) : -1;
@@ -236,6 +301,23 @@ export function computeParamOrigins(input: {
     }
   }
   return rows;
+}
+
+/**
+ * The file a markup tag renders, among the files the parent imports: the one
+ * its import of that name points at, else the one file named like the tag.
+ */
+function childFile(a: FileAnalysis, tag: string, imported: readonly string[]): string | null {
+  const name = tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag;
+  const stem = (f: string) => f.replace(/\.[\w]+$/, "");
+  const source = a.imports.find((i) => i.specifiers.includes(name) || i.specifiers.includes(tag))?.source;
+  if (source) {
+    const tail = stem(source.replace(/^(?:\.\.?\/)+|^[@~]\/?/, ""));
+    const hits = imported.filter((f) => { const s = stem(f); return s === tail || s.endsWith(`/${tail}`) || s.endsWith(`/${tail}/index`); });
+    if (hits.length === 1) return hits[0]!;
+  }
+  const named = imported.filter((f) => stem(f).split("/").pop() === name);
+  return named.length === 1 ? named[0]! : null;
 }
 
 function hasOrigins(a: FileAnalysis): boolean {

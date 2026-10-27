@@ -1400,7 +1400,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Before the data-access graph, per-symbol attribution and responsibility
   // profiles read the data sources.
   // Which value feeds each slot of an API call's URL: a screen's route parameter, a literal, through the calls between.
-  const paramOrigins = computeParamOrigins({ analyses: allAnalyses, symbolLinks, apiRouteLinks, routes: allRoutes, screens: allScreens });
+  const paramOrigins = computeParamOrigins({ analyses: allAnalyses, symbolLinks, apiRouteLinks, routes: allRoutes, screens: allScreens, componentGraph });
   if (paramOrigins.length > 0) progress.detail(`  Parameter origins: ${paramOrigins.length} (${paramOrigins.filter((p) => p.origin.kind === "route-param").length} from a route parameter)`);
 
   const projectCallSources = demoteProjectCallDataSources(allAnalyses, symbolLinks);

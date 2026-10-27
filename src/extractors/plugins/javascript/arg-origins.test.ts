@@ -114,3 +114,45 @@ export function ClubView() {
     ]);
   });
 });
+
+describe("argument origins — component props (JS/TS)", () => {
+  it("reads a Vue prop through defineProps, a destructure, toRefs, toRef and a computed wrapper", async () => {
+    const src = `const props = withDefaults(defineProps<{ clubId: number; season?: string }>(), { season: "2026" });
+const { playerId } = defineProps<{ playerId: number }>();
+const { season } = toRefs(props);
+const club = computed(() => props.clubId);
+const league = toRef(props, "leagueId");
+const page = ref(0);
+function load() {
+  fetchClub(props.clubId, playerId, season.value, club.value, league.value, page.value);
+}`;
+    expect(await originsOf(src, "load", "fetchClub")).toEqual([
+      { index: 0, origin: { kind: "prop", name: "clubId" } },
+      { index: 1, origin: { kind: "prop", name: "playerId" } },
+      { index: 2, origin: { kind: "prop", name: "season" } },
+      { index: 3, origin: { kind: "prop", name: "clubId" } },
+      { index: 4, origin: { kind: "prop", name: "leagueId" } },
+    ]);
+  });
+
+  it("reads a React component's props, destructured or not, and a class component's this.props", async () => {
+    const src = `export function ClubCard({ clubId, name }: Props) {
+  useEffect(() => { loadClub(clubId) }, [clubId]);
+}
+export const PlayerCard = memo((props: Props) => {
+  loadPlayer(props.playerId);
+});
+class SquadPanel extends React.Component {
+  componentDidMount() { loadSquad(this.props.clubId, this.props.match.params.season); }
+}
+function helper({ clubId }) { loadClub(clubId); }`;
+    expect(await originsOf(src, "ClubCard", "loadClub")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" } }]);
+    expect(await originsOf(src, "PlayerCard", "loadPlayer")).toEqual([{ index: 0, origin: { kind: "prop", name: "playerId" } }]);
+    expect(await originsOf(src, "SquadPanel.componentDidMount", "loadSquad")).toEqual([
+      { index: 0, origin: { kind: "prop", name: "clubId" } },
+      { index: 1, origin: { kind: "route-param", name: "season" } },
+    ]);
+    // A lowercase function's destructured parameter is no component's props.
+    expect(await originsOf(src, "helper", "loadClub")).toBeUndefined();
+  });
+});

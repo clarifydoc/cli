@@ -103,4 +103,31 @@ describe("paramOrigins", () => {
     const bare = file("web/api/clubs.ts", [fn("getClub", 1, 3, ["id"])], [{ kind: "api-call", name: "http.get", target: "/clubs/${id}", line: 2, calls: [] }]);
     expect(computeParamOrigins({ analyses: [bare], symbolLinks: [], apiRouteLinks: [], routes: [], screens: [] })).toEqual([]);
   });
+
+  it("follows a component's prop to the value its parent binds and to the route parameter the router hands it", () => {
+    // ClubView (rendered by `/clubs/:id` with `props: route => ({ clubId: Number(route.params.id) })`)
+    // binds `:club-id="clubId"` on ClubHeader, which hands `props.clubId` to getClub.
+    const header = file("web/components/ClubHeader.vue", [
+      fn("refresh", 10, 14, [], [{ name: "getClub", kind: "cross-file", target: null, line: 12, argOrigins: [{ index: 0, origin: { kind: "prop", name: "clubId" } }] }]),
+    ]);
+    const view = { ...file("web/views/ClubView.vue", []), imports: [{ source: "@/components/ClubHeader.vue", specifiers: ["ClubHeader"], line: 9 }], propBindings: [{ component: "ClubHeader", prop: "clubId", line: 3, origin: { kind: "prop", name: "clubId" } }] } as unknown as FileAnalysis;
+    const router = { ...file("web/router/index.ts", []), routes: [] } as unknown as FileAnalysis;
+    const viewRoute = { kind: "frontend", path: "/clubs/:id", httpMethod: null, handler: "ClubView", componentPath: "web/views/ClubView.vue", propsFromRoute: [{ prop: "clubId", kind: "route-param", name: "id" }], line: 7, filePath: "web/router/index.ts" };
+    const rows = computeParamOrigins({
+      analyses: [header, view, router, api],
+      symbolLinks: [link("web/components/ClubHeader.vue", "refresh", 12, "getClub", "web/api/clubs.ts", "getClub")],
+      apiRouteLinks: [apiLink],
+      routes: [...routes, viewRoute] as any,
+      screens: [{ name: "ClubView", filePath: "web/views/ClubView.vue", routePath: "/clubs/:id" }] as unknown as ScreenInfo[],
+      componentGraph: { "web/views/ClubView.vue": ["web/components/ClubHeader.vue"] },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.origin).toEqual({ kind: "route-param", name: "id", file: "web/views/ClubView.vue", line: 3, screen: "ClubView", routePath: "/clubs/:id", inRoutePath: true });
+    expect(rows[0]!.hops.map((h) => [h.file, h.symbol, h.field ?? null])).toEqual([
+      ["web/router/index.ts", "route:/clubs/:id", "clubId"],
+      ["web/views/ClubView.vue", "<ClubHeader>", "clubId"],
+      ["web/components/ClubHeader.vue", "refresh", null],
+    ]);
+    expect(rows[0]!.confidence).toBe("INFERRED");
+  });
 });

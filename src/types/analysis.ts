@@ -367,6 +367,13 @@ export interface FileAnalysis {
    * Omitted when empty.
    */
   stringConstants?: Record<string, string>;
+  /**
+   * Values the file's markup binds to a child component's props where their
+   * origin is known (`<ClubCard :club-id="clubId" />`, `<ClubCard clubId={id} />`):
+   * the prop (camel-cased), and where the value comes from in this file. The
+   * `paramOrigins` pass follows a child's `prop` origin up through them.
+   */
+  propBindings?: PropBinding[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
   /**
@@ -826,7 +833,15 @@ export interface CallArgOrigin {
      * `mutation.mutate(x)` is given): argument `index` of such a call, or its
      * property `field` when the callback destructures it.
      */
-    | { kind: "invoked"; via: string[]; index: number; field?: string };
+    | { kind: "invoked"; via: string[]; index: number; field?: string }
+    /**
+     * A prop of the component the call sits in (Vue `props.clubId`, a name
+     * destructured from `defineProps()` / `toRefs(props)`; a React component's
+     * `props.clubId` or destructured `{ clubId }`): the project pass follows it
+     * to the value each parent binds (`FileAnalysis.propBindings`) and to the
+     * URL value a route hands it (`RouteInfo.propsFromRoute`).
+     */
+    | { kind: "prop"; name: string };
   /** One wrapper the value passed through (`Number`, `encodeURIComponent`, a template literal). */
   transform?: string;
   /**
@@ -1097,6 +1112,13 @@ export interface RouteInfo {
    * could be identified.
    */
   componentPath?: string | null;
+  /**
+   * The props a client router hands the component it renders from the URL:
+   * `true` for each route parameter as the prop of its name (Vue Router
+   * `props: true`), else each prop and the value it is read off
+   * (`props: route => ({ clubId: Number(route.params.id) })`).
+   */
+  propsFromRoute?: true | Array<{ prop: string; kind: "route-param" | "query-param"; name: string }>;
   /**
    * Frontend routes only: the route renders no page of its own but sends the
    * reader on — Vue `redirect`, Angular `redirectTo`, React Router
@@ -2025,6 +2047,17 @@ export interface SubComponentInfo {
    * import source's component, wherever it is used.
    */
   global?: true;
+}
+
+/** A value bound to a child component's prop (`FileAnalysis.propBindings`). */
+export interface PropBinding {
+  /** The child's tag as written (`ClubCard`, `club-card`). */
+  component: string;
+  /** The prop, camel-cased (`clubId` for `:club-id`). */
+  prop: string;
+  line: number;
+  origin: CallArgOrigin["origin"];
+  transform?: string;
 }
 
 /** One app-wide instance member a file installs (`FileAnalysis.globalMembers`). */

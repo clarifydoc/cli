@@ -3,6 +3,7 @@ import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { componentOf, redirectTargetOf } from "./react-router.js";
 import { isTanstackRouteOptions } from "./tanstack-router.js";
+import { unwrap } from "../arg-origins.js";
 
 /** Vue Router: routes array config { path: "/foo", component: Bar } */
 export function extractVueRouterRoutes(root: Node, routes: RouteInfo[]): void {
@@ -244,6 +245,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
     let redirectTo: string | null = null;
     /** Angular `loadChildren: () => import('./x.routes')`: the module whose routes sit under this one. */
     let lazyChildren: string | null = null;
+    /** Vue Router `props`: what the route hands its component from the URL. */
+    let propsFromRoute: RouteInfo["propsFromRoute"];
 
     for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
@@ -280,6 +283,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
             handler = lazy[1]!.split("/").pop()!.replace(/\.\w+$/, "");
             componentPath = lazy[1]!;
           }
+        } else if (keyText === "props" && value) {
+          propsFromRoute = routeProps(value);
         } else if (keyText === "index" && value?.text === "true") {
           index = true;
         } else if (keyText === "name" && value && handler === null) {
@@ -310,6 +315,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
         handler,
         componentPath,
         ...(onlyRedirect ? { redirectTo: redirectTo! } : {}),
+        ...(propsFromRoute && componentPath !== null ? { propsFromRoute } : {}),
         calls: [],
         middleware: [],
         line: node.startPosition.row + 1,
@@ -331,6 +337,47 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
       for (const array of names) facts.push({ kind: "react-router-map", line: node.startPosition.row + 1, data: { array, head: "", pathProp: "path", componentProp: null, prefix: parent || null } });
     }
   }
+}
+
+/**
+ * Vue Router's `props` option: `true` hands each route parameter as the prop of
+ * its name; a function of the route (`route => ({ clubId: Number(route.params.id) })`,
+ * also destructured — `({ params }) => …`) hands each prop the URL value it reads.
+ * The object form (static values, or per named view) hands none from the URL.
+ */
+function routeProps(value: Node): RouteInfo["propsFromRoute"] {
+  if (value.type === "true") return true;
+  if (value.type !== "arrow_function" && value.type !== "function_expression" && value.type !== "function") return undefined;
+  const params = value.childForFieldName("parameters")?.namedChildren.filter((p) => p?.type !== "comment") ?? [];
+  const first = value.childForFieldName("parameter") ?? params[0];
+  const pattern = first ? first.childForFieldName("pattern") ?? first : null;
+  // The names the URL's values are read off: `route.params` / `route.query`, or a destructured `params` / `query`.
+  const heads = new Map<string, "route-param" | "query-param">();
+  if (pattern?.type === "identifier") {
+    heads.set(`${pattern.text}.params`, "route-param");
+    heads.set(`${pattern.text}.query`, "query-param");
+  } else if (pattern?.type === "object_pattern") {
+    for (const p of pattern.namedChildren) {
+      if (p?.type === "shorthand_property_identifier_pattern" && (p.text === "params" || p.text === "query")) heads.set(p.text, p.text === "params" ? "route-param" : "query-param");
+    }
+  }
+  let body = value.childForFieldName("body");
+  if (body?.type === "parenthesized_expression") body = body.namedChild(0);
+  if (body?.type === "statement_block") {
+    const ret = body.namedChildren.find((c) => c?.type === "return_statement")?.namedChild(0) ?? null;
+    body = ret?.type === "parenthesized_expression" ? ret.namedChild(0) : ret;
+  }
+  if (body?.type !== "object" || heads.size === 0) return undefined;
+  const out: Array<{ prop: string; kind: "route-param" | "query-param"; name: string }> = [];
+  for (const pair of body.namedChildren) {
+    if (pair?.type !== "pair") continue;
+    const prop = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+    const read = unwrap(pair.childForFieldName("value")!).node.text.replace(/\s+/g, "");
+    const dot = read.lastIndexOf(".");
+    const kind = dot > 0 ? heads.get(read.slice(0, dot)) : undefined;
+    if (prop && kind && /^[\w$]+$/.test(prop)) out.push({ prop, kind, name: read.slice(dot + 1) });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**

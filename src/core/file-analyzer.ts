@@ -612,6 +612,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       }
       setup.calls.push(...classified);
     }
+    const propBindings = hooks?.propBindings?.(tree, sourceText, rawSource, file.relativePath);
+    if (propBindings && propBindings.length > 0) analysis.propBindings = propBindings;
     for (const fn of hooks?.markupFunctions?.(analysis.interactiveElements, file.relativePath) ?? []) {
       fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
       analysis.functions.push(fn);

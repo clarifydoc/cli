@@ -118,7 +118,7 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
 
 /** A file that reads no URL values needs no declaration scan: the router's words, once per tree. */
 const READS_URL = new WeakMap<object, boolean>();
-const URL_WORDS = /params|query|\$route|paramMap|useParams|useRoute|useSearchParams/;
+const URL_WORDS = /params|query|\$route|paramMap|useParams|useRoute|useSearchParams|props|defineProps/;
 function readsUrl(n: Node): boolean {
   const tree = n.tree as unknown as object;
   let hit = READS_URL.get(tree);
@@ -132,7 +132,7 @@ function readsUrl(n: Node): boolean {
 const WRAPPERS = new Set(["Number", "String", "parseInt", "parseFloat", "encodeURIComponent", "encodeURI", "BigInt"]);
 
 /** One wrapper around the value, and its name. */
-function unwrap(n: Node): { node: Node; transform?: string } {
+export function unwrap(n: Node): { node: Node; transform?: string } {
   let node = n;
   let transform: string | undefined;
   for (let i = 0; i < 4; i++) {
@@ -193,7 +193,14 @@ function originOf(n: Node, depth: number): Origin | null {
       const obj = n.childForFieldName("object");
       if (n.type === "member_expression" && n.childForFieldName("property")?.text === "value" && obj?.type === "identifier" && readsUrl(n)) {
         const bound = paramOf(obj, obj.text) ? null : bindingOf(obj, obj.text);
-        if (bound?.kind === "value") return originOf(unwrap(bound.value).node, depth + 1);
+        if (bound?.kind === "value") {
+          // `ref(0)` is state the component changes: its first value is no origin.
+          const held = unwrap(bound.value);
+          const origin = originOf(held.node, depth + 1);
+          return origin?.kind === "literal" && held.transform === "ref" ? null : origin;
+        }
+        // `const { clubId } = toRefs(props)` … `clubId.value`: the prop.
+        if (bound?.kind === "member" && propsSource(unwrap(bound.value).node, depth + 1)) return { kind: "prop", name: bound.key };
       }
       // `label.id` on an invoked callback's parameter: that property of what the invoker is handed.
       const prop = n.childForFieldName("property")?.text;
@@ -201,11 +208,19 @@ function originOf(n: Node, depth: number): Origin | null {
         const param = paramOf(obj, obj.text);
         if (param?.kind === "invoked") return { ...param, field: param.field ? `${param.field}.${prop}` : prop };
       }
+      // `props.clubId`: a prop of the component the read sits in.
+      if (n.type === "member_expression" && obj && prop && /^[\w$]+$/.test(prop) && readsUrl(n) && propsObject(obj, depth + 1)) return { kind: "prop", name: prop };
       return paramRead(n, depth);
     }
     case "call_expression": {
       // `searchParams.get("q")`, `route.snapshot.paramMap.get("id")`.
       const fn = n.childForFieldName("function");
+      // `toRef(props, "clubId")`: that prop.
+      if (fn?.type === "identifier" && fn.text === "toRef") {
+        const [of, key] = n.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+        const name = stringValue(key ?? null);
+        if (of && name && propsObject(of, depth + 1)) return { kind: "prop", name };
+      }
       const key = literalArg(n);
       if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "get" && key) {
         const obj = fn.childForFieldName("object")!;
@@ -230,6 +245,8 @@ function identifierOrigin(n: Node, name: string, depth: number): Origin | null {
   const bound = bindingOf(n, name);
   if (!bound) return null;
   if (bound.kind === "value") return originOf(unwrap(bound.value).node, depth + 1);
+  // `const { clubId } = defineProps<…>()`, `= toRefs(props)`, `= props`: the prop.
+  if (propsSource(unwrap(bound.value).node, depth + 1)) return { kind: "prop", name: bound.key };
   // `const { id } = useParams()` / `const { id: clubId } = this.props.match.params`
   const kind = paramsObject(bound.value, depth + 1);
   return kind ? { kind, name: bound.key } : null;
@@ -333,6 +350,11 @@ function paramOf(at: Node, name: string): Origin | null {
         return via ? { kind: "invoked", via, index: i } : { kind: "param", name, index: i };
       }
       if (declares(pattern, name)) {
+        // A component's destructured props (`function ClubCard({ clubId })`): the prop.
+        if (i === 0 && id?.type === "object_pattern" && isComponentFunction(fn)) {
+          const field = fieldPath(id, name);
+          return field && !field.includes(".") ? { kind: "prop", name: field } : null;
+        }
         // Bound by a destructured parameter: not a plain argument — unless a library hands it in.
         const via = invokerOf(fn);
         const field = via && id?.type === "object_pattern" ? fieldPath(id, name) : null;
@@ -341,6 +363,75 @@ function paramOf(at: Node, name: string): Origin | null {
     }
   }
   return null;
+}
+
+/** `defineProps(…)`, `withDefaults(defineProps(…), …)`: a Vue component's props object. */
+function isDefineProps(n: Node): boolean {
+  if (n.type !== "call_expression") return false;
+  const fn = n.childForFieldName("function")?.text;
+  if (fn === "defineProps") return true;
+  const first = fn === "withDefaults" ? n.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment") : null;
+  return !!first && isDefineProps(first);
+}
+
+/** What a component's props are destructured from: `defineProps()`, `toRefs(props)`, `props` itself. */
+function propsSource(n: Node, depth: number): boolean {
+  if (n.type === "call_expression" && n.childForFieldName("function")?.text === "toRefs") {
+    const of = n.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+    return !!of && propsObject(of, depth + 1);
+  }
+  return propsObject(n, depth);
+}
+
+/**
+ * Is `n` a component's props object: `defineProps(…)` or a local holding it,
+ * the props parameter of a React function component, Vue's `setup(props)`,
+ * or a class component's `this.props`?
+ */
+function propsObject(n: Node, depth: number): boolean {
+  if (depth > 6) return false;
+  if (n.type === "call_expression") return isDefineProps(n);
+  if (n.type === "member_expression") return n.text === "this.props";
+  if (n.type !== "identifier") return false;
+  const site = paramSite(n, n.text);
+  if (site) return site.index === 0 && site.plain && isComponentFunction(site.fn);
+  const bound = bindingOf(n, n.text);
+  return !!bound && bound.kind === "value" && propsObject(unwrap(bound.value).node, depth + 1);
+}
+
+/** The innermost function declaring `name` as a parameter, its position, and whether it is the whole parameter. */
+function paramSite(at: Node, name: string): { fn: Node; index: number; plain: boolean } | null {
+  for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
+    if (!FUNCTION_NODES.has(fn.type)) continue;
+    const single = fn.childForFieldName("parameter");
+    if (single?.type === "identifier") {
+      if (single.text === name) return { fn, index: 0, plain: true };
+      continue;
+    }
+    const params = fn.childForFieldName("parameters")?.namedChildren.filter((p) => p?.type !== "comment") ?? [];
+    for (let i = 0; i < params.length; i++) {
+      const pattern = params[i]!.childForFieldName("pattern") ?? params[i]!;
+      const id = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
+      if (id?.type === "identifier" && id.text === name) return { fn, index: i, plain: true };
+      if (declares(pattern, name)) return { fn, index: i, plain: false };
+    }
+  }
+  return null;
+}
+
+/**
+ * A function whose first parameter is a component's props: a React function
+ * component (a capitalized function, or one assigned to a capitalized name,
+ * through `memo` / `forwardRef`), or a Vue `setup(props)`.
+ */
+function isComponentFunction(fn: Node): boolean {
+  if (fn.type === "method_definition") return fn.childForFieldName("name")?.text === "setup";
+  if (fn.type === "function_declaration") return /^[A-Z]/.test(fn.childForFieldName("name")?.text ?? "");
+  let up = fn.parent;
+  if (up?.type === "pair") return up.childForFieldName("key")?.text === "setup";
+  // `memo((props) => …)`, `forwardRef(function (props, ref) { … })`
+  if (up?.type === "arguments" && /^(?:React\.)?(?:memo|forwardRef|observer)$/.test(up.parent?.childForFieldName("function")?.text ?? "")) up = up.parent?.parent ?? null;
+  return up?.type === "variable_declarator" && /^[A-Z]/.test(up.childForFieldName("name")?.text ?? "");
 }
 
 function declares(pattern: Node | null, name: string): boolean {
@@ -396,4 +487,38 @@ function stringValue(n: Node | null): string | null {
 function literalArg(call: Node): string | null {
   const first = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
   return first ? stringValue(first) : null;
+}
+
+/** Where an expression's value comes from, one wrapper unwrapped: what a markup binding hands a child's prop. */
+export function expressionOrigin(n: Node): { origin: Origin; transform?: string } | null {
+  const { node, transform } = unwrap(n);
+  const origin = originOf(node, 0);
+  return origin ? { origin, ...(transform ? { transform } : {}) } : null;
+}
+
+/**
+ * Where a template's value comes from — a member chain the markup spells
+ * (`clubId`, `props.clubId`, `route.params.id`, `$route.query.q`) — read in
+ * the scope of the component's script: `anchor` is a statement of the
+ * script's program. A bare name the script does not bind is the component's
+ * own prop when it declares one of that name (`declared`).
+ */
+export function templateValueOrigin(anchor: Node, chain: readonly string[], declared: ReadonlySet<string>): Origin | null {
+  const [head, ...rest] = chain;
+  if (!head) return null;
+  if (head === "props" && rest.length === 1) return { kind: "prop", name: rest[0]! };
+  if ((head === "$route" || head === "$router") && rest.length === 2) {
+    if (rest[0] === "params") return { kind: "route-param", name: rest[1]! };
+    if (rest[0] === "query") return { kind: "query-param", name: rest[1]! };
+    return null;
+  }
+  const bound = bindingOf(anchor, head);
+  if (!bound) return rest.length === 0 && declared.has(head) ? { kind: "prop", name: head } : null;
+  if (rest.length === 0 || (rest.length === 1 && rest[0] === "value")) return identifierOrigin(anchor, head, 0);
+  if (bound.kind !== "value") return null;
+  const value = unwrap(bound.value).node;
+  if (rest.length === 1 && propsObject(value, 1)) return { kind: "prop", name: rest[0]! };
+  if (rest.length === 2 && rest[0] === "params" && routeObject(value, 1)) return { kind: "route-param", name: rest[1]! };
+  if (rest.length === 2 && rest[0] === "query" && (routeObject(value, 1) || routerObject(value))) return { kind: "query-param", name: rest[1]! };
+  return null;
 }
