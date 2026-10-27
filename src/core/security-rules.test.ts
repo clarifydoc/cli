@@ -59,6 +59,10 @@ const CASES: Array<[Language, string, string, string | null]> = [
   ["go", "pkg/a.go", "h := sha1.New()", null],
   ["go", "pkg/a.go", "k := md5.Sum([]byte(cacheKey))", null],
   ["typescript", "src/a.ts", "const id = crypto.createHash('sha1').update(design).digest('hex');", null],
+  ["typescript", "src/a.ts", "const db = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!);", "insecure-config"],
+  ["typescript", "src/a.ts", "const secret = import.meta.env.VITE_GARAGE_CLIENT_SECRET;", "insecure-config"],
+  ["typescript", "src/a.ts", "const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;", null],
+  ["typescript", "src/a.ts", "const secret = process.env.GARAGE_CLIENT_SECRET;", null],
 ];
 
 describe("per-language sink and configuration rules", () => {

@@ -166,6 +166,18 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     excludeTest: true,
   },
   {
+    // `process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY`, `import.meta.env.VITE_CLIENT_SECRET`: the bundler
+    // inlines every variable with a public prefix into the browser code. Publishable keys and tokens are
+    // public by design (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, a map token), so only names that say secret.
+    category: "insecure-config",
+    cwe: "CWE-200",
+    severity: "high",
+    pattern: /\b(?:process\.env|import\.meta\.env)\s*\.\s*(?:NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|PUBLIC)_\w*?(?:SECRET|PRIVATE_KEY|PASSWORD|PASSWD|SERVICE_ROLE)\w*/,
+    message: "A secret read from a public build variable: the bundler inlines it into the code every browser downloads.",
+    priority: 34,
+    excludeTest: true,
+  },
+  {
     category: "insecure-config",
     cwe: "CWE-1004",
     severity: "medium",
