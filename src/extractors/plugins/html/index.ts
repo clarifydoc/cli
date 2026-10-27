@@ -67,8 +67,16 @@ function isDirectoryGuard(source: string): boolean {
   return source.length < 1024 && /<title>\s*403 Forbidden\s*<\/title>/i.test(source) && !/<(?:a|form|script|button|input)\b/i.test(source);
 }
 
-/** Content-sniffing preprocess: skip pages that are generated API reference, and directory guards. */
-export function htmlPreprocess(rawSource: string): { skip: string } | null {
+/** A test directory (`tests/`, `spec/`, `__tests__/`, `cypress/`, `e2e/`): what sits there is read by the tests. */
+const TEST_DIR = /(?:^|[\\/])(?:__tests__|tests?|specs?|cypress|e2e)[\\/]/i;
+
+/**
+ * Content-sniffing preprocess: skip pages that are generated API reference, and directory guards —
+ * and any page under a test directory, a fixture the tests read (a saved third-party recipe page a
+ * scraper is tested against): its links are another site's, never this application's requests.
+ */
+export function htmlPreprocess(rawSource: string, relativePath = ""): { skip: string } | null {
+  if (TEST_DIR.test(relativePath)) return { skip: "test fixture page" };
   const generator = apiDocGeneratorOf(rawSource);
   if (generator) return { skip: `generated API documentation (${generator})` };
   return isDirectoryGuard(rawSource) ? { skip: "directory guard page (403 Forbidden)" } : null;

@@ -4105,6 +4105,17 @@ function scopedName(
     }
     return point;
   }
+  // A local of a function the callable is declared in (`const api = useUserApi()`
+  // in a composable, read by the functions it returns): lexical scope, as for the module's below.
+  if (callable && sourceSymbol !== "<setup>" && depth < 4 && pluginFor(analysis.language)?.moduleLocalsInScope) {
+    let outer: FunctionInfo | undefined;
+    for (const f of analysis.functions) {
+      if (f === callable || f.name.startsWith("<") || f.line > callable.line || f.endLine < callable.endLine || (f.line === callable.line && f.endLine === callable.endLine)) continue;
+      if (!f.localTypes?.some((l) => nameKey(analysis.language, l.name) === key)) continue;
+      if (!outer || f.endLine - f.line < outer.endLine - outer.line) outer = f;
+    }
+    if (outer && analysis.functions.filter((f) => f.name === outer!.name).length === 1) return scopedName(ctx, analysis, sourceFile, outer.name, consumer, name, depth + 1);
+  }
   // A module-scope binding the callable does not shadow with a typed local
   // or a parameter (`const api = useUserApi()` above `function save() { api.x.y() }`).
   if (sourceSymbol !== "<setup>" && pluginFor(analysis.language)?.moduleLocalsInScope) {

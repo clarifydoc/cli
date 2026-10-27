@@ -17,7 +17,9 @@ const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token
  *
  * Generated API-reference pages (Doxygen, PasDoc, DocInsight, javadoc…) are
  * build artifacts, not UI — preprocess skips them so a committed docs/ tree
- * can't flood the report with phantom screens. Every other page's forms, submit
+ * can't flood the report with phantom screens; a page under a test directory is
+ * a fixture the tests read (a saved third-party page a scraper is tested
+ * against), skipped too. Every other page's forms, submit
  * buttons and links that request an app path become api-calls for the route
  * linker, as a server template's do.
  */
@@ -26,8 +28,8 @@ export const htmlMeta: LanguagePluginMeta = {
   regexSpec: htmlSpec,
   // A sub-project's own dev server serves its pages from its root.
   routeResolvers: [htmlProjectRootPages],
-  preprocess: (rawSource) =>
-    htmlPreprocess(rawSource) ?? {
+  preprocess: (rawSource, relativePath) =>
+    htmlPreprocess(rawSource, relativePath) ?? {
       sourceText: rawSource,
       language: "html",
       // A Django / Jinja template is served by the view that renders it, never at its own

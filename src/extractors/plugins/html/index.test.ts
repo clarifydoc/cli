@@ -250,3 +250,13 @@ describe("template placeholder titles", () => {
     expect(handler("Garage")).toBe("Garage");
   });
 });
+
+describe("HTML pages under a test directory", () => {
+  it("skips a fixture page the tests read, never an application page", () => {
+    const page = `<html><body><a href="/recipes">Recipes</a></body></html>`;
+    expect(htmlPreprocess(page, "tests/data/html/roast-chicken.html")).toEqual({ skip: "test fixture page" });
+    expect(htmlPreprocess(page, "web/src/__tests__/fixtures/club.html")).toEqual({ skip: "test fixture page" });
+    expect(htmlPreprocess(page, "public/clubs/index.html")).toBeNull();
+    expect(htmlPreprocess(page, "contests/index.html")).toBeNull();
+  });
+});
