@@ -13,6 +13,8 @@ export const elixirManifest: LanguagePluginManifest = {
   packageManagers: [hexPackageManager],
   packageEcosystems: ["hex"],
   parsing: "regex",
+  // Read by the `tree-sitter:elixir` front end only (meta.treeSitter).
+  grammar: { variants: { elixir: { pkg: "tree-sitter-elixir", wasm: "tree-sitter-elixir.wasm" } } },
   extensions: [".ex", ".exs"],
   testFilePatterns: [/_test\.exs$/],
   externalModulePrefixes: ["Enum", "Map", "List", "String", "Kernel", "IO", "File", "Path", "Logger", "GenServer", "Supervisor", "Application", "Process", "Agent", "Task", "Stream", "Ecto", "Phoenix", "Plug", "Jason"],

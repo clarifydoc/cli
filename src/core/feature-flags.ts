@@ -18,7 +18,7 @@ export const KNOWN_FEATURES: Readonly<Record<string, { description: string; defa
     default: true,
   },
   "tree-sitter": {
-    description: "Read the functions and calls of Swift and Dart with their tree-sitter grammars; a file with a syntax error keeps the regex reading",
+    description: "Read the functions and calls of Swift, Dart and Elixir with their tree-sitter grammars; a file with a syntax error keeps the regex reading",
     default: true,
   },
 };

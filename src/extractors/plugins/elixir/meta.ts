@@ -22,6 +22,8 @@ export const elixirMeta: LanguagePluginMeta = {
   reachability: elixirReachability,
   ...elixirManifest,
   regexSpec: elixirSpec,
+  // Functions and calls read by tree-sitter-elixir while the `tree-sitter:elixir` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "elixir", load: () => import("./tree-sitter.js").then((m) => m.loadElixirReader()) },
   // Project-level: `Repo.preload(:assoc)` rows typed by the schemas declaring the association.
   entities: new ElixirEntityExtractor(),
   // Control flow from source: keyword-delimited blocks (see control-flow.ts).

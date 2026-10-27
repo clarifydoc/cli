@@ -30,7 +30,7 @@ const outDir = resolve(args.includes("--out") ? args[args.indexOf("--out") + 1] 
 const stage = join(root, ".pack");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
-/** Grammar packages are loaded as WASM; only package.json + *.wasm are read. */
+/** Grammar packages are loaded as WASM; only package.json + *.wasm are read (and the licence travels with them). */
 const isGrammar = (name) => /(^|\/)tree-sitter-/.test(name);
 
 /** Production dependencies that only serve native bindings the analyzer never loads. */
@@ -100,7 +100,7 @@ for (const dir of closure()) {
   mkdirSync(dirname(to), { recursive: true });
   const meta = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   if (isGrammar(name)) {
-    cpSync(dir, to, { recursive: true, filter: (src) => statSync(src).isDirectory() || src.endsWith(".wasm") || src.endsWith("package.json") });
+    cpSync(dir, to, { recursive: true, filter: (src) => statSync(src).isDirectory() || src.endsWith(".wasm") || src.endsWith("package.json") || /(?:^|[\\/])(?:LICEN[CS]E|COPYING|NOTICE)[^\\/]*$/i.test(src) });
     if (!walk(to).some((f) => f.endsWith(".wasm"))) missingWasm.push(name);
     // Nothing of the native build survives, so nothing may try to run it.
     for (const pj of walk(to).filter((f) => f.endsWith("package.json"))) {

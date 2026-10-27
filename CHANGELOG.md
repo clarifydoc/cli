@@ -20,6 +20,13 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Elixir is read by tree-sitter.** Elixir's functions and calls come from tree-sitter-elixir under the `tree-sitter`
+  feature, with the per-file fallback (`no-tree-sitter:elixir` keeps the patterns). Calls of names ending in `!` or `?`
+  (`Repo.get!(Player, id)`, `Repo.insert!`, `Accounts.valid?`) and remote calls without parentheses are read, each
+  `def` clause ends at its `end`, a head's guard and default arguments are the function's, and a template's calls
+  (`phx-click={show_modal("x")}`, an attribute's `#{format_date(@at)}`) are still read from `~H` markup; `~w(…)`
+  words, names quoted in strings and SQL inside strings are no longer calls. Grammar packages in the npm tarball and
+  the Docker image now keep their licence files.
 - **Dart named constructors stay with their type.** A named or factory constructor (`SquadEvent.selectPlayer`) is
   marked `isConstructor` and is no longer a candidate for a call through a value of the same name
   (`coach.selectPlayer()`), which it captured whenever that name was otherwise unique. The patterns now read
