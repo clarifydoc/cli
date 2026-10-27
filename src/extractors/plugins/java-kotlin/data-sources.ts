@@ -688,8 +688,16 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     return out;
   }
 
+  /** Records and enums the file declares: values, never a repository. */
+  private ownValueTypes = new Set<string>();
+
   override beginFile(tree: Tree): void {
     const prepass = buildFilePrepass(tree.rootNode);
+    this.ownValueTypes = new Set(
+      /\b(?:record|enum)\s+[A-Z]/.test(tree.rootNode.text)
+        ? tree.rootNode.descendantsOfType(["record_declaration", "enum_declaration"]).map((d) => d?.childForFieldName("name")?.text ?? "").filter(Boolean)
+        : [],
+    );
     this.tableAliases = prepass.tableAliases;
     this.stringConsts = prepass.stringConsts;
     fileStringConsts = prepass.stringConsts;
@@ -1032,6 +1040,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // thirds of one real codebase's service methods.
       // A field inherited from a base class has no declaration here; its name still says service.
       if (!seg || (declared ? SERVICE_LAYER_TYPE_RE.test(declared) : SERVICE_LAYER_NAME_RE.test(seg))) return;
+      // `products.count()` on a record of the file (`record Products(int count, …)`): its accessor.
+      if (declared && this.ownValueTypes.has(declared)) return;
       // `InetAddress.getByName(host)`, `NetworkInterface.getByIndex(i)`: the JDK's network lookups share the verb.
       if (/^(?:java\.net\.)?(?:Inet[46]?Address|NetworkInterface)$/.test(receiver.trim())) return;
       // A repository is a field or a local: `persons.stream()…count()`, `Projections.count(…)`

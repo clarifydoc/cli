@@ -665,6 +665,15 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     expect(rows.filter((d) => d.kind === "env").map((d) => d.target)).toEqual(["user.home", "league.url"]);
   });
 
+  it("reads no access in a record accessor named like a repository verb (real-repo FP)", async () => {
+    const tree = await parseSource(`class Picks {
+  void m() { Squad squad = new Squad(3, ids); log(squad.count()); }
+  private record Squad(int count, Set<String> unique) {}
+}`, "java" as any, "Picks.java");
+    const ds = new JavaKotlinDataSourceExtractor().extract(tree, tree.rootNode.text);
+    expect(db(ds)).toEqual([]);
+  });
+
   it("reads a JCR query manager's query", async () => {
     const rows = await sourcesOf(`
     QueryManager queryManager = session.getWorkspace().getQueryManager();
