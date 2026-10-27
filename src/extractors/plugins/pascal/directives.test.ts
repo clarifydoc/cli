@@ -54,3 +54,36 @@ describe("Pascal conditional directives the grammar cannot place (real-repo FP s
     expect(pascalDirectivePreprocess("{$IFDEF X}inline;{$ENDIF}", "club.dfm")).toBeNull();
   });
 });
+
+describe("Pascal conditional groups around a routine's declarations and platform guards (real-repo FP)", () => {
+  const SRC = `unit Fixtures;
+interface
+implementation
+{$IFNDEF MSWINDOWS}
+  'This unit is only meant for the Windows league client.'
+  'Use the portable fixtures unit elsewhere.'
+{$ENDIF}
+function KickOff(const Venue: string): string;
+{$IFDEF MSWINDOWS}
+var
+  Gate: Integer;
+{$ENDIF}
+begin
+  Result := Venue;
+end;
+function FinalWhistle(Minute: Integer): Boolean;
+begin
+  Result := Minute >= 90;
+end;
+end.`;
+
+  it("blanks a strings-only group and the directives around declaration sections, keeping the declarations", async () => {
+    const out = pascalDirectivePreprocess(SRC, "src/fixtures.pas")!.sourceText;
+    expect(out.split("\n").map((l) => l.length)).toEqual(SRC.split("\n").map((l) => l.length));
+    expect(out).not.toContain("This unit is only meant");
+    expect(out).toContain("Gate: Integer;");
+    expect(out).not.toContain("{$IFDEF MSWINDOWS}");
+    expect((await errors(SRC)).n).toBeGreaterThan(0);
+    expect(await errors(out)).toEqual({ n: 0, procs: 2 });
+  });
+});
