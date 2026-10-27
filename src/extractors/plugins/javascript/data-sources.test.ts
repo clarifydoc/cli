@@ -1298,3 +1298,22 @@ describe("JS api-calls — a URL concatenated from a helper's result (real-repo 
     ]);
   });
 });
+
+describe("JS data sources — a generated HTTP client's or a query cache's own API (real-repo FP)", () => {
+  it("reads no database access on `client.interceptors…`, `client.setConfig` or TanStack `client.getQueryData`", async () => {
+    const rows = await dbOf(`import { client } from './generated/client.gen'
+export function configure(base) {
+  client.setConfig({ baseUrl: base })
+  client.interceptors.request.use((req) => req)
+  client.interceptors.error.clear()
+}
+export function boards(queryClient) {
+  const client = queryClient
+  return client.getQueriesData<BoardData>({ queryKey: ['boards'] }).filter(Boolean)
+}
+export async function clubs() {
+  return client.findMany({ where: { active: true } })
+}`);
+    expect(rows.map((r) => r.name)).toEqual(["client.findMany"]);
+  });
+});

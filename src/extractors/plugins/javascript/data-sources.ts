@@ -92,6 +92,9 @@ const VUE_MACROS = new Set([
  */
 const ORM_ROOTS = new Set(["prisma", "db", "client"]);
 
+/** An HTTP client's configuration or a query cache's API: `interceptors`, `setConfig`, `getQueryData`, `invalidateQueries`, … */
+const CLIENT_API_SEGMENT = /^(?:interceptors|setConfig|getConfig|getQueryData|getQueriesData|setQueryData|setQueriesData|invalidateQueries|removeQueries|cancelQueries|prefetchQuery|fetchQuery|ensureQueryData|refetchQueries|resetQueries|getQueryCache|getMutationCache)$/;
+
 /** The packages the plugin's catalog files as ORMs or database drivers: importing one is ORM evidence. */
 const ORM_PACKAGES = new Set(npmPackages.filter((r) => r.category === "orm" || r.category === "database").flatMap((r) => r.names ?? []));
 
@@ -2496,6 +2499,9 @@ function isOrmCall(name: string): boolean {
   // An HTTP client receiver (`axios.create`, `http.get`, `fetchClient.delete`)
   // is never an ORM — its verb/CRUD-shaped methods are HTTP, not DB.
   if (isHttpRoot(root)) return false;
+  // A generated HTTP client's or a query cache's own API on a `client` (`client.interceptors.request.use`,
+  // `client.setConfig`, TanStack `client.getQueryData<Board>(key)`) is no database, whatever the root is called.
+  if (parts.slice(1).some((seg) => CLIENT_API_SEGMENT.test(seg.replace(/<[\s\S]*$/, "")))) return false;
   // A trusted ORM root (`db`, `prisma`, `*Repository`) makes the whole chain DB
   // access regardless of intermediate calls — `db.prepare("sql").all()`,
   // `repo.createQueryBuilder().getMany()`.
