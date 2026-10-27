@@ -645,6 +645,29 @@ class CoachServiceImpl {
   });
 });
 
+describe("extension-client writes of an object another class's method produces (real-repo FP)", () => {
+  it("names the producing type and method, for the project pass to type by its declared return", async () => {
+    const java = `import run.halo.app.extension.ReactiveExtensionClient;
+class LeagueSettingsEndpoint {
+  private final ReactiveExtensionClient client;
+  private final LeagueConfigFetcher configFetcher;
+  Mono<Void> save(String group, Profile profile) {
+    configFetcher.getConfigMap().flatMap(cm -> { cm.setGroup(group); return client.update(cm); });
+    client.update(profile.coach());
+    var squad = configFetcher.squadOf(group);
+    return client.create(squad).then();
+  }
+}`;
+    const tree = await parseSource(java, "java", "LeagueSettingsEndpoint.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database" && d.access === "write");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.entityProducer ? `${d.entityProducer.type}#${d.entityProducer.method}` : "-"}`)).toEqual([
+      "client.update - LeagueConfigFetcher#getConfigMap",
+      "client.update - Profile#coach",
+      "client.create - LeagueConfigFetcher#squadOf",
+    ]);
+  });
+});
+
 describe("JPQL a query builder or a descriptor factory is handed (real-repo FP)", () => {
   it("reads the entity a String method's returned query constant names, and a constant handed to a descriptor factory", async () => {
     const java = `class StandingsQueryBuilder {

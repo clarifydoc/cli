@@ -1709,6 +1709,13 @@ export interface DataSourceInfo {
    */
   entityTypeParameter?: string;
   /**
+   * For `database`: the object written is what this method of this project type
+   * returns (`systemConfigFetcher.getConfigMap().flatMap(cm -> client.update(cm))`,
+   * `SystemConfigFetcher#getConfigMap`). `entity` stays empty; the plugin's project
+   * pass takes the method's declared return type (a `Mono<X>` / `Optional<X>` unwrapped).
+   */
+  entityProducer?: { type: string; method: string };
+  /**
    * For `queue-publish`/`queue-consume`: the channel is this parameter of the
    * enclosing function (`clientSend(event, room) { server.to(room).emit(event) }`);
    * `target` stays null. Core adds a row at each call site that hands the

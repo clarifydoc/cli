@@ -39,6 +39,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
     implementedDaoTables(jvm);
     projectDaoMethodCalls(jvm);
     handedEntityAccess(jvm);
+    producedObjectEntities(jvm);
     helperPublishedEvents(jvm);
     const byName = namedQueryEntities(analyses);
     if (byName.size === 0) return;
@@ -1234,4 +1235,33 @@ function namedQueryEntity(declaration: string): string | undefined {
   if (declaration.startsWith("NamedNativeQuery")) return resultClass;
   const query = /\bquery\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)/.exec(declaration)?.[1] ?? "";
   return /\b(?:from|FROM|From)\s+([A-Z]\w*)\b/.exec(query.replace(/"\s*\+\s*"/g, ""))?.[1] ?? resultClass;
+}
+
+/**
+ * A write whose object another class's method produces (`DataSourceInfo.entityProducer`):
+ * the method's declared return type, a `Mono<X>`/`Flux<X>`/`Optional<X>`/`List<X>`
+ * unwrapped, when the one class of that name declares one.
+ */
+function producedObjectEntities(jvm: readonly FileAnalysis[]): void {
+  if (!jvm.some((a) => a.dataSources?.some((d) => d.entityProducer))) return;
+  const byName = new Map<string, Array<FileAnalysis["classes"][number]>>();
+  for (const a of jvm) for (const c of a.classes ?? []) (byName.get(c.name) ?? byName.set(c.name, []).get(c.name)!).push(c);
+  for (const a of jvm) {
+    for (const ds of a.dataSources ?? []) {
+      if (!ds.entityProducer || ds.entity) continue;
+      const types = new Set<string>();
+      for (const cls of byName.get(ds.entityProducer.type) ?? []) {
+        for (const m of cls.methods) {
+          if (m.name !== ds.entityProducer.method || !m.returnType) continue;
+          const ret = m.returnType.replace(/\s+/g, "");
+          const inner = /^(?:Mono|Flux|Optional|List|Set|Collection|Uni|CompletableFuture)<([A-Z][\w.]*)>$/.exec(ret)?.[1] ?? ret;
+          if (/^[A-Z][\w.]*$/.test(inner)) types.add(inner.split(".").pop()!);
+        }
+      }
+      if (types.size !== 1) continue;
+      const [entity] = types;
+      ds.entity = entity!;
+      ds.target ??= entity!;
+    }
+  }
 }

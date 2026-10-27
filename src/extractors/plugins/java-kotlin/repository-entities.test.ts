@@ -147,3 +147,21 @@ describe("a DAO-named call on a project class", () => {
     expect(handler.dataSources.map((d) => d.name)).toEqual(["DAO: findAll"]);
   });
 });
+
+describe("an extension-client write of an object another class's method produces (real-repo FP)", () => {
+  it("takes the producing method's declared return type, a Mono unwrapped", () => {
+    const method = (name: string, returnType: string) => ({ name, params: [], returnType, isAsync: false, isExported: true, decorators: [], calls: [], line: 2, endLine: 4 });
+    const fetcher = javaFile("src/main/java/league/LeagueConfigFetcher.java", {
+      classes: [{ name: "LeagueConfigFetcher", kind: "class", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 9,
+        methods: [method("getConfigMap", "Mono<ConfigMap>"), method("squads", "List<Squad>")] }],
+    });
+    const endpoint = javaFile("src/main/java/league/LeagueSettingsEndpoint.java", {
+      dataSources: [
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 7, entityProducer: { type: "LeagueConfigFetcher", method: "getConfigMap" } },
+        { kind: "database", name: "client.update", target: null, access: "write", calls: [], line: 8, entityProducer: { type: "Profile", method: "coach" } },
+      ],
+    });
+    new JavaKotlinEntityExtractor().reconcileProject([fetcher, endpoint]);
+    expect(endpoint.dataSources.map((d) => d.entity ?? null)).toEqual(["ConfigMap", null]);
+  });
+});

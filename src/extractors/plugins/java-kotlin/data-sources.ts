@@ -1065,11 +1065,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       if ((declared && /ExtensionClient$/.test(declared)) || (literal && /client$/i.test(seg))) {
         const argName = call.firstArg?.type === "identifier" ? call.firstArg.text : null;
         const entity = literal ?? (argName ? heldEntityType(node, argName) : call.firstArg ? producedEntityType(node, call.firstArg) : null);
+        // What another class's method returns (`profile.user()`, `fetcher.getConfigMap().flatMap(cm -> …)`): typed by the project pass.
+        const producer = entity || !call.firstArg || !EXTENSION_CLIENT_WRITES.has(method) ? null : objectProducer(node, call.firstArg, (n) => this.fieldTypes.get(n) ?? null);
         sources.push(this.ds({
           kind: "database",
           name: `${seg || "client"}.${method}`,
           target: entity,
           ...(entity ? { entity } : {}),
+          ...(producer ? { entityProducer: producer } : {}),
           line,
           ...withAccess(EXTENSION_CLIENT_WRITES.has(method) ? "write" : "read"),
         }));
@@ -2299,4 +2302,48 @@ function insideNestedCallable(node: Node, root: Node): boolean {
     if (at.type === "lambda_expression" || at.type === "class_body" || at.type === "method_declaration") return true;
   }
   return false;
+}
+
+/** `x.m(…)` with `x` declared (in the method, a lambda around it, or as a field) as a project-looking type: that type and method. */
+function receiverMethod(call: Node, fieldType: (name: string) => string | null): { type: string; method: string } | null {
+  if (call.type !== "method_invocation") return null;
+  const object = call.childForFieldName("object");
+  const method = call.childForFieldName("name")?.text;
+  if (object?.type !== "identifier" || !method) return null;
+  const declared = (declaredOutward(object, object.text) ?? fieldType(object.text) ?? "").replace(/<[\s\S]*$/, "").trim();
+  return /^[A-Z][\w]*$/.test(declared) ? { type: declared, method } : null;
+}
+
+/**
+ * The method of another class whose result an extension-client write hands over: the argument
+ * itself (`client.update(profile.user())`), the stream a lambda parameter is the element of
+ * (`fetcher.getConfigMap().flatMap(cm -> client.update(cm))`), or a local's initializer.
+ */
+function objectProducer(node: Node, arg: Node, fieldType: (name: string) => string | null): { type: string; method: string } | null {
+  const direct = receiverMethod(arg, fieldType);
+  if (direct || arg.type !== "identifier") return direct;
+  const name = arg.text;
+  for (let at: Node | null = node.parent; at; at = at.parent) {
+    if (at.type === "lambda_expression") {
+      const params = at.childForFieldName("parameters");
+      const names = params ? (params.type === "identifier" ? [params.text] : params.descendantsOfType("identifier").map((n) => n?.text)) : [];
+      if (!names.includes(name)) continue;
+      const step = at.parent?.type === "argument_list" ? at.parent.parent : null;
+      if (step?.type !== "method_invocation" || !ELEMENT_STEPS.test(step.childForFieldName("name")?.text ?? "")) return null;
+      let root: Node | null | undefined = step.childForFieldName("object");
+      while (root?.type === "method_invocation" && KEEPING_STEPS.test(root.childForFieldName("name")?.text ?? "") && root.childForFieldName("object")?.type === "method_invocation") {
+        root = root.childForFieldName("object");
+      }
+      return root ? receiverMethod(root, fieldType) : null;
+    }
+    if (/^(method_declaration|constructor_declaration)$/.test(at.type)) {
+      for (const decl of at.descendantsOfType("variable_declarator")) {
+        if (decl?.childForFieldName("name")?.text !== name) continue;
+        const value = decl.childForFieldName("value");
+        return value ? receiverMethod(value, fieldType) : null;
+      }
+      return null;
+    }
+  }
+  return null;
 }
