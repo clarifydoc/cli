@@ -29,7 +29,7 @@ interface ResolvedUrl {
 }
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
-const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
+const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax", "needle"]);
 
 /**
  * HTTP "verb" methods. These collide with non-HTTP APIs (`Map.get`,
@@ -1254,7 +1254,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // the verb comes first and the URL second.
           let callName = jqueryVerb ?? fnName;
           const positional = args?.namedChildren.filter((a) => a.type !== "comment") ?? [];
-          if (trusted && fnName.toLowerCase() === "request" && positional.length > 1) {
+          // `needle('post', url, body)` spells it the same way.
+          if (trusted && /^(?:request|needle)$/i.test(fnName) && positional.length > 1) {
             const verb = literalString(positional[0]!);
             if (verb && HTTP_VERBS.has(verb.toLowerCase())) {
               callName = verb.toLowerCase();
@@ -2311,9 +2312,9 @@ function isJQueryAjax(fn: Node | null): boolean {
 }
 
 /** A receiver named like an HTTP client: `http`, `$http`, `httpClient`, `axios`, `$axios`, `api`, `apiService`, `requests`. */
-const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests)(client|service)?$/i;
+const HTTP_RECEIVER_RE = /^\$?(http|axios|ky|got|api|request|requests|needle)(client|service)?$/i;
 /** A root that names an outbound client (never `request`, an incoming request as often as not). */
-const CLIENT_ROOT_RE = /^\$?(http|axios|ky|got|api)(client|service)?$/i;
+const CLIENT_ROOT_RE = /^\$?(http|axios|ky|got|api|needle)(client|service)?$/i;
 /** A property of a request's data, not a client setting: `http.params.get('x')` reads a parameter. */
 const REQUEST_DATA_SEGMENT = /^(?:params|query|headers|body|data|cookies|searchParams|form|files|session)$/i;
 
@@ -2399,6 +2400,9 @@ const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$
  * Signals: the receiver is a known router object, or a handler function is
  * passed as an argument (route handler / middleware).
  */
+/** Client modules whose verb calls are always outbound, whatever callback follows the URL. */
+const OUTBOUND_CLIENT_MODULES = new Set(["needle", "https", "superagent"]);
+
 function isServerRouteDef(fn: Node, callNode: Node, routers: Set<string>): boolean {
   if (fn.type !== "member_expression") return false;
   const objRoot = (fn.childForFieldName("object")?.text ?? "").split(/[.[]/)[0]!;
@@ -2410,6 +2414,9 @@ function isServerRouteDef(fn: Node, callNode: Node, routers: Set<string>): boole
   // — the literal `router` name is too narrow for the common `<name>Router`
   // convention, so the whole route file was being mis-read as outbound calls.
   if (/route(r|s)?$/i.test(objRoot)) return true;
+  // An outbound client module never registers a route: `needle.get(url, (err, res) => …)`,
+  // Node's `https.get(url, (res) => …)` take a response callback.
+  if (OUTBOUND_CLIENT_MODULES.has(objRoot)) return false;
   const args = callNode.childForFieldName("arguments");
   if (args) {
     for (const a of args.namedChildren) {

@@ -1344,3 +1344,20 @@ export async function listClubs(page: number) {
   });
 });
 
+
+describe("needle and Node https clients", () => {
+  it("reads needle's verb-first call, its verb methods and https.get with a response callback", async () => {
+    const calls = await apiCallsOf(`
+      const needle = require('needle');
+      const https = require('https');
+      async function saveCar(car) { return needle('post', '/api/v2/cars', car, { json: true }); }
+      function loadCar(id) { needle.get('/api/v2/cars/' + id, (err, res) => res.body); }
+      function fixtures() { https.get('https://fixtures.example.com/api/v1/matches', (res) => res.pipe(process.stdout)); }
+    `);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
+      "post /api/v2/cars",
+      "get /api/v2/cars/${id}",
+      "get https://fixtures.example.com/api/v1/matches",
+    ]);
+  });
+});
