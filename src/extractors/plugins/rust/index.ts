@@ -1,4 +1,4 @@
-import type { PropertyInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { parseRustParam, stripRustTypeModifiers } from "./params.js";
 import { collectRocketFacts } from "./rocket-mounts.js";
@@ -58,6 +58,31 @@ function parseRustReturnType(line: string): string | null {
   return stripRustTypeModifiers(m[1].trim());
 }
 
+/**
+ * A method called on a struct literal written over lines (`ReportQuery { … }⏎.list(pool)`): the
+ * baseline sees a bare `list`; it is the struct type's method (`ReportQuery.list`, receiver typed).
+ */
+function structLiteralReceivers(lines: string[], fns: FunctionInfo[]): FunctionInfo[] {
+  for (const fn of fns) {
+    for (const call of fn.calls) {
+      if (call.name.includes(".") || !new RegExp(`^\\s*\\.${call.name}\\s*[(<]`).test(lines[call.line - 1] ?? "")) continue;
+      let j = call.line - 2;
+      while (j >= 0 && !lines[j]!.trim()) j--;
+      if (j < 0 || !/^\s*\}\s*$/.test(lines[j]!)) continue;
+      let depth = 0;
+      for (; j >= 0; j--) {
+        for (const ch of [...lines[j]!].reverse()) depth += ch === "}" ? 1 : ch === "{" ? -1 : 0;
+        if (depth <= 0) break;
+      }
+      const type = j >= 0 ? /\b([A-Z]\w*)\s*\{\s*$/.exec(lines[j]!)?.[1] : undefined;
+      if (!type) continue;
+      call.name = `${type}.${call.name}`;
+      call.receiverType = type;
+    }
+  }
+  return fns;
+}
+
 export const rustSpec: RegexLangSpec = {
   // `mod x;` / `#[path]` / `include!` — the module tree dead-code analysis
   // walks (see reachability.ts).
@@ -79,6 +104,7 @@ export const rustSpec: RegexLangSpec = {
   ],
   blockEnds: RUST_CODE.blockEnds,
   callSourceLines: RUST_CODE.callSourceLines,
+  postProcessFunctions: structLiteralReceivers,
 
   parseParam: parseRustParam,
   parseReturnType: parseRustReturnType,

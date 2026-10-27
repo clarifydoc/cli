@@ -26,3 +26,21 @@ describe("rust associated functions", () => {
     expect(out.map((c) => [c.name, c.receiverType])).toEqual([["Invoice.open", "Invoice"], ["Club.new", "Club"]]);
   });
 });
+
+describe("Rust methods on a struct literal written over lines", () => {
+  it("names the struct type's method, receiver typed (real-repo FP)", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `pub async fn list_reports(pool: &mut DbPool<'_>) -> LeagueResult<Json<Vec<Report>>> {
+  let reports = MatchReportQuery {
+    club_id,
+    unresolved_only,
+  }
+  .list(&mut pool, &view)
+  .await?;
+  Ok(Json(reports))
+}`;
+    const a = extractWithRegex(src, "src/reports/list.rs", "rust");
+    const call = a.functions.find((f) => f.name === "list_reports")!.calls.find((c) => c.name.endsWith("list"));
+    expect(call).toMatchObject({ name: "MatchReportQuery.list", receiverType: "MatchReportQuery" });
+  });
+});
