@@ -1005,7 +1005,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const literal = /^[A-Z]\w*(?:\.class|::class(?:\.java)?)$/.test(call.firstArg?.text ?? "") ? call.firstArg!.text.replace(/(?:\.class|::class(?:\.java)?)$/, "") : null;
       if ((declared && /ExtensionClient$/.test(declared)) || (literal && /client$/i.test(seg))) {
         const argName = call.firstArg?.type === "identifier" ? call.firstArg.text : null;
-        const entity = literal ?? (argName ? heldEntityType(node, argName) : null);
+        const entity = literal ?? (argName ? heldEntityType(node, argName) : call.firstArg ? producedEntityType(node, call.firstArg) : null);
         sources.push(this.ds({
           kind: "database",
           name: `${seg || "client"}.${method}`,
@@ -1829,9 +1829,77 @@ function lambdaParamClass(node: Node, name: string): string | null {
       const fetched = first?.type === "lambda_expression" ? /\b(?:get|fetch|list|listAll|listBy)\s*\(\s*([A-Z]\w*)\.class\b/.exec(first.text) : null;
       if (fetched) return fetched[1]!;
     }
-    return null;
+    return call?.type === "method_invocation" ? streamElementType(call, at) : null;
   }
   return null;
+}
+
+/** Stream/reactive steps handing their element to a lambda's (first) parameter. */
+const ELEMENT_STEPS = /^(?:flatMap|map|concatMap|flatMapMany|filter|filterWhen|doOnNext|doOnSuccess|forEach|forEachOrdered|ifPresent|ifPresentOrElse|subscribe|anyMatch|allMatch|noneMatch|peek|then)$/;
+/** Steps that keep the element type: what they hand on is what they were handed. */
+const KEEPING_STEPS = /^(?:filter|filterWhen|doOnNext|doOnSuccess|doOnError|doFinally|switchIfEmpty|defaultIfEmpty|onErrorResume|onErrorMap|retry|retryWhen|timeout|cache|log|sort|sorted|distinct|take|skip|limit|peek|subscribeOn|publishOn|stream)$/;
+/** One-element and many-element containers whose element a step hands to its lambda. */
+const CONTAINER_RE = /^(?:Mono|Flux|Optional|List|Set|Collection|Iterable|Stream|Uni|Multi)<\s*([A-Z][\w.]*)\s*>$/;
+
+/**
+ * The element a stream step hands its lambda (`userMono.flatMap(user -> …)` with `Mono<User> userMono`,
+ * `getUser(name).filter(…).flatMap(user -> …)` with `Mono<User> getUser(…)` in the file): the
+ * chain's root is a variable or a same-file method whose declared type is a container of
+ * that element, and every step in between keeps it.
+ */
+function streamElementType(call: Node, lambda: Node): string | null {
+  if (!ELEMENT_STEPS.test(call.childForFieldName("name")?.text ?? "")) return null;
+  // The lambda the step hands its element to is its first argument.
+  if (call.childForFieldName("arguments")?.namedChildren[0]?.id !== lambda.id) return null;
+  let root: Node | null | undefined = call.childForFieldName("object");
+  while (root?.type === "method_invocation" && root.childForFieldName("object") && KEEPING_STEPS.test(root.childForFieldName("name")?.text ?? "")) {
+    root = root.childForFieldName("object");
+  }
+  let declared: string | null = null;
+  if (root?.type === "identifier") declared = declaredOutward(root, root.text);
+  else if (root?.type === "method_invocation" && !root.childForFieldName("object")) declared = sameFileReturnType(root, root.childForFieldName("name")?.text);
+  const inner = declared ? CONTAINER_RE.exec(declared.replace(/\s+/g, ""))?.[1] : undefined;
+  return inner ? simpleTypeName(inner) : null;
+}
+
+/** A name's declared type as written, in the enclosing function or, from inside a lambda, the functions around it. */
+function declaredOutward(node: Node, name: string): string | null {
+  for (let at: Node | null = node; at; ) {
+    const declared = localDeclaredType(at, name, true);
+    if (declared) return declared;
+    let fn: Node | null = at.parent;
+    while (fn && !/^(method_declaration|constructor_declaration|function_declaration|lambda_expression|lambda_literal)$/.test(fn.type)) fn = fn.parent;
+    if (!fn || fn.type !== "lambda_expression") return null;
+    at = fn;
+  }
+  return null;
+}
+
+/** A method of this file's declared return type, as written (`Mono<User>`). */
+function sameFileReturnType(node: Node, callee: string | undefined): string | null {
+  if (!callee) return null;
+  const method = node.tree.rootNode.descendantsOfType("method_declaration").find((m) => m?.childForFieldName("name")?.text === callee);
+  return method?.childForFieldName("type")?.text ?? null;
+}
+
+/**
+ * The entity a call handed to an extension client produces: a same-file method's declared
+ * return (`client.create(createAdmin(…))`), or a function variable's result
+ * (`func.apply(post)` with `UnaryOperator<Post> func`).
+ */
+function producedEntityType(node: Node, arg: Node): string | null {
+  if (arg.type !== "method_invocation") return null;
+  const object = arg.childForFieldName("object");
+  const name = arg.childForFieldName("name")?.text;
+  let declared: string | null = null;
+  if (!object) declared = sameFileReturnType(node, name);
+  else if (object.type === "identifier" && /^(?:apply|get)$/.test(name ?? "")) {
+    const fnType = (declaredOutward(node, object.text) ?? "").replace(/\s+/g, "");
+    declared = /^(?:UnaryOperator|Supplier)<([A-Z][\w.]*)>$/.exec(fnType)?.[1] ?? /^(?:Bi)?Function<.*,([A-Z][\w.]*)>$/.exec(fnType)?.[1] ?? null;
+  }
+  if (!declared) return null;
+  const inner = /^(?:Mono|Optional|Uni|CompletableFuture)<\s*([A-Z][\w.]*)\s*>$/.exec(declared.replace(/\s+/g, ""))?.[1] ?? declared;
+  return /^[A-Z][\w.]*$/.test(inner) ? simpleTypeName(inner) : null;
 }
 
 /**

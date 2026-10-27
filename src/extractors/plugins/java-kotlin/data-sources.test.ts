@@ -612,6 +612,39 @@ class FixtureCountUpdater {
   });
 });
 
+describe("extension-client writes typed through a stream's element or a produced object (real-repo FP)", () => {
+  it("takes the element a container variable or a same-file method hands its lambda, and what a call produces", async () => {
+    const java = `import run.halo.app.extension.ReactiveExtensionClient;
+class CoachServiceImpl {
+  private final ReactiveExtensionClient client;
+  Mono<Coach> getCoach(String name) { return client.get(Coach.class, name); }
+  Mono<Coach> rename(String name, String title) {
+    return getCoach(name).filter(c -> c.getTitle() != null).flatMap(coach -> { coach.setTitle(title); return client.update(coach); });
+  }
+  Mono<Void> crest(Mono<Club> clubMono) {
+    return upload().flatMap(file -> clubMono.flatMap(club -> client.update(club))).then();
+  }
+  Mono<Fixture> retry(Fixture fixture, UnaryOperator<Fixture> change) {
+    return client.update(change.apply(fixture));
+  }
+  Mono<Void> seed() { return client.create(createKit("home")).then(); }
+  private Kit createKit(String name) { return new Kit(); }
+  Mono<Void> renamed(Mono<String> name) {
+    return name.map(n -> n.trim()).flatMap(n -> client.delete(n)).then();
+  }
+}`;
+    const tree = await parseSource(java, "java", "CoachServiceImpl.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database" && d.access === "write");
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual([
+      "client.update Coach",
+      "client.update Club",
+      "client.update Fixture",
+      "client.create Kit",
+      "client.delete -",
+    ]);
+  });
+});
+
 describe("Java JPA / Hibernate rows name their entity", () => {
   const db = (rows: DataSourceInfo[]) => rows.filter((r) => r.kind === "database").map((r) => [r.name, r.entity ?? null]);
 
