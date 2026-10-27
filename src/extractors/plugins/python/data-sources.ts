@@ -192,11 +192,15 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           const body = jsonBody(node);
           const reads = pythonResponseReads(node);
           const based = http.target ? statedBase(http.target, node) : null;
+          // A Locust user's `self.client` sends to the host the run is started against (`--host`,
+          // `LOCUST_HOST`): an app path behind a base nobody states here.
+          const locust = !based && /^self\.client\.\w+$/.test(fnName) && /\bfrom\s+locust\b|\bimport\s+locust\b/.test(this.sourceText) && http.target?.startsWith("/");
           sources.push(this.ds({
             kind: "api-call",
             name: http.name,
             target: based ? based.target : (http.target ? statedPath(http.target, node) ?? http.target : http.target),
             ...(based ? { baseRef: { kind: "literal" as const, key: based.origin } } : {}),
+            ...(locust ? { baseExpr: "self.client" } : {}),
             line: node.startPosition.row + 1,
             ...(body ? { requestBody: body } : {}),
             ...(reads ? { responseReads: reads } : {}),

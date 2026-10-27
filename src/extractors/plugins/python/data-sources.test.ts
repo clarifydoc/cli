@@ -312,6 +312,13 @@ describe("Python api-call — a base the file states", () => {
     ]);
   });
 
+  it("marks a Locust user's request as behind the host the run is started against (real-repo FP)", async () => {
+    const src = ["from locust import HttpUser, task", "class Fan(HttpUser):", "    @task", "    def home(self):", '        self.client.get("/")', '        self.client.get("/api/fixtures")'].join("\n");
+    const tree = await parseSource(src, "python" as never, "locustfile.py");
+    const calls = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.target} ${c.baseExpr}`)).toEqual(["/ self.client", "/api/fixtures self.client"]);
+  });
+
   it("writes out an app path a test class states once (real-repo FP)", async () => {
     expect(await rows([
       "class TestLeagueConfig(APITestCase):",
