@@ -69,6 +69,15 @@ describe("vendored roots", () => {
     expect([...dropVendoredFacts([lib, ...own])]).toEqual(["webapp/js/jquery/jquery-ui.js"]);
     expect(lib.dataSources).toEqual([]);
   });
+
+  it("never an API contract its license header marks (real-repo FP: every rpc row lost)", () => {
+    const proto = createEmptyAnalysis("pb/league.proto", "protobuf");
+    proto.vendored = true;
+    proto.routes = [{ path: "/league.MatchService/GetMatch", httpMethod: "POST", kind: "api", handler: "GetMatch", calls: [], middleware: [], line: 20 }];
+    const own = Array.from({ length: 5 }, (_, i) => createEmptyAnalysis(`src/web/page${i}.ts`, "typescript"));
+    expect([...dropVendoredFacts([proto, ...own])]).toEqual([]);
+    expect(proto.routes).toHaveLength(1);
+  });
 });
 
 describe("analyzeUnusedCode — convention merge", () => {

@@ -1,4 +1,5 @@
 import { vendoredMinoritySet } from "./security-scanner.js";
+import { isApiContractLanguage } from "../extractors/registry.js";
 import { DEAD_CODE_ENTRY_LIMIT } from "../types/analysis.js";
 import type {
   DeadCodeReport,
@@ -113,7 +114,11 @@ export function dropVendoredFacts(analyses: FileAnalysis[]): Set<string> {
   if (roots.length === 0 && licensed.size === 0) return vendored;
   for (const a of analyses) {
     const p = a.filePath.replace(/\\/g, "/");
-    if (!roots.some((r) => p.startsWith(r + "/")) && !licensed.has(a.filePath)) continue;
+    const underRoot = roots.some((r) => p.startsWith(r + "/"));
+    if (!underRoot && !licensed.has(a.filePath)) continue;
+    // An API contract carrying the Apache header (`demo.proto` in a repo whose code says only
+    // `SPDX-License-Identifier`) is the system's contract, not a library pasted in.
+    if (!underRoot && isApiContractLanguage(a.language)) continue;
     vendored.add(a.filePath);
     a.routes = [];
     a.screens = [];
