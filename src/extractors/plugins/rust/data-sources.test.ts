@@ -137,4 +137,21 @@ impl MatchReportView {
       "diesel club_actions read @17",
     ]);
   });
+
+  it("read the table an aliased dsl module stands for (real-repo FP)", () => {
+    const src = `fn limit_kits(conn: &mut Conn, league: LeagueId) {
+    use league_schema_file::schema::{
+      club::dsl as c,
+      club_kit::dsl as ck,
+    };
+    let kits: Vec<KitId> = ck::club_kit
+      .inner_join(c::club)
+      .filter(c::league_id.eq(league))
+      .select(ck::kit_id)
+      .get_results(conn);
+}`;
+    const rows = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "database");
+    expect(rows.map((r) => r.entity)).toEqual(expect.arrayContaining(["club_kit"]));
+    expect(rows.some((r) => r.entity === "ck" || r.entity === "c")).toBe(false);
+  });
 });

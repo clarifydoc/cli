@@ -87,15 +87,18 @@ function dieselDslTables(lines: string[]): { tables: Map<string, string>; module
  * `use crate::schema::{club, match_report};`, `use db::schema::club;` — each a
  * table whose column paths (`club::name.eq(x)`) the file's queries use.
  */
-function dieselSchemaModules(lines: string[]): Set<string> {
-  const out = new Set<string>();
+function dieselSchemaModules(lines: string[]): Map<string, string> {
+  // The name each module is used by → the table it is: `club` → club, `community::dsl as c` → community.
+  const out = new Map<string, string>();
   const text = lines.join("\n");
   if (!/\bschema::/.test(text)) return out;
   for (const use of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
-    for (const m of use[0].matchAll(/\bschema::(\{[^}]*\}|[a-z][a-z0-9_]*)/g)) {
+    for (const m of use[0].matchAll(/\bschema::(\{[^}]*\}|[a-z][a-z0-9_]*(?:::dsl)?(?:\s+as\s+[a-z]\w*)?)/g)) {
       for (const item of m[1]!.replace(/[{}]/g, "").split(",")) {
-        const name = item.trim().split(/\s+as\s+/).pop()!.trim();
-        if (/^[a-z][a-z0-9_]*$/.test(name) && name !== "dsl" && name !== "self") out.add(name);
+        const [path = "", alias] = item.trim().split(/\s+as\s+/);
+        const table = path.trim().split("::")[0]!;
+        const name = (alias ?? table).trim();
+        if (/^[a-z][a-z0-9_]*$/.test(name) && /^[a-z][a-z0-9_]*$/.test(table) && table !== "dsl" && table !== "self" && name !== "dsl") out.set(name, table);
       }
     }
   }
@@ -207,7 +210,7 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
   const schemaModules = dieselSchemaModules(lines);
   // A column path (`report::creator_id.eq(id)`) names its table's module: never `table`/`dsl`, a call or a deeper path.
   const columnRe = schemaModules.size
-    ? new RegExp(`(?<![\\w:.])(${[...schemaModules].join("|")})::(?!table\\b|dsl\\b)[a-z_][a-z0-9_]*\\b(?!\\s*(?:::|\\(|!))`)
+    ? new RegExp(`(?<![\\w:.])(${[...schemaModules.keys()].join("|")})::(?!table\\b|dsl\\b)[a-z_][a-z0-9_]*\\b(?!\\s*(?:::|\\(|!))`)
     : null;
   /** Tables a row was already recorded for in the statement the scan is in. */
   const statementTables = new Set<string>();
@@ -242,9 +245,10 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
     // A query whose table comes from a helper (`report_joins(id).filter(report::post_id.eq(p)).first(conn)`)
     // still reads the table its column paths name — once per statement.
     const column = !declaration ? columnRe?.exec(line) : null;
-    if (column && !statementTables.has(column[1]!)) {
-      statementTables.add(column[1]!);
-      sources.push({ kind: "database", name: "diesel", target: column[1]!, entity: column[1]!, access: "read", calls: [], line: lineNo });
+    const columnTable = column ? schemaModules.get(column[1]!) ?? column[1]! : null;
+    if (columnTable && !statementTables.has(columnTable)) {
+      statementTables.add(columnTable);
+      sources.push({ kind: "database", name: "diesel", target: columnTable, entity: columnTable, access: "read", calls: [], line: lineNo });
       continue;
     }
 
