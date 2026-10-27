@@ -655,6 +655,7 @@ class LeagueSettingsEndpoint {
     configFetcher.getConfigMap().flatMap(cm -> { cm.setGroup(group); return client.update(cm); });
     client.update(profile.coach());
     var squad = configFetcher.squadOf(group);
+    client.create(KitUtils.defaultKit(group));
     return client.create(squad).then();
   }
 }`;
@@ -663,6 +664,7 @@ class LeagueSettingsEndpoint {
     expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.entityProducer ? `${d.entityProducer.type}#${d.entityProducer.method}` : "-"}`)).toEqual([
       "client.update - LeagueConfigFetcher#getConfigMap",
       "client.update - Profile#coach",
+      "client.create - KitUtils#defaultKit",
       "client.create - LeagueConfigFetcher#squadOf",
     ]);
   });

@@ -2310,7 +2310,8 @@ function receiverMethod(call: Node, fieldType: (name: string) => string | null):
   const object = call.childForFieldName("object");
   const method = call.childForFieldName("name")?.text;
   if (object?.type !== "identifier" || !method) return null;
-  const declared = (declaredOutward(object, object.text) ?? fieldType(object.text) ?? "").replace(/<[\s\S]*$/, "").trim();
+  // A capitalized name nothing declares is the class itself (`SettingUtils.populateDefaultConfig(…)`, a static method).
+  const declared = (declaredOutward(object, object.text) ?? fieldType(object.text) ?? (/^[A-Z]/.test(object.text) ? object.text : "")).replace(/<[\s\S]*$/, "").trim();
   return /^[A-Z][\w]*$/.test(declared) ? { type: declared, method } : null;
 }
 
