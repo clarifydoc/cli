@@ -1279,3 +1279,22 @@ describe("JS request URLs held in an imported constant", () => {
     expect(calls.map((c) => c.target)).toEqual(["${CLUBS_URL}"]);
   });
 });
+
+describe("JS api-calls — a URL concatenated from a helper's result (real-repo FP)", () => {
+  it("keeps the helper call, inline or held in a local, for the URL-builder pass to substitute", async () => {
+    const rows = await apiCallsOf(`class StandingsService {
+  private readonly apiUrl = environment.apiUrl;
+  encode(filter) {
+    const route = StandingsFilter.routeFor('filter/encode/', filter.kind);
+    return this.http.post(this.apiUrl + route, filter);
+  }
+  decode(filter) {
+    return this.http.post(this.apiUrl + StandingsFilter.routeFor('filter/decode/', filter.kind), filter);
+  }
+}`);
+    expect(rows.map((r) => `${r.name} ${r.target}`)).toEqual([
+      "post ${this.apiUrl}${StandingsFilter.routeFor('filter/encode/', filter.kind)}",
+      "post ${this.apiUrl}${StandingsFilter.routeFor('filter/decode/', filter.kind)}",
+    ]);
+  });
+});

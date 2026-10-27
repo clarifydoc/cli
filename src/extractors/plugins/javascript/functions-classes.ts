@@ -465,7 +465,8 @@ export function extractUrlTemplates(
   const push = (text: string | null, bareMember = false): boolean => {
     if (text == null) return false;
     const tpl = stripUrlBase(text);
-    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl));
+    // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
+    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl);
     if (ok && !templates.includes(tpl)) templates.push(tpl);
     return templates.length >= MAX_URL_TEMPLATES;
   };
@@ -588,12 +589,28 @@ interface Locals {
   assigned: Map<string, Node[]>;
 }
 
-/** The appended expressions of every combination of guards, unconditional appends always in, fewest guards first. */
+/** The guard of a `switch` arm: `switch@<start>#<arm>`; arms of one switch exclude each other. */
+const SWITCH_ARM = /^switch@(\d+)#\d+$/;
+
+/**
+ * The appended expressions of every combination of guards, unconditional appends always in, fewest guards first.
+ * The arms of one `switch` are one choice: at most one of them is on (`switch (kind) { case A: url += 'a'; … }`
+ * gives one variant per arm, never two arms appended together).
+ */
 function appendVariants(appends: ReadonlyArray<{ guard: string | null; expr: Node }>): Node[][] {
-  const guards = [...new Set(appends.map((a) => a.guard).filter((g): g is string => g !== null))].slice(0, 3);
-  const subsets: Set<string>[] = [];
+  const all = [...new Set(appends.map((a) => a.guard).filter((g): g is string => g !== null))];
+  const guards = all.filter((g) => !SWITCH_ARM.test(g)).slice(0, 3);
+  const switches = new Map<string, string[]>();
+  for (const g of all) {
+    const m = SWITCH_ARM.exec(g);
+    if (m) (switches.get(m[1]!) ?? switches.set(m[1]!, []).get(m[1]!)!).push(g);
+  }
+  let subsets: Set<string>[] = [];
   for (let mask = 0; mask < 1 << guards.length; mask++) {
     subsets.push(new Set(guards.filter((_, i) => mask & (1 << i))));
+  }
+  for (const arms of [...switches.values()].slice(0, 2)) {
+    subsets = subsets.flatMap((on) => [on, ...arms.map((arm) => new Set([...on, arm]))]);
   }
   subsets.sort((a, b) => a.size - b.size);
   return subsets.map((on) => appends.filter((a) => a.guard === null || on.has(a.guard)).map((a) => a.expr));
@@ -664,6 +681,8 @@ function collectReturns(
       if (e?.type === "augmented_assignment_expression" && e.childForFieldName("operator")?.text === "+=") {
         const left = e.childForFieldName("left");
         const right = e.childForFieldName("right");
+        // A parameter extended in place (`apiRoute += 'series'`) starts from the value the caller passes.
+        if (left?.type === "identifier" && right && params.has(left.text) && !locals.values.has(left.text)) locals.values.set(left.text, left);
         if (left?.type === "identifier" && right && locals.values.has(left.text)) {
           const list = locals.appends.get(left.text) ?? [];
           list.push({ guard, expr: right });
@@ -683,6 +702,13 @@ function collectReturns(
       if (cons) collectReturns(branchStatements(cons), locals, out, depth + 1, inner, params);
       const alt = stmt.childForFieldName("alternative")?.namedChild(0); // else_clause → body
       if (alt) collectReturns(branchStatements(alt), locals, out, depth + 1, "?", params);
+    } else if (stmt.type === "switch_statement") {
+      // Each arm one exclusive guard: `case A: url += 'a'; break;`.
+      const arms = stmt.childForFieldName("body")?.namedChildren.filter((c) => c.type === "switch_case" || c.type === "switch_default") ?? [];
+      arms.forEach((arm, i) => {
+        const body = arm.childrenForFieldName("body").filter((c): c is Node => !!c);
+        collectReturns(body, locals, out, depth + 1, `switch@${stmt.startIndex}#${i}`, params);
+      });
     }
   }
 }

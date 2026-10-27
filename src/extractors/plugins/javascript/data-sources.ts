@@ -873,13 +873,23 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       } else pieces.push(n);
     };
     flatten(expr);
-    if (!pieces.some((p) => p.type === "string" || p.type === "template_string")) return null;
+    // A local holding a helper's result (`const route = Filters.routeFor('filter/encode/', kind)`) is
+    // that call, as written inline: the URL-builder pass substitutes the helper's template.
+    const heldCall = (p: Node): Node | null => {
+      if (p.type !== "identifier") return null;
+      const value = this.bindings()?.valueOf(p.text, p);
+      return value?.type === "call_expression" ? value : null;
+    };
+    const literal = pieces.some((p) => p.type === "string" || p.type === "template_string");
+    if (!literal && !pieces.some((p) => p.type === "call_expression" || heldCall(p))) return null;
     let out = "";
     for (const p of pieces) {
       if (p.type === "string") out += stripQuotes(p.text);
       else if (p.type === "template_string") out += resolveTemplateUrl(p, (name) => this.lookupUrl(name, p));
-      else if (p.type === "identifier") out += this.lookupUrl(p.text, p)?.url ?? `\${${p.text}}`;
-      else out += `\${${p.text.replace(/\s+/g, " ")}}`;
+      else if (p.type === "identifier") {
+        const held = heldCall(p);
+        out += this.lookupUrl(p.text, p)?.url ?? (held ? `\${${held.text.replace(/\s+/g, " ")}}` : `\${${p.text}}`);
+      } else out += `\${${p.text.replace(/\s+/g, " ")}}`;
     }
     return out;
   }

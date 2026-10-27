@@ -261,6 +261,25 @@ describe("URL-builder template extraction — guarded appends", () => {
   });
 });
 
+describe("URL-builder template extraction — a parameter extended per switch arm (real-repo FP)", () => {
+  it("emits one template per arm, the parameter the caller passes as its base", async () => {
+    const SRC = `export class StandingsFilter {
+      public static routeFor(apiRoute: string, kind: EntityKind) {
+        switch (kind) {
+          case EntityKind.Club:
+            apiRoute += 'club';
+            break;
+          case EntityKind.Player:
+            apiRoute += 'player';
+            break;
+        }
+        return apiRoute;
+      }
+    }`;
+    expect(await templatesOf(SRC, "routeFor")).toEqual(["{apiRoute}club", "{apiRoute}player"]);
+  });
+});
+
 describe("JavaScriptExtractor — a registry keyed by a constant", () => {
   it("makes each `[KEY]:` handler a function and each creator naming KEY a function calling it", async () => {
     const src = `import { createThunk, handleThunks } from 'Store/thunks';
