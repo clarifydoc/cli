@@ -1,7 +1,7 @@
 export { analyze, type AnalyzeOptions, type AnalyzeResult, type AnalyzeProgressEvent, type AnalyzeStage } from "./core/analyzer.js";
 // Plugin bodies load lazily; `analyze`/`analyzeFile` self-activate, but API
 // consumers driving extraction paths directly can pre-load here.
-export { ensureLanguagesLoaded, loadAllPlugins } from "./extractors/registry.js";
+export { ensureLanguagesLoaded, loadAllPlugins, packageKeyOf } from "./extractors/registry.js";
 export { discoverFiles } from "./core/file-discovery.js";
 export { gatherProjectInfo, detectFrameworks } from "./core/framework-detector.js";
 export { parseSource, parseFile, runQuery } from "./parsers/parser-manager.js";

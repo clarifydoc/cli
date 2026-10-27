@@ -728,6 +728,15 @@ export function packageMatchingFor(ecosystem: PackageEcosystem): PackageManagerS
   return PACKAGE_MATCHING.get(ecosystem);
 }
 
+/**
+ * A package name in its ecosystem's key form — how two manifests naming one
+ * package compare (PyPI `Club_Stats` is `club-stats`); lower case where the
+ * ecosystem says nothing.
+ */
+export function packageKeyOf(ecosystem: PackageEcosystem, name: string): string {
+  return PACKAGE_MATCHING.get(ecosystem)?.packageKey?.(name) ?? name.toLowerCase();
+}
+
 /** The package ecosystems a language's imports are matched against. */
 export function packageEcosystemsFor(language: Language): readonly PackageEcosystem[] {
   return MANIFEST_BY_LANGUAGE.get(language)?.packageEcosystems ?? [];
