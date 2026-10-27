@@ -1041,6 +1041,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (REPOSITORY_QUERY_RE.test(method)) {
       const own = enclosingTypeDecl(node);
       const typeParams = new Set((own?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []).map((t) => t.text));
+      // …and the enclosing generic method's own (`static IEnumerable<T> Query<T>(…) => db.Query<T>(sql)`).
+      for (const t of enclosingMember(node)?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []) typeParams.add(t.text);
       const generic = fn.type === "member_access_expression" ? fn.childForFieldName("name") : fn.type === "generic_name" ? fn : null;
       const typeArgs = generic?.type === "generic_name"
         ? (generic.namedChildren.find((c) => c.type === "type_argument_list")?.namedChildren ?? []).map((t) => t.text.replace(/<.*$/, "").split(".").pop()!)
