@@ -64,6 +64,8 @@ describe("isTestFile — per-language filename conventions", () => {
     ["api/test_views.py", "python"],
     ["api/views_test.py", "python"],
     ["api/conftest.py", "python"],
+    ["load/locustfile.py", "python"],
+    ["load/locustfiles/garage_load.py", "python"],
     ["src/main/PlayerServiceTest.java", "java"],
     ["src/main/PlayerServiceIT.java", "java"],
     ["src/main/PlayerServiceTest.kt", "kotlin"],

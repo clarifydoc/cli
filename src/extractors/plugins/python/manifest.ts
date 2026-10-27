@@ -41,7 +41,8 @@ export const pythonManifest: LanguagePluginManifest = {
     ],
   },
   grammar: { variants: { python: { pkg: "tree-sitter-python", wasm: "tree-sitter-python.wasm" } } },
-  testFilePatterns: [/(^|[\\/])test_[^\\/]*\.py$/, /_test\.py$/, /(^|[\\/])conftest\.py$/],
+  // Locust load tests (`locustfile.py`, a `locustfiles/` folder) drive the API as tooling.
+  testFilePatterns: [/(^|[\\/])test_[^\\/]*\.py$/, /_test\.py$/, /(^|[\\/])conftest\.py$/, /(^|[\\/])locustfile[^\\/]*\.py$/, /(^|[\\/])locustfiles[\\/]/],
   builtinMembers: ["append", "extend", "insert", "remove", "pop", "clear", "index", "count", "sort", "reverse", "copy", "items", "keys", "values", "update", "setdefault", "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize", "startswith", "endswith", "split", "rsplit", "splitlines", "join", "format", "replace", "encode", "decode", "find", "rfind", "isdigit", "isalpha", "read", "readline", "readlines", "write", "writelines", "close", "flush", "seek", "tell", "open", "connect", "login", "sendmail", "quit", "send", "recv", "bind", "listen", "accept", "get", "add", "discard", "union", "intersection", "difference"],
   externalModulePrefixes: ["os", "sys", "json", "re", "math", "datetime", "typing", "enum", "collections", "itertools", "functools", "pathlib", "hashlib", "asyncio", "logging", "unittest", "abc", "fastapi", "flask", "django", "pydantic", "sqlalchemy", "requests", "httpx", "aiohttp", "pytest", "numpy", "pandas", "scipy"],
   frameworkImportHints: { sqlalchemy: "sqlalchemy", "django.db.models": "django-orm", "django.db": "django-orm", tortoise: "tortoise-orm", peewee: "peewee", pony: "pony-orm", "pony.orm": "pony-orm" },
