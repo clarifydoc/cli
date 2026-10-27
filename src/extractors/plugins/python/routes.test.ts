@@ -358,3 +358,33 @@ async def retrieve_club(club: Club = Depends(get_club_from_path), user: User = D
     expect(routes[0]!.calls.map((c) => c.name)).toEqual(["get_club_from_path", "get_current_user_authorizer", "deps.get_clubs_repo"]);
   });
 });
+
+describe("FastAPI dependencies that guard a route", () => {
+  it("takes a dependency for a guard only when its callable checks the caller, never a repository factory or an optional caller", async () => {
+    const routes = await routesOf(`
+router = APIRouter()
+
+@router.post("/clubs/login")
+async def login(repo: ClubsRepository = Depends(get_repository(UsersRepository))):
+    pass
+
+@router.get("/managers/{username}")
+async def manager(profile: Profile = Depends(get_profile_by_username_from_path), viewer = Depends(get_current_user_authorizer(required=False)), fan = Depends(try_get_current_user)):
+    pass
+
+@router.put("/clubs/{slug}")
+async def update(club = Depends(check_club_modification_permissions), user = Depends(get_current_user_authorizer()), owner = Depends(deps.get_current_active_user), key = Depends(verifyApiKey)):
+    pass
+
+@router.get("/fixtures", dependencies=[Depends(get_db), Depends(require_admin)])
+async def fixtures():
+    pass
+`);
+    expect(routes.map((r) => r.auth?.policies ?? [])).toEqual([
+      [],
+      [],
+      ["check_club_modification_permissions", "get_current_user_authorizer()", "deps.get_current_active_user", "verifyApiKey"],
+      ["require_admin"],
+    ]);
+  });
+});

@@ -247,13 +247,51 @@ function guardsFromDependencies(list: Node): GuardAttr[] {
   const items = list.type === "list" || list.type === "tuple" ? list.namedChildren : [list];
   for (const item of items) {
     const guard = item.type === "call" ? dependencyGuard(item) : null;
-    if (guard) guards.push(guard);
+    if (guard && (isSecurityMarker(item) || isAuthDependency(item))) guards.push(guard);
   }
   return guards;
 }
 
-/** Names of the dependency callables that are authentication/authorization checks, not data providers. */
-const AUTH_DEPENDENCY = /auth|user|token|security|scope|permission|login|verify|require/i;
+/** Words of a dependency callable's name that say it checks who is calling: `verify_token`, `get_admin_user`, `oauth2_scheme`. */
+const AUTH_WORD = /^(?:auth|auths|authn|authz|authori[sz]\w*|authenticat\w*|token|tokens|jwt|oauth2?|bearer|security|secure|scopes?|permissions?|perms?|login|logged|verify|verified|requires?|required|admin|superuser|credentials?|apikey|guard|guarded|protected|signed|signature|access)$/;
+/** A user-ish word guards only when the name says it is the caller (`get_current_user`), not a record looked up (`get_profile_by_username`). */
+const CALLER_WORD = /^(?:current|active|logged|authenticated|authorized|request|requesting|session)$/;
+const PRINCIPAL_WORD = /^(?:user|users|account|principal|member|identity|caller)$/;
+/** An optional caller (`try_get_current_user`, `authorizer(required=False)`) lets everyone in: not a guard. */
+const OPTIONAL_WORD = /^(?:try|optional|maybe|soft)$/;
+
+/** `get_current_user_authorizer` → [get, current, user, authorizer]; `deps.verifyToken` → [verify, token]. */
+function nameWords(name: string): string[] {
+  const leaf = name.replace(/^.*\./, "");
+  return leaf.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/_+/).filter(Boolean);
+}
+
+/** `Security(x)` — FastAPI's own marker for a security dependency; always a guard. */
+function isSecurityMarker(call: Node): boolean {
+  return call.childForFieldName("function")?.text === "Security";
+}
+
+/**
+ * Whether `Depends(x)` is an authentication/authorization check rather than a
+ * data provider: judged on the callable's NAME (a factory call's function,
+ * never its arguments — `get_repository(UsersRepository)` is a repository),
+ * and refused when the dependency is optional (`required=False`,
+ * `auto_error=False`, `try_get_current_user`).
+ */
+function isAuthDependency(call: Node): boolean {
+  const args = call.childForFieldName("arguments");
+  const target = args ? firstPositionalArg(args) : null;
+  const callable = target?.type === "call" ? target.childForFieldName("function") : target;
+  if (!callable || (callable.type !== "identifier" && callable.type !== "attribute")) return false;
+  if (target!.type === "call") {
+    const factoryArgs = target!.childForFieldName("arguments");
+    for (const kw of ["required", "auto_error"]) if (factoryArgs && keywordArg(factoryArgs, kw)?.text === "False") return false;
+  }
+  const words = nameWords(callable.text);
+  if (words.some((w) => OPTIONAL_WORD.test(w))) return false;
+  if (words.some((w) => AUTH_WORD.test(w))) return true;
+  return words.some((w) => PRINCIPAL_WORD.test(w)) && words.some((w) => CALLER_WORD.test(w));
+}
 
 /**
  * `Depends(x)` → policy `x`; `Security(x, scopes=[…])` → policy `x` with the
@@ -554,7 +592,7 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
       params.push(boundParam(name, type, MARKER_BINDINGS[mk]!));
       if (mk === "Depends" || mk === "Security") {
         const guard = dependencyGuard(marker!);
-        if (guard && (mk === "Security" || AUTH_DEPENDENCY.test(guard.policies![0]!))) guards.push(guard);
+        if (guard && (mk === "Security" || isAuthDependency(marker!))) guards.push(guard);
         // The framework calls a dependency named as a callable before the
         // handler runs (`Depends(get_club_from_path)`), so the route reaches
         // what it reads. A factory call (`Depends(get_authorizer())`) hands it
