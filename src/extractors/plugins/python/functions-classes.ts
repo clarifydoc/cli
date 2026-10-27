@@ -323,11 +323,19 @@ export class PythonExtractor extends FunctionClassExtractor {
         // holds is the one each construction passes — the project pass reads it there.
         const init = parsed.find((p) => p.fn.name === "__init__");
         const selfName = init ? instanceParam(init) : null;
-        if (init && selfName && properties.some((p) => CLASS_TYPED.test(p.type ?? ""))) {
+        // An untyped parameter assigned unchanged (`self.model = model`) may hold a class too: whether it
+        // does is for the constructions to say, so the parameter only names the attribute it fills.
+        const untyped = init?.fn.params.some((p) => !p.type && !p.name.startsWith("*")) ?? false;
+        if (init && selfName && (untyped || properties.some((p) => CLASS_TYPED.test(p.type ?? "")))) {
           const from = constructorParamAttributes({ node: init.node, fn: init.fn, selfName });
           for (const prop of properties) {
             const param = from.get(prop.name);
             if (param && CLASS_TYPED.test(prop.type ?? "")) prop.assignedFrom = param;
+          }
+          const declared = new Map(properties.map((p) => [p.name, p]));
+          for (const [attr, param] of from) {
+            const p = init.fn.params.find((x) => x.name === param);
+            if (p && !p.type && !declared.get(attr)?.type) p.assignedTo = attr;
           }
         }
       }

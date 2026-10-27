@@ -752,6 +752,14 @@ export interface ParamInfo {
   variadic?: boolean;
   /** A caller may leave it out without a default standing in (TypeScript `b?: number`). */
   optional?: boolean;
+  /**
+   * The instance attribute a constructor assigns this untyped parameter to,
+   * unchanged (`def __init__(self, model): self.model = model` → `model`):
+   * what lets a project pass read the class an instance holds off what each
+   * construction passes, when no annotation says it holds a class. Omitted
+   * for a typed parameter (`PropertyInfo.assignedFrom` covers a `type[…]` one).
+   */
+  assignedTo?: string;
 }
 
 /**

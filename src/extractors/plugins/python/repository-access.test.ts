@@ -140,4 +140,28 @@ describe("Python model held by an instance attribute", () => {
     const { generic } = build([["RepositoryMatches", "MatchModel"]]);
     expect(generic.dataSources.map((d) => d.entity)).toEqual(["MatchModel"]);
   });
+
+  /** The base's model parameter written without an annotation: a class only because every construction hands one. */
+  const untyped = (args: string[][]) => {
+    const models = file("db/models.py", [cls("MatchModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const init = ctor(["session", "model"]);
+    init.params[1].assignedTo = "model";
+    const base = file("repos/base.py", [at(cls("BaseRepository", { methods: [init] }), 1, 40)]);
+    base.dataSources = [row(30)];
+    const users = file("repos/factory.py", [cls("Repositories", {
+      methods: args.map((a, i) => ({ ...method(`r${i}`, [], null), calls: [{ name: "BaseRepository", kind: "cross-file", target: null, line: 70 + i, args: a }] })),
+    })]);
+    new PythonEntityExtractor().reconcileProject([models, base, users]);
+    return base.dataSources[0]!.entity ?? null;
+  };
+
+  it("reads an untyped constructor parameter's model off the constructions when each hands the same class", () => {
+    expect(untyped([["self.session", "MatchModel"], ["session", "models.MatchModel"]])).toBe("MatchModel");
+  });
+
+  it("names none when a construction hands an untyped parameter anything but a class", () => {
+    expect(untyped([["self.session", "MatchModel"], ["self.session", "model_for(kind)"]])).toBeNull();
+    expect(untyped([["self.session", "MatchModel"], ["self.session", "chosen_model"]])).toBeNull();
+  });
 });
+

@@ -899,6 +899,9 @@ function resolveEntityAttributes(analyses: FileAnalysis[]): void {
       const i = ctor.init.params.findIndex((p) => p.name === prop.assignedFrom);
       return i >= 0 ? { index: i } : null;
     }
+    // An untyped parameter the constructor stores there: a class only if every construction hands one (`modelsOf`).
+    const untyped = ctor.init.params.findIndex((p) => p.assignedTo === attr);
+    if (untyped >= 0) return { index: untyped };
     // Handed on to the base: `super().__init__(session, model)`, `Base.__init__(self, session, model)`.
     const forward = ctor.init.calls?.find((c) => c.args && /^(?:super\(\)|[A-Z]\w*)\.__init__$/.test(c.name));
     const explicit = forward ? /^([A-Z]\w*)\.__init__$/.exec(forward.name)?.[1] : undefined;

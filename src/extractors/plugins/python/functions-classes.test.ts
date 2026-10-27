@@ -298,4 +298,24 @@ class ClubRepository:
       ["schema", "schema"],
     ]);
   });
+
+  it("names the attribute an untyped parameter is stored in, unchanged, and nothing for a typed or reworked one", async () => {
+    const { classes } = await extract(`
+class MatchRepository:
+    def __init__(self, session: Session, model, table_name, limit):
+        self.session = session
+        self.model = model
+        self.table = table_name.lower()
+        self.limit = limit
+        self.limit = limit or 10
+`);
+    const init = classes[0]!.methods.find((m) => m.name === "__init__")!;
+    expect(init.params.map((p) => [p.name, p.assignedTo ?? null])).toEqual([
+      ["session", null],
+      ["model", "model"],
+      ["table_name", null],
+      ["limit", null],
+    ]);
+  });
 });
+
