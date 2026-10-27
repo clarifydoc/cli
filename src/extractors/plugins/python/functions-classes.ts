@@ -4,6 +4,7 @@ import type { FunctionInfo, ClassInfo, ParamInfo, Language } from "../../functio
 import type { PropertyInfo } from "../../../types/analysis.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { scanRequestAccess } from "./request-access.js";
+import { pyStringValue } from "./data-sources.js";
 import {
   annotatedAliases,
   annotationToken,
@@ -208,6 +209,10 @@ export class PythonExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    // A URL helper (`def clubs_slug(slug): return f"{prefix}/clubs/{slug}"`): the path it returns,
+    // its parameters as `{name}`, a module's value as a `${…}` hole.
+    const template = body ? returnedUrl(body) : null;
+    if (template) fn.urlTemplate = template;
     // A dependency factory (`return _get_current_user if required else _get_optional`): what
     // it hands out is called by whoever asked for it — FastAPI's `Depends(get_authorizer())`.
     if (body && /\breturn\b/.test(bodyText)) {
@@ -690,4 +695,13 @@ function returnedModuleFunctions(body: Node): Array<{ name: string; line: number
   };
   visit(body);
   return out;
+}
+
+/** The URL path a body made of one `return` (a docstring before it allowed) hands back, when it has a `/`. */
+function returnedUrl(body: Node): string | null {
+  const stmts = body.namedChildren.filter((c) => c.type !== "comment" && !(c.type === "expression_statement" && c.namedChild(0)?.type === "string"));
+  if (stmts.length !== 1 || stmts[0]!.type !== "return_statement") return null;
+  const value = stmts[0]!.namedChild(0);
+  const text = value ? pyStringValue(value, value) : null;
+  return text && text.includes("/") ? text : null;
 }

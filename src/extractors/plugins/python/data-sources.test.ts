@@ -532,7 +532,7 @@ def test_standings():
 `);
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
       "post ${api_routes.clubs_create_url}",
-      "get null",
+      "get ${api_routes.clubs_slug(\"rovers\")}",
       "delete /api/clubs/rovers",
       "get /api/standings",
     ]);
@@ -550,5 +550,32 @@ describe("Python raw SQL — an f-string's value in a table's place (real-repo F
     const tree = await parseSource(src, "python" as never, "x.py");
     const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && d.name === "session.execute");
     expect(rows.map((d) => d.entity ?? null)).toEqual([null, "clubs"]);
+  });
+});
+
+describe("Python api-call — a URL a helper of another module builds (real-repo FP)", () => {
+  it("takes the helper's path, a literal argument spliced in, any other a {} segment, its module's values filled", async () => {
+    const { PythonExtractor } = await import("./functions-classes.js");
+    const helperSrc = [
+      'prefix = "/api"',
+      "",
+      "def clubs_slug(slug):",
+      '    """`/api/clubs/{slug}`"""',
+      '    return f"{prefix}/clubs/{slug}"',
+    ].join("\n");
+    const tree = await parseSource(helperSrc, "python" as never, "tests/utils/api_routes/__init__.py");
+    const helper = new PythonExtractor().extractFunctions(tree, helperSrc).find((f) => f.name === "clubs_slug")!;
+    expect(helper.urlTemplate).toBe("${prefix}/clubs/{slug}");
+    const analyses = [
+      { filePath: "tests/utils/api_routes/__init__.py", functions: [helper], moduleValues: { prefix: "/api" } },
+      { filePath: "tests/test_clubs.py", functions: [] },
+    ] as never;
+    const calls = [
+      { kind: "api-call", name: "get", target: "${api_routes.clubs_slug(club.slug)}", line: 3, calls: [], filePath: "tests/test_clubs.py" },
+      { kind: "api-call", name: "get", target: '${api_routes.clubs_slug("rovers")}?page=2', line: 4, calls: [], filePath: "tests/test_clubs.py" },
+    ] as never;
+    const ctx = { importIndex: { localFor: (_f: string, name: string) => (name === "api_routes" ? "tests/utils/api_routes/__init__.py" : null) } } as never;
+    expect(new PythonDataSourceExtractor().resolveProject(calls, analyses, ctx)).toBe(2);
+    expect((calls as Array<{ target: string }>).map((c) => c.target)).toEqual(["/api/clubs/{}", "/api/clubs/rovers?page=2"]);
   });
 });

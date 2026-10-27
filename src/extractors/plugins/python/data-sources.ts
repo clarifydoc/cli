@@ -1,13 +1,48 @@
 import type { Node } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
-import type { DataSourceInfo, JsonSchemaNode, Language } from "../../../types/analysis.js";
-import { DataSourceExtractor } from "../../data-sources/base.js";
+import type { DataSourceInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
+import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
+import type { ProjectContext } from "../../../types/project.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { pythonResponseReads } from "./response-reads.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
+
+  /**
+   * A request whose URL a Python helper builds (`api_client.get(api_routes.clubs_slug(slug))`,
+   * the helper `def clubs_slug(slug): return f"{prefix}/clubs/{slug}"` in the module the
+   * name is imported as): the helper's path, a literal argument spliced in, any other
+   * a `{}` segment, and the helper module's own values (`prefix`) filled.
+   */
+  override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
+    const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+    let n = 0;
+    for (const call of calls) {
+      if (call.kind !== "api-call" || !call.target?.startsWith("${") || !call.filePath.endsWith(".py")) continue;
+      const m = /^\$\{([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?\(([^()]*)\)\}(.*)$/.exec(call.target);
+      if (!m) continue;
+      const [, head, member, argsText, rest] = m;
+      const file = member ? ctx.importIndex.localFor(call.filePath, head!) : call.filePath;
+      const helperFile = file ? byFile.get(file) : undefined;
+      const name = member ?? head!;
+      const helper = helperFile?.functions.find((f) => f.name === name && f.urlTemplate);
+      if (!helper?.urlTemplate) continue;
+      const args = argsText!.split(",").map((a) => a.trim()).filter((a) => a && !a.includes("="));
+      let out = helper.urlTemplate;
+      helper.params.forEach((p, i) => {
+        const token = `{${p.name}}`;
+        if (!out.includes(token)) return;
+        const lit = i < args.length ? /^[rbuf]*(["'])(.*)\1$/.exec(args[i]!) : null;
+        out = out.split(token).join(lit && !/^[a-z]*f/i.test(args[i]!) ? lit[2]! : "{}");
+      });
+      out = out.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, v: string) => helperFile!.moduleValues?.[v] ?? hole);
+      call.target = out + rest!;
+      n++;
+    }
+    return n;
+  }
 
   /** Names this file binds to a vector-store client: `qdrant = QdrantClient(…)`, `self.db = chromadb.Client()`. */
   private vectorClients = new Set<string>();
@@ -707,9 +742,14 @@ function annotatedParam(name: string, at: Node): string | null {
   return null;
 }
 
-/** A URL another module defines, named by the argument (`api_routes.recipes_url`): a `${…}` hole the project pass fills. */
+/**
+ * A URL another module defines, named by the argument (`api_routes.recipes_url`), or a
+ * URL helper's call (`api_routes.recipes_slug(slug)`): a `${…}` hole the project pass fills.
+ */
 function moduleValueHole(arg: Node): string | null {
-  return (arg.type === "attribute" || arg.type === "identifier") && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){0,2}$/.test(arg.text) ? `\${${arg.text}}` : null;
+  if ((arg.type === "attribute" || arg.type === "identifier") && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){0,2}$/.test(arg.text)) return `\${${arg.text}}`;
+  const fn = arg.type === "call" ? arg.childForFieldName("function")?.text ?? "" : "";
+  return /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?$/.test(fn) && !arg.text.includes("\n") ? `\${${arg.text.replace(/\s+/g, " ")}}` : null;
 }
 
 /** The constructors of an HTTP client object. */
@@ -961,7 +1001,7 @@ function positional(call: Node): Node[] {
  * those (`url = f"{BASE}/users/{id}"; requests.get(url)`). Null when the
  * expression carries no literal text at all.
  */
-function pyStringValue(node: Node, at: Node, depth = 0): string | null {
+export function pyStringValue(node: Node, at: Node, depth = 0): string | null {
   if (depth > 3) return null;
   if (node.type === "string") {
     const text = pyStringLiteral(node);
