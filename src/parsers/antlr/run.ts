@@ -10,6 +10,14 @@ import {
   type ParserRuleContext,
 } from "antlr4ng";
 
+/**
+ * The text the lexer reads: lines as `splitLines` counts them (ANTLR counts only `\n`, and a CR-only file would
+ * read as one line), without a byte-order mark, which is no token of any grammar. Token offsets index this text.
+ */
+export function normalizeSource(source: string): string {
+  return source.replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+}
+
 /** Counts the syntax errors a lexer or parser reports, instead of printing them. */
 class ErrorCounter extends BaseErrorListener {
   count = 0;
@@ -35,8 +43,7 @@ export function parseWithAntlr<P extends Parser, T extends ParserRuleContext>(
   makeParser: (tokens: CommonTokenStream) => P,
   entry: (parser: P) => T,
 ): AntlrParse<T> {
-  // Lines as `splitLines` counts them: ANTLR counts only `\n`, and a CR-only file would read as one line.
-  const lexer = makeLexer(CharStream.fromString(source.replace(/\r\n?/g, "\n")));
+  const lexer = makeLexer(CharStream.fromString(normalizeSource(source)));
   const errors = new ErrorCounter();
   lexer.removeErrorListeners();
   lexer.addErrorListener(errors);

@@ -14,6 +14,12 @@ recorded in the git history only.
 
 ### Added
 
+- **Rust is read by a parser.** Rust's functions and calls come from its ANTLR4 grammar too, under the same `antlr`
+  feature and per-file fallback (`no-antlr:rust` keeps the patterns). A method chain rustfmt wraps over lines keeps
+  its receiver (`garage⏎.open_bay()` is `garage.open_bay`, `Builder::new()⏎.build()` is `Builder.new().build`),
+  so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
+  are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
+  expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
 - **Go and Lua are read by a parser.** The functions and calls of Go and Lua files come from their ANTLR4 grammars
   (antlr4ng) instead of line patterns: exact function extents (a Lua function ends at its `end`), calls written over
   several lines or without parentheses (`require "x"`, `db.Get[User](ctx)`), and nothing read from comments, strings

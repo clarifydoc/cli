@@ -21,6 +21,8 @@ export interface PatternCallName {
   leafName: string;
   line: number;
   column: number;
+  /** The type a path names the call on (`Club::new` → `Club`), as a language's call pattern states it. */
+  receiverType?: string;
 }
 
 /**
@@ -72,6 +74,6 @@ export function recordPatternCalls(found: PatternCallName[]): CallInfo[] {
   found.sort((a, b) => a.line - b.line || rank(a) - rank(b) || a.column - b.column);
   const calls: CallInfo[] = [];
   const add = callRecorder(calls);
-  for (const c of found) add(c.name, c.leafName, c.line, c.column);
+  for (const c of found) add(c.name, c.leafName, c.line, c.column, c.receiverType ? { receiverType: c.receiverType } : undefined);
   return calls;
 }

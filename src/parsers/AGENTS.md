@@ -39,7 +39,7 @@ Delphi form file parser (`.dfm`). Not tree-sitter — uses a custom recursive-de
 
 ## antlr/ — ANTLR4 parsers for regex languages
 
-antlr4ng parsers that read the functions and calls of regex languages (Go, Lua), on by default through the `antlr`
+antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, Rust), on by default through the `antlr`
 feature (`core/feature-flags.ts`; `--feature no-antlr` switches them off). Generated from
 `grammars/antlr/<lang>/*.g4` by `node scripts/generate-antlr.mjs` and committed. Hand-written beside them: each
 grammar's base class ported from the `antlr4` runtime (`GoParserBase.ts`, `LuaLexerBase.ts`, …) and `run.ts`

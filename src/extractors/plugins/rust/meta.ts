@@ -34,6 +34,8 @@ export const rustMeta: LanguagePluginMeta = {
   ...rustManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: rustSpec,
+  // Functions and calls read by the grammars-v4 Rust grammar while the `antlr:rust` feature is on (antlr.ts).
+  antlr: { grammar: "rust", load: () => import("./antlr.js").then((m) => m.readRust) },
   routeResolvers: [rocketMountResolver],
   // Multi-line strings, and one-line strings declaring a Rust item, are blanked so
   // their code-shaped text is not read as functions; the data sources (SQL in

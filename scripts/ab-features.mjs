@@ -8,7 +8,8 @@
  * - per language: files B's front end read, and the ones it handed back to the patterns (syntax errors);
  * - functions: found by both, by one arm only, and for the ones both found whether the spans agree;
  * - calls: per function both found, the call names only A or only B records;
- * - the project: call→definition links gained and lost, and the size of every other result.
+ * - the project: call→definition edges (caller → definition, whatever the call is named) gained and lost, and
+ *   the size of every other result.
  *
  * Every disagreement kind comes with examples (file:line and the source line), which is what decides which
  * arm is right: the counts say how much differs, the examples say who is wrong.
@@ -112,9 +113,28 @@ function linkKeys(summary) {
     const id = (ref) => (typeof ref === "number" ? el[ref]?.id ?? el[ref] : ref);
     const from = id(l.from);
     const to = id(l.to);
-    keys.set(`${from} -> ${to} (${l.callName ?? l.relation})`, { from: String(from), to: String(to), call: l.callName ?? l.relation });
+    // An edge is its two ends: the same edge under another call name (`self.load` for `load`) is not a change.
+    const key = `${from} -> ${to}`;
+    if (!keys.has(key)) keys.set(key, { from: String(from), to: String(to), call: l.callName ?? l.relation });
   }
   return keys;
+}
+
+/** Why an edge only A makes is not in B, as far as the two readings tell. */
+function lostKind(project, A, B, edge) {
+  if (edge.from === edge.to) return "a function linked to itself";
+  const [file, symbol] = edge.from.split("::");
+  const fnsOf = (analyses) => {
+    const a = analyses.get(file);
+    return a ? [...(a.functions ?? []), ...(a.classes ?? []).flatMap((c) => (c.methods ?? []).map((m) => ({ ...m, name: `${c.name}.${m.name}` })))] : [];
+  };
+  const call = fnsOf(A).find((f) => f.name === symbol)?.calls?.find((c) => c.name === edge.call);
+  if (!call) return "other";
+  const leaf = edge.call.split(".").pop();
+  const line = sourceLine(project, file, call.line);
+  if (new RegExp(`\\b(?:fn|func|def|function|sub)\\s+${leaf.replace(/[$]/g, "\\$")}\\b`).test(line)) return "a declaration read as a call";
+  const holder = fnsOf(B).find((f) => f.name !== symbol && f.line <= call.line && call.line <= f.endLine && (f.calls ?? []).some((c) => c.name.split(".").pop() === leaf));
+  return holder ? "the call is a nested function's" : "other";
 }
 
 function sizes(summary) {
@@ -229,15 +249,23 @@ function compare(project, dirA, dirB, examples) {
     consumed.set(key, left - 1);
     return false;
   });
-  for (const k of moved.slice(0, examples)) samples.add("link moved to another function of its file", k);
-  for (const k of lost.slice(0, examples)) samples.add("link only A makes", k);
-  for (const k of gained.slice(0, examples)) samples.add("link only B makes", k);
+  const label = (map, k) => `${k} (${map.get(k).call})`;
+  for (const k of moved.slice(0, examples)) samples.add("link moved to another function of its file", label(la, k));
+  // Edges only A makes that are no loss: a function linked to itself through a bare name (a call on another
+  // object), a declaration's own line read as a call, and a call B gives to the nested function holding it.
+  const lostKinds = {};
+  for (const k of lost) {
+    const kind = lostKind(project, A, B, la.get(k));
+    lostKinds[kind] = (lostKinds[kind] ?? 0) + 1;
+    samples.add(`link only A makes (${kind})`, label(la, k));
+  }
+  for (const k of gained.slice(0, examples)) samples.add("link only B makes", label(lb, k));
   const sizeA = sizes(sa);
   const sizeB = sizes(sb);
   const changedSizes = Object.keys({ ...sizeA, ...sizeB })
     .filter((k) => sizeA[k] !== sizeB[k])
     .map((k) => ({ field: k, a: sizeA[k] ?? 0, b: sizeB[k] ?? 0 }));
-  return { perLanguage, links: { a: la.size, b: lb.size, lost: lost.length, gained: gained.length, moved: moved.length }, changedSizes, samples: Object.fromEntries(samples.kinds) };
+  return { perLanguage, links: { a: la.size, b: lb.size, lost: lost.length, gained: gained.length, moved: moved.length, lostKinds }, changedSizes, samples: Object.fromEntries(samples.kinds) };
 }
 
 const pct = (n, d) => (d === 0 ? "—" : `${((100 * n) / d).toFixed(1)}%`);
@@ -250,7 +278,8 @@ function report(project, feature, timing, result) {
   for (const [l, s] of Object.entries(result.perLanguage)) {
     lines.push(`| ${l} | ${s.files} | ${s.parsed} | ${s.fallbackSyntax + s.fallbackError} | ${s.fnBoth} | ${s.fnOnlyA} | ${s.fnOnlyB} | ${pct(s.spanSame, s.fnBoth)} | ${pct(s.spanOneLine, s.fnBoth)} | ${s.callsBoth} | ${s.callsOnlyA} | ${s.callsOnlyB} | ${pct(s.fnCallsSame, s.fnBoth)} |`);
   }
-  lines.push("", `Call→definition links: A ${result.links.a}, B ${result.links.b} (${result.links.gained} only B, ${result.links.lost} only A, ${result.links.moved} moved to another function of the same file).`, "");
+  const kinds = Object.entries(result.links.lostKinds ?? {}).map(([k, n]) => `${n} ${k}`).join(", ");
+  lines.push("", `Call→definition links: A ${result.links.a}, B ${result.links.b} (${result.links.gained} only B, ${result.links.lost} only A — ${kinds} — ${result.links.moved} moved to another function of the same file).`, "");
   if (result.changedSizes.length > 0) {
     lines.push("Results that changed size:", "", "| field | A | B |", "|---|---|---|");
     for (const c of result.changedSizes) lines.push(`| ${c.field} | ${c.a} | ${c.b} |`);

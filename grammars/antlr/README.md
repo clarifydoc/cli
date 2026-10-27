@@ -16,9 +16,11 @@ Each generated file starts with its grammar's licence block, which the bundle ke
 |---|---|---|
 | `go/` | [grammars-v4](https://github.com/antlr/grammars-v4) `golang/` at `d1689adc` (2026-10-26) | BSD (in the files) |
 | `lua/` | [grammars-v4](https://github.com/antlr/grammars-v4) `lua/` at `d1689adc` (2026-10-26) | MIT (in the files) |
+| `rust/` | [grammars-v4](https://github.com/antlr/grammars-v4) `rust/` at `d1689adc` (2026-10-26) | MIT (in the files) |
 
 The target-specific base classes upstream ships for the `antlr4` JavaScript runtime
-(`golang/TypeScript/GoParserBase.ts`, `lua/TypeScript/Lua*Base.ts`) are ported to antlr4ng beside the generated code.
+(`golang/TypeScript/GoParserBase.ts`, `lua/TypeScript/Lua*Base.ts`, `rust/Antlr4ng/Rust*Base.ts`) are ported to antlr4ng
+beside the generated code.
 
 ## Changes from upstream
 
@@ -46,6 +48,30 @@ per target at its `// Insert here @header` marker.
 - **Lua, base class:** `IsFunctionCall` looks past the whole name path (`a.b[c].d`) for a call. Upstream looked one
   token past the first name, so `gio.File.open(p):read()` parsed as the variable `gio.File.open` and a second
   statement `(p):read()`.
+
+- **Rust, lexer:**
+  - One rule for every block comment, which may hold `*`. Upstream's `~[*]` refused a doc comment with a Markdown
+    list.
+  - An empty `//` or `///` line ends at its newline. Upstream's swallowed the next line.
+  - One escape per backslash in strings, so `"\\"` ends where it should.
+  - `c"…"` strings, tabs as whitespace, and `~` as a token.
+  - SHEBANG and FLOAT_LITERAL predicates moved after their first characters. A predicate at a rule's start kept the
+    lexer from caching any DFA state, at about 60 KB/s, and moving them made lexing about 230× faster.
+- **Rust, parser: newer syntax.** `let … else`, let chains in `if`/`while` (`condition`, replacing `ifLetExpression`
+  and the `while let` rule), `async` closures, `_ =`, `const { }`, `&raw const`/`&raw mut`, `..=x` patterns,
+  associated-type bounds and where-clauses, const-generic defaults, `use<…>` capturing, `#[unsafe(…)]`, `#[doc =
+  include_str!(…)]`, `$keyword` metavariables, `union` as a name, and `&&T` as a type.
+- **Rust, parser: ambiguities removed.**
+  - Tuple, unit and enum-variant struct expressions had exactly the shapes of calls and paths.
+  - The four alternatives of `genericArgs` described the same input.
+  - `foo!(…);` was a statement, an item and an expression.
+  - A cast type is its own rule (`castType`), so no type is followed by `<`.
+  - Block-like statements and match arms are read once: the statement-start rule `statementExpression` mirrors
+    `expression` without a block-like leftmost operand, and `statementsTail`/`matchArmBody` end at one `;`/`,`.
+  - A block-like statement may go on with `.`/`?` steps, as rustc allows.
+
+  Upstream's parse ran at about 60 KB/s and failed on 5–30% of real files. Now SLL prediction succeeds nearly
+  everywhere, and on nine real repositories only rustc's own error fixtures and unstable syntax fail.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL
 prediction succeed on all but 2 of its files, with no file failing to parse.
