@@ -94,6 +94,40 @@ end`;
   });
 });
 
+describe("rails-route-anchor — guards a base controller declares", () => {
+  it("gives every action its ancestors' guard filters, unless it skips them; loaders and feature switches guard nothing", () => {
+    const router = `Rails.application.routes.draw do
+  namespace :api do
+    resources :fixtures, only: [:index, :show]
+  end
+  resources :fans, only: [:index]
+end`;
+    const app = { ...cls("ApplicationController", "ActionController::API", []), decorators: ["before_action :set_current_user"] } as ClassInfo;
+    const base = {
+      ...cls("Api::BaseController", "ApplicationController", []),
+      decorators: ["before_action :authenticate_user!", "before_action :ensure_league_feature_enabled", "before_action :check_authorization"],
+    } as ClassInfo;
+    const fixtures = { ...cls("Api::FixturesController", "Api::BaseController", [["index", 4], ["show", 8]]), decorators: ["skip_before_action :check_authorization only: index"] } as ClassInfo;
+    const fans = { ...cls("FansController", "ApplicationController", [["index", 3]]) } as ClassInfo;
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/application_controller.rb", [app]),
+      file("app/controllers/api/base_controller.rb", [base]),
+      file("app/controllers/api/fixtures_controller.rb", [fixtures]),
+      file("app/controllers/fans_controller.rb", [fans]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const auth = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)?.auth;
+    expect(auth("/api/fixtures")?.policies).toEqual(["authenticate_user!"]);
+    expect(auth("/api/fixtures")?.schemes).toEqual(["devise"]);
+    expect(auth("/api/fixtures/:id")?.policies).toEqual(["authenticate_user!", "check_authorization"]);
+    expect(auth("/api/fixtures/:id")?.inherited).toBe(true);
+    expect(auth("/fans")).toBeUndefined();
+  });
+});
+
 describe("rails-route-anchor — actions nothing serves", () => {
   it("drops a declared action the project's own controller chain never defines and no view renders; keeps gem-backed and view-backed ones", () => {
     const router = `Rails.application.routes.draw do

@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { buildPath } from "./aspnet.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 
@@ -28,9 +28,30 @@ interface Group {
   prefix: string;
   versions: string[];
   guards: string[];
+  /** The group locals it is built from, itself included: a route on a sub-group is also on its parent. */
+  locals: string[];
 }
 
-export function extractMinimalApiRoutes(root: Node, routes: RouteInfo[]): void {
+/**
+ * A method building endpoints on a group it returns (`MapClubsApi(this
+ * IEndpointRouteBuilder app)` → `return api;`): the lines of the routes on that
+ * group, which a caller's `app.MapClubsApi().RequireAuthorization()` guards.
+ */
+export const CS_GROUP_METHOD = "cs:group-method";
+export interface CsGroupMethodFact {
+  lines: number[];
+}
+/** A call of a group-building method with the group's fluent tail: `app.MapClubsApi().RequireAuthorization()`. */
+export const CS_GROUP_CALL = "cs:group-call";
+export interface CsGroupCallFact {
+  callee: string;
+  guards: string[];
+}
+/** ASP.NET's own endpoint conventions (`WithTags`, `HasApiVersion`, `Produces`…): never a project's group method. */
+const ENDPOINT_CONVENTION = /^(?:With|Has|Produces|Add|Require|Allow|Cache|Disable|Exclude|Accepts|Map(?:ToApiVersion|Fallback))/;
+export const GROUP_CALL_GATE = /\.(?:RequireAuthorization|AllowAnonymous)\s*\(/;
+
+export function extractMinimalApiRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   // One scope per method / local function / the top-level statements: group locals live there.
   const scopes = [
     ...root.descendantsOfType("method_declaration"),
@@ -48,21 +69,33 @@ export function extractMinimalApiRoutes(root: Node, routes: RouteInfo[]): void {
         const init = value?.type === "equals_value_clause" ? value.namedChildren[0] : value;
         if (!name || !init || init.type !== "invocation_expression") continue;
         const group = groupOf(init, groups);
-        if (group) groups.set(name, group);
+        if (group) groups.set(name, { ...group, locals: [...group.locals, name] });
       }
     }
+    const onGroup: Array<{ line: number; locals: string[] }> = [];
     for (const node of nodes) {
       for (const inv of [node, ...node.descendantsOfType("invocation_expression")]) {
         if (inv.type !== "invocation_expression" || seen.has(inv.id)) continue;
         const member = memberName(inv);
         if (!member || !(member in VERB_OF || member === "MapMethods")) continue;
         seen.add(inv.id);
-        const route = readRoute(inv, member, groups);
-        if (route) routes.push(route);
+        const read = readRoute(inv, member, groups);
+        if (!read) continue;
+        routes.push(read.route);
+        onGroup.push({ line: read.route.line, locals: read.locals });
       }
     }
+    return { groups, onGroup };
   };
-  for (const scope of scopes) readScope([scope]);
+  for (const scope of scopes) {
+    const { groups, onGroup } = readScope([scope]);
+    const method = scope.type === "method_declaration" ? scope.childForFieldName("name")?.text : null;
+    if (!facts || !method || groups.size === 0) continue;
+    // `return api;` — the routes on that group answer to what the caller chains onto the call.
+    const returned = scope.descendantsOfType("return_statement").map((r) => r.namedChildren[0]).find((e) => e?.type === "identifier" && groups.has(e.text));
+    const lines = returned ? onGroup.filter((r) => r.locals.includes(returned.text)).map((r) => r.line) : [];
+    if (lines.length > 0) facts.push({ kind: CS_GROUP_METHOD, line: scope.startPosition.row + 1, owner: method, data: { lines } satisfies CsGroupMethodFact });
+  }
   if (topLevel.length > 0) readScope(topLevel);
 }
 
@@ -84,10 +117,10 @@ function groupOf(expr: Node | null | undefined, groups: Map<string, Group>): Gro
   const base = fn.childForFieldName("expression");
   const args = argumentNodes(expr);
   if (name === "MapGroup") {
-    const outer = groupOf(base, groups) ?? { prefix: "", versions: [], guards: [] };
+    const outer = groupOf(base, groups) ?? { prefix: "", versions: [], guards: [], locals: [] };
     const prefix = literal(args[0]);
     if (prefix === null) return null;
-    return { prefix: joinPrefix(outer.prefix, prefix), versions: outer.versions, guards: outer.guards };
+    return { prefix: joinPrefix(outer.prefix, prefix), versions: outer.versions, guards: outer.guards, locals: outer.locals };
   }
   const inner = groupOf(base, groups);
   if (!inner) return null;
@@ -100,7 +133,7 @@ function groupOf(expr: Node | null | undefined, groups: Map<string, Group>): Gro
   return inner;
 }
 
-function readRoute(inv: Node, member: string, groups: Map<string, Group>): RouteInfo | null {
+function readRoute(inv: Node, member: string, groups: Map<string, Group>): { route: RouteInfo; locals: string[] } | null {
   const fn = inv.childForFieldName("function")!;
   const receiver = fn.childForFieldName("expression");
   const args = argumentNodes(inv);
@@ -122,24 +155,11 @@ function readRoute(inv: Node, member: string, groups: Map<string, Group>): Route
     handlerArg = args[1];
   }
   if (template === null || verbs.length === 0) return null;
-  const group = groupOf(receiver, groups) ?? { prefix: "", versions: [], guards: [] };
+  const group = groupOf(receiver, groups) ?? { prefix: "", versions: [], guards: [], locals: [] };
   // The route's own fluent tail: `.RequireAuthorization()`, `.MapToApiVersion(2, 0)`.
-  const guards = [...group.guards];
-  const versions = [...group.versions];
-  for (let p: Node | null = inv.parent; p; p = p.parent) {
-    if (p.type === "member_access_expression" && p.parent?.type === "invocation_expression") {
-      const name = p.childForFieldName("name")?.text;
-      if (name === "RequireAuthorization") guards.push(guardText(p.parent));
-      else if (name === "AllowAnonymous") guards.push("AllowAnonymous");
-      else if (name === "MapToApiVersion" || name === "HasApiVersion") {
-        const v = versionOf(argumentNodes(p.parent));
-        if (v) versions.push(v);
-      }
-      p = p.parent;
-      continue;
-    }
-    break;
-  }
+  const { guards: tail, versions: tailVersions } = fluentTail(inv);
+  const guards = [...group.guards, ...tail];
+  const versions = [...group.versions, ...tailVersions];
   const handler = handlerOf(handlerArg);
   const lambda = handlerArg && /lambda/.test(handlerArg.type) ? handlerArg : null;
   const route: RouteInfo = {
@@ -157,7 +177,38 @@ function readRoute(inv: Node, member: string, groups: Map<string, Group>): Route
     const policies = guards.flatMap((g) => [...g.matchAll(/"([^"]+)"/g)].map((m) => m[1]!));
     route.auth = { policies, roles: [], schemes: [], anonymous: guards.includes("AllowAnonymous"), inherited: false };
   }
-  return route;
+  return { route, locals: group.locals };
+}
+
+/** What an invocation's fluent tail adds: `.RequireAuthorization("Coach")`, `.AllowAnonymous()`, `.MapToApiVersion(2, 0)`. */
+function fluentTail(inv: Node): { guards: string[]; versions: string[] } {
+  const guards: string[] = [];
+  const versions: string[] = [];
+  for (let p: Node | null = inv.parent; p; p = p.parent) {
+    if (p.type === "member_access_expression" && p.parent?.type === "invocation_expression") {
+      const name = p.childForFieldName("name")?.text;
+      if (name === "RequireAuthorization") guards.push(guardText(p.parent));
+      else if (name === "AllowAnonymous") guards.push("AllowAnonymous");
+      else if (name === "MapToApiVersion" || name === "HasApiVersion") {
+        const v = versionOf(argumentNodes(p.parent));
+        if (v) versions.push(v);
+      }
+      p = p.parent;
+      continue;
+    }
+    break;
+  }
+  return { guards, versions };
+}
+
+/** Calls of a project method with a guard chained on what it returns: `app.MapClubsApi().RequireAuthorization()`. */
+export function collectGroupCalls(root: Node, facts: RouteFact[]): void {
+  for (const inv of root.descendantsOfType("invocation_expression")) {
+    const member = memberName(inv) ?? (inv.childForFieldName("function")?.type === "identifier" ? inv.childForFieldName("function")!.text : null);
+    if (!member || member in VERB_OF || member === "MapMethods" || member === "MapGroup" || ENDPOINT_CONVENTION.test(member)) continue;
+    const { guards } = fluentTail(inv);
+    if (guards.length > 0) facts.push({ kind: CS_GROUP_CALL, line: inv.startPosition.row + 1, data: { callee: member, guards } satisfies CsGroupCallFact });
+  }
 }
 
 /** `GetItemById` / `Handlers.GetAll` → that name; a lambda or anything else → null. */

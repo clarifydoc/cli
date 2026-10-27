@@ -1,8 +1,9 @@
 import { azureFunctionPath } from "../shared/azure-functions.js";
 import type { Node } from "web-tree-sitter";
-import type { CallInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { pythonStringTemplate } from "./module-values.js";
+import { namesCallerCheck } from "../shared/guard-words.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../shared/route-metadata.js";
 import { HTTP_METHODS } from "../../routes/base.js";
 import type { RouteExtractor } from "../../routes/base.js";
@@ -10,6 +11,7 @@ import { scanRequestAccess } from "./request-access.js";
 import { splitGeneric, unwrapNullable } from "./request-schema.js";
 import { DJANGO_GATE, collectDjangoFacts } from "./django/facts.js";
 import { PY_GRAPHQL_GATE, extractPythonGraphqlRoutes } from "./graphql.js";
+import { PY_ROUTER_CLASS, PY_ROUTER_CTOR, PY_VIEW_CLASS, type PyRouterClassFact, type PyRouterCtorFact, type PyViewClassFact } from "./fastapi-guards.js";
 
 /**
  * Python: `@app.get("/path")` (FastAPI, Flask ≥2), `@bp.route("/path", methods=[…])`
@@ -17,11 +19,13 @@ import { PY_GRAPHQL_GATE, extractPythonGraphqlRoutes } from "./graphql.js";
  * per-route `dependencies=[Depends(…)]`, Flask/Django guard decorators, and
  * the parameter bindings FastAPI reads off the handler signature.
  */
-export function extractPythonRoutes(root: Node, routes: RouteInfo[]): void {
+export function extractPythonRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   const consts = collectModuleStrings(root);
   const routers = collectRouterDecls(root, consts);
-  walkForPythonRoutes(root, routes, routers);
-  walkForRouterMounts(root, routes, routers, consts);
+  const receiverLines = new Map<string, number[]>();
+  walkForPythonRoutes(root, routes, routers, receiverLines);
+  walkForRouterMounts(root, routes, routers, consts, receiverLines);
+  if (facts) collectGuardFacts(root, routers, receiverLines, facts);
 }
 
 /** Module-level `NAME = "literal"` — what a `prefix=prefix` keyword names. */
@@ -89,6 +93,7 @@ function walkForRouterMounts(
   routes: RouteInfo[],
   routers: ReadonlyMap<string, RouterDecl>,
   consts: ReadonlyMap<string, string>,
+  receiverLines: Map<string, number[]>,
 ): void {
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
@@ -113,12 +118,21 @@ function walkForRouterMounts(
           mount: true,
         };
         if (prefix === null) mount.prefixUnresolved = `mount:${collapse(keywordArg(args!, leaf === "include_router" ? "prefix" : "url_prefix")!.text)}`;
-        if (receiver?.guards.length) applyRouteMeta(mount, { guards: receiver.guards });
+        // `include_router(x, dependencies=[…])` guards what it includes, as the receiver's own do.
+        const includeDeps = leaf === "include_router" && args ? keywordArg(args, "dependencies") : null;
+        const guards = [...(receiver?.guards ?? []), ...(includeDeps ? guardsFromDependencies(includeDeps) : [])];
+        if (guards.length) applyRouteMeta(mount, { guards });
+        if (receiverNode?.type === "identifier") pushLine(receiverLines, receiverNode.text, mount.line);
         routes.push(mount);
       }
     }
   }
-  for (const child of node.children) walkForRouterMounts(child, routes, routers, consts);
+  for (const child of node.children) walkForRouterMounts(child, routes, routers, consts, receiverLines);
+}
+
+function pushLine(lines: Map<string, number[]>, key: string, line: number): void {
+  const list = lines.get(key) ?? lines.set(key, []).get(key)!;
+  if (!list.includes(line)) list.push(line);
 }
 
 /** First non-keyword argument inside an `argument_list`. */
@@ -200,6 +214,8 @@ interface RouterDecl {
   endpointPrefix: string;
   /** An Azure Functions app or blueprint (`func.FunctionApp()`, `func.Blueprint()`): routes by `route=`, named by the function. */
   azure?: true;
+  /** A project router class building it (`MemberRouter(prefix=…)`), as written: what it adds is resolved across files. */
+  ctor?: string;
 }
 
 const ROUTER_CTORS = new Set(["APIRouter", "Blueprint", "FastAPI", "Flask", "FunctionApp", "DFApp"]);
@@ -236,6 +252,7 @@ function collectRouterDecls(root: Node, consts: ReadonlyMap<string, string>): Ma
       guards: deps ? guardsFromDependencies(deps) : [],
       endpointPrefix: blueprint ? `${blueprint}.` : "",
       ...(AZURE_APP_CTOR.test(ctor!.text) ? { azure: true as const } : {}),
+      ...(!ROUTER_CTORS.has(ctorName) ? { ctor: ctor!.text } : {}),
     });
   }
   return decls;
@@ -250,20 +267,6 @@ function guardsFromDependencies(list: Node): GuardAttr[] {
     if (guard && (isSecurityMarker(item) || isAuthDependency(item))) guards.push(guard);
   }
   return guards;
-}
-
-/** Words of a dependency callable's name that say it checks who is calling: `verify_token`, `get_admin_user`, `oauth2_scheme`. */
-const AUTH_WORD = /^(?:auth|auths|authn|authz|authori[sz]\w*|authenticat\w*|token|tokens|jwt|oauth2?|bearer|security|secure|scopes?|permissions?|perms?|login|logged|verify|verified|requires?|required|admin|superuser|credentials?|apikey|guard|guarded|protected|signed|signature|access)$/;
-/** A user-ish word guards only when the name says it is the caller (`get_current_user`), not a record looked up (`get_profile_by_username`). */
-const CALLER_WORD = /^(?:current|active|logged|authenticated|authorized|request|requesting|session)$/;
-const PRINCIPAL_WORD = /^(?:user|users|account|principal|member|identity|caller)$/;
-/** An optional caller (`try_get_current_user`, `authorizer(required=False)`) lets everyone in: not a guard. */
-const OPTIONAL_WORD = /^(?:try|optional|maybe|soft)$/;
-
-/** `get_current_user_authorizer` → [get, current, user, authorizer]; `deps.verifyToken` → [verify, token]. */
-function nameWords(name: string): string[] {
-  const leaf = name.replace(/^.*\./, "");
-  return leaf.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/_+/).filter(Boolean);
 }
 
 /** `Security(x)` — FastAPI's own marker for a security dependency; always a guard. */
@@ -287,10 +290,7 @@ function isAuthDependency(call: Node): boolean {
     const factoryArgs = target!.childForFieldName("arguments");
     for (const kw of ["required", "auto_error"]) if (factoryArgs && keywordArg(factoryArgs, kw)?.text === "False") return false;
   }
-  const words = nameWords(callable.text);
-  if (words.some((w) => OPTIONAL_WORD.test(w))) return false;
-  if (words.some((w) => AUTH_WORD.test(w))) return true;
-  return words.some((w) => PRINCIPAL_WORD.test(w)) && words.some((w) => CALLER_WORD.test(w));
+  return namesCallerCheck(callable.text);
 }
 
 /**
@@ -436,7 +436,7 @@ function joinPrefix(prefix: string, path: string): string {
   return prefix + path;
 }
 
-function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<string, RouterDecl>): void {
+function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<string, RouterDecl>, receiverLines: Map<string, number[]>): void {
   if (node.type === "decorated_definition") {
     const routeDecs: RouteDecorator[] = [];
     const guards: GuardAttr[] = [];
@@ -459,6 +459,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
       const handler = fnDef?.childForFieldName("name")?.text ?? null;
       for (const rd of routeDecs) {
         const router = rd.receiver ? routers.get(rd.receiver) : undefined;
+        if (rd.receiver) pushLine(receiverLines, rd.receiver, node.startPosition.row + 1);
         // Azure Functions: `route=` (else the function's name), any method unless `methods=` lists them.
         const azure = !!router?.azure && !!handler;
         if (azure) {
@@ -501,8 +502,84 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
   }
 
   for (const child of node.children) {
-    walkForPythonRoutes(child, routes, routers);
+    walkForPythonRoutes(child, routes, routers, receiverLines);
   }
+}
+
+// ─── Guards declared around a route: router classes and class-based views ──
+
+/**
+ * Facts for `fastapi-inherited-guards`: the router classes this file declares
+ * (`class MemberRouter(APIRouter)` whose `__init__` passes `dependencies=[…]`
+ * on), the routers it builds with a project class and the lines of the routes
+ * and mounts on each, and every class with class-level dependencies or routes
+ * — a class-based view's endpoints run the dependencies of the class and of
+ * each base.
+ */
+function collectGuardFacts(root: Node, routers: ReadonlyMap<string, RouterDecl>, receiverLines: ReadonlyMap<string, number[]>, facts: RouteFact[]): void {
+  for (const [variable, decl] of routers) {
+    const lines = receiverLines.get(variable);
+    if (!decl.ctor || !lines?.length) continue;
+    facts.push({ kind: PY_ROUTER_CTOR, line: lines[0]!, data: { variable, ctor: decl.ctor, lines } satisfies PyRouterCtorFact });
+  }
+  const visit = (node: Node): void => {
+    if (node.type === "class_definition") classGuardFacts(node, facts);
+    for (const child of node.namedChildren) {
+      if (child.type === "class_definition" || child.type === "decorated_definition" || child.type === "block") visit(child);
+    }
+  };
+  visit(root);
+}
+
+function classGuardFacts(cls: Node, facts: RouteFact[]): void {
+  const name = cls.childForFieldName("name")?.text;
+  const body = cls.childForFieldName("body");
+  if (!name || !body) return;
+  const line = cls.startPosition.row + 1;
+  const supers = cls.childForFieldName("superclasses")?.namedChildren ?? [];
+  if (supers.some((s) => ROUTER_CLASS_NAME.test(s.text.replace(/\[.*$/s, "")))) {
+    const deps = initDependencies(body);
+    if (deps) facts.push({ kind: PY_ROUTER_CLASS, line, owner: name, data: { guards: guardsFromDependencies(deps) } satisfies PyRouterClassFact });
+  }
+  const attrs: PyViewClassFact["attrs"] = [];
+  const lines: number[] = [];
+  let dependencies = false;
+  for (const stmt of body.namedChildren) {
+    if (stmt.type === "expression_statement") {
+      const assignment = stmt.namedChild(0);
+      const left = assignment?.type === "assignment" ? assignment.childForFieldName("left") : null;
+      if (left?.type !== "identifier") continue;
+      const right = assignment!.childForFieldName("right");
+      const dependency = right?.type === "call" ? dependencyGuard(right) : null;
+      if (dependency) dependencies = true;
+      attrs.push({ name: left.text, guard: dependency && (isSecurityMarker(right!) || isAuthDependency(right!)) ? dependency : null });
+    } else if (stmt.type === "decorated_definition" && stmt.childForFieldName("definition")?.type === "function_definition") {
+      if (stmt.namedChildren.some((d) => d.type === "decorator" && routeDecorator(d))) lines.push(stmt.startPosition.row + 1);
+    }
+  }
+  // A class with no route and no dependency says nothing; one whose dependencies guard nothing still shadows its bases'.
+  if (lines.length > 0 || dependencies) facts.push({ kind: PY_VIEW_CLASS, line, owner: name, data: { attrs, lines } satisfies PyViewClassFact });
+}
+
+/** The `dependencies=[…]` list `__init__` hands its router base: `super().__init__(…)` or `APIRouter.__init__(self, …)`. */
+function initDependencies(body: Node): Node | null {
+  for (const stmt of body.namedChildren) {
+    const fn = stmt.type === "decorated_definition" ? stmt.childForFieldName("definition") : stmt;
+    if (fn?.type !== "function_definition" || fn.childForFieldName("name")?.text !== "__init__") continue;
+    let found: Node | null = null;
+    const walk = (n: Node): void => {
+      if (found) return;
+      if (n.type === "call" && /(?:^super\([^)]*\)|Router)\.__init__$/.test(n.childForFieldName("function")?.text ?? "")) {
+        const deps = keywordArg(n.childForFieldName("arguments")!, "dependencies");
+        if (deps && (deps.type === "list" || deps.type === "tuple")) found = deps;
+        return;
+      }
+      for (const c of n.namedChildren) walk(c);
+    };
+    walk(fn.childForFieldName("body")!);
+    return found;
+  }
+  return null;
 }
 
 // ─── Parameters: what FastAPI reads off the signature ─────────────────────
@@ -649,7 +726,7 @@ export const pythonRouteExtractor: RouteExtractor = {
   languages: ["python"],
   extractRoutes(tree, sourceText, _filePath, facts) {
     const routes: RouteInfo[] = [];
-    extractPythonRoutes(tree.rootNode, routes);
+    extractPythonRoutes(tree.rootNode, routes, facts && /Router|Depends|Security/.test(sourceText) ? facts : undefined);
     // Code-first GraphQL (Strawberry, Graphene): the root fields a schema class serves.
     if (PY_GRAPHQL_GATE.test(sourceText)) extractPythonGraphqlRoutes(tree.rootNode, routes);
     // Django / DRF routing is only facts per file; `django-urlconf` joins them.

@@ -12,6 +12,8 @@ import { extractHaloExtensionRoutes } from "./halo.js";
 import { collectSecurityRules } from "./security-dsl.js";
 import { collectServiceBeans } from "./service-beans.js";
 import { extractComposeDestinations } from "./compose-nav.js";
+import { guardsOn } from "./meta-annotations.js";
+import { collectClassGuardFacts } from "../../shared/class-guards.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
@@ -19,6 +21,9 @@ import { extractComposeDestinations } from "./compose-nav.js";
  * routing DSL and Javalin / Spark route calls. Each family is gated on a cheap substring so annotation-free
  * files skip the full-tree walks entirely.
  */
+/** A class-level guard annotation (meta-annotations.ts `guardOf`). */
+const CLASS_GUARD_GATE = /@(?:PreAuthorize|PostAuthorize|PreFilter|PostFilter|Secured|RolesAllowed|PermitAll|Anonymous|DenyAll|Authenticated)\b/;
+
 export const javaKotlinRouteExtractor: RouteExtractor = {
   languages: ["java", "kotlin"],
 
@@ -74,6 +79,16 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
 
     // CXF service beans, whose jar interfaces become contract rows in cxfServiceBeanResolver.
     collectServiceBeans(sourceText, facts);
+
+    // Class-level guards a controller's base class declares in another file (shared/class-guards.ts).
+    if (facts && (routes.some((r) => r.kind === "api") || CLASS_GUARD_GATE.test(sourceText)) && /\bclass\b/.test(sourceText)) {
+      const classes = tree.rootNode.descendantsOfType("class_declaration").flatMap((node) => {
+        const name = node.childForFieldName("name")?.text ?? node.namedChildren.find((c) => c.type === "type_identifier")?.text;
+        const derived = !!node.childForFieldName("superclass") || node.namedChildren.some((c) => c.type === "delegation_specifier" || c.type === "delegation_specifiers");
+        return name ? [{ node, name, guards: guardsOn(node), derived }] : [];
+      });
+      collectClassGuardFacts(classes, routes, facts);
+    }
 
     // `@GetMapping("${service.prefix}public/user-types")`: the property's value is a prefix
     // the code does not state — the rest is the known tail a caller's URL ends with.

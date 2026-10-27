@@ -158,3 +158,26 @@ export function inferredParam(
   const binding = pathParamNames(path).has(name.toLowerCase()) ? "route" : fallback;
   return binding ? { name, type, binding, inferred: true } : { name, type, binding: null };
 }
+
+/**
+ * A copy of `route` that also requires `guards`, declared around it rather than
+ * on it (a router class, a base controller): their texts lead its middleware
+ * (each once), their requirements join its auth, and its own `inherited` and
+ * `anonymous` stand.
+ */
+export function withInheritedGuards(route: RouteInfo, guards: readonly GuardAttr[]): RouteInfo {
+  const texts = [...new Set(guards.map((g) => g.text))].filter((t) => !route.middleware.includes(t));
+  const added = buildAuth(guards, [])!;
+  const own = route.auth;
+  const uniq = (xs: string[]) => [...new Set(xs)];
+  const auth: RouteAuthInfo = own
+    ? {
+        policies: uniq([...added.policies, ...own.policies]),
+        roles: uniq([...added.roles, ...own.roles]),
+        schemes: uniq([...added.schemes, ...own.schemes]),
+        anonymous: own.anonymous || added.anonymous,
+        inherited: own.inherited,
+      }
+    : added;
+  return { ...route, middleware: [...texts, ...route.middleware], auth };
+}

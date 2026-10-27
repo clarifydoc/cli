@@ -5,7 +5,7 @@ import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
 import { collectRouteArrays, visitReactRouterRoute } from "./react-router.js";
-import { visitNestjsRoute } from "./nestjs.js";
+import { collectNestClassGuards, visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
@@ -73,6 +73,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
     // A hand-rolled router's `{ path, screen }` table, joined to the layout showing each screen (screen-tables.ts).
     if (facts) collectScreenTables(tree.rootNode, sourceText, facts);
+    // A NestJS controller's guard on a base class in another file (shared/class-guards.ts).
+    if (facts && /\bextends\b|@UseGuards\b/.test(sourceText) && (nestjs.length > 0 || /@(?:UseGuards|Roles|Public)\b/.test(sourceText))) collectNestClassGuards(tree.rootNode, nestjs, facts);
 
     if (maybeTanstack) collectTanstackCodeRoutes(tree.rootNode, sourceText, tanstack);
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.

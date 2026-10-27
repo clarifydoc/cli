@@ -3,6 +3,8 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { enclosingModules } from "./index.js";
 import { railsUnderscore } from "./schema.js";
+import { guardForFilter } from "./route-meta.js";
+import { withInheritedGuards } from "../../shared/route-metadata.js";
 
 const HANDLER_RE = /^((?:[A-Z]\w*::)*[A-Z]\w*Controller)#(\w+)$/;
 
@@ -133,6 +135,23 @@ export const railsRouteAnchor: RouteResolver = {
       if (kept.length !== a.routes.length) a.routes = kept;
     }
     for (const [a, rows] of moved) a.routes = [...a.routes, ...rows];
+
+    // An ancestor's guard filter (`before_action :authenticate_user!` on an
+    // `Api::BaseController`) runs before every action of each subclass, unless
+    // one skips it: per file only the controller's own filters were applied.
+    for (const a of analyses) {
+      let changed = false;
+      const next = a.routes.map((r) => {
+        const m = r.kind === "api" && r.handler ? HANDLER_RE.exec(r.handler) : null;
+        const ref = m ? byName.get(m[1]!) : null;
+        if (!ref) return r;
+        const guards = chainFilters(ref, m![2]!, byName, qualified).flatMap((name) => guardForFilter(name, `before_action :${name}`) ?? []);
+        if (guards.every((g) => r.middleware.includes(g.text))) return r;
+        changed = true;
+        return withInheritedGuards(r, guards);
+      });
+      if (changed) a.routes = next;
+    }
   },
 };
 
@@ -247,25 +266,19 @@ function superOf(ref: ClassRef, byName: Map<string, ClassRef | null>, qualified:
   return lookup(written, (qualified.get(ref) ?? ref.cls.name).split("::").slice(0, -1), byName);
 }
 
-/**
- * The filter methods an action of `ref` runs, from its `before_action`
- * decorators up the class chain (an ancestor's first; `skip_before_action`
- * removes one), each as a call on the class that defines it.
- */
-function filterCalls(
-  ref: ClassRef,
-  action: string,
-  byName: Map<string, ClassRef | null>,
-  qualified: Map<ClassRef, string>,
-  modules: Map<string, ClassRef | null>,
-  line: number,
-): CallInfo[] {
+/** The class chain of `ref`, the root ancestor first. */
+function chainOf(ref: ClassRef, byName: Map<string, ClassRef | null>, qualified: Map<ClassRef, string>): ClassRef[] {
   const chain: ClassRef[] = [];
   const seen = new Set<ClassRef>();
   for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
     seen.add(c);
     chain.unshift(c);
   }
+  return chain;
+}
+
+/** The filter names an action runs, from `before_action` decorators down the chain (`skip_before_action` removes one). */
+function activeFilters(chain: readonly ClassRef[], action: string): string[] {
   const active: string[] = [];
   for (const c of chain) {
     for (const d of c.cls.decorators ?? []) {
@@ -280,8 +293,33 @@ function filterCalls(
       } else if (!active.includes(m[2]!)) active.push(m[2]!);
     }
   }
+  return active;
+}
+
+/** The filters an action of `ref` runs that an ANCESTOR declares — its own were applied per file. */
+function chainFilters(ref: ClassRef, action: string, byName: Map<string, ClassRef | null>, qualified: Map<ClassRef, string>): string[] {
+  const chain = chainOf(ref, byName, qualified);
+  if (chain.length < 2) return [];
+  const own = new Set(activeFilters([ref], action));
+  return activeFilters(chain, action).filter((name) => !own.has(name));
+}
+
+/**
+ * The filter methods an action of `ref` runs, from its `before_action`
+ * decorators up the class chain (an ancestor's first; `skip_before_action`
+ * removes one), each as a call on the class that defines it.
+ */
+function filterCalls(
+  ref: ClassRef,
+  action: string,
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  modules: Map<string, ClassRef | null>,
+  line: number,
+): CallInfo[] {
+  const chain = chainOf(ref, byName, qualified);
   const out: CallInfo[] = [];
-  for (const name of active) {
+  for (const name of activeFilters(chain, action)) {
     const def = definerOf(ref, name, byName, qualified, modules);
     if (!def) continue;
     const owner = [ref, ...chain].find((c) => c.filePath === def.file && c.cls.methods.includes(def.fn))

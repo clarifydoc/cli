@@ -19,6 +19,7 @@ import { PythonMutationExtractor } from "./data-mutations.js";
 import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
 import { djangoUrlconfResolver } from "./django/resolver.js";
+import { fastapiInheritedGuards } from "./fastapi-guards.js";
 import { PytestFixtureResolver } from "./pytest-fixtures.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
@@ -150,7 +151,7 @@ export const pythonMeta: LanguagePluginMeta = {
   docComments: PYTHON_DOCS,
   knownPackages: pypiPackages,
   routes: pythonRouteExtractor,
-  routeResolvers: [djangoUrlconfResolver],
+  routeResolvers: [djangoUrlconfResolver, fastapiInheritedGuards],
   // A test's parameter is the fixture of that name (module, then conftest.py).
   dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver()],
   functionsClasses: new PythonExtractor(),

@@ -8,7 +8,7 @@ import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
-import { nestPrefixResolver } from "./routes/nestjs.js";
+import { nestInheritedGuards, nestPrefixResolver } from "./routes/nestjs.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
@@ -276,7 +276,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver(), new JobEventResolver()];
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, screenTableResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, nestInheritedGuards, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

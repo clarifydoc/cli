@@ -3,6 +3,7 @@ import type { FileAnalysis, RouteFact, RouteInfo, RouteParamBinding, RouteParamI
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../../shared/route-metadata.js";
+import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
 
 /**
  * NestJS decorator routing.
@@ -274,7 +275,28 @@ const HTTP_STATUS: Record<string, number> = {
   BAD_REQUEST: 400, UNAUTHORIZED: 401, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409,
 };
 
+/**
+ * Each class's own class-level guards and the routes of a derived class without
+ * one, for `nest-inherited-guards` (shared/class-guards.ts): Nest reads a
+ * class's guard metadata up the prototype chain, so a `@UseGuards` on a base
+ * controller guards its subclasses.
+ */
+export function collectNestClassGuards(root: Node, routes: readonly RouteInfo[], facts: RouteFact[]): void {
+  const classes = root.descendantsOfType(["class_declaration", "abstract_class_declaration"]).flatMap((node) => {
+    const name = node.childForFieldName("name")?.text;
+    const body = node.childForFieldName("body");
+    if (!name || !body) return [];
+    const guards = classDecorators(body).flatMap((dec) => guardOf(dec) ?? []);
+    const derived = node.namedChildren.some((c) => c.type === "class_heritage" && /\bextends\b/.test(c.text));
+    return [{ node, name, guards, derived }];
+  });
+  collectClassGuardFacts(classes, routes, facts);
+}
+
 /** Inspect a single node for a NestJS HTTP-verb decorator. */
+/** NestJS: a class-level guard a controller inherits from its base class. */
+export const nestInheritedGuards = inheritedClassGuards("nest-inherited-guards", ["typescript", "javascript"]);
+
 /** A route whose controller prefix is an enum member (`@Controller(RouteKey.Asset)`), for `nestPrefixResolver`. */
 export const NEST_PREFIX_FACT = "nest-prefix-ref";
 

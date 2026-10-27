@@ -22,6 +22,7 @@ import { CSharpDataSourceExtractor, extractCsharpPathArgCalls } from "./data-sou
 import { CSharpEntityExtractor } from "./entities.js";
 import { csharpRouteExtractor } from "./routes/aspnet.js";
 import { aspnetControllerInheritance } from "./routes/aspnet-resolver.js";
+import { minimalApiGroupGuards } from "./routes/minimal-api-resolver.js";
 import { CSharpMediatrResolver } from "./dispatch.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
@@ -49,7 +50,7 @@ export const csharpMeta: LanguagePluginMeta = {
   dataSources: new CSharpDataSourceExtractor(),
   entities: new CSharpEntityExtractor(),
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
-  routeResolvers: [aspnetControllerInheritance, hotChocolateResolver],
+  routeResolvers: [aspnetControllerInheritance, minimalApiGroupGuards, hotChocolateResolver],
   requestSchema: csharpRequestSchema,
   grpcStubService: csharpGrpcStub,
   grpcServiceOf: csharpGrpcService,

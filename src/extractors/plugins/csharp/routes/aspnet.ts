@@ -4,7 +4,7 @@ import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo, RouteResp
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, filterKind, routeFilters, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
-import { extractMinimalApiRoutes, MINIMAL_API_GATE } from "./minimal-api.js";
+import { collectGroupCalls, extractMinimalApiRoutes, GROUP_CALL_GATE, MINIMAL_API_GATE } from "./minimal-api.js";
 import { AZURE_FUNCTIONS_GATE, extractAzureFunctionRoutes } from "./azure-functions.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
@@ -836,6 +836,8 @@ export const csharpRouteExtractor: RouteExtractor = {
   extractRoutes(tree, sourceText, _filePath, facts) {
     // HotChocolate root-type registrations (`AddQueryType<Query>()`), for hotChocolateResolver.
     collectHotChocolateFacts(sourceText, facts);
+    // `app.MapClubsApi().RequireAuthorization()`: a guard on the group a project method returns.
+    if (facts && GROUP_CALL_GATE.test(sourceText)) collectGroupCalls(tree.rootNode, facts);
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
     const azure = AZURE_FUNCTIONS_GATE.test(sourceText);
@@ -852,7 +854,7 @@ export const csharpRouteExtractor: RouteExtractor = {
     const routes: RouteInfo[] = [];
     extractAspnetRoutes(tree.rootNode, routes, facts, sourceText);
     // Minimal APIs (`app.MapGet("/x", Handler)`, see minimal-api.ts).
-    if (minimal) extractMinimalApiRoutes(tree.rootNode, routes);
+    if (minimal) extractMinimalApiRoutes(tree.rootNode, routes, facts);
     // Azure Functions HTTP triggers (see azure-functions.ts).
     if (azure) extractAzureFunctionRoutes(tree.rootNode, routes);
     return routes;

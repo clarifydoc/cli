@@ -2,6 +2,7 @@ import type { ClassInfo, FunctionInfo, RouteInfo, RouteParamBinding, RouteParamI
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta, pathParamNames } from "../../shared/route-metadata.js";
 import { extractRubyResponses } from "./responses.js";
+import { nameWords, namesCallerCheck } from "../shared/guard-words.js";
 
 /**
  * The attribute layer of Ruby routes — what a Rails/Sinatra handler reads from
@@ -121,9 +122,8 @@ function paramsFromAccess(access: readonly RouteParamInfo[] | undefined, path: s
 
 // ─── Guards ──────────────────────────────────────────────────────────────────
 
-/** A `before_action` name that reads as an access check rather than a loader. */
-const AUTH_FILTER_RE =
-  /auth|login|logged|signed_in|session|require|ensure|verify|permission|permit|admin|token|access|role|guard|owner|current_user|user_exists|check_|can_|allowed/i;
+/** A filter named for what it loads (`set_current_user`, `load_club`, `fetch_inbox`) is a loader, whatever it loads. */
+const LOADER_WORD = /^(?:set|load|fetch|find|assign|build|prepare|init|initialize)$/;
 
 /** Devise's generated helpers: `authenticate_user!`, `authenticate_admin_user!`. */
 const DEVISE_RE = /^authenticate_\w+!$/;
@@ -162,9 +162,9 @@ function collapse(s: string): string {
 }
 
 /** The guard a filter method name implies, or null for a plain loader (`set_user`). */
-function guardForFilter(name: string, text: string): GuardAttr | null {
+export function guardForFilter(name: string, text: string): GuardAttr | null {
   if (DEVISE_RE.test(name)) return { text, policies: [name], schemes: ["devise"] };
-  if (!AUTH_FILTER_RE.test(name)) return null;
+  if (LOADER_WORD.test(nameWords(name)[0] ?? "") || !namesCallerCheck(name)) return null;
   return { text, policies: [name] };
 }
 
