@@ -67,6 +67,29 @@ export function useClubStore() {
 `,
   "web/composables/store/index.ts": `export * from "./use-club-store";
 `,
+  "web/composables/use-fixtures.ts": `import { useLeagueApi } from "../lib/api-client";
+export function useFixtures() {
+  const api = useLeagueApi();
+  async function fetchPage() {
+    return await api.clubs.getAll();
+  }
+  async function removeClub(id: string) {
+    return await api.clubs.updateOne(id, null);
+  }
+  return { fetchPage, removeClub };
+}
+`,
+  "web/composables/index.ts": `export { useFixtures } from "./use-fixtures";
+`,
+  "web/pages/fixtures.ts": `import { useFixtures } from "../composables";
+const { fetchPage, removeClub: dropClub } = useFixtures();
+export async function loadMore() {
+  await fetchPage();
+}
+export async function remove(id: string) {
+  await dropClub(id);
+}
+`,
   "web/pages/clubs.ts": `import { useClubStore } from "../composables/store";
 const clubStore = useClubStore();
 export async function handleEdit(club: { id: string }) {
@@ -96,12 +119,18 @@ describe("a client handed to the factory that builds a store", () => {
 
   it("links the screen's call through the factories to the member of the client the store was built with", () => {
     const from = summary.symbolLinks.filter((l) => l.sourceFile === "web/pages/clubs.ts" && l.callName === "clubStore.actions.updateOne");
-    // The factory the barrel forwards, not the barrel's line.
-    expect(from.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toContain("web/composables/store/use-club-store.ts::useClubStore");
+    // The member found, the factory no longer stands in for it.
+    expect(from.map((l) => `${l.targetFile}::${l.targetSymbol}`)).not.toContain("web/composables/store/use-club-store.ts::useClubStore");
     // The clubs client's update — never the players client's.
     const client = from.filter((l) => /lib\//.test(l.targetFile)).map((l) => l.targetSymbol);
     expect(client.length).toBe(1);
     expect(client[0]).toMatch(/^(?:ClubsApi|BaseCrudApi)\.updateOne$/);
     expect(from.some((l) => /players/.test(l.targetFile))).toBe(false);
+  });
+
+  it("links a member of what a factory returns to the factory's own nested function, through a barrel and a renamed binding", () => {
+    const at = (symbol: string) => summary.symbolLinks.filter((l) => l.sourceFile === "web/pages/fixtures.ts" && l.sourceSymbol === symbol && l.relation === "calls").map((l) => `${l.targetFile}::${l.targetSymbol}`);
+    expect(at("loadMore")).toEqual(["web/composables/use-fixtures.ts::fetchPage"]);
+    expect(at("remove")).toEqual(["web/composables/use-fixtures.ts::removeClub"]);
   });
 });

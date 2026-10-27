@@ -298,7 +298,7 @@ export class DocumentNotesService extends BaseCRUDAPI { baseRoute = "/api/docume
     expect(targets.map((t) => t[0])).toEqual(["/api/documents/", "/api/documents/"]);
   });
 
-  it("fans a generic CRUD client's calls out to each subclass's route fields (mealie)", async () => {
+  it("fans a generic CRUD client's calls out to each subclass's route fields (real-repo FP)", async () => {
     const targets = await project({
       "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {
   const url = new URL(parts.prefix + rest, parts.host);
@@ -332,6 +332,31 @@ export class AdminGroupsApi extends BaseCRUDAPI {
       "/api/admin/groups/{}",
       "/api/admin/groups/{}/duplicate",
     ]);
+  });
+
+  it("reads a subclass's item route written as an arrow handing its parameter to a URL helper (real-repo FP)", async () => {
+    const targets = await project({
+      "src/base/base-clients.ts": `
+export abstract class BaseCRUDAPI {
+  public baseRoute: string;
+  itemRoute(itemId: string): string { return this.itemRouteFn(itemId); }
+  async createOne(payload: unknown) { return await this.requests.post(this.baseRoute, payload); }
+  async updateOne(itemId: string, payload: unknown) { return await this.requests.put(this.itemRoute(itemId), payload); }
+  async deleteOne(itemId: string) { return await this.requests.delete(this.itemRoute(itemId)); }
+}`,
+      "src/user/players.ts": `
+import { BaseCRUDAPI } from "../base/base-clients";
+const prefix = "/api";
+const routes = {
+  players: \`\${prefix}/players\`,
+  playersId: (id: string) => \`\${prefix}/players/\${id}\`,
+};
+export class PlayersApi extends BaseCRUDAPI {
+  baseRoute: string = routes.players;
+  itemRoute = (playerId: string) => routes.playersId(playerId);
+}`,
+    });
+    expect(targets.map((t) => t[0]).sort()).toEqual(["/api/players", "/api/players/{}", "/api/players/{}"]);
   });
 
   it("requests the entry of a module's URL table a pass-through helper is handed (real-repo FP)", async () => {

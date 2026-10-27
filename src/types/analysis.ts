@@ -780,6 +780,13 @@ export interface CallInfo {
    */
   via?: string;
   /**
+   * The member of the factory's result a bare call's local name was
+   * destructured from under another name (`const { remove: removeCar } =
+   * useGarage()` → `removeCar()` carries member:"remove"): the function the
+   * linker looks for in the factory's module.
+   */
+  member?: string;
+  /**
    * The type the call's receiver is, when the call expression itself says
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,

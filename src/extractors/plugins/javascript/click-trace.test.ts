@@ -143,7 +143,7 @@ export function Garage() {
     const tree = await parse(src);
     const aliases = extractJsVariableAliases(tree, IMPORTS);
     expect(aliases.get("addToGarage")).toEqual({ source: "../context/AppContext", factory: "useAppContext" });
-    expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext" }); // renamed binding
+    expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext", member: "removeFromGarage" }); // renamed binding
   });
 
   it("keeps the factory of an unimported call with no source, never over an imported one (real-repo FP)", async () => {

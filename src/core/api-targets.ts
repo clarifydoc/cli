@@ -591,19 +591,38 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
         const m = c.cls.methods.find((x) => x.name === name);
         if (!m) continue;
         helper = m.urlTemplate ? m : undefined;
+        // `itemRoute = (id) => routes.clubsId(id)`: a member whose one call is a URL helper,
+        // handed the member's own parameters — that helper with them.
+        const only = !helper && m.calls.length === 1 ? m.calls[0]! : undefined;
+        if (only && /^[A-Za-z_$][\w$]*(?:\.[\w$]+)?$/.test(only.name)) {
+          const source = ctx.importIndex.localFor(c.filePath, only.name.split(".")[0]!) ?? c.filePath;
+          const inner = byFile.get(source)?.functions.find((f) => f.name === only.name && f.urlTemplate);
+          const outer = splitArgs(argsText);
+          if (inner) {
+            const handed = inner.params.map((_, i) => {
+              const o = only.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform)?.origin;
+              return o?.kind === "param" ? outer[o.index] ?? "" : o?.kind === "literal" ? JSON.stringify(o.value) : "";
+            });
+            return resolveThisCallWith(inner, source, handed, cls, depth);
+          }
+        }
       }
       if (!helper?.urlTemplate) return null;
-      const args = splitArgs(argsText);
-      // The base the extractor dropped from the template (`${this.constructor.getCollectionResource()}`), put back.
-      let out = (helper.urlTemplateBase ? `\${${helper.urlTemplateBase}}` : "") + helper.urlTemplate;
-      helper.params.forEach((p, i) => {
-        const a = args[i]?.trim();
-        const lit = a ? /^(['"`])([^'"`]*)\1$/.exec(a)?.[2] : undefined;
-        out = out.split(`{${p.name}}`).join(lit ?? "{}");
-      });
-      return resolveValue(out, helperFile, cls, depth + 1);
+      return resolveThisCallWith(helper, helperFile, splitArgs(argsText), cls, depth);
     }
     return null;
+  };
+
+  /** A URL helper's template with the call's arguments: a literal spliced in, anything else a wildcard. */
+  const resolveThisCallWith = (helper: FunctionInfo, helperFile: string, args: string[], cls: ClassRef, depth: number): string => {
+    // The base the extractor dropped from the template (`${this.constructor.getCollectionResource()}`), put back.
+    let out = (helper.urlTemplateBase ? `\${${helper.urlTemplateBase}}` : "") + helper.urlTemplate;
+    helper.params.forEach((p, i) => {
+      const a = args[i]?.trim();
+      const lit = a ? /^(['"`])([^'"`]*)\1$/.exec(a)?.[2] : undefined;
+      out = out.split(`{${p.name}}`).join(lit ?? "{}");
+    });
+    return resolveValue(out, helperFile, cls, depth + 1);
   };
 
   const resolveValue = (value: string, file: string, cls: ClassRef | null, depth: number): string => {

@@ -34,13 +34,13 @@ export function extractJsVariableAliases(
   const conflicted = new Set<string>();
   const { importMap } = buildImportMaps(imports);
 
-  function bind(name: string, source: string, factory: string) {
+  function bind(name: string, source: string, factory: string, member?: string) {
     if (conflicted.has(name)) return;
     const prev = aliases.get(name);
     // A binding from an unimported factory (no source) is the weakest fact: it never
     // displaces or conflicts with one from an imported factory, which replaces it.
     if (prev !== undefined && (prev.source === "") !== (source === "")) {
-      if (prev.source === "") aliases.set(name, { source, factory });
+      if (prev.source === "") aliases.set(name, { source, factory, ...(member ? { member } : {}) });
       return;
     }
     if (prev !== undefined) {
@@ -52,9 +52,11 @@ export function extractJsVariableAliases(
         // classification target, but the factory is ambiguous.
         prev.factory = undefined;
       }
+      // Two bindings of the name to different members: neither is the one called.
+      if (prev.member !== member) delete prev.member;
       return;
     }
-    aliases.set(name, { source, factory });
+    aliases.set(name, { source, factory, ...(member ? { member } : {}) });
   }
 
   function walk(node: Node) {
@@ -99,7 +101,7 @@ export function extractJsVariableAliases(
                 if (prop.type === "shorthand_property_identifier_pattern") bind(prop.text, "", fnName);
                 else if (prop.type === "pair_pattern") {
                   const local = prop.childForFieldName("value");
-                  if (local?.type === "identifier") bind(local.text, "", fnName);
+                  if (local?.type === "identifier") bind(local.text, "", fnName, memberKey(prop, local.text));
                 }
               }
             }
@@ -123,7 +125,7 @@ export function extractJsVariableAliases(
               bind(prop.text, source, fnName);
             } else if (prop.type === "pair_pattern") {
               const local = prop.childForFieldName("value");
-              if (local?.type === "identifier") bind(local.text, source, fnName);
+              if (local?.type === "identifier") bind(local.text, source, fnName, memberKey(prop, local.text));
             }
           }
         }
@@ -137,4 +139,10 @@ export function extractJsVariableAliases(
 
   walk(tree.rootNode);
   return aliases;
+}
+
+/** The key a `{ key: local }` pattern destructures, when it renames it. */
+function memberKey(pair: Node, local: string): string | undefined {
+  const key = pair.childForFieldName("key");
+  return key?.type === "property_identifier" && key.text !== local ? key.text : undefined;
 }

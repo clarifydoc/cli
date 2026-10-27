@@ -728,6 +728,8 @@ export interface VariableAliasBinding {
   source: string;
   /** The factory function's name (`useShopCart`). */
   factory?: string;
+  /** The member of the factory's result a renamed binding was destructured from (`{ refresh: reload }` → `refresh`). */
+  member?: string;
 }
 
 /** Location of a tree-sitter grammar WASM inside an npm package. */

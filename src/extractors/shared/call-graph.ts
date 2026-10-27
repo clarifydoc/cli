@@ -502,6 +502,8 @@ export function classifyCalls(
       const alias = ownFunction || shadowed ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
       // A binding from a factory the file does not import (no source): only the factory is
       // remembered, for a project pass that knows where the framework imports it from.
+      // A renamed destructured member (`{ remove: removeCar }`) is called by its local name.
+      if (alias && typeof alias !== "string" && alias.member && !call.name.includes(".")) call.member = alias.member;
       if (alias && typeof alias !== "string" && alias.source === "") {
         if (alias.factory) call.via = alias.factory;
       } else if (alias) {

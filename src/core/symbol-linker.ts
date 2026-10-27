@@ -394,7 +394,16 @@ export function buildSymbolLinks(
   links.push(...ctx.extraLinks);
   links.push(...inheritedHandlerLinks(analyses, ctx));
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
-  links.push(...handedClientLinks(links, ctx));
+  const handed = handedClientLinks(links, ctx);
+  if (handed.length > 0) {
+    // The factory stood in for a member it could not name; once the member is found, the stand-in goes —
+    // else the call reaches whatever the factory itself calls too.
+    const found = new Set(handed.map((l) => `${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`));
+    let kept = 0;
+    for (const l of links) if (l.strategy !== "factory-via" || !found.has(`${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`)) links[kept++] = l;
+    links.length = kept;
+    links.push(...handed);
+  }
 
   // Fan-out: emit a link from each interface method to every implementation's
   // matching method so the trace tab can navigate from interface → impls. A
@@ -2797,7 +2806,8 @@ function resolveCallToDefinition(
   // Case folds only on a callable's own name — never on a receiver
   // (`handler.render` is not `Handler.render`).
   // `import { addPlayer as signPlayer }`: the call names the local alias, the module defines the export.
-  const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] : undefined;
+  // `const { remove: removeCar } = useGarage()`: the call names the local, the factory's module defines the member.
+  const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] ?? call.member : undefined;
   let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, exported ?? call.name);
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
   // Which strategy found `def`. The default path at the bottom is reached from
@@ -2963,6 +2973,15 @@ function resolveCallToDefinition(
     // `export { useClubStore } from …`): the factory is where the re-export
     // leads, not the barrel's line.
     const fwd = !viaDef || viaDef.reexport ? forwardedDefinition(ctx, targetFile, call.via, 0, new Set()) : null;
+    // What the factory returns is often its own nested function (`const { fetchPage } = useClubs()`
+    // through a barrel, `clubs.fetchPage()`): that function, not the factory.
+    const member = !isQualified ? exported ?? call.name : parts.length === 2 ? leafName : null;
+    const factory = fwd ? { file: fwd.file, def: fwd.def } : viaDef ? { file: targetFile, def: viaDef } : null;
+    if (member && factory) {
+      const inner = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(factory.file)?.functions
+        .filter((f) => f.name === member && f.line > factory.def.line && f.endLine <= factory.def.endLine);
+      if (inner?.length === 1) return mkLink(factory.file, inner[0]!.name, inner[0]!.line, "INFERRED", "direct");
+    }
     if (fwd) return mkLink(fwd.file, fwd.def.name, fwd.def.line, "INFERRED", "factory-via");
     if (viaDef) {
       return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED", "factory-via");
