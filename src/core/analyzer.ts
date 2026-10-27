@@ -1352,6 +1352,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const isContractRoute = (r: { filePath: string }) =>
     isApiContractLanguage(analysisByPath.get(r.filePath)?.language ?? "");
   const contractTwins = pairContractTwins(allRoutes, symbolLinks, isContractRoute);
+  for (const [contract, code] of contractTwins) contract.implementedBy = { filePath: code.filePath, line: code.line };
   const implementedContractRows = implementedContracts(allRoutes, symbolLinks, isContractRoute, (f) => analysisByPath.get(f)?.projectId);
   // A contract document the project only calls through a client proxy (a bundled WSDL behind
   // `getPort`) keeps its rows for those calls to join, marked as no route it serves.

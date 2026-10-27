@@ -1223,6 +1223,13 @@ export interface RouteInfo {
    */
   consumed?: true;
   /**
+   * On an API-contract row (OpenAPI, WSDL, …): the code route implementing the
+   * operation (`pairContractTwins` — same method and path, or the handler the
+   * spec join bound). The two rows are one endpoint; its handler, callers and
+   * data are the code row's.
+   */
+  implementedBy?: { filePath: string; line: number };
+  /**
    * The path as written when it names constants the file does not define
    * (`@GetMapping(ApiPaths.CLUB)`, `[HttpGet(ApiRoutes.Club)]`,
    * `@app.route(CLUBS_URL + "/<id>")`): the full path with each such name a
