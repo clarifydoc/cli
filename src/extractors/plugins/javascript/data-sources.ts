@@ -665,6 +665,33 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * or runtime base is stripped to keep the path joinable (its env var, when
    * known, is returned in `baseEnv`).
    */
+  /**
+   * `this.previewUrl()` where the class holds `previewUrl = signal<string>(…)`: the URLs its
+   * `this.previewUrl.set(x)` calls store, each read as a request URL would be.
+   */
+  private signalValue(read: Node): ResolvedUrl | null {
+    const fn = read.childForFieldName("function");
+    if (fn?.type !== "member_expression" || fn.childForFieldName("object")?.type !== "this") return null;
+    if ((read.childForFieldName("arguments")?.namedChildCount ?? 1) !== 0) return null;
+    const name = fn.childForFieldName("property")?.text ?? "";
+    if (!new RegExp(String.raw`\b${name}\s*=\s*signal\s*[<(]`).test(this.sourceText)) return null;
+    let root: Node = read;
+    while (root.parent) root = root.parent;
+    const urls: string[] = [];
+    for (const call of root.descendantsOfType("call_expression")) {
+      if (call?.childForFieldName("function")?.text.replace(/\s+/g, "") !== `this.${name}.set`) continue;
+      const value = call.childForFieldName("arguments")?.namedChildren[0];
+      const url = value && !this.signalValueReadsItself(value, name) ? this.resolveUrlArg(value) : null;
+      if (url) for (const u of [url.url, ...(url.alternatives ?? [])]) if (!urls.includes(u)) urls.push(u);
+    }
+    return urls.length > 0 ? { url: urls[0]!, ...(urls.length > 1 ? { alternatives: urls.slice(1) } : {}), confidence: "INFERRED" } : null;
+  }
+
+  /** A stored value that reads the signal again (`this.x.set(this.x() + '/y')`) is not followed. */
+  private signalValueReadsItself(value: Node, name: string): boolean {
+    return value.text.replace(/\s+/g, "").includes(`this.${name}(`);
+  }
+
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
     if (arg.type === "parenthesized_expression" && arg.namedChild(0)) return this.resolveUrlArg(arg.namedChild(0)!);
@@ -744,6 +771,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // `this.url`, `routes.tags`: a URL held in a field or a route table. Kept as
     // a hole a project pass may still fill; only a trusted client call emits it.
     if (arg.type === "member_expression") return { url: `\${${arg.text}}`, confidence: "INFERRED" };
+    // An Angular signal read (`this.previewUrl()`): the value its `this.previewUrl.set(…)` calls store.
+    const signalUrl = arg.type === "call_expression" ? this.signalValue(arg) : null;
+    if (signalUrl) return signalUrl;
     // A URL-builder helper call: `axios.get(requestUri('teamtalk', 'v4'))`.
     // Keep the call text verbatim (whitespace-collapsed) so a project-level pass
     // can substitute the helper's template and recover the concrete URL. Emitted

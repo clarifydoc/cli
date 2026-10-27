@@ -401,3 +401,60 @@ export const counter = new Map();`,
     ]);
   });
 });
+
+describe("a service's URL helper built on a URL object, called through a field and stored in a signal (real-repo FP)", () => {
+  it("resolves the helper as the service the field is declared as, and a signal read as the URL its set() stores", async () => {
+    const out = await project({
+      "src/environments/environment.ts": `export const environment = { apiBaseUrl: 'http://localhost:8000/api/' }`,
+      "src/services/abstract-league-service.ts": `
+import { environment } from '../environments/environment'
+export abstract class AbstractLeagueService<T> {
+  protected baseUrl: string = environment.apiBaseUrl
+  protected resourceName: string
+  protected getResourceUrl(id: number = null, action: string = null): string {
+    let url = \`\${this.baseUrl}\${this.resourceName}/\`
+    if (id !== null) {
+      url += \`\${id}/\`
+    }
+    if (action) {
+      url += \`\${action}/\`
+    }
+    return url
+  }
+}`,
+      "src/services/match.service.ts": `
+import { AbstractLeagueService } from './abstract-league-service'
+export class MatchService extends AbstractLeagueService<any> {
+  constructor() {
+    super()
+    this.resourceName = 'matches'
+  }
+  getReportUrl(id: number, original: boolean = false): string {
+    let url = new URL(this.getResourceUrl(id, 'report'))
+    if (original) {
+      url.searchParams.append('original', 'true')
+    }
+    return url.toString()
+  }
+}`,
+      "src/components/match-detail.component.ts": `
+import { inject, signal } from '@angular/core'
+import { HttpClient } from '@angular/common/http'
+import { MatchService } from '../services/match.service'
+export class MatchDetailComponent {
+  matchService = inject(MatchService)
+  private http = inject(HttpClient)
+  readonly reportPreview = signal<string>(undefined)
+  preview(id: number) {
+    this.reportPreview.set(this.matchService.getReportUrl(id))
+    this.http.get(this.reportPreview(), { responseType: 'text' }).subscribe()
+  }
+  download(id: number) {
+    const reportUrl = this.matchService.getReportUrl(id, true)
+    this.http.get(reportUrl, { responseType: 'blob' }).subscribe()
+  }
+}`,
+    });
+    expect(out.map((r) => r[0])).toEqual(["/api/matches/{}/report/", "/api/matches/{}/report/"]);
+  });
+});

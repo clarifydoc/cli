@@ -258,7 +258,11 @@ function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): He
       ? builder.templates.map((tpl) => substituteNamed(tpl, named))
       : chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
     if (rewrites.some((r) => r === null)) continue; // a bare-variable arg — leave verbatim
-    return { start: m.index!, end: m.index! + m[0].length, rewrites: rewrites as string[] };
+    // Reached through a receiver (`this.matches.getReportUrl(id)`), the helper's own `this`
+    // is that receiver: `${this.getResourceUrl(…)}` in its template is `${this.matches.getResourceUrl(…)}` here.
+    const via = receiver.replace(/\s+/g, "").replace(/\.$/, "");
+    const seen = via && via !== "this" ? (rewrites as string[]).map((r) => r.replace(/\$\{this\./g, `\${${via}.`)) : (rewrites as string[]);
+    return { start: m.index!, end: m.index! + m[0].length, rewrites: seen };
   }
   return null;
 }

@@ -466,11 +466,24 @@ export function extractUrlTemplates(
     if (text == null) return false;
     const tpl = stripUrlBase(text);
     // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
-    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl);
+    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
+      // A helper handing back another of its class's URL methods (`${this.getResourceUrl({id}, 'download')}`).
+      /^\$\{this\.[\w$]+\([^{}]*(?:\{[\w$]+\}[^{}]*)*\)\}$/.test(tpl);
     if (ok && !templates.includes(tpl)) templates.push(tpl);
     return templates.length >= MAX_URL_TEMPLATES;
   };
-  for (const ret of returns) {
+  for (const raw of returns) {
+    // `return url.toString()` / `url.href` with `let url = new URL(this.getResourceUrl(id, 'download'))`:
+    // the URL object's path argument (query parameters appended to it change no path).
+    const urlArg = urlObjectArgument(raw, locals);
+    const ret = urlArg ?? raw;
+    // The URL object's path is another URL method of the class (`new URL(this.getResourceUrl(id, 'download'))`):
+    // that call, the helper's parameters as placeholders, resolved per class where it is called.
+    const delegated = urlArg ? thisMethodCall(urlArg, paramNames) : null;
+    if (delegated) {
+      if (push(delegated)) return templates;
+      continue;
+    }
     if (out && !out.base) out.base = leadingBaseText(ret.type === "identifier" ? locals.values.get(ret.text) ?? ret : ret);
     // `let url = this.apiVersion; if (enterprise) url = `/enterprise${url}`; if (scoped) url = `${url}/accounts/${id}`; return url`
     // — one template per combination of the guarded reassignments, fewest first.
@@ -516,6 +529,35 @@ export function extractUrlTemplates(
     }
   }
   return templates;
+}
+
+/** `this.getResourceUrl(id, 'download')` as a template: `${this.getResourceUrl({id}, 'download')}`; null for any other expression. */
+function thisMethodCall(node: Node, params: ReadonlySet<string>): string | null {
+  if (node.type !== "call_expression") return null;
+  const fn = node.childForFieldName("function");
+  if (fn?.type !== "member_expression" || fn.childForFieldName("object")?.type !== "this") return null;
+  const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+  const texts: string[] = [];
+  for (const a of args) {
+    if (a.type === "identifier" && params.has(a.text)) texts.push(`{${a.text}}`);
+    else if (a.type === "string" || a.type === "number" || a.type === "null" || a.type === "true" || a.type === "false") texts.push(a.text);
+    else return null;
+  }
+  return `\${this.${fn.childForFieldName("property")!.text}(${texts.join(", ")})}`;
+}
+
+/** The path argument of the `URL` object a return reads: `url.toString()`, `url.href`, `String(url)` with `url = new URL(path)`. */
+function urlObjectArgument(ret: Node, locals: Locals): Node | null {
+  let name: Node | null = null;
+  if (ret.type === "call_expression") {
+    const fn = ret.childForFieldName("function");
+    if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "toString") name = fn.childForFieldName("object");
+    else if (fn?.text === "String") name = ret.childForFieldName("arguments")?.namedChildren[0] ?? null;
+  } else if (ret.type === "member_expression" && ret.childForFieldName("property")?.text === "href") name = ret.childForFieldName("object");
+  if (name?.type !== "identifier") return null;
+  const value = locals.values.get(name.text);
+  if (value?.type !== "new_expression" || value.childForFieldName("constructor")?.text !== "URL") return null;
+  return value.childForFieldName("arguments")?.namedChildren[0] ?? null;
 }
 
 /** Calls that make a request rather than decorate a path. */

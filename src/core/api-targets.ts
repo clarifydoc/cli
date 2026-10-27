@@ -539,6 +539,13 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (literal) return literal[2]!;
     const field = /^this\.([\w$]+)$/.exec(expr);
     if (field) return cls ? resolveMember(field[1]!, cls, depth) : null;
+    // `this.matches.resourceName`: a member of the class a field of `this` is declared as.
+    const fieldMember = /^this\.([\w$]+)\.([\w$]+)$/.exec(expr);
+    if (fieldMember && cls) {
+      const type = chainOf(cls).flatMap(({ c }) => c.cls.properties).find((p) => p.name === fieldMember[1])?.type?.replace(/<[\s\S]*$/, "").trim();
+      const typed = type && /^[A-Za-z_$][\w$]*$/.test(type) ? ctx.classes.resolve(cls.filePath, type) : null;
+      if (typed) return resolveMember(fieldMember[2]!, typed, depth);
+    }
     // `options.apiVersion`: a member of a constructor parameter, stated by the
     // object literal the subclass below passed to `super(…)` (walked down like `resolveMember`).
     const paramMember = /^([A-Za-z_$][\w$]*)\.([\w$]+)$/.exec(expr);
