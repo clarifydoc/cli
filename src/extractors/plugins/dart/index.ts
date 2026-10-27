@@ -743,26 +743,53 @@ function extractFlutterScreens(lines: string[], filePath: string, classes: Class
   const screens: ScreenInfo[] = [];
   const stateOf = new Map<string, ClassInfo>(); // screen class → its State class
   for (const cls of classes) {
-    const m = cls.extends?.match(/^State<\s*([A-Z]\w*)/);
+    // `extends State<GaragePage>` — the class row may keep the base without its type argument,
+    // or none when the header wraps (`class _GarageState⏎    extends State<GaragePage>`).
+    const m = cls.extends?.match(/^State<\s*([A-Za-z_$][\w$]*)/) ??
+      (!cls.extends || cls.extends === "State" ? /^[^{]*?\bextends\s+State\s*<\s*([A-Za-z_$][\w$]*)/.exec(lines.slice(cls.line - 1, cls.line + 2).join(" ")) : null);
     if (m) stateOf.set(m[1]!, cls);
   }
   const bodyOf = (cls: ClassInfo): string => lines.slice(cls.line - 1, cls.endLine).join("\n");
+  // Every widget of the file, with the body its State adds: a screen navigates through the
+  // widgets of its file it builds (`_AlbumCard(…)` whose `onTap` pushes a route) as well.
+  const widgets = new Map<string, { body: string; screen: boolean }>();
   for (const cls of classes) {
     const base = cls.extends?.replace(/<.*$/, "") ?? "";
     if (!FLUTTER_WIDGET_BASE_RE.test(base)) continue;
+    const own = bodyOf(cls);
     const state = stateOf.get(cls.name);
-    const body = bodyOf(cls) + (state ? "\n" + bodyOf(state) : "");
     const annotated = cls.decorators.some((d) => /^RoutePage\b/.test(d)) || /@RoutePage\b/.test(lines[Math.max(0, cls.line - 2)] ?? "");
-    const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(body);
-    if (!annotated && !scaffold && !/(?:Page|Screen)$/.test(cls.name)) continue;
-    const navigatesTo = new Set<string>();
+    // Whether it is a screen is read off the widget's own body: a routed widget often wraps
+    // another of its file whose State renders the `Scaffold`.
+    const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(own);
+    widgets.set(cls.name, { body: own + (state ? "\n" + bodyOf(state) : ""), screen: annotated || scaffold || /(?:Page|Screen)$/.test(cls.name) });
+  }
+  const navigationOf = (body: string, self: string, into: Set<string>): void => {
     for (const re of FLUTTER_NAV_RE) {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) {
         const raw = m[1] ?? m[2];
         const target = raw ? screenOfTarget(raw) : undefined;
-        if (target && target !== cls.name) navigatesTo.add(target);
+        if (target && target !== self) into.add(target);
+      }
+    }
+  };
+  for (const cls of classes) {
+    const own = widgets.get(cls.name);
+    if (!own?.screen) continue;
+    const navigatesTo = new Set<string>();
+    navigationOf(own.body, cls.name, navigatesTo);
+    // The file's other widgets this screen builds, transitively — never into another screen.
+    const seen = new Set([cls.name]);
+    const queue = [own.body];
+    while (queue.length > 0) {
+      const body = queue.shift()!;
+      for (const [name, w] of widgets) {
+        if (seen.has(name) || w.screen || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}\\s*(?:<[^>()]*>)?\\(`).test(body)) continue;
+        seen.add(name);
+        navigationOf(w.body, cls.name, navigatesTo);
+        queue.push(w.body);
       }
     }
     screens.push({

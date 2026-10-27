@@ -368,6 +368,59 @@ class SquadPage extends HookConsumerWidget {
     const a = extractWithRegex(src, "mobile/lib/pages/squad.page.dart", "dart");
     expect(a.screens.find((sc) => sc.name === "SquadPage")?.navigatesTo.sort()).toEqual(["FixturesPage", "LoginPage", "PlayerDetailPage"]);
   });
+
+  it("navigates through the widgets of its file it builds, never through another screen's (real-repo FP)", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `@RoutePage()
+class GaragePage extends StatefulWidget {
+  const GaragePage({super.key});
+  @override
+  State<GaragePage> createState() => _GaragePageState();
+}
+
+class _GaragePageState
+    extends State<GaragePage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(body: Column(children: [const _CarList(), _ServiceCard(car: car)]));
+  }
+}
+
+class _CarList extends StatelessWidget {
+  const _CarList();
+  @override
+  Widget build(BuildContext context) => ListView(children: [_CarTile(car: car)]);
+}
+
+class _CarTile extends StatelessWidget {
+  const _CarTile({required this.car});
+  @override
+  Widget build(BuildContext context) => ListTile(onTap: () => context.pushRoute(CarDetailRoute(id: car.id)));
+}
+
+class _ServiceCard extends StatelessWidget {
+  const _ServiceCard({required this.car});
+  @override
+  Widget build(BuildContext context) => InkWell(onTap: () => context.pushRoute(const ServiceHistoryRoute()));
+}
+
+@RoutePage()
+class ServiceHistoryPage extends StatelessWidget {
+  const ServiceHistoryPage({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: _Unused());
+}
+
+class _Unused extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => TextButton(onPressed: () => context.pushRoute(const TyreRoute()));
+}`;
+    const a = extractWithRegex(src, "mobile/lib/pages/garage.page.dart", "dart");
+    expect(a.screens.map((sc) => `${sc.name} → ${sc.navigatesTo.sort().join(", ")}`)).toEqual([
+      "GaragePage → CarDetailPage, ServiceHistoryPage",
+      "ServiceHistoryPage → TyrePage",
+    ]);
+  });
 });
 
 describe("Dart raw SQL", () => {
