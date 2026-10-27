@@ -393,6 +393,7 @@ export function buildSymbolLinks(
 
   links.push(...ctx.extraLinks);
   links.push(...inheritedHandlerLinks(analyses, ctx));
+  links.push(...fieldHandlerLinks(analyses, ctx));
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
   const handed = handedClientLinks(links, ctx);
   if (handed.length > 0) {
@@ -1426,6 +1427,41 @@ function inheritedHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkConte
           strategy: "inheritance",
           relation: relationForStrategy("inheritance"),
         });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** Strategies that resolved a call through its receiver's declared type. */
+const TYPED_RECEIVER_STRATEGIES: ReadonlySet<SymbolLinkStrategy> = new Set(["injection", "interface-redirect", "di-binding"]);
+
+/**
+ * A template's event handler that calls a member of a component field
+ * (`(click)="downloads.resumeQueue()"` where the class declares
+ * `downloads = inject(DownloadService)`): the markup closes over the instance,
+ * so the click is the call `this.downloads.resumeQueue()` written in the class
+ * body, resolved the same way — through the field's declared or injected type.
+ * Only a typed receiver links: a field nothing types (a signal, a template
+ * ref) is no evidence. Linked from the file's `<component>` anchor, as an
+ * inherited handler is.
+ */
+function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext): SymbolLink[] {
+  const out: SymbolLink[] = [];
+  for (const a of analyses) {
+    if (!a.interactiveElements?.length || !a.classes.length) continue;
+    const done = new Set<string>();
+    for (const el of a.interactiveElements) {
+      const chain = el.handler ? /^\s*(?:this\.)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*(?:\(|$)/.exec(el.handler)?.[1] : undefined;
+      if (!chain || done.has(chain)) continue;
+      done.add(chain);
+      const head = chain.slice(0, chain.indexOf("."));
+      for (const cls of a.classes) {
+        if (!cls.properties.some((p) => p.name === head) && !cls.methods.some((m) => m.name === "constructor" && m.params.some((p) => p.name === head))) continue;
+        const link = resolveCallToDefinition(a.filePath, `${cls.name}.<template>`, { name: `this.${chain}`, kind: "internal", target: null, line: el.line }, a, ctx);
+        if (!link || !TYPED_RECEIVER_STRATEGIES.has(link.strategy!)) continue;
+        out.push({ ...link, sourceSymbol: "<component>", callName: chain });
         break;
       }
     }

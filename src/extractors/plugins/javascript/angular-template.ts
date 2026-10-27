@@ -213,7 +213,8 @@ function splitTopLevel(text: string): string[] {
 }
 
 /**
- * Normalize a handler expression to a short name (`onClick($event)` → `onClick`).
+ * Normalize a handler expression to the function it calls (`onClick($event)` → `onClick`,
+ * `this.save()` → `save`, `downloads.resumeQueue()` → `downloads.resumeQueue`).
  * An output emitted straight from the markup keeps its output's name
  * (`read.emit(chapter)` → `read.emit`): the parent's handler is found through it.
  */
@@ -222,6 +223,8 @@ function cleanHandler(raw: string | null): string | null {
   const trimmed = raw.trim();
   const emit = /^(?:this\.)?([a-zA-Z_$][\w$]*)\.emit\s*\(/.exec(trimmed);
   if (emit) return `${emit[1]}.emit`;
-  const call = trimmed.match(/^([a-zA-Z_$][\w$.]*)/);
-  return call ? call[1]!.split(".").pop()! : trimmed;
+  // A member of a component field keeps its receiver (`downloads.resumeQueue()` →
+  // `downloads.resumeQueue`): the linker resolves it through the field's type.
+  const call = /^(?:this\.)?([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/.exec(trimmed);
+  return call ? call[1]! : trimmed;
 }
