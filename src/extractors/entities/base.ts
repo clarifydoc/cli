@@ -84,9 +84,12 @@ export abstract class EntityExtractor {
     extraDecorators?: string[];
     /** The physical table, when the code names one (`@Table(name = "…")`, `__tablename__`). */
     tableName?: string | null;
+    /** The column route binding finds a record by, when not `id` (`ClassInfo.routeKey`). */
+    routeKey?: string | null;
   }): ClassInfo {
     return {
       name: opts.name,
+      ...(opts.routeKey && opts.routeKey !== "id" ? { routeKey: opts.routeKey } : {}),
       // A table differing only in case (`Employee` → `employee`) says nothing new.
       ...(opts.tableName && opts.tableName.toLowerCase() !== opts.name.toLowerCase() ? { tableName: opts.tableName } : {}),
       extends: opts.extends ?? null,

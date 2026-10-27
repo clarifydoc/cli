@@ -1097,6 +1097,11 @@ export interface ClassInfo {
    * table, so access matching tries it beside the class name.
    */
   tableName?: string;
+  /**
+   * The column a framework's route binding looks a record of this model up by
+   * when it is not `id` (Laravel `getRouteKeyName()` / `$primaryKey`).
+   */
+  routeKey?: string;
   extends: string | null;
   implements: string[];
   /**

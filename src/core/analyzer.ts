@@ -1415,10 +1415,6 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (projectCallSources > 0) {
     progress.detail(`  Data sources that are calls into project code: ${projectCallSources}`);
   }
-  // Which route parameters a data statement filters on, through the calls between.
-  const paramColumns = computeParamColumns({ analyses: allAnalyses, symbolLinks, routes: allRoutes });
-  if (paramColumns.length > 0) progress.detail(`  Route parameters filtering data: ${paramColumns.length}`);
-
   // Step 4c: Advanced analysis
   progress.step("Analyzing complexity and patterns...");
 
@@ -1716,6 +1712,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // may name the entity of an access whose entity class the project does not
   // declare (a repository typed by an entity from a dependency).
   reconcileProjectEntities(allAnalyses);
+  // Which route parameters a data statement filters on, through the calls between — after the
+  // entity passes, which add statements the framework runs for an action (a route-model binding).
+  const paramColumns = computeParamColumns({ analyses: allAnalyses, symbolLinks, routes: allRoutes });
+  if (paramColumns.length > 0) progress.detail(`  Route parameters filtering data: ${paramColumns.length}`);
   fillParamColumnEntities(paramColumns, allAnalyses);
   // Single-table-inheritance subclasses share their base's associations, not
   // just its columns — re-home the base's relations onto each subclass so STI

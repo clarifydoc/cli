@@ -253,7 +253,7 @@ export class PhpEntityExtractor extends EntityExtractor {
       if (changed) a.dataSources = next;
     }
     if (generic.size > 0) inheritGenericRows(php, generic, models, classByName);
-    addRouteModelBindings(php, models);
+    addRouteModelBindings(php, models, classByName);
   }
 
   // ─── Eloquent detection (inheritance chain) ───────────────────────────────
@@ -423,6 +423,11 @@ export class PhpEntityExtractor extends EntityExtractor {
         endLine: cls.endLine,
         // `protected $table = 'app_users';`
         tableName: /\$table\s*=\s*["']([^"']+)["']/.exec(body.join("\n"))?.[1] ?? null,
+        // `getRouteKeyName(): string { return 'public_id'; }`, else `protected $primaryKey = 'code';`
+        routeKey:
+          /function\s+getRouteKeyName\s*\([^)]*\)[^{]*\{\s*return\s+["']([^"']+)["']\s*;/.exec(body.join("\n"))?.[1] ??
+          /\$primaryKey\s*=\s*["']([^"']+)["']/.exec(body.join("\n"))?.[1] ??
+          null,
       }),
     );
   }
@@ -1048,20 +1053,39 @@ const shortType = (type: string | null | undefined): string | null => receiverTy
  * is loaded by the framework before the action runs — `Song::findOrFail($id)`
  * the action never writes. That read is the action's: one row of that model at
  * the action's line. Only public methods of `…Controller` classes, where the
- * router does the binding.
+ * router does the binding. The row filters the model's route key (`id`, or
+ * what `getRouteKeyName()` / `$primaryKey` names, up the model's `extends`) on
+ * the parameter — the route segment of the same name.
  */
-function addRouteModelBindings(php: FileAnalysis[], models: ReadonlySet<string>): void {
+function addRouteModelBindings(php: FileAnalysis[], models: ReadonlySet<string>, classByName: ReadonlyMap<string, ClassInfo | null>): void {
+  const routeKeyOf = (model: string): string => {
+    const seen = new Set<string>();
+    for (let c = classByName.get(model); c && !seen.has(c.name); c = c.extends ? classByName.get(c.extends.split("\\").pop()!) : undefined) {
+      seen.add(c.name);
+      if (c.routeKey) return c.routeKey;
+    }
+    return "id";
+  };
   for (const a of php) {
     for (const cls of a.classes) {
       if (!/Controller$/.test(cls.name)) continue;
       for (const m of cls.methods) {
         if (m.name.startsWith("__") && m.name !== "__invoke") continue;
-        for (const p of m.params) {
+        m.params.forEach((p, index) => {
           const type = shortType(p.type);
-          if (!type || !models.has(type)) continue;
-          if (a.dataSources.some((d) => d.line === m.line && d.entity === type && d.name === "route-model-binding")) continue;
-          a.dataSources.push({ kind: "database", name: "route-model-binding", target: type, entity: type, access: "read", calls: [], line: m.line });
-        }
+          if (!type || !models.has(type)) return;
+          if (a.dataSources.some((d) => d.line === m.line && d.entity === type && d.name === "route-model-binding" && d.whereFields?.[0]?.origin.kind === "param" && d.whereFields[0].origin.index === index)) return;
+          a.dataSources.push({
+            kind: "database",
+            name: "route-model-binding",
+            target: type,
+            entity: type,
+            access: "read",
+            calls: [],
+            line: m.line,
+            whereFields: [{ field: routeKeyOf(type), origin: { kind: "param", name: p.name, index } }],
+          });
+        });
       }
     }
   }

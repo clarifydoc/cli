@@ -104,3 +104,39 @@ describe("Eloquent access resolution across files", () => {
     expect(a.dataSources).toHaveLength(1);
   });
 });
+
+/**
+ * Laravel route-model binding: `show(Club $club)` behind `/clubs/{club}` is
+ * loaded by the framework, by the model's route key — `id`, or what
+ * `getRouteKeyName()` / `$primaryKey` names (up the model's `extends`).
+ */
+describe("Laravel route-model binding", () => {
+  const modelSrc = (body: string) => `<?php\nclass X extends Model {\n${body}\n}`;
+  it("reads the route key a model declares", () => {
+    const keyOf = (body: string) => {
+      const src = modelSrc(body);
+      const analysis = { filePath: "app/Models/X.php", classes: [{ name: "X", extends: "Model", implements: [], decorators: [], methods: [], properties: [], isExported: true, line: 2, endLine: 4 + body.split("\n").length }] } as unknown as FileAnalysis;
+      return new PhpEntityExtractor().extract({ analysis, sourceText: src, lines: src.split("\n") }).entities[0]?.routeKey ?? "id";
+    };
+    expect(keyOf(`public function getRouteKeyName(): string\n{\n    return 'public_id';\n}`)).toBe("public_id");
+    expect(keyOf(`protected $primaryKey = 'code';`)).toBe("code");
+    expect(keyOf(`protected $fillable = ['name'];`)).toBe("id");
+  });
+
+  it("filters the model's route key on the action parameter it binds", () => {
+    const model = (name: string, extra: object = {}): any => ({
+      name, extends: "BaseModel", implements: [], decorators: ["entity", "eloquent"], methods: [], properties: [], isExported: true, line: 1, endLine: 20, ...extra,
+    });
+    const models = { filePath: "app/Models/All.php", language: "php", functions: [], dataSources: [],
+      classes: [{ ...model("BaseModel", { routeKey: "public_id", extends: "Model" }) }, model("Player"), model("Club", { routeKey: "slug" })] } as unknown as FileAnalysis;
+    const ctl = { filePath: "app/Http/Controllers/ClubController.php", language: "php", functions: [], dataSources: [], classes: [{
+      name: "ClubController", extends: "Controller", implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 30,
+      methods: [{ name: "transfer", params: [{ name: "request", type: "Request" }, { name: "club", type: "Club" }, { name: "player", type: "?Player" }], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 5, endLine: 9 }],
+    }] } as unknown as FileAnalysis;
+    new PhpEntityExtractor().reconcileProject([models, ctl]);
+    expect(ctl.dataSources.map((d) => `${d.name} ${d.entity} ${d.whereFields?.map((w) => `${w.field}<-${w.origin.kind}:${"index" in w.origin ? w.origin.index : ""}`)}`)).toEqual([
+      "route-model-binding Club slug<-param:1",
+      "route-model-binding Player public_id<-param:2",
+    ]);
+  });
+});

@@ -125,6 +125,7 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
         if (!existing.implements.includes(im)) existing.implements.push(im);
       }
       if (e.tableName && !existing.tableName) existing.tableName = e.tableName;
+      if (e.routeKey && !existing.routeKey) existing.routeKey = e.routeKey;
     } else {
       analysis.classes.push(e);
     }
