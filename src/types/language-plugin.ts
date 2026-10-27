@@ -1393,6 +1393,11 @@ export interface ParserFrontEnd {
   grammar: string;
   /** Loaded on first use: the parsers are large and most runs never need them. */
   load(): Promise<(source: string) => ParsedStructure>;
+  /**
+   * The extensions the grammar reads, when the language claims files it does not (Play's `conf/routes` is Scala's):
+   * any other file keeps the regex reading without a parse. Absent: every file of the language.
+   */
+  extensions?: readonly string[];
 }
 
 /** An ANTLR front end (`meta.antlr`). */

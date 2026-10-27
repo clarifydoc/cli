@@ -137,10 +137,10 @@ npm run setup
 npm run build
 ```
 
-`npm run setup` builds the Pascal, Kotlin, Swift and Dart tree-sitter grammars, the
-only four whose packages ship C sources instead of a usable WASM — it needs Docker
+`npm run setup` builds the Pascal, Kotlin, Swift, Dart and Scala tree-sitter grammars,
+the only five whose packages ship C sources instead of a usable WASM — it needs Docker
 running (for emscripten) and takes about a minute. Skipping it leaves Pascal/Delphi
-and Kotlin parsing broken, and Swift and Dart read by their regex patterns only. `.npmrc` sets `ignore-scripts`, since the grammar
+and Kotlin parsing broken, and Swift, Dart and Scala read by their regex patterns only. `.npmrc` sets `ignore-scripts`, since the grammar
 packages' native `node-gyp` builds are never loaded by the WASM parser.
 
 `npm run build` produces `dist/cli.js`, which is what the `clarifydoc` bin points at — it must exist before any of the invocations below.

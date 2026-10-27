@@ -17,6 +17,8 @@ export const scalaManifest: LanguagePluginManifest = {
   // A value is named for its type more often than not (`gameRepo`, `api` of a `ClubApi`).
   typeNamedByReceiver: (receiver) => (/^[a-z][A-Za-z\d]+$/.test(receiver) ? receiver[0]!.toUpperCase() + receiver.slice(1) : null),
   parsing: "regex",
+  // Read by the `tree-sitter:scala` front end only (meta.treeSitter): the wasm `npm run setup` builds.
+  grammar: { variants: { scala: { pkg: "tree-sitter-scala", wasm: "tree-sitter-scala.wasm" } } },
   // `.sc`: Scala CLI / Ammonite scripts, worksheets and Mill's `build.sc`
   // (SuperCollider also writes `.sc` — meta.ts skips those).
   extensions: [".scala", ".sc"],

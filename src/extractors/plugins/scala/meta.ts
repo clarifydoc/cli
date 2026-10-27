@@ -33,6 +33,8 @@ export const scalaMeta: LanguagePluginMeta = {
       ? { skip: "not a Scala script (no Scala declaration — SuperCollider?)" }
       : null,
   regexSpec: scalaSpec,
+  // Functions and calls read by tree-sitter-scala while the `tree-sitter:scala` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "scala", extensions: [".scala", ".sc"], load: () => import("./tree-sitter.js").then((m) => m.loadScalaReader()) },
   knownPackages: scalaPackages,
   builtinTypes: SCALA_BUILTINS,
   requestSchema: scalaRequestSchema,

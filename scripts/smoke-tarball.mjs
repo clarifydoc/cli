@@ -39,6 +39,8 @@ const SOURCES = {
   "o.swift": "func greet(_ name: String) -> String {\n    \"hi \\(name)\"\n}\n",
   "p.dart": "String greet(String name) {\n  return 'hi ' + name;\n}\n",
   "q.ex": "defmodule Q do\n  def greet(name), do: \"hi \" <> name\nend\n",
+  "r.scala": "object R {\n  def greet(name: String): String = \"hi \" + name\n}\n",
+  "s.m": "@implementation S\n- (NSString *)greet:(NSString *)name {\n  return [@\"hi \" stringByAppendingString:name];\n}\n@end\n",
 };
 
 const work = mkdtempSync(join(tmpdir(), "clarifydoc-smoke-"));
@@ -63,7 +65,7 @@ try {
       continue;
     }
     if (analysis.extraction?.reason === "grammar-unavailable") problems.push(`${file}: grammar did not load (${analysis.language})`);
-    else if (/\.(swift|dart|ex)$/.test(file) && (analysis.frontEnd?.parser !== "tree-sitter" || analysis.frontEnd.fallback)) {
+    else if (/\.(swift|dart|ex|scala|m)$/.test(file) && (analysis.frontEnd?.parser !== "tree-sitter" || analysis.frontEnd.fallback)) {
       problems.push(`${file}: the tree-sitter front end did not read it (${JSON.stringify(analysis.frontEnd ?? null)})`);
     }
     else {

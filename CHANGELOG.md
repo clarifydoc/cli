@@ -20,6 +20,19 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Objective-C is read by tree-sitter.** Objective-C's functions and calls come from tree-sitter-objc under the
+  `tree-sitter` feature, with the per-file fallback (`no-tree-sitter:objc` keeps the patterns; files with macro forms
+  the grammar refuses, such as `typedef NS_ENUM(…)`, keep them). The patterns read a message send only on a plain
+  name; sends on a property path (`[self.api post:…]`), on a construction (`[[Club alloc] initWithName:…]`, typed as
+  `Club`), on another send's result and nested in arguments are now read, as are C functions and called block
+  properties (`self.onRefresh(YES)`); `@selector(…)`, `@available(…)` and casts are no longer calls.
+- **Scala is read by tree-sitter.** Scala's functions and calls come from tree-sitter-scala (v0.26.3, pinned to the
+  upstream release; npm's 0.24.0 fails on a fifth of Play and Scala 3 files) under the `tree-sitter` feature, with the
+  per-file fallback (`no-tree-sitter:scala` keeps the patterns). Each `def` ends at its body's end; a method on a call's
+  result or a construction is named as the chain from it (`repo.find(id).map`, `new LeagueTable(s).recompute`); an
+  anonymous instance's methods (`new Handler { def run() = … }`) keep their calls and lend them to the function
+  building it; a constructor pattern (`case Goal(minute) =>`) calls its extractor; declarations and `val (a, b) =`
+  are no longer calls.
 - **Elixir is read by tree-sitter.** Elixir's functions and calls come from tree-sitter-elixir under the `tree-sitter`
   feature, with the per-file fallback (`no-tree-sitter:elixir` keeps the patterns). Calls of names ending in `!` or `?`
   (`Repo.get!(Player, id)`, `Repo.insert!`, `Accounts.valid?`) and remote calls without parentheses are read, each

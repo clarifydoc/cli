@@ -11,6 +11,8 @@ export const objcManifest: LanguagePluginManifest = {
   family: "cfam",
   packageEcosystems: ["swiftpm", "cocoapods"],
   parsing: "regex",
+  // Read by the `tree-sitter:objc` front end only (meta.treeSitter).
+  grammar: { variants: { objc: { pkg: "tree-sitter-objc", wasm: "tree-sitter-objc.wasm" } } },
   extensions: [".m", ".mm"],
   // One type spans files here: categories and the `@implementation` file add to a class declared elsewhere.
   typesSpanFiles: true,

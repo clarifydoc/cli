@@ -27,6 +27,8 @@ export const objcMeta: LanguagePluginMeta = {
   ...objcManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: objcSpec,
+  // Functions and calls read by tree-sitter-objc while the `tree-sitter:objc` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "objc", load: () => import("./tree-sitter.js").then((m) => m.loadObjcReader()) },
   builtinTypes: OBJC_BUILTINS,
   knownPackages: objcPackages,
   apiCallRoots: ["AFHTTPSessionManager", "NSURLSession", "NSURLConnection"],

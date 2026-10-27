@@ -137,6 +137,7 @@ export interface FileResult {
 async function readWithParser(
   language: Language,
   source: string,
+  filePath: string,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
@@ -146,6 +147,7 @@ async function readWithParser(
       : null;
   if (!choice) return null;
   const { parser, frontEnd } = choice;
+  if (frontEnd.extensions && !frontEnd.extensions.some((ext) => filePath.endsWith(ext))) return null;
   const grammar = frontEnd.grammar;
   try {
     const read = await frontEnd.load();
@@ -359,7 +361,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const read = await readWithParser(regexLanguage, regexSource);
+      const read = await readWithParser(regexLanguage, regexSource, file.relativePath);
       const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
       if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;
