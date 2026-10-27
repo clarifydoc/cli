@@ -141,7 +141,12 @@ export function buildModuleValueLookup(
       const mod = byFile.get(source)?.moduleValues;
       const exported = imp.aliases?.[head];
       const key = exported ? (rest ? `${exported}.${rest}` : exported) : expr;
-      const v = mod?.[key] ?? (imp.isNamespace && rest ? mod?.[rest] : undefined);
+      // `from tests.utils import api_routes` binds the module itself (a file or a package named
+      // like the binding): `api_routes.clubs_url` is that module's `clubs_url`.
+      const segs = source.replace(/\.[^./]+$/, "").split("/");
+      const named = exported ?? head;
+      const isModule = segs[segs.length - 1] === named || segs[segs.length - 2] === named;
+      const v = mod?.[key] ?? ((imp.isNamespace || isModule) && rest ? mod?.[rest] : undefined);
       return v === undefined ? null : { value: v, file: source };
     }
     // A package import: the import path names a directory, whose files share one scope.

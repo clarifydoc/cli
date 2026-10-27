@@ -30,6 +30,14 @@ describe("module values across files", () => {
     expect(get("src/api/clubs.ts", "PLAYERS_URL")).toBeNull();
   });
 
+  it("reads a module a named import binds by its own name (`from tests.utils import api_routes`)", () => {
+    const routes = file("tests/utils/api_routes/__init__.py", "python", { prefix: "/api", clubs_create_url: "/api/clubs/create" });
+    const test = file("tests/integration/test_clubs.py", "python", null, [{ source: "tests.utils", specifiers: ["api_routes"] }]);
+    const get = lookup([routes, test]);
+    expect(get("tests/integration/test_clubs.py", "api_routes.clubs_create_url")).toBe("/api/clubs/create");
+    expect(get("tests/integration/test_clubs.py", "api_routes.players_url")).toBeNull();
+  });
+
   it("reads a Go package by the directory its import path ends with, and resolves the value's own holes there", () => {
     const consts = file("internal/config/const.go", "go", { ApiUri: "/api/v1", DownloadUri: "${ApiUri}/dl" });
     const server = file("internal/server/routes.go", "go", null, [{ source: "github.com/example/league/internal/config", specifiers: ["config"] }]);
