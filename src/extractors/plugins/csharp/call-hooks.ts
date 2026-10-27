@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { csharpReceiverTypeOf } from "./local-types.js";
+import { csharpArgOriginsOf } from "./arg-origins.js";
 
 /**
  * `Foo x = new();` — a target-typed construction names its class only in the
@@ -45,6 +46,8 @@ export const csharpCallHooks: CallExtractionHooks = {
   receiverTypeOf: csharpReceiverTypeOf,
   argCountOf: csharpArgCount,
   argsOf: csharpTableArgs,
+  // Where each argument comes from: a parameter, a request value, a literal (named arguments by name).
+  argOriginsOf: csharpArgOriginsOf,
 };
 
 /**

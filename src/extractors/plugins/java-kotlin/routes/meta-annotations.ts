@@ -40,6 +40,13 @@ function annotationStrings(ann: Node): string[] {
   return out;
 }
 
+/** The request value a binding annotation names: `@PathVariable("id")`, `@RequestParam(value = "q", required = false)`. */
+function boundName(ann: Node): string | null {
+  const text = annotationText(ann);
+  const m = /^[\w.]+\s*\(\s*"([^"]+)"/.exec(text) ?? /[(,]\s*(?:value|name)\s*=\s*"([^"]+)"/.exec(text);
+  return m && /^[A-Za-z_][\w.-]*$/.test(m[1]!) ? m[1]! : null;
+}
+
 function annotationText(ann: Node): string {
   return ann.text.replace(/^@/, "").replace(/\s+/g, " ");
 }
@@ -211,15 +218,18 @@ export function routeParamsOf(method: Node, path: string, flavor: JvmFlavor): Ro
   for (const p of parametersOf(method)) {
     const bare = (p.type ?? "").replace(/<.*$/s, "").replace(/\?$/, "").replace(/^.*\./, "");
     let explicit: RouteParamBinding | null = null;
+    let requestName: string | null = null;
     for (const ann of p.annotations) {
       const b = BINDING_ANNOTATIONS[annotationSimpleName(ann) ?? ""];
       if (b) {
         explicit = b;
+        requestName = b === "route" || b === "query" ? boundName(ann) : null;
         break;
       }
     }
     if (explicit) {
-      out.push({ name: p.name, type: p.type, binding: explicit });
+      // `@PathVariable("id") Long clubId`: the request names it `id`, the handler `clubId`.
+      out.push(requestName && requestName !== p.name ? { name: requestName, type: p.type, binding: explicit, variable: p.name } : { name: p.name, type: p.type, binding: explicit });
     } else if (FRAMEWORK_TYPES.has(bare)) {
       out.push({ name: p.name, type: p.type, binding: "services", inferred: true });
     } else {

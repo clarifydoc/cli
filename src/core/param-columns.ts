@@ -56,7 +56,17 @@ export function computeParamColumns(input: {
     }
     return list;
   };
-  const fnNamed = (file: string, symbol: string) => fnsIn(file).find((f) => f.symbol === symbol);
+  /** The function a link lands on: of overloads sharing a name, the one declared at the link's target line. */
+  const fnNamed = (file: string, symbol: string, line?: number) => {
+    const named = fnsIn(file).filter((f) => f.symbol === symbol);
+    return (named.length > 1 && line !== undefined ? named.find((f) => f.fn.line === line) : undefined) ?? named[0];
+  };
+  const overloaded = (f: Fn): boolean => fnsIn(f.file).filter((x) => x.symbol === f.symbol).length > 1;
+  /** Two declared types, nullability and namespaces aside; an undeclared one agrees with anything. */
+  const sameType = (a: string | null | undefined, b: string | null | undefined): boolean => {
+    const norm = (t: string) => t.replace(/\s+/g, "").replace(/\?$/, "").replace(/^(?:[\w]+\.)+/, "");
+    return !a || !b || norm(a) === norm(b);
+  };
   /** The innermost function of the file spanning `line`. */
   const innermost = (file: string, line: number): Fn | undefined => {
     let best: Fn | undefined;
@@ -73,7 +83,8 @@ export function computeParamColumns(input: {
       if (d.kind !== "database" || !d.whereFields) continue;
       const owner = innermost(a.filePath, d.line);
       if (!owner) continue;
-      const k = `${owner.file}::${owner.symbol}`;
+      // Keyed by the declaration's line too: overloads share a name.
+      const k = `${owner.file}::${owner.symbol}@${owner.fn.line}`;
       (statementsOf.get(k) ?? statementsOf.set(k, []).get(k)!).push(d);
     }
   }
@@ -85,16 +96,20 @@ export function computeParamColumns(input: {
     (linksFrom.get(k) ?? linksFrom.set(k, []).get(k)!).push(l);
   }
   const leaf = (name: string) => name.split(".").pop() ?? name;
-  /** The links one call made, by line and name. */
-  const linksOfCall = (file: string, symbol: string, call: CallInfo): SymbolLink[] =>
-    (linksFrom.get(`${file}::${symbol}`) ?? []).filter((l) => l.sourceLine === call.line && leaf(l.callName) === leaf(call.name) && !l.strategy?.startsWith("dispatch:"));
+  /**
+   * The links one call made, by line and name. A framework dispatch (a bus
+   * message, a named query a loader exposes) hands its arguments on by its own
+   * rules, so it is followed only for an argument handed by name.
+   */
+  const linksOfCall = (file: string, symbol: string, call: CallInfo, byName: boolean): SymbolLink[] =>
+    (linksFrom.get(`${file}::${symbol}`) ?? []).filter((l) => l.sourceLine === call.line && leaf(l.callName) === leaf(call.name) && (byName || !l.strategy?.startsWith("dispatch:")));
 
   type Row = Omit<ParamColumn, "route">;
-  const walk = (file: string, symbol: string, calls: readonly CallInfo[], slot: Slot, hops: ParamColumn["hops"], depth: number, confidence: Confidence, seen: Set<string>, out: Row[]): void => {
-    const key = `${file}::${symbol}#${slot.kind === "param" ? slot.index : `${slot.kind}:${slot.name}`}`;
+  const walk = (file: string, symbol: string, at: number | null, calls: readonly CallInfo[], slot: Slot, hops: ParamColumn["hops"], depth: number, confidence: Confidence, seen: Set<string>, out: Row[]): void => {
+    const key = `${file}::${symbol}@${at}#${slot.kind === "param" ? slot.index : `${slot.kind}:${slot.name}`}`;
     if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_ROUTE) return;
     seen.add(key);
-    for (const d of statementsOf.get(`${file}::${symbol}`) ?? []) {
+    for (const d of statementsOf.get(`${file}::${symbol}@${at}`) ?? []) {
       for (const w of d.whereFields!) {
         if (!matches(w.origin, slot)) continue;
         out.push({
@@ -109,11 +124,17 @@ export function computeParamColumns(input: {
       for (const arg of call.argOrigins ?? []) {
         // A property of an object argument arrives as a field of the callee's parameter: not followed.
         if (arg.field !== undefined || !matches(arg.origin, slot)) continue;
-        for (const link of linksOfCall(file, symbol, call)) {
-          const target = fnNamed(link.targetFile, link.targetSymbol);
-          if (!target || arg.index >= target.fn.params.length) continue;
-          const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: arg.index };
-          walk(target.file, target.symbol, target.fn.calls, { kind: "param", index: arg.index }, [...hops, hop], depth + 1, weakest(confidence, link.confidence ?? "INFERRED"), seen, out);
+        for (const link of linksOfCall(file, symbol, call, arg.param !== undefined)) {
+          const target = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
+          // Handed by name: the callee's parameter of that name, wherever it sits. An extension
+          // method's receiver parameter is written before the dot (`clubs.ForLeague(id)`).
+          const shift = target?.fn.params[0]?.isReceiver && call.name.includes(".") ? 1 : 0;
+          const index = !target ? -1 : arg.param !== undefined ? target.fn.params.findIndex((p) => p.name === arg.param) : arg.index + shift;
+          if (!target || index < 0 || index >= target.fn.params.length) continue;
+          // Of overloads sharing a name the linker may have picked the wrong one: followed only when the declared types agree.
+          if (slot.kind === "param" && overloaded(target) && !sameType(fnNamed(file, symbol, at ?? undefined)?.fn.params[slot.index]?.type, target.fn.params[index]!.type)) continue;
+          const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: index };
+          walk(target.file, target.symbol, target.fn.line, target.fn.calls, { kind: "param", index }, [...hops, hop], depth + 1, weakest(confidence, link.confidence ?? "INFERRED"), seen, out);
         }
       }
     }
@@ -129,15 +150,23 @@ export function computeParamColumns(input: {
     for (const p of params) {
       const found: Row[] = [];
       // An inline handler reading the request: the route's own calls.
-      walk(r.filePath, routeSymbol, r.calls ?? [], { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name }, [], 0, "EXTRACTED", new Set(), found);
-      // A handler function: its parameter of the route parameter's name.
+      walk(r.filePath, routeSymbol, null, r.calls ?? [], { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name }, [], 0, "EXTRACTED", new Set(), found);
+      // A handler function, or a callee the framework hands the route's parameters by name: its parameter of that name.
+      const byName = new Set((r.calls ?? []).filter((c) => c.routeParamsByName).map((c) => `${c.line}|${leaf(c.name)}`));
       for (const link of linksFrom.get(`${r.filePath}::${routeSymbol}`) ?? []) {
-        if (!r.handler || leaf(link.callName) !== leaf(r.handler)) continue;
-        const handler = fnNamed(link.targetFile, link.targetSymbol);
-        const index = handler ? handler.fn.params.findIndex((x) => x.name === p.name) : -1;
-        if (!handler || index < 0) continue;
-        const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: index };
-        walk(handler.file, handler.symbol, handler.fn.calls, { kind: "param", index }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+        const isHandler = !!r.handler && leaf(link.callName) === leaf(r.handler);
+        if (!isHandler && !byName.has(`${link.sourceLine}|${leaf(link.callName)}`)) continue;
+        const handler = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
+        if (!handler) continue;
+        const index = handler.fn.params.findIndex((x) => x.name === (isHandler ? p.variable ?? p.name : p.name));
+        if (index >= 0) {
+          const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: index };
+          walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, { kind: "param", index }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+        } else if (isHandler) {
+          // The handler reads it off the request itself (`req.params.slug`, `request.args.get("season")`).
+          const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: -1 };
+          walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+        }
       }
       for (const row of found) rows.push({ ...row, param: p.name, binding: p.binding! });
     }

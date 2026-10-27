@@ -565,7 +565,8 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
         const factory = dep?.type === "call" ? dep.childForFieldName("function") : null;
         const named = dep && (dep.type === "identifier" || dep.type === "attribute") ? dep : factory && (factory.type === "identifier" || factory.type === "attribute") ? factory : null;
         if (named) {
-          dependencies.push({ name: named.text, kind: "internal", target: null, line: named.startPosition.row + 1 });
+          // FastAPI hands a dependency the route's parameters by name (`def get_club(slug: str = Path(...))`).
+          dependencies.push({ name: named.text, kind: "internal", target: null, line: named.startPosition.row + 1, ...(named === dep ? { routeParamsByName: true as const } : {}) });
         }
       }
       continue;

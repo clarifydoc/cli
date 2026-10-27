@@ -176,3 +176,43 @@ VALUES ((
     ]);
   });
 });
+
+describe("named queries: parameters and filter fields", () => {
+  const src = `-- name: get-squad-by-club^
+SELECT p.id,
+       p.name,
+       (SELECT name FROM clubs WHERE id = p.club_id) AS club_name
+FROM players p
+         INNER JOIN clubs c ON p.club_id = c.id AND (c.slug = :club_slug)
+WHERE p.id = :player_id;
+
+-- name: update-player-shirt!
+UPDATE players
+SET shirt = :shirt
+WHERE id = :player_id;
+
+-- name: delete-player!
+DELETE
+FROM players
+WHERE id = :player_id
+  AND club_id = (SELECT id FROM clubs WHERE slug = :club_slug);`;
+
+  it("gives each named query its placeholders as parameters, in order", () => {
+    const fns = sqlSpec.postProcessFunctions!(src.split("\n"), []);
+    expect(fns.map((f) => [f.name, f.params.map((p) => p.name)])).toEqual([
+      ["get-squad-by-club", ["club_slug", "player_id"]],
+      ["update-player-shirt", ["shirt", "player_id"]],
+      ["delete-player", ["player_id", "club_slug"]],
+    ]);
+  });
+
+  it("sets each compared field on the row of its table — by alias, else the query at its depth — never a SET or VALUES", () => {
+    expect(rows(src).filter((r) => r.whereFields).map((r) => [r.name, r.entity, r.line, r.whereFields!.map((w) => `${w.field}=${w.origin.kind === "param" ? `${w.origin.name}#${w.origin.index}` : "?"}`)])).toEqual([
+      ["SELECT", "clubs", 2, ["slug=club_slug#0"]],
+      ["SELECT", "players", 5, ["id=player_id#1"]],
+      ["UPDATE", "players", 10, ["id=player_id#1"]],
+      ["DELETE", "players", 15, ["id=player_id#0"]],
+      ["SELECT", "clubs", 18, ["slug=club_slug#1"]],
+    ]);
+  });
+});

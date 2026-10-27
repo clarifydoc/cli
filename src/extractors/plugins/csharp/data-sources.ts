@@ -1,4 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
+import { csharpWhereFields } from "./arg-origins.js";
 import type { DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
@@ -851,7 +852,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (row) {
         // One row per query: `_db.Owners.Where(..).Include(..).ToListAsync()` is
         // one access, recorded on the outermost EF operator of the chain.
-        if (!this.efCallFollows(node)) sources.push(row);
+        if (!this.efCallFollows(node)) {
+          const whereFields = csharpWhereFields(node);
+          sources.push(whereFields ? { ...row, whereFields } : row);
+        }
         return;
       }
     }

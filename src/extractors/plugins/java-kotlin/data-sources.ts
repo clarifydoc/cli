@@ -1,4 +1,5 @@
 import { constantString } from "./constant-expr.js";
+import { annotatedQueryWhereFields, derivedQueryWhereFields } from "./arg-origins.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
@@ -876,6 +877,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       if (sqlAnn) {
         const access = annotatedSqlAccess(node, text, sqlAnn[1]!, this.isRoomFile);
         if (access) {
+          const holder = node.parent?.type === "modifiers" ? node.parent.parent : node.parent;
+          const whereFields = holder && /^(?:method_declaration|function_declaration)$/.test(holder.type) ? annotatedQueryWhereFields(text, holder) : null;
           sources.push(this.ds({
             kind: "database",
             name: `@${sqlAnn[1]}`,
@@ -883,6 +886,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             entity: access.table,
             line: access.line,
             ...(access.access ? { access: access.access } : {}),
+            ...(whereFields ? { whereFields } : {}),
           }));
         }
       }
@@ -1042,6 +1046,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const daoEntity = named === null ? null
       : (jpaEntityArg(node) ?? (generic ? this.instanceArgType(node, call.firstArg) : named));
     if (named && DAO_CRUD_RE.test(method)) {
+      // A derived query's criteria are its filter: `findByClubIdAndSeason(clubId, season)`.
+      const whereFields = derivedQueryWhereFields(method, node);
       sources.push(this.ds({
         kind: "database",
         name: `DAO: ${method}`,
@@ -1049,6 +1055,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         ...(daoEntity ? { entity: daoEntity } : {}),
         line,
         ...withAccess(jvmVerbAccess(method)),
+        ...(whereFields ? { whereFields } : {}),
       }));
       return;
     }

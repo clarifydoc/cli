@@ -56,4 +56,83 @@ describe("paramColumns", () => {
   it("is empty when no statement reports filter fields", () => {
     expect(computeParamColumns({ analyses: [routes, file("api/services/clubs.ts", [])], symbolLinks: links, routes: [route] })).toEqual([]);
   });
+  it("hands an argument given by name to the parameter of that name — through a named-query dispatch too", () => {
+    const r = { kind: "api", path: "/clubs/{slug}", httpMethod: "GET", handler: "show", line: 5, filePath: "league/routes.py", params: [{ name: "slug", type: null, binding: "route" }], calls: [] } as any;
+    const routesFile = file("league/routes.py", [fn("show", 6, 8, ["slug"], [{ name: "repo.get_club", kind: "internal", target: null, line: 7, argOrigins: [{ index: 0, param: "slug", origin: { kind: "param", name: "slug", index: 0 } }] }])], { routes: [r] } as any);
+    const repo = file("league/repo.py", [fn("get_club", 1, 3, ["season", "slug"], [{ name: "queries.get_club_by_slug", kind: "internal", target: null, line: 2, argOrigins: [{ index: 1, param: "slug", origin: { kind: "param", name: "slug", index: 1 } }] }])]);
+    const sql = file("league/sql/clubs.sql", [fn("get-club-by-slug", 1, 4, ["slug"])], {
+      dataSources: [{ kind: "database", name: "SELECT", target: "clubs", entity: "clubs", access: "read", line: 2, calls: [], whereFields: [{ field: "slug", origin: { kind: "param", name: "slug", index: 0 } }] }],
+    } as any);
+    const rows = computeParamColumns({
+      analyses: [routesFile, repo, sql],
+      symbolLinks: [
+        link("league/routes.py", "route:GET /clubs/{slug}", 5, "show", "league/routes.py", "show"),
+        link("league/routes.py", "show", 7, "repo.get_club", "league/repo.py", "get_club"),
+        { ...link("league/repo.py", "get_club", 2, "queries.get_club_by_slug", "league/sql/clubs.sql", "get-club-by-slug"), strategy: "dispatch:named-query", relation: "dispatch" },
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.column.field, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([["slug", "show/0 → get_club/1 → get-club-by-slug/0"]]);
+  });
+
+  it("follows a dependency the framework hands the route's parameters by name, and a request value the handler reads itself", () => {
+    const r = {
+      kind: "api", path: "/clubs/{slug}", httpMethod: "GET", handler: "show", line: 5, filePath: "league/routes.py",
+      params: [{ name: "slug", type: null, binding: "route" }, { name: "season", type: null, binding: "query" }],
+      calls: [{ name: "club_from_path", kind: "internal", target: null, line: 6, routeParamsByName: true }],
+    } as any;
+    const routesFile = file("league/routes.py", [
+      fn("show", 6, 9, ["club"], [{ name: "repo.squad", kind: "internal", target: null, line: 8, argOrigins: [{ index: 0, origin: { kind: "query-param", name: "season" } }] }]),
+      fn("club_from_path", 11, 13, ["slug"], [{ name: "repo.club", kind: "internal", target: null, line: 12, argOrigins: [{ index: 0, origin: { kind: "param", name: "slug", index: 0 } }] }]),
+    ], { routes: [r] } as any);
+    const repo = file("league/repo.py", [fn("club", 1, 3, ["slug"]), fn("squad", 5, 7, ["season"])], {
+      dataSources: [
+        { kind: "database", name: "Club.objects.get", target: "Club", entity: "Club", access: "read", line: 2, calls: [], whereFields: [{ field: "slug", origin: { kind: "param", name: "slug", index: 0 } }] },
+        { kind: "database", name: "Player.objects.filter", target: "Player", entity: "Player", access: "read", line: 6, calls: [], whereFields: [{ field: "season", origin: { kind: "param", name: "season", index: 0 } }] },
+      ],
+    } as any);
+    const rows = computeParamColumns({
+      analyses: [routesFile, repo],
+      symbolLinks: [
+        link("league/routes.py", "route:GET /clubs/{slug}", 5, "show", "league/routes.py", "show"),
+        link("league/routes.py", "route:GET /clubs/{slug}", 6, "club_from_path", "league/routes.py", "club_from_path"),
+        link("league/routes.py", "club_from_path", 12, "repo.club", "league/repo.py", "club"),
+        link("league/routes.py", "show", 8, "repo.squad", "league/repo.py", "squad"),
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.route.param, `${x.column.entity}.${x.column.field}`, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([
+      ["season", "Player.season", "show/-1 → squad/0"],
+      ["slug", "Club.slug", "club_from_path/0 → club/0"],
+    ]);
+  });
+
+  it("follows an overloaded callee only when the declared types agree, and shifts past an extension method's receiver", () => {
+    const r = { kind: "api", path: "/clubs/{id}", httpMethod: "GET", handler: "ClubsController.Show", line: 3, filePath: "Api/ClubsController.cs", params: [{ name: "clubId", type: "int", binding: "route", variable: undefined }], calls: [] } as any;
+    const p = (name: string, type: string, extra = {}) => ({ name, type, defaultValue: null, ...extra });
+    const controller = file("Api/ClubsController.cs", [], { classes: [{ name: "ClubsController", methods: [{ ...fn("Show", 4, 8, []), params: [p("clubId", "int")], calls: [
+      { name: "_service.Find", kind: "internal", target: null, line: 5, argOrigins: [{ index: 0, origin: { kind: "param", name: "clubId", index: 0 } }] },
+      { name: "_context.Clubs.ForClub", kind: "internal", target: null, line: 6, argOrigins: [{ index: 0, origin: { kind: "param", name: "clubId", index: 0 } }] },
+    ] }] }] } as any);
+    const service = file("Api/ClubService.cs", [], { classes: [{ name: "ClubService", methods: [
+      { ...fn("Find", 1, 3, []), params: [p("name", "string")] },
+      { ...fn("Find", 5, 7, []), params: [p("id", "int")] },
+    ] }, { name: "ClubQueries", methods: [{ ...fn("ForClub", 10, 12, []), params: [p("clubs", "IQueryable<Club>", { isReceiver: true }), p("id", "int")] }] }],
+    dataSources: [
+      { kind: "database", name: "EF: Where", target: "Clubs", entity: "Clubs", access: "read", line: 2, calls: [], whereFields: [{ field: "Name", origin: { kind: "param", name: "name", index: 0 } }] },
+      { kind: "database", name: "EF: Where", target: "Clubs", entity: "Clubs", access: "read", line: 6, calls: [], whereFields: [{ field: "Id", origin: { kind: "param", name: "id", index: 0 } }] },
+      { kind: "database", name: "EF: Where", target: "Clubs", entity: "Clubs", access: "read", line: 11, calls: [], whereFields: [{ field: "Id", origin: { kind: "param", name: "id", index: 1 } }] },
+    ] } as any);
+    const rows = computeParamColumns({
+      analyses: [controller, service],
+      symbolLinks: [
+        link("Api/ClubsController.cs", "route:GET /clubs/{id}", 3, "ClubsController.Show", "Api/ClubsController.cs", "ClubsController.Show"),
+        // The linker picked the string overload: its parameter's type is not the value's.
+        { ...link("Api/ClubsController.cs", "ClubsController.Show", 5, "_service.Find", "Api/ClubService.cs", "ClubService.Find"), targetLine: 1 },
+        link("Api/ClubsController.cs", "ClubsController.Show", 6, "_context.Clubs.ForClub", "Api/ClubService.cs", "ClubQueries.ForClub"),
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.column.line, x.column.field, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([[11, "Id", "ClubsController.Show/0 → ClubQueries.ForClub/1"]]);
+  });
 });

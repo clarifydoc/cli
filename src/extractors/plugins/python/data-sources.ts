@@ -5,6 +5,7 @@ import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/bas
 import type { ProjectContext } from "../../../types/project.js";
 import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { pythonResponseReads } from "./response-reads.js";
+import { pythonWhereFields } from "./arg-origins.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
@@ -370,11 +371,16 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             else if (stated?.attribute) entityAttribute = stated.attribute;
             if (stated) access ??= stated.access;
           }
+          // Each call of a chain is a row of its own (`query(…).filter(…).first()`): the filter is told once per line.
+          const found = pythonWhereFields(node);
+          const json = found ? JSON.stringify(found) : "";
+          const whereFields = found && !sources.some((d) => d.line === node.startPosition.row + 1 && d.whereFields && JSON.stringify(d.whereFields) === json) ? found : null;
           sources.push(this.ds({
             kind: "database",
             name: fnName,
             target: table ?? tableRef,
             line: node.startPosition.row + 1,
+            ...(whereFields ? { whereFields } : {}),
             ...(table ? { entity: table } : tableRef ? { entity: tableRef, targetRef: tableRef } : {}),
             ...(instance ? { receiverIsInstance: true } : {}),
             ...(relatedField ? { relatedField } : {}),

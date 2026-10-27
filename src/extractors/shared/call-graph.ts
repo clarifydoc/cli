@@ -256,7 +256,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}` : c.name;
-    if (seen.has(seenKey)) continue;
+    // One site is one call, however many ways the walk met it (a decorator is also its call node).
+    const site = `${c.name}\0@${c.line}:${c.column}`;
+    if (seen.has(seenKey) || seen.has(site)) continue;
+    seen.add(site);
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;

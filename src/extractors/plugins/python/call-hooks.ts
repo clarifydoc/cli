@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { pythonReceiverTypeOf } from "./di.js";
+import { pythonArgOriginsOf } from "./arg-origins.js";
 
 export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
@@ -80,6 +81,8 @@ export const pythonCallHooks: CallExtractionHooks = {
   },
   noOverloads: true,
   argsOf: pythonClassArgs,
+  // Where each argument comes from: a parameter, a request value, a literal (keyword arguments by name).
+  argOriginsOf: pythonArgOriginsOf,
 };
 
 /**

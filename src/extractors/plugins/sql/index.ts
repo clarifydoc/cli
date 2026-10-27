@@ -4,7 +4,7 @@ import type {
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
-import { namedQueries } from "./named-queries.js";
+import { addNamedQueryFilters, namedQueries } from "./named-queries.js";
 import { statementAccesses } from "../shared/sql-string-sources.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
@@ -500,7 +500,8 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
     if (isSelect && read[i]) continue;
     const selectText = isSelect && !/\bFROM\b/i.test(line) ? statementText(lines, i) : line;
     const selectMatch = (isSelect ? selectText.match(/^\s*SELECT\b[\s\S]*?\bFROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)(?![\w.]|\s*\()/i) : null)
-      ?? line.match(/^\s*DELETE\s+(?:TOP\s*\([^)]*\)\s*)?FROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
+      // `DELETE` alone on its line, `FROM t` on the next.
+      ?? (/^\s*DELETE\s*$/i.test(line) ? statementText(lines, i) : line).match(/^\s*DELETE\s+(?:TOP\s*\([^)]*\)\s*)?FROM\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
     if (selectMatch) {
       const target = unquoteName(selectMatch[1]!);
       const verb = /^\s*DELETE/i.test(line) ? "DELETE" : "SELECT";
@@ -520,14 +521,16 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 
     // INSERT INTO t / UPDATE t / MERGE INTO t / REPLACE INTO t / TRUNCATE TABLE t — and
     // T-SQL's `UPDATE TOP (n) t`, `INSERT t`, `DELETE a FROM t a`, `UPDATE a … FROM t a`.
-    const writeMatch = line.match(
+    // `INSERT` / `UPDATE` alone on its line, the table on the next.
+    const writeText = /^\s*(?:INSERT|UPDATE)\s*$/i.test(line) ? statementText(lines, i) : line;
+    const writeMatch = writeText.match(
       /^\s*(INSERT\s+(?:OR\s+\w+\s+)?(?:INTO\s+)?|UPDATE\s+(?:TOP\s*\([^)]*\)\s*)?|DELETE\s+(?:TOP\s*\([^)]*\)\s*)?(?=\w+\s+FROM\b)|MERGE\s+(?:INTO\s+)?|REPLACE\s+INTO\s+|TRUNCATE\s+TABLE\s+|TRUNCATE\s+)((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (writeMatch && !/^(?:INTO|TABLE|OR)$/i.test(writeMatch[2]!)) {
       const verb = writeMatch[1]!.trim().toUpperCase().replace(/\s*TOP\s*\(.*$/, "").replace(/\s+/g, " ").replace(/^INSERT(?: OR \w+)?(?: INTO)?$/, "INSERT INTO").replace(/^MERGE(?: INTO)?$/, "MERGE INTO");
       const end = statementSpanEnd(lines, i);
       let target = unquoteName(writeMatch[2]!);
-      let rest = line.slice(writeMatch.index! + writeMatch[0].length);
+      let rest = writeText.slice(writeMatch.index! + writeMatch[0].length);
       // `UPDATE p SET … FROM dbo.Players p`: the alias names the table the FROM gives it.
       const aliased = /^\w+$/.test(target) ? aliasTables(lines.slice(i, end).map(codeOf).join("\n")).get(target.toLowerCase()) : undefined;
       if (aliased) {
@@ -659,7 +662,11 @@ export const sqlSpec: RegexLangSpec = {
     },
   ],
 
-  extractDataSources: (lines, _classes) => extractDmlStatements(lines),
+  extractDataSources: (lines, _classes) => {
+    const sources = extractDmlStatements(lines);
+    addNamedQueryFilters(lines, sources);
+    return sources;
+  },
 
   extractRoutes: (_lines, _classes): RouteInfo[] => [],
 

@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { jvmArgOriginsOf } from "./arg-origins.js";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { containerLookup, expressionFact } from "./di-expressions.js";
@@ -177,6 +178,8 @@ export const javaCallHooks: CallExtractionHooks = {
   receiverTypeOf: javaReceiverType,
   argCountOf: javaArgCount,
   argsOf: javaQueryNameArgs,
+  // Where each argument comes from: a parameter, a request value, a literal.
+  argOriginsOf: jvmArgOriginsOf,
   collectExtraCalls: javaMethodReference,
 };
 
@@ -219,6 +222,8 @@ export const kotlinCallHooks: CallExtractionHooks = {
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: kotlinReceiverType,
   argCountOf: kotlinArgCount,
+  // Where each argument comes from (named arguments by name).
+  argOriginsOf: jvmArgOriginsOf,
 };
 
 /** A string literal shaped like a query name (`"match.by.club"`, `"Club.findAll"`): dotted, no spaces. */

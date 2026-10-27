@@ -830,6 +830,12 @@ export interface CallInfo {
    */
   argOrigins?: CallArgOrigin[];
   /**
+   * The framework calls the callee with the route's parameters by name (a
+   * FastAPI `Depends(get_club)` in a handler's signature): its parameter
+   * named like a route parameter receives that value. On a route's calls.
+   */
+  routeParamsByName?: true;
+  /**
    * How many arguments the call passes (Java, Kotlin, C#, TypeScript, Python,
    * PHP): in a language with overloading the linker picks `save(Order)` or
    * `save(Order, boolean)` by it; the patch check compares it with the
@@ -872,6 +878,13 @@ export interface CallArgOrigin {
    * itself is the value.
    */
   field?: string;
+  /**
+   * Handed by name (`get_club(slug=slug)`, `GetClub(id: clubId)`): the callee's
+   * parameter of this name receives it, wherever it sits — `index` is then only
+   * the argument's place in the call. Also a value a framework hands a callee
+   * by name (a dependency's parameter named like the route parameter).
+   */
+  param?: string;
 }
 
 /**
@@ -904,7 +917,11 @@ export interface ParamColumn {
   route: { file: string; line: number; method: string | null; path: string; param: string; binding?: string };
   /** The statement: the entity it names (as written, when it names one), the filtered field (dotted when nested), where it is, and what it does. */
   column: { entity: string | null; field: string; file: string; line: number; access?: "read" | "write"; call: string };
-  /** The functions the value is handed through, from the route towards the statement, each with the argument position it arrives at. */
+  /**
+   * The functions the value is handed through, from the route towards the
+   * statement, each with the argument position it arrives at (`-1`: the
+   * handler reads it off the request itself, `request.args.get("season")`).
+   */
   hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
   /** One wrapper the value passed through on the last step (`Number`). */
   transform?: string;
@@ -1399,6 +1416,12 @@ export interface RouteParamInfo {
    * binds from the body) rather than an explicit `[FromX]` attribute.
    */
   inferred?: boolean;
+  /**
+   * The handler's own parameter receiving it, when it is named differently
+   * from the request value (`@PathVariable("id") Long clubId`,
+   * `[FromRoute(Name = "id")] int clubId`).
+   */
+  variable?: string;
   /**
    * The `$ref` the parameter is defined by when that definition lives in a file
    * outside the analysis (an API spec's shared `headers.yaml#/customerId`): the

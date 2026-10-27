@@ -131,7 +131,9 @@ export function computeParamOrigins(input: {
       const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) };
       // A framework dispatch (an emitted event, a bus message) hands its arguments on by its own rules, not by position.
       const dispatched = link.strategy?.startsWith("dispatch:") ?? false;
-      const arg: CallArgOrigin | undefined = dispatched ? undefined : call?.argOrigins?.find((a) => a.index === index && a.field === field);
+      // An argument handed by name lands on the parameter of that name.
+      const lands = (a: CallArgOrigin) => (a.param !== undefined ? a.param === target.fn.params[index]?.name : a.index === index);
+      const arg: CallArgOrigin | undefined = dispatched ? undefined : call?.argOrigins?.find((a) => lands(a) && a.field === field);
       if (!arg) {
         out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         continue;
