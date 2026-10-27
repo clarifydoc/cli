@@ -41,6 +41,8 @@ export const swiftMeta: LanguagePluginMeta = {
   ...swiftManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: swiftSpec,
+  // Functions and calls read by tree-sitter-swift while the `tree-sitter:swift` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "swift", load: () => import("./tree-sitter.js").then((m) => m.loadSwiftReader()) },
   knownPackages: swiftPackages,
   builtinTypes: SWIFT_BUILTINS,
   requestSchema: swiftRequestSchema,

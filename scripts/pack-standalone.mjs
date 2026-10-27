@@ -44,6 +44,10 @@ const SKIP = new Set([
   "nan",
   "node-addon-api",
   "node-gyp-build",
+  // tree-sitter-swift's: the CLI that would build its native binding, and what finds it on the PATH.
+  "tree-sitter-cli",
+  "which",
+  "isexe",
 ]);
 
 function fail(msg) {

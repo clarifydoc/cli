@@ -128,25 +128,32 @@ export interface FileResult {
  * fixtures; the class of failure is what a reader needs.
  */
 /**
- * The language's ANTLR front end's reading of a regex-language file, when the
- * `antlr` feature covers it (`antlr` or `antlr:<grammar>`). `parsed` is
- * absent — the patterns read the file — when the parse had syntax errors or
- * the reader threw: a recovered tree can give a function the next one's calls.
+ * A parser front end's reading of a regex-language file: the language's ANTLR
+ * grammar when the `antlr` feature covers it (`antlr` or `antlr:<grammar>`),
+ * else its tree-sitter grammar when `tree-sitter` does. `parsed` is absent —
+ * the patterns read the file — when the parse had syntax errors or the reader
+ * threw: a recovered tree can give a function the next one's calls.
  */
-async function readWithAntlr(
+async function readWithParser(
   language: Language,
   source: string,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
-  const frontEnd = pluginFor(language)?.antlr;
-  if (!frontEnd || !featureEnabled(`antlr:${frontEnd.grammar}`)) return null;
+  const plugin = pluginFor(language);
+  const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
+    ? { parser: "antlr" as const, frontEnd: plugin.antlr }
+    : plugin?.treeSitter && featureEnabled(`tree-sitter:${plugin.treeSitter.grammar}`)
+      ? { parser: "tree-sitter" as const, frontEnd: plugin.treeSitter }
+      : null;
+  if (!choice) return null;
+  const { parser, frontEnd } = choice;
   const grammar = frontEnd.grammar;
   try {
     const read = await frontEnd.load();
     const parsed = read(source);
-    if (parsed.syntaxErrors > 0) return { frontEnd: { parser: "antlr", grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors } };
-    return { parsed, frontEnd: { parser: "antlr", grammar } };
+    if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors } };
+    return { parsed, frontEnd: { parser, grammar } };
   } catch {
-    return { frontEnd: { parser: "antlr", grammar, fallback: "parser-error" } };
+    return { frontEnd: { parser, grammar, fallback: "parser-error" } };
   }
 }
 
@@ -352,9 +359,9 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const antlr = await readWithAntlr(regexLanguage, regexSource);
-      const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, antlr?.parsed);
-      if (antlr) analysis.frontEnd = antlr.frontEnd;
+      const read = await readWithParser(regexLanguage, regexSource);
+      const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
+      if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;
       restoreTypedReceiverCalls(analysis, caseInsensitive);
       importedNameCalls(analysis);

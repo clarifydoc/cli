@@ -6,6 +6,8 @@ Wraps `web-tree-sitter` WASM runtime. Key functions:
 - `parseSource(sourceText, language, filePath?)` — parse source into a `Tree`
 - `runQuery(tree, language, querySource)` — run S-expression queries
 - `getParser(language)` / `getLanguage(language)` — lower-level access
+- `getGrammarParser(key)` — a parser for a grammar registered by key, for a regex language's tree-sitter front end
+  (`meta.treeSitter`): Swift's manifest registers `tree-sitter-swift` while the language stays on the regex path
 
 Grammars are lazy-loaded from npm packages via `GRAMMAR_PACKAGES`. Parsers, languages, and compiled queries are all cached.
 
@@ -36,6 +38,9 @@ Parses Vue Single File Components — splits into `<script>`, `<template>`, `<st
 ## dfm-parser.ts
 
 Delphi form file parser (`.dfm`). Not tree-sitter — uses a custom recursive-descent parser for Delphi's form object notation. Produces `ScreenInfo` with nested `ScreenComponentInfo` tree.
+
+`normalize-source.ts` is the text every front end parses (BOM dropped, `\r\n`/`\r` as `\n`), so its lines are the
+ones `splitLines` counts.
 
 ## antlr/ — ANTLR4 parsers for regex languages
 

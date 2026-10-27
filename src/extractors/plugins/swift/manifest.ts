@@ -18,6 +18,8 @@ export const swiftManifest: LanguagePluginManifest = {
   packageManagers: [swiftpmPackageManager, cocoapodsPackageManager],
   packageEcosystems: ["swiftpm", "cocoapods"],
   parsing: "regex",
+  // Read by the `tree-sitter:swift` front end only (meta.treeSitter): the wasm `npm run setup` builds.
+  grammar: { variants: { swift: { pkg: "tree-sitter-swift", wasm: "tree-sitter-swift.wasm" } } },
   extensions: [".swift"],
   // One type spans files here: `extension`s add to a type from other files.
   typesSpanFiles: true,

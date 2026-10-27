@@ -1354,9 +1354,9 @@ export interface LanguagePluginManifest {
 }
 
 /**
- * A function an ANTLR parser read in a regex language's file: its exact span and the calls in it, spelled as
- * that language's regex call patterns spell them, so everything downstream reads them as it reads the regex
- * path's.
+ * A function a parser (ANTLR or tree-sitter) read in a regex language's file: its exact span and the calls in it,
+ * spelled as that language's regex call patterns spell them, so everything downstream reads them as it reads the
+ * regex path's.
  */
 export interface ParsedFunctionSpan {
   /** As the language's function pattern names it (`M:connect`, `ServeHTTP`). */
@@ -1370,7 +1370,7 @@ export interface ParsedFunctionSpan {
   calls: CallInfo[];
 }
 
-/** What an ANTLR front end reads from one file. */
+/** What a parser front end reads from one file. */
 export interface ParsedStructure {
   /** The functions, in source order; a nested one owns its calls, an anonymous one gives them to its owner. */
   functions: ParsedFunctionSpan[];
@@ -1381,17 +1381,20 @@ export interface ParsedStructure {
 }
 
 /**
- * An ANTLR4 (antlr4ng) parser for a `parsing: "regex"` language, used while the `antlr` feature is on (the
- * default; core/feature-flags.ts). It replaces the regex path's function spans and calls; every other extractor
- * of the language's `regexSpec` still reads the lines, and a file it reads with a syntax error keeps the
- * regex reading.
+ * A parser for a `parsing: "regex"` language's functions and calls — an ANTLR4 (antlr4ng) grammar under the
+ * `antlr` feature, or a tree-sitter grammar under the `tree-sitter` feature (both on by default;
+ * core/feature-flags.ts). It replaces the regex path's function spans and calls; every other extractor of the
+ * language's `regexSpec` still reads the lines, and a file it reads with a syntax error keeps the regex reading.
  */
-export interface AntlrFrontEnd {
-  /** The grammar's name, as the feature names it (`antlr:go`). */
+export interface ParserFrontEnd {
+  /** The grammar's name, as the feature names it (`antlr:go`, `tree-sitter:swift`). */
   grammar: string;
-  /** Loaded on first use: the generated parsers are large and most runs never need them. */
+  /** Loaded on first use: the parsers are large and most runs never need them. */
   load(): Promise<(source: string) => ParsedStructure>;
 }
+
+/** An ANTLR front end (`meta.antlr`). */
+export type AntlrFrontEnd = ParserFrontEnd;
 
 /**
  * Per-language plugin metadata — the LAZY tier: everything the static
@@ -1454,6 +1457,12 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * feature is on. A file it reads with a syntax error keeps the regex reading.
    */
   antlr?: AntlrFrontEnd;
+  /**
+   * A tree-sitter grammar for a regex language's functions and calls, tried before the regex patterns when the
+   * `tree-sitter` feature is on and the language has no ANTLR front end that is. The grammar is the manifest's
+   * `grammar`, which registers it with parser-manager without moving the language off the regex path.
+   */
+  treeSitter?: ParserFrontEnd;
 
   /**
    * How the language documents a function or class, so its first sentence

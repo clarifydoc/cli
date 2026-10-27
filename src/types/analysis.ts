@@ -299,12 +299,12 @@ export interface FileAnalysis {
   /** Syntax errors the parser recovered from — the file was read only in part. Absent for a clean parse. */
   parseErrors?: { nodes: number; missing: number; ratio: number };
   /**
-   * Set when an ANTLR front end read this regex-language file (the `antlr` feature, on by default): its
-   * functions and calls are the parser's. `fallback` says the regex reading was kept instead — the parse
-   * had syntax errors (`syntaxErrors` of them) or the reader failed. Absent when the feature is off or the
-   * language has no grammar.
+   * Set when a parser front end read this regex-language file (the `antlr` and `tree-sitter` features, on by
+   * default): its functions and calls are the parser's. `fallback` says the regex reading was kept instead —
+   * the parse had syntax errors (`syntaxErrors` of them) or the reader failed. Absent when the feature is off
+   * or the language has no grammar.
    */
-  frontEnd?: { parser: "antlr"; grammar: string; fallback?: "syntax-errors" | "parser-error"; syntaxErrors?: number };
+  frontEnd?: { parser: "antlr" | "tree-sitter"; grammar: string; fallback?: "syntax-errors" | "parser-error"; syntaxErrors?: number };
 
   /**
    * Package names the file uses by path without importing them — Rust's

@@ -4,7 +4,7 @@
  *
  * `CLARIFYDOC_FEATURES` holds the names, comma- or space-separated; `analyze --feature <names…>` adds to the
  * same variable, which worker threads inherit. A name switches itself and every name under it: `antlr` covers
- * every ANTLR front end, `antlr:go` only Go's. A name prefixed `-` or `no-` switches one off (`no-antlr`,
+ * every ANTLR front end, `antlr:go` only Go's; `tree-sitter:swift` is Swift's tree-sitter front end. A name prefixed `-` or `no-` switches one off (`no-antlr`,
  * `antlr,-antlr:lua`); the more specific name wins.
  *
  * The deviations from the defaults are part of the incremental cache's stamp (`extractorStamp` in
@@ -15,6 +15,10 @@
 export const KNOWN_FEATURES: Readonly<Record<string, { description: string; default: boolean }>> = {
   antlr: {
     description: "Read the functions and calls of Go, Lua and Rust with their ANTLR grammars; a file with a syntax error keeps the regex reading",
+    default: true,
+  },
+  "tree-sitter": {
+    description: "Read the functions and calls of Swift with tree-sitter-swift; a file with a syntax error keeps the regex reading",
     default: true,
   },
 };

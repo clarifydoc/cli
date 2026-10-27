@@ -2,26 +2,32 @@
 //
 // Every other grammar package (tree-sitter-java, tree-sitter-c-sharp, …) ships a
 // `web-tree-sitter@0.27`-loadable `.wasm` in its tarball, which parser-manager.ts
-// loads straight out of node_modules. `tree-sitter-pascal` and `tree-sitter-kotlin`
-// ship only C sources, so their wasm has to be compiled locally — without it,
-// Pascal/Delphi and Kotlin parsing throws ENOENT and ~29 tests fail.
+// loads straight out of node_modules. `tree-sitter-pascal`, `tree-sitter-kotlin`
+// and `tree-sitter-swift` ship only C sources, so their wasm has to be compiled
+// locally — without it, Pascal/Delphi and Kotlin parsing throws ENOENT and ~29
+// tests fail, and Swift keeps its regex reading.
 //
 // Needs Docker (or a local emcc) for emscripten. Run via `npm run setup` after
 // any `npm install`, which wipes these files along with the rest of node_modules.
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GRAMMAR_PATCHES, applyGrammarPatches } from "./grammar-patches.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * Grammar packages with no prebuilt wasm on npm — keep in sync with the plugin
- * manifests.
+ * manifests and the root Dockerfile's grammar stage. A package with source
+ * patches (grammar-patches.mjs) is built from a patched copy; the installed
+ * package is left as npm wrote it.
  */
 const grammars = [
   { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" },
   { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" },
+  { pkg: "tree-sitter-swift", wasm: "tree-sitter-swift.wasm" },
 ];
 
 const run = (cmd, args) =>
@@ -48,7 +54,16 @@ for (const { pkg, wasm } of grammars) {
     process.exit(1);
   }
   console.log(`setup-grammars: building ${wasm} (emscripten via Docker, ~1 min)`);
-  if (run(cliBin, ["build", "--wasm", "-o", out, pkgDir]).status !== 0 || !existsSync(out)) {
+  const patched = Boolean(GRAMMAR_PATCHES[pkg]);
+  let source = pkgDir;
+  if (patched) {
+    source = mkdtempSync(join(tmpdir(), `${pkg}-`));
+    cpSync(pkgDir, source, { recursive: true });
+    applyGrammarPatches(pkg, source);
+  }
+  const status = run(cliBin, ["build", "--wasm", "-o", out, source]).status;
+  if (patched) rmSync(source, { recursive: true, force: true });
+  if (status !== 0 || !existsSync(out)) {
     console.error(`setup-grammars: failed to build ${wasm}. Emscripten needs Docker running (or emcc on PATH).`);
     process.exit(1);
   }

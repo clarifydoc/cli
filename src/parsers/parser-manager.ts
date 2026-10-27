@@ -145,6 +145,14 @@ export async function getParser(language: TreeSitterLanguage): Promise<Parser> {
   return getParserForKey(language);
 }
 
+/**
+ * A parser for a grammar registered by key — a regex language's tree-sitter front end (`meta.treeSitter`),
+ * whose language stays off the tree-sitter path, so it has no `TreeSitterLanguage` to be asked for by.
+ */
+export async function getGrammarParser(key: string): Promise<Parser> {
+  return getParserForKey(key);
+}
+
 /** Public API: get language grammar */
 export async function getLanguage(language: TreeSitterLanguage): Promise<TSLanguage> {
   return getLanguageForKey(language);

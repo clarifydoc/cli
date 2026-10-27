@@ -1,4 +1,4 @@
-import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type Language, type RouteFact } from "../types/analysis.js";
+import { createEmptyAnalysis, type ClassInfo, type FileAnalysis, type FunctionInfo, type Language, type RouteFact } from "../types/analysis.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import {
   extractFunctionsWithSpec,
@@ -43,6 +43,7 @@ export function extractWithRegex(
   // When classes have methods (e.g. Perl file-scoped packages), remove those methods
   // from the top-level functions list to avoid double-counting.
   if (spec.extractClasses) {
+    if (parsed) adoptParsedMembers(analysis.classes, analysis.functions);
     const methodLines = new Set<number>();
     for (const cls of analysis.classes) {
       for (const m of cls.methods) methodLines.add(m.line);
@@ -113,6 +114,37 @@ export function extractWithRegex(
   if (entityResult.schemaOps && entityResult.schemaOps.length > 0) analysis.schemaOps = entityResult.schemaOps;
 
   return analysis;
+}
+
+/**
+ * Class members as the parser read them. A class pass that reads methods by pattern (Swift's) made its own
+ * method objects, with pattern-read calls: a method declared on a parsed function's line is that function. A
+ * parsed function no class pass found (an `override init` the pattern misses) is a member of the innermost class
+ * around it, unless it is nested in another function. Where the class pass attached the parsed functions
+ * themselves (Go, Rust) this changes nothing.
+ */
+function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): void {
+  const parsedAt = new Map<number, FunctionInfo>();
+  for (const fn of functions) parsedAt.set(fn.line, fn);
+  const members = new Set<FunctionInfo>();
+  for (const cls of classes) {
+    cls.methods = cls.methods.map((m) => {
+      const fn = parsedAt.get(m.line);
+      return fn && fn.name === m.name ? fn : m;
+    });
+    for (const m of cls.methods) members.add(m);
+  }
+  const nested = (fn: FunctionInfo): boolean => functions.some((g) => g !== fn && g.line < fn.line && fn.endLine <= g.endLine);
+  for (const fn of functions) {
+    if (members.has(fn) || nested(fn)) continue;
+    let owner: ClassInfo | null = null;
+    for (const cls of classes) {
+      if (cls.line < fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;
+    }
+    if (!owner) continue;
+    owner.methods.push(fn);
+    owner.methods.sort((a, b) => a.line - b.line);
+  }
 }
 
 /**

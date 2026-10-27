@@ -10,13 +10,9 @@ import {
   type ParserRuleContext,
 } from "antlr4ng";
 
-/**
- * The text the lexer reads: lines as `splitLines` counts them (ANTLR counts only `\n`, and a CR-only file would
- * read as one line), without a byte-order mark, which is no token of any grammar. Token offsets index this text.
- */
-export function normalizeSource(source: string): string {
-  return source.replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
-}
+import { normalizeSource } from "../normalize-source.js";
+
+export { normalizeSource };
 
 /** Counts the syntax errors a lexer or parser reports, instead of printing them. */
 class ErrorCounter extends BaseErrorListener {

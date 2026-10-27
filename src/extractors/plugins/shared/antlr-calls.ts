@@ -1,5 +1,5 @@
 /**
- * Call names for an ANTLR front end, spelled as the regex call scan spells them (regex-base.ts
+ * Call names for a parser front end (ANTLR or tree-sitter), spelled as the regex call scan spells them (regex-base.ts
  * `extractCallsFromBody` and `callChainPatterns`), so a parsed call reaches the linker under the name the
  * pattern reading would have given it. The parser decides WHAT is a call; this decides only its name.
  */
@@ -23,6 +23,8 @@ export interface PatternCallName {
   column: number;
   /** The type a path names the call on (`Club::new` → `Club`), as a language's call pattern states it. */
   receiverType?: string;
+  /** The registration a container lookup names (`Container.shared.repo()` → `repo`), as a call pattern states it. */
+  receiverQualifier?: string;
 }
 
 /**
@@ -74,6 +76,11 @@ export function recordPatternCalls(found: PatternCallName[]): CallInfo[] {
   found.sort((a, b) => a.line - b.line || rank(a) - rank(b) || a.column - b.column);
   const calls: CallInfo[] = [];
   const add = callRecorder(calls);
-  for (const c of found) add(c.name, c.leafName, c.line, c.column, c.receiverType ? { receiverType: c.receiverType } : undefined);
+  for (const c of found) {
+    const receiver = c.receiverType || c.receiverQualifier
+      ? { ...(c.receiverType ? { receiverType: c.receiverType } : {}), ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}) }
+      : undefined;
+    add(c.name, c.leafName, c.line, c.column, receiver);
+  }
   return calls;
 }

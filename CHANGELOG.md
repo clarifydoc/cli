@@ -20,6 +20,12 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Swift is read by tree-sitter.** Swift's functions and calls come from tree-sitter-swift under a new `tree-sitter`
+  feature, on by default with the same per-file fallback (`no-tree-sitter:swift` keeps the patterns). A nested
+  function owns its calls; an `init` the pattern missed (`override init`, a generic one) is read; a call after `!` or
+  `try`/`await`, a method on a call's result (`session.request(url).validate()`), a generic type's construction and a
+  call inside string interpolation are named; `#expect(…)`, `#if` conditions, attributes (`@Sendable (…)`), case
+  patterns (`.success(let x)`) and subscripts are no longer calls. `npm run setup` builds the grammar's wasm.
 - **Rust trait and impl links.** A method a trait declares and another crate implements resolves to that
   implementation (`ClubShow.with_query` → `MatchPath.with_query` through `impl<T: Route> WithQuery for T`), and a
   trait's default method to the trait. An `impl` block in another crate adds methods to the type without becoming its
