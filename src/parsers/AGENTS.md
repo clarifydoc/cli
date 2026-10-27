@@ -44,16 +44,20 @@ ones `splitLines` counts.
 
 ## antlr/ — ANTLR4 parsers for regex languages
 
-antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, Rust), on by default through the `antlr`
+antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, Rust, C), on by default through the `antlr`
 feature (`core/feature-flags.ts`; `--feature no-antlr` switches them off). Generated from
 `grammars/antlr/<lang>/*.g4` by `node scripts/generate-antlr.mjs` and committed. Hand-written beside them: each
 grammar's base class ported from the `antlr4` runtime (`GoParserBase.ts`, `LuaLexerBase.ts`, …) and `run.ts`
-(`parseWithAntlr`: error counting, SLL first and full LL only when SLL fails). The tree walk that turns a parse into
+(`parseWithAntlr`: error counting, SLL first and full LL only when SLL fails; with `firstError` the LL pass gives up at its first error too, for a reader that discards a file with any — full-context error recovery is where a parse spends seconds). The tree walk that turns a parse into
 functions and calls is language knowledge, so it lives in the plugin (`plugins/go/antlr.ts`) and is reached through
 `meta.antlr`. A base class must not import the parser that extends it (read token types from the lexer), or the
 bundle can evaluate the subclass first. A semantic predicate must read tokens only: the prediction DFA is shared by
-every parse in the process, so a predicate reading per-file state (grammars-v4 Go's import table) makes a file's parse
-depend on the file before it. Profile a slow grammar with `parser.setProfile(true)` and `getParseInfo()` — the decision
+every parse in the process, so a predicate reading per-file state the parse fills (grammars-v4 Go's import table, C's
+symbol table) makes a file's parse depend on the file before it. State fixed before the parse is fine: C's predicates
+read per-token facts its first pass computes (`c/CTypes.ts` — the names used as types, macro names, the `)` closing
+each `(`), so no prediction scans forward or reads a token's text, which antlr4ng rebuilds from the character stream
+on every read (`c/CKeywords.ts` holds keyword sets by token type, found by lexing each keyword: a rule with several
+spellings has no literal name). Profile a slow grammar with `parser.setProfile(true)` and `getParseInfo()` — the decision
 with the longest lookahead (`sllMaxLookEvent` gives its text) is the one to restructure. `grammars/antlr/README.md`
 records upstream commits and every local change.
 

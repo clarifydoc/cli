@@ -14,6 +14,13 @@ recorded in the git history only.
 
 ### Added
 
+- **C is read by a parser.** C's functions and calls come from its ANTLR4 grammar under the `antlr` feature, with the
+  per-file fallback (`no-antlr:c` keeps the patterns). Without the headers or `gcc -E`, the names a file uses as types
+  are read off its tokens first, then the file is parsed. Loop macros (`for_each_item(i, list) { … }`) and test
+  macros (`TEST("x") { … }`) are no longer read as functions of their own: they are calls of the function around
+  them, which owns the calls in their body, and calls to them no longer link to a function that does not exist. Code
+  under `#if 0` makes no calls; calls in a macro's arguments and in a `#define` inside a function count; a function
+  whose header each platform writes under `#if`/`#else` is one function.
 - **Rust is read by a parser.** Rust's functions and calls come from its ANTLR4 grammar too, under the same `antlr`
   feature and per-file fallback (`no-antlr:rust` keeps the patterns). A method chain rustfmt wraps over lines keeps
   its receiver (`garage⏎.open_bay()` is `garage.open_bay`, `Builder::new()⏎.build()` is `Builder.new().build`),

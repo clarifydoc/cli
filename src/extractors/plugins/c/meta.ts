@@ -22,5 +22,7 @@ export const cMeta: LanguagePluginMeta = {
   ...cManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: cSpec,
+  // Functions and calls read by the grammars-v4 C grammar, in two passes, while the `antlr:c` feature is on (antlr.ts).
+  antlr: { grammar: "c", load: () => import("./antlr.js").then((m) => m.readC) },
   builtinTypes: C_BUILTINS,
 };

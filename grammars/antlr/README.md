@@ -17,10 +17,11 @@ Each generated file starts with its grammar's licence block, which the bundle ke
 | `go/` | [grammars-v4](https://github.com/antlr/grammars-v4) `golang/` at `d1689adc` (2026-10-26) | BSD (in the files) |
 | `lua/` | [grammars-v4](https://github.com/antlr/grammars-v4) `lua/` at `d1689adc` (2026-10-26) | MIT (in the files) |
 | `rust/` | [grammars-v4](https://github.com/antlr/grammars-v4) `rust/` at `d1689adc` (2026-10-26) | MIT (in the files) |
+| `c/` | [grammars-v4](https://github.com/antlr/grammars-v4) `c/` at `d1689adc` (2026-10-26) | BSD (in the files) |
 
 The target-specific base classes upstream ships for the `antlr4` JavaScript runtime
 (`golang/TypeScript/GoParserBase.ts`, `lua/TypeScript/Lua*Base.ts`, `rust/Antlr4ng/Rust*Base.ts`) are ported to antlr4ng
-beside the generated code.
+beside the generated code. C's (`c/Antlr4ng/C*Base.ts`) are replaced, see below.
 
 ## Changes from upstream
 
@@ -72,6 +73,25 @@ per target at its `// Insert here @header` marker.
 
   Upstream's parse ran at about 60 KB/s and failed on 5–30% of real files. Now SLL prediction succeeds nearly
   everywhere, and on nine real repositories only rustc's own error fixtures and unstable syntax fail.
+
+- **C: no preprocessor.** Upstream's lexer base ran `gcc -E` on each file, and its parser base resolved a typedef name
+  through a symbol table the parse filled — empty without the headers, so 90–95% of real files failed. The lexer has
+  no base class; the parser's (`CParserBase.ts`) reads the names the file's first pass found used as types
+  (`CTypes.ts`: its own typedefs, `T *x` and `T x,` at a declaration's start, casts, compound literals, the `_t`
+  convention), fixed for the whole parse. Directives are hidden tokens, and `#if 0` / `#ifdef __cplusplus` are blanked
+  before the parse.
+- **C: unexpanded macros as rules.** A loop or block macro before a statement (`for_each_item(i, list) { … }`), a
+  statement macro whose arguments are a declaration or a block (`VERBOSE(size_t n = 0);`, `EACH(x, { … });`), a macro
+  called at file scope or as a struct member, an attribute macro among specifiers or after a declarator
+  (`NO_CHECKS("x") static int f(`, `int fd UNUSED`), a macro between string literals (`"%" PRIu64`), a type as a
+  macro argument (`offsetof(struct x, y)`) and `va_arg(ap, char *)`. A macro's arguments are a balanced token list.
+  `$` in names, form feeds as whitespace, a directive's block comment running past its line, C23 `static_assert`.
+- **C: flatter expressions.** An assignment's left side is a conditional expression, so one token decides it (upstream
+  read past the whole operand first); the ten binary-operator levels are one rule, without precedence. The same
+  strings parse.
+
+  Without the preprocessor 5–22% of the files of six real C repositories still fail and keep the patterns' reading.
+  The reader runs at 1.1–3.2 MB/s, about three times upstream's grammar with the first pass alone.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL
 prediction succeed on all but 2 of its files, with no file failing to parse.
