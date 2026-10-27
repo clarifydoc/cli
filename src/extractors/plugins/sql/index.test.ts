@@ -56,7 +56,9 @@ describe("SQL routines and grants", () => {
   it("targets the object a GRANT names, never the privilege", () => {
     const out = rows(`GRANT SELECT ON players TO read_only_role;
 GRANT EXECUTE ON PROCEDURE TEAM_STANDINGS TO USER COACH;
-GRANT coach TO alice;`);
+GRANT coach TO alice;
+GRANT USAGE ON SCHEMA league TO coach;
+GRANT SELECT ON ALL TABLES IN SCHEMA league TO coach;`);
     expect(out.map((r) => [r.name, r.target])).toEqual([
       ["GRANT", "players"],
       ["GRANT", "TEAM_STANDINGS"],

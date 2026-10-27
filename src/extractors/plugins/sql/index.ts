@@ -572,7 +572,8 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
       /^\s*(GRANT|REVOKE)\b.*?\bON\s+(?:TABLE\s+|PROCEDURE\s+|FUNCTION\s+|SEQUENCE\s+|VIEW\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
     );
     if (/^\s*(?:GRANT|REVOKE)\b/i.test(line)) {
-      if (grantMatch) {
+      // `ON SCHEMA x`, `ON ALL TABLES IN SCHEMA x`, `ON DATABASE x`: a privilege on a container, no table's.
+      if (grantMatch && !/\bON\s+(?:SCHEMA|DATABASE|ALL\s+\w+\s+IN\s+SCHEMA)\b/i.test(line)) {
         sources.push({
           kind: "database",
           name: grantMatch[1]!.toUpperCase(),
