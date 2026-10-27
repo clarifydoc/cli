@@ -38,6 +38,16 @@ func (v *Van) Park() error {
 }
 
 func (v *Van) Cut() {}
+
+func (v *Van) Header(name string) string {
+	return name
+}
+
+type Vans []*Van
+
+func (l Vans) Inspect() int {
+	return len(l)
+}
 `,
   "internal/standings/table.go": `package standings
 
@@ -72,7 +82,11 @@ var Fleet []*fleet.Van
 
 import (
 	"log"
+	"net/http/httptest"
 	"strings"
+
+	"github.com/labstack/echo/v4"
+	"example.com/league/internal/fleet"
 
 	"example.com/league/internal/standings"
 	"example.com/garage/cars"
@@ -88,7 +102,18 @@ func ListClubs() []string {
 func ParkAll() {
 	for _, v := range Fleet {
 		v.Park()
+		v.Header("plate")
 	}
+}
+
+func Respond(c echo.Context) {
+	c.Response().Header().Set("Cache-Control", "no-store")
+	rec := httptest.NewRecorder()
+	rec.Header()
+	resp := (*c).Response()
+	resp.Header()
+	vans := fleet.Vans(Fleet)
+	vans.Inspect()
 }
 
 func Kickoff(x interface{ Whistle() }) {
@@ -146,6 +171,15 @@ describe("Go package imports", () => {
 
   it("links a method by its unique name when the caller's package imports its package", () => {
     expect(linkOf("ParkAll", "v.Park")).toBe("internal/fleet/van.go Van.Park unique-global");
+  });
+
+  it("never takes a value another module made for a project value of a method's name (real-repo FP)", () => {
+    expect(linkOf("ParkAll", "v.Header")).toBe("internal/fleet/van.go Van.Header unique-global");
+    expect(linkOf("Respond", "c.Response().Header")).toBeNull();
+    expect(linkOf("Respond", "rec.Header")).toBeNull();
+    expect(linkOf("Respond", "resp.Header")).toBeNull();
+    // A conversion to a project type is a project value.
+    expect(linkOf("Respond", "vans.Inspect")).toBe("internal/fleet/van.go Vans.Inspect unique-global");
   });
 
   it("leaves a method of a package the caller's package never imports unlinked", () => {

@@ -1438,6 +1438,8 @@ interface LinkContext {
   filePathMap: Map<string, string>;
   /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
   directoryFiles?: Map<string, string[]>;
+  /** Names some project function or method bears, built on first use. */
+  callableNames?: Set<string>;
   /** `${family}\0${package}` → the files declaring it (`importsNamePackages`), built on first use. */
   packageFiles?: Map<string, string[]>;
   /** Per file, the files it sees by package (`importsNamePackages`). */
@@ -1851,6 +1853,32 @@ function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string
 }
 
 /** Whether `head` is the name an import binds to a package no project directory holds (the standard library, a download). */
+/**
+ * A call chain (`c.Response()`, `httptest.NewRecorder()`) passing through a call no project
+ * function, method or function-typed field bears. Right after an imported package the name
+ * may also be a project type (`actions_model.RunList(runs)` converts); on a value it is a
+ * method, which a type of that name is not.
+ */
+function callsOutside(segments: readonly string[], analysis: FileAnalysis, ctx: LinkContext): boolean {
+  if (!ctx.callableNames) {
+    ctx.callableNames = new Set();
+    for (const a of ctx.analyses) {
+      for (const f of a.functions ?? []) ctx.callableNames.add(f.name);
+      for (const c of a.classes ?? []) {
+        for (const m of c.methods ?? []) ctx.callableNames.add(m.name);
+        for (const p of c.properties ?? []) if (/^func\b/.test(p.type ?? "")) ctx.callableNames.add(p.name);
+      }
+    }
+  }
+  const packageHead = segments.length > 1 && analysis.imports.some((i) => i.specifiers.includes(segments[0]!.trim()));
+  return segments.some((segment, i) => {
+    const open = segment.indexOf("(");
+    if (i === 0 || open <= 0) return false;
+    const name = segment.slice(0, open).trim();
+    return !ctx.callableNames!.has(name) && !(i === 1 && packageHead && ctx.classCatalog.has(name));
+  });
+}
+
 function headNamesForeignPackage(analysis: FileAnalysis, head: string, ctx: LinkContext): boolean {
   const imp = analysis.imports.find((i) => i.specifiers.includes(head));
   // Decided by the language's package rule only: a trailing-segment guess that finds no directory proves nothing.
@@ -3347,7 +3375,18 @@ function resolveCallToDefinition(
         // `builder.Select().From` on an imported query builder): its values are
         // that package's types, never a project method of the same name.
         const foreignPackage = packageScoped(analysis.language) && headNamesForeignPackage(analysis, head.replace(/\?$/, ""), ctx);
-        if (!contradicted && !freeTargetVetoed && !foreignPackage && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
+        // Where a method belongs to its package, a value another module made is never a project
+        // value: a chain through a call no project file defines (`c.Response().Header` on a web
+        // framework's context), or a local initialized by a foreign package's function or by
+        // such a call (`rec := httptest.NewRecorder()`, `resp := (*c).Response()`).
+        const foreignValue = packageScoped(analysis.language) && (
+          callsOutside(parts.slice(0, -1), analysis, ctx) ||
+          (findEnclosingCallable(analysis, sourceSymbol)?.localTypes ?? []).some((l) => {
+            const from = l.name === head ? l.from?.split(".") : undefined;
+            return !!from && from.length > 1 &&
+              ((from.length === 2 && headNamesForeignPackage(analysis, from[0]!, ctx)) || callsOutside(from, analysis, ctx));
+          }));
+        if (!contradicted && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,
             entry.def.name,

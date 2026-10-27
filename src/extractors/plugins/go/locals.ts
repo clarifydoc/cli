@@ -123,7 +123,8 @@ function fieldAlias(rhs: string): string | null {
 
 /** `repo.Find(id)` / `store.NewRepo()` — the whole expression is ONE call: its chain as a call names it, `repo.Find()`. */
 function singleCall(rhs: string): string | null {
-  const text = rhs.trim().replace(/;\s*$/, "");
+  // A dereferenced receiver calls the same method: `(*c).Response()` → `c.Response()`.
+  const text = rhs.trim().replace(/;\s*$/, "").replace(/^\(\s*\*\s*([A-Za-z_]\w*)\s*\)\./, "$1.");
   const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
   if (!m || GO_TYPE_KEYWORDS.has(m[1]!) || /^(?:make|new|len|cap|append|string|int|float64|byte|rune)$/.test(m[1]!)) return null;
   return matchingClose(text, m[0].length - 1) === text.length - 1 ? `${m[1]}()` : null;
