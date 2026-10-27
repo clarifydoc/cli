@@ -78,3 +78,29 @@ class Migration(migrations.Migration):
     expect(entities(a)).toEqual([]);
   });
 });
+
+describe("Python entities — Alembic revisions", () => {
+  it("does not take a revision's model copies for the application's models (real-repo FP)", async () => {
+    const a = await analyze(`"""add unique constraints"""
+import sqlalchemy as sa
+from sqlalchemy import orm
+
+revision = "dded3119c1fe"
+down_revision = "0341b154f79a"
+
+
+class SqlAlchemyBase(orm.DeclarativeBase):
+    pass
+
+
+class Fixture(SqlAlchemyBase):
+    __tablename__ = "fixtures"
+    id: orm.Mapped[int] = orm.mapped_column(sa.Integer, primary_key=True)
+
+
+def upgrade():
+    pass
+`, "league/alembic/versions/2023-10-04_dded3119c1fe_added_unique_constraints.py");
+    expect(entities(a)).toEqual([]);
+  });
+});

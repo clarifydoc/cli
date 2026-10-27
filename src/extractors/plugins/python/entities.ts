@@ -63,6 +63,9 @@ export class PythonEntityExtractor extends EntityExtractor {
     const hasPony = importMods.some((m) => m.startsWith("pony"));
     // Non-ORM `Model`-ish bases that must never be treated as entities.
     const nonOrmBases = this.collectNonOrmBases(ctx);
+    // An Alembic revision (`revision = "…"` beside `down_revision = …`) declares copies of the models
+    // as they were at that point, for its data migration: the models are the application's, not these.
+    if (/^revision\s*[:=]/m.test(ctx.sourceText) && /^down_revision\s*[:=]/m.test(ctx.sourceText)) return { entities, relations };
 
     for (const cls of ctx.analysis.classes) {
       try {
