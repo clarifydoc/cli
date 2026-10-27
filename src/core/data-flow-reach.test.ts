@@ -343,7 +343,7 @@ describe("attributeApiCallsToSymbols", () => {
     expect(attributeApiCallsToSymbols([analysis])).toEqual([]);
   });
 
-  it("attributes a call a project pass added, unless the line already has its own row", () => {
+  it("attributes a call a project pass added, the line's own row taking the URL the pass filled in", () => {
     const analysis = {
       filePath: "store.ts",
       functions: [{ name: "sellPlayer", line: 3, endLine: 8 }],
@@ -355,7 +355,7 @@ describe("attributeApiCallsToSymbols", () => {
       { filePath: "store.ts", line: 6, target: "/league/transfers/{id}" },
     ];
     expect(attributeApiCallsToSymbols([analysis], projectCalls)).toEqual([
-      { file: "store.ts", symbol: "sellPlayer", resource: "${base}/players" },
+      { file: "store.ts", symbol: "sellPlayer", resource: "/players" },
       { file: "store.ts", symbol: "sellPlayer", resource: "/league/transfers/{id}" },
     ]);
   });

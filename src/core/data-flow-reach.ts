@@ -82,14 +82,24 @@ export function attributeApiCallsToSymbols(
     seen.add(key);
     out.push({ file, symbol: at.symbol, resource });
   };
+  // A per-file target with a hole the project pass filled (`${routes.preferences}` → `/api/groups/preferences`)
+  // is reached as the filled URL, when one project call sits at that line.
+  const projectAt = new Map<string, Array<string | null | undefined>>();
+  for (const c of projectCalls) {
+    if (!c.filePath) continue;
+    const k = `${c.filePath}:${c.line}`;
+    (projectAt.get(k) ?? projectAt.set(k, []).get(k)!).push(c.target);
+  }
   for (const a of analyses) {
     const spans = spansOf(a);
     if (spans.length === 0) continue;
     spansByFile.set(a.filePath, spans);
     for (const ds of a.dataSources ?? []) {
       if (ds.kind !== "api-call") continue;
-      perFileLines.add(`${a.filePath}:${ds.line}`);
-      attribute(a.filePath, spans, ds.line, ds.target);
+      const k = `${a.filePath}:${ds.line}`;
+      perFileLines.add(k);
+      const filled = ds.target?.includes("${") ? projectAt.get(k) : undefined;
+      attribute(a.filePath, spans, ds.line, filled?.length === 1 && filled[0] ? filled[0] : ds.target);
     }
   }
   for (const c of projectCalls) {
