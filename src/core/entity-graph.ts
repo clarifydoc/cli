@@ -14,6 +14,7 @@ import type {
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
+import { resolveImportSource } from "./import-index.js";
 import { isApiContractLanguage } from "../extractors/registry.js";
 
 /**
@@ -70,6 +71,22 @@ function bareName(name: string | null): string | null {
  * `["entity", <orm>]` decorators — relations are still per-file.
  */
 export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
+  const knownFiles = new Set(analyses.map((a) => a.filePath));
+  /**
+   * Which of several same-named classes `a` extends: the one it declares, else
+   * the one its import of the name resolves to; undefined when nothing decides
+   * (no import of the name, or one resolving to a file declaring none of them).
+   */
+  const decidingBase = <T extends { filePath: string }>(a: FileAnalysis, name: string, named: T[]): T | undefined => {
+    const own = named.find((p) => p.filePath === a.filePath);
+    if (own) return own;
+    for (const imp of a.imports ?? []) {
+      if (!imp.specifiers?.includes(name)) continue;
+      const file = resolveImportSource(a.filePath, imp.source, knownFiles, name);
+      if (file) return named.find((p) => p.filePath === file) ?? undefined;
+    }
+    return undefined;
+  };
   // Index every class by its bare name (superclass references are usually bare).
   // An API description's schema of the same name is no base class of code: each side inherits within itself.
   const byBare = new Map<string, Array<{ c: ClassInfo; contract: boolean; test: boolean; filePath: string }>>();
@@ -104,8 +121,15 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
         // that name in another package is not it.
         const imported = (a.imports ?? []).find((i) => i.specifiers?.includes(parentName) && /^[\w$]+(?:\.[\w$]+)+$/.test(i.source) && i.source.endsWith(`.${parentName}`));
         const importedPath = imported ? imported.source.replace(/\./g, "/") : null;
-        const hit = (byBare.get(parentName) ?? []).find((p) => p.contract === contract && isEntity(p.c) &&
-          (!importedPath || p.filePath.replace(/\.\w+$/, "").endsWith(importedPath)));
+        const named = byBare.get(parentName) ?? [];
+        // Several classes share the name (a form mixin and a model mixin both called `OwnerMixin`):
+        // the one this file declares, else the one its import of the name resolves to, decides —
+        // an entity of that name elsewhere is not the base.
+        const declared = named.length > 1 ? decidingBase(a, parentName, named) : undefined;
+        const hit = declared
+          ? (declared.contract === contract && isEntity(declared.c) ? declared : undefined)
+          : named.find((p) => p.contract === contract && isEntity(p.c) &&
+            (!importedPath || p.filePath.replace(/\.\w+$/, "").endsWith(importedPath)));
         // A test's subclass of a production model (`class StubClub extends Club` to reach
         // its protected hooks) is a test double, not another model.
         if (!hit || (testFile.get(a.filePath) && !hit.test)) continue;

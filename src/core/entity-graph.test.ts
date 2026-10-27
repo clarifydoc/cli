@@ -370,6 +370,19 @@ describe("reconcileEntityInheritance", () => {
     expect(sub.decorators).toEqual(["entity", "jpa"]);
   });
 
+  it("takes the same-named base the file imports, not a model mixin of that name elsewhere (real-repo FP)", () => {
+    const f = (filePath: string, classes: unknown[], imports: unknown[] = []) => ({ filePath, language: "python", classes, imports }) as unknown as FileAnalysis;
+    const modelMixin = f("league/models/mixins.py", [{ name: "SponsorMixin", extends: "models.Model", decorators: ["entity", "django", "abstract"], properties: [], line: 1 }]);
+    const formMixin = f("league/forms/mixins.py", [{ name: "SponsorMixin", extends: "forms.Form", decorators: [], properties: [], line: 1 }]);
+    const base = { name: "ClubBulkEditForm", extends: "SponsorMixin", decorators: [] as string[], properties: [], line: 4 };
+    const form = f("league/forms/bulk_edit.py", [base], [{ source: ".mixins", specifiers: ["SponsorMixin"], line: 1 }]);
+    const club = { name: "Club", extends: "SponsorMixin", decorators: [] as string[], properties: [], line: 3 };
+    const model = f("league/models/clubs.py", [club], [{ source: ".mixins", specifiers: ["SponsorMixin"], line: 1 }]);
+    reconcileEntityInheritance([modelMixin, formMixin, form, model]);
+    expect(base.decorators).toEqual([]);
+    expect(club.decorators).toEqual(["entity", "django"]);
+  });
+
   it("does not make a test's subclass of a production model an entity (real-repo FP)", () => {
     const model = { filePath: "src/main/java/com/example/league/TrackedEntity.java", language: "java", classes: [{ name: "TrackedEntity", decorators: ["entity", "jpa", "abstract"], properties: [], line: 1 }] } as unknown as FileAnalysis;
     const stub = { name: "StubClub", extends: "TrackedEntity", decorators: [] as string[], properties: [], line: 9 };
