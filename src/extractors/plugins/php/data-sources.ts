@@ -393,6 +393,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         // A parameter bag, session, cache or message bag shares the verbs (`$request->attributes->get('x')`,
         // `$this->parameters->get('start')`, `$validator->errors()->count()`): no table behind it.
         if (NON_MODEL_RECEIVER_RE.test(recvText)) return;
+        // `$c->get(SettingsInterface::class)`: a PSR-11 container lookup by class, never a query.
+        if (method === "get" && /^\s*\\?[A-Z][\w\\]*::class\s*$/.test(argumentTexts(node)[0] ?? "")) return;
         if (!this.namespaced && !PDO_HANDLE_RE.test(callText)) return;
         sources.push(this.ds({
           kind: "database",
@@ -451,6 +453,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       const relative = RELATIVE_SCOPE_RE.test(scope);
       if ((/^[A-Z]/.test(scope) || relative) && ELOQUENT_STATIC_VERBS.has(name)) {
         if (continuesEloquentChain(node)) return;
+        // `Bridge::create($container)`: an application factory handed the DI container, not a model's insert.
+        if (name === "create" && /^\s*\$\w*container\s*$/i.test(argumentTexts(node).join(","))) return;
         sources.push(this.ds({
           kind: "database",
           name: callText,
@@ -624,7 +628,12 @@ const DB_SQL_METHODS: ReadonlySet<string> = new Set(["select", "selectOne", "sca
  * carries the access it makes.
  */
 const NON_MODEL_RECEIVER_RE =
-  /(?:->|^\$)(?:attributes|parameters|headers|cookies|files|server|session|cache|config|messages|bag|disk|storage|filesystem|collection|collections|service|factory)$|(?:->|^\$)\w*(?:Service|Factory)$|->(?:query|request)$|->(?:errors|getMessages|getMessageBag|session|cache|config)\(\s*\)$|^(?:session|cache|config|auth)\(\s*\)$/i;
+  /(?:->|^\$)(?:attributes|parameters|headers|cookies|files|server|session|cache|config|settings|messages|bag|disk|storage|filesystem|collection|collections|service|factory|container)$|(?:->|^\$)\w*(?:Service|Factory)$|->(?:query|request)$|->(?:errors|getMessages|getMessageBag|session|cache|config)\(\s*\)$|^(?:session|cache|config|auth)\(\s*\)$/i;
+
+/** The arguments of a call, as written. */
+function argumentTexts(call: Node): string[] {
+  return (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a): a is Node => a?.type === "argument").map((a) => a.text);
+}
 
 /** A PDO / mysqli handle or statement by its conventional name: `$pdo->query`, `$stmt->fetchAll()`. */
 const PDO_HANDLE_RE = /^\$(?:pdo|db|dbh|conn|connection|stmt|statement|sth|mysqli|link)\b|->(?:query|exec|prepare|fetchAll|fetch)$/i;

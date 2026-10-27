@@ -295,3 +295,13 @@ class StandingsRepository {
     expect(rows).toContain("DB::select results");
   });
 });
+
+describe("container wiring is no data access (real-repo FP)", () => {
+  it("reads no row for a PSR-11 lookup, a settings bag or an app built from the container", async () => {
+    const rows = await eloquentRowsOf(`    $settings = $c->get(SettingsInterface::class);
+    $loggerSettings = $settings->get('logger');
+    $app = Bridge::create($container);
+    $club = Club::create(['name' => 'Rovers']);`);
+    expect(rows.map((r) => r.name)).toEqual(["Club::create"]);
+  });
+});
