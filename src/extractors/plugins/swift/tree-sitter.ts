@@ -1,7 +1,8 @@
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
-import { getGrammarParser, type TSNode } from "../../../parsers/parser-manager.js";
-import { normalizeSource } from "../../../parsers/normalize-source.js";
+import type { TSNode } from "../../../parsers/parser-manager.js";
+import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front-end.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
+import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { swiftDiCallPatterns } from "./di.js";
 
 /**
@@ -26,18 +27,8 @@ const NOT_A_CALL: ReadonlySet<string> = new Set(
  * The Swift front end of the `tree-sitter:swift` feature: tree-sitter-swift's reading of a file's functions and
  * calls, loaded on first use (the grammar is the wasm `npm run setup` builds).
  */
-export async function loadSwiftReader(): Promise<(source: string) => ParsedStructure> {
-  const parser = await getGrammarParser("swift");
-  return (source) => {
-    const text = normalizeSource(source);
-    const tree = parser.parse(text);
-    if (!tree) throw new Error("tree-sitter-swift returned no tree");
-    try {
-      return readSwiftTree(tree.rootNode, text);
-    } finally {
-      tree.delete();
-    }
-  };
+export function loadSwiftReader(): Promise<(source: string) => ParsedStructure> {
+  return treeSitterReader("swift", readSwiftTree);
 }
 
 /**
@@ -83,7 +74,7 @@ export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
   return {
     functions: functions.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) })),
     topLevelCalls: recordPatternCalls(topLevel),
-    syntaxErrors: countErrors(root),
+    syntaxErrors: countSyntaxErrors(root),
   };
 }
 
@@ -103,37 +94,14 @@ function keywordRow(node: TSNode, keyword: string): number {
   return (node.childForFieldName("name") ?? node).startPosition.row;
 }
 
-function countErrors(root: TSNode): number {
-  if (!root.hasError) return 0;
-  let count = 0;
-  const stack = [root];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (node.isError || node.isMissing) {
-      count++;
-      continue;
-    }
-    if (!node.hasError) continue;
-    for (let i = 0; i < node.childCount; i++) stack.push(node.child(i)!);
-  }
-  // A node can carry the flag with no error node under it; the file still did not parse cleanly.
-  return Math.max(count, 1);
-}
-
-/** One step of a callee, left to right. */
-type Segment =
-  | { kind: "id"; name: string; node: TSNode }
-  | { kind: "call"; constructs?: string }
-  /** `literal`: `"s".f(`, a tuple field `x.0.f(` — the patterns read the bare method; anything else names none. */
-  | { kind: "other"; bare: boolean };
-
-const call = (name: string, leafName: string, at: TSNode, receiverType?: string): PatternCallName => ({
+const call = (name: string, leafName: string, at: TSNode): PatternCallName => ({
   name,
   leafName,
   line: at.startPosition.row + 1,
   column: at.startPosition.column,
-  ...(receiverType ? { receiverType } : {}),
 });
+
+const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** A call's argument list: `value_arguments` in `(…)` (a `[…]` one is a subscript), and whether a closure trails. */
 function suffixOf(node: TSNode): { args: TSNode | null; subscript: boolean; trailing: boolean } | null {
@@ -149,120 +117,71 @@ function suffixOf(node: TSNode): { args: TSNode | null; subscript: boolean; trai
   return { args, subscript: args?.child(0)?.type === "[", trailing };
 }
 
-function segmentsOf(node: TSNode): Segment[] {
+/** A callee as steps; `"s".f(` and a tuple field `x.0.f(` are receivers the patterns read the bare method on. */
+function stepsOf(node: TSNode): CalleeStep[] {
   switch (node.type) {
     case "simple_identifier":
       // A closure's `$0` or a wrapper's `$name` names no declared receiver: the patterns read the bare method.
-      return node.text.startsWith("$") ? [{ kind: "other", bare: true }] : [{ kind: "id", name: node.text, node }];
+      return node.text.startsWith("$") ? [{ kind: "other", bare: true }] : [idStep(node.text, node)];
     case "self_expression":
-      return [{ kind: "id", name: "self", node }];
+      return [idStep("self", node)];
     case "super_expression":
-      return [{ kind: "id", name: "super", node }];
+      return [idStep("super", node)];
     case "navigation_expression": {
       const target = node.childForFieldName("target");
       const member = node.childForFieldName("suffix")?.childForFieldName("suffix");
-      const base = target ? segmentsOf(target) : [];
-      if (member?.type === "simple_identifier") return [...base, { kind: "id", name: member.text, node: member }];
+      const base = target ? stepsOf(target) : [];
+      if (member?.type === "simple_identifier") return [...base, idStep(member.text, member)];
       return [...base, { kind: "other", bare: member?.type === "integer_literal" }];
     }
     case "postfix_expression": {
       // `x!.f(` / `x?.f(` call through `x`.
       const op = node.childForFieldName("operation")?.type;
       const target = node.childForFieldName("target");
-      return target && (op === "bang" || op === "?") ? segmentsOf(target) : [{ kind: "other", bare: false }];
+      return target && (op === "bang" || op === "?") ? stepsOf(target) : [{ kind: "other", bare: false }];
     }
     case "try_expression":
     case "await_expression": {
       // `(try repo.find(id)).first()` as the grammar groups `try repo.find(id).first()`.
       const inner = node.childForFieldName("expr");
-      return inner ? segmentsOf(inner) : [{ kind: "other", bare: false }];
+      return inner ? stepsOf(inner) : [{ kind: "other", bare: false }];
     }
     case "prefix_expression": {
       // The grammar binds a prefix operator before the call it applies to: `!isOperator(name:)` calls `isOperator`,
       // and an implicit member `.shared.f(` reads as `shared.f`.
       const target = node.childForFieldName("target");
-      return target ? segmentsOf(target) : [{ kind: "other", bare: false }];
+      return target ? stepsOf(target) : [{ kind: "other", bare: false }];
     }
     case "call_expression": {
       const suffix = suffixOf(node);
       const callee = node.namedChild(0);
       if (!suffix || !callee || suffix.subscript) return [{ kind: "other", bare: false }];
-      const inner = segmentsOf(callee);
-      const only = inner.length === 1 ? inner[0]! : null;
-      const constructs = only?.kind === "id" && /^[A-Z]/.test(only.name) ? only.name : undefined;
-      return [...inner, { kind: "call", ...(constructs ? { constructs } : {}) }];
+      const inner = stepsOf(callee);
+      return [...inner, callStep(inner)];
     }
     default:
       return [{ kind: "other", bare: /literal$/.test(node.type) }];
   }
 }
 
-/**
- * The chain a call's result is named by — `repo.find()`, `repo.find().first()`, `Club.load()` for a method on a
- * construction — as the names before each `()`, or null when a step has no name.
- */
-function chainOf(segments: Segment[]): { parts: string[]; head: TSNode } | null {
-  const last = segments.at(-1);
-  if (last?.kind !== "call") return null;
-  const callee = segments.slice(0, -1);
-  const name = callee.at(-1);
-  if (name?.kind !== "id") return null;
-  const prev = callee.at(-2);
-  if (!prev) return { parts: [name.name], head: name.node };
-  if (prev.kind === "id") return callee.at(-3)?.kind === "call" || callee.at(-3)?.kind === "other" ? null : { parts: [`${prev.name}.${name.name}`], head: prev.node };
-  if (prev.kind !== "call") return null;
-  const receiver = callee.slice(0, -1);
-  if (prev.constructs && receiver.length === 2) return { parts: [`${prev.constructs}.${name.name}`], head: (receiver[0] as { node: TSNode }).node };
-  const inner = chainOf(receiver);
-  return inner && inner.parts.length < CHAIN_DEPTH ? { parts: [...inner.parts, name.name], head: inner.head } : null;
-}
-
-/** A container lookup a Swift DI pattern names, read off the callee's own text. */
-function containerCall(node: TSNode, args: TSNode | null, text: string): PatternCallName | null {
-  const callee = node.namedChild(0)!;
-  const end = args?.startIndex ?? callee.endIndex;
-  const source = `${text.slice(callee.startIndex, end)}(`;
-  for (const pattern of swiftDiCallPatterns) {
-    for (const m of source.matchAll(new RegExp(pattern.pattern.source, pattern.pattern.flags.replace("g", "") + "g"))) {
-      if (m.index + m[0].length !== source.length) continue;
-      const built = pattern.buildName(m, source);
-      if (!built.name) return null;
-      return {
-        name: built.name,
-        leafName: built.leafName,
-        line: callee.startPosition.row + 1,
-        column: callee.startPosition.column,
-        ...(built.receiverType ? { receiverType: built.receiverType } : {}),
-        ...(built.receiverQualifier ? { receiverQualifier: built.receiverQualifier } : {}),
-      };
-    }
-  }
-  return null;
-}
-
 function callName(node: TSNode, text: string): PatternCallName | null {
   const suffix = suffixOf(node);
   const callee = node.namedChild(0);
   if (!suffix || !callee || suffix.subscript) return null;
-  const container = containerCall(node, suffix.args, text);
-  if (container) return container;
-  const segments = segmentsOf(callee);
-  const leaf = segments.at(-1);
+  // A container lookup a DI pattern names, read off the callee's own text.
+  const source = `${text.slice(callee.startIndex, suffix.args?.startIndex ?? callee.endIndex)}(`;
+  const container = patternNamedCall(source, swiftDiCallPatterns, callee.startPosition.row + 1, callee.startPosition.column);
+  if (container !== undefined) return container;
+  const steps = stepsOf(callee);
+  const leaf = steps.at(-1);
   if (leaf?.kind !== "id") return null;
-  const ids = segments.every((s) => s.kind === "id") ? (segments as Array<Extract<Segment, { kind: "id" }>>) : null;
   // `withApp { … }`, `DispatchQueue.main.async { … }`: the whole path, as the trailing-closure pattern reads it.
-  if (!suffix.args && suffix.trailing && ids) {
+  if (!suffix.args && suffix.trailing && steps.every((s) => s.kind === "id")) {
+    const ids = steps as Array<Extract<CalleeStep, { kind: "id" }>>;
     if (NOT_A_CALL.has(ids[0]!.name) || /^[A-Z]/.test(leaf.name)) return null;
-    return call(ids.map((s) => s.name).join("."), leaf.name, ids[0]!.node);
+    return { name: ids.map((s) => s.name).join("."), leafName: leaf.name, line: ids[0]!.line, column: ids[0]!.column };
   }
-  const prev = segments.at(-2);
-  if (!prev) return call(leaf.name, leaf.name, leaf.node);
-  if (prev.kind === "id") return call(`${prev.name}.${leaf.name}`, leaf.name, prev.node);
-  if (prev.kind === "other") return prev.bare ? call(leaf.name, leaf.name, leaf.node) : null;
-  const receiver = segments.slice(0, -1);
-  if (prev.constructs && receiver.length === 2) return call(`${prev.constructs}.${leaf.name}`, leaf.name, (receiver[0] as { node: TSNode }).node, prev.constructs);
-  const chain = chainOf(receiver);
-  return chain ? call(`${chain.parts.map((p) => `${p}()`).join(".")}.${leaf.name}`, leaf.name, chain.head) : null;
+  return nameCall(steps, CHAIN_DEPTH);
 }
 
 /** `Cache<String, Club>(…)`, `League.Table<Club>(…)`: the generic type constructed, by its last two names. */

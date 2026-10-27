@@ -38,6 +38,7 @@
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-c-sharp": "^0.23.1",
     "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-dart": "github:UserNobody14/tree-sitter-dart#0038280b774b65c1b89ba7fec50624d8baed9fe1",
     "tree-sitter-fsharp": "^0.3.12",
     "tree-sitter-go": "^0.25.0",
     "tree-sitter-java": "^0.23.5",

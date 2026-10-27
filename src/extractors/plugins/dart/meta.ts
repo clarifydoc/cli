@@ -31,6 +31,8 @@ export const dartMeta: LanguagePluginMeta = {
   ...dartManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: dartSpec,
+  // Functions and calls read by tree-sitter-dart while the `tree-sitter:dart` feature is on (tree-sitter.ts).
+  treeSitter: { grammar: "dart", load: () => import("./tree-sitter.js").then((m) => m.loadDartReader()) },
   entities: new DartEntityExtractor(),
   knownPackages: pubPackages,
   builtinTypes: DART_BUILTINS,

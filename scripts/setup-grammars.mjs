@@ -2,10 +2,11 @@
 //
 // Every other grammar package (tree-sitter-java, tree-sitter-c-sharp, …) ships a
 // `web-tree-sitter@0.27`-loadable `.wasm` in its tarball, which parser-manager.ts
-// loads straight out of node_modules. `tree-sitter-pascal`, `tree-sitter-kotlin`
-// and `tree-sitter-swift` ship only C sources, so their wasm has to be compiled
-// locally — without it, Pascal/Delphi and Kotlin parsing throws ENOENT and ~29
-// tests fail, and Swift keeps its regex reading.
+// loads straight out of node_modules. `tree-sitter-pascal`, `tree-sitter-kotlin`,
+// `tree-sitter-swift` and `tree-sitter-dart` (pinned to a commit; npm's 1.0.0 is
+// from 2023 and its wasm does not load) ship only C sources, so their wasm has to
+// be compiled locally — without it, Pascal/Delphi and Kotlin parsing throws ENOENT
+// and ~29 tests fail, and Swift and Dart keep their regex reading.
 //
 // Needs Docker (or a local emcc) for emscripten. Run via `npm run setup` after
 // any `npm install`, which wipes these files along with the rest of node_modules.
@@ -28,6 +29,7 @@ const grammars = [
   { pkg: "tree-sitter-pascal", wasm: "tree-sitter-pascal.wasm" },
   { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" },
   { pkg: "tree-sitter-swift", wasm: "tree-sitter-swift.wasm" },
+  { pkg: "tree-sitter-dart", wasm: "tree-sitter-dart.wasm" },
 ];
 
 const run = (cmd, args) =>

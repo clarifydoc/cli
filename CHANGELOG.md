@@ -20,6 +20,12 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Dart is read by tree-sitter.** Dart's functions and calls come from tree-sitter-dart (Dart 3, pinned to an upstream
+  commit) under the `tree-sitter` feature, with the per-file fallback (`no-tree-sitter:dart` keeps the patterns).
+  Functions whose parameters hold function types, functions without a return type, local functions and every
+  constructor are read; a constructor's initializer list is its own (`: super(key: key)`, `: _repo = Repo()`); a
+  method on a call's result or a `const` construction is named as the chain from it (`Navigator.of(context).push`,
+  `Pipeline.addMiddleware`); object patterns (`case Error<T>():`), `assert` and declarations are no longer calls.
 - **Swift is read by tree-sitter.** Swift's functions and calls come from tree-sitter-swift under a new `tree-sitter`
   feature, on by default with the same per-file fallback (`no-tree-sitter:swift` keeps the patterns). A nested
   function owns its calls; an `init` the pattern missed (`override init`, a generic one) is read; a call after `!` or

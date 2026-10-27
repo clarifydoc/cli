@@ -117,26 +117,35 @@ export function extractWithRegex(
 }
 
 /**
- * Class members as the parser read them. A class pass that reads methods by pattern (Swift's) made its own
- * method objects, with pattern-read calls: a method declared on a parsed function's line is that function. A
- * parsed function no class pass found (an `override init` the pattern misses) is a member of the innermost class
- * around it, unless it is nested in another function. Where the class pass attached the parsed functions
- * themselves (Go, Rust) this changes nothing.
+ * Class members as the parser read them. A class pass that reads methods by pattern (Swift's, Dart's) made its own
+ * method objects, with pattern-read calls and extents: a method declared on a parsed function's line takes that
+ * function's calls and extent (and the locals and request reads found over it), keeping what the class pass knows
+ * of its signature — a Dart constructor's return type, a `this.repo` parameter's field type. A parsed function no
+ * class pass found (an `override init` the pattern misses) is a member of the innermost class around it, unless it
+ * is nested in another function. Where the class pass attached the parsed functions themselves (Go, Rust) this
+ * changes nothing.
  */
 function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): void {
   const parsedAt = new Map<number, FunctionInfo>();
   for (const fn of functions) parsedAt.set(fn.line, fn);
-  const members = new Set<FunctionInfo>();
+  const claimed = new Set<FunctionInfo>();
   for (const cls of classes) {
-    cls.methods = cls.methods.map((m) => {
+    for (const m of cls.methods) {
       const fn = parsedAt.get(m.line);
-      return fn && fn.name === m.name ? fn : m;
-    });
-    for (const m of cls.methods) members.add(m);
+      if (!fn || fn.name !== m.name) continue;
+      claimed.add(fn);
+      if (fn === m) continue;
+      m.calls = fn.calls;
+      m.endLine = fn.endLine;
+      if (fn.localTypes) m.localTypes = fn.localTypes;
+      else delete m.localTypes;
+      if (fn.requestAccess) m.requestAccess = fn.requestAccess;
+      else delete m.requestAccess;
+    }
   }
   const nested = (fn: FunctionInfo): boolean => functions.some((g) => g !== fn && g.line < fn.line && fn.endLine <= g.endLine);
   for (const fn of functions) {
-    if (members.has(fn) || nested(fn)) continue;
+    if (claimed.has(fn) || nested(fn)) continue;
     let owner: ClassInfo | null = null;
     for (const cls of classes) {
       if (cls.line < fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;

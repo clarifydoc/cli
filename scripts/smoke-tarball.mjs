@@ -35,8 +35,9 @@ const SOURCES = {
   "l.jl": "function greet(name)\n  \"hi $name\"\nend\n",
   "m.zig": "pub fn greet(name: []const u8) []const u8 {\n    return name;\n}\n",
   "n.ml": "let greet name = \"hi \" ^ name\n",
-  // A regex language read by a tree-sitter front end: its grammar must load too.
+  // Regex languages read by a tree-sitter front end: their grammars must load too.
   "o.swift": "func greet(_ name: String) -> String {\n    \"hi \\(name)\"\n}\n",
+  "p.dart": "String greet(String name) {\n  return 'hi ' + name;\n}\n",
 };
 
 const work = mkdtempSync(join(tmpdir(), "clarifydoc-smoke-"));
@@ -61,7 +62,7 @@ try {
       continue;
     }
     if (analysis.extraction?.reason === "grammar-unavailable") problems.push(`${file}: grammar did not load (${analysis.language})`);
-    else if (file.endsWith(".swift") && (analysis.frontEnd?.parser !== "tree-sitter" || analysis.frontEnd.fallback)) {
+    else if (/\.(swift|dart)$/.test(file) && (analysis.frontEnd?.parser !== "tree-sitter" || analysis.frontEnd.fallback)) {
       problems.push(`${file}: the tree-sitter front end did not read it (${JSON.stringify(analysis.frontEnd ?? null)})`);
     }
     else {

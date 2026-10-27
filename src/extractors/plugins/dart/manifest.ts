@@ -16,6 +16,8 @@ export const dartManifest: LanguagePluginManifest = {
   // `package:<name>/x.dart` is that package's `lib/x.dart`; any other URI is relative to the file.
   importedFile: dartImportedFile,
   parsing: "regex",
+  // Read by the `tree-sitter:dart` front end only (meta.treeSitter): the wasm `npm run setup` builds.
+  grammar: { variants: { dart: { pkg: "tree-sitter-dart", wasm: "tree-sitter-dart.wasm" } } },
   extensions: [".dart"],
   // One type spans files here: `part` files and `extension`s add to a type from other files.
   typesSpanFiles: true,
