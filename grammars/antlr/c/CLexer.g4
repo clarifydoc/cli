@@ -35,6 +35,14 @@ lexer grammar CLexer;
 
 // [ClarifyDoc] No preprocessing lexer base: upstream's ran `gcc -E` on each file.
 
+// [ClarifyDoc] Names the first pass (CTypes.ts) retyped, so the parser reads them by token rather than by predicate:
+// a macro alone where a statement or declaration starts, a calling convention, a macro joined to string literals.
+tokens {
+    MacroName,
+    CallingConvention,
+    StringMacro
+}
+
 // Insert here @header for lexer.
 
 channels {

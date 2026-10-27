@@ -124,6 +124,41 @@ int start_engine(int ignition) {
     expect(read(source).functions).toEqual([["start_engine", 8, ["ignite"]]]);
   });
 
+  it("reads fold expressions, forwarding packs and attributes on declarations", () => {
+    const source = `template <typename... Args>
+void announce(Args &&...args) {
+  (std::cout << ... << args);
+  (cheer(args), ...);
+  [[maybe_unused]] auto ok = (check(args) && ...);
+}
+`;
+    expect(read(source).functions).toEqual([["announce", 2, ["cheer", "check"]]]);
+  });
+
+  it("reads bare macros, contextual keywords as members, and a dereferenced template call in an initializer", () => {
+    const source = `BEGIN_NAMESPACE
+void replay(Match *m) {
+  BENCHMARK_LOOP { rewind(m); }
+  m->final();
+  Item a(*cast<const Item *>(m));
+  SET_SOURCE_PATH
+  return finish(m);
+}
+END_NAMESPACE
+`;
+    expect(read(source).functions).toEqual([["replay", 2, ["BENCHMARK_LOOP", "rewind", "final", "cast", "SET_SOURCE_PATH", "finish"]]]);
+  });
+
+  it("reads an all-caps parameter name, and casts inside a macro's arguments", () => {
+    const source = `void doTest(std::shared_ptr<Case> TEST_CTX) {
+  auto l = [](Ctx TEST_CTX) { kick(); };
+  if (UNLIKELY(m->id != (unsigned)Pitch::Home)) restart();
+  CHECK((int)(unsigned char)shirt[0] == 0x8A);
+}
+`;
+    expect(read(source).functions).toEqual([["doTest", 1, ["kick", "UNLIKELY", "restart", "CHECK"]]]);
+  });
+
   it("counts a syntax error and reads nothing more of the file, so core keeps the patterns' reading", () => {
     expect(readCpp("int f() { return (1; }\n")).toMatchObject({ functions: [] });
     expect(readCpp("int f() { return (1; }\n").syntaxErrors).toBeGreaterThan(0);

@@ -89,6 +89,38 @@ static int open_pit(void) { return pit_open(); }
     });
   });
 
+  it("reads macros joined to string literals, and counts the ones called", () => {
+    const source = 'static char banner[] = "Stadium: " VERSION CRLF;\nvoid greet(void) {\n  say("x" QUOTE(GATE) ".y", 1);\n}\n';
+    expect(shape(source)).toEqual({ errors: 0, functions: [["greet", 2, 4, ["say", "QUOTE"]]] });
+  });
+
+  it("reads calling conventions the file does not expand", () => {
+    const source = "BOOL WINAPI open_gate(HANDLE h) { return lift(h); }\nvoid * api_cdecl format_score(char *f) { return render(f); }\ntypedef BOOL (WINAPI *gate_fn)(int);\n";
+    expect(shape(source)).toEqual({ errors: 0, functions: [["open_gate", 1, 1, ["lift"]], ["format_score", 2, 2, ["render"]]] });
+  });
+
+  it("reads a macro defining a function as a function of its name, and a macro ending a file", () => {
+    const source = "MATCH_TEST(kickoff) {\n  whistle();\n}\nYY_DECL {\n  scan();\n}\nDEFINE_WATCHER(idle, IDLE)\n";
+    expect(shape(source)).toEqual({ errors: 0, functions: [["MATCH_TEST", 1, 3, ["whistle"]], ["YY_DECL", 4, 6, ["scan"]]] });
+  });
+
+  it("reads bare macros, statement macros with no `;`, and type arguments", () => {
+    const source = `void play(int t) {
+  PARSER_BEGIN
+  *++top = next();
+  PARSER_END
+  switch (t) {
+    TYPE_MAP(XX)
+    default: return;
+  }
+  FRAME(1)
+  FRAME(2)
+  CONFIG(fill, const char *);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["play", 1, 12, ["next", "TYPE_MAP", "FRAME", "CONFIG"]]] });
+  });
+
   it("counts a syntax error and reads nothing more of the file, so core keeps the patterns' reading", () => {
     expect(shape("int f(void) { return (1; }\n")).toEqual({ errors: 1, functions: [] });
   });

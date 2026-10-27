@@ -48,6 +48,8 @@ const STATEMENT_KEYWORDS: ReadonlySet<number> = new Set([
   CPP14Lexer.Throw, CPP14Lexer.Co_return,
 ]);
 
+const POINTER_OPERATORS: ReadonlySet<number> = new Set([CPP14Lexer.Star, CPP14Lexer.And, CPP14Lexer.AndAnd, CPP14Lexer.Caret]);
+
 const ACCESS: ReadonlySet<number> = new Set([CPP14Lexer.Public, CPP14Lexer.Private, CPP14Lexer.Protected]);
 
 /** Qt's section keywords, macros the file does not expand. */
@@ -162,6 +164,7 @@ const NO_FACTS: CppTokenFacts = {
   angle: new Int32Array(0),
   cast: new Uint8Array(0),
   macroCall: new Uint8Array(0),
+  fold: new Uint8Array(0),
   nonExpression: new Uint8Array(0),
   next: new Int32Array(0),
 };
@@ -187,6 +190,9 @@ export abstract class CPP14ParserBase extends Parser {
     });
     this.facts.macroCall.forEach((call, name) => {
       if (call === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.MacroName;
+    });
+    this.facts.fold.forEach((fold, open) => {
+      if (fold === 1) (stream.get(open) as { type: number }).type = CPP14Lexer.FoldLeftParen;
     });
     stream.seek(0);
     const simulator = this.interpreter;
@@ -270,12 +276,18 @@ export abstract class CPP14ParserBase extends Parser {
     }
   }
 
-  /** `*`, `&`, `^` or `Club::*` at `index`: a declarator in parentheses, as `(*kick)` and `(Club::*kick)` are. */
-  private pointerDeclaratorAt(index: number): boolean {
-    const type = this.typeAt(index);
-    if (type === CPP14Lexer.Star || type === CPP14Lexer.And || type === CPP14Lexer.Caret) return true;
-    const path = this.pathAt(index);
-    return !!path && this.typeAt(path.after) === CPP14Lexer.Doublecolon && this.typeAt(this.following(path.after)) === CPP14Lexer.Star;
+  /** A declarator in parentheses opens at `open`: `(*kick)`, `(&squad)`, `(Club::*kick)`, `(*squads[3])`. */
+  private parenDeclaratorAt(open: number): boolean {
+    let i = this.following(open);
+    const path = this.pathAt(i);
+    if (path && this.typeAt(path.after) === CPP14Lexer.Doublecolon && this.typeAt(this.following(path.after)) === CPP14Lexer.Star) i = this.following(path.after);
+    if (!POINTER_OPERATORS.has(this.typeAt(i))) return false;
+    while (POINTER_OPERATORS.has(this.typeAt(i)) || this.typeAt(i) === CPP14Lexer.Const) i = this.following(i);
+    // `(*)`, `(*on_goal)`, `(*squads[3])` — never `(*load(id))`.
+    if (this.typeAt(i) === CPP14Lexer.RightParen) return true;
+    if (this.typeAt(i) !== CPP14Lexer.Identifier) return false;
+    const next = this.typeAt(this.following(i));
+    return next === CPP14Lexer.RightParen || next === CPP14Lexer.LeftBracket;
   }
 
   private known(index: number): boolean {
@@ -293,12 +305,20 @@ export abstract class CPP14ParserBase extends Parser {
    * (`Club *c = …`). A name followed by `(`, `=`, `.`, `->` or an operator is an expression.
    */
   protected IsDeclarationStatement(): boolean {
-    const t = this.lt(1);
+    let start = this.lt(1).tokenIndex;
+    // `[[maybe_unused]] auto x = …`: what follows an attribute decides.
+    while (this.typeAt(start) === CPP14Lexer.LeftBracket && this.typeAt(this.following(start)) === CPP14Lexer.LeftBracket) {
+      const close = this.facts.close[start] ?? -1;
+      if (close < 0) return false;
+      start = this.following(close);
+    }
+    const type = this.typeAt(start);
+    const second = this.following(start);
     // `void(0);`, `int{x};`: a type converting a value — but `void (*kick)(int);`, `void (Club::*kick)();` declare.
-    if (TYPE_KEYWORDS.has(t.type) && t.type !== CPP14Lexer.Decltype && (this.lt(2).type === CPP14Lexer.LeftBrace || (this.lt(2).type === CPP14Lexer.LeftParen && !this.pointerDeclaratorAt(this.lt(3).tokenIndex)))) return false;
-    if (DECLARATION_KEYWORDS.has(t.type)) return true;
-    if (t.type !== CPP14Lexer.Identifier && t.type !== CPP14Lexer.Doublecolon) return false;
-    const path = this.pathAt(t.tokenIndex);
+    if (TYPE_KEYWORDS.has(type) && type !== CPP14Lexer.Decltype && (this.typeAt(second) === CPP14Lexer.LeftBrace || (this.typeAt(second) === CPP14Lexer.LeftParen && !this.parenDeclaratorAt(second)))) return false;
+    if (DECLARATION_KEYWORDS.has(type)) return true;
+    if (type !== CPP14Lexer.Identifier && type !== CPP14Lexer.Doublecolon) return false;
+    const path = this.pathAt(start);
     if (!path) return false;
     const after = this.typeAt(path.after);
     // `Club c`, `Club const &c`.
@@ -310,7 +330,7 @@ export abstract class CPP14ParserBase extends Parser {
       return this.known(path.last) || [CPP14Lexer.Assign, CPP14Lexer.Semi, CPP14Lexer.Comma, CPP14Lexer.LeftParen, CPP14Lexer.LeftBracket, CPP14Lexer.LeftBrace].includes(this.typeAt(this.following(i)));
     }
     // `Callback (*on_goal)(int);`
-    if (after === CPP14Lexer.LeftParen && this.known(path.last)) return [CPP14Lexer.Star, CPP14Lexer.And].includes(this.typeAt(this.following(path.after)));
+    if (after === CPP14Lexer.LeftParen && this.known(path.last)) return this.parenDeclaratorAt(path.after);
     return false;
   }
 
@@ -328,12 +348,14 @@ export abstract class CPP14ParserBase extends Parser {
     const path = this.pathAt(t.tokenIndex);
     if (!path) return false;
     const after = this.typeAt(path.after);
-    // `Club squad GUARDED_BY(mu);`: the macro ends the declarator the name is.
-    if (after === CPP14Lexer.Identifier && this.macro(path.after) && MACRO_SUFFIX_END.has(this.typeAt(this.afterMacro(path.after)))) return false;
+    // `Club squad GUARDED_BY(mu);`: the macro ends the declarator the name is — after a type, not at a parameter's
+    // start (`shared_ptr<Case> TEST_CTX)` names its parameter in capitals).
+    const before = this.lt(-1)?.type ?? -1;
+    if (after === CPP14Lexer.Identifier && before !== CPP14Lexer.LeftParen && before !== CPP14Lexer.Comma && this.macro(path.after) && MACRO_SUFFIX_END.has(this.typeAt(this.afterMacro(path.after)))) return false;
     if (DECLARATOR_START.has(after) || ABSTRACT_END.has(after)) return true;
     if (after === CPP14Lexer.Assign) return [CPP14Lexer.LeftParen, CPP14Lexer.Comma, CPP14Lexer.TemplateLess].includes(this.lt(-1)?.type ?? -1);
     // `Callback (*on_goal)(int)`, `int (Club::*member)`.
-    if (after === CPP14Lexer.LeftParen) return [CPP14Lexer.Star, CPP14Lexer.And, CPP14Lexer.Caret, CPP14Lexer.Doublecolon].includes(this.typeAt(this.following(path.after)));
+    if (after === CPP14Lexer.LeftParen) return this.parenDeclaratorAt(path.after);
     return false;
   }
 
@@ -412,7 +434,9 @@ export abstract class CPP14ParserBase extends Parser {
   /** `QFETCH(bool, ok);`, `Q_D(const Club);`, `CASE(X)` before another macro: a statement macro. */
   protected IsMacroStatement(): boolean {
     const t = this.lt(1);
-    if (!this.macroAt(t) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
+    if (!this.macroAt(t)) return false;
+    // `QTEST_SET_PATH return run();`: a bare macro the first pass retyped, before a statement keyword or the block's end.
+    if (this.lt(2).type !== CPP14Lexer.LeftParen) return t.type === CPP14Lexer.MacroName && this.lt(2).type !== CPP14Lexer.LeftBrace;
     const after = this.afterMacro(t.tokenIndex);
     const type = this.typeAt(after);
     if (t.type === CPP14Lexer.MacroName) return type !== CPP14Lexer.LeftBrace;
@@ -423,6 +447,8 @@ export abstract class CPP14ParserBase extends Parser {
   /** `SECTION("x") {`, `Q_FOREACH(x, list) use(x);`: a macro before a statement it takes as its body. */
   protected IsMacroBlock(): boolean {
     const t = this.lt(1);
+    // `BENCHMARK_LOOP { … }`: a bare macro the first pass retyped, before a block.
+    if (t.type === CPP14Lexer.MacroName && this.lt(2).type === CPP14Lexer.LeftBrace) return true;
     if (!isName(t.type) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
     const after = this.afterMacro(t.tokenIndex);
     const type = this.typeAt(after);
@@ -433,7 +459,9 @@ export abstract class CPP14ParserBase extends Parser {
   /** `TEST_MAIN(Squad)`, `REGISTER(int, 1);`, `BENCHMARK(kick)->Arg(1);`: a macro at file scope. */
   protected IsTopLevelMacro(): boolean {
     const t = this.lt(1);
-    if (!this.macroAt(t) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
+    if (!this.macroAt(t)) return false;
+    // `BEGIN_NAMESPACE`, `END_NAMESPACE`: a bare macro before another declaration, a macro or the end.
+    if (this.lt(2).type !== CPP14Lexer.LeftParen) return t.type === CPP14Lexer.MacroName;
     // At file scope no declaration starts with an all-caps name and its arguments: `INSTANTIATE_SUITE(Cup, …);`.
     return this.typeAt(this.afterMacro(t.tokenIndex)) !== CPP14Lexer.LeftBrace;
   }
@@ -463,6 +491,15 @@ export abstract class CPP14ParserBase extends Parser {
     if ((this.macroIndex(after) || type === CPP14Lexer.Identifier && QT_SECTIONS.has(this.inputStream.get(after).text ?? ""))) return true;
     if (this.lt(2).type !== CPP14Lexer.LeftParen) return false;
     return type === CPP14Lexer.Identifier || type === CPP14Lexer.Tilde || DECLARATION_KEYWORDS.has(type) || type === CPP14Lexer.Template;
+  }
+
+  /** A `;` ends the macro at 1, its arguments and any chain after them (`BENCH(f)->Arg(1);`). */
+  protected SemiAfterMacro(): boolean {
+    let after = this.afterMacro(this.lt(1).tokenIndex);
+    while ((this.typeAt(after) === CPP14Lexer.Arrow || this.typeAt(after) === CPP14Lexer.Dot) && this.typeAt(this.following(this.following(after))) === CPP14Lexer.LeftParen) {
+      after = this.afterMacro(this.following(after));
+    }
+    return this.typeAt(after) === CPP14Lexer.Semi;
   }
 
   /** Qt's `signals`, `slots` before `:`. */

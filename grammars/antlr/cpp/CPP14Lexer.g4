@@ -10,7 +10,8 @@ tokens {
     TemplateLess,
     TemplateGreater,
     CastLeftParen,
-    MacroName
+    MacroName,
+    FoldLeftParen
 }
 
 IntegerLiteral:

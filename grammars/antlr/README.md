@@ -85,14 +85,21 @@ per target at its `// Insert here @header` marker.
   statement macro whose arguments are a declaration or a block (`VERBOSE(size_t n = 0);`, `EACH(x, { … });`), a macro
   called at file scope or as a struct member, an attribute macro among specifiers or after a declarator
   (`NO_CHECKS("x") static int f(`, `int fd UNUSED`), a macro between string literals (`"%" PRIu64`), a type as a
-  macro argument (`offsetof(struct x, y)`) and `va_arg(ap, char *)`. A macro's arguments are a balanced token list.
-  `$` in names, form feeds as whitespace, a directive's block comment running past its line, C23 `static_assert`.
+  macro argument (`offsetof(struct x, y)`, `const char *`) and `va_arg(ap, char *)`, empty macro arguments. A macro's
+  arguments are a balanced token list. `$` in names, form feeds as whitespace, a directive's block comment running
+  past its line, C23 `static_assert`.
+- **C: retyped tokens.** As for C++ below, the first pass retypes what the grammar then reads by token rather than by
+  predicate: a macro alone where a statement or declaration starts (`PARSER_BEGIN`, before a statement keyword, a `{`,
+  a specifier or another such macro) and a macro defining a function at file scope (`MATCH_TEST(x) { … }`, `YY_DECL
+  {`) as `MacroName`; a calling convention (`BOOL WINAPI f(`, `void * api_cdecl f(`, `(WINAPI *pfn)(…)`) as
+  `CallingConvention`; a macro joined to string literals (`"x" QUOTE(n) VERSION "y"`) as `StringMacro`. A name alone
+  matched by a rule would let prediction read a whole function as a macro followed by an old-style definition.
 - **C: flatter expressions.** An assignment's left side is a conditional expression, so one token decides it (upstream
   read past the whole operand first); the ten binary-operator levels are one rule, without precedence. The same
   strings parse.
 
-  Without the preprocessor 5–22% of the files of six real C repositories still fail and keep the patterns' reading.
-  The reader runs at 1.1–3.2 MB/s, about three times upstream's grammar with the first pass alone.
+  Without the preprocessor 1–11% of the files of six real C repositories still fail and keep the patterns' reading.
+  The reader runs at 0.8–2.9 MB/s.
 
 - **C++: a first pass that retypes tokens.** Upstream reads C++ without knowing which names are types or templates,
   so a statement could be a declaration or an expression and `a < b` a template argument list, and left it to
@@ -115,9 +122,14 @@ per target at its `// Insert here @header` marker.
 - **C++: unexpanded macros** as in C, plus class-head and declarator attribute macros (`class EXPORT Club`,
   `GUARDED_BY(mu)`), class-body macros (`Q_OBJECT`, `Q_PROPERTY(…)`, Qt's `signals:`/`slots`), test macros defining
   a function (`TEST(Cache, Hit) { … }`) or a block (`SECTION("x") { … }`), macros at file scope, macros listing
-  enumerators, and Qt's `emit` skipped.
+  enumerators, bare macros where a statement or declaration starts (retyped `MacroName`), and Qt's `emit` skipped.
+  A macro rule's `;` is never optional: each takes the form with `;` or the one without, which a predicate chooses,
+  since an optional `;` is also an empty statement and full-context prediction explored every reading.
+- **C++: C++17 fold expressions** (`(std::cout << ... << args)`, the `(` retyped `FoldLeftParen` where `...` stands
+  beside an operator), `final`/`override` as member names, template-template parameters, logical operators in the
+  arguments of a qualified template (`std::enable_if<!A::value && B>`).
 
-  On four real C++ repositories 1–11% of files keep the patterns' reading. Cold, the parse runs at 0.5–0.8 MB/s, warm
+  On four real C++ repositories 0–1% of files keep the patterns' reading. Cold, the parse runs at 0.5–0.8 MB/s, warm
   about 1.2 MB/s.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL

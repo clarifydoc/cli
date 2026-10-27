@@ -14,6 +14,12 @@ recorded in the git history only.
 
 ### Added
 
+- **C and C++: fewer files left to the patterns.** Of six real C repositories 1–11% of files now keep the patterns'
+  reading (was 5–22%), of four C++ ones 0–1% (was 1–11%). The parsers now read calling conventions (`BOOL WINAPI f(`),
+  macros joined to strings (`"Server: " VERSION CRLF`), macros alone on a line (`PARSER_BEGIN`, `BEGIN_NAMESPACE`),
+  macros defining a function (`MATCH_TEST(x) { … }`, `YY_DECL {`), statement macros without `;`, empty and qualified
+  macro arguments, C++17 fold expressions and Qt's `SIGNAL(moved(Club *))`. A parse that full-context prediction
+  cannot finish within a budget keeps the patterns' reading instead of taking seconds.
 - **C++ is read by a parser.** C++'s functions and calls come from its ANTLR4 grammar under the `antlr` feature, with
   the per-file fallback (`no-antlr:cpp` keeps the patterns), headers included. Without the build's headers, a first
   pass reads which names are types, which `<` opens template arguments and which parentheses are casts. Template calls

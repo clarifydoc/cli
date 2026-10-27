@@ -47,6 +47,7 @@ primaryExpression
     : Identifier? literal (Identifier | literal)*
     | This
     | LeftParen expression RightParen
+    | FoldLeftParen foldExpression RightParen // [ClarifyDoc] C++17, the `(` retyped by the first pass
     | idExpression bracedInitList
     | idExpression
     | MacroName macroArguments // [ClarifyDoc] a macro whose arguments no expression reads: `SIGNAL(moved(Club *))`
@@ -124,7 +125,7 @@ postfixExpression
         LeftParen expressionList? RightParen
         | bracedInitList
     )
-    | postfixExpression (Dot | Arrow) (Template? idExpression | pseudoDestructorName)
+    | postfixExpression (Dot | Arrow) (Template? idExpression | pseudoDestructorName | Final | Override) // [ClarifyDoc] `p->final()`
     | postfixExpression (PlusPlus | MinusMinus)
     | (Dynamic_cast | Static_cast | Reinterpret_cast | Const_cast) Less theTypeId Greater LeftParen expression RightParen
     | typeIdOfTheTypeId LeftParen (expression | theTypeId) RightParen
@@ -214,6 +215,18 @@ castExpression
 
 pointerMemberExpression
     : castExpression ((DotStar | ArrowStar) castExpression)*
+    ;
+
+// [ClarifyDoc] C++17 fold expressions: `(std::cout << ... << args)`, `(check(args) && ...)`.
+foldExpression
+    : castExpression foldOperator Ellipsis (foldOperator castExpression)?
+    | Ellipsis foldOperator castExpression
+    ;
+
+foldOperator
+    : binaryOperator
+    | Comma
+    | assignmentOperator
     ;
 
 // [ClarifyDoc] The multiplicative to logical-OR expressions as one flat rule. The same strings parse; the tree loses
@@ -316,12 +329,13 @@ selectionStatement
 // [ClarifyDoc] A statement macro whose arguments no expression reads (a type, a block) or that has no `;`:
 // `QFETCH(bool, ok);`, `RULE(OFFSIDE)⏎RULE(HANDBALL)`.
 macroStatement
-    : {this.IsMacroStatement()}? (Identifier | MacroName) macroArguments Semi?
+    : {this.IsMacroStatement() && this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) Semi
+    | {this.IsMacroStatement() && !this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) // [ClarifyDoc] an optional `;` is also an empty statement
     ;
 
 // [ClarifyDoc] A statement macro taking the statement after it as its body: `SECTION("kickoff") { … }`.
 macroBlockStatement
-    : {this.IsMacroBlock()}? (Identifier | MacroName) macroArguments statement
+    : {this.IsMacroBlock()}? (Identifier macroArguments | MacroName macroArguments?) statement
     ;
 
 // [ClarifyDoc] C++17: `if (auto it = squad.find(id); it != squad.end())`.
@@ -793,7 +807,8 @@ functionDefinition
 // [ClarifyDoc] A macro at file scope that no declaration reads: `TEST_MAIN(Squad)`, `REGISTER(int, 1);`,
 // `BENCHMARK(kick)->Arg(1);`.
 topLevelMacro
-    : {this.IsTopLevelMacro()}? (Identifier | MacroName) macroArguments ((Arrow | Dot) Identifier macroArguments)* Semi?
+    : {this.IsTopLevelMacro() && this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) ((Arrow | Dot) Identifier macroArguments)* Semi
+    | {this.IsTopLevelMacro() && !this.SemiAfterMacro()}? (Identifier macroArguments | MacroName macroArguments?) ((Arrow | Dot) Identifier macroArguments)*
     ;
 
 // [ClarifyDoc] A macro the file does not expand that defines a function: `TEST(Cache, Hit) { … }`.
@@ -871,10 +886,10 @@ macroArguments
     ;
 
 macroArgument
-    : LeftParen macroArgument* RightParen
+    : (LeftParen | CastLeftParen | FoldLeftParen) macroArgument* RightParen
     | LeftBracket macroArgument* RightBracket
     | LeftBrace macroArgument* RightBrace
-    | ~(LeftParen | RightParen | LeftBrace | RightBrace | LeftBracket | RightBracket)
+    | ~(LeftParen | CastLeftParen | FoldLeftParen | RightParen | LeftBrace | RightBrace | LeftBracket | RightBracket)
     ;
 
 classHeadName
@@ -896,7 +911,8 @@ memberSpecification
 
 // [ClarifyDoc] A macro as a class member: `Q_OBJECT`, `ROUTE_ADD("/goals", Get)`, `DISABLE_COPY(Club)`.
 memberMacro
-    : {this.IsMacroMember()}? (Identifier | MacroName) macroArguments? Semi?
+    : {this.IsMacroMember() && this.SemiAfterMacro()}? (Identifier | MacroName) macroArguments? Semi
+    | {this.IsMacroMember() && !this.SemiAfterMacro()}? (Identifier | MacroName) macroArguments?
     ;
 
 memberDeclaration

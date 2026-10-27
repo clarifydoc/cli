@@ -130,7 +130,7 @@ predefinedConstant
 primaryExpression
     : Identifier {this.LookupSymbol();}
     | constant
-    | ({this.BeforeString()}? Identifier)? StringLiteral ({this.AfterString()}? Identifier | StringLiteral)* // [ClarifyDoc] `"%" PRIu64`, `name_n " failed"`: macros among strings
+    | stringMacro* StringLiteral (StringLiteral | stringMacro)* // [ClarifyDoc] `"%" PRIu64`, `"x" QUOTE(n) "y"`: macros among strings
     | '(' expression ')'
     | genericSelection
 
@@ -183,9 +183,14 @@ postfixExpression
     ;
 
 // ISO C: argument-expression-list (6.5.3.1)
+// [ClarifyDoc] A macro's argument may be left empty: `CIPHER(GCM, SHA256, , )`.
 argumentExpressionList
-    : argumentExpression (',' argumentExpression)*
-    |
+    : argumentExpression? (',' argumentExpression?)*
+    ;
+
+// [ClarifyDoc] A macro the first pass found beside a string literal, which it joins: `"Server: " VERSION CRLF`.
+stringMacro
+    : StringMacro ('(' gnuAttributeList ')')?
     ;
 
 // [ClarifyDoc] A macro's argument may be a type: `list_entry(p, struct squad_item, list)`, `offsetof(struct x, y)`.
@@ -284,6 +289,7 @@ declarationSpecifier
     | functionSpecifier
     | alignmentSpecifier
     | macroAttribute // [ClarifyDoc]
+    | callingConvention // [ClarifyDoc]
     ;
 
 // [ClarifyDoc] An attribute macro the file does not expand: `LEAGUE_NO_CHECKS("undefined") void f(…)`,
@@ -369,7 +375,8 @@ memberDeclarationList
 
 // ISO C: member-declaration (6.7.3.2)
 memberDeclaration
-    : {this.IsMacroMember()}? Identifier '(' gnuAttributeList ')' ';'? // [ClarifyDoc] `BIT(can_substitute);`
+    : {this.IsMacroMember() && this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' ';' // [ClarifyDoc] `BIT(can_substitute);`
+    | {this.IsMacroMember() && !this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' // [ClarifyDoc] each form its own: an optional `;` is also an empty statement
     | attributeSpecifierSequence? specifierQualifierList memberDeclaratorList? ';'
     | staticAssertDeclaration
     | '__extension__' memberDeclaration // GNU extension.
@@ -385,6 +392,7 @@ typeSpecifierQualifier
     : typeSpecifier
     | typeQualifier
     | alignmentSpecifier
+    | macroAttribute // [ClarifyDoc] a member's macro type: `LIST_ENTRY(squad) link;`
     ;
 
 // ISO C: member-declarator-list (6.7.3.2)
@@ -477,6 +485,7 @@ directDeclarator
 	| Identifier ':' DigitSequence         // bit field
 	| vcSpecificModifer Identifier         // Visual C Extension
 	| '(' vcSpecificModifer declarator ')' // Visual C Extension
+	| '(' callingConvention declarator ')' // [ClarifyDoc]
 	| gnuAttribute
     )
     ( '[' typeQualifierList? assignmentExpression? ']' attributeSpecifierSequence?
@@ -492,7 +501,7 @@ directDeclarator
 
 // ISO C: pointer (6.7.7.1)
 pointer
-    : (('*' | '^') typeQualifierList?)+ // ^ - Blocks language extension
+    : (('*' | '^') (typeQualifierList | callingConvention)?)+ // ^ - Blocks language extension; [ClarifyDoc] calling convention
     ;
 
 // ISO C: type-qualifier-list (6.7.7.1)
@@ -682,7 +691,8 @@ blockItemList
 
 // ISO C: block-item (6.8.3)
 blockItem
-    : macroStatement // [ClarifyDoc] before a declaration it would read as one
+    : bareMacro // [ClarifyDoc]
+    | macroStatement // [ClarifyDoc] before a declaration it would read as one
     | {this.IsStatement()}? statement
     | {this.IsDeclaration()}? declaration
     ;
@@ -695,7 +705,8 @@ expressionStatement
 // [ClarifyDoc] A statement macro whose arguments no expression reads: a declaration or a block,
 // `VERBOSE(char buffer[REASON_LEN]);`, `for_each_car(garage, { … });`.
 macroStatement
-    : {this.IsMacroStatement()}? Identifier '(' gnuAttributeList ')' ';'
+    : {this.IsMacroStatement() && this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' ';'
+    | {this.IsMacroStatement() && !this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')'
     ;
 
 // [ClarifyDoc] A statement macro the file does not expand, taking the statement after it as its body:
@@ -751,7 +762,9 @@ translationUnit
 // ISO C: external-declaration (6.9.1)
 externalDeclaration
     : '__extension__'? (
-	topLevelMacro // [ClarifyDoc]
+	macroFunctionDefinition // [ClarifyDoc]
+	| topLevelMacro // [ClarifyDoc]
+	| bareMacro // [ClarifyDoc]
 	| functionDefinition
 	| declaration
 	| ';' // stray ;
@@ -761,7 +774,23 @@ externalDeclaration
 
 // [ClarifyDoc] A macro invoked at file scope: `define_garage_bays(bays, {"plain"});`.
 topLevelMacro
-    : {this.IsTopLevelMacro()}? Identifier '(' gnuAttributeList ')' ';'
+    : {this.IsTopLevelMacro() && this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' ';'
+    | {this.IsTopLevelMacro() && !this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')'
+    ;
+
+// [ClarifyDoc] A macro defining a function the file does not expand: `MATCH_TEST(kickoff) { … }`.
+macroFunctionDefinition
+    : MacroName ('(' gnuAttributeList ')')? compoundStatement // retyped by the first pass: no function definition starts so; `YY_DECL {`
+    ;
+
+// [ClarifyDoc] A macro standing alone where a statement or declaration starts: `PARSER_SUPPRESS_BEGIN`.
+bareMacro
+    : MacroName
+    ;
+
+// [ClarifyDoc] A calling-convention macro: `BOOL WINAPI start(`, `void * api_cdecl format(`, `(WINAPI *pfn)`.
+callingConvention
+    : CallingConvention
     ;
 
 // ISO C: function-definition (6.9.2)

@@ -105,6 +105,26 @@ const BEFORE_CAST: ReadonlySet<number> = new Set([
   CPP14Lexer.PlusPlus, CPP14Lexer.MinusMinus,
 ]);
 
+/** Where a bare macro statement or declaration may start. */
+const BARE_MACRO_AFTER: ReadonlySet<number> = new Set([CPP14Lexer.Semi, CPP14Lexer.LeftBrace, CPP14Lexer.RightBrace]);
+
+/** What only starts a statement or a declaration, so a bare macro may stand before it. */
+const BARE_MACRO_BEFORE: ReadonlySet<number> = new Set([
+  CPP14Lexer.LeftBrace, CPP14Lexer.If, CPP14Lexer.For, CPP14Lexer.While, CPP14Lexer.Do,
+  CPP14Lexer.Switch, CPP14Lexer.Return, CPP14Lexer.Break, CPP14Lexer.Continue, CPP14Lexer.Goto, CPP14Lexer.Try,
+  CPP14Lexer.Throw, CPP14Lexer.Co_return, CPP14Lexer.Namespace, CPP14Lexer.Class, CPP14Lexer.Struct, CPP14Lexer.Union,
+  CPP14Lexer.Enum, CPP14Lexer.Template, CPP14Lexer.Using, CPP14Lexer.Typedef, CPP14Lexer.Extern,
+]);
+
+/** The operators a fold expression folds over. */
+const FOLD_OPERATORS: ReadonlySet<number> = new Set([
+  CPP14Lexer.Plus, CPP14Lexer.Minus, CPP14Lexer.Star, CPP14Lexer.Div, CPP14Lexer.Mod, CPP14Lexer.Caret, CPP14Lexer.And,
+  CPP14Lexer.Or, CPP14Lexer.Less, CPP14Lexer.Greater, CPP14Lexer.Equal, CPP14Lexer.NotEqual, CPP14Lexer.LessEqual,
+  CPP14Lexer.GreaterEqual, CPP14Lexer.AndAnd, CPP14Lexer.OrOr, CPP14Lexer.Comma, CPP14Lexer.Assign,
+  CPP14Lexer.PlusAssign, CPP14Lexer.MinusAssign, CPP14Lexer.StarAssign, CPP14Lexer.DivAssign, CPP14Lexer.OrAssign,
+  CPP14Lexer.AndAssign,
+]);
+
 const POINTER: ReadonlySet<number> = new Set([CPP14Lexer.Star, CPP14Lexer.And, CPP14Lexer.AndAnd]);
 
 /** An all-caps macro name: `UNUSED`, `NO_CHECKS`; a name starting with `__` (`__attribute__`) is a compiler's. */
@@ -126,6 +146,8 @@ export interface CppTokenFacts {
   cast: Uint8Array;
   /** 1 where an all-caps name calls a macro with arguments no expression reads: a type, `T *`, a block. */
   macroCall: Uint8Array;
+  /** 1 where a `(` holds a C++17 fold expression: `...` beside an operator at its own depth. */
+  fold: Uint8Array;
   /** 1 where a `(` directly holds what no expression does: a type keyword, a specifier, `{`, `;`. */
   nonExpression: Uint8Array;
   /** The next token, or -1. */
@@ -165,17 +187,21 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   for (let i = 0; i < n; i++) {
     if (type(i) !== CPP14Lexer.Less || shift(i) || !(isId(i - 1) || type(i - 1) === CPP14Lexer.Template || type(i - 1) === CPP14Lexer.Operator)) continue;
     let depth = 1;
+    // `std::enable_if<!A::value && B>`: after a qualified name the `<` is a template's, whose constant arguments may
+    // hold logical operators; elsewhere `&&` ends the scan (`if (a < b && c > d)`).
+    const qualified = type(i - 2) === CPP14Lexer.Doublecolon;
     for (let j = i + 1; j < n; j++) {
       const t = type(j);
       if (OPENS.has(t) && t !== CPP14Lexer.LeftBrace) {
         if (close[j] < 0) break;
         j = close[j]!;
-      } else if (t === CPP14Lexer.Less && !shift(j) && (isId(j - 1) || CASTS.has(type(j - 1)))) depth++;
+      } else if (t === CPP14Lexer.Less && !shift(j) && (isId(j - 1) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;
       else if (t === CPP14Lexer.Greater && --depth === 0) {
         // `template <…>` opens a parameter list whatever follows it.
         if (AFTER_TEMPLATE.has(type(j + 1)) || j + 1 === n || type(i - 1) === CPP14Lexer.Template) angle[i] = j;
         break;
-      } else if (t === CPP14Lexer.AndAnd && RVALUE_SUFFIX.has(type(j + 1))) continue;
+      } else if (t === CPP14Lexer.AndAnd && (qualified || RVALUE_SUFFIX.has(type(j + 1)))) continue;
+      else if (t === CPP14Lexer.OrOr && qualified) continue;
       else if (ENDS_TEMPLATE.has(t)) break;
     }
   }
@@ -262,7 +288,8 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     // `(int)(long) x`: a cast's `)` may precede another.
     if (i > 0 && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)) && !(prev === CPP14Lexer.RightParen && cast[open_(i - 1)] === 1)) continue;
     let j = i + 1;
-    while (SPECIFIER_KEYWORDS.has(type(j))) j++;
+    // `(const Club *)`, `(struct sockaddr *)`.
+    while (SPECIFIER_KEYWORDS.has(type(j)) || CLASS_KEYWORDS.has(type(j))) j++;
     if (TYPE_KEYWORDS.has(type(j)) && type(j) !== CPP14Lexer.Decltype) {
       while (TYPE_KEYWORDS.has(type(j)) || SPECIFIER_KEYWORDS.has(type(j)) || POINTER.has(type(j))) j++;
       if (j === c) cast[i] = 1;
@@ -285,6 +312,8 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   for (let i = 0; i < n; i++) {
     // An all-caps class the file declares (`DB(const DB &)`) is no macro.
     if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || type(i + 1) !== CPP14Lexer.LeftParen || close[i + 1]! < 0) continue;
+    // `Resolver::CIDR::CIDR(…)`, `p->MAX(…)`: a member or a qualified name is no macro.
+    if (type(i - 1) === CPP14Lexer.Doublecolon || type(i - 1) === CPP14Lexer.Dot || type(i - 1) === CPP14Lexer.Arrow) continue;
     for (let j = i + 2; j < close[i + 1]!; j++) {
       const t = type(j);
       if (NON_EXPRESSION.has(t) || (POINTER.has(t) && (type(j + 1) === CPP14Lexer.RightParen || type(j + 1) === CPP14Lexer.Comma))) {
@@ -293,7 +322,33 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
   }
-  return facts(all, tokens, names, types, close, angle, cast, macroCall);
+  // `BENCHMARK_LOOP {`, `SET_SOURCE_PATH return …`, `BEGIN_NAMESPACE class …`: a bare macro where a statement or
+  // declaration starts, before what only starts another — a name alone there would be an expression.
+  for (let i = 0; i < n; i++) {
+    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || (i > 0 && !BARE_MACRO_AFTER.has(type(i - 1)))) continue;
+    const next = type(i + 1);
+    if (BARE_MACRO_BEFORE.has(next) || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
+  }
+  // `(std::cout << ... << args)`, `(check(args) && ...)`: a fold, its `...` beside an operator at the parentheses' depth.
+  const fold = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    // A fold's own parentheses stand where an operand may start; after a name they are a call's or a parameter list's
+    // (`run(Args &&...args)`).
+    if (type(i) !== CPP14Lexer.LeftParen || close[i]! < 0 || (i > 0 && (!BEFORE_CAST.has(type(i - 1)) || closesTemplate.has(i - 1)))) continue;
+    for (let j = i + 1; j < close[i]!; j++) {
+      if (OPENS.has(type(j)) && close[j]! >= 0) {
+        j = close[j]!;
+        continue;
+      }
+      // `void log(const char *fmt, ...)` is a variadic parameter list: a comma folds only after a call, `(kick(p), ...)`.
+      const before = type(j - 1) === CPP14Lexer.Comma ? type(j - 2) === CPP14Lexer.RightParen : FOLD_OPERATORS.has(type(j - 1));
+      if (type(j) === CPP14Lexer.Ellipsis && (before || (FOLD_OPERATORS.has(type(j + 1)) && type(j + 1) !== CPP14Lexer.Comma))) {
+        fold[i] = 1;
+        break;
+      }
+    }
+  }
+  return facts(all, tokens, names, types, close, angle, cast, macroCall, fold);
 
   /** The `(` a `)` at `i` closes. */
   function open_(i: number): number {
@@ -311,6 +366,7 @@ function facts(
   angle: Int32Array,
   cast: Uint8Array,
   macroCall: Uint8Array,
+  fold: Uint8Array,
 ): CppTokenFacts {
   const size = all.length;
   const out: CppTokenFacts = {
@@ -321,6 +377,7 @@ function facts(
     angle: new Int32Array(size).fill(-1),
     cast: new Uint8Array(size),
     macroCall: new Uint8Array(size),
+    fold: new Uint8Array(size),
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
   };
@@ -338,6 +395,7 @@ function facts(
     if (angle[i]! >= 0) out.angle[k] = tokens[angle[i]!]!.tokenIndex;
     if (cast[i] === 1) out.cast[k] = 1;
     if (macroCall[i] === 1) out.macroCall[k] = 1;
+    if (fold[i] === 1) out.fold[k] = 1;
     const name = names[i];
     if (name === undefined) return;
     if (types.has(name)) out.known[k] = 1;

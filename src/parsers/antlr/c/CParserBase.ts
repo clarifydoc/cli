@@ -8,7 +8,7 @@
  */
 import { Parser, Token, type CommonTokenStream, type TokenStream } from "antlr4ng";
 import { CLexer } from "./CLexer.js";
-import { SPECIFIER_KEYWORDS, STATEMENT_KEYWORDS, STATIC_ASSERT, TYPE_KEYWORDS } from "./CKeywords.js";
+import { QUALIFIER_KEYWORDS, SPECIFIER_KEYWORDS, STATEMENT_KEYWORDS, STATIC_ASSERT, TYPE_KEYWORDS } from "./CKeywords.js";
 import { readTypes, type CTokenFacts } from "./CTypes.js";
 
 /** What may follow a declarator's name: an identifier here is the name, not a type. */
@@ -23,6 +23,8 @@ const NO_FACTS: CTokenFacts = {
   macro: new Uint8Array(0),
   close: new Int32Array(0),
   blockArg: new Uint8Array(0),
+  stringMacro: new Uint8Array(0),
+  retype: new Int32Array(0),
   next: new Int32Array(0),
 };
 
@@ -36,6 +38,10 @@ export abstract class CParserBase extends Parser {
   /** The first pass over the tokens the parse is about to read. */
   prepare(stream: CommonTokenStream): void {
     this.facts = readTypes(stream);
+    // The names the first pass read as bare macros, calling conventions and string macros, retyped for the grammar.
+    this.facts.retype.forEach((type, index) => {
+      if (type > 0) (stream.get(index) as { type: number }).type = type;
+    });
     stream.seek(0);
   }
 
@@ -53,7 +59,7 @@ export abstract class CParserBase extends Parser {
   }
 
   private macroName(t: Token): boolean {
-    return t.type === CLexer.Identifier && this.facts.macro[t.tokenIndex] === 1;
+    return (t.type === CLexer.Identifier || t.type === CLexer.MacroName) && this.facts.macro[t.tokenIndex] === 1;
   }
 
   /** A type token: a type keyword, or a known type name. */
@@ -76,12 +82,13 @@ export abstract class CParserBase extends Parser {
   private typedefAt(k: number): boolean {
     if (!this.known(this.lt(k))) return false;
     const next = this.lt(k + 1);
-    const follows = next.type === CLexer.Identifier || next.type === CLexer.Star || next.type === CLexer.RightParen
+    const follows = next.type === CLexer.Identifier || next.type === CLexer.CallingConvention || next.type === CLexer.Star || next.type === CLexer.RightParen
       || next.type === CLexer.Comma || next.type === CLexer.LeftBracket || SPECIFIER_KEYWORDS.has(next.type)
       || (next.type === CLexer.LeftParen && (this.lt(k + 2).type === CLexer.Star || this.lt(k + 2).type === CLexer.Caret));
     if (!follows) return false;
     const prev = this.lt(k === 1 ? -1 : k - 1);
-    if (!prev || !this.isType(prev)) return true;
+    // After a type, or a struct body's `}` (`typedef struct x { … } Club, *ClubPtr;`), a name before `,` `;` `=` is declared.
+    if (!prev || !(this.isType(prev) || prev.type === CLexer.RightBrace)) return true;
     // `club_inline club_int_t foo(`: a known type followed by a name or `*` is no declarator either.
     return !AFTER_DECLARATOR.has(next.type);
   }
@@ -136,7 +143,7 @@ export abstract class CParserBase extends Parser {
     return this.typedefAt(1);
   }
   protected IsDeclarationSpecifier(): boolean {
-    return this.specifierAt(1);
+    return this.specifierAt(1) || this.lt(1).type === CLexer.CallingConvention;
   }
   protected IsTypeSpecifierQualifier(): boolean {
     return this.specifierAt(1);
@@ -173,23 +180,43 @@ export abstract class CParserBase extends Parser {
     return !!next && (END_OF_DECLARATOR.has(next.type) || this.macroName(next));
   }
   /** A macro invoked at file scope as a statement: `name(…);`. */
+  /** A macro invoked at file scope: `name(…);`, or an all-caps one before what only starts a declaration, or the end. */
   protected IsTopLevelMacro(): boolean {
-    return this.macroCall()?.type === CLexer.Semi;
+    const name = this.lt(1);
+    if (name.type !== CLexer.Identifier || this.known(name) || this.lt(2).type !== CLexer.LeftParen) return false;
+    // `DEFINE_WATCHER(idle, IDLE)` as the file's last line.
+    if (this.macroName(name) && (this.facts.close[this.lt(2).tokenIndex] ?? -1) >= 0 && !this.afterClosing(this.lt(2))) return true;
+    const next = this.macroCall();
+    if (!next) return false;
+    if (next.type === CLexer.Semi) return true;
+    return this.macroName(this.lt(1)) && (next.type === Token.EOF || SPECIFIER_KEYWORDS.has(next.type) || this.macroName(next));
   }
+
+  /** A `;` ends the macro at 1 and its arguments: the form with `;` applies, else the one without. */
+  protected SemiAfterMacro(): boolean {
+    return this.afterClosing(this.lt(2))?.type === CLexer.Semi;
+  }
+
+
+
+
+
+
+
+
   /** After a string literal, a name can only be a macro the strings concatenate with: `"%" PRIu64`. */
-  protected AfterString(): boolean {
-    return this.lt(-1).type === CLexer.StringLiteral;
-  }
+
   /** A name directly before a string literal is a macro it concatenates with: `close_gate_n " failed"`. */
-  protected BeforeString(): boolean {
-    return this.lt(1).type === CLexer.Identifier && this.lt(2).type === CLexer.StringLiteral;
-  }
+
   /** A macro's argument that is a type: `struct squad_item`, `unsigned int`, a known type before `*`, `,` or `)`. */
   protected IsTypeArgument(): boolean {
-    const t = this.lt(1);
+    // `const char *`: qualifiers first.
+    let k = 1;
+    while (QUALIFIER_KEYWORDS.has(this.lt(k).type)) k++;
+    const t = this.lt(k);
     if (TYPE_KEYWORDS.has(t.type)) return true;
     if (!this.known(t)) return false;
-    const next = this.lt(2).type;
+    const next = this.lt(k + 1).type;
     return next === CLexer.Star || next === CLexer.Comma || next === CLexer.RightParen;
   }
   /** A macro as a struct member: `BIT(can_substitute);`. */
@@ -202,14 +229,20 @@ export abstract class CParserBase extends Parser {
     const third = this.lt(3);
     const holds = SPECIFIER_KEYWORDS.has(third.type) || (this.known(third) && (this.lt(4).type === CLexer.Identifier || this.lt(4).type === CLexer.Star))
       || this.facts.blockArg[this.lt(2).tokenIndex] === 1;
-    return holds && this.macroCall()?.type === CLexer.Semi;
+    const after = this.macroCall();
+    if (!after) return false;
+    // `TYPE_MAP(XX)` before `default:` or `}`, another macro: no `;` follows it.
+    if (this.macroName(this.lt(1)) && (after.type === CLexer.RightBrace || after.type === CLexer.Case || after.type === CLexer.Default || (this.macroName(after) && this.following(after)?.type === CLexer.LeftParen))) return true;
+    return holds && after.type === CLexer.Semi;
   }
   /** A statement macro: `name(…)` followed by a statement's start rather than `;` or an operator. */
   protected IsMacroBlock(): boolean {
     const name = this.lt(1);
     if (name.type !== CLexer.Identifier || this.lt(2).type !== CLexer.LeftParen) return false;
     const next = this.afterClosing(this.lt(2));
-    // A name right after `)` cannot continue an expression: it starts the macro's body (`for_each_item(i, l)⏎ use(i);`).
+    // A name right after `)` cannot continue an expression: it starts the macro's body (`for_each_item(i, l)⏎ use(i);`)
+    // — unless it is the next statement macro (`FRAME(1)⏎FRAME(2)`), or each would nest the rest of the block.
+    if (next && this.macroName(name) && this.macroName(next) && this.following(next)?.type === CLexer.LeftParen) return false;
     return !!next && (next.type === CLexer.LeftBrace || next.type === CLexer.Identifier || STATEMENT_KEYWORDS.has(next.type));
   }
   protected EnterDeclaration(): void {}

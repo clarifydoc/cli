@@ -25,12 +25,13 @@ export const SPECIFIER_KEYWORDS = typesOf([
   "volatile", "__volatile__", "restrict", "__restrict", "__restrict__", "_Atomic", "static", "extern", "auto",
   "register", "typedef", "inline", "__inline", "__inline__", "_Noreturn", "_Thread_local", "thread_local", "__thread",
   "_Alignas", "alignas", "__attribute__", "__extension__", "__declspec", "__stdcall", "__cdecl", "constexpr",
+  "__m128", "__m128d", "__m128i",
 ]);
 
 /** Keywords that are a type by themselves (`int`, `struct`), as opposed to a qualifier or storage class. */
 export const TYPE_KEYWORDS = typesOf([
   "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool", "bool", "_Complex",
-  "_BitInt", "__int128", "struct", "union", "enum",
+  "_BitInt", "__int128", "struct", "union", "enum", "__m128", "__m128d", "__m128i",
 ]);
 
 /** Keywords a declaration's specifiers may start with besides a type: storage classes and qualifiers. */
@@ -49,7 +50,7 @@ export const BEFORE_MACRO_KEYWORDS = typesOf([
 export const NOT_BEFORE_CAST = typesOf(["if", "while", "for", "switch", "sizeof", "_Alignof", "return"]);
 
 /** Keywords that start a statement: what may follow a statement macro's `)` besides `{` and a name. */
-export const STATEMENT_KEYWORDS = typesOf(["if", "for", "while", "do", "switch", "return", "break", "continue", "goto"]);
+export const STATEMENT_KEYWORDS = typesOf(["if", "for", "while", "do", "switch", "return", "break", "continue", "goto", "case", "default"]);
 
 /** `struct`, `union`, `enum`: the name after one is a tag, never a typedef name. */
 export const TAG_KEYWORDS = typesOf(["struct", "union", "enum"]);

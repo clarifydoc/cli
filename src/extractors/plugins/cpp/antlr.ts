@@ -233,7 +233,11 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       // The patterns read a member after `->` alone: `p->kick(` is `kick`.
       if (type === CPP14Lexer.Arrow) steps.push({ kind: "other", bare: true });
       const member = kids.find((k) => k instanceof IdExpressionContext);
-      steps.push(...(member ? idSteps(member as IdExpressionContext).slice(-1) : [{ kind: "other" as const, bare: false }]));
+      // `p->final()`: a contextual keyword names a member too.
+      const keyword = kids.find((k) => k instanceof TerminalNode && (k.symbol.type === CPP14Lexer.Final || k.symbol.type === CPP14Lexer.Override));
+      if (member) steps.push(...idSteps(member as IdExpressionContext).slice(-1));
+      else if (keyword) steps.push(idStep((keyword as TerminalNode).symbol));
+      else steps.push({ kind: "other", bare: false });
     } else {
       steps.push({ kind: "other", bare: false });
     }

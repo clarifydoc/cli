@@ -9,6 +9,8 @@ import {
   MacroAttributeContext,
   MacroBlockStatementContext,
   MacroStatementContext,
+  MacroFunctionDefinitionContext,
+  StringMacroContext,
   PostfixExpressionContext,
   PrimaryExpressionContext,
 } from "../../../parsers/antlr/c/CParser.js";
@@ -99,6 +101,18 @@ function walk(root: ParseTree, stream: readonly Token[]): Found[] {
       into = [];
       const endLine = ctx.stop?.line ?? name?.line ?? ctx.start!.line;
       if (name) pending.push({ span: { name: name.text, line: name.line, endLine }, calls: into, from: ctx.start!.line, to: endLine });
+    } else if (ctx instanceof MacroFunctionDefinitionContext) {
+      // `MATCH_TEST(kickoff) { … }`: a function named by the macro; its arguments name it, they call nothing.
+      const head = (ctx.children[0] as TerminalNode).symbol;
+      const endLine = ctx.stop?.line ?? head.line;
+      into = [];
+      pending.push({ span: { name: head.text ?? "", line: head.line, endLine }, calls: into, from: head.line, to: endLine });
+      stack.push({ node: ctx.compoundStatement(), owner: into });
+      continue;
+    } else if (calls && ctx instanceof StringMacroContext && ctx.gnuAttributeList()) {
+      // `"x" QUOTE(n) "y"`: a macro called among strings.
+      const head = (ctx.children[0] as TerminalNode).symbol;
+      calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       postfixCalls(ctx, calls);
     } else if (calls && (ctx instanceof MacroBlockStatementContext || ctx instanceof MacroStatementContext || ctx instanceof MacroAttributeContext)) {

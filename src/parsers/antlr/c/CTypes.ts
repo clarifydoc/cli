@@ -6,10 +6,13 @@
  */
 import { Token, type CommonTokenStream } from "antlr4ng";
 import { CLexer } from "./CLexer.js";
-import { BEFORE_MACRO_KEYWORDS, LEADING_KEYWORDS, NOT_BEFORE_CAST, QUALIFIER_KEYWORDS, TAG_KEYWORDS, TYPEDEF } from "./CKeywords.js";
+import { STATEMENT_KEYWORDS, SPECIFIER_KEYWORDS, BEFORE_MACRO_KEYWORDS, LEADING_KEYWORDS, NOT_BEFORE_CAST, QUALIFIER_KEYWORDS, TAG_KEYWORDS, TYPEDEF } from "./CKeywords.js";
 
 /** Types every C program sees through the standard headers. */
 const STANDARD = ["FILE", "DIR", "va_list", "jmp_buf", "sigjmp_buf", "bool", "wchar_t", "fd_set", "sigset_t", "locale_t"];
+
+/** Where a bare macro may start a statement or declaration. */
+const BARE_AFTER: ReadonlySet<number> = new Set([CLexer.Semi, CLexer.LeftBrace, CLexer.RightBrace, CLexer.Colon]);
 
 /** An all-caps macro name: `UNUSED`, `NO_CHECKS`, `PRINTF_LIKE`. */
 export const MACRO_NAME = /^[A-Z_][A-Z0-9_]*[A-Z][A-Z0-9_]*$/;
@@ -35,6 +38,10 @@ export interface CTokenFacts {
   close: Int32Array;
   /** 1 where a `(` holds a `{` or `;` of its own: a macro's block argument (`EACH(x, { … })`), no expression. */
   blockArg: Uint8Array;
+  /** 1 where a name, with its arguments if any, stands beside a string literal it joins: `"x" QUOTE(n) VERSION "y"`. */
+  stringMacro: Uint8Array;
+  /** The token type a name is retyped to (`MacroName`, `CallingConvention`, `StringMacro`), or 0. */
+  retype: Int32Array;
   /** The next token on the default channel, or -1. */
   next: Int32Array;
 }
@@ -82,7 +89,8 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
       const after = type(j + 1);
       // The declared name is the run's last but trailing attribute macros: `int fd UNUSED)`.
       let declared = j;
-      while (declared > i && macroName(declared)) declared--;
+      // An all-caps name before `[` is the array declared: `uShort TABLE[1024]`.
+      if (after !== CLexer.LeftBracket) while (declared > i && macroName(declared)) declared--;
       if (declared > i && (AFTER_NAME.has(after) || (after === CLexer.LeftParen && (boundary(i) || afterType)) || after === CLexer.Star)) types.add(name);
     }
     // `club *c,` / `(car_wash_t* req)` / `leagueDb *db =` / `GarageType *garageType(` at a declaration's start.
@@ -97,6 +105,13 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
       let open = i - 1;
       while (QUALIFIER_KEYWORDS.has(type(open))) open--;
       if ((type(open) === CLexer.LeftParen || type(open) === CLexer.Comma) && (type(j) === CLexer.RightParen || type(j) === CLexer.Comma)) types.add(name);
+    }
+    // `(Spec[]){ … }`: an array compound literal — not `switch (dirs[i]) {`, nor a call's argument.
+    const opener = type(i - 2);
+    if (prev === CLexer.LeftParen && type(i + 1) === CLexer.LeftBracket && opener !== CLexer.Identifier && opener !== CLexer.RightParen && !NOT_BEFORE_CAST.has(opener)) {
+      let j = i + 2;
+      while (j < tokens.length && type(j) !== CLexer.RightBracket && type(j) !== CLexer.Semi) j++;
+      if (type(j + 1) === CLexer.RightParen && type(j + 2) === CLexer.LeftBrace) types.add(name);
     }
     // `(foo) bar` after an operator or `return`, `(GarageMem) { … }`: a cast or a compound literal.
     const before = type(i - 2);
@@ -127,6 +142,7 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
   const macro = new Uint8Array(size);
   const close = new Int32Array(size).fill(-1);
   const blockArg = new Uint8Array(size);
+  const stringMacro = new Uint8Array(size);
   const next = new Int32Array(size).fill(-1);
   const open: number[] = [];
   let following = -1;
@@ -145,5 +161,92 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
       if (o !== undefined) close[o] = t.tokenIndex;
     } else if ((t.type === CLexer.LeftBrace || t.type === CLexer.Semi) && open.length > 0) blockArg[open.at(-1)!] = 1;
   });
-  return { types, known, macro, close, blockArg, next };
+  // Names beside string literals, followed through runs of them: `"Server: " VERSION CRLF`, `QUOTE("x") " y"`.
+  const ends = (i: number) => (tokens[i + 1]?.type === CLexer.LeftParen && close[tokens[i + 1]!.tokenIndex]! >= 0 ? indexOf(close[tokens[i + 1]!.tokenIndex]!) : i);
+  const indexOf = (tokenIndex: number) => position.get(tokenIndex) ?? -1;
+  const position = new Map(tokens.map((t, i) => [t.tokenIndex, i]));
+  const isString = (i: number) => tokens[i]?.type === CLexer.StringLiteral;
+  const opens = new Map<number, number>();
+  close.forEach((c, o) => c >= 0 && opens.set(c, o));
+  /** The name a `)` at `i` closes the arguments of, or -1. */
+  const calledBy = (i: number) => {
+    const o = tokens[i]?.type === CLexer.RightParen ? opens.get(tokens[i]!.tokenIndex) : undefined;
+    return o === undefined ? -1 : indexOf(o) - 1;
+  };
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < tokens.length; i++) {
+      if (names[i] === undefined || stringMacro[tokens[i]!.tokenIndex] === 1) continue;
+      const end = ends(i);
+      const prev = tokens[i - 1];
+      const after = end + 1;
+      const caller = calledBy(i - 1);
+      const joined =
+        isString(i - 1) || (prev?.type === CLexer.Identifier && stringMacro[prev.tokenIndex] === 1) ||
+        (caller >= 0 && names[caller] !== undefined && stringMacro[tokens[caller]!.tokenIndex] === 1) ||
+        isString(after) || (names[after] !== undefined && stringMacro[tokens[after]!.tokenIndex] === 1);
+      if (joined) stringMacro[tokens[i]!.tokenIndex] = 1;
+    }
+  }
+  // What the grammar reads by token: a macro alone where a statement or declaration starts, before what only starts
+  // another (`PARSER_BEGIN`, `END_DECLS int x;`); a calling convention (`BOOL WINAPI start(`, `* api_cdecl f(`,
+  // `(WINAPI *pfn)(…)`); a macro joined to strings.
+  const retype = new Int32Array(size);
+  const typeOf = (i: number) => tokens[i]?.type ?? -1;
+  const isName = (i: number) => names[i] !== undefined;
+  const caps = (i: number) => isName(i) && MACRO_NAME.test(names[i]!) && !types.has(names[i]!);
+  // `MATCH_TEST(kickoff) {` at file scope: a name, its arguments and a body — a macro defining a function. Read as a
+  // definition without specifiers it would make prediction read the whole body to choose.
+  let depth = 0;
+  tokens.forEach((t, i) => {
+    if (t.type === CLexer.LeftBrace) depth++;
+    else if (t.type === CLexer.RightBrace) depth = Math.max(0, depth - 1);
+    if (depth !== 0 || !isName(i) || types.has(names[i]!) || (i > 0 && typeOf(i - 1) !== CLexer.Semi && typeOf(i - 1) !== CLexer.RightBrace)) return;
+    const open = tokens[i + 1];
+    if (open?.type !== CLexer.LeftParen || close[open.tokenIndex]! < 0) return;
+    if (typeOf(position.get(close[open.tokenIndex]!)! + 1) === CLexer.LeftBrace) retype[t.tokenIndex] = CLexer.MacroName;
+  });
+  // `YY_DECL {`: a macro naming a function's whole header.
+  depth = 0;
+  tokens.forEach((t, i) => {
+    if (t.type === CLexer.LeftBrace) depth++;
+    else if (t.type === CLexer.RightBrace) depth = Math.max(0, depth - 1);
+    if (depth === 0 && isName(i) && MACRO_NAME.test(names[i]!) && typeOf(i + 1) === CLexer.LeftBrace && (i === 0 || typeOf(i - 1) === CLexer.Semi || typeOf(i - 1) === CLexer.RightBrace)) {
+      retype[t.tokenIndex] = CLexer.MacroName;
+    }
+  });
+  tokens.forEach((t, i) => {
+    if (!isName(i) || retype[t.tokenIndex] !== 0) return;
+    const k = t.tokenIndex;
+    if (stringMacro[k] === 1) {
+      retype[k] = CLexer.StringMacro;
+      return;
+    }
+    const prev = typeOf(i - 1);
+    const next = typeOf(i + 1);
+    // A bare macro may also follow another: `END_DECLS PUSH_DIAGNOSTICS`. Before `}` or a statement keyword no type
+    // stands, whatever the first pass took the name for.
+    const capsHere = caps(i) || (isName(i) && MACRO_NAME.test(names[i]!) && (next === CLexer.RightBrace || STATEMENT_KEYWORDS.has(next)));
+    if (capsHere && (i === 0 || BARE_AFTER.has(prev) || retype[tokens[i - 1]!.tokenIndex] === CLexer.MacroName)) {
+      // Before `}` only after a statement: `TEST_END }` closes a body, `{ NULL }` initializes.
+      const bare = STATEMENT_KEYWORDS.has(next) || SPECIFIER_KEYWORDS.has(next) || next === CLexer.LeftBrace || i + 1 === tokens.length
+        || (next === CLexer.RightBrace && (prev === CLexer.Semi || prev === CLexer.RightBrace))
+        || (next === CLexer.Star && [CLexer.PlusPlus, CLexer.MinusMinus, CLexer.LeftParen].includes(typeOf(i + 2)))
+        || (caps(i + 1) && typeOf(i + 2) !== CLexer.Semi);
+      if (bare) {
+        retype[k] = CLexer.MacroName;
+        return;
+      }
+    }
+    // After `*` a name before a declarator's name and its `(` is no type, whatever the first pass took it for.
+    const declaratorNext = isName(i + 1) && typeOf(i + 2) === CLexer.LeftParen;
+    // `slot_t * MUTABLE slot = …`: an all-caps macro after `*` before the declared name qualifies it.
+    if ((prev === CLexer.Star || prev === CLexer.Caret) && (declaratorNext || (MACRO_NAME.test(names[i]!) && isName(i + 1)))) retype[k] = CLexer.CallingConvention;
+    else if (!types.has(names[i]!) && declaratorNext && isName(i - 1) && types.has(names[i - 1]!)) retype[k] = CLexer.CallingConvention;
+    else if (!types.has(names[i]!) && prev === CLexer.LeftParen && (next === CLexer.Star || next === CLexer.Caret) && isName(i + 2) && typeOf(i + 3) === CLexer.RightParen) {
+      const open = tokens[i - 1]!.tokenIndex;
+      const after = close[open]! >= 0 ? position.get(close[open]!)! + 1 : -1;
+      if (typeOf(after) === CLexer.LeftParen) retype[k] = CLexer.CallingConvention;
+    }
+  });
+  return { types, known, macro, close, blockArg, stringMacro, retype, next };
 }
