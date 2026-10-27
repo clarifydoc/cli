@@ -362,3 +362,34 @@ describe("detectDeployment — a Dockerfile in the build's docker folder", () =>
     }
   });
 });
+
+describe("detectDeployment — a build whose context is the repository root", () => {
+  it("is the project its Dockerfile sits in (real-repo FP: `context: ../` with `dockerfile: server/Dockerfile`)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-rootctx-"));
+    try {
+      await mkdir(join(root, "docker"), { recursive: true });
+      await mkdir(join(root, "server"), { recursive: true });
+      await mkdir(join(root, "web"), { recursive: true });
+      await writeFile(join(root, "server", "Dockerfile"), ["FROM node:22", 'CMD ["node", "dist/main.js"]', ""].join("\n"));
+      await writeFile(join(root, "docker", "docker-compose.yml"), [
+        "services:",
+        "  league-server:",
+        "    build:",
+        "      context: ../",
+        "      dockerfile: server/Dockerfile",
+        "    ports:",
+        "      - '2283:2283'",
+        "",
+      ].join("\n"));
+      const subProjects = [
+        { id: "root", name: "league", root: "", type: "node" },
+        { id: "server", name: "server", root: "server", type: "node" },
+        { id: "web", name: "web", root: "web", type: "node" },
+      ] as unknown as SubProject[];
+      const dep = await detectDeployment(root, { subProjects });
+      expect(dep!.services.find((s) => s.name === "league-server")?.project).toBe("server");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -886,7 +886,13 @@ export async function detectDeployment(
       // A context that is not in this repository (a compose-only repo building ./worker from another) names
       // nothing here: the service is matched by name, as before, so a system can join it to the repo that has it.
       const context = svc.build && (svc.build.context === "" || repo.exists(svc.build.context)) ? svc.build.context : undefined;
-      s.project = (context !== undefined ? projectOfContext(context, options.subProjects) : undefined) ?? matchProject(svc, projects, byFiles);
+      // A context holding several projects (the repository root, `context: ../`) with a Dockerfile
+      // inside one of them (`dockerfile: server/Dockerfile`) builds that project.
+      const dockerDir = context !== undefined && svc.build?.dockerfile ? posix.dirname(posix.normalize(posix.join(context, svc.build.dockerfile))) : undefined;
+      const fromContext = context !== undefined ? projectOfContext(context, options.subProjects) : undefined;
+      const fromDockerfile = dockerDir && dockerDir !== "." && dockerDir !== context ? projectOfContext(dockerDir, options.subProjects) : undefined;
+      const rootId = options.subProjects.find((p) => p.root === "")?.id;
+      s.project = (fromDockerfile && fromContext === rootId && fromDockerfile !== rootId ? fromDockerfile : fromContext) ?? matchProject(svc, projects, byFiles);
       const entryFile = svc.entryFile ?? (svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined);
       if (entryFile) s.entryFile = entryFile;
       // Where the service is told other services are — URL-shaped values only.
