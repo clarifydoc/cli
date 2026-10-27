@@ -269,7 +269,21 @@ export const djangoUrlconfResolver: RouteResolver = {
       for (const m of methods) emit(where, { path, httpMethod: m, kind: "api", handler: ref.cls.name, ...auth, ...extra });
     };
 
-    const expandRegistration = (file: string, base: string, reg: DrfRegisterFact & { line: number }, slash: boolean, marker: string | undefined, router?: DrfRouterFact) => {
+    /**
+     * The model a viewset's `queryset = Club.objects.all()` names, on the class or its nearest
+     * ancestor stating one: DRF's router names a registration's routes after it.
+     */
+    const querysetModel = (ref: ClassRef): string | null => {
+      for (const c of classChain(ref)) {
+        const end = c.cls.endLine ?? c.cls.line;
+        const inMethod = (line: number) => c.cls.methods.some((m) => line >= m.line && line <= (m.endLine ?? m.line));
+        const row = ctx.fileOf(c.filePath)?.dataSources?.find((d) =>
+          d.kind === "database" && d.entity && d.line > c.cls.line && d.line <= end && !inMethod(d.line) && /(?:^|\.)objects\./.test(d.name));
+        if (row) return row.entity!;
+      }
+      return null;
+    };
+    const expandRegistration = (file: string, base: string, reg: DrfRegisterFact & { line: number }, slash: boolean, marker: string | undefined, router?: DrfRouterFact, ns: readonly string[] = []) => {
       const ref = ctx.classes.resolve(file, reg.viewset);
       const urlconf = ctx.fileOf(file);
       const extra = marker ? { prefixUnresolved: marker } : {};
@@ -281,24 +295,27 @@ export const djangoUrlconfResolver: RouteResolver = {
         return;
       }
       const fact = nearestFact(ref);
+      // DRF names the routes `<basename>-list`, `<basename>-detail`, `<basename>-<action>`, in the includes' namespaces.
+      const basename = reg.basename ?? querysetModel(ref)?.split(".").pop()?.toLowerCase();
+      const named = (suffix: string) => (basename ? { name: [...ns, `${basename}-${suffix}`].join(":") } : {});
       const lookup = fact.lookupUrlKwarg ?? fact.lookupField ?? "pk";
       const detailPath = joinDjango(base, prefix, `/{${lookup}}`, ts);
       const allowed = fact.httpMethodNames ? new Set(fact.httpMethodNames.map((m) => m.toUpperCase())) : null;
       const auth = authOf(fact, ref);
       const provided = new Set(externalBases(ref).flatMap((b) => BASE_ACTIONS[b] ?? []));
-      const route = (path: string, method: string, action: string) => {
+      const route = (path: string, method: string, action: string, suffix: string) => {
         if (allowed && !allowed.has(method)) return;
         const m = methodOf(ref, action);
         if (!m && !provided.has(action)) return;
         const where = (m && whereMethod(m)) ?? whereClass(ref);
         if (where) {
-          emit(where, { path, httpMethod: method, kind: "api", handler: `${(m?.owner ?? ref).cls.name}.${action}`, owner: ref.cls.name, ...auth, ...extra });
+          emit(where, { path, httpMethod: method, kind: "api", handler: `${(m?.owner ?? ref).cls.name}.${action}`, owner: ref.cls.name, ...named(suffix), ...auth, ...extra });
         }
       };
-      for (const [action, method] of Object.entries(LIST_ACTIONS)) route(listPath, method, action);
+      for (const [action, method] of Object.entries(LIST_ACTIONS)) route(listPath, method, action, "list");
       // A router class mapping more verbs onto the list route (bulk update / delete).
-      for (const [method, action] of Object.entries((router && routerClasses.get(router.ctor)) ?? {})) route(listPath, method, action);
-      for (const [action, method] of Object.entries(DETAIL_ACTIONS)) route(detailPath, method, action);
+      for (const [method, action] of Object.entries((router && routerClasses.get(router.ctor)) ?? {})) route(listPath, method, action, "list");
+      for (const [action, method] of Object.entries(DETAIL_ACTIONS)) route(detailPath, method, action, "detail");
 
       // `@action(detail=…, methods=[…], url_path=…)` and `@x.mapping.<verb>` along the class chain.
       const seen = new Set<string>();
@@ -314,15 +331,16 @@ export const djangoUrlconfResolver: RouteResolver = {
               ? joinDjango(base, prefix, `/{${lookup}}/`, urlPath, ts)
               : joinDjango(base, prefix, "/", urlPath, ts);
             const where = whereMethod({ owner: c, fn });
+            const actionName = named(act.urlName ?? fn.name.replace(/_/g, "-"));
             for (const method of act.methods) {
-              if (where) emit(where, { path, httpMethod: method, kind: "api", handler: `${c.cls.name}.${fn.name}`, owner: ref.cls.name, ...auth, ...extra });
+              if (where) emit(where, { path, httpMethod: method, kind: "api", handler: `${c.cls.name}.${fn.name}`, owner: ref.cls.name, ...actionName, ...auth, ...extra });
             }
             // `@<action>.mapping.patch def other(…)`: another method on the same URL.
             for (const other of c.cls.methods) {
               for (const od of other.decorators ?? []) {
                 const mapped = new RegExp(`^${fn.name}\\.mapping\\.(\\w+)$`).exec(od.trim());
                 const w = mapped ? whereMethod({ owner: c, fn: other }) : null;
-                if (mapped && w) emit(w, { path, httpMethod: mapped[1]!.toUpperCase(), kind: "api", handler: `${c.cls.name}.${other.name}`, owner: ref.cls.name, ...auth, ...extra });
+                if (mapped && w) emit(w, { path, httpMethod: mapped[1]!.toUpperCase(), kind: "api", handler: `${c.cls.name}.${other.name}`, owner: ref.cls.name, ...actionName, ...auth, ...extra });
               }
             }
           }
@@ -346,6 +364,8 @@ export const djangoUrlconfResolver: RouteResolver = {
       const parts = file.split("/");
       for (let i = parts.length - 1; i > 0; i--) {
         const dir = parts.slice(0, i).join("/");
+        // The app's own `models` package holding a `models.py` module (`extras/models/models.py`) is no app.
+        if (parts[i - 1] === "models" && ctx.fileOf(`${dir}/__init__.py`)) continue;
         if (["apps.py", "models.py", "models/__init__.py"].some((n) => ctx.fileOf(`${dir}/${n}`))) return parts[i - 1]!;
       }
       return null;
@@ -394,7 +414,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       for (const e of entries) {
         if (e.t === "router") {
           const r = routerIn(file, e.name);
-          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, prefix, reg, r!.entry.router?.trailingSlash ?? true, marker, r!.entry.router);
+          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, prefix, reg, r!.entry.router?.trailingSlash ?? true, marker, r!.entry.router, own);
           continue;
         }
         const segment = e.route === null ? "" : djangoRoute(e.route, e.regex);
@@ -424,7 +444,7 @@ export const djangoUrlconfResolver: RouteResolver = {
           if (conf && source) walk(source, conf, path, nextMarker, depth + 1, under(source === file ? null : source));
         } else if (t.kind === "router") {
           const r = routerIn(file, t.name);
-          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker, r!.entry.router);
+          for (const reg of r?.entry.registers ?? []) expandRegistration(r!.file, path, reg, r!.entry.router?.trailingSlash ?? true, nextMarker, r!.entry.router, under(null));
         } else if (t.kind === "model-views") {
           mountModelViews(file, path, e.line, t, nextMarker, under(null));
         }
@@ -464,7 +484,7 @@ function dedupe(rows: RouteInfo[]): RouteInfo[] {
 }
 
 /** `action(detail=True, methods=["get", "post"], url_path=r"versions/(?P<id>\d+)")` → its parts. */
-export function parseAction(decorator: string): { detail: boolean; methods: string[]; urlPath: string | null } | null {
+export function parseAction(decorator: string): { detail: boolean; methods: string[]; urlPath: string | null; urlName?: string } | null {
   const text = decorator.replace(/\s+/g, " ").trim();
   if (!/^(?:[\w.]+\.)?action\b/.test(text)) return null;
   const detail = /detail\s*=\s*True/.test(text);
@@ -473,7 +493,8 @@ export function parseAction(decorator: string): { detail: boolean; methods: stri
     ? [...methodsMatch[1]!.matchAll(/["'](\w+)["']/g)].map((m) => m[1]!.toUpperCase())
     : ["GET"];
   const urlPath = /url_path\s*=\s*[rbu]*(["'])(.*?)\1/.exec(text)?.[2] ?? null;
-  return { detail, methods: methods.length ? methods : ["GET"], urlPath };
+  const urlName = /url_name\s*=\s*[rbu]*(["'])(.*?)\1/.exec(text)?.[2];
+  return { detail, methods: methods.length ? methods : ["GET"], urlPath, ...(urlName ? { urlName } : {}) };
 }
 
 /** DRF's view bases (`APIView`, `ListCreateAPIView`, `ModelViewSet`, `GenericViewSet`): their permissions default to the settings'. */

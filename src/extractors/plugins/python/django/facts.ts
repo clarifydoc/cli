@@ -87,6 +87,8 @@ export interface DrfRouterFact {
 export interface DrfRegisterFact {
   prefix: string;
   viewset: string;
+  /** `basename="userconfig"`: what the router names the routes after (else the queryset's model). */
+  basename?: string;
 }
 
 export interface DrfSettingsFact {
@@ -186,7 +188,7 @@ export function collectDjangoFacts(root: Node, facts: RouteFact[]): void {
           kind: DRF_REGISTER,
           line,
           owner: obj.text,
-          data: { prefix: pyString(args[0].text), viewset: args[1].text } satisfies DrfRegisterFact,
+          data: { prefix: pyString(args[0].text), viewset: args[1].text, ...registerBasename(expr) } satisfies DrfRegisterFact,
         });
       } else if ((method === "append" || method === "extend") && obj?.type === "identifier" && args[0]) {
         const entries = method === "append" ? [urlEntry(args[0])].filter((e): e is UrlEntry => !!e) : urlList(args[0]);
@@ -457,4 +459,14 @@ function keyword(call: Node, name: string): Node | null {
     if (a.type === "keyword_argument" && a.childForFieldName("name")?.text === name) return a.childForFieldName("value");
   }
   return null;
+}
+
+/** `router.register("config", ConfigViewSet, basename="userconfig")` → its `basename`, when a literal. */
+function registerBasename(call: Node): { basename?: string } {
+  const args = call.childForFieldName("arguments")?.namedChildren ?? [];
+  const kw = args.find((a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "basename");
+  const value = kw?.childForFieldName("value");
+  const third = args.filter((a) => a.type !== "keyword_argument" && a.type !== "comment")[2];
+  const v = value ?? third;
+  return v?.type === "string" ? { basename: pyString(v.text) } : {};
 }

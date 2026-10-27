@@ -3,6 +3,7 @@ import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
 import { extractClasses, extractFunctions } from "../../../functions-classes/index.js";
 import { extractImports } from "../../../imports-exports/index.js";
+import { extractDataSources } from "../../../data-sources/index.js";
 import { pythonRouteExtractor } from "../routes.js";
 import { djangoUrlconfResolver, parseAction } from "./resolver.js";
 import { reconcileProjectRoutes } from "../../../route-resolvers/index.js";
@@ -26,6 +27,7 @@ async function analyze(files: Record<string, string>): Promise<FileAnalysis[]> {
       classes: extractClasses(tree, src, "python" as never),
       functions: extractFunctions(tree, src, "python" as never),
       routes: pythonRouteExtractor.extractRoutes(tree, src, filePath, facts),
+      dataSources: extractDataSources(tree, src, "python" as never),
       routeFacts: facts,
     } as unknown as FileAnalysis);
   }
@@ -410,6 +412,19 @@ urlpatterns = [path("league/", include("league.urls")), path("cup/", include("cu
     expect(paths).toContain("/league/clubs/{pk}/edit/");
   });
 
+  it("finds the app of a model whose models package holds a `models.py` module (real-repo FP)", async () => {
+    const { "league/models.py": _flat, ...rest } = LEAGUE;
+    const out = await analyze({
+      ...rest,
+      "league/models/__init__.py": `from .clubs import *\nfrom .models import *\n`,
+      "league/models/clubs.py": `class Club:\n    pass\n`,
+      "league/models/models.py": `class Match:\n    pass\n`,
+      "league/views.py": LEAGUE["league/views.py"].replace("from .models import Club, Match", "from .models import *"),
+    });
+    const paths = out.flatMap((a) => a.routes).filter((r) => r.kind === "api").map((r) => r.path);
+    expect(paths).toContain("/league/clubs/{pk}/edit/");
+  });
+
   it("mounts a view registered in a loop for every model built on a mixin", async () => {
     const out = await analyze({
       ...LEAGUE,
@@ -501,6 +516,51 @@ class ClubViewSet(BulkUpdateMixin, ModelViewSet):
     const list = rows(out).filter((r) => / \/api\/clubs\/ /.test(r)).map((r) => r.split(" @")[0]);
     // ModelViewSet has no bulk_destroy, so DELETE on the list path is not served.
     expect(list).toEqual(["GET /api/clubs/ ClubViewSet.list", "POST /api/clubs/ ClubViewSet.create", "PUT /api/clubs/ BulkUpdateMixin.bulk_update"]);
+  });
+});
+
+describe("django-urlconf: DRF router route names", () => {
+  it("names a registration's routes after its basename or its queryset's model, in the includes' namespaces", async () => {
+    const out = await analyze({
+      "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+      "config/urls.py": `
+from django.urls import include, path
+urlpatterns = [path("api/league/", include("league.api.urls"))]
+`,
+      "league/api/urls.py": `
+from rest_framework.routers import DefaultRouter
+from . import views
+
+app_name = "league-api"
+router = DefaultRouter()
+router.register("clubs", views.ClubViewSet)
+router.register("config", views.ScoutConfigViewSet, basename="scoutconfig")
+urlpatterns = router.urls
+`,
+      "league/api/views.py": `
+from rest_framework.viewsets import ModelViewSet, ViewSet
+from rest_framework.decorators import action
+from league.models import Club
+
+class ClubViewSet(ModelViewSet):
+    queryset = Club.objects.all()
+
+    @action(detail=True, url_path="match-history")
+    def match_history(self, request, pk=None):
+        return None
+
+class ScoutConfigViewSet(ViewSet):
+    def list(self, request):
+        return None
+`,
+    });
+    const named = out.flatMap((a) => a.routes).filter((r) => r.kind === "api" && r.httpMethod === "GET").map((r) => `${r.path} ${r.name ?? "-"}`).sort();
+    expect(named).toEqual([
+      "/api/league/clubs/ league-api:club-list",
+      "/api/league/clubs/{pk}/ league-api:club-detail",
+      "/api/league/clubs/{pk}/match-history/ league-api:club-match-history",
+      "/api/league/config/ league-api:scoutconfig-list",
+    ]);
   });
 });
 
