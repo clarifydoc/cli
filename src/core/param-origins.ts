@@ -71,10 +71,21 @@ export function computeParamOrigins(input: {
     return best;
   };
   const callersOf = new Map<string, SymbolLink[]>();
+  const linked = new Set(input.symbolLinks.map((l) => `${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`));
   for (const l of input.symbolLinks) {
     if (l.relation === "reference" || l.navigational || l.sourceSymbol.startsWith("(")) continue;
     const k = `${l.targetFile}::${l.targetSymbol}`;
-    (callersOf.get(k) ?? callersOf.set(k, []).get(k)!).push(l);
+    const list = callersOf.get(k) ?? callersOf.set(k, []).get(k)!;
+    list.push(l);
+    // One link stands for every call of that name in its caller (`load(params.id, page)` and
+    // `load(params.id)`): each other site handing on known values is a caller of its own.
+    if ((l.relation ?? "calls") !== "calls" || l.strategy?.startsWith("dispatch:")) continue;
+    const site = fnNamed(l.sourceFile, l.sourceSymbol)?.fn.calls.find((c) => c.line === l.sourceLine && c.name === l.callName);
+    if (!site) continue;
+    for (const c of fnNamed(l.sourceFile, l.sourceSymbol)!.fn.calls) {
+      if (c === site || c.name !== site.name || c.key !== site.key || !c.argOrigins || linked.has(`${l.sourceFile}\0${l.sourceSymbol}\0${c.line}\0${c.name}`)) continue;
+      list.push({ ...l, sourceLine: c.line });
+    }
   }
   const screensOf = new Map<string, ScreenInfo[]>();
   for (const s of input.screens) (screensOf.get(s.filePath) ?? screensOf.set(s.filePath, []).get(s.filePath)!).push(s);

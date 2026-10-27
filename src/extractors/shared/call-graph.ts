@@ -251,7 +251,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
     // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads
     // (not where the language has none: there the first call's count stands for the name).
+    // So is a call handing on values whose origin is known (a parameter, a URL value, a prop): each
+    // site is its own claim about what feeds the callee (`load(params.id)` and `load(params.id, page)`).
     const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
+      : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}` : c.name;
     if (seen.has(seenKey)) continue;
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };

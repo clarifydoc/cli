@@ -99,6 +99,17 @@ describe("paramOrigins", () => {
     ]);
   });
 
+  it("follows every call of one name in a caller, though one symbol link stands for them all", () => {
+    const screen = file("web/pages/ClubPage.tsx", [
+      fn("ClubPage", 3, 9, [], [
+        { name: "getClub", kind: "cross-file", target: null, line: 4, argOrigins: [{ index: 0, origin: { kind: "route-param", name: "clubId" } }, { index: 1, origin: { kind: "param", name: "page", index: 0 } }] },
+        { name: "getClub", kind: "cross-file", target: null, line: 6, argOrigins: [{ index: 0, origin: { kind: "query-param", name: "club" } }] },
+      ]),
+    ]);
+    const rows = computeParamOrigins({ analyses: [screen, api], symbolLinks: [link("web/pages/ClubPage.tsx", "ClubPage", 4, "getClub", "web/api/clubs.ts", "getClub")], apiRouteLinks: [apiLink], routes, screens });
+    expect(rows.map((r) => [r.origin.kind, r.origin.line])).toEqual([["route-param", 4], ["query-param", 6]]);
+  });
+
   it("is empty when no plugin reports argument origins", () => {
     const bare = file("web/api/clubs.ts", [fn("getClub", 1, 3, ["id"])], [{ kind: "api-call", name: "http.get", target: "/clubs/${id}", line: 2, calls: [] }]);
     expect(computeParamOrigins({ analyses: [bare], symbolLinks: [], apiRouteLinks: [], routes: [], screens: [] })).toEqual([]);

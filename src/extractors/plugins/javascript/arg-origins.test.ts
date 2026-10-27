@@ -155,4 +155,20 @@ function helper({ clubId }) { loadClub(clubId); }`;
     // A lowercase function's destructured parameter is no component's props.
     expect(await originsOf(src, "helper", "loadClub")).toBeUndefined();
   });
+  it("keeps each call of one function that hands on known values, not only the first (real-repo FP)", async () => {
+    const src = `class ClubFixtures extends ClubPage {
+  componentWillMount() {
+    this.props.onLoad(page => agent.Matches.playedBy(this.props.match.params.club, page), Promise.all([
+      agent.Club.get(this.props.match.params.club),
+      agent.Matches.playedBy(this.props.match.params.club)
+    ]));
+    agent.Matches.playedBy("home");
+    agent.Matches.playedBy("away");
+  }
+}`;
+    const tree = await parseSource(src, "typescript" as never, "x.tsx");
+    const calls = new JavaScriptExtractor().extractClasses(tree, src)[0]!.methods[0]!.calls.filter((c) => c.name === "agent.Matches.playedBy");
+    // The two sites reading the route parameter each stay; literal-only sites still collapse into the first plain call.
+    expect(calls.map((c) => [c.line, c.argOrigins?.length ?? 0])).toEqual([[3, 2], [5, 1], [7, 0]]);
+  });
 });
