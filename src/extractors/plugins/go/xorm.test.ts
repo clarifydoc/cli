@@ -123,6 +123,35 @@ func Touch(uid string) error {
   });
 });
 
+describe("GORM: the table a long chain or an aliased table names (real-repo FP)", () => {
+  it("takes the chain's Table(…) over the result struct a Scan fills, and drops a table's alias", () => {
+    expect(rows(`package query
+
+func KitColourCounts() (result []KitColourCount, err error) {
+	err = Db().
+		Table(entity.Kit{}.TableName()).
+		Select("colour, COUNT(*) AS kits").
+		// Comparing the pattern with an empty string is driver dependent.
+		Where("kit_type = ? AND LENGTH(pattern) > 0", entity.KitHome).
+		Group("colour").
+		Order("colour").
+		Limit(100).
+		Offset(0).
+		Scan(&result).Error
+	return result, err
+}
+
+func Scorers(clubUID string) (result []ScorerRow) {
+	Db().Table("goals g").Select("g.player_uid").Where("g.club_uid = ?", clubUID).Scan(&result)
+	return result
+}
+`)).toEqual([
+      "13 GORM: Scan Kit read",
+      "18 GORM: Scan goals read",
+    ]);
+  });
+});
+
 describe("xorm in handlers, migrations and other session names", () => {
   it("reads a generic FindAndCount in a handler, a migration's engine, sess*/eng receivers and .Table(\"x\") (real-repo FP)", () => {
     expect(rows(`func Clubs(ctx *context.Context) {

@@ -67,7 +67,9 @@ const GORM: OrmChainSpec = {
   builder: /\.\s*(?:Where|Not|Or|Model|Table|Select|Omit|Order|Limit|Offset|Group|Having|Joins|Preload|Unscoped|Debug|Session|WithContext|Distinct|Clauses)\s*\(/,
   root: /^(?:[A-Za-z_]\w*\.)?\w*(?:db|Db|DB|tx|Tx|orm|conn)\w*(?:\(\))?(?:\.|$)/,
   reads: new Set(["Find", "First", "Take", "Last", "Count", "Pluck", "Scan"]),
-  model: /\.\s*(?:Model|Table)\s*\(\s*("[\w.]+"|&?[A-Za-z_][\w.]*\s*\{?|new\(\s*[\w.]+\s*\))/,
+  // Also the chain's first step (`Table(…)` opening a line under `err = Db().`); a table may carry
+  // its alias (`Table("matches m")`).
+  model: /(?:^|\.)\s*(?:Model|Table)\s*\(\s*("[\w.]+(?:\s+(?:[Aa][Ss]\s+)?\w+)?"|&?[A-Za-z_][\w.]*\s*\{?|new\(\s*[\w.]+\s*\))/,
   builderVars: true,
 };
 
@@ -239,8 +241,10 @@ function stripComment(line: string): string {
  */
 function chainBefore(lines: string[], i: number, col: number): string {
   let text = stripComment(lines[i]!).slice(0, col);
-  for (let j = i - 1; j >= 0 && i - j < 8; j--) {
+  for (let j = i - 1; j >= 0 && i - j < 16; j--) {
     const prev = stripComment(lines[j]!).trimEnd();
+    // A comment line inside the chain (`.Select(…).` ⏎ `// why` ⏎ `Where(…)`) continues it.
+    if (prev === "" && /^\s*\/\//.test(lines[j]!)) continue;
     if (!(prev.endsWith(".") || /^\s*$/.test(text))) break;
     if (!prev.endsWith(".") && /^\s*$/.test(text)) break;
     text = prev + text.trimStart();
@@ -257,7 +261,8 @@ function chainBefore(lines: string[], i: number, col: number): string {
     } else if (depth === 0 && !/[\w.\s]/.test(ch)) break;
     else if (depth === 0 && /\s/.test(ch) && !/\.\s*$/.test(text.slice(0, k)) && !/^\s*\./.test(text.slice(k))) break;
   }
-  return text.slice(k + 1).replace(/\s+/g, "");
+  // Whitespace dropped outside string literals: `Table("matches m")` keeps its alias apart.
+  return text.slice(k + 1).replace(/("[^"]*"|`[^`]*`)|\s+/g, (_m, str: string | undefined) => str ?? "");
 }
 
 /** The first argument's text: `&labels`, `issue`, `&Comment{`, `new(Issue)`. */
@@ -270,7 +275,7 @@ function firstArg(rest: string): string | null {
 /** The entity an argument names, through its declaration in the enclosing function when it is a variable. */
 function entityOfArg(arg: string, lines: string[], i: number): string | null {
   // A table named outright: `.Table("issue")`.
-  const table = /^"([\w.]+)"$/.exec(arg)?.[1];
+  const table = /^"([\w.]+)(?:\s+(?:[Aa][Ss]\s+)?\w+)?"$/.exec(arg)?.[1];
   if (table) return table.split(".").pop()!;
   // A composite literal names its type, exported or not (a migration's own `&clubTokens20210711{…}`).
   const literal = /^&?(?:[a-z_]\w*\.)?([A-Za-z_]\w*)\s*\{/.exec(arg) ?? /^new\(\s*(?:[a-z_]\w*\.)?([A-Za-z_]\w*)\s*\)$/.exec(arg);
