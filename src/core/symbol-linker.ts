@@ -849,7 +849,7 @@ const SPEC_JOIN_CLASS_SUFFIX_RE = /(Test|Tests|Spec|IT)\.\w+$/;
  * contract-first backends implement interfaces from an external artifact, so
  * the spec is the only in-repo route statement and no handler symbol exists:
  *   GET /grantable-club-entity-types → getGrantableClubEntityTypes
- *   GET /find-persons                     → findPersons
+ *   GET /find-players                     → findPlayers
  * Unique-or-nothing across non-test files; misses stay unlinked (no guess).
  */
 function specRouteHandlerLink(
@@ -897,8 +897,8 @@ function specRouteHandlerLink(
     relation: "calls",
   });
   // A class method implements it: the JAX-WS / JAX-RS class implementing the
-  // interface generated from the spec at build time (`IntegrationPropertyServiceImpl
-  // implements IntegrationPropertyServicePort`, the WSDL portType; `PetApiImpl
+  // interface generated from the spec at build time (`FixtureFeedServiceImpl
+  // implements FixtureFeedServicePort`, the WSDL portType; `PetApiImpl
   // implements PetApi`). The interface is not in the source, so the join is by
   // the operation's name, among implementors of the route's contract type —
   // unique-or-nothing.
@@ -3250,7 +3250,7 @@ function resolveCallToDefinition(
         // is known (typed local / parameter / field) and names neither the
         // candidate's class nor its file, the unique-name match is coincidence
         // — `existing.setStartDate()` on an `Account` local must not bind
-        // `CustomerEntity.setStartDate` however unique that setter is. (If the
+        // `SponsorEntity.setStartDate` however unique that setter is. (If the
         // declared type HAD resolved to a file defining the method, Strategy 2
         // would have linked it before reaching here.)
         // The call's own statement of its receiver (`Printexc.to_string` on

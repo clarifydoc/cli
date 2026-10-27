@@ -16,7 +16,7 @@ import { jvmServiceConfig } from "./service-config.js";
  * JDK / Kotlin-stdlib member names that must never be resolved by name-only
  * heuristics: a call like `x.stream().toList()` or `ex.getMessage()` is
  * overwhelmingly a platform call, so a uniquely-named app method that happens
- * to collide (`CustomerApiImpl.toList`) would magnet every such call site in
+ * to collide (`ClubApiImpl.toList`) would magnet every such call site in
  * the repo. Fed into ALL_BUILTIN_MEMBERS (symbol-linker Strategy 7 veto).
  * Builder members cover Lombok/protobuf/immutables generated code.
  */

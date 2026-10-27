@@ -6,16 +6,16 @@ const proxies = (xml: string) => extractSpringClientProxies(xml.split("\n")).map
 describe("Spring XML client proxies", () => {
   it("reads a factory bean handed an API type and a URL property", () => {
     expect(proxies(`<beans>
-    <bean id="personApi" class="com.acme.EosRestClientFactory" factory-method="create">
-        <constructor-arg><value type="java.lang.Class">com.acme.api.PersonApi</value></constructor-arg>
-        <constructor-arg><value type="java.lang.String">\${person.service.url}</value></constructor-arg>
+    <bean id="playerApi" class="com.acme.LeagueRestClientFactory" factory-method="create">
+        <constructor-arg><value type="java.lang.Class">com.acme.api.PlayerApi</value></constructor-arg>
+        <constructor-arg><value type="java.lang.String">\${player.service.url}</value></constructor-arg>
     </bean>
     <bean id="cars" class="com.acme.ClientFactory" factory-method="create">
         <constructor-arg type="java.lang.Class" value="com.acme.api.CarsApi"/>
         <constructor-arg value="\${cars.url:http://localhost:8081}"/>
     </bean>
 </beans>`)).toEqual([
-      { client: "com.acme.api.PersonApi", scope: "project", proxyOf: "com.acme.api.PersonApi", base: { kind: "config", key: "person.service.url" } },
+      { client: "com.acme.api.PlayerApi", scope: "project", proxyOf: "com.acme.api.PlayerApi", base: { kind: "config", key: "player.service.url" } },
       { client: "com.acme.api.CarsApi", scope: "project", proxyOf: "com.acme.api.CarsApi", base: { kind: "config", key: "cars.url", fallback: "http://localhost:8081" } },
     ]);
   });

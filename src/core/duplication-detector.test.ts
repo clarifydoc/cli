@@ -24,7 +24,7 @@ describe("detectDuplicates — name-based precision", () => {
     const groups = detectDuplicates([
       file("a/CreateLicense.ts", [fn("submit", ["createLicense", "toastOk"])]),
       file("b/UpdateLicense.ts", [fn("submit", ["updateLicense", "closeModal"])]),
-      file("c/CreateOrg.ts", [fn("submit", ["createOrganisation", "navigate"])]),
+      file("c/CreateClub.ts", [fn("submit", ["createClub", "navigate"])]),
     ]);
     expect(groups.filter((g) => g.kind === "name-based")).toHaveLength(0);
   });

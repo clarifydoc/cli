@@ -36,11 +36,11 @@ const FLOW = `<?xml version="1.0" encoding="UTF-8"?>
       <transition on="finish" to="approve"/>
    </subflow-state>
    <action-state id="approve">
-      <evaluate expression="clubapplication_action.approveApplication"/>
+      <evaluate expression="clubapplication_action.approveTransfer"/>
       <transition on="success" to="finish"/>
    </action-state>
    <action-state id="reject">
-      <evaluate expression="clubapplication_action.rejectApplication"/>
+      <evaluate expression="clubapplication_action.rejectTransfer"/>
       <transition on="success" to="finish"/>
    </action-state>
    <end-state id="cancel" view="/default_endpoint"/>
@@ -203,8 +203,8 @@ describe("WebflowUiBridgeResolver", () => {
     implements: [],
     decorators: [],
     methods: [
-      { name: "approveApplication", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 40, endLine: 60 },
-      { name: "rejectApplication", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 62, endLine: 70 },
+      { name: "approveTransfer", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 40, endLine: 60 },
+      { name: "rejectTransfer", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 62, endLine: 70 },
       { name: "setupForm", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line: 20, endLine: 30 },
     ],
     properties: [],
@@ -216,10 +216,10 @@ describe("WebflowUiBridgeResolver", () => {
   const links = new WebflowUiBridgeResolver().resolve([flowAnalysis, beansAnalysis, jsp, java]);
 
   it("links flow evaluates to the Java bean methods", () => {
-    const l = links.find((x) => x.sourceSymbol === "approve" && x.callName === "clubapplication_action.approveApplication")!;
+    const l = links.find((x) => x.sourceSymbol === "approve" && x.callName === "clubapplication_action.approveTransfer")!;
     expect(l).toBeDefined();
     expect(l.targetFile).toBe(java.filePath);
-    expect(l.targetSymbol).toBe("ClubApplicationAction.approveApplication");
+    expect(l.targetSymbol).toBe("ClubApplicationAction.approveTransfer");
   });
 
   it("falls back to the class anchor for inherited framework methods", () => {
@@ -236,13 +236,13 @@ describe("WebflowUiBridgeResolver", () => {
   });
 
   it("wires JSP click events through transitions into action-state evaluates", () => {
-    // approve → checkResources (decision) → approve action-state → approveApplication.
+    // approve → checkResources (decision) → approve action-state → approveTransfer.
     const approve = links.find((x) => x.sourceFile === jsp.filePath && x.callName === "approve"
-      && x.targetSymbol === "ClubApplicationAction.approveApplication");
+      && x.targetSymbol === "ClubApplicationAction.approveTransfer");
     expect(approve).toBeDefined();
     // reject goes straight to the reject action-state.
     const reject = links.find((x) => x.sourceFile === jsp.filePath && x.callName === "reject"
-      && x.targetSymbol === "ClubApplicationAction.rejectApplication");
+      && x.targetSymbol === "ClubApplicationAction.rejectTransfer");
     expect(reject).toBeDefined();
     // events with no matching transition produce nothing.
     expect(links.some((x) => x.callName === "nonexistent")).toBe(false);

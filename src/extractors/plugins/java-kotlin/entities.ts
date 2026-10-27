@@ -960,9 +960,9 @@ function statedRepositoryEntities(jvm: readonly FileAnalysis[]): void {
 }
 
 /**
- * A DAO whose implementation states its table in SQL (`RawMessageDAOImpl` running
+ * A DAO whose implementation states its table in SQL (`RawFixtureDAOImpl` running
  * `INSERT INTO hnfwk_local_event_queue …`): a call through the DAO type
- * (`rawMessageDAO.create(…)`, read as `RawMessage` from the DAO's name) touches
+ * (`rawFixtureDAO.create(…)`, read as `RawMessage` from the DAO's name) touches
  * that table, not a value class the DAO's name happens to spell. Only when the
  * implementations' own SQL names exactly one table, and the name read is no
  * declared entity.
@@ -1010,11 +1010,11 @@ function implementedDaoTables(jvm: readonly FileAnalysis[]): void {
 }
 
 /**
- * A `DAO: findArea` row on a receiver whose declared type is a class of the
- * project (`GeographicAreaCopyRepository repository; repository.findArea(id)`,
- * `documentRepository.getSession()`) names an entity after the receiver, not
+ * A `DAO: findStadium` row on a receiver whose declared type is a class of the
+ * project (`StadiumCopyRepository repository; repository.findStadium(id)`,
+ * `garageRepository.getSession()`) names an entity after the receiver, not
  * after what the method does: the method's own body is in the analysis, with
- * whatever access it makes (`em.createQuery("… from GeoArea a")`), which the
+ * whatever access it makes (`em.createQuery("… from Stadium s")`), which the
  * call graph reaches. Such a row whose name is no entity is dropped.
  */
 function projectDaoMethodCalls(jvm: readonly FileAnalysis[]): void {
@@ -1139,7 +1139,7 @@ function handedEntityAccess(jvm: readonly FileAnalysis[]): void {
  * A helper publishing what it is handed (`protected void emitSubEntity(T entity, Object event)
  * { eventPublisher.send(audit, meta, event); }`, its row marked `payloadParameter`)
  * publishes, at each call in its class or a subclass, the event type the call hands
- * it there (`AddressCreatedEvent event = …; emitSubEntity(address, event)`): a row
+ * it there (`StadiumCreatedEvent event = …; emitSubEntity(stadium, event)`): a row
  * at the call. The marker rows themselves name nothing and are dropped.
  */
 function helperPublishedEvents(jvm: readonly FileAnalysis[]): void {

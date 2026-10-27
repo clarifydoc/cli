@@ -183,7 +183,7 @@ export class RubyEntityExtractor extends EntityExtractor {
     }
 
     // DSL-presence pass — a class that uses ActiveRecord / Sequel DSL is an
-    // entity even when it extends a PROJECT base class (`< IdaModel`) defined in
+    // entity even when it extends a PROJECT base class (`< LeagueModel`) defined in
     // another file, which per-file analysis can't resolve by name. This is the
     // common Rails case (most apps subclass an `ApplicationRecord`-derived base),
     // so without it the bulk of real models — and all their associations — are

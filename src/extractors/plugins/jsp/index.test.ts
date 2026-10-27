@@ -10,21 +10,21 @@ const SAMPLE = `<%@ include file="../fragments/header.jsp" %>
 </head>
 
 <club:page labelKey="league.jsp.clubapplication_list.header">
-    <grid_extjs:controller id="applications" entityListDescriptor="\${applications}">
+    <grid_table:controller id="applications" fixtureListDescriptor="\${applications}">
         <grid:column name="action.details" labelKey="league.misc.action.details">
             <grid:actionLink cssClass="actionLink details" event="details" title="Details">
                 <grid:actionParam name="applicationId" value="\${ref.id}"/>
             </grid:actionLink>
         </grid:column>
-        <grid:column name="civicNo" labelKey="league.jsp.clubapplication_list.applicant"/>
-    </grid_extjs:controller>
+        <grid:column name="shirtNo" labelKey="league.jsp.clubapplication_list.applicant"/>
+    </grid_table:controller>
     <!-- <club:button event="ghost" labelKey="commented.out"/> -->
     <club:form>
         <club:textBox bindPath="model.notes" cols="50" labelKey="league.dmo.clubapplication.notes"/>
         <club:buttonGroup>
-            <club:button cssClass="approveButton" event="approveAll"
+            <club:button cssClass="approveButton" event="approveSelected"
                         labelKey="league.jsp.clubapplication_list.approveselected"/>
-            <club:button cssClass="rejectButton" event="rejectAll" labelKey="league.jsp.clubapplication_list.rejectselected"/>
+            <club:button cssClass="rejectButton" event="rejectSelected" labelKey="league.jsp.clubapplication_list.rejectselected"/>
         </club:buttonGroup>
     </club:form>
     <a href="other.jsp" onclick="openHelp()">Help</a>
@@ -37,18 +37,18 @@ describe("jspSpec interactive elements", () => {
   const els = jspSpec.extractInteractiveElements!(lines);
 
   it("extracts taglib event tags with the event as handler", () => {
-    const approve = els.find((e) => e.handler === "approveAll")!;
+    const approve = els.find((e) => e.handler === "approveSelected")!;
     expect(approve).toBeDefined();
     expect(approve.element).toBe("button");
     expect(approve.component).toBe("club:button");
-    expect(els.some((e) => e.handler === "rejectAll")).toBe(true);
+    expect(els.some((e) => e.handler === "rejectSelected")).toBe(true);
     const details = els.find((e) => e.handler === "details")!;
     expect(details.element).toBe("link");
   });
 
   it("extracts multi-line tags and skips commented-out ones", () => {
-    // approveAll's tag spans two lines — line points at the opening.
-    const approve = els.find((e) => e.handler === "approveAll")!;
+    // approveSelected's tag spans two lines — line points at the opening.
+    const approve = els.find((e) => e.handler === "approveSelected")!;
     expect(approve.line).toBe(20);
     expect(els.some((e) => e.handler === "ghost")).toBe(false);
   });
@@ -98,7 +98,7 @@ describe("jspSpec screens", () => {
     const comps = screens[0]!.components;
     const button = comps.find((c) => c.componentType === "club:button")!;
     expect(button.category).toBe("action");
-    expect(button.events).toEqual(["approveAll"]);
+    expect(button.events).toEqual(["approveSelected"]);
     const bound = comps.find((c) => c.componentType === "club:textBox")!;
     expect(bound.category).toBe("input");
     expect(bound.dataBindings).toEqual(["model.notes"]);

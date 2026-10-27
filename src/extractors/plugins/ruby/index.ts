@@ -858,7 +858,7 @@ export const rubySpec: RegexLangSpec = {
     },
     {
       // Rails autoload via inheritance: `class Foo < Bar` loads Bar's file
-      // (e.g. a controller's ApplicationController, a model's IdaModel). The
+      // (e.g. a controller's ApplicationController, a model's LeagueModel). The
       // superclass is already captured as an `extends` edge for the data-model
       // graph; emitting it as an import additionally wires the file-level
       // dependency graph the same way `require` would.

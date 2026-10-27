@@ -83,7 +83,7 @@ const JDBC_METHODS = new Set([
  * A JDBC / JPA / Hibernate handle, read on the receiver's LAST segment:
  * `jdbcTemplate`, `hibernateTemplate`, `entityManager`, `em`, `session`,
  * `sessionFactory.getCurrentSession()`. A substring anywhere in the chain
- * matched `elementTemplateService.merge(x)` — a service call — 362 times on one real codebase.
+ * matched `kitTemplateService.merge(x)` — a service call — 362 times on one real codebase.
  */
 const JDBC_RECEIVER_RE = /^(?:\w*jdbc\w*|\w*(?:hibernate|jpa|mongo|sqlsession|r2dbcentity)template|entitymanager\w*|em|\w*session|get(?:current)?session|getentitymanager|gethibernatetemplate|getjdbctemplate)$/i;
 /** Sessions that are not a database's: an HTTP or WebSocket session, a messaging one. */
@@ -556,8 +556,8 @@ const EVENT_ANN_CLASS_RE = /\(\s*(?:value\s*=\s*)?(?:classes\s*=\s*)?[[{]?\s*([A
 // `publishEvent`, which is unambiguous on its own).
 const EVENT_PUBLISH_METHODS = new Set(["publishEvent", "publish", "send", "post", "emit"]);
 const EVENT_PUBLISHER_RECEIVER_RE = /(publisher|eventbus|bus)$/i;
-// An event payload type: `AccountCreatedEvent`, `LoginMessage`, a request a
-// service sends on the bus and its reply (`PurgePersonRequest`, `…Response`) … The
+// An event payload type: `ClubCreatedEvent`, `KickoffMessage`, a request a
+// service sends on the bus and its reply (`ReleasePlayerRequest`, `…Response`) … The
 // suffix fence keeps `emailPublisher.send(new Attachment())` from reading as an event.
 export const EVENT_TYPE_RE = /(Event|Message|Command|Notification|Request|Response|Reply)$/;
 /**
@@ -652,9 +652,9 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   /** File imports Room: a SQL-less `@Insert`/`@Update`/`@Delete` writes its parameter's entity. */
   private isRoomFile = false;
   /**
-   * Declared field/constructor-parameter types (`accountJpaRepository` →
-   * `AccountJpaRepository`). The TYPE names the entity more reliably than the
-   * field name: `externalIdJpaRepository` is a FederatedIdentityJpaRepository.
+   * Declared field/constructor-parameter types (`clubJpaRepository` →
+   * `ClubJpaRepository`). The TYPE names the entity more reliably than the
+   * field name: `licenceIdJpaRepository` is a ClubLicenceJpaRepository.
    */
   private fieldTypes = new Map<string, string>();
   /** The file uses the plain Kafka client (`KafkaConsumer`, `KafkaProducer`). */
@@ -730,7 +730,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
 
     // A JPQL query handed to a constructor — a framework's list or grid
-    // descriptor (`new EntityListDescriptor<>(Match.class, "select m from Match m")`)
+    // descriptor (`new FixtureListDescriptor<>(Match.class, "select m from Match m")`)
     // runs it later; the query names the entity it reads.
     if (node.type === "object_creation_expression") {
       const entity = constructorJpqlEntity(node);
@@ -971,7 +971,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
 
     // 2) DAO / Repository call — entity from the receiver's declared type when
-    // the file declares it (`accountJpaRepository: AccountJpaRepository` →
+    // the file declares it (`clubJpaRepository: ClubJpaRepository` →
     // Account), else from the receiver name (`caseDAO.get` → Case). Dominant
     // data path here: the DAO wraps jOOQ behind a factory, so this is where a
     // service method's DB access is visible.
@@ -1034,7 +1034,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         : null;
       // A service receiver (`personService.save(cmd)`) is a call into the
       // service layer, where the access — if any — is visible in its own
-      // right; a bare `save(x)` / `getByCivicNumber(id)` is a call on this
+      // right; a bare `save(x)` / `getByShirtNumber(id)` is a call on this
       // class, which the linker follows to its definition. Neither is a data
       // access here: emitting them put a target-less "database" row on two
       // thirds of one real codebase's service methods.
@@ -1383,7 +1383,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // `em.persist(new MatchReport(…))`: the object built in place states its type.
     const built = constructedType(arg);
     if (built) return /^[A-Z]\w/.test(built) && !NOT_AN_ENTITY_LITERAL.has(built) ? built : null;
-    // `em.persist(createAddress(original))`: a method of the same class, by its declared return type.
+    // `em.persist(createStadium(original))`: a method of the same class, by its declared return type.
     if (arg.type === "method_invocation" && (!arg.childForFieldName("object") || arg.childForFieldName("object")?.type === "this")) {
       const own = ownMethodReturnType(arg, arg.childForFieldName("name")?.text ?? "");
       return own && /^[A-Z]\w/.test(own) && !NOT_AN_ENTITY_LITERAL.has(own) ? own : null;
@@ -1402,7 +1402,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
 
   /**
    * Event type published by this call, scanning arguments right-to-left:
-   * `new AccountCreatedEvent(…)` → AccountCreatedEvent;
+   * `new ClubCreatedEvent(…)` → ClubCreatedEvent;
    * `AccountUpdateMessage.newBuilder()…build()` → AccountUpdateMessage;
    * a bare identifier → its declared local/parameter/field type.
    * Non-`publishEvent` verbs require the EVENT_TYPE_RE suffix (`relaxed`
@@ -1691,10 +1691,10 @@ function resolveTableExpr(arg: Node | null, aliases: Map<string, string>): strin
 /**
  * Entity behind a DAO/Repository receiver. The receiver's DECLARED TYPE wins
  * when the file declares it and the type itself is DAO-shaped — a field named
- * `externalIdJpaRepository` of type `FederatedIdentityJpaRepository` accesses
- * FederatedIdentity, which only the type knows. Otherwise the receiver name is
+ * `licenceIdJpaRepository` of type `ClubLicenceJpaRepository` accesses
+ * ClubLicence, which only the type knows. Otherwise the receiver name is
  * used (`this.caseDAO` → "case"). In both, the `DAO`/`Repository` suffix is
- * stripped, plus a residual persistence-tech suffix (`AccountJpaRepository` →
+ * stripped, plus a residual persistence-tech suffix (`ClubJpaRepository` →
  * `AccountJpa` → `Account`) and an interface-convention `I` prefix
  * (`ICaseDAO` → `Case`). The prefix convention works the same way
  * (`RepositoryClass` → `Class`). Null when the receiver isn't a DAO.
@@ -1895,7 +1895,7 @@ function localDeclaredType(node: Node, name: string, raw = false): string | null
       // `try (Statement statement = connection.createStatement())`
       if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
     } else if (n.type === "enhanced_for_statement") {
-      // `for (UnitGroupRateCategory c : categories)`
+      // `for (SeasonTicketCategory c : categories)`
       if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
     } else if (n.type === "property_declaration") {
       const kt = kotlinNameAndType(n);
@@ -1962,10 +1962,10 @@ function annotatedSqlAccess(
 
 /**
  * Subscribed event type of the method a listener annotation decorates —
- * `@MessageHandler void handle(ElementUpdatedEvent event, Metadata md)` →
- * ElementUpdatedEvent. Prefers the parameter whose type is event-shaped
+ * `@MessageHandler void handle(ClubUpdatedEvent event, Metadata md)` →
+ * ClubUpdatedEvent. Prefers the parameter whose type is event-shaped
  * (frameworks pass audit/metadata alongside the payload — e.g.
- * `handle(AuditInformation a, Metadata m, LoginMessage msg)`), falling back to
+ * `handle(MatchLog a, Metadata m, KickoffMessage msg)`), falling back to
  * the first parameter. Climbs annotation → modifiers → declaration; null when
  * the annotation sits on a class or the method has no typed parameters.
  */
@@ -1986,7 +1986,7 @@ function handlerFirstParamType(ann: Node): string | null {
     }
   }
   // The payload, after the audit / metadata parameters a typed framework puts first
-  // (`handle(AuditInformation audit, PurgeResponse response)`); else the first parameter.
+  // (`handle(MatchLog audit, ReleaseResponse response)`); else the first parameter.
   return [...types].reverse().find((t) => EVENT_TYPE_RE.test(t)) ?? types[0] ?? null;
 }
 

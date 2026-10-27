@@ -157,9 +157,9 @@ describe("synthesizeReferencedTableEntities", () => {
 
 describe("ORM-suffix dedupe (JPA `XEntity` classes vs repository-derived names)", () => {
   it("does NOT synthesize a node when a real `<name>Entity` class covers the table", () => {
-    const g = graph(["DriverEntity", "CachedItemEntity"]);
+    const g = graph(["DriverEntity", "CachedKitEntity"]);
     synthesizeReferencedTableEntities(
-      [analysis("a.java", ["driver", "cachedItem"])],
+      [analysis("a.java", ["driver", "cachedKit"])],
       g,
     );
     expect(g.nodes.filter((n) => n.orm === "inferred")).toEqual([]);
@@ -201,18 +201,18 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
 
   it("re-homes a base's relations onto a cross-file STI subclass chain", () => {
     const analyses = [
-      file("change_request.rb", [entityClass("ChangeRequest", "IdaModel")], [
-        rel("ChangeRequest", "referee", "Referee"),
-        rel("ChangeRequest", "department", "Department"),
+      file("transfer_request.rb", [entityClass("TransferRequest", "LeagueModel")], [
+        rel("TransferRequest", "referee", "Referee"),
+        rel("TransferRequest", "academy", "Academy"),
       ]),
-      file("duty_change_request.rb", [entityClass("DutyChangeRequest", "ChangeRequest")], [
-        rel("DutyChangeRequest", "duty", "Duty"),
+      file("loan_request.rb", [entityClass("LoanRequest", "TransferRequest")], [
+        rel("LoanRequest", "squad", "Squad"),
       ]),
       // Grandchild in a separate file, declaring NO relations of its own.
-      file("time_duty_change_request.rb", [entityClass("TimeDutyChangeRequest", "DutyChangeRequest")]),
-      file("referee.rb", [entityClass("Referee", "IdaModel")]),
-      file("department.rb", [entityClass("Department", "IdaModel")]),
-      file("duty.rb", [entityClass("Duty", "IdaModel")]),
+      file("short_loan_request.rb", [entityClass("ShortLoanRequest", "LoanRequest")]),
+      file("referee.rb", [entityClass("Referee", "LeagueModel")]),
+      file("academy.rb", [entityClass("Academy", "LeagueModel")]),
+      file("squad.rb", [entityClass("Squad", "LeagueModel")]),
     ];
 
     propagateStiRelations(analyses);
@@ -220,21 +220,21 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
     const relsOf = (fp: string) =>
       (analyses.find((a) => a.filePath === fp)!.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField}->${r.toEntity}`);
 
-    // DutyChangeRequest keeps its own `duty` and inherits referee+department.
-    expect(relsOf("duty_change_request.rb").sort()).toEqual([
-      "DutyChangeRequest.department->Department",
-      "DutyChangeRequest.duty->Duty",
-      "DutyChangeRequest.referee->Referee",
+    // LoanRequest keeps its own `squad` and inherits referee+academy.
+    expect(relsOf("loan_request.rb").sort()).toEqual([
+      "LoanRequest.academy->Academy",
+      "LoanRequest.referee->Referee",
+      "LoanRequest.squad->Squad",
     ]);
     // The grandchild inherits all three, transitively.
-    expect(relsOf("time_duty_change_request.rb").sort()).toEqual([
-      "TimeDutyChangeRequest.department->Department",
-      "TimeDutyChangeRequest.duty->Duty",
-      "TimeDutyChangeRequest.referee->Referee",
+    expect(relsOf("short_loan_request.rb").sort()).toEqual([
+      "ShortLoanRequest.academy->Academy",
+      "ShortLoanRequest.referee->Referee",
+      "ShortLoanRequest.squad->Squad",
     ]);
     // Inherited copies are marked INFERRED (only declared ones stay EXTRACTED).
     const inherited = analyses
-      .find((a) => a.filePath === "time_duty_change_request.rb")!
+      .find((a) => a.filePath === "short_loan_request.rb")!
       .entityRelations!;
     expect(inherited.every((r) => r.confidence === "INFERRED")).toBe(true);
 
@@ -247,8 +247,8 @@ describe("propagateStiRelations — STI subclasses inherit their base's relation
           (e.source === nid(aName) && e.target === nid(bName)) ||
           (e.source === nid(bName) && e.target === nid(aName)),
       );
-    for (const target of ["Referee", "Department", "Duty"]) {
-      expect(touches("TimeDutyChangeRequest", target)).toBe(true);
+    for (const target of ["Referee", "Academy", "Squad"]) {
+      expect(touches("ShortLoanRequest", target)).toBe(true);
     }
   });
 
@@ -359,8 +359,8 @@ describe("reconcileEntityInheritance", () => {
 
   it("follows the import naming the base, not a same-named entity in another package (real-repo FP)", () => {
     const entity = { filePath: "src/main/java/com/example/league/domain/Address.java", language: "java", classes: [{ name: "Address", decorators: ["entity", "jpa"], properties: [], line: 1 }] } as unknown as FileAnalysis;
-    const impl = { name: "AddressImpl", extends: "Address", decorators: [] as string[], properties: [], line: 9 };
-    const legacy = { filePath: "src/main/java/com/example/league/api/legacy/AddressImpl.java", language: "java", classes: [impl],
+    const impl = { name: "StadiumImpl", extends: "Address", decorators: [] as string[], properties: [], line: 9 };
+    const legacy = { filePath: "src/main/java/com/example/league/api/legacy/StadiumImpl.java", language: "java", classes: [impl],
       imports: [{ source: "com.example.league.api.legacy.Address", specifiers: ["Address"], line: 3 }] } as unknown as FileAnalysis;
     const sub = { name: "HomeAddress", extends: "Address", decorators: [] as string[], properties: [], line: 5 };
     const model = { filePath: "src/main/java/com/example/league/domain/HomeAddress.java", language: "java", classes: [sub],

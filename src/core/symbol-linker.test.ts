@@ -426,22 +426,22 @@ describe("symbol-linker — spec-route → impl-method name join", () => {
 
   it("joins the bare camel form when no verb-prefixed method exists", () => {
     const impl = file("api/ClubUiApiImpl.cs", "app", {
-      classes: [{ ...cls("ClubUiApiImpl"), methods: [fn("findPersons", [])] }],
+      classes: [{ ...cls("ClubUiApiImpl"), methods: [fn("findPlayers", [])] }],
     });
-    const links = buildSymbolLinks([specFile("/find-persons", "GET"), impl]);
-    expect(links.some((l) => l.targetSymbol === "ClubUiApiImpl.findPersons")).toBe(true);
+    const links = buildSymbolLinks([specFile("/find-players", "GET"), impl]);
+    expect(links.some((l) => l.targetSymbol === "ClubUiApiImpl.findPlayers")).toBe(true);
   });
 
   it("never binds a test file, and stays silent on ambiguity", () => {
     const test = file("src/test/api/FindPersonsTest.cs", "app", {
-      classes: [{ ...cls("FindPersonsTest"), methods: [fn("findPersons", [])] }],
+      classes: [{ ...cls("FindPersonsTest"), methods: [fn("findPlayers", [])] }],
     });
-    const links = buildSymbolLinks([specFile("/find-persons", "GET"), test]);
+    const links = buildSymbolLinks([specFile("/find-players", "GET"), test]);
     expect(links.some((l) => l.targetFile.includes("Test"))).toBe(false);
 
-    const a = file("api/A.cs", "app", { classes: [{ ...cls("A"), methods: [fn("findPersons", [])] }] });
-    const b = file("api/B.cs", "app", { classes: [{ ...cls("B"), methods: [fn("findPersons", [])] }] });
-    const ambiguous = buildSymbolLinks([specFile("/find-persons", "GET"), a, b]);
+    const a = file("api/A.cs", "app", { classes: [{ ...cls("A"), methods: [fn("findPlayers", [])] }] });
+    const b = file("api/B.cs", "app", { classes: [{ ...cls("B"), methods: [fn("findPlayers", [])] }] });
+    const ambiguous = buildSymbolLinks([specFile("/find-players", "GET"), a, b]);
     expect(ambiguous.some((l) => String(l.sourceSymbol).startsWith("route:"))).toBe(false);
   });
 });

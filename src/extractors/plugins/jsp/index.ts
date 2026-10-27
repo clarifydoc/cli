@@ -19,7 +19,7 @@ import { attr, extractHtmlInteractiveElements, maskMarkup } from "../html/index.
  * Three things are extracted:
  *  - plain HTML controls (forms/buttons/inputs/inline `on*=`) via the html
  *    plugin's extractor — JSPs are HTML at heart;
- *  - custom-taglib action tags (`<club:button event="approveAll">`,
+ *  - custom-taglib action tags (`<club:button event="approveSelected">`,
  *    `<grid:actionLink event="details">`): any namespaced tag carrying an
  *    `event`/`action` attribute is an interactive element whose handler is
  *    that event name — in Web Flow apps it names the `<transition on="…">`

@@ -5,7 +5,7 @@ import { extractJavaClientProxies } from "./client-proxies.js";
 
 async function proxies(body: string) {
   const src = `package com.acme.app;
-import com.acme.api.PersonApi;
+import com.acme.api.PlayerApi;
 import com.acme.domain.Application;
 class C { void m() {
 ${body}
@@ -17,46 +17,46 @@ ${body}
 describe("Java client proxies", () => {
   it("reads the proxy factories of CXF, Jersey, RESTEasy, MicroProfile and Feign", async () => {
     expect(await proxies(`
-RestClient.createClient(PersonApi.class, url);
-JAXRSClientFactory.create("http://person:8080", PersonApi.class);
-WebResourceFactory.newResource(PersonApi.class, target);
-webTarget.proxy(PersonApi.class);
-RestClientBuilder.newBuilder().baseUri(uri).build(PersonApi.class);
-Feign.builder().target(PersonApi.class, "http://person:8080");`)).toEqual([
-      { proxyOf: "com.acme.api.PersonApi" },
-      { proxyOf: "com.acme.api.PersonApi", base: { kind: "literal", key: "http://person:8080" } },
-      { proxyOf: "com.acme.api.PersonApi" },
-      { proxyOf: "com.acme.api.PersonApi" },
-      { proxyOf: "com.acme.api.PersonApi" },
-      { proxyOf: "com.acme.api.PersonApi", base: { kind: "literal", key: "http://person:8080" } },
+RestClient.createClient(PlayerApi.class, url);
+JAXRSClientFactory.create("http://player:8080", PlayerApi.class);
+WebResourceFactory.newResource(PlayerApi.class, target);
+webTarget.proxy(PlayerApi.class);
+RestClientBuilder.newBuilder().baseUri(uri).build(PlayerApi.class);
+Feign.builder().target(PlayerApi.class, "http://player:8080");`)).toEqual([
+      { proxyOf: "com.acme.api.PlayerApi" },
+      { proxyOf: "com.acme.api.PlayerApi", base: { kind: "literal", key: "http://player:8080" } },
+      { proxyOf: "com.acme.api.PlayerApi" },
+      { proxyOf: "com.acme.api.PlayerApi" },
+      { proxyOf: "com.acme.api.PlayerApi" },
+      { proxyOf: "com.acme.api.PlayerApi", base: { kind: "literal", key: "http://player:8080" } },
     ]);
   });
 
   it("reads a factory method named for the proxy it makes, on any receiver, when handed an address", async () => {
     expect(await proxies(`
-webClientUtils.createWebClientProxy(PersonApi.class, loadBalancerURL + serviceURI, ContextAccessor.get());
-helper.createProxy(Application.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }]);
+leagueClientUtils.createWebClientProxy(PlayerApi.class, loadBalancerURL + serviceURI, MatchContext.get());
+helper.createProxy(Application.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PlayerApi" }]);
   });
 
   it("reads an in-house REST client factory only when it is handed an address", async () => {
     expect(await proxies(`
-EosRestClientFactory.createWithAPIFriendlyProviders(SchoolSelectionApi.class, getSchoolSelectionRestURL());
-EosRestClientFactory.create(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.app.SchoolSelectionApi" }]);
+LeagueRestClientFactory.createWithAPIFriendlyProviders(TransferApi.class, getTransferRestURL());
+LeagueRestClientFactory.create(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.app.TransferApi" }]);
   });
 
   it("reads a client builder handed an address", async () => {
     expect(await proxies(`
-Framework.clientFor(PersonApi.class, url).withTimeout(30, SECONDS).build();
-Framework.clientFor(LeagueApi.class, host).useCommLog(true).build();
-Framework.clientFor(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PersonApi" }, { proxyOf: "com.acme.app.LeagueApi" }]);
+Framework.clientFor(PlayerApi.class, url).withTimeout(30, SECONDS).build();
+Framework.clientFor(LeagueApi.class, host).useMatchLog(true).build();
+Framework.clientFor(Settings.class, defaults);`)).toEqual([{ proxyOf: "com.acme.api.PlayerApi" }, { proxyOf: "com.acme.app.LeagueApi" }]);
   });
 
   it("reads nothing into factories that are not proxies", async () => {
     expect(await proxies(`
 sessionFactory.getCurrentSession().createCriteria(Application.class);
-ApplicationFactory.create(Application.class, input);
-objectMapper.readValue(json, PersonApi.class);
-ProxyUtil.deproxy(owner, Application.class);`)).toEqual([]);
+SquadFactory.create(Application.class, input);
+objectMapper.readValue(json, PlayerApi.class);
+SquadUtil.deproxy(owner, Application.class);`)).toEqual([]);
   });
 
   it("registers the type handed to a helper of the file that forwards its Class parameter to a factory", async () => {
@@ -90,6 +90,6 @@ class TransferClient {
 }`;
     const tree = await parseSource(soap, "java" as any, "TransferClient.java");
     expect(extractJavaClientProxies(tree, soap).map((r) => r.proxyOf)).toEqual(["com.acme.transfers.TransferPortType"]);
-    expect(await proxies(`server.getPort(PersonApi.class);`)).toEqual([]);
+    expect(await proxies(`server.getPort(PlayerApi.class);`)).toEqual([]);
   });
 });

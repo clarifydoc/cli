@@ -39,7 +39,7 @@ describe("JVM calls inside an anonymous or local class", () => {
   it("attributes the methods' calls to the method that builds the object, not to no function", async () => {
     const m = await methodOf(`class ClubServiceImpl {
   public boolean hasSquad(final String clubId) {
-    return cache.get(new MicroCache.Task<Boolean>() {
+    return cache.get(new TacticsCache.Task<Boolean>() {
       @Override
       public Boolean get() {
         return getService().findPlayers(clubId, "squad").isEmpty();

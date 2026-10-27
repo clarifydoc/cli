@@ -13,7 +13,7 @@ type ApiCall = DataSourceInfo & { filePath: string };
  * A proxy implements an API interface and turns each method call into the
  * request the interface's annotations declare (JAX-RS, Feign, MicroProfile,
  * Spring HTTP interfaces). In the calling code nothing says HTTP —
- * `personRepository.getPerson(id, …)` is an ordinary call on an
+ * `playerRepository.getPlayer(id, …)` is an ordinary call on an
  * interface-typed field — and the URL usually lives in a shared API jar the
  * repository does not contain. What IS stated: the proxy registration
  * (`HttpClientRegistration.proxyOf`, from a Spring XML factory bean or a
@@ -25,7 +25,7 @@ type ApiCall = DataSourceInfo & { filePath: string };
  *
  * Language-agnostic: declared types come from the classes and functions any
  * plugin reports, a simple type name is qualified through the file's imports
- * (`import a.b.PersonApi` → `a.b.PersonApi`), or by being the one registered
+ * (`import a.b.PlayerApi` → `a.b.PlayerApi`), or by being the one registered
  * type of that name.
  */
 export function clientProxyCalls(
@@ -112,7 +112,7 @@ export function clientProxyCalls(
           out.push(contractCall(returned, helper.method, call.line, a.filePath));
           continue;
         }
-        // `Factory.fromClient(client, PersonApi.class).getPerson(id)`: the plugin states the receiver's type.
+        // `Factory.fromClient(client, PlayerApi.class).getPlayer(id)`: the plugin states the receiver's type.
         const stated = call.receiverType ? proxyOf(call.receiverType) : null;
         const statedMethod = stated ? /\.([A-Za-z_$][\w$]*)$/.exec(call.name)?.[1] : undefined;
         if (stated && statedMethod) {
@@ -281,7 +281,7 @@ export function markConsumedContracts<R extends { kind: string; contract?: { typ
 
 /**
  * A call through a client proxy is a request, not also a database access: a
- * plugin that reads a repository-named receiver (`personRepository.findPersons(…)`)
+ * plugin that reads a repository-named receiver (`playerRepository.findPlayers(…)`)
  * as a data-access row cannot see per file that the receiver is a REST proxy.
  * Drops the database row each contract call shadows — same file, same line,
  * the operation's method named — and returns how many went.

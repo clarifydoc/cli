@@ -143,12 +143,12 @@ export function joinSchemaColumns(analyses: FileAnalysis[]): void {
     }
   }
 
-  // Pass 2: single-table inheritance — a subclass (`TimeDutyChangeRequest <
-  // ChangeRequest`) has no table of its own; it shares the base class's table.
+  // Pass 2: single-table inheritance — a subclass (`ShortLoanRequest <
+  // TransferRequest`) has no table of its own; it shares the base class's table.
   // Walk each still-empty entity's `extends` chain to the nearest ancestor
   // entity that resolved columns and copy them. Iterate to a fixed point so
   // multi-level STI chains fill from the root down. (Abstract bases like an
-  // `IdaModel` with no table stay empty, which correctly stops the walk.)
+  // `LeagueModel` with no table stay empty, which correctly stops the walk.)
   const filledByBare = new Map<string, ClassInfo>();
   for (const cls of entities) {
     const bare = cls.name.split("::").pop()!;

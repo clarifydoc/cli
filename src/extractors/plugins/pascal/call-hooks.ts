@@ -9,7 +9,7 @@ const PASCAL_STATEMENT_NOISE = new Set(["exit", "break", "continue", "halt", "ab
 /**
  * An argument that names a dataset: `X.DataSet`, or a component named the way
  * Delphi names them (`qryPupils`, `dsAddress`, `srcPlayers`, `IBDataset`,
- * `cdsTemp`, `PersonQuery`). Only calls passing one keep their arguments — a
+ * `cdsSquad`, `PlayerQuery`). Only calls passing one keep their arguments — a
  * routine called hundreds of times with constants (`LlDefineVariableExt('X', v,
  * LL_TEXT)`) must stay one call.
  */

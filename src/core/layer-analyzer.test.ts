@@ -192,7 +192,7 @@ describe("wiring classes, flow definitions, singular service dirs (real-repo FPs
 
   it("matches a singular service/ directory segment", () => {
     const layers = classifyFileLayers([
-      "core/src/main/java/com/example/league/domain/settings/service/SettingServiceImpl.java",
+      "core/src/main/java/com/example/league/domain/settings/service/LeagueSettingServiceImpl.java",
     ]);
     expect(Object.values(layers)[0]).toBe("services");
   });

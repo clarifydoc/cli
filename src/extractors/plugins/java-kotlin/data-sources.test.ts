@@ -107,11 +107,11 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
 
   it("reads the entity of a JPQL query handed to a constructor", async () => {
     const s = db(await sourcesOf(
-      `    var d = new EntityListDescriptor<>(Match.class, "select m from Match m " + "where m.season = :s");
+      `    var d = new FixtureListDescriptor<>(Match.class, "select m from Match m " + "where m.season = :s");
     var n = new Notice("select a seat from the list");`,
       "java",
     ));
-    expect(s.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual(["new EntityListDescriptor Match read"]);
+    expect(s.map((d) => `${d.name} ${d.entity} ${d.access}`)).toEqual(["new FixtureListDescriptor Match read"]);
   });
 
   it("reads a query held in a constant, on a handle declared as one whatever its name", async () => {
@@ -321,18 +321,18 @@ describe("jOOQ false-table fences", () => {
 
 describe("Repository receiver → entity via declared field type", () => {
   it("resolves the entity from the field's TYPE, not the field name", async () => {
-    // The field name says externalId; the type says FederatedIdentity — the
+    // The field name says externalId; the type says ClubLicence — the
     // type is what names the entity.
     const src = `package x;
-class RoleOverviewApiService {
-  private final FederatedIdentityJpaRepository externalIdJpaRepository;
+class SquadOverviewApiService {
+  private final ClubLicenceJpaRepository licenceIdJpaRepository;
   void m(String driverId) {
-    externalIdJpaRepository.findIdsByDriverId(driverId);
+    licenceIdJpaRepository.findIdsByDriverId(driverId);
   }
 }`;
-    const tree = await parseSource(src, "java" as any, "RoleOverviewApiService.java");
+    const tree = await parseSource(src, "java" as any, "SquadOverviewApiService.java");
     const s = db(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.some((d) => d.entity === "FederatedIdentity")).toBe(true);
+    expect(s.some((d) => d.entity === "ClubLicence")).toBe(true);
   });
 
   it("strips a residual Jpa/Db tech suffix from the receiver name", async () => {
@@ -422,15 +422,15 @@ describe("Typed application/domain events", () => {
 
   it("@MessageHandler handler → queue-consume on the first parameter's type", async () => {
     const src = `package x;
-public class OrganisationEventHandler {
+public class LeagueEventHandler {
   @MessageHandler(threadSafe = true)
-  public void handle(ElementUpdatedEvent event, Metadata metadata) {
-    updateRoles(event.getSubject());
+  public void handle(ClubUpdatedEvent event, Metadata metadata) {
+    updateSquads(event.getSubject());
   }
 }`;
-    const tree = await parseSource(src, "java" as any, "OrganisationEventHandler.java");
+    const tree = await parseSource(src, "java" as any, "LeagueEventHandler.java");
     const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.some((d) => d.kind === "queue-consume" && d.target === "ElementUpdatedEvent" && d.name === "@MessageHandler")).toBe(true);
+    expect(s.some((d) => d.kind === "queue-consume" && d.target === "ClubUpdatedEvent" && d.name === "@MessageHandler")).toBe(true);
   });
 
   it("@EventListener(X.class) → queue-consume on the annotation's class", async () => {
@@ -449,10 +449,10 @@ public class Refresher {
 public class ClubEventServiceImpl {
   private final EventPublisher eventPublisher;
   void notifyUpdate(String id) {
-    AuditInformation auditInformation = createAuditInformation();
+    MatchLog matchLog = createMatchLog();
     Metadata metaData = createMetadata(id);
     ClubUpdateMessage message = ClubUpdateMessage.newBuilder().setId(id).build();
-    eventPublisher.send(auditInformation, metaData, message);
+    eventPublisher.send(matchLog, metaData, message);
   }
 }`;
     const tree = await parseSource(src, "java" as any, "ClubEventServiceImpl.java");
@@ -472,13 +472,13 @@ public class ClubEventServiceImpl {
 
   it("prefers the event-shaped parameter over audit/metadata companions", async () => {
     const src = `package x;
-public class LoginEventHandler {
+public class KickoffEventHandler {
   @MessageHandler(threadSafe = true)
-  public void handle(AuditInformation auditInformation, Metadata metadata, LoginMessage msg) {}
+  public void handle(MatchLog matchLog, Metadata metadata, KickoffMessage msg) {}
 }`;
-    const tree = await parseSource(src, "java" as any, "LoginEventHandler.java");
+    const tree = await parseSource(src, "java" as any, "KickoffEventHandler.java");
     const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
-    expect(s.some((d) => d.kind === "queue-consume" && d.target === "LoginMessage")).toBe(true);
+    expect(s.some((d) => d.kind === "queue-consume" && d.target === "KickoffMessage")).toBe(true);
   });
 
   it("reads a request or reply sent on the bus as the event, on both sides", async () => {
@@ -486,10 +486,10 @@ public class LoginEventHandler {
 public class TransferEvents {
   private final EventPublisher publisher;
   void requestTransfer(TransferPlayerRequest message) {
-    publisher.send(auditInformation(), metadata(message.getId()), message);
+    publisher.send(matchLog(), metadata(message.getId()), message);
   }
   @MessageHandler
-  public void handle(AuditInformation auditInformation, TransferPlayerResponse response) {}
+  public void handle(MatchLog matchLog, TransferPlayerResponse response) {}
 }`;
     const tree = await parseSource(src, "java" as any, "TransferEvents.java");
     const s = q(new JavaKotlinDataSourceExtractor().extract(tree, src));
@@ -500,14 +500,14 @@ public class TransferEvents {
     const src = `package x;
 public class LeagueEventPublisherImpl {
   private final EventPublisher eventPublisher;
-  public void created(Club club, AuditInformation audit) {
+  public void created(Club club, MatchLog audit) {
     sendLeagueEvent(club, audit, ClubCreatedEvent.newBuilder().setClub(club.getId()).build());
   }
-  public void deleted(Club club, AuditInformation audit) {
+  public void deleted(Club club, MatchLog audit) {
     sendLeagueEvent(club, audit, new ClubDeletedEvent(club.getId()));
   }
-  private void sendLeagueEvent(Club club, AuditInformation audit, Object leagueEvent) {
-    eventPublisher.send(audit, Metadata.newBuilder().setAffectedEntity(club.getId()).build(), leagueEvent);
+  private void sendLeagueEvent(Club club, MatchLog audit, Object leagueEvent) {
+    eventPublisher.send(audit, Metadata.newBuilder().setAffectedClub(club.getId()).build(), leagueEvent);
   }
 }`;
     const tree = await parseSource(src, "java" as any, "LeagueEventPublisherImpl.java");
@@ -617,7 +617,7 @@ describe("Java JPA / Hibernate rows name their entity", () => {
 
   it("takes the entity from an instance argument's declared type, Optional unwrapped", async () => {
     const rows = await sourcesOf(`
-    PersonAddress address = new PersonAddress();
+    PlayerAddress address = new PlayerAddress();
     Optional<Person> person = Optional.empty();
     em.persist(address);
     em.merge(person.get());
@@ -625,9 +625,9 @@ describe("Java JPA / Hibernate rows name their entity", () => {
     session.get(Car.class, id);
     for (Brand c : brands) { em.remove(c); }`, "java");
     expect(db(rows)).toEqual([
-      ["persist", "PersonAddress"],
+      ["persist", "PlayerAddress"],
       ["merge", "Person"],
-      ["saveOrUpdate", "PersonAddress"],
+      ["saveOrUpdate", "PlayerAddress"],
       ["get", "Car"],
       ["remove", "Brand"],
     ]);
@@ -708,12 +708,12 @@ describe("Java JPA / Hibernate rows name their entity", () => {
 
   it("is not fooled by services, REST templates and HTTP sessions", async () => {
     const rows = await sourcesOf(`
-    elementTemplateService.merge(template);
+    kitTemplateService.merge(template);
     restTemplate.delete("/x");
     request.getSession().get("k");
     EntityManager entityManager = null;
     entityManager.find(Person.class, id);
-    personCacheQueryService.findByHypernetId(id);`, "java");
+    playerCacheQueryService.findByLicenceId(id);`, "java");
     // An EntityManager stays a handle although its type ends in "Manager".
     expect(db(rows)).toEqual([["find", "Person"]]);
   });
@@ -876,7 +876,7 @@ describe("Spring application listeners", () => {
   it("never consume the container's own lifecycle events — a startup hook is no message (real-repo FP)", async () => {
     const java = `class FixturePoller implements ApplicationListener<ContextRefreshedEvent> {
   @EventListener(ApplicationReadyEvent.class)
-  public void scheduleStartupLoad() { executor.schedule(this::poll, 5, SECONDS); }
+  public void scheduleKickoffLoad() { executor.schedule(this::poll, 5, SECONDS); }
   @Override
   public void onApplicationEvent(ContextRefreshedEvent event) { warmUp(); }
   @EventListener

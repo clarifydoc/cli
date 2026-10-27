@@ -398,8 +398,8 @@ describe("symbol-linker — typed receivers", () => {
     const returning = (name: string, returnType: string | null, line = 5, calls: CallInfo[] = []) =>
       ({ ...method(name, calls, [], line), returnType });
     const domain = () => [
-      file("app/Choice.java", [cls("Choice", { methods: [returning("getTheCase", "Case", 4), returning("getOwner", "Optional<Person>", 8)] })], { language: "java" }),
-      file("app/Case.java", [cls("Case", { methods: [returning("getCaseState", "CaseState", 6), returning("getId", "Long", 9)] })], { language: "java" }),
+      file("app/Choice.java", [cls("Choice", { methods: [returning("getTheFixture", "Case", 4), returning("getOwner", "Optional<Person>", 8)] })], { language: "java" }),
+      file("app/Case.java", [cls("Case", { methods: [returning("getFixtureState", "FixtureState", 6), returning("getId", "Long", 9)] })], { language: "java" }),
       file("app/Person.java", [cls("Person", { methods: [returning("getName", "String", 3)] })], { language: "java" }),
     ];
     const caller = (calls: CallInfo[], extra: { methods?: ReturnType<typeof method>[]; params?: ParamInfo[] } = {}) =>
@@ -408,12 +408,12 @@ describe("symbol-linker — typed receivers", () => {
       })], { language: "java" });
 
     it("follows a getter chain hop by hop", () => {
-      const links = buildSymbolLinks([...domain(), caller([call("choice.getTheCase().getCaseState")])]);
-      expect(callsFrom(links, "web/Action.java").map((l) => [l.targetSymbol, l.strategy])).toEqual([["Case.getCaseState", "injection"]]);
+      const links = buildSymbolLinks([...domain(), caller([call("choice.getTheFixture().getFixtureState")])]);
+      expect(callsFrom(links, "web/Action.java").map((l) => [l.targetSymbol, l.strategy])).toEqual([["Case.getFixtureState", "injection"]]);
     });
 
     it("keeps arguments that contain dots inside their call", () => {
-      const links = buildSymbolLinks([...domain(), caller([call("choice.getTheCase( other.getX().y ).getId")])]);
+      const links = buildSymbolLinks([...domain(), caller([call("choice.getTheFixture( other.getX().y ).getId")])]);
       expect(callsFrom(links, "web/Action.java").map((l) => l.targetSymbol)).toEqual(["Case.getId"]);
     });
 
@@ -423,8 +423,8 @@ describe("symbol-linker — typed receivers", () => {
     });
 
     it("starts from a constructed instance", () => {
-      const links = buildSymbolLinks([...domain(), caller([call("new Case(a.b).getId"), call("new app.Case().getCaseState")])]);
-      expect(callsFrom(links, "web/Action.java").map((l) => l.targetSymbol)).toEqual(["Case.getId", "Case.getCaseState"]);
+      const links = buildSymbolLinks([...domain(), caller([call("new Case(a.b).getId"), call("new app.Case().getFixtureState")])]);
+      expect(callsFrom(links, "web/Action.java").map((l) => l.targetSymbol)).toEqual(["Case.getId", "Case.getFixtureState"]);
     });
 
     it("stays on the receiver's class through a fluent `$this` / `static` return", () => {
@@ -447,16 +447,16 @@ describe("symbol-linker — typed receivers", () => {
           methods: [{ ...method("run", calls, [param("choice", "Choice")]), localTypes } as ReturnType<typeof method>],
         })], { language: "java" });
       const links = buildSymbolLinks([...domain(), withLocals(
-        [call("theCase.getCaseState"), call("again.getId"), call("loop.getId")],
+        [call("theFixture.getFixtureState"), call("again.getId"), call("loop.getId")],
         [
-          { name: "theCase", type: "", from: "choice.getTheCase()" },
+          { name: "theFixture", type: "", from: "choice.getTheFixture()" },
           // A local initialized from another such local.
-          { name: "again", type: "", from: "theCase.self()" },
+          { name: "again", type: "", from: "theFixture.self()" },
           { name: "loop", type: "", from: "loop.next()" },
         ],
       ), file("app/Decoy.java", [cls("Decoy", { methods: [returning("getId", "Long", 3)] })], { language: "java" })]);
       const out = callsFrom(links, "web/Action.java");
-      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["theCase.getCaseState", "Case.getCaseState"]]);
+      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["theFixture.getFixtureState", "Case.getFixtureState"]]);
     });
 
     it("types a local initialized in several branches only when every call returns the same class", () => {
@@ -497,11 +497,11 @@ describe("symbol-linker — typed receivers", () => {
 
     it("keeps a reassigned parameter's declared type when the reassigning call states none", () => {
       const svc = file("web/Action.java", [cls("Action", {
-        methods: [{ ...method("run", [call("choice.getTheCase")], [param("choice", "Choice")]),
+        methods: [{ ...method("run", [call("choice.getTheFixture")], [param("choice", "Choice")]),
           localTypes: [{ name: "choice", type: "", from: "this.fallback()" }] } as ReturnType<typeof method>],
       })], { language: "java" });
-      const decoy = file("app/Other.java", [cls("Other", { methods: [returning("getTheCase", "Case", 3)] })], { language: "java" });
-      expect(callsFrom(buildSymbolLinks([...domain(), decoy, svc]), "web/Action.java").map((l) => l.targetSymbol)).toEqual(["Choice.getTheCase"]);
+      const decoy = file("app/Other.java", [cls("Other", { methods: [returning("getTheFixture", "Case", 3)] })], { language: "java" });
+      expect(callsFrom(buildSymbolLinks([...domain(), decoy, svc]), "web/Action.java").map((l) => l.targetSymbol)).toEqual(["Choice.getTheFixture"]);
     });
 
     it("refuses a hop it cannot type: no return type, a container, overloads that disagree, an index", () => {
@@ -509,7 +509,7 @@ describe("symbol-linker — typed receivers", () => {
       const links = buildSymbolLinks([...domain(), overloaded, caller([
         call("choice.getOwner().getName"),
         call("repo.find(1).getId"),
-        call("choice.getTheCase().getCaseState()[0].getId"),
+        call("choice.getTheFixture().getFixtureState()[0].getId"),
         call("choice.unknown().getId"),
       ], { params: [param("choice", "Choice"), param("repo", "Repo")] })]);
       expect(callsFrom(links, "web/Action.java")).toEqual([]);
@@ -897,19 +897,19 @@ describe("symbol-linker — structural interfaces", () => {
 describe("spec join to an implementing class method (generated interface absent)", () => {
   it("joins a WSDL operation to the method of the class implementing its portType", () => {
     const wsdl = {
-      ...file("ws/IntegrationPropertyService.wsdl", [], { language: "wsdl" }),
+      ...file("ws/FixtureFeedService.wsdl", [], { language: "wsdl" }),
       routes: [
-        { path: "/getNoarkIntegrationParameters", httpMethod: null, kind: "api", handler: "getNoarkIntegrationParameters", calls: [], middleware: [], line: 88, contract: { type: "IntegrationPropertyServicePort", method: "getNoarkIntegrationParameters" } },
+        { path: "/getLeagueIntegrationParameters", httpMethod: null, kind: "api", handler: "getLeagueIntegrationParameters", calls: [], middleware: [], line: 88, contract: { type: "FixtureFeedServicePort", method: "getLeagueIntegrationParameters" } },
       ],
     } as unknown as FileAnalysis;
-    const impl = file("src/IntegrationPropertyServiceImpl.java", [
-      cls("IntegrationPropertyServiceImpl", { implements: ["IntegrationPropertyServicePort"], methods: [method("getNoarkIntegrationParameters", [], [], 68)] }),
+    const impl = file("src/FixtureFeedServiceImpl.java", [
+      cls("FixtureFeedServiceImpl", { implements: ["FixtureFeedServicePort"], methods: [method("getLeagueIntegrationParameters", [], [], 68)] }),
     ], { language: "java" });
     // Another class with the same method name, implementing something else: the implementor wins.
-    const other = file("src/LegacyFacade.java", [cls("LegacyFacade", { methods: [method("getNoarkIntegrationParameters", [], [], 12)] })], { language: "java" });
+    const other = file("src/LegacyFacade.java", [cls("LegacyFacade", { methods: [method("getLeagueIntegrationParameters", [], [], 12)] })], { language: "java" });
     const links = buildSymbolLinks([wsdl, impl, other]).filter((l) => l.strategy === "spec-join");
     expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
-      "route:USE /getNoarkIntegrationParameters -> src/IntegrationPropertyServiceImpl.java::IntegrationPropertyServiceImpl.getNoarkIntegrationParameters",
+      "route:USE /getLeagueIntegrationParameters -> src/FixtureFeedServiceImpl.java::FixtureFeedServiceImpl.getLeagueIntegrationParameters",
     ]);
   });
 });

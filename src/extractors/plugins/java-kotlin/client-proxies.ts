@@ -5,21 +5,21 @@ import type { HttpClientRegistration } from "../../../types/analysis.js";
  * REST client proxies built in Java code — an API interface handed to a proxy
  * factory, every call on the result an HTTP request:
  *
- *   RestClient.createClient(PersonApi.class, url)           (in-house wrappers alike)
- *   JAXRSClientFactory.create(url, PersonApi.class)         (CXF)
- *   WebResourceFactory.newResource(PersonApi.class, target) (Jersey)
- *   target.proxy(PersonApi.class)                           (RESTEasy)
- *   RestClientBuilder.newBuilder().baseUri(u).build(PersonApi.class)  (MicroProfile)
- *   Feign.builder().target(PersonApi.class, url)            (Feign)
+ *   RestClient.createClient(PlayerApi.class, url)           (in-house wrappers alike)
+ *   JAXRSClientFactory.create(url, PlayerApi.class)         (CXF)
+ *   WebResourceFactory.newResource(PlayerApi.class, target) (Jersey)
+ *   target.proxy(PlayerApi.class)                           (RESTEasy)
+ *   RestClientBuilder.newBuilder().baseUri(u).build(PlayerApi.class)  (MicroProfile)
+ *   Feign.builder().target(PlayerApi.class, url)            (Feign)
  *   service.getPort(PersonPortType.class)                   (JAX-WS, in a file using javax/jakarta.xml.ws)
  *
  * Only those shapes, each handed exactly one type literal (`X.class`) — a
  * Hibernate `session.createCriteria(X.class)` or a domain
- * `ApplicationFactory.create(X.class)` is not a proxy. An in-house wrapper
- * (`EosRestClientFactory.create(X.class, url)`) counts when it is named like a
+ * `SquadFactory.create(X.class)` is not a proxy. An in-house wrapper
+ * (`LeagueRestClientFactory.create(X.class, url)`) counts when it is named like a
  * REST client factory AND handed an address, as does a client builder
- * (`Framework.clientFor(PersonApi.class, url).build()`) or a method named for the proxy it makes
- * (`webClientUtils.createWebClientProxy(PersonApi.class, url)`) handed one. Registered by the type's fully
+ * (`Framework.clientFor(PlayerApi.class, url).build()`) or a method named for the proxy it makes
+ * (`leagueClientUtils.createWebClientProxy(PlayerApi.class, url)`) handed one. Registered by the type's fully
  * qualified name, from the file's imports or package. A method of the file
  * that hands its `Class<T>` parameter to one of those factories
  * (`<T> T createClient(Class<T> type, Context c) { … JAXRSClientFactory.fromClient(client, type, true) … }`)
@@ -87,7 +87,7 @@ export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpCl
     if (literals.length !== 1) return;
     const known = isKnown(name, object);
     const addressed = args.some((a) => a.type !== "class_literal" && ADDRESS_ARG.test(a.text));
-    // A factory method named for what it makes (`createWebClientProxy(PersonApi.class, url)`) needs no receiver name.
+    // A factory method named for what it makes (`createWebClientProxy(PlayerApi.class, url)`) needs no receiver name.
     const wrapper = addressed && ((/^create\w*$/.test(name) && WRAPPER_RECEIVER.test(object)) || /^(?:clientFor|create\w*Proxy)$/.test(name));
     if (!known && !wrapper) return;
     const type = literals[0]!.text.replace(/\.class$/, "").trim();

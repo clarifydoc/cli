@@ -62,10 +62,10 @@ function bareName(name: string | null): string | null {
 
 /**
  * Mark classes that transitively inherit from a known entity as entities too,
- * across files. Per-file extraction can't see that `Employee < IdaModel` is an
- * ActiveRecord model when `IdaModel` lives in another file, nor resolve a
- * cross-file STI chain (`SupervisionTimeDutyChangeRequest < TimeDutyChangeRequest
- * < ChangeRequest < IdaModel`). This project-level fixpoint closes both gaps and
+ * across files. Per-file extraction can't see that `Player < LeagueModel` is an
+ * ActiveRecord model when `LeagueModel` lives in another file, nor resolve a
+ * cross-file STI chain (`YouthShortLoanRequest < ShortLoanRequest
+ * < TransferRequest < LeagueModel`). This project-level fixpoint closes both gaps and
  * is language-agnostic (also helps JPA/EF/Sequel STI). It only ADDS the
  * `["entity", <orm>]` decorators — relations are still per-file.
  */
@@ -127,7 +127,7 @@ export function reconcileEntityInheritance(analyses: FileAnalysis[]): void {
  * subclass IS-A its parent and shares the parent's table AND associations. The
  * engine already copies the shared COLUMNS down (each plugin's schema join), but
  * the relations stay on the base — so every subclass node renders as an
- * unconnected island in the Data Model view even though `ChangeRequest`'s
+ * unconnected island in the Data Model view even though `TransferRequest`'s
  * `belongs_to :employee` applies to each of its STI children. This closes that
  * gap symmetrically with the column inheritance: for every entity that
  * (transitively) extends another entity, re-home a copy of each ancestor
@@ -570,7 +570,7 @@ export function linkEntityModels(entityGraph: EntityGraph, classGraph: ClassGrap
  *  keying used by `attributeDataAccessToSymbols` so the two stay in sync. */
 /**
  * Case-insensitive match keys for an entity/table name: the name itself, a
- * singular variant, and — because a `CustomerEntity` class models the
+ * singular variant, and — because a `SponsorEntity` class models the
  * `customer` table while repository-derived access names drop the suffix —
  * the `entity`-suffix-stripped variants (and `entity`-prefix-stripped, for the
  * `EntityCustomer` convention). Shared by node dedupe here and by

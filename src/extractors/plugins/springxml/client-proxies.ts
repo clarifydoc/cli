@@ -5,13 +5,13 @@ import type { CallBaseRef, HttpClientRegistration } from "../../../types/analysi
  * services reach each other. A proxy implements an API interface and turns
  * each method call into the HTTP request the interface's annotations declare:
  *
- *   <bean id="personApi" class="com.acme.RestClientFactory" factory-method="create">
- *     <constructor-arg><value type="java.lang.Class">com.acme.api.PersonApi</value></constructor-arg>
- *     <constructor-arg><value type="java.lang.String">${person.service.url}</value></constructor-arg>
+ *   <bean id="playerApi" class="com.acme.RestClientFactory" factory-method="create">
+ *     <constructor-arg><value type="java.lang.Class">com.acme.api.PlayerApi</value></constructor-arg>
+ *     <constructor-arg><value type="java.lang.String">${player.service.url}</value></constructor-arg>
  *   </bean>
- *   <jaxrs:client id="personApi" serviceClass="com.acme.api.PersonApi" address="${person.service.url}"/>
+ *   <jaxrs:client id="playerApi" serviceClass="com.acme.api.PlayerApi" address="${player.service.url}"/>
  *   <bean class="org.apache.cxf.jaxrs.client.JAXRSClientFactoryBean">
- *     <property name="serviceClass" value="com.acme.api.PersonApi"/> <property name="address" value="…"/>
+ *     <property name="serviceClass" value="com.acme.api.PlayerApi"/> <property name="address" value="…"/>
  *   </bean>
  *
  * A factory bean counts when it is handed exactly ONE type (`java.lang.Class`)
