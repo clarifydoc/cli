@@ -4365,18 +4365,23 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
   // A module reaches another module's class only through an import (`importsBindNames`).
   const reachable = (f: string): boolean => !source || !unboundAcrossModules(ctx, source, typeName, f);
+  // The type's name means its declaration, not a part that only extends it (a Rust `impl` block elsewhere).
+  const declaredFirst = (fs: string[]): string[] => {
+    const declared = fs.filter((f) => !declOf(f, typeName)?.extension);
+    return declared.length > 0 ? declared : fs;
+  };
   const own = ctx.classByProject.get(`${projectId}\0${typeName}`);
   if (own) {
-    const ownFiles = own.files.filter(reachable);
+    const ownFiles = declaredFirst(own.files.filter(reachable));
     const pick = ownFiles.length === 1 ? ownFiles[0]! : ownFiles.length > 1 ? pickDefinition(typeName, ownFiles, sourceFile, declOf, languageOf) : null;
     if (pick) return pick;
   }
   // Elsewhere in the type space: a unique definition — or one type split
   // across files of a single directory.
   const srcLang = ctx.languageOf.get(sourceFile) ?? "";
-  const files = (ctx.classFiles.get(typeName) ?? []).filter((f) =>
+  const files = declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
     sameTypeSpace(sourceFile, srcLang, f, ctx.languageOf.get(f) ?? "") && reachable(f),
-  );
+  ));
   if (files.length === 1) return files[0]!;
   if (files.length > 1 && new Set(files.map((f) => f.slice(0, f.lastIndexOf("/") + 1))).size === 1) {
     return pickDefinition(typeName, files, sourceFile, declOf, languageOf);
@@ -4515,6 +4520,10 @@ function linkThroughPoint(
   }
   const ext = extensionMethodFor(ctx, analysis, sourceFile, point.typeName, point.typeFile, method);
   if (ext) return mkLink(ext.file, ext.symbol, ext.line, "INFERRED", "injection");
+  const viaInterface = point.typeFile ? implementedMethod(ctx, baseChain(ctx, point.typeName, point.typeFile), method) : null;
+  if (viaInterface) {
+    return Object.assign(mkLink(viaInterface.file, viaInterface.symbol, viaInterface.line, "INFERRED", "injection"), { viaType: point.typeName, viaTypeFile: point.typeFile });
+  }
   return null;
 }
 
@@ -4772,6 +4781,52 @@ function findMethodInClass(
   return null;
 }
 
+/** A class and the classes it extends, nearest first. */
+function baseChain(ctx: LinkContext, className: string, classFile: string): Array<{ name: string; file: string }> {
+  const out: Array<{ name: string; file: string }> = [];
+  let name = className;
+  let file = classFile;
+  for (let depth = 0; depth < MAX_BASE_DEPTH && !out.some((c) => c.name === name && c.file === file); depth++) {
+    out.push({ name, file });
+    const base = bareClassName(ctx.classAt.get(memberKey(file, name))?.extends ?? null);
+    const baseFile = base ? locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root") : null;
+    if (!base || !baseFile) break;
+    name = base;
+    file = baseFile;
+  }
+  return out;
+}
+
+/**
+ * A method none of the classes define but an interface they implement declares — a Rust trait's default
+ * method (`impl TypedPath for UsersShow {}`, `#[derive(TypedPath)]`), a Java default method, or the contract a
+ * class meets through a base outside the project. Every part of each class counts (its declaration and the
+ * `extension` parts that implement interfaces for it). One such method, or none. The last resort of a typed
+ * receiver: an abstract base that only declares the member dispatches to the subclass below it first.
+ */
+function implementedMethod(
+  ctx: LinkContext,
+  classes: ReadonlyArray<{ name: string; file: string }>,
+  method: string,
+): { file: string; symbol: string; line: number } | null {
+  const hits = new Map<string, { file: string; symbol: string; line: number }>();
+  for (const { name, file } of classes) {
+    const lang = ctx.languageOf.get(file) ?? "";
+    const parts = (ctx.classFiles.get(name) ?? []).filter((f) =>
+      f === file || (ctx.classAt.get(memberKey(f, name))?.extension === true && sameTypeSpace(file, lang, f, ctx.languageOf.get(f) ?? "")));
+    for (const part of parts) {
+      for (const written of ctx.classAt.get(memberKey(part, name))?.implements ?? []) {
+        const iface = bareClassName(written);
+        const ifaceFile = iface ? locateClass(ctx, iface, part, ctx.projectOf.get(part) ?? "root") : null;
+        if (!iface || !ifaceFile || ctx.classAt.get(memberKey(ifaceFile, iface))?.kind !== "interface") continue;
+        const def = symbolIn(ctx, ifaceFile, `${iface}.${method}`);
+        if (def) hits.set(`${ifaceFile}\0${def.name}`, { file: ifaceFile, symbol: def.name, line: def.line });
+      }
+    }
+  }
+  return hits.size === 1 ? [...hits.values()][0]! : null;
+}
+
 /**
  * C3 linearization of a class whose bases are all classes (`class D(B, C)`):
  * the class, then its bases merged so each comes before its own bases and
@@ -4855,7 +4910,8 @@ function promotedMethod(
  * `Class.method` defined in ANOTHER file than the class declaration, where the
  * language puts it there: a Go method beside its type in the same package
  * directory, a C# partial class's other half (a file that declares the same
- * class in the same sub-project). Unique-or-nothing.
+ * class in the same sub-project), an `extension` part implementing an
+ * interface for the type in any sub-project. Unique-or-nothing.
  */
 function methodBesideClass(
   ctx: LinkContext,
@@ -4874,7 +4930,11 @@ function methodBesideClass(
   const hits = files.filter((f) => {
     if (f === classFile || extensionFamily(f) !== family) return false;
     if (f.slice(0, f.lastIndexOf("/") + 1) === dir) return true;
-    return ctx.projectOf.get(f) === projectId && ctx.classAt.has(memberKey(f, className));
+    const part = ctx.classAt.get(memberKey(f, className));
+    if (!part) return false;
+    // A part implementing an interface for the type may come from any sub-project (Rust `impl Trait for T` in
+    // the crate that defines `Trait`).
+    return ctx.projectOf.get(f) === projectId || (part.extension === true && part.implements.length > 0);
   });
   if (hits.length !== 1) return null;
   const def = symbolIn(ctx, hits[0]!, qualified);

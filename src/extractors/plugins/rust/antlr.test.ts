@@ -111,7 +111,8 @@ describe("Rust through ANTLR", () => {
  * chain from its first call (`args.iter().position`, `Router.new().route()`), which the linker types through
  * declared return types. The patterns name none of these on one line — a bare name after `)` would let any
  * same-named function capture it — and on a chain rustfmt wraps they read each step as a bare method, one per
- * line (`.bind(id)`, `.fetch_all(pool)`). A method on a tuple field (`a.1.cmp(…)`) has no name to give.
+ * line (`.bind(id)`, `.fetch_all(pool)`). A method on a struct literal is the type's (`ClubShow { id }.with_query()`);
+ * a method on a tuple field (`a.1.cmp(…)`) has no name to give.
  */
 const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
   "test-fixtures/sample-dead-code/native/src/old_parser.rs": {
@@ -133,6 +134,9 @@ const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
     get_car: [["bind", "fetch_optional"], []],
     create_car: [["bind", "execute"], []],
     delete_car: [["bind", "execute"], []],
+  },
+  "test-fixtures/sample-rust-traits/app/src/main.rs": {
+    main: [["with_query"], ["ClubShow.with_query"]],
   },
   "test-fixtures/sample-rust-cli/src/config.rs": {
     "Config.from_args": [["unwrap_or_else", "position", "and_then"], ["args.get().map().unwrap_or_else", "args.iter().position", "args.iter().position().and_then", "args.iter().any"]],

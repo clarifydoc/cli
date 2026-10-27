@@ -1165,6 +1165,13 @@ export interface ClassInfo {
    * types, whose methods are promoted.
    */
   embeds?: string[];
+  /**
+   * This part only adds members and conformances to a type declared elsewhere — a Rust `impl` block for a type
+   * the file does not declare (`impl RouterExt for Router`). The type's name means its declaration; members
+   * are looked up in its parts too, and a part that implements an interface may sit in another sub-project
+   * (Rust lets a crate implement its own trait for any type).
+   */
+  extension?: true;
 }
 
 /** A non-auth filter on a route (`RouteInfo.filters`). */

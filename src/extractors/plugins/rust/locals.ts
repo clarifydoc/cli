@@ -100,6 +100,12 @@ function initializerType(rhs: string): string | null {
   if (ctor && closesAtEndOrNever(ctor[2]!, "(", ")")) return ctor[1]!;
   const lit = /^((?:[A-Za-z_]\w*::)*[A-Z]\w*)\s*\{(.*)$/s.exec(text);
   if (lit && closesAtEndOrNever(lit[2]!, "{", "}")) return lit[1]!;
+  // A tuple struct built by its name (`Html(body)`), a unit struct (`Squad`), an enum variant (`Status::Active`
+  // is a `Status`).
+  const tuple = /^((?:[a-z_]\w*::)*[A-Z]\w*)\s*\((.*)$/s.exec(text);
+  if (tuple && closesAtEndOrNever(tuple[2]!, "(", ")")) return tuple[1]!;
+  const unit = /^((?:[a-z_]\w*::)*[A-Z]\w*)(?:::[A-Z]\w*)?$/.exec(text);
+  if (unit) return unit[1]!;
   return null;
 }
 

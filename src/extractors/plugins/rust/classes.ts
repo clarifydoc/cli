@@ -20,11 +20,14 @@ import { blockEndLine, extractClassesWithSpec, splitTopLevel, type RegexLangSpec
  *   can only reach the trait's methods. `Self` in a method stands for the
  *   impl's type.
  * - a one-line struct body (`struct S { repo: PgRepo }`) has its fields read.
+ * - a stub is an `extension` of the type declared elsewhere, and a derived trait (`#[derive(Serialize, TypedPath)]`)
+ *   is implemented: the derive writes the `impl`.
  */
 export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
   const classes = extractClassesWithSpec(lines, spec);
   for (const cls of classes) {
     if (cls.kind === "interface") continue;
+    for (const trait of derivedTraits(cls.decorators)) if (!cls.implements.includes(trait)) cls.implements.push(trait);
     if (cls.line === cls.endLine && cls.properties.length === 0) readInlineFields(lines[cls.line - 1] ?? "", cls, spec);
     const bounds = genericBounds(declarationHead(lines, cls.line - 1));
     if (bounds.size > 0) for (const p of cls.properties) if (p.type) p.type = substitute(p.type, bounds);
@@ -92,6 +95,7 @@ function newStub(name: string, line: number, endLine: number, stubs: Map<string,
     isExported: true,
     line,
     endLine,
+    extension: true,
   };
   stubs.set(name, stub);
   return stub;
@@ -278,4 +282,18 @@ function readInlineFields(line: string, cls: ClassInfo, spec: RegexLangSpec): vo
       if (prop) { cls.properties.push(prop); break; }
     }
   }
+}
+
+/** The traits `#[derive(…)]` attributes implement, by their last path segment (`serde::Serialize` → `Serialize`). */
+function derivedTraits(decorators: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const d of decorators) {
+    const m = /^derive\s*\(([\s\S]*)\)\s*$/.exec(d.trim());
+    if (!m) continue;
+    for (const part of splitTopLevel(m[1]!)) {
+      const name = part.trim().split("::").pop()?.trim();
+      if (name && /^[A-Za-z_]\w*$/.test(name)) out.push(name);
+    }
+  }
+  return out;
 }

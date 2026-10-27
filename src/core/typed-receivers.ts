@@ -66,10 +66,21 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   }
 }
 
-/** `repo.find` / `this.repo.find` / `self.repo.find` with `repo` in scope. */
+/**
+ * `repo.find` / `this.repo.find` / `self.repo.find` with `repo` in scope; and a method on a chain whose head is
+ * typed — a type's function (`Season.named().close`) or a member of a name in scope (`repo.find().close`) —
+ * which the linker types step by step through declared return types.
+ */
 function receiverIn(callName: string, scope: ReadonlySet<string>, fold: (n: string) => string): boolean {
   const parts = callName.split(".");
   if (parts.length < 2) return false;
+  const call = parts.findIndex((p) => p.endsWith("()"));
+  if (call >= 0 && call < parts.length - 1) {
+    const head = parts.slice(0, call + 1).map((p) => p.replace(/\(\)$/, ""));
+    if (head.length >= 2 && /^[A-Z]/.test(head[0]!)) return true;
+    const names = head.length >= 2 && SELF_HEADS.has(head[0]!) ? head.slice(1) : head;
+    return names.length === 2 && scope.has(fold(names[0]!));
+  }
   // `x?.find`, `x!.find`, `x!!.find` and a line-broken chain all call through `x`.
   let receiver = parts.slice(0, -1).map((seg) => seg.replace(/\s+/g, "").replace(/(?:\?|!+)$/, ""));
   if (receiver.length === 2 && SELF_HEADS.has(receiver[0]!)) receiver = receiver.slice(1);

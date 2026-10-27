@@ -20,6 +20,12 @@ recorded in the git history only.
   so the call resolves through declared types instead of by bare name, however long the chain; a macro's arguments
   are parsed as code where they are expressions (and read off their tokens where not); functions inside item macros (`cfg_if!`, `cfg_server! { … }`) and `macro_rules!` templates are read as the
   expansion would read them. Match-arm patterns (`Vote(v) =>`) and function-typed fields are no longer calls.
+- **Rust trait and impl links.** A method a trait declares and another crate implements resolves to that
+  implementation (`ClubShow.with_query` → `MatchPath.with_query` through `impl<T: Route> WithQuery for T`), and a
+  trait's default method to the trait. An `impl` block in another crate adds methods to the type without becoming its
+  declaration, so `Fixtures::new()` still resolves to the crate that declares `Fixtures`. `#[derive(…)]` traits count as
+  implemented. A method on a typed chain (`Season::named().close()`, `w.Header().Set`) is kept and typed step by step
+  instead of being dropped as noise.
 - **Go and Lua are read by a parser.** The functions and calls of Go and Lua files come from their ANTLR4 grammars
   (antlr4ng) instead of line patterns: exact function extents (a Lua function ends at its `end`), calls written over
   several lines or without parentheses (`require "x"`, `db.Get[User](ctx)`), and nothing read from comments, strings

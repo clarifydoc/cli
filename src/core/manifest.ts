@@ -12,11 +12,11 @@ import { featureStamp } from "./feature-flags.js";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.570.0";
+export const EXTRACTOR_VERSION = "1.571.0";
 
 /**
  * What a cache written by this run is stamped with: `EXTRACTOR_VERSION`, and
- * the features switched away from their defaults (`1.570.0+-antlr`), so a run
+ * the features switched away from their defaults (`1.571.0+-antlr`), so a run
  * reading files another way re-extracts instead of reusing its JSON.
  */
 export function extractorStamp(): string {
