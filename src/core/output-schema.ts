@@ -48,6 +48,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   pathReferences: "optional",
   events: "required",
   screens: "required",
+  uiComponents: "optional",
   extractorWarnings: "optional",
   complexities: "optional",
   securityIssues: "optional",

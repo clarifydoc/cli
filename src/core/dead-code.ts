@@ -122,6 +122,7 @@ export function dropVendoredFacts(analyses: FileAnalysis[]): Set<string> {
     vendored.add(a.filePath);
     a.routes = [];
     a.screens = [];
+    delete a.uiComponents;
     a.dataSources = [];
     a.dataMutations = [];
     if (a.entityRelations) a.entityRelations = [];

@@ -422,6 +422,14 @@ export interface FileAnalysis {
   pathReferences?: string[];
   events: EventInfo[];
   screens: ScreenInfo[];
+  /**
+   * The UI components the file declares (Flutter widget classes, and objects
+   * whose code navigates), each with the components of OTHER files it builds
+   * by name and where it navigates — the components of its own file it builds
+   * already folded in. Core gives a screen the navigation of the components it
+   * builds across files (`core/screen-navigation.ts`). Omitted when none.
+   */
+  uiComponents?: UiComponentInfo[];
   /** Schema-validation warnings produced by validateFileAnalysis(). Omitted when empty. */
   extractorWarnings?: ExtractorWarning[];
   /**
@@ -2270,6 +2278,26 @@ export interface ScreenComponentInfo {
    *  `v-for`). Drives the loop badge in the screen's component tree. */
   repeated?: boolean;
   line: number;
+}
+
+/**
+ * A UI component a file declares, as far as screen navigation needs it: the
+ * names it constructs that its own file does not declare (`SettingsTile(…)`,
+ * resolved by core against the components other files declare) and the
+ * screens it navigates to, written as `ScreenInfo.navigatesTo` writes them.
+ */
+export interface UiComponentInfo {
+  name: string;
+  line: number;
+  builds: string[];
+  navigatesTo: string[];
+  /** For a name it builds: the named arguments every construction of it passes (`Timeline(appBar: …)`). */
+  passes?: Record<string, string[]>;
+  /**
+   * Parameter → the names its default value builds (`{this.appBar = const MainAppBar()}`):
+   * built only when the builder does not pass that parameter. Not in `builds`.
+   */
+  defaults?: Record<string, string[]>;
 }
 
 export interface ScreenInfo {

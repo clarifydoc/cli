@@ -5,7 +5,7 @@ import type {
   DataSourceInfo,
   ParamInfo,
 } from "../../../types/analysis.js";
-import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo } from "../../../types/analysis.js";
+import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo, UiComponentInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
@@ -727,6 +727,13 @@ const FLUTTER_NAV_RE = [
 ];
 
 /**
+ * Framework widgets a dialog or sheet builder returns first (`AlertDialog`, `MultiBlocProvider(…)`
+ * around the app's own dialog, a bloc it creates): never a screen of the app.
+ */
+const FLUTTER_FRAMEWORK_TARGET_RE =
+  /^(?:(?:Cupertino)?(?:Alert|Simple|About)?Dialog|CupertinoActionSheet|CupertinoPopupSurface|DatePickerDialog|TimePickerDialog|Material|Container|Padding|SafeArea|SizedBox|Center|Align|Column|Row|Stack|Wrap|ListView|SingleChildScrollView|DraggableScrollableSheet|BottomSheet|AnimatedBuilder|StatefulBuilder|LayoutBuilder|Builder|Consumer|ProviderScope|UncontrolledProviderScope|(?:Multi)?(?:Bloc|Repository)Provider|BlocBuilder|BlocConsumer|BlocListener|\w+(?:Bloc|Cubit))$/;
+
+/**
  * An auto_route route class names its page: `AlbumRoute` is generated for `AlbumPage`
  * (`replaceInRouteName: 'Page|Screen,Route'`, the convention). Any other target is the screen itself.
  */
@@ -738,21 +745,115 @@ const screenOfTarget = (target: string): string => (/^[A-Z]\w+Route$/.test(targe
  * A `State<X>` class belongs to the screen `X` — its body is scanned for the
  * screen's navigation. `components` stay empty: the widget tree is code, not a
  * designer file; the interactive elements carry the handlers.
+ *
+ * Beside the screens, the file's UI components (`FileAnalysis.uiComponents`):
+ * every public widget, every screen, and every other public class whose code
+ * navigates (an action a sheet lists), with the names of other files it builds
+ * and where it navigates — core joins them across files.
  */
 function extractFlutterScreens(lines: string[], filePath: string, classes: ClassInfo[]): ScreenInfo[] {
+  return flutterUi(lines, filePath, classes).screens;
+}
+
+interface FlutterUi {
+  screens: ScreenInfo[];
+  components: UiComponentInfo[];
+}
+
+/** Per file (the `lines` array the extractor hands both hooks): screens and components are read in one pass. */
+const flutterUiMemo = new WeakMap<string[], FlutterUi>();
+
+/** `SettingsTile(`, `const SettingsTile(`, `SettingsTile<Car>(`, `SettingsTile.compact(`: a name the body constructs. */
+const FLUTTER_BUILD_RE = /(?<![\w$.])(_*[A-Z][\w$]*)(?:\.[a-z]\w*)?\s*(?:<[^>()]*>)?\(/g;
+
+/** The text inside the bracket at `open` and its match (string literals skipped), or null. */
+function bracketedText(text: string, open: number): string | null {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if ((ch === ")" || ch === "]" || ch === "}") && --depth === 0) return text.slice(open + 1, i);
+  }
+  return null;
+}
+
+/** The named arguments an argument list passes at its top level: `appBar: x, title: y` → appBar, title. */
+function namedArgs(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  const take = (segment: string) => {
+    const m = /^\s*([A-Za-z_]\w*)\s*:(?!:)/.exec(segment);
+    if (m) out.push(m[1]!);
+  };
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i]!;
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      take(args.slice(start, i));
+      start = i + 1;
+    }
+  }
+  take(args.slice(start));
+  return out;
+}
+
+/**
+ * A widget's constructor parameters whose default value builds a widget
+ * (`{this.appBar = const MainAppBar(), …}`): parameter → the names built, and
+ * the spans of the parameter lists in `body`.
+ */
+function constructorDefaults(body: string, name: string): { defaults: Map<string, Set<string>>; ranges: Array<[number, number]> } {
+  const defaults = new Map<string, Set<string>>();
+  const ranges: Array<[number, number]> = [];
+  if (!body.includes("=")) return { defaults, ranges };
+  const ctorRe = new RegExp(`(?<![\\w$.])(?:const\\s+|factory\\s+)?${name.replace(/\$/g, "\\$")}(?:\\.\\w+)?\\s*\\(`, "g");
+  let c: RegExpExecArray | null;
+  while ((c = ctorRe.exec(body)) !== null) {
+    const open = c.index + c[0].length - 1;
+    const params = bracketedText(body, open);
+    if (params === null || !params.includes("=")) continue;
+    ranges.push([open, open + params.length + 1]);
+    for (const d of params.matchAll(/(?:\bthis\.|\bsuper\.)?\b([A-Za-z_]\w*)\s*=\s*(?:const\s+)?(_*[A-Z][\w$]*)(?:\.[a-z]\w*)?\s*(?:<[^>()]*>)?\(/g)) {
+      (defaults.get(d[1]!) ?? defaults.set(d[1]!, new Set()).get(d[1]!)!).add(d[2]!);
+    }
+  }
+  return { defaults, ranges };
+}
+
+function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): FlutterUi {
+  const memo = flutterUiMemo.get(lines);
+  if (memo) return memo;
   const screens: ScreenInfo[] = [];
+  const components: UiComponentInfo[] = [];
   const stateOf = new Map<string, ClassInfo>(); // screen class → its State class
   for (const cls of classes) {
-    // `extends State<GaragePage>` — the class row may keep the base without its type argument,
-    // or none when the header wraps (`class _GarageState⏎    extends State<GaragePage>`).
-    const m = cls.extends?.match(/^State<\s*([A-Za-z_$][\w$]*)/) ??
-      (!cls.extends || cls.extends === "State" ? /^[^{]*?\bextends\s+State\s*<\s*([A-Za-z_$][\w$]*)/.exec(lines.slice(cls.line - 1, cls.line + 2).join(" ")) : null);
+    // `extends State<GaragePage>` / `extends ConsumerState<GaragePage>` (Riverpod) — the class row may keep
+    // the base without its type argument, or none when the header wraps (`class _GarageState⏎    extends State<GaragePage>`).
+    const m = cls.extends?.match(/^(?:Consumer)?State<\s*([A-Za-z_$][\w$]*)/) ??
+      (!cls.extends || /^(?:Consumer)?State$/.test(cls.extends) ? /^[^{]*?\bextends\s+(?:Consumer)?State\s*<\s*([A-Za-z_$][\w$]*)/.exec(lines.slice(cls.line - 1, cls.line + 2).join(" ")) : null);
     if (m) stateOf.set(m[1]!, cls);
   }
+  const states = new Set(stateOf.values());
   const bodyOf = (cls: ClassInfo): string => lines.slice(cls.line - 1, cls.endLine).join("\n");
   // Every widget of the file, with the body its State adds: a screen navigates through the
   // widgets of its file it builds (`_AlbumCard(…)` whose `onTap` pushes a route) as well.
-  const widgets = new Map<string, { body: string; screen: boolean }>();
+  const widgets = new Map<string, { cls: ClassInfo; body: string; screen: boolean }>();
   for (const cls of classes) {
     const base = cls.extends?.replace(/<.*$/, "") ?? "";
     if (!FLUTTER_WIDGET_BASE_RE.test(base)) continue;
@@ -762,48 +863,119 @@ function extractFlutterScreens(lines: string[], filePath: string, classes: Class
     // Whether it is a screen is read off the widget's own body: a routed widget often wraps
     // another of its file whose State renders the `Scaffold`.
     const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(own);
-    widgets.set(cls.name, { body: own + (state ? "\n" + bodyOf(state) : ""), screen: annotated || scaffold || /(?:Page|Screen)$/.test(cls.name) });
+    widgets.set(cls.name, { cls, body: own + (state ? "\n" + bodyOf(state) : ""), screen: annotated || scaffold || /(?:Page|Screen)$/.test(cls.name) });
   }
-  const navigationOf = (body: string, self: string, into: Set<string>): void => {
+  /** Adds where `body` navigates to `into`; returns the names it shows as a dialog or route (opened, not built in place). */
+  const navigationOf = (body: string, self: string, into: Set<string>): Set<string> => {
+    const opened = new Set<string>();
     for (const re of FLUTTER_NAV_RE) {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) {
         const raw = m[1] ?? m[2];
-        const target = raw ? screenOfTarget(raw) : undefined;
-        if (target && target !== self) into.add(target);
+        if (!raw) continue;
+        opened.add(raw);
+        // `showDialog(… => AlertDialog(…))` opens a framework widget, no screen of the app.
+        if (FLUTTER_FRAMEWORK_TARGET_RE.test(raw)) continue;
+        const target = screenOfTarget(raw);
+        if (target !== self) into.add(target);
       }
     }
+    return opened;
+  };
+  // A widget's navigation and what it builds, through the file's other widgets it builds,
+  // transitively — never into a screen of the file, nor into what it opens as a dialog
+  // (whose own navigation is the dialog's). What its constructor builds as a parameter's
+  // default (`this.appBar = const MainAppBar()`) is built only when a builder leaves that
+  // parameter out: kept apart, with the named arguments each builder passes.
+  const declared = new Set(classes.map((c) => c.name));
+  const closure = (name: string, body: string) => {
+    const navigatesTo = new Set<string>();
+    const builds = new Set<string>();
+    const passes = new Map<string, Set<string>>();
+    const defaults = new Map<string, Set<string>>();
+    const seen = new Set([name]);
+    const queue: Array<{ body: string; self: string; passed: Set<string> | null }> = [{ body, self: name, passed: null }];
+    const argsAt = (text: string, m: RegExpExecArray): Set<string> => {
+      const args = bracketedText(text, m.index + m[0].length - 1);
+      return new Set(args ? namedArgs(args) : []);
+    };
+    const fold = (built: string, passed: Set<string> | null): boolean => {
+      const w = widgets.get(built);
+      if (!w) return false;
+      if (!seen.has(built)) {
+        seen.add(built);
+        if (!w.screen) queue.push({ body: w.body, self: built, passed });
+      }
+      return true;
+    };
+    const add = (built: string, named: Set<string>): void => {
+      if (declared.has(built) || built.startsWith("_") || /Route$/.test(built)) return;
+      builds.add(built);
+      const before = passes.get(built);
+      passes.set(built, before ? new Set([...before].filter((n) => named.has(n))) : named);
+    };
+    while (queue.length > 0) {
+      const next = queue.shift()!;
+      const opened = navigationOf(next.body, name, navigatesTo);
+      const ctor = constructorDefaults(next.body, next.self);
+      for (const [param, names] of ctor.defaults) {
+        for (const built of names) {
+          // The builder's own defaults are kept apart; a folded widget's are built unless its builder passes the parameter.
+          if (next.self === name) {
+            if (!widgets.has(built)) (defaults.get(param) ?? defaults.set(param, new Set()).get(param)!).add(built);
+          } else if (!next.passed?.has(param) && !fold(built, null)) add(built, new Set());
+        }
+      }
+      FLUTTER_BUILD_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = FLUTTER_BUILD_RE.exec(next.body)) !== null) {
+        const built = m[1]!;
+        if (opened.has(built)) continue;
+        if (ctor.ranges.some(([from, to]) => m!.index >= from && m!.index <= to)) continue;
+        const named = argsAt(next.body, m);
+        if (!fold(built, named)) add(built, named);
+      }
+    }
+    for (const [param, names] of defaults) for (const n of names) if (builds.has(n)) names.delete(n);
+    return { navigatesTo, builds, passes, defaults };
   };
   for (const cls of classes) {
     const own = widgets.get(cls.name);
-    if (!own?.screen) continue;
-    const navigatesTo = new Set<string>();
-    navigationOf(own.body, cls.name, navigatesTo);
-    // The file's other widgets this screen builds, transitively — never into another screen.
-    const seen = new Set([cls.name]);
-    const queue = [own.body];
-    while (queue.length > 0) {
-      const body = queue.shift()!;
-      for (const [name, w] of widgets) {
-        if (seen.has(name) || w.screen || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}\\s*(?:<[^>()]*>)?\\(`).test(body)) continue;
-        seen.add(name);
-        navigationOf(w.body, cls.name, navigatesTo);
-        queue.push(w.body);
+    if (own) {
+      const { navigatesTo, builds, passes, defaults } = closure(cls.name, own.body);
+      if (own.screen) {
+        screens.push({
+          name: cls.name,
+          formType: "FlutterPage",
+          caption: null,
+          dimensions: null,
+          components: [],
+          filePath,
+          routePath: null,
+          navigatesTo: [...navigatesTo],
+        });
       }
+      const defaultBuilds = [...defaults].filter(([, names]) => names.size > 0);
+      // A private widget is folded into the widgets of its file that build it.
+      if ((own.screen || !cls.name.startsWith("_")) && (builds.size > 0 || navigatesTo.size > 0 || defaultBuilds.length > 0)) {
+        const component: UiComponentInfo = { name: cls.name, line: cls.line, builds: [...builds].sort(), navigatesTo: [...navigatesTo].sort() };
+        const passed = [...passes].filter(([, args]) => args.size > 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        if (passed.length > 0) component.passes = Object.fromEntries(passed.map(([n, args]) => [n, [...args].sort()]));
+        if (defaultBuilds.length > 0) component.defaults = Object.fromEntries(defaultBuilds.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([p, names]) => [p, [...names].sort()]));
+        components.push(component);
+      }
+      continue;
     }
-    screens.push({
-      name: cls.name,
-      formType: "FlutterPage",
-      caption: null,
-      dimensions: null,
-      components: [],
-      filePath,
-      routePath: null,
-      navigatesTo: [...navigatesTo],
-    });
+    // Any other public class whose code navigates (`AssetActionBuilder` subclasses a sheet lists).
+    if (cls.name.startsWith("_") || states.has(cls) || cls.kind === "interface") continue;
+    const navigatesTo = new Set<string>();
+    navigationOf(bodyOf(cls), cls.name, navigatesTo);
+    if (navigatesTo.size > 0) components.push({ name: cls.name, line: cls.line, builds: [], navigatesTo: [...navigatesTo].sort() });
   }
-  return screens;
+  const ui = { screens, components };
+  flutterUiMemo.set(lines, ui);
+  return ui;
 }
 
 /**
@@ -971,4 +1143,5 @@ export const dartSpec: RegexLangSpec = {
     return [...fns, ...closures];
   },
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
+  extractUiComponents: (lines, filePath, classes) => flutterUi(lines, filePath, classes).components,
 };

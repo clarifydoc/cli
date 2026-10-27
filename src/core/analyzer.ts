@@ -87,6 +87,7 @@ import { collectProjectCommands } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage, routeTestCoverage } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
+import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
 import { crossFileTaint } from "./cross-file-taint.js";
@@ -1327,6 +1328,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   // Build screens: DFM screens + web screens from routes + routeless UI
   // component files (so their component tree shows in the "Components" group).
+  // A screen navigates where the components of other files it builds navigate.
+  const composedNavigation = composeScreenNavigation(allAnalyses, componentGraph);
+  if (composedNavigation > 0) progress.detail(`  Screen navigation through built components: ${composedNavigation}`);
   const dfmScreens = allAnalyses.flatMap((a) => a.screens ?? []);
   const webScreens = buildScreensFromRoutes(allAnalyses, rawSources, importIndex);
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));

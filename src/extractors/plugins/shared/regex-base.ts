@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo, UiComponentInfo } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 
@@ -200,6 +200,12 @@ export interface RegexLangSpec {
   extractClasses?: (lines: string[], fns: FunctionInfo[]) => ClassInfo[];
   /** Extract UI screens/forms — analog of the Delphi DFM parser for languages with designer code. */
   extractScreens?: (lines: string[], filePath: string, classes: ClassInfo[]) => ScreenInfo[];
+  /**
+   * The file's UI components with what each builds and where it navigates
+   * (`FileAnalysis.uiComponents`), called right after `extractScreens` with the
+   * same arguments; core joins them to screens across files.
+   */
+  extractUiComponents?: (lines: string[], filePath: string, classes: ClassInfo[]) => UiComponentInfo[];
   /**
    * Rendered sub-components from a template/markup file (the regex-path analog of
    * `AstExtractorHooks.subComponents`, used by Blazor `.razor`). Feeds the

@@ -423,6 +423,82 @@ class _Unused extends StatelessWidget {
   });
 });
 
+describe("Flutter UI components", () => {
+  it("reports what each widget builds from other files, the arguments it passes and its constructor's default widgets", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `class Timeline extends ConsumerStatefulWidget {
+  const Timeline({super.key, this.appBar = const MainAppBar(floating: true), this.bottomSheet});
+  final Widget? appBar;
+  @override
+  ConsumerState<Timeline> createState() => _TimelineState();
+}
+
+class _TimelineState extends ConsumerState<Timeline> {
+  @override
+  Widget build(BuildContext context) => Stack(children: [const StatusButton(), _Grid(onTap: () => showDialog(context: context, builder: (_) => const PitDialog()))]);
+}
+
+class _Grid extends StatelessWidget {
+  const _Grid({required this.onTap});
+  @override
+  Widget build(BuildContext context) => InkWell(onTap: () => context.pushRoute(CarDetailRoute(id: 7)));
+}
+
+class PitStopAction extends ActionBuilder {
+  const PitStopAction();
+  ActionItem create(BuildContext context) => ActionItem(onAction: () => context.pushRoute(const PitStopRoute()));
+}`;
+    const a = extractWithRegex(src, "lib/widgets/timeline.dart", "dart");
+    expect(a.uiComponents).toEqual([
+      {
+        name: "Timeline", line: 1,
+        builds: ["InkWell", "Stack", "StatusButton"],
+        navigatesTo: ["CarDetailPage", "PitDialog"],
+        passes: { InkWell: ["onTap"], Stack: ["children"] },
+        defaults: { appBar: ["MainAppBar"] },
+      },
+      { name: "PitStopAction", line: 19, builds: [], navigatesTo: ["PitStopPage"] },
+    ]);
+    const page = extractWithRegex(`@RoutePage()
+class ShowroomPage extends StatelessWidget {
+  const ShowroomPage({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Timeline(appBar: ShowroomBar(title: 'Cars'), bottomSheet: const GarageSheet()));
+}`, "lib/pages/showroom.page.dart", "dart");
+    expect(page.uiComponents).toEqual([
+      { name: "ShowroomPage", line: 2, builds: ["GarageSheet", "Scaffold", "ShowroomBar", "Timeline"], navigatesTo: [], passes: { Scaffold: ["body"], ShowroomBar: ["title"], Timeline: ["appBar", "bottomSheet"] } },
+    ]);
+  });
+
+  it("folds a widget of its own file without the default its builder overrides", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`class Timeline extends StatelessWidget {
+  const Timeline({super.key, this.appBar = const _MainAppBar()});
+  @override
+  Widget build(BuildContext context) => Column(children: [appBar]);
+}
+
+class _MainAppBar extends StatelessWidget {
+  const _MainAppBar();
+  @override
+  Widget build(BuildContext context) => IconButton(onPressed: () => context.pushRoute(const PitRoute()));
+}
+
+@RoutePage()
+class ShowroomPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Timeline(appBar: Text('Cars')));
+}
+
+@RoutePage()
+class GaragePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Scaffold(body: const Timeline());
+}`, "lib/pages/cars.page.dart", "dart");
+    expect(a.screens.map((sc) => `${sc.name} → ${sc.navigatesTo.join(", ")}`)).toEqual(["ShowroomPage → ", "GaragePage → PitPage"]);
+  });
+});
+
 describe("Dart raw SQL", () => {
   it("reads the tables Drift custom statements and sqflite raw queries name", async () => {
     const { extractWithRegex } = await import("../../../core/regex-extractor.js");
