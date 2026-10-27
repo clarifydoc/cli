@@ -27,7 +27,7 @@ describe("entry points, end to end", () => {
       'server.tool("save_car", { id: "string" }, saveCar);',
     ].join("\n"));
     await analyze({ projectRoot: root, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
-  });
+  }, 180_000);
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
   });

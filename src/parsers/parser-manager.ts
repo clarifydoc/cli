@@ -40,9 +40,14 @@ export function registerGrammar(language: Language, spec: GrammarSpec | undefine
   }
 }
 
-let initialized = false;
-const parserCache = new Map<GrammarKey, Parser>();
-const languageCache = new Map<GrammarKey, TSLanguage>();
+// Promises, not values: files are analysed concurrently, and two that start
+// at once must share ONE runtime init and ONE grammar load. A second
+// `Parser.init` re-instantiates the WASM module under the first caller's
+// grammar and parser, whose next parse then throws — the file silently fell
+// back to regex extraction whenever two first parses overlapped.
+let initializing: Promise<void> | null = null;
+const parserCache = new Map<GrammarKey, Promise<Parser>>();
+const languageCache = new Map<GrammarKey, Promise<TSLanguage>>();
 const queryCache = new Map<string, Query>();
 
 /** Resolve a file within a node_modules package */
@@ -76,17 +81,15 @@ function installNodeTypeCache(): void {
   });
 }
 
-/** Ensure tree-sitter WASM runtime is initialized */
-async function ensureInit(): Promise<void> {
-  if (initialized) return;
-
-  const wasmPath = resolvePackageFile("web-tree-sitter", "web-tree-sitter.wasm");
-
-  await Parser.init({
-    locateFile: () => wasmPath,
-  });
-  installNodeTypeCache();
-  initialized = true;
+/** Ensure tree-sitter WASM runtime is initialized (once, however many callers ask at once). */
+function ensureInit(): Promise<void> {
+  if (!initializing) {
+    const wasmPath = resolvePackageFile("web-tree-sitter", "web-tree-sitter.wasm");
+    initializing = Parser.init({ locateFile: () => wasmPath }).then(() => installNodeTypeCache());
+    // A failed init is retried by the next caller rather than remembered.
+    initializing.catch(() => { initializing = null; });
+  }
+  return initializing;
 }
 
 /** Languages that have tree-sitter grammars (excludes non-parseable and regex-only formats) */
@@ -112,29 +115,28 @@ function getGrammarPath(key: GrammarKey): string {
 }
 
 /** Get or create a parser for the given grammar key */
-async function getParserForKey(key: GrammarKey): Promise<Parser> {
-  await ensureInit();
-
-  const cached = parserCache.get(key);
-  if (cached) return cached;
-
-  const lang = await getLanguageForKey(key);
-  const parser = new Parser();
-  parser.setLanguage(lang);
-  parserCache.set(key, parser);
+function getParserForKey(key: GrammarKey): Promise<Parser> {
+  let parser = parserCache.get(key);
+  if (!parser) {
+    parser = getLanguageForKey(key).then((lang) => {
+      const p = new Parser();
+      p.setLanguage(lang);
+      return p;
+    });
+    parserCache.set(key, parser);
+    parser.catch(() => parserCache.delete(key));
+  }
   return parser;
 }
 
 /** Get or load a language grammar */
-async function getLanguageForKey(key: GrammarKey): Promise<TSLanguage> {
-  await ensureInit();
-
-  const cached = languageCache.get(key);
-  if (cached) return cached;
-
-  const grammarPath = getGrammarPath(key);
-  const lang = await TSLanguage.load(grammarPath);
-  languageCache.set(key, lang);
+function getLanguageForKey(key: GrammarKey): Promise<TSLanguage> {
+  let lang = languageCache.get(key);
+  if (!lang) {
+    lang = ensureInit().then(() => TSLanguage.load(getGrammarPath(key)));
+    languageCache.set(key, lang);
+    lang.catch(() => languageCache.delete(key));
+  }
   return lang;
 }
 
