@@ -478,6 +478,27 @@ describe("symbol-linker — typed receivers", () => {
       expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["a.getFont", "Cell.getFont"]]);
     });
 
+    it("types a local by a member read off its initializer call, each arm of a conditional agreeing", () => {
+      const garage = file("app/Garage.java", [
+        cls("Garage", { properties: [prop("clubs", "ClubApi")] }),
+        cls("ClubApi", { methods: [returning("list", null, 12)] }),
+        cls("LeagueApi", { methods: [returning("list", null, 20)] }),
+        cls("Factory", { methods: [returning("garage", "Garage", 24), returning("clubApi", "ClubApi", 26), returning("leagueApi", "LeagueApi", 28)] }),
+      ], { language: "java" });
+      const svc = file("web/Clubs.java", [cls("Clubs", {
+        properties: [prop("factory", "Factory")],
+        methods: [{ ...method("run", [call("api.list"), call("other.list")]), localTypes: [
+          { name: "api", type: "", from: "factory.garage().clubs" },
+          { name: "api", type: "", from: "factory.clubApi()" },
+          // The arms disagree: neither class is the local's.
+          { name: "other", type: "", from: "factory.leagueApi()" },
+          { name: "other", type: "", from: "factory.clubApi()" },
+        ] } as ReturnType<typeof method>],
+      })], { language: "java" });
+      const out = callsFrom(buildSymbolLinks([garage, svc]), "web/Clubs.java").filter((l) => l.strategy === "injection");
+      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["api.list", "ClubApi.list"]]);
+    });
+
     it("unwraps the language's task type when the initializer is awaited", () => {
       const repo = file("Data/Repo.cs", [cls("Repo", { methods: [returning("FindAsync", "Task<Player>", 3), returning("Find", "Player", 6)] })]);
       const player = file("Domain/Player.cs", [cls("Player", { methods: [returning("Rename", null, 4)] })]);

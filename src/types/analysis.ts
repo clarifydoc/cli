@@ -959,8 +959,10 @@ export interface FunctionInfo {
    * (`val dao = UserDAOFactory.getDAO()`, `$w = IOFactory::createWriter(…)`,
    * `var s = repo.Find(id)`) carries that call as a chain spelled the way
    * `CallInfo.name` spells one, closed by `()` (`UserDAOFactory.getDAO()`;
-   * `callChainText` builds it), with `type: ""`. The linker types the local
-   * with the call's DECLARED return type — the plugin never infers it.
+   * `callChainText` builds it), with `type: ""` — or a member read off such a
+   * call (`usePublicApi(slug).explore`). A conditional initializer is one
+   * entry per arm. The linker types the local with the call's DECLARED return
+   * type (and the member's declared type) — the plugin never infers it.
    * `awaited`: the initializer was awaited (`var s = await repo.FindAsync(id)`),
    * so the local holds what the returned task/promise resolves to.
    */

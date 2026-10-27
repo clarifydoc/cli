@@ -3905,9 +3905,10 @@ function initializerPoint(
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
-  // The initializer is the receiver of an imagined member call on its result.
+  // The initializer is the receiver of an imagined member call on its result: a call, or a
+  // member read off one (`usePublicApi(slug).explore`).
   const chain = receiverChain(`${local.from}.x`);
-  if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
+  if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain.some((seg) => seg.call)) return null;
   return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true);
 }
 

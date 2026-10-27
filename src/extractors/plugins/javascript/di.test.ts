@@ -275,6 +275,21 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
     ]);
   });
 
+  it("keeps each arm of a conditional initializer, and a member read off a call", async () => {
+    const r = await extract(`
+      function useClubs(slug: string | null) {
+        const api = slug ? useGarage(slug).clubs : (useClubApi());
+        const half = slug ? useClubApi() : slug.length;
+        const garage = useGarage(slug).clubs;
+      }`);
+    // `half` has an arm no call types: never typed.
+    expect(r.functions.find((fn) => fn.name === "useClubs")!.localTypes).toEqual([
+      { name: "api", type: "", from: "useGarage().clubs" },
+      { name: "api", type: "", from: "useClubApi()" },
+      { name: "garage", type: "", from: "useGarage().clubs" },
+    ]);
+  });
+
   it("reads module-scope locals for the file's <setup> (a Vue <script setup>, a module's top level)", async () => {
     const { topLevelLocalTypes } = await import("./functions-classes.js");
     const src = `

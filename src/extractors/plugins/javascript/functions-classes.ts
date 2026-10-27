@@ -231,10 +231,11 @@ function scanBody(
       } else if (type === "variable_declarator") {
         const name = children[0];
         if (name?.type === "identifier") {
-          const local = declaredLocal(node, children, name.text, ctx);
+          // A conditional initializer binds the name once per arm (`slug ? publicApi() : userApi()`).
+          const locals = conditionalLocals(children, name.text) ?? [declaredLocal(node, children, name.text, ctx)];
           const list = bindings.get(name.text);
-          if (list) list.push(local);
-          else bindings.set(name.text, [local]);
+          if (list) list.push(...locals);
+          else bindings.set(name.text, locals);
         } else {
           bindPattern(name ?? null);
         }
@@ -306,13 +307,51 @@ function declaredLocal(
     // `const api = useUserApi()`, `const u = await repo.find(id)`: the call is
     // kept, and the linker types the local by what that call is declared to return.
     if (annotation || !value) return null;
-    const awaited = value.type === "await_expression";
-    const call = awaited ? value.namedChild(0) : value;
-    const from = call?.type === "call_expression" ? callChainText(call, "typescript") : null;
-    if (!from) return null;
-    return { local: awaited ? { name, type: "", from, awaited } : { name, type: "", from }, annotated: false };
+    return initializerLocal(value, name);
   }
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
+}
+
+/**
+ * A local initialized by a call that states no type, kept as that call for the
+ * linker to type by what it is declared to return: `useUserApi()`, `await
+ * repo.find(id)`, or a member read off a call's result
+ * (`usePublicApi(slug).explore`).
+ */
+function initializerLocal(value: Node, name: string): { local: LocalType; annotated: boolean } | null {
+  const awaited = value.type === "await_expression";
+  const expr = awaited ? value.namedChild(0) : value;
+  let from: string | null = null;
+  if (expr?.type === "call_expression") from = callChainText(expr, "typescript");
+  else if (expr?.type === "member_expression" && !awaited) {
+    const object = expr.childForFieldName("object");
+    const property = expr.childForFieldName("property");
+    const call = object?.type === "call_expression" ? callChainText(object, "typescript") : null;
+    if (call && property?.type === "property_identifier") from = `${call}.${property.text}`;
+  }
+  if (!from) return null;
+  return { local: awaited ? { name, type: "", from, awaited } : { name, type: "", from }, annotated: false };
+}
+
+/**
+ * `const api = slug ? usePublicApi(slug).explore : useUserApi()`: one local per
+ * arm, each the call it is initialized from — the linker types the name only
+ * when the arms agree. Null for any other initializer (or an annotated one).
+ */
+function conditionalLocals(children: readonly Node[], name: string): Array<{ local: LocalType; annotated: boolean } | null> | null {
+  let value: Node | null = null;
+  for (let i = 1; i < children.length; i++) {
+    if (children[i]!.type === "type_annotation") return null;
+    if (children[i]!.type === "=") value = children[i + 1] ?? null;
+  }
+  while (value?.type === "parenthesized_expression") value = value.namedChild(0);
+  if (value?.type !== "ternary_expression") return null;
+  const arms = [value.childForFieldName("consequence"), value.childForFieldName("alternative")];
+  return arms.map((arm) => {
+    let a = arm;
+    while (a?.type === "parenthesized_expression") a = a.namedChild(0);
+    return a ? initializerLocal(a, name) : null;
+  });
 }
 
 /**
