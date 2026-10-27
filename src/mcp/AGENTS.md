@@ -60,7 +60,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   bodies and the doc comments above them — spans from the summary's complexity rows, text from the
   source — once per loaded analysis, in memory (`body-search.ts`). The same call ranks functions and classes by
   their `doc` (the first sentence, from the per-file JSON) as a name-search tier of its own, below every name and
-  path tier — never without `body`, since reading every per-file JSON is what it costs. `signature=` reads parameters and
+  path tier — never without `body`, since reading every per-file JSON is what it costs. When no name matches every
+  term (a question described in words), the body hits lead and the partial name matches follow under their own
+  heading; body hits in test files come after the code unless the query mentions tests. `signature=` reads parameters and
   return types from the per-file JSON of the candidates only. The tools/list byte budget is tight:
   new schema text has to pay for itself.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one

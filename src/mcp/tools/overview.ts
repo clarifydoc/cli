@@ -355,7 +355,13 @@ export function searchTool(ctx: ToolContext): McpTool {
       let bodyNote: string | null = null;
       if (wantBody) {
         const index = await bodyIndexFor(loaded, ctx.store.projectRoot);
-        const raw = index.search(query === "*" ? throwsFilter ?? query : query, 200, (doc) => !throwsFilter || thrownTypes(doc).some((t) => t.toLowerCase().includes(throwsFilter.toLowerCase())));
+        let raw = index.search(query === "*" ? throwsFilter ?? query : query, 200, (doc) => !throwsFilter || thrownTypes(doc).some((t) => t.toLowerCase().includes(throwsFilter.toLowerCase())));
+        // A test spells out the behaviour it checks, so it outscores the code doing it: the code
+        // comes first, tests after — unless the question is about tests.
+        if (!/\b(?:tests?|specs?)\b/i.test(query)) {
+          const isTest = (file: string) => summary.fileLayerMap?.[file] === "test";
+          raw = [...raw.filter((h) => !isTest(h.doc.file)), ...raw.filter((h) => isTest(h.doc.file))];
+        }
         for (const hit of raw) {
           if (signatureFilter && !(await signatureOf(hit.doc.file, hit.doc.name, hit.doc.line)).some((sig) => passes(sig, signatureText!))) continue;
           // A function the name search already listed is not listed twice.
@@ -412,6 +418,27 @@ export function searchTool(ctx: ToolContext): McpTool {
 
       const counts = tally(ranked, (hit) => hit.kind);
       const header = `${ranked.length} hit${ranked.length === 1 ? "" : "s"} · ${countMap(counts)}`;
+      // A question described in words ("sign a token for the user") that no name matches in full:
+      // what bodies and docs say answers it better than a name sharing one of its words, so they lead.
+      if (wantBody && loose && bodyHits.length > 0 && !throwsFilter) {
+        return {
+          text: joinLines([
+            `# Search: "${query}"`,
+            "",
+            `No name matches every term · ${plural(bodyHits.length, "body or doc section", "bodies or doc sections")} that match first, then names matching some terms`,
+            "",
+            ...bodyLines(bodyHits),
+            "",
+            bodyNote ?? "",
+            "",
+            `## Names matching some terms`,
+            "",
+            header,
+            "",
+            bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}`, { offset }),
+          ]),
+        };
+      }
       const note = loose
         ? [`No result matches every term — showing results matching some of them.`, ""]
         : [];
