@@ -373,6 +373,13 @@ export interface FileAnalysis {
    * the prop (camel-cased), and where the value comes from in this file. The
    * `paramOrigins` pass follows a child's `prop` origin up through them.
    */
+  /**
+   * Outputs of components the code opens itself and subscribes to
+   * (`modal.componentInstance.confirmClicked.subscribe(…)`, the dialog opened
+   * with `ConfirmDialogComponent`): the component-emit resolver joins the
+   * child's emit to the function subscribing, as it does a markup binding.
+   */
+  componentSubscriptions?: ComponentSubscription[];
   propBindings?: PropBinding[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
@@ -2047,6 +2054,15 @@ export interface SubComponentInfo {
    * import source's component, wherever it is used.
    */
   global?: true;
+}
+
+/** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */
+export interface ComponentSubscription {
+  /** The component class, as the file names it. */
+  component: string;
+  /** The output (`confirmClicked`). */
+  event: string;
+  line: number;
 }
 
 /** A value bound to a child component's prop (`FileAnalysis.propBindings`). */

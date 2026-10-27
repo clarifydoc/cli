@@ -282,3 +282,28 @@ describe("component-emit through a Nuxt project's auto-imported components", () 
     expect(new JsComponentEmitResolver().resolve([page, card])).toEqual([]);
   });
 });
+
+describe("component outputs subscribed in code", () => {
+  const cls = (name: string, methods: Array<[string, number, number]>, ext: string | null = null) =>
+    ({ name, extends: ext, implements: [], decorators: [], properties: [], methods: methods.map(([m, a, b]) => fn(m, a, b)), isExported: true, line: 1, endLine: 99 });
+
+  it("joins a dialog's emit — in the base it extends — to the function subscribing to it", () => {
+    const base = fa("src/app/common/confirm-dialog.component.ts", {
+      classes: [cls("ConfirmDialogComponent", [["confirm", 70, 75]])] as never,
+      events: [{ name: "confirmClicked", params: [], line: 72 }],
+    });
+    const release = fa("src/app/squad/release-dialog.component.ts", {
+      classes: [cls("ReleaseDialogComponent", [["ngOnInit", 10, 12]], "ConfirmDialogComponent")] as never,
+      imports: [{ source: "../common/confirm-dialog.component", specifiers: ["ConfirmDialogComponent"], line: 1 }] as never,
+    });
+    const opener = fa("src/app/squad/squad.component.ts", {
+      classes: [cls("SquadComponent", [["release", 20, 30], ["other", 31, 40]])] as never,
+      imports: [{ source: "./release-dialog.component", specifiers: ["ReleaseDialogComponent"], line: 2 }] as never,
+      componentSubscriptions: [{ component: "ReleaseDialogComponent", event: "confirmClicked", line: 24 }, { component: "ReleaseDialogComponent", event: "cancelled", line: 26 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([base, release, opener]);
+    expect(links.map((l) => [l.sourceFile, l.sourceSymbol, l.callName, l.targetFile, l.targetSymbol])).toEqual([
+      ["src/app/common/confirm-dialog.component.ts", "ConfirmDialogComponent.confirm", "emit:confirmClicked", "src/app/squad/squad.component.ts", "SquadComponent.release"],
+    ]);
+  });
+});

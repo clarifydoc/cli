@@ -31,3 +31,37 @@ describe("Go call arguments", () => {
     ]);
   });
 });
+
+describe("Go call arguments — a field of a parameter addressed", () => {
+  it("stands for a literal of the field's type, through an anonymous struct, an embedded field and a local", () => {
+    const lines = [
+      "type clubReadBody struct {",
+      "\tmodels.Club",
+      "\tMaxPermission models.Permission `json:\"max_permission\"`",
+      "}",
+      "func clubsUpdate(ctx context.Context, in *struct { ID int64 `path:\"id\"` Body clubReadBody }) error {",
+      "\tclub := &in.Body.Club",
+      "\tclub.ID = in.ID",
+      "\treturn handler.DoUpdate(ctx, club, a)",
+      "}",
+      "func clubsCreate(ctx context.Context, in *struct { Body models.Club }) error {",
+      "\treturn handler.DoCreate(ctx, &in.Body, a)",
+      "}",
+      "func clubsCount(ctx context.Context, in *struct { Body clubReadBody }) error {",
+      "\treturn handler.DoCount(ctx, &in.Body.MaxPermission.Level, a)",
+      "}",
+    ];
+    const fn = (name: string, params: Array<[string, string]>, line: number, endLine: number, call: [string, number]): FunctionInfo =>
+      ({ name, params: params.map(([n, t]) => ({ name: n, type: t, defaultValue: null })), line, endLine, calls: [{ name: call[0], line: call[1], kind: "internal", target: null }] }) as unknown as FunctionInfo;
+    const fns = withCompositeArgs(lines, [
+      fn("clubsUpdate", [["ctx", "context.Context"], ["in", "struct { ID int64 `path:\"id\"` Body clubReadBody }"]], 5, 9, ["handler.DoUpdate", 8]),
+      fn("clubsCreate", [["ctx", "context.Context"], ["in", "struct { Body models.Club }"]], 10, 12, ["handler.DoCreate", 11]),
+      fn("clubsCount", [["ctx", "context.Context"], ["in", "struct { Body clubReadBody }"]], 13, 15, ["handler.DoCount", 14]),
+    ]);
+    expect(fns.map((f) => f.calls[0]!.args)).toEqual([
+      ["", "&models.Club{…}", ""],
+      ["", "&models.Club{…}", ""],
+      undefined, // a field of another package's type is not followed
+    ]);
+  });
+});

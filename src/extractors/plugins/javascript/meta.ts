@@ -5,6 +5,7 @@ import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
+import { componentSubscriptions } from "./component-subscriptions.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nestPrefixResolver } from "./routes/nestjs.js";
@@ -230,6 +231,7 @@ function astHooks(language: Language): AstExtractorHooks {
     markupCalls,
     markupFunctions,
     propBindings,
+    componentSubscriptions,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),

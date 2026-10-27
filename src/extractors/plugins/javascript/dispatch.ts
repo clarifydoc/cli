@@ -133,6 +133,44 @@ export class JsComponentEmitResolver implements DispatchResolver {
         }
       }
     }
+    // An output subscribed in code (`modal.componentInstance.confirmClicked.subscribe(() => …)`,
+    // the dialog opened with that component): the subscribing function is the handler.
+    for (const parent of analyses) {
+      for (const sub of parent.componentSubscriptions ?? []) {
+        const source = parent.imports.find((i) => i.specifiers.includes(sub.component))?.source;
+        const childFile = source ? resolveTarget(source, parent.filePath, filePathMap) : null;
+        const child = childFile ? byPath.get(childFile) : undefined;
+        const target = child ? innermostAt(spans(parent), sub.line) : null;
+        if (!child || !target) continue;
+        // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
+        let emitter: FileAnalysis | undefined = child;
+        for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
+          const owner: FileAnalysis = emitter;
+          const base = owner.classes.find((c) => c.name === sub.component || depth > 0)?.extends?.replace(/<.*$/s, "").trim();
+          const from = base ? owner.imports.find((i) => i.specifiers.includes(base))?.source : undefined;
+          const file = from ? resolveTarget(from, owner.filePath, filePathMap) : null;
+          emitter = file ? byPath.get(file) : undefined;
+        }
+        if (!emitter) continue;
+        for (const site of (emitter.events ?? []).filter((e) => e.name === sub.event)) {
+          const fn = innermostAt(spans(emitter), site.line);
+          const symbol = fn?.symbol ?? "<template>";
+          const k = `${emitter.filePath}\u0000${symbol}\u0000emit:${sub.event}\u0000${parent.filePath}\u0000${target.symbol}`;
+          if (seenLink.has(k)) continue;
+          seenLink.add(k);
+          links.push({
+            sourceFile: emitter.filePath,
+            sourceSymbol: symbol,
+            sourceLine: site.line,
+            callName: `emit:${sub.event}`,
+            targetFile: parent.filePath,
+            targetSymbol: target.symbol,
+            targetLine: target.line,
+            confidence: "INFERRED",
+          });
+        }
+      }
+    }
     return links;
   }
 }

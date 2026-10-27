@@ -627,6 +627,8 @@ export interface AstExtractorHooks {
    * (a Vue SFC's template is blanked out of `sourceText`).
    */
   propBindings?(tree: Tree, sourceText: string, rawSource: string, filePath: string): import("./analysis.js").PropBinding[];
+  /** Outputs of components the code opens and subscribes to: `FileAnalysis.componentSubscriptions`. */
+  componentSubscriptions?(tree: Tree, sourceText: string): import("./analysis.js").ComponentSubscription[];
   /**
    * UI screens for tree-sitter languages with designer/markup code embedded in
    * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use
