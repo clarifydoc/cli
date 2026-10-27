@@ -239,8 +239,8 @@ describe("JS class field values", () => {
 });
 
 describe("URL-builder template extraction — guarded appends", () => {
-  it("emits one template per combination of parameter-guarded appends, fields kept as holes (paperless)", async () => {
-    const SRC = `class AbstractPaperlessService {
+  it("emits one template per combination of parameter-guarded appends, fields kept as holes (real-repo FP)", async () => {
+    const SRC = `class AbstractClubService {
       protected getResourceUrl(id: number = null, action: string = null): string {
         let url = \`\${this.baseUrl}\${this.resourceName}/\`;
         if (id !== null) {

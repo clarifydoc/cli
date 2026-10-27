@@ -43,7 +43,7 @@ export class PythonEntityExtractor extends EntityExtractor {
    * `RepositoryRecipes(HouseholdRepositoryGeneric[Recipe, RecipeModel])` names
    * its table only through the type argument that is an entity. The per-file
    * pass sees none of that; this walks the typed member chain across files and
-   * puts the entity on the call (mealie: 42 of 277 routes reached the database).
+   * puts the entity on the call (a real FastAPI app: 42 of 277 routes reached the database).
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     attributeRepositoryAccesses(analyses, PY_REPOSITORY_KNOBS);

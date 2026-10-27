@@ -81,8 +81,8 @@ export async function gatherProjectInfo(
       const raw = await readFile(join(root, "pyproject.toml"), "utf-8");
       // The owning plugin's manifest parser reads every layout — PEP 621
       // `[project] dependencies = [...]`, optional-dependencies, Poetry tables —
-      // where a section-header scan here missed `[project]` (paperless-ngx was
-      // not detected as Django) and took Poetry's version strings for names.
+      // where a section-header scan here missed `[project]` (a real Django app
+      // was not detected as Django) and took Poetry's version strings for names.
       const spec = PACKAGE_MANAGERS.flatMap((pm) => pm.manifests).find((m) => m.files.includes("pyproject.toml"));
       const declared = spec
         ? await spec.parse(raw, { declaredIn: "pyproject.toml", path: "pyproject.toml", readSibling: async () => null })

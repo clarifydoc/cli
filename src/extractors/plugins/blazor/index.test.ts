@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { blazorSpec } from "./index.js";
 
 /**
- * Blazor `.razor` markup extraction. DevToys (a Blazor Hybrid desktop app, 73
+ * Blazor `.razor` markup extraction. A Blazor Hybrid desktop app (73
  * `.razor` files) was 100% invisible to the engine — `.razor` was in no
  * extension allowlist, so screens/componentUsage/interactiveElements were all 0.
  * This spec is the UI-markup half (the C# logic lives in `.razor.cs`).

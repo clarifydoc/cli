@@ -461,7 +461,7 @@ const ANY_HOLE = /\$\{([^{}]*)\}/g;
  * resolve in the context of the file and class that declared it, up to four
  * levels. Names are only followed through the class chain and the import
  * index — never looked up project-wide — and a hole nothing explains stays a
- * hole for `finalizeApiTargets`. Kavita's `${this.baseUrl}series/${id}`
+ * hole for `finalizeApiTargets`. An Angular service's `${this.baseUrl}series/${id}`
  * becomes `http://localhost:5000/api/series/${id}`, then `/api/series/${id}`.
  *
  * Returns the number of rows changed.

@@ -21,7 +21,7 @@ const NOT_A_FACTORY = new Set(["fetch", "axios", "get", "post", "put", "patch", 
 
 /**
  * Calls handing a path literal to a project function — the call sites of a
- * request FACTORY. Radarr's redux layer declares ~130 endpoints this way:
+ * request FACTORY. A real app's redux layer declares ~130 endpoints this way:
  *
  *     export const fetchStatus = createFetchHandler('system.status', '/system/status');
  *

@@ -23,9 +23,8 @@ import { byOrdinal } from "./ordinal.js";
  * reach an effect through the call graph — so a controller that calls a
  * repository that writes the DB is shown to (transitively) touch the DB.
  *
- * It is call-graph reachability, NOT value/alias/branch-aware taint. Borrowed
- * from semgrep's dataflow model only in spirit (propagate an effect along the
- * graph as a per-function summary); it runs over the SAME symbol-link edges the
+ * It is call-graph reachability, NOT value/alias/branch-aware taint: it
+ * propagates an effect along the graph as a per-function summary; it runs over the SAME symbol-link edges the
  * Call Traces / trace-impact passes walk (regular links + synthetic HTTP/MQ
  * links), reusing {@link buildSymbolAdjacency}.
  *

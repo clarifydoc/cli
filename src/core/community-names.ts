@@ -8,7 +8,7 @@
  *  - system: the sub-project most of its files belong to (absent when one
  *    project holds the whole analysis);
  *  - name: the deepest folder holding at least 35% of the files, with its
- *    share when under 60% (`mealie/routes (45%)`);
+ *    share when under 60% (`league/routes (45%)`);
  *    failing that the two folders most of it sits in (`api + web`);
  *  - subsystem: the name's first two folders;
  *  - slug: the name, lower-cased and dashed — two communities that would
@@ -109,7 +109,7 @@ export function nameCommunities(
     const deepest = (share: number) => ranked.find((x) => x.n >= Math.ceil(files.length * share));
     let name: string;
     let nameBasis: NonNullable<CommunityName["nameBasis"]>;
-    // The deepest folder with a real share says most: `mealie/routes (45%)` over `mealie`.
+    // The deepest folder with a real share says most: `league/routes (45%)` over `league`.
     const pick = deepest(0.35);
     if (pick) {
       const whole = pick.n >= Math.ceil(files.length * 0.6);

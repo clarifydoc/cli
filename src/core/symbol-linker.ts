@@ -1531,8 +1531,8 @@ interface LinkContext {
    * the way that ecosystem's `PackageManagerSpec` keys packages
    * (`packageKey`): what an import of a sibling sub-project resolves against,
    * with the same `importKey`/`prefixMatch` rules the dependency inventory
-   * uses — `lemmy_db_views_site::SiteView` (Cargo), `@acme/ui/Button` (npm),
-   * `code.gitea.io/gitea/models/user` (Go), `my_pkg.models` (pypi).
+   * uses — `league_db_views_site::SiteView` (Cargo), `@acme/ui/Button` (npm),
+   * `code.example.com/league/models/user` (Go), `my_pkg.models` (pypi).
    */
   packageProjects: Map<PackageEcosystem, Array<{ key: string; projectId: string }>>;
   /** Sub-projects an analysis imports by package (see `importedProjectsOf`). */
@@ -1710,7 +1710,7 @@ function packageImportsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string>
 /**
  * Sub-projects the analysis imports by declared package name: an import that
  * resolves to no file of this project but names a sibling sub-project — a
- * Cargo workspace member (`use lemmy_db_views_site::SiteView`), an npm
+ * Cargo workspace member (`use league_db_views_site::SiteView`), an npm
  * workspace package, a Go module path. None resolve by path, since the name
  * is the manifest's, not the directory's. Kept as project ids, not expanded
  * to the project's files: a shared package imported by thousands of files
@@ -3033,7 +3033,7 @@ function resolveCallToDefinition(
       }
     }
     // A dotted module called by its trailing names (`QueryBuilder.build` for
-    // `Plausible.Stats.SQL.QueryBuilder`, aliased through `alias Plausible.Stats.SQL`):
+    // `League.Stats.SQL.QueryBuilder`, aliased through `alias League.Stats.SQL`):
     // the one module ending that way, or the one under a module the file imports.
     if (!candidateFiles) {
       let matches = ctx.dottedClassSuffixIndex.get(className) ?? [];

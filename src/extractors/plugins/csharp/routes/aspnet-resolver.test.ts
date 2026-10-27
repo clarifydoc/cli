@@ -41,7 +41,7 @@ async function analyze(files: Record<string, string>): Promise<FileAnalysis[]> {
 
 const BASE = `
 using Microsoft.AspNetCore.Mvc;
-namespace Kavita.Controllers;
+namespace League.Controllers;
 
 [ApiController]
 [Authorize]
@@ -51,11 +51,11 @@ public class BaseApiController : ControllerBase
 }`;
 
 describe("aspnet-controller-inheritance", () => {
-  it("gives a derived controller its base's [Route], with [controller] naming the DERIVED class (Kavita)", async () => {
+  it("gives a derived controller its base's [Route], with [controller] naming the DERIVED class (real-repo FP)", async () => {
     const [, series] = await analyze({
       "Api/Controllers/BaseApiController.cs": BASE,
       "Api/Controllers/SeriesController.cs": `
-namespace Kavita.Controllers;
+namespace League.Controllers;
 public class SeriesController(IUnitOfWork unitOfWork) : BaseApiController
 {
     [HttpGet("{seriesId:int}")]
@@ -141,10 +141,10 @@ public abstract class RestController<T> : Controller
   });
 });
 
-/** Radarr's own routing attributes, as declared in `src/Radarr.Http`. */
-const RADARR_ATTRS = {
-  "Radarr.Http/VersionedApiControllerAttribute.cs": `
-namespace Radarr.Http
+/** A project's own routing attributes, as declared in `src/League.Http`. */
+const LEAGUE_ATTRS = {
+  "League.Http/VersionedApiControllerAttribute.cs": `
+namespace League.Http
 {
     public class VersionedApiControllerAttribute : Attribute, IRouteTemplateProvider, IEnableCorsAttribute, IApiBehaviorMetadata
     {
@@ -173,7 +173,7 @@ namespace Radarr.Http
         }
     }
 }`,
-  "Radarr.Http/REST/Attributes/RestPutByIdAttribute.cs": `
+  "League.Http/REST/Attributes/RestPutByIdAttribute.cs": `
 [AttributeUsage(AttributeTargets.Method)]
 public class RestPutByIdAttribute : HttpPutAttribute
 {
@@ -182,16 +182,16 @@ public class RestPutByIdAttribute : HttpPutAttribute
     {
     }
 }`,
-  "Radarr.Http/REST/Attributes/RestDeleteByIdAttribute.cs": `
+  "League.Http/REST/Attributes/RestDeleteByIdAttribute.cs": `
 public class RestDeleteByIdAttribute : HttpDeleteAttribute
 {
     public RestDeleteByIdAttribute() : base("{id:int}") { }
 }`,
-  "Radarr.Http/REST/Attributes/RestPostByIdAttribute.cs": `
+  "League.Http/REST/Attributes/RestPostByIdAttribute.cs": `
 public class RestPostByIdAttribute : HttpPostAttribute
 {
 }`,
-  "Radarr.Http/REST/Attributes/RestGetByIdAttribute.cs": `
+  "League.Http/REST/Attributes/RestGetByIdAttribute.cs": `
 public class RestGetByIdAttribute : Attribute, IActionHttpMethodProvider, IRouteTemplateProvider
 {
     public IEnumerable<string> HttpMethods => new[] { "GET" };
@@ -199,7 +199,7 @@ public class RestGetByIdAttribute : Attribute, IActionHttpMethodProvider, IRoute
     public int? Order => 0;
     public string Name { get; }
 }`,
-  "Radarr.Http/REST/RestController.cs": `
+  "League.Http/REST/RestController.cs": `
 public abstract class RestController<TResource> : Controller
 {
     [RestGetById]
@@ -209,13 +209,13 @@ public abstract class RestController<TResource> : Controller
 }`,
 };
 
-describe("project routing attributes (Radarr)", () => {
+describe("project routing attributes (real-repo FP)", () => {
   const rows = (a: FileAnalysis | undefined) => (a?.routes ?? []).map((r) => `${r.httpMethod} ${r.path} ${r.owner}`).sort();
 
   it("evaluates [V3ApiController] through its constructor chain, and custom verb attributes through their base call", async () => {
     const out = await analyze({
-      ...RADARR_ATTRS,
-      "Radarr.Api.V3/Tags/TagController.cs": `
+      ...LEAGUE_ATTRS,
+      "League.Api.V3/Tags/TagController.cs": `
 [V3ApiController]
 public class TagController : RestController<TagResource>
 {
@@ -235,7 +235,7 @@ public class TagController : RestController<TagResource>
     [NonAction]
     public void Handle(TagsUpdatedEvent message) { }
 }`,
-      "Radarr.Api.V3/Movies/MovieLookupController.cs": `
+      "League.Api.V3/Movies/MovieLookupController.cs": `
 [V3ApiController("movie/lookup")]
 public class MovieLookupController : RestController<MovieResource>
 {
@@ -244,20 +244,20 @@ public class MovieLookupController : RestController<MovieResource>
 }`,
     });
     const byPath = (p: string) => out.find((a) => a.filePath === p);
-    expect(rows(byPath("Radarr.Api.V3/Tags/TagController.cs"))).toEqual([
+    expect(rows(byPath("League.Api.V3/Tags/TagController.cs"))).toEqual([
       "DELETE /api/v3/Tag/{id} TagController",
       "GET /api/v3/Tag TagController",
       "POST /api/v3/Tag TagController",
       "PUT /api/v3/Tag/{id} TagController",
     ]);
-    expect(rows(byPath("Radarr.Api.V3/Movies/MovieLookupController.cs"))).toEqual(["GET /api/v3/movie/lookup/tmdb MovieLookupController"]);
+    expect(rows(byPath("League.Api.V3/Movies/MovieLookupController.cs"))).toEqual(["GET /api/v3/movie/lookup/tmdb MovieLookupController"]);
     // The abstract base's [RestGetById] action is served under each concrete controller.
-    expect(rows(byPath("Radarr.Http/REST/RestController.cs"))).toEqual([
+    expect(rows(byPath("League.Http/REST/RestController.cs"))).toEqual([
       "GET /api/v3/Tag/{id} TagController",
       "GET /api/v3/movie/lookup/{id} MovieLookupController",
     ]);
     // `IApiBehaviorMetadata` is [ApiController] behaviour: the complex parameter binds from the body.
-    const put = byPath("Radarr.Api.V3/Tags/TagController.cs")!.routes.find((r) => r.httpMethod === "PUT")!;
+    const put = byPath("League.Api.V3/Tags/TagController.cs")!.routes.find((r) => r.httpMethod === "PUT")!;
     expect(put.params).toEqual([{ name: "resource", type: "TagResource", binding: "body", inferred: true }]);
     // `{id:int?}` is optional: the update also answers the collection path a settings page saves to.
     expect(put.aliases).toEqual(["/api/v3/Tag"]);

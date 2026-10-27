@@ -677,7 +677,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       DBCONTEXT_SUFFIX.test(seg) ||
       seg === "_context" || seg === "context" || seg === "Context" || seg === "db" ||
       seg === "_db" || seg === "dbContext" || seg === "_dbContext" || seg === "DbContext";
-    // The context may sit behind a member: `services.Context.CatalogItems…` (eShop's
+    // The context may sit behind a member: `services.Context.CatalogItems…` (an
     // `[AsParameters] CatalogServices`), `this.uow.Db.Orders…`.
     // A `context` declared as one of the framework's own contexts (an MVC
     // `ValueProviderFactoryContext`, an `HttpContext`) holds no entity sets.

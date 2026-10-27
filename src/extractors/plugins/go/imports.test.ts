@@ -2,18 +2,18 @@ import { describe, it, expect } from "vitest";
 import { extractGoImports } from "./imports.js";
 
 describe("extractGoImports", () => {
-  it("reads bare, aliased, blank and dot imports — and only inside import declarations (gitea)", () => {
+  it("reads bare, aliased, blank and dot imports — and only inside import declarations (real-repo FP)", () => {
     const src = `package routers
 
 import "fmt"
-import web "gitea.dev/modules/web"
+import web "league.dev/modules/web"
 
 import (
 	"net/http" // stdlib
 
-	packages_router "gitea.dev/routers/api/packages"
-	_ "gitea.dev/modules/markup/external"
-	. "gitea.dev/modules/testhelpers"
+	packages_router "league.dev/routers/api/packages"
+	_ "league.dev/modules/markup/external"
+	. "league.dev/modules/testhelpers"
 )
 
 var contentTypes = []string{
@@ -23,11 +23,11 @@ var contentTypes = []string{
 `;
     expect(extractGoImports(src.split("\n")).map((i) => `${i.line} ${i.source} [${i.specifiers.join(",")}]`)).toEqual([
       "3 fmt [fmt]",
-      "4 gitea.dev/modules/web [web]",
+      "4 league.dev/modules/web [web]",
       "7 net/http [http]",
-      "9 gitea.dev/routers/api/packages [packages_router]",
-      "10 gitea.dev/modules/markup/external []",
-      "11 gitea.dev/modules/testhelpers [testhelpers]",
+      "9 league.dev/routers/api/packages [packages_router]",
+      "10 league.dev/modules/markup/external []",
+      "11 league.dev/modules/testhelpers [testhelpers]",
     ]);
   });
 

@@ -4,7 +4,7 @@ import { parseSource } from "../../../parsers/parser-manager.js";
 import { JavaScriptExtractor } from "./functions-classes.js";
 
 /**
- * API clients and services written as namespace objects — realworld's
+ * API clients and services written as namespace objects — a demo app's
  * `agent.js` is `const Profile = { get: username => requests.get(…) }`,
  * exported in a default object and called as `agent.Profile.get(…)`. Their
  * members used to be no symbol at all: the call linked to nothing, and the

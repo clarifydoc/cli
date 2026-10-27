@@ -17,11 +17,11 @@ from pathlib import Path
 
 class CallGraphAnalyzer:
     def analyze(self, files):
-        from gitprobe.core.analysis_limits import reset_global_tracker
+        from scouting.core.analysis_limits import reset_global_tracker
         reset_global_tracker()
         for f in files:
             if f.lang == "python":
-                from gitprobe.analyzers.python import analyze_python_file
+                from scouting.analyzers.python import analyze_python_file
                 analyze_python_file(f)
 
 @cached
@@ -30,8 +30,8 @@ def helper():
     return json
 `)).toEqual([
       { source: "pathlib", specifiers: ["Path"], isType: false, line: 2 },
-      { source: "gitprobe.core.analysis_limits", specifiers: ["reset_global_tracker"], isType: false, line: 6 },
-      { source: "gitprobe.analyzers.python", specifiers: ["analyze_python_file"], isType: false, line: 10 },
+      { source: "scouting.core.analysis_limits", specifiers: ["reset_global_tracker"], isType: false, line: 6 },
+      { source: "scouting.analyzers.python", specifiers: ["analyze_python_file"], isType: false, line: 10 },
       { source: "json", specifiers: ["json"], isType: false, line: 15 },
     ]);
   });
@@ -99,7 +99,7 @@ describe("python package re-exports", () => {
     const { PythonImportExportExtractor } = await import("./imports-exports.js");
     const src = `from .dependencies import *
 from .player import Player as Club, Group
-from mealie.schema import *
+from league.schema import *
 from typing import Any
 def helper():
     from .late import x
@@ -110,7 +110,7 @@ def helper():
       ["*", ".dependencies", undefined],
       ["Club", ".player", "Player"],
       ["Group", ".player", undefined],
-      ["*", "mealie.schema", undefined],
+      ["*", "league.schema", undefined],
     ]);
   });
 

@@ -430,7 +430,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     if (sources.some((s) => s.includes("mikro-orm"))) return "mikro-orm";
     if (sources.some((s) => s.includes("typeorm"))) return "typeorm";
     if (sources.some((s) => s.includes("sequelize-typescript"))) return "sequelize";
-    // A schema DSL of its own (`@immich/sql-tools`-style): the package that supplies `@Table`.
+    // A schema DSL of its own (a `@league/sql-tools`-style package): the package that supplies `@Table`.
     const tablePkg = ctx.analysis.imports.find((imp) => imp.specifiers.includes("Table") && !imp.source.startsWith("."))?.source;
     if (tablePkg) return tablePkg.replace(/^@/, "").split("/").pop()!;
     return "typeorm";

@@ -86,7 +86,7 @@ function workspaceCrate(name: string, ctx: ImportResolveContext): string | null 
     crateIndex.set(ctx.files, index);
   }
   if (index.has(name)) return index.get(name) ?? null;
-  // A package named with a prefix its directory drops (`lemmy_api_utils` in `crates/api/api_utils`):
+  // A package named with a prefix its directory drops (`league_api_utils` in `crates/api/api_utils`):
   // the crate whose directory name is the longest `_`-bounded tail of the name.
   let best: string | null = null;
   let bestLen = 0;

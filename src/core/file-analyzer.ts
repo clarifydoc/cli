@@ -255,7 +255,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (aliases.size > 0) {
       for (const imp of a.imports) imp.source = applyAliases(imp.source, aliases, projectRoot);
     }
-    // A package of this repository imported by its name (`@immich/sdk`) is a
+    // A package of this repository imported by its name (`@league/sdk`) is a
     // project file, not a dependency (workspace-packages.ts).
     if (a.language === "typescript" || a.language === "javascript") {
       const packages = loadWorkspacePackages(projectRoot);

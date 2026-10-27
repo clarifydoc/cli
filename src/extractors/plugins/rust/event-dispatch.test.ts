@@ -3,7 +3,7 @@ import "../../registry.js";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import { AfDispatchResolver } from "./event-dispatch.js";
 
-describe("af-dispatch (AppFlowy lib-dispatch)", () => {
+describe("af-dispatch (an event-dispatch library)", () => {
   it("joins a Flutter call of a generated event class to the Rust handler registered for it", () => {
     const eventMap = extractWithRegex(`use crate::event_handler::*;
 pub fn init(folder: Weak<FolderManager>) -> AFPlugin {
@@ -31,7 +31,7 @@ pub(crate) async fn read_current_workspace_handler() -> DataResult<WorkspacePB, 
     final payload = CreateViewPayloadPB.create()..name = name;
     return FolderEventCreateView(payload).send();
   }
-}`, "frontend/appflowy_flutter/lib/workspace/application/view/view_service.dart", "dart");
+}`, "frontend/league_flutter/lib/workspace/application/view/view_service.dart", "dart");
     const links = new AfDispatchResolver().resolve([eventMap, handlers, dart]);
     expect(links.map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
       "ViewBackendService.createView -FolderEventCreateView-> frontend/rust-lib/flowy-folder/src/event_handler.rs::create_view_handler",

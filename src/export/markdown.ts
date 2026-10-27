@@ -48,8 +48,7 @@ function header(summary: Summary, title: string): string[] {
 }
 
 /**
- * The confidence mix, at the bottom of every document. Taken wholesale from
- * graphify's per-article audit trail, for the same reason: the counts are
+ * The confidence mix, at the bottom of every document. The counts are
  * computed either way, and a reader who never sees them cannot calibrate
  * anything above.
  */

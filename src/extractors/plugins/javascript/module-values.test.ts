@@ -9,7 +9,7 @@ async function valuesOf(src: string) {
 }
 
 describe("extractModuleValues", () => {
-  it("folds module constants into an exported object's members (Kavita environment.ts)", async () => {
+  it("folds module constants into an exported object's members (real-repo FP: environment.ts)", async () => {
     expect(
       await valuesOf(`
 const IP = 'localhost';
@@ -24,7 +24,7 @@ export const environment = {
     });
   });
 
-  it("follows a shorthand member to its constant (mealie config.ts)", async () => {
+  it("follows a shorthand member to its constant (real-repo FP: config.ts)", async () => {
     expect(await valuesOf(`const PREFIX = "/api";\nexport const config = { PREFIX };`)).toEqual({
       PREFIX: "/api",
       "config.PREFIX": "/api",
@@ -37,7 +37,7 @@ export const environment = {
     });
   });
 
-  it("keeps an API version a URL splices in (chatwoot DEFAULT_API_VERSION)", async () => {
+  it("keeps an API version a URL splices in (real-repo FP: DEFAULT_API_VERSION)", async () => {
     expect(await valuesOf(`const DEFAULT_API_VERSION = 'v1';\nconst API = '/api/';`)).toEqual({
       DEFAULT_API_VERSION: "v1",
       API: "/api/",

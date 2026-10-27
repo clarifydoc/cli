@@ -4,7 +4,7 @@ import { clearDirectoryListings, rememberListing } from "./dir-listings.js";
 
 /**
  * Packages of the repository itself, imported by name — a pnpm/npm/yarn
- * workspace's `import { getAlbum } from '@immich/sdk'`. The name is bare, so
+ * workspace's `import { getAlbum } from '@league/sdk'`. The name is bare, so
  * the import read as an external package and every call through it stopped at
  * the package boundary, though its source sits in `packages/sdk/src`.
  *
@@ -120,8 +120,8 @@ function exportsEntry(exp: unknown): string | undefined {
 }
 
 /**
- * `@immich/sdk` → `packages/sdk/src/index` (project-relative, posix), for a
- * file outside that package; `@immich/sdk/x` → the package directory + `x`.
+ * `@league/sdk` → `packages/sdk/src/index` (project-relative, posix), for a
+ * file outside that package; `@league/sdk/x` → the package directory + `x`.
  * Anything else comes back unchanged.
  */
 export function applyWorkspacePackages(

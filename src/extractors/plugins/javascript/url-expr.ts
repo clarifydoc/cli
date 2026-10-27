@@ -5,7 +5,7 @@ import { stripQuotes } from "../../shared/node-helpers.js";
  * A JS/TS expression rendered as a URL string with `${…}` holes for what is
  * not literal — the notation api-call targets already use:
  *
- *     environment.apiUrl + 'kavita-plus-audit/'   → ${environment.apiUrl}kavita-plus-audit/
+ *     environment.apiUrl + 'league-plus-audit/'   → ${environment.apiUrl}league-plus-audit/
  *     `${this.baseUrl}${this.resourceName}/`       → ${this.baseUrl}${this.resourceName}/
  *     import.meta.env.VITE_API ?? '/api'          → /api
  *

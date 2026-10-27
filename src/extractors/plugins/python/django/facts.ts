@@ -231,7 +231,7 @@ function collectMixinModelViews(root: Node, facts: RouteFact[]): void {
   }
 }
 
-/** `DefaultRouter()` / `SimpleRouter(trailing_slash=False)` / `NetBoxRouter()` — any `*Router(...)` call. */
+/** `DefaultRouter()` / `SimpleRouter(trailing_slash=False)` / `LeagueRouter()` — any `*Router(...)` call. */
 function routerCtor(node: Node): DrfRouterFact | null {
   if (node.type !== "call") return null;
   const fn = node.childForFieldName("function");

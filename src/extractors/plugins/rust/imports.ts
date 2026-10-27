@@ -2,12 +2,12 @@ import type { ImportInfo } from "../../../types/analysis.js";
 
 /**
  * Rust `use` declarations, whole: a declaration may span lines and nest braces
- * (`use lemmy_db_schema::{\n  source::{site::Site, community::Community},\n  traits::Crud,\n};`),
+ * (`use league_db_schema::{\n  source::{site::Site, community::Community},\n  traits::Crud,\n};`),
  * and the per-line pattern read only the single-line ones — a file importing
  * its models in the common multi-line form imported nothing, so its
  * `Site::read(…)` calls had no type to resolve against. Each leaf is an import
  * of its parent path naming the leaf (or its `as` alias): `{ source:
- * "lemmy_db_schema::source::site", specifiers: ["Site"] }`; a glob
+ * "league_db_schema::source::site", specifiers: ["Site"] }`; a glob
  * (`traits::*`) imports the module itself with no specifier. Imports of one
  * declaration sharing a parent path are grouped.
  */

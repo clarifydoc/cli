@@ -2,7 +2,7 @@ import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis
 import type { DispatchResolver } from "../../dispatch/base.js";
 
 /**
- * AppFlowy's lib-dispatch: a Rust plugin registers a handler per event of its
+ * An event-dispatch library (`lib-dispatch`): a Rust plugin registers a handler per event of its
  * enum, and the Flutter side sends the event through a class generated from
  * the same enum.
  *

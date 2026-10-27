@@ -662,7 +662,7 @@ export function nodeKeyIndex<T extends { name: string; table?: string }, V>(node
 
 export function tableMatchKeys(name: string): string[] {
   // The last segment of a namespaced name — Ruby `Ns::Model`, an Elixir module
-  // `Plausible.Site`, a schema-qualified table `shop.orders` — is how code
+  // `League.Site`, a schema-qualified table `shop.orders` — is how code
   // names it (`Repo.get(Site, id)`, `FROM orders`).
   const base = name.split(/::|\./).pop()!.toLowerCase();
   const keys = [base];

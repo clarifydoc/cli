@@ -126,7 +126,7 @@ def ping(request):
 };
 
 describe("django-urlconf", () => {
-  it("composes nested re_path includes, router registrations and @actions into full paths (paperless shape)", async () => {
+  it("composes nested re_path includes, router registrations and @actions into full paths (real-repo shape)", async () => {
     const files = await analyze(SHOP);
     expect(rows(files)).toEqual([
       "* /legacy/ping/ views.ping @legacy/urls.py:5",

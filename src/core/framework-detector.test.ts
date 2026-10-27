@@ -127,7 +127,7 @@ describe("framework rules — .NET / Blazor / desktop", () => {
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "revdoc-fw-net-"));
 
-    // A Blazor Hybrid desktop project (like DevToys): Razor SDK + Components +
+    // A Blazor Hybrid desktop project (a developer-tools app): Razor SDK + Components +
     // MEF + WPF — and crucially NO Web SDK / AspNetCore.App, so it is NOT ASP.NET.
     await mkdir(join(root, "blazor"), { recursive: true });
     await writeFile(
@@ -181,13 +181,13 @@ describe("framework rules — pyproject.toml", () => {
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "revdoc-fw-py-"));
-    // paperless-ngx's layout: PEP 621 dependencies under [project], with an
+    // A real Django app's layout: PEP 621 dependencies under [project], with an
     // [project.optional-dependencies] table after it.
     await writeFile(
       join(root, "pyproject.toml"),
       [
         "[project]",
-        'name = "paperless-ngx"',
+        'name = "league-office"',
         "dependencies = [",
         '  "celery[redis]~=5.5.1",',
         '  "django~=5.2.13",',

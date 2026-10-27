@@ -5,7 +5,7 @@ import { extractCalls } from "../../../shared/call-graph.js";
 
 /**
  * ASP.NET Core Minimal APIs — the routing modern .NET services use instead of
- * controllers (eShop, every `dotnet new webapi`):
+ * controllers (every `dotnet new webapi`):
  *
  *   var api = app.MapGroup("api/catalog").HasApiVersion(1, 0);
  *   api.MapGet("/items/{id:int}", GetItemById);                  // method group

@@ -43,7 +43,6 @@ export function hasModifier(node: Node, modifier: string): boolean {
 
 /**
  * Extract a node's name using tree-sitter field access first, then child scanning.
- * Inspired by the `_get_name` pattern in code-review-graph's parser.py.
  */
 export function getNameFromNode(node: Node): string | null {
   // Primary: field-based access (most reliable)

@@ -6,8 +6,8 @@ import type { FileAnalysis, SymbolLink, SymbolLinkStrategy } from "../types/anal
  * Data-source extractors recognise ORM access partly by method name
  * (`X.Comments.create(…)` reads as a write on entity `Comments`), and a name
  * cannot tell an ORM from the project's own API client, service or in-memory
- * store. realworld's browser components showed a DIRECT database write from
- * `agent.Comments.create(…)` — a call into the frontend's HTTP client; Ix's
+ * store. A demo app's browser components showed a DIRECT database write from
+ * `agent.Comments.create(…)` — a call into the frontend's HTTP client; a CLI's
  * `client.health()` on its own HTTP client, a NestJS controller's
  * `this.users.findOne()` on the injected service, a plain in-memory Ruby class
  * all counted as database access.

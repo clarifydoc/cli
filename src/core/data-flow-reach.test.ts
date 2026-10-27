@@ -265,7 +265,7 @@ describe("computeDataFlows", () => {
 
   it("resolves a route with an inline handler through its synthetic route symbol", () => {
     // `router.get("/cars", auth, async (req, res) => …)` — plain Express, and
-    // the shape every RealWorld controller uses. There is no function span at
+    // the shape every controller of a demo Express API uses. There is no function span at
     // the route's line and `handler` holds the MIDDLEWARE's name, so both of
     // the name-based fallbacks miss and the route used to resolve to nothing.
     // `symbol-linker` already mints `route:GET /cars` and links it onward, so

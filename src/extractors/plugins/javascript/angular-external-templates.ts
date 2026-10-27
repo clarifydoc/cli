@@ -52,7 +52,7 @@ export async function resolveAngularExternalTemplates(
     // as no handler, `{{label}}` as one). Both describe the component, which is
     // enriched below; drop them from the partial whatever the template holds,
     // so an Angular app's templates don't each surface as a bogus screen or
-    // double every element (Kavita: 692 html rows beside 1,011 component rows).
+    // double every element (a real Angular app: 692 html rows beside 1,011 component rows).
     const htmlAnalysis = byAbs.get(htmlPath);
     if (htmlAnalysis && htmlAnalysis !== a) {
       const kept = (htmlAnalysis.routes ?? []).filter((r) => r.kind !== "frontend");

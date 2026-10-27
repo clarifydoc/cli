@@ -143,7 +143,7 @@ export class GoEntityExtractor extends EntityExtractor {
         );
         const hasGormTag = fields.some((f) => f.tags.gorm !== undefined);
         const isGorm = embedsGormModel || hasGormTag;
-        // xorm (gitea, and anything on `xorm.io`) registers its models through
+        // xorm (anything on `xorm.io`) registers its models through
         // the same `RegisterModel(new(X))` call shape as Beego; the tag only
         // says which ORM. A tag alone is NOT a marker: xorm migrations redeclare
         // partial copies of a table's struct (`type Repository struct {…}` in
@@ -151,7 +151,7 @@ export class GoEntityExtractor extends EntityExtractor {
         // twelve — the typed-receiver resolution then refused every call on it.
         const hasXormTag = fields.some((f) => f.tags.xorm !== undefined);
         // A tagged struct naming its table is a model however it is registered
-        // (vikunja lists its models in another file's `GetTables()`) — except
+        // (a project may list its models in another file's `GetTables()`) — except
         // in a migrations package, where each step redeclares the slice of a
         // table it changes (`tasksReminderDateMigration20190324205606` → "tasks").
         const namesTable = hasXormTag && tableNames.has(struct.name) && !inMigrations;
@@ -206,12 +206,12 @@ export class GoEntityExtractor extends EntityExtractor {
   /**
    * Project-level pass: an entity's field typed as ANOTHER entity — declared in
    * another file, so the per-file pass kept it as a column — is an association
-   * (`Repo *repo_model.Repository` on gitea's Issue, `Photos []Photo` on a
+   * (`Repo *repo_model.Repository` on a forge's Issue, `Photos []Photo` on a
    * GORM Album). Pointer or value → many-to-one, slice → one-to-many; the
    * `<Field>ID` column beside it is the foreign key. Inferred from the type,
    * not an ORM tag, so INFERRED; a relation the per-file pass already derived
-   * from a tag for the same field is kept as it is. gitea: 128 relations
-   * between 382 entities, photoprism: 1 between 300, before this.
+   * from a tag for the same field is kept as it is. Two real Go apps: 128 relations
+   * between 382 entities, and 1 between 300, before this.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     const go = analyses.filter((a) => a.language === "go");
@@ -269,7 +269,7 @@ export class GoEntityExtractor extends EntityExtractor {
 
   /**
    * An integer `<X>ID` column names the entity it points at even when no
-   * `X *Entity` field sits beside it — gitea's `Comment.IssueID`,
+   * `X *Entity` field sits beside it — a forge's `Comment.IssueID`,
    * `Release.RepoID`, `Review.ReviewerID`. `X` is an entity's own name, or a
    * name it abbreviates with lowercase letters only (`Repo` → `Repository`, never
    * `RepoUnit`), tried on the whole prefix and then without its leading words
@@ -283,7 +283,7 @@ export class GoEntityExtractor extends EntityExtractor {
       const key = `${dir}|${prefix}|${self}`;
       if (memo.has(key)) return memo.get(key)!;
       let hit: string | null = null;
-      // The package's own entity first: in gitea's `actions`, `TaskID` is an `ActionTask`, not admin's `Task`.
+      // The package's own entity first: in a forge's `actions`, `TaskID` is an `ActionTask`, not admin's `Task`.
       const local = (byDir.get(dir) ?? []).filter((n) => n !== self);
       const localHits = local.includes(prefix) ? [prefix] : local.filter((n) => n.length > prefix.length && n.endsWith(prefix));
       if (localHits.length === 1) hit = localHits[0]!;

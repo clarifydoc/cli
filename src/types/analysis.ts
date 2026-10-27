@@ -3253,7 +3253,7 @@ export interface SubProject {
   root: string;
   kind: SubProjectKind;
   /**
-   * The name the sub-project's own manifest declares (`lemmy_db_views_site`
+   * The name the sub-project's own manifest declares (`league_db_views_site`
    * in its Cargo.toml, `@scope/ui` in package.json, a go.mod `module` path):
    * what a sibling sub-project writes to import it. Absent when no manifest
    * at the root declares one.

@@ -9,7 +9,7 @@ const analysis = (filePath: string, language: string): FileAnalysis =>
 describe("server templates", () => {
   it("reads a Handlebars admin page: partials, a form posting a literal path materialized as an api-call", () => {
     const a = analysis("src/static/templates/admin/login.hbs", "handlebars");
-    readTemplate(a, `<title>Vaultwarden Admin</title>
+    readTemplate(a, `<title>Garage Admin</title>
 {{> header}}
 <form class="form-inline" method="post" action="{{urlpath}}/admin">
   <input type="password" name="token">
@@ -19,7 +19,7 @@ describe("server templates", () => {
     expect(a.interactiveElements.find((e) => e.element === "form")).toMatchObject({ handler: "post_admin", request: { method: "POST", target: "/admin" } });
     expect(a.dataSources).toEqual([{ kind: "api-call", name: "POST /admin", target: "/admin", calls: [], line: 3 }]);
     expect(a.functions.map((f) => [f.name, f.line, f.endLine])).toEqual([["post_admin", 3, 3]]);
-    expect(a.screens[0]).toMatchObject({ formType: "HandlebarsTemplate", caption: "Vaultwarden Admin" });
+    expect(a.screens[0]).toMatchObject({ formType: "HandlebarsTemplate", caption: "Garage Admin" });
   });
 
   it("reads a FreeMarker login page: includes, its controls, and a form posting to a model-supplied URL as no app path", () => {

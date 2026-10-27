@@ -181,7 +181,7 @@ describe.each(MEASURED)("regex tier agrees with the parser — $language", { tim
  * used only here: what the parse tree says a method contains — branches
  * (`if`/`unless`/`elsif` and their modifiers, each `case` and its arms), loops,
  * returns, `raise`, jumps, `rescue` clauses — outside the blocks and lambdas
- * both tiers treat as closures. Measured on chatwoot's 10,477 methods at 98.9%
+ * both tiers treat as closures. Measured on a real Rails app's 10,477 methods at 98.9%
  * and match-centre's 4,704 at 98.0% when written; the threshold sits below that.
  */
 describe("keyword-delimited regex tier agrees with tree-sitter-ruby", { timeout: CORPUS_TIMEOUT_MS }, () => {

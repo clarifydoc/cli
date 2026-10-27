@@ -38,8 +38,8 @@ const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax"]);
  * `del` is here because `delete` is a reserved word: superagent, koa-route and
  * several wrappers spell the DELETE verb `del`, and a client that wraps them
  * (`const requests = { del: url => superagent.del(...) }`) inherits the name.
- * Leaving it out silently dropped every DELETE call in a codebase — the accuracy
- * eval found exactly that on the RealWorld frontend, where `get`/`post`/`put`
+ * Leaving it out silently dropped every DELETE call in a codebase — hand-labelling
+ * found exactly that on a demo app's frontend, where `get`/`post`/`put`
  * all resolved and all four DELETEs went missing.
  */
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "del"]);
@@ -762,7 +762,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return value == null && (this.imports ??= importEvidence(this.sourceText)).names.has(arg.text) ? { url: `\${${arg.text}}`, confidence: "INFERRED" } : null;
     }
     // `this.baseUrl + 'series/' + seriesId` — Angular's dominant spelling
-    // (Kavita: 398 of 417 call sites). Rendered the way a template literal is,
+    // (a real Angular app: 398 of 417 call sites). Rendered the way a template literal is,
     // `${this.baseUrl}series/${seriesId}`, so one downstream path handles both.
     if (arg.type === "binary_expression" && arg.childForFieldName("operator")?.text === "+") {
       const url = this.concatUrl(arg);

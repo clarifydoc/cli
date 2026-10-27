@@ -26,7 +26,7 @@ router.include_router(tags.router, prefix="/tags")
     ]);
   });
 
-  it("mounts at the receiving router's own prefix, with or without an include prefix (mealie)", async () => {
+  it("mounts at the receiving router's own prefix, with or without an include prefix (real-repo FP)", async () => {
     const routes = await routesOf(`
 router = APIRouter(prefix="/api")
 router.include_router(app.router)
@@ -56,7 +56,7 @@ app.include_router(api_router, prefix=settings.api_prefix)
 
   it("reads a project router class's prefix and puts the receiver's guards on the mount", async () => {
     const routes = await routesOf(`
-router = PlayerAPIRouter(prefix="/recipes", route_class=MealieCrudRoute)
+router = PlayerAPIRouter(prefix="/recipes", route_class=LeagueCrudRoute)
 
 @router.get("/{slug}")
 def get_one(slug: str): ...
@@ -121,7 +121,7 @@ describe("FastAPI mounts resolved across files", () => {
 
   it("composes transitively through a nested router package", () => {
     // app/api/routes/reports/api.py mounts its siblings at /reports, and is
-    // itself included from api.py — the FastAPI RealWorld layout.
+    // itself included from api.py — a demo FastAPI app's layout.
     const inner = file(
       "app/api/routes/reports/api.py",
       [mount("/reports", "reports_resource")],
@@ -135,18 +135,18 @@ describe("FastAPI mounts resolved across files", () => {
     expect(resource.routes.map((r) => r.path)).toEqual(["/reports", "/reports/{slug}"]);
   });
 
-  it("composes the receiving router's prefix through prefix-less includes (mealie's /api/app/about)", async () => {
+  it("composes the receiving router's prefix through prefix-less includes (real-repo FP: /api/app/about)", async () => {
     const api = file(
-      "mealie/routes/__init__.py",
+      "league/routes/__init__.py",
       [mount("/api", "app")],
       [{ source: ".", specifiers: ["app"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     );
     const appPkg = file(
-      "mealie/routes/app/__init__.py",
+      "league/routes/app/__init__.py",
       [mount("/app", "app_about")],
       [{ source: ".", specifiers: ["app_about"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     );
-    const about = file("mealie/routes/app/app_about.py", [get("/about")]);
+    const about = file("league/routes/app/app_about.py", [get("/about")]);
     const analyses = [api, appPkg, about];
     resolveRouterMounts(analyses, buildImportIndex(analyses));
     expect(about.routes.map((r) => r.path)).toEqual(["/api/app/about"]);

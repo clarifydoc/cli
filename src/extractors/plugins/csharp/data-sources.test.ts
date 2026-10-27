@@ -161,7 +161,7 @@ describe("C# HTTP-client detection — receiver gating", () => {
 });
 
 /**
- * Desktop/GUI I/O sinks. A Blazor Hybrid / WinUI tool app (DevToys) has no HTTP
+ * Desktop/GUI I/O sinks. A Blazor Hybrid / WinUI tool app has no HTTP
  * or DB tier — its "data" is the settings store, clipboard, and picked files.
  * Surfacing these as `database` data sources (with a distinguishing `target`
  * label + a synthetic entity) lights up the screen→data-access→entity trace +

@@ -50,7 +50,7 @@ export function extractElixirImports(lines: string[]): ImportInfo[] {
 
 // ─── Ecto data access ──────────────────────────────────────────────────────
 
-// `Repo.`, and the project's other repos: `ClickhouseRepo.`, `Plausible.IngestRepo.`.
+// `Repo.`, and the project's other repos: `ClickhouseRepo.`, `League.IngestRepo.`.
 const ECTO_REPO_RE = /\b(?:[A-Z]\w*\.)*\w*Repo\.(all|get|get!|get_by|get_by!|one|one!|exists\?|aggregate|delete_all|update_all|preload)\s*\(\s*([A-Z][\w.]*)/g;
 // `from(x in Schema, …)`, and a schemaless query over a table named as a string: `from(e in "events_v2", …)`.
 // A query built by a function (`from(e in Base.events_query(site))`) names the table it is handed, if any.

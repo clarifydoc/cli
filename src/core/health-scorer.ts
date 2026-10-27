@@ -159,8 +159,8 @@ export const HEALTH_MODEL = {
   complexityThreshold: 20,
   /** Security weights per distinct (file, category). */
   securityWeights: { critical: 3, high: 1, medium: 0.25 } as Record<string, number>,
-  // Calibrated 2026-10-07 on 17 of the 22 corpus repos (chatwoot, halo,
-  // mealie, netbox, vikunja held out): median 78, no F, Spearman(score, N)
+  // Calibrated 2026-10-07 on 17 of the 22 corpus repos (five held
+  // out): median 78, no F, Spearman(score, N)
   // −0.25, no dimension at ≥ 80% of its cap in more than a quarter of repos.
   dimensions: {
     cycles: { cap: 10, rHalf: 0.1 },

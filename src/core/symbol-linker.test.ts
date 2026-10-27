@@ -543,14 +543,14 @@ describe("symbol-linker — imports that name a sibling sub-project by package",
   const rust = (filePath: string, projectId: string, opts: { functions?: any[]; classes?: any[]; imports?: any[] }): FileAnalysis =>
     ({ ...file(filePath, projectId, opts), language: "rust", imports: opts.imports ?? [] } as unknown as FileAnalysis);
   const subProjects = [
-    { id: "crates-api", name: "api", root: "crates/api", kind: "rust", markers: [], packageName: "lemmy_api", packageEcosystem: "cargo" },
-    { id: "crates-db_views-site", name: "site", root: "crates/db_views/site", kind: "rust", markers: [], packageName: "lemmy-db-views-site", packageEcosystem: "cargo" },
+    { id: "crates-api", name: "api", root: "crates/api", kind: "rust", markers: [], packageName: "league_api", packageEcosystem: "cargo" },
+    { id: "crates-db_views-site", name: "site", root: "crates/db_views/site", kind: "rust", markers: [], packageName: "league-db-views-site", packageEcosystem: "cargo" },
   ] as any[];
 
   it("resolves `Type::method` into the crate a `use` names by its Cargo package name", () => {
     const handler = rust("crates/api/src/site/read.rs", "crates-api", {
       functions: [fn("read_site", [call("SiteView.read_local")])],
-      imports: [{ source: "lemmy_db_views_site::SiteView", specifiers: ["SiteView"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+      imports: [{ source: "league_db_views_site::SiteView", specifiers: ["SiteView"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
     });
     const struct = rust("crates/db_views/site/src/lib.rs", "crates-db_views-site", { classes: [cls("SiteView")] });
     const impls = rust("crates/db_views/site/src/impls.rs", "crates-db_views-site", {

@@ -68,7 +68,7 @@ describe("JS reachability — module resolution", () => {
     expect(m.resolve("src/a.ts", "~/missing/thing")).toBeNull();
   });
 
-  it("matches a bundler-rooted path that names its file with the extension (photoprism)", async () => {
+  it("matches a bundler-rooted path that names its file with the extension (real-repo FP)", async () => {
     // `overlayResolver({ roots: [src] })`: `component/…` is `frontend/src/component/…`.
     const m = await model(["frontend/src/component/album/edit/dialog.vue", "frontend/src/component/components.js"]);
     expect(m.resolve("frontend/src/component/components.js", "component/album/edit/dialog.vue")).toEqual([
@@ -88,7 +88,7 @@ describe("JS reachability — module resolution", () => {
 });
 
 describe("JS reachability — entry points", () => {
-  it("treats every file under vite_ruby's entrypoints directory as an entry (chatwoot)", async () => {
+  it("treats every file under vite_ruby's entrypoints directory as an entry (real-repo FP)", async () => {
     const m = await model(
       ["app/javascript/entrypoints/dashboard.js", "app/javascript/entrypoints/v3app.js", "app/javascript/v3/App.vue"],
       { "config/vite.json": { all: { sourceCodeDir: "app/javascript" } } },
@@ -172,7 +172,7 @@ describe("JS reachability — tool-loaded files named by convention or config", 
     expect(m.passiveReason?.(analysis("app/javascript/histoire.setup.ts"), "app/javascript/histoire.setup.ts", none)).toBe("Histoire setup");
   });
 
-  it("anchors the locale files @nuxtjs/i18n loads from langDir (mealie)", async () => {
+  it("anchors the locale files @nuxtjs/i18n loads from langDir (real-repo FP)", async () => {
     const m = await model(
       ["frontend/app/lang/locales/en-US.ts", "frontend/app/lang/locales/da-DK.ts", "frontend/app/lang/locales/unused.ts", "frontend/app/other/en-US.ts"],
       {

@@ -7,7 +7,7 @@ describe("xorm data sources", () => {
   it("names no store after a local the call fills (real-repo FP)", () => {
     const src = `package squads
 
-import "code.gitea.io/gitea/models/db"
+import "code.example.com/league/models/db"
 
 func PlayerIDs(ctx context.Context, clubID int64) ([]int64, error) {
 	ids := make([]int64, 0, 10)
@@ -20,7 +20,7 @@ func PlayerIDs(ctx context.Context, clubID int64) ([]int64, error) {
   it("reads engine chains, generic helpers and the argument's entity", () => {
     expect(rows(`package issues
 
-import "code.gitea.io/gitea/models/db"
+import "code.example.com/league/models/db"
 
 func GetLabelsByRepoID(ctx context.Context, repoID int64) ([]*Label, error) {
 	labels := make([]*Label, 0, 10)

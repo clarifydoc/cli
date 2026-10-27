@@ -398,7 +398,7 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     if (segMatch) return segMatch;
 
     // A module named in CamelCase lives in a snake_case file (Elixir, Ruby):
-    // `Plausible.Stats.QueryRunner` → `…/plausible/stats/query_runner.ex`.
+    // `League.Stats.QueryRunner` → `…/league/stats/query_runner.ex`.
     if (/[a-z][A-Z]/.test(importSource)) {
       const snake = importSource.split(".").map(snakeCase);
       for (let k = snake.length; k >= 2; k--) {
@@ -423,7 +423,7 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   }
 
   // 5. `::` namespace: "Shop::Orders" → "Shop/Orders"; else the longest unique
-  // path suffix (`lemmy_api_crud::site::read` → `…/site/read.rs`, the crate name
+  // path suffix (`league_api_crud::site::read` → `…/site/read.rs`, the crate name
   // being a directory the path does not spell); the last segment alone only
   // when one file in the project bears it — `read` names a dozen.
   if (importSource.includes("::")) {

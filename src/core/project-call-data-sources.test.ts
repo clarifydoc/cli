@@ -18,7 +18,7 @@ const names = (a: FileAnalysis) => a.dataSources.map((d) => d.name);
 
 describe("demoteProjectCallDataSources", () => {
   it("drops a DB data source whose call resolves into the project's own code", () => {
-    // realworld: `agent.Comments.create(…)` in a browser component is a call
+    // A demo app: `agent.Comments.create(…)` in a browser component is a call
     // into the frontend's HTTP client, not a write to a `Comments` table.
     const page = file("web/CommentInput.js", { dataSources: [ds("agent.Comments.create", 24), ds("prisma.comment.create", 30)] });
     const agent = file("web/agent.js");

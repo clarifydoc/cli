@@ -64,7 +64,7 @@ describe("reachability kit — names", () => {
     expect(m.declaredNames!(a, "class Missed {}")).toEqual(["StringExtensions", "Helper", "Slugify", "StringExtensions", "Missed"]);
   });
 
-  it("reads C# 14 extension-block members from the source (Kavita's filters)", async () => {
+  it("reads C# 14 extension-block members from the source (real-repo FP)", async () => {
     const { csharpReachability } = await import("../csharp/reachability.js");
     const m = await csharpReachability.load({ projectRoot: "/nonexistent", roots: [], files: new Set<string>() });
     const a = analysis("Filters/PersonFilter.cs", { classes: [cls("PersonFilter", { methods: [fn("extension")] })] } as never);

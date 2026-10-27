@@ -579,16 +579,16 @@ describe("symbol-linker — typed receivers", () => {
   });
 
   it("joins an alias import, or a module written out, to the module declared by that name (Elixir)", () => {
-    const sessions = file("lib/plausible/auth/user_sessions.ex", [cls("Plausible.Auth.UserSessions", { methods: [method("revoke_all", [], [], 4)] })], { language: "elixir" });
+    const sessions = file("lib/league/auth/user_sessions.ex", [cls("League.Auth.UserSessions", { methods: [method("revoke_all", [], [], 4)] })], { language: "elixir" });
     const other = file("lib/other/user_sessions.ex", [cls("Other.UserSessions", { methods: [method("revoke_all", [], [], 4)] })], { language: "elixir" });
-    const sso = { ...file("lib/plausible/auth/sso.ex", [cls("Plausible.Auth.SSO", { methods: [method("logout", [
-      call("UserSessions.revoke_all", { kind: "cross-file", target: "Plausible.Auth.UserSessions" }),
-      call("Plausible.Auth.UserSessions.revoke_all"),
-    ])] })], { language: "elixir" }), imports: [{ source: "Plausible.Auth.UserSessions", specifiers: ["UserSessions"], line: 2 }] } as unknown as FileAnalysis;
-    const out = callsFrom(buildSymbolLinks([sessions, other, sso]), "lib/plausible/auth/sso.ex");
+    const sso = { ...file("lib/league/auth/sso.ex", [cls("League.Auth.SSO", { methods: [method("logout", [
+      call("UserSessions.revoke_all", { kind: "cross-file", target: "League.Auth.UserSessions" }),
+      call("League.Auth.UserSessions.revoke_all"),
+    ])] })], { language: "elixir" }), imports: [{ source: "League.Auth.UserSessions", specifiers: ["UserSessions"], line: 2 }] } as unknown as FileAnalysis;
+    const out = callsFrom(buildSymbolLinks([sessions, other, sso]), "lib/league/auth/sso.ex");
     expect(out.map((l) => [l.callName, l.targetFile])).toEqual([
-      ["UserSessions.revoke_all", "lib/plausible/auth/user_sessions.ex"],
-      ["Plausible.Auth.UserSessions.revoke_all", "lib/plausible/auth/user_sessions.ex"],
+      ["UserSessions.revoke_all", "lib/league/auth/user_sessions.ex"],
+      ["League.Auth.UserSessions.revoke_all", "lib/league/auth/user_sessions.ex"],
     ]);
   });
 
@@ -623,11 +623,11 @@ describe("symbol-linker — typed receivers", () => {
     const ts = callsFrom(buildSymbolLinks([format, dup, dup2, barrel, caller]), "src/app.ts");
     expect(ts.map((l) => [l.callName, l.targetFile])).toEqual([["formatDate", "src/utils/format.ts"], ["u.formatDate", "src/utils/format.ts"]]);
 
-    const deps = file("mealie/core/dependencies/dependencies.py", [], { language: "python", functions: [fn("get_admin_user")] });
-    const init = withIo(file("mealie/core/dependencies/__init__.py", [], { language: "python" }), { exports: [{ name: "*", kind: "re-export", line: 1, source: ".dependencies" }] });
-    const router = file("mealie/routes/routers.py", [], { language: "python", functions: [method("admin", [call("get_admin_user", { kind: "cross-file", target: "mealie.core.dependencies" })])] });
-    const py = callsFrom(buildSymbolLinks([deps, init, router]), "mealie/routes/routers.py");
-    expect(py.map((l) => [l.callName, l.targetFile])).toEqual([["get_admin_user", "mealie/core/dependencies/dependencies.py"]]);
+    const deps = file("league/core/dependencies/dependencies.py", [], { language: "python", functions: [fn("get_admin_user")] });
+    const init = withIo(file("league/core/dependencies/__init__.py", [], { language: "python" }), { exports: [{ name: "*", kind: "re-export", line: 1, source: ".dependencies" }] });
+    const router = file("league/routes/routers.py", [], { language: "python", functions: [method("admin", [call("get_admin_user", { kind: "cross-file", target: "league.core.dependencies" })])] });
+    const py = callsFrom(buildSymbolLinks([deps, init, router]), "league/routes/routers.py");
+    expect(py.map((l) => [l.callName, l.targetFile])).toEqual([["get_admin_user", "league/core/dependencies/dependencies.py"]]);
 
     // A class forwarded by the barrel and called by name is constructed.
     const conv = file("pkg/units.py", [cls("UnitConverter", { methods: [method("__init__", [], [], 4)] })], { language: "python" });
@@ -664,14 +664,14 @@ describe("symbol-linker — typed receivers", () => {
   it("resolves a bare call through a wildcard import, to what the module exports", () => {
     const withIo = (a: FileAnalysis, extra: Record<string, unknown>) => ({ ...a, ...extra }) as unknown as FileAnalysis;
     // `__all__ = ["system_job"]` — `_helper` is not exported.
-    const jobs = withIo(file("netbox/jobs.py", [], { language: "python", functions: [method("system_job", [], [], 44), method("_helper", [], [], 60)] }), {
+    const jobs = withIo(file("league/jobs.py", [], { language: "python", functions: [method("system_job", [], [], 44), method("_helper", [], [], 60)] }), {
       exports: [{ name: "system_job", kind: "function", line: 44 }],
     });
-    const test = withIo(file("netbox/tests/test_jobs.py", [], { language: "python", functions: [method("<setup>", [call("system_job"), call("_helper")])] }), {
+    const test = withIo(file("league/tests/test_jobs.py", [], { language: "python", functions: [method("<setup>", [call("system_job"), call("_helper")])] }), {
       imports: [{ source: "..jobs", specifiers: [], isDefault: false, isNamespace: true, isType: false, line: 19 }],
     });
-    const out = callsFrom(buildSymbolLinks([jobs, test]), "netbox/tests/test_jobs.py");
-    expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([["system_job", "netbox/jobs.py", "import-file"]]);
+    const out = callsFrom(buildSymbolLinks([jobs, test]), "league/tests/test_jobs.py");
+    expect(out.map((l) => [l.callName, l.targetFile, l.strategy])).toEqual([["system_job", "league/jobs.py", "import-file"]]);
   });
 
   it("resolves a PHP function by its namespace: imported, fully qualified, or the caller's own namespace first", () => {

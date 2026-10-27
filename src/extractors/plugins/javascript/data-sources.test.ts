@@ -438,7 +438,7 @@ describe("JS api-call — `del` is the DELETE verb", () => {
   // `delete` is a reserved word, so superagent, koa-route and the clients that
   // wrap them expose DELETE as `del`. Leaving it out of the verb set dropped
   // every DELETE call in a codebase silently: hand-labelling found all four
-  // of the RealWorld frontend's DELETEs missing while `get`/`post`/`put`
+  // of a demo app frontend's DELETEs missing while `get`/`post`/`put`
   // resolved, at precision 1.000 — a pure blind spot, not a wrong answer.
   it("captures a del() call with a URL-shaped argument", async () => {
     const calls = await apiCallsOf(`
@@ -464,7 +464,7 @@ describe("JS api-call — `del` is the DELETE verb", () => {
 });
 
 describe("JS api-call bindings are resolved in the scope of the call", () => {
-  it("gives each method its own `let url` (Kavita's series service)", async () => {
+  it("gives each method its own `let url` (real-repo FP: a series service)", async () => {
     const calls = await apiCallsOf(`
       class SeriesService {
         wantToRead() {
@@ -665,7 +665,7 @@ describe("JS request descriptors and positional request()", () => {
     ]);
   });
 
-  it("accepts a method-less descriptor passed to a call with request-shaped keys (Radarr)", async () => {
+  it("accepts a method-less descriptor passed to a call with request-shaped keys (real-repo FP)", async () => {
     const calls = await apiCallsOf(`
       const promise = createAjaxRequest({ url: '/calendar', data: { start, end } }).request;
       const key = [{ url: '/api/cache-key' }];
@@ -765,7 +765,7 @@ describe("JS route decorators are not outbound calls", () => {
 });
 
 describe("JS request factories: a descriptor URL built from a parameter", () => {
-  it("reads a ternary's arms and the factory's parameter as a hole (Radarr createFetchHandler)", async () => {
+  it("reads a ternary's arms and the factory's parameter as a hole (real-repo FP: createFetchHandler)", async () => {
     const calls = await apiCallsOf(`
       export default function createFetchHandler(section, url) {
         return function(getState, payload, dispatch) {
@@ -829,8 +829,8 @@ describe("openapi-generator wrappers", () => {
 
 /**
  * A generic verb is a database operation only with evidence: an ORM/driver
- * import, a repository/model-shaped chain, or a model in scope. Chatwoot's
- * Vuex actions, vue-test-utils wrappers and API clients were database rows.
+ * import, a repository/model-shaped chain, or a model in scope. A real Rails
+ * app's Vuex actions, vue-test-utils wrappers and API clients were database rows.
  */
 describe("JS ORM rows need ORM evidence", () => {
   it("drops generic verbs on non-model receivers in a file with no ORM", async () => {

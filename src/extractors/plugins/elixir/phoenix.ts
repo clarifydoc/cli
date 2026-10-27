@@ -318,7 +318,7 @@ export function attachPatternKeys(lines: string[], fns: FunctionInfo[]): void {
 // ─── Ecto schema ─────────────────────────────────────────────────────────────
 
 const ECTO_FIELD_RE = /^\s*field\s+:(\w+)\s*(?:,\s*(\{[^}]*\}|:\w+|[A-Z][\w.]*))?/;
-/** `belongs_to :team, Plausible.Teams.Team` / `has_many :goals, Goal, preload_order: …` / `many_to_many :tags, Tag, join_through: "posts_tags"`. */
+/** `belongs_to :team, League.Teams.Team` / `has_many :goals, Goal, preload_order: …` / `many_to_many :tags, Tag, join_through: "posts_tags"`. */
 const ECTO_ASSOC_RE = /^\s*(belongs_to|has_many|has_one|many_to_many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)(.*)$/;
 const ECTO_EMBEDS_RE = /^\s*embeds_(one|many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 
@@ -376,8 +376,8 @@ export function attachEctoSchema(lines: string[], cls: ClassInfo): void {
 
 /**
  * Ecto associations of every schema module in the file, as entity relations.
- * The target is written as a module — fully (`Plausible.Teams.Team`) or by an
- * alias (`Team`, after `alias Plausible.Teams.Team`) — and is resolved to the
+ * The target is written as a module — fully (`League.Teams.Team`) or by an
+ * alias (`Team`, after `alias League.Teams.Team`) — and is resolved to the
  * full module name, which is what the entity graph names the schema by; an
  * alias the file never declares is taken as a sibling of the declaring module.
  * `many_to_many` carries its `join_through` table.

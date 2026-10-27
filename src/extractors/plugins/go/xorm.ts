@@ -2,13 +2,13 @@ import type { DataSourceInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 /**
- * xorm — the ORM gitea and many Go services use. Its sessions carry no entity
+ * xorm — the ORM many Go services use. Its sessions carry no entity
  * of their own: the entity is the argument the terminal verb is handed.
  *
  *   db.GetEngine(ctx).Where("repo_id = ?", id).Find(&labels)      // labels := make([]*Label, 0)
  *   e.ID(id).Get(issue)                                          // issue *Issue (a parameter)
  *   sess.Insert(&Comment{…})
- *   db.Find[repo_model.Topic](ctx, opts)   db.Insert(ctx, review)    // gitea's generic helpers
+ *   db.Find[repo_model.Topic](ctx, opts)   db.Insert(ctx, review)    // a project's generic helpers
  *
  * A file is read only when it states xorm (`xorm.io/…`, `db.GetEngine(`,
  * `NewSession(`). Within it, a terminal verb (Find/Get/Insert/Update/Delete/…)
@@ -54,7 +54,7 @@ const XORM: OrmChainSpec = {
 };
 
 /**
- * GORM chains (photoprism): `UnscopedDb().Model(m).UpdateColumn(…)`,
+ * GORM chains: `UnscopedDb().Model(m).UpdateColumn(…)`,
  * `Db().Where("photo_id = ?", id).Delete(&PhotoLabel{})`. A receiver directly
  * named like a DB (`db.Find(&x)`) is the per-line GORM rule's; this one reads
  * the chains it cannot, and takes the entity from a `.Model(…)` step first.

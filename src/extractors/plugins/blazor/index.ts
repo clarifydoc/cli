@@ -14,7 +14,7 @@ import { extractCallsFromBody } from "../shared/regex-base.js";
  *
  * A `.razor` file is HTML-ish markup with Razor `@`-directives. Its C# logic
  * lives either in a `@code { }` block or — more commonly in component libraries
- * like DevToys — in a sibling `Foo.razor.cs` code-behind partial class (already
+ * and desktop tools — in a sibling `Foo.razor.cs` code-behind partial class (already
  * parsed by the C# plugin). So this spec extracts the UI half only:
  *
  *  - `@page "/route"`               → frontend routes (and therefore routed screens),
@@ -122,7 +122,7 @@ const INJECT_RE = /^\s*@inject\s+([A-Za-z_][\w.<>,? ]*?)\s+([A-Za-z_]\w*)\s*$/;
 /**
  * The methods of a component's own `@code` block, as functions of the `.razor`
  * file — `@onclick="SendMessageAsync"` names one of them, and before this the
- * file declared none, so no Blazor handler resolved (eShop: 0 of 13). Only
+ * file declared none, so no Blazor handler resolved (a real Blazor app: 0 of 13). Only
  * methods: a component with a `.razor.cs` code-behind keeps its class there,
  * and nothing here declares a second one. Each method knows the services the
  * component injects (`@inject BasketState Basket` → `Basket: BasketState`), the

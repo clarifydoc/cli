@@ -61,11 +61,11 @@ describe("gRPC client calls", () => {
       // The project's own wrapper, typed: not the stub.
       fn("main", ["client.ListProducts"], [{ name: "client", type: "CatalogClient" }]),
     ] });
-    const routes = [rpc("hipstershop.AdService", "GetAds"), rpc("hipstershop.CurrencyService", "GetSupportedCurrencies"), rpc("hipstershop.ProductCatalogService", "ListProducts")];
+    const routes = [rpc("league.AdService", "GetAds"), rpc("league.CurrencyService", "GetSupportedCurrencies"), rpc("league.ProductCatalogService", "ListProducts")];
     expect(grpcClientCalls([go, py], routes).map((c) => `${c.filePath}:${c.line} ${c.name}`)).toEqual([
-      "x.go:3 POST /hipstershop.AdService/GetAds",
-      "x.go:11 POST /hipstershop.CurrencyService/GetSupportedCurrencies",
-      "x.python:5 POST /hipstershop.ProductCatalogService/ListProducts",
+      "x.go:3 POST /league.AdService/GetAds",
+      "x.go:11 POST /league.CurrencyService/GetSupportedCurrencies",
+      "x.python:5 POST /league.ProductCatalogService/ListProducts",
     ]);
   });
 

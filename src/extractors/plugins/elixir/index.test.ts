@@ -5,7 +5,7 @@ import "../../registry.js";
 describe("Ecto writes and query reads", () => {
   it("reads writes through changesets, structs and pipelines, and reads of a query variable", async () => {
     const { extractWithRegex } = await import("../../../core/regex-extractor.js");
-    const src = `defmodule Plausible.Sites do
+    const src = `defmodule League.Sites do
   def create(attrs) do
     %Site{}
     |> Site.changeset(attrs)
@@ -27,7 +27,7 @@ describe("Ecto writes and query reads", () => {
 
   defp execute(query), do: query |> QueryBuilder.build() |> ClickhouseRepo.all(query: query)
 end`;
-    const a = extractWithRegex(src, "lib/plausible/sites.ex", "elixir");
+    const a = extractWithRegex(src, "lib/league/sites.ex", "elixir");
     expect(a.dataSources.map((d) => `${d.line} ${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`)).toEqual([
       "5 Repo.insert Site write",
       "9 Repo.update! Site write",

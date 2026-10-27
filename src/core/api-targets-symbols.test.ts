@@ -43,7 +43,7 @@ async function project(files: Record<string, string>) {
 }
 
 describe("resolveSymbolicTargets", () => {
-  it("resolves a field set from an imported environment, and its loopback origin drops (Kavita)", async () => {
+  it("resolves a field set from an imported environment, and its loopback origin drops (real-repo FP)", async () => {
     const targets = await project({
       "src/environments/environment.ts": `const IP = 'localhost';\nexport const environment = { apiUrl: 'http://' + IP + ':5000/api/' };`,
       "src/app/series.service.ts": `
@@ -79,7 +79,7 @@ export class TagsService extends BaseService {
     expect(targets).toEqual([["/api/v2/tags", null]]);
   });
 
-  it("falls back to the default of `a || b` when the project states only the default (chatwoot)", async () => {
+  it("falls back to the default of `a || b` when the project states only the default (real-repo FP)", async () => {
     const targets = await project({
       "src/club.js": `
 const DEFAULT_API_VERSION = 'v1';
@@ -128,11 +128,11 @@ describe("URL builders resolved where they are called", () => {
     return calls.map((c) => `${c.filePath.split("/").pop()}:${c.line} ${c.name} ${c.target}`);
   }
 
-  const PAPERLESS = {
+  const CLUB_SERVICES = {
     "src/environments/environment.ts": `export const environment = { apiBaseUrl: 'http://localhost:8000/api/' };`,
-    "src/app/services/abstract-paperless-service.ts": `
+    "src/app/services/abstract-club-service.ts": `
 import { environment } from '../../environments/environment';
-export abstract class AbstractPaperlessService<T> {
+export abstract class AbstractClubService<T> {
   protected baseUrl: string = environment.apiBaseUrl;
   constructor(protected http: HttpClient, protected resourceName: string) {}
   protected getResourceUrl(id: number = null, action: string = null): string {
@@ -143,8 +143,8 @@ export abstract class AbstractPaperlessService<T> {
   }
 }`,
     "src/app/services/document.service.ts": `
-import { AbstractPaperlessService } from './abstract-paperless-service';
-export class DocumentService extends AbstractPaperlessService<Document> {
+import { AbstractClubService } from './abstract-club-service';
+export class DocumentService extends AbstractClubService<Document> {
   constructor(http: HttpClient) { super(http, 'documents'); this.resourceName = 'documents'; }
   get(id: number) { return this.http.get(this.getResourceUrl(id)); }
   notes(id: number) { return this.http.get(this.getResourceUrl(id, 'notes')); }
@@ -152,15 +152,15 @@ export class DocumentService extends AbstractPaperlessService<Document> {
 }`,
   };
 
-  it("builds an inherited helper's URL from the CALLING subclass's fields, the variant its arguments pick (paperless)", async () => {
-    expect(await linked(PAPERLESS)).toEqual([
+  it("builds an inherited helper's URL from the CALLING subclass's fields, the variant its arguments pick (real-repo FP)", async () => {
+    expect(await linked(CLUB_SERVICES)).toEqual([
       "document.service.ts:5 get /api/documents/{}/",
       "document.service.ts:6 get /api/documents/{}/notes/",
       "document.service.ts:7 post /api/documents/bulk_edit/",
     ]);
   });
 
-  it("resolves a route table's arrow helper in its own file, over an imported prefix (mealie)", async () => {
+  it("resolves a route table's arrow helper in its own file, over an imported prefix (real-repo FP)", async () => {
     expect(
       await linked({
         "lib/api/config.ts": `const PREFIX = "/api";\nexport const config = { PREFIX };`,
@@ -283,7 +283,7 @@ export default new LeagueAPI();`,
     expect(rows.map((r) => r[0])).toEqual(["/api/v1/${id}"]);
   });
 
-  it("keeps one row per subclass when two request the same URL (paperless DocumentService, DocumentNotesService)", async () => {
+  it("keeps one row per subclass when two request the same URL (real-repo FP: DocumentService, DocumentNotesService)", async () => {
     const targets = await project({
       "src/base.ts": `
 export abstract class BaseCRUDAPI {

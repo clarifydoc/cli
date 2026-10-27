@@ -573,7 +573,7 @@ describe("linkApiCallsToRoutes — what the call itself knows", () => {
 });
 
 describe("linkApiCallsToRoutes — method policy", () => {
-  it("refuses a route that serves another method, whichever tier found it (Radarr)", () => {
+  it("refuses a route that serves another method, whichever tier found it (real-repo FP)", () => {
     // `POST /movie`: the literal path is BlocklistController's GET; the
     // /api/v3 contract row serving POST is one tier further.
     const blocklist = route("Blocklist/BlocklistController.cs", "GET", "/movie", "GetMovieBlocklist");
@@ -597,7 +597,7 @@ describe("linkApiCallsToRoutes — method policy", () => {
     expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "method-fallback" });
   });
 
-  it("reads a request descriptor without a method as a GET (Radarr createFetchHandler)", () => {
+  it("reads a request descriptor without a method as a GET (real-repo FP: createFetchHandler)", () => {
     const routes = [route("MovieController.cs", "GET", "/movie", "AllMovie"), route("MovieController.cs", "POST", "/movie", "AddMovie")];
     const [link] = linkApiCallsToRoutes([apiCall("web/movieActions.js", "request", "/movie")], routes);
     expect(link).toMatchObject({ handler: "AllMovie", confidence: "EXTRACTED" });
@@ -632,9 +632,9 @@ describe("linkApiCallsToRoutes — method policy", () => {
 describe("linkApiCallsToRoutes — code rows and their API-contract twins", () => {
   const isContract = (r: { filePath: string }) => r.filePath.endsWith(".json");
 
-  it("prefers the implementing code row over the contract row for the same endpoint (immich)", () => {
+  it("prefers the implementing code row over the contract row for the same endpoint (real-repo FP)", () => {
     const ctl = route("server/src/controllers/album.controller.ts", "GET", "/api/albums", "getAllAlbums", 40);
-    const spec = route("open-api/immich-openapi-specs.json", "GET", "/api/albums", "getAllAlbums", 900);
+    const spec = route("open-api/league-openapi-specs.json", "GET", "/api/albums", "getAllAlbums", 900);
     const twins = pairContractTwins([ctl, spec], [], isContract);
     const links = linkApiCallsToRoutes([apiCall("web/albums.ts", "get", "/api/albums")], [spec, ctl], {
       isContract,
@@ -651,7 +651,7 @@ describe("linkApiCallsToRoutes — code rows and their API-contract twins", () =
   });
 
   it("lands on the code twin a spec join found when the code row knows only its tail", () => {
-    // Radarr: the controller row is prefix-less (`/movie`), the contract row
+    // Real-repo shape: the controller row is prefix-less (`/movie`), the contract row
     // carries the real path; the symbol linker's spec join tied the operation
     // to MovieController.AddMovie.
     const ctl = route("Movies/MovieController.cs", "POST", "/movie", "AddMovie", 120);
@@ -820,11 +820,11 @@ describe("linkApiCallsToRoutes — a call whose base is unknown", () => {
     expect(links[0]).toMatchObject({ confidence: "INFERRED", matchedVia: "base-unresolved:/api" });
   });
 
-  it("falls back to a unique same-method suffix (Kavita `email/all`)", () => {
+  it("falls back to a unique same-method suffix (real-repo FP: `email/all`)", () => {
     const routes = [
       // A base no conventional prefix covers.
-      route("Api/EmailController.cs", "GET", "/kavita/api/Email/all", "GetEmails"),
-      route("Api/AnnotationController.cs", "GET", "/kavita/api/Annotation/all", "GetAll"),
+      route("Api/EmailController.cs", "GET", "/league/api/Email/all", "GetEmails"),
+      route("Api/AnnotationController.cs", "GET", "/league/api/Annotation/all", "GetAll"),
     ];
     const links = linkApiCallsToRoutes([withBase("/email/all")], routes);
     expect(links[0]).toMatchObject({ target: "Api/EmailController.cs", confidence: "INFERRED", matchedVia: "base-unresolved:suffix" });
@@ -842,7 +842,7 @@ describe("linkApiCallsToRoutes — a call whose base is unknown", () => {
     expect(linkApiCallsToRoutes([withBase("/email/all", "fetch")], [routes[0]!])).toEqual([]);
   });
 
-  it("never lets an unsplit leading hole stand for a path segment (mealie /duplicate)", () => {
+  it("never lets an unsplit leading hole stand for a path segment (real-repo FP: /duplicate)", () => {
     const links = linkApiCallsToRoutes(
       [apiCall("web/base-clients.ts", "post", "${this.itemRoute(itemId)}/duplicate")],
       [route("recipes.py", "POST", "/{slug}/duplicate", "duplicate_one")],

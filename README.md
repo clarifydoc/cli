@@ -650,7 +650,7 @@ Over seven pinned repositories, as of extractor 1.222.0:
 <!-- accuracy:end -->
 
 Bad numbers get published too: a corpus picked to flatter the tool measures nothing. The first run
-scored route paths at 0.000 on FastAPI and missed every DELETE call in the RealWorld frontend.
+scored route paths at 0.000 on FastAPI and missed every DELETE call in a demo app's frontend.
 
 ## License
 

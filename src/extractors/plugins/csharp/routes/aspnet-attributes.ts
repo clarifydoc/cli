@@ -4,7 +4,7 @@ import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 
 /**
  * ASP.NET custom routing attributes — a project's own `[V3ApiController]`
- * (Radarr: `IRouteTemplateProvider` whose constructor builds
+ * (an `IRouteTemplateProvider` whose constructor builds
  * `Template = $"api/v{version}/{resource}"`) or `[RestPutById]`
  * (`: HttpPutAttribute` with `base("{id:int?}")`).
  *

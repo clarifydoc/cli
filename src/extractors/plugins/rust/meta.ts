@@ -51,7 +51,7 @@ export const rustMeta: LanguagePluginMeta = {
       },
     };
   },
-  // AppFlowy lib-dispatch: a Flutter call of a generated event class runs the Rust handler (event-dispatch.ts).
+  // lib-dispatch: a Flutter call of a generated event class runs the Rust handler (event-dispatch.ts).
   dispatchResolvers: [new AfDispatchResolver()],
   dispatchLanguages: ["dart"],
   builtinTypes: RUST_BUILTINS,

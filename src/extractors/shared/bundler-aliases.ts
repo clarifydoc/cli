@@ -7,7 +7,7 @@ import { escapeRegex } from "../plugins/shared/path-utils.js";
  * Import aliases a bundler config declares — Vite `resolve.alias`, webpack
  * `resolve.alias`, Vue CLI `configureWebpack.resolve.alias` — for projects
  * that never write them into a tsconfig (`'@': fileURLToPath(new URL('./src',
- * import.meta.url))`, chatwoot's `dashboard: path.resolve('./app/javascript/dashboard')`).
+ * import.meta.url))`, a Rails app's `dashboard: path.resolve('./app/javascript/dashboard')`).
  *
  * The config is code, so only the spellings that state a path literally are
  * read: string literals (`'/resources/js'` is relative to the config's

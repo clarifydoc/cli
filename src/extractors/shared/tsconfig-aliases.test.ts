@@ -21,7 +21,7 @@ describe("tsconfig aliases", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("resolves a bare import under baseUrl when the file is there (paperless)", () => {
+  it("resolves a bare import under baseUrl when the file is there (real-repo FP)", () => {
     const aliases = loadTsconfigAliasesForDir(join(root, "src-ui/src/app"));
     expect(applyAliases("src/environments/environment", aliases, root)).toBe("src-ui/src/environments/environment");
   });
@@ -70,7 +70,7 @@ export default {
   },
   build: { rollupOptions: { alias: [{ find: 'lib', replacement: path.resolve(__dirname, 'lib') }, { find: /^~/, replacement: '' }] } },
 }`);
-    // Aliases declared in a shared module the config imports (chatwoot).
+    // Aliases declared in a shared module the config imports (a real Rails app).
     await mkdir(join(root, "rails/app/javascript/dashboard"), { recursive: true });
     await writeFile(join(root, "rails/vite.shared.ts"), `import path from 'path';
 export const aliases = {

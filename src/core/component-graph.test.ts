@@ -132,12 +132,12 @@ describe("buildComponentGraph — package-directory imports (Go)", () => {
     return a;
   };
 
-  it("resolves an import to the directory its longest path suffix names, never every same-named package (gitea)", () => {
+  it("resolves an import to the directory its longest path suffix names, never every same-named package (real-repo FP)", () => {
     const graph = buildComponentGraph([
       goFile("modules/setting/setting.go", ["AppName"]),
       goFile("modules/setting/database.go", ["LoadDBSetting"]),
       goFile("routers/web/repo/setting/setting.go", ["Settings"]),
-      goFile("cmd/web.go", [], ["code.gitea.io/gitea/modules/setting"], ["setting.AppName"]),
+      goFile("cmd/web.go", [], ["code.example.com/league/modules/setting"], ["setting.AppName"]),
     ]);
     // Narrowed to the file declaring the name used; the router's `setting` package is another directory.
     expect(graph["cmd/web.go"]).toEqual(["modules/setting/setting.go"]);

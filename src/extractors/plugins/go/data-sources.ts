@@ -305,7 +305,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const stated = new Set(sources.filter((d) => d.kind === "api-call").map((d) => d.line));
   for (const d of goRequestFactoryRows(lines)) if (!stated.has(d.line)) sources.push(d);
 
-  // xorm sessions (gitea): the entity is the terminal verb's argument (xorm.ts).
+  // xorm sessions: the entity is the terminal verb's argument (xorm.ts).
   const gormLines = new Set(sources.filter((d) => d.name.startsWith("GORM:")).map((d) => d.line));
   for (const d of extractXormDataSources(lines)) if (!gormLines.has(d.line)) sources.push(d);
 

@@ -74,7 +74,7 @@ interface Where {
  * include([...]))`, `path("api/dcim/", include("dcim.api.urls"))`), a DRF
  * `router.register("tags", TagViewSet)` becomes up to six routes plus one per
  * `@action` — which depend on the ViewSet's bases, usually in another file.
- * ClarifyDoc read none of it: paperless-ngx (20 registered ViewSets, nested
+ * ClarifyDoc read none of it: a real Django app (20 registered ViewSets, nested
  * `re_path` includes) had no API route at all.
  *
  * The walk starts at `ROOT_URLCONF`'s module, or at every urlconf nothing

@@ -73,11 +73,11 @@ function effectiveFact(raw: CsControllerFact, filePath: string, attrs: CustomAtt
 /**
  * ASP.NET controller inheritance — what one file cannot see.
  *
- * `[Route("api/[controller]")]` on a base controller (Kavita's
+ * `[Route("api/[controller]")]` on a base controller (a
  * `BaseApiController`) is inherited by every controller deriving from it,
  * with `[controller]` naming the DERIVED class; so are `[ApiController]` and
  * `[Authorize]`. Read per file, `SeriesController`'s actions came out
- * prefix-less (`GET /{seriesId}`) — 426 of Kavita's 452 rows — and distinct
+ * prefix-less (`GET /{seriesId}`) — 426 of a real app's 452 rows — and distinct
  * endpoints with the same tail collapsed into one in dedupe.
  *
  * And a routed action declared on an abstract base (`RestController<T>`'s

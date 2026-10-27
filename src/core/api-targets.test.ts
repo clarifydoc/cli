@@ -120,7 +120,7 @@ describe("expandRequestFactories", () => {
     expect(calls[1]).toMatchObject({ filePath: client.filePath, line: 30, target: "${this.BasePath}/v2/person/{id}", via: "Get" });
   });
 
-  it("fills the factory's URL parameter from each call site's literal (Radarr)", () => {
+  it("fills the factory's URL parameter from each call site's literal (real-repo FP)", () => {
     const calls: Array<DataSourceInfo & { filePath: string }> = [factoryRow()];
     const site = analysis("Store/Actions/systemActions.js", [], [
       { callee: "createFetchHandler", args: ["system.status", "/system/status"], line: 256 },

@@ -147,7 +147,7 @@ describe("Python database calls", () => {
   });
 
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
-    // code-scalpel: every one of these was a "database" access.
+    // Real-repo FP: every one of these was a "database" access.
     expect(await dbCallsOf([
       "interp.execute(ir)",
       "SymbolicInterpreter().execute(code)",

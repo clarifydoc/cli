@@ -364,7 +364,7 @@ describe("Go routes: several closures in one registering function", () => {
   });
 });
 
-describe("a router built by groups of closures (gitea style)", () => {
+describe("a router built by groups of closures (real-repo shape)", () => {
   it("composes Group prefixes and reads Combo chains, verb-first Methods, empty and suffix paths (real-repo FP: ~98 of ~1,420 routes right)", () => {
     const src = `func registerWebRoutes(m *web.Router) {
 	m.Group("/league/settings", func() {

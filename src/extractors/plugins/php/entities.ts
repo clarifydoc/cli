@@ -178,7 +178,7 @@ export class PhpEntityExtractor extends EntityExtractor {
    *
    * Per file, `Account::where(…)->first()` is a query on `Account` only if
    * `Account` is a model — `Carbon::create(…)` and `Finder::create()` share the
-   * verb and were two thirds of firefly-iii's and koel's "database" rows. And
+   * verb and were two thirds of two real Laravel apps' "database" rows. And
    * `$user->accounts()->where(…)->get()` names its table only through the
    * relation `accounts()`, declared on `User` in another file. Both joins need
    * every model the project declares, so they happen here:
@@ -1073,7 +1073,7 @@ const GENERIC_MODEL_RE = /^(?:\$this\s*->\s*(?:modelClass|model|entityClass|enti
 /**
  * A generic repository base (`abstract class Repository { getOne($id) {
  * return $this->modelClass::query()->findOrFail($id); } }`, the model guessed
- * from the subclass's name — koel's, and Laravel repository packages') reads
+ * from the subclass's name — a real app's, and Laravel repository packages') reads
  * the table of whichever subclass it runs as. Its rows stay where they are,
  * one per model a subclass named `<Model>Repository` (or `…Repo`) stands for:
  * `Repository.getOne` reaches songs, albums, users — each table one of its

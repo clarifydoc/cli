@@ -981,8 +981,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   }
 
   /**
-   * A registry keyed by a constant, and the creators that name it — Radarr's
-   * thunks, and every Redux codebase built the same way:
+   * A registry keyed by a constant, and the creators that name it — a real
+   * app's thunks, and every Redux codebase built the same way:
    *
    *   export const fetchMovies = createThunk(FETCH_MOVIES);
    *   handleThunks({ [FETCH_MOVIES]: createFetchHandler(section, '/movie') });
@@ -1354,7 +1354,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * functions of their own name. A `setup()` body is descended for the named
    * inner functions it returns to the template. Before this an Options API
    * component declared NO functions at all, so none of its handlers resolved
-   * and no click trace left the component (photoprism: 0 of 754 handlers).
+   * and no click trace left the component (a real Vue app: 0 of 754 handlers).
    */
   private extractVueOptionsMembers(options: Node, functions: FunctionInfo[]): void {
     for (const member of options.namedChildren) {

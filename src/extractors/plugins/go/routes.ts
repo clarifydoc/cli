@@ -115,9 +115,9 @@ function joinPrefix(prefix: string, path: string): string {
 const PROJECT_ROUTER_RE = /(\w+)\s*:?=\s*(?:\w+\.)?New(?:Router|Mux)\s*\(\s*\)/;
 /** `r.Mount("/api/v1", apiv1.Routes())` — a router a function returns, mounted. */
 const MOUNT_CALL_RE = /(\w+)\.\s*Mount\s*\(\s*["'`]([^"'`]*)["'`]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(\s*\)\s*\)/;
-/** gitea's `m.Combo("/path", mw…).Get(h).Post(mw, h2)`: one path, a chain of verbs. */
+/** A forge's `m.Combo("/path", mw…).Get(h).Post(mw, h2)`: one path, a chain of verbs. */
 const COMBO_RE = /(\w+)\.\s*Combo\s*\(/;
-/** gitea's `m.Methods("GET, POST", "/path", h)`: the verbs first. */
+/** A forge's `m.Methods("GET, POST", "/path", h)`: the verbs first. */
 const VERBS_FIRST_RE = /(\w+)\.\s*Methods\s*\(\s*["'`]/;
 /** gorilla's route builder: `r.Methods("GET").Path("/x").HandlerFunc(h)`, `r.Path("/x").Methods("POST").Handler(h)`. */
 const GORILLA_CHAIN_RE = /(\w+)\.\s*(?:Methods|Path)\s*\(/;
@@ -486,7 +486,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     const chiBlock = group ? null : line.match(CHI_BLOCK_RE);
     if (chiBlock) {
       const { args, closed } = parseArgs(line, chiBlock.index! + chiBlock[0].length - 1);
-      // chi's `Route("/p", func(r) {…})` and `Group(func(r) {…})`; gitea's `Group("/p", func() {…}, mw…)`.
+      // chi's `Route("/p", func(r) {…})` and `Group(func(r) {…})`; a forge's `Group("/p", func() {…}, mw…)`.
       const prefixed = chiBlock[2] === "Route" || (literal(args[0]) !== null && /^func\s*\(/.test(args[1] ?? ""));
       const prefix = prefixed ? literal(args[0]) : "";
       const body = args[prefixed ? 1 : 0];
@@ -498,7 +498,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       }
     }
 
-    // gitea: `m.Combo("/forks").Get(repo.ListForks).Post(mw, repo.CreateFork)`, possibly over several lines.
+    // A forge: `m.Combo("/forks").Get(repo.ListForks).Post(mw, repo.CreateFork)`, possibly over several lines.
     const combo = line.match(COMBO_RE);
     if (combo) {
       let text = line;

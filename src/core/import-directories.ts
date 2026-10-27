@@ -34,7 +34,7 @@ export function packageRootsOf(subProjects: readonly SubProject[]): Map<string, 
  * then the directory) decides it from the repository's packages, exactly —
  * the standard library and downloads are no directory. Otherwise, or when no
  * manifest names a package, the directory whose path ends with the longest
- * run of the import's trailing segments (`code.gitea.io/gitea/modules/setting`
+ * run of the import's trailing segments (`code.example.com/league/modules/setting`
  * → `modules/setting`, never `routers/web/repo/setting`). Anchored when two or
  * more segments agree, or the whole directory path does (a root-level
  * `handler/` under a module path); otherwise only a directory unique by name
