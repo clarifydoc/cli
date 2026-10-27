@@ -41,6 +41,8 @@ These consume a `RegexLangSpec` and produce standard output:
 - `repository-access.ts` `attributeRepositoryAccesses(analyses, knobs)` — the repository pattern over a generic base (`IMovieRepository : IBasicRepository<Movie>`, `RepositoryRecipes(Generic[Recipe, RecipeModel])`): walks the typed member chain across files and puts the generic's entity-typed argument on every CRUD-shaped call; a plugin's entity extractor calls it from `reconcileProject` with its spelling knobs (C#, Python)
 - `inflection.ts` `singularize`/`pluralize` — the loose English inflection ORM conventions share (Crystal, Dart)
 - `declared-package.ts` `tomlSectionValue(text, sections, key)` — a manifest's own `[package]`/`[project]` name
+- `preprocessor-branches.ts` `readWithBranches(text, cplusplus, read)` — the C-family parser front ends' reading of `#if`: dead blocks (`#if 0`, `__cplusplus` as the language says) blanked; a file that does not parse read again with each conditional's first branch, the left-out branches' calls counted, a second-branch reading's definitions added (C, C++)
+- `token-calls.ts` `tokenCalls`/`defineCalls`/`leftOutCalls` — calls read off a C-family ANTLR lexer's tokens (`TokenKinds`) where a parse reads no expression: macro arguments, a `#define` inside a function, left-out branches
 
 ### Helpers
 

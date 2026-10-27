@@ -14,7 +14,7 @@
 /** The features this build knows: what each switches, and whether it is on unless switched off. */
 export const KNOWN_FEATURES: Readonly<Record<string, { description: string; default: boolean }>> = {
   antlr: {
-    description: "Read the functions and calls of Go, Lua, Rust and C with their ANTLR grammars; a file with a syntax error keeps the regex reading",
+    description: "Read the functions and calls of Go, Lua, Rust, C and C++ with their ANTLR grammars; a file with a syntax error keeps the regex reading",
     default: true,
   },
   "tree-sitter": {

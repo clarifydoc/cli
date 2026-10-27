@@ -14,6 +14,13 @@ recorded in the git history only.
 
 ### Added
 
+- **C++ is read by a parser.** C++'s functions and calls come from its ANTLR4 grammar under the `antlr` feature, with
+  the per-file fallback (`no-antlr:cpp` keeps the patterns), headers included. Without the build's headers, a first
+  pass reads which names are types, which `<` opens template arguments and which parentheses are casts. Template calls
+  (`make_shared<Club>(…)`, `obj.template get<T>()`) are now read, a declaration such as `Car spare(4)` is no longer a
+  call, class members defined inline (`~Club() {}`) and in a class local to a function are functions of their own, and
+  macros the patterns read as calls stay calls: test macros (`TEST(Cache, Hit) { … }`), Qt's `SIGNAL(…)`/`SLOT(…)`,
+  statement macros.
 - **C is read by a parser.** C's functions and calls come from its ANTLR4 grammar under the `antlr` feature, with the
   per-file fallback (`no-antlr:c` keeps the patterns). Without the headers or `gcc -E`, the names a file uses as types
   are read off its tokens first, then the file is parsed. Loop macros (`for_each_item(i, list) { … }`) and test

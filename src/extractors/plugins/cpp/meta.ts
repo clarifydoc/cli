@@ -28,6 +28,7 @@ export const cppMeta: LanguagePluginMeta = {
   ...cppManifest,
   docComments: C_STYLE_DOCS,
   regexSpec: cppSpec,
+  antlr: { grammar: "cpp", load: () => import("./antlr.js").then((m) => m.readCpp) },
   knownPackages: nativePackages,
   builtinTypes: CPP_BUILTINS,
   grpcServiceOf: cppGrpcService,

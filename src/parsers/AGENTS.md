@@ -44,7 +44,7 @@ ones `splitLines` counts.
 
 ## antlr/ — ANTLR4 parsers for regex languages
 
-antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, Rust, C), on by default through the `antlr`
+antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, Rust, C, C++), on by default through the `antlr`
 feature (`core/feature-flags.ts`; `--feature no-antlr` switches them off). Generated from
 `grammars/antlr/<lang>/*.g4` by `node scripts/generate-antlr.mjs` and committed. Hand-written beside them: each
 grammar's base class ported from the `antlr4` runtime (`GoParserBase.ts`, `LuaLexerBase.ts`, …) and `run.ts`
@@ -57,7 +57,16 @@ symbol table) makes a file's parse depend on the file before it. State fixed bef
 read per-token facts its first pass computes (`c/CTypes.ts` — the names used as types, macro names, the `)` closing
 each `(`), so no prediction scans forward or reads a token's text, which antlr4ng rebuilds from the character stream
 on every read (`c/CKeywords.ts` holds keyword sets by token type, found by lexing each keyword: a rule with several
-spellings has no literal name). Profile a slow grammar with `parser.setProfile(true)` and `getParseInfo()` — the decision
+spellings has no literal name).
+
+A predicate at an alternative's left edge costs more than its own evaluation: every DFA state of a decision whose
+start reaches one carries semantic contexts, and antlr4ng's SLL conflict check copies the whole configuration set
+without them for each new state — on C++ that was most of a cold parse. Where the first pass can decide outright, it
+retypes the tokens instead (`cpp/CppTypes.ts`: `TemplateLess`/`TemplateGreater`, `CastLeftParen`, `MacroName`, token
+types the lexer grammar declares and never matches) and the grammar reads them syntactically. The widest decisions
+(C++'s statement, declaration and member) are settled from tokens before prediction runs (`CPP14ParserBase.prepare`
+wraps `adaptivePredict`; the alternatives are found by the sub-rule each reaches in the ATN, never by number).
+Profile a cold parse by wrapping `adaptivePredict` per decision: a warm one hides it. Profile a slow grammar with `parser.setProfile(true)` and `getParseInfo()` — the decision
 with the longest lookahead (`sllMaxLookEvent` gives its text) is the one to restructure. `grammars/antlr/README.md`
 records upstream commits and every local change.
 

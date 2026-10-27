@@ -18,10 +18,11 @@ Each generated file starts with its grammar's licence block, which the bundle ke
 | `lua/` | [grammars-v4](https://github.com/antlr/grammars-v4) `lua/` at `d1689adc` (2026-10-26) | MIT (in the files) |
 | `rust/` | [grammars-v4](https://github.com/antlr/grammars-v4) `rust/` at `d1689adc` (2026-10-26) | MIT (in the files) |
 | `c/` | [grammars-v4](https://github.com/antlr/grammars-v4) `c/` at `d1689adc` (2026-10-26) | BSD (in the files) |
+| `cpp/` | [grammars-v4](https://github.com/antlr/grammars-v4) `cpp/` at `d1689adc` (2026-10-26) | MIT (in the files) |
 
 The target-specific base classes upstream ships for the `antlr4` JavaScript runtime
 (`golang/TypeScript/GoParserBase.ts`, `lua/TypeScript/Lua*Base.ts`, `rust/Antlr4ng/Rust*Base.ts`) are ported to antlr4ng
-beside the generated code. C's (`c/Antlr4ng/C*Base.ts`) are replaced, see below.
+beside the generated code. C's and C++'s (`c/Antlr4ng/C*Base.ts`, `cpp/TypeScript/CPP14ParserBase.ts`) are replaced, see below.
 
 ## Changes from upstream
 
@@ -92,6 +93,32 @@ per target at its `// Insert here @header` marker.
 
   Without the preprocessor 5–22% of the files of six real C repositories still fail and keep the patterns' reading.
   The reader runs at 1.1–3.2 MB/s, about three times upstream's grammar with the first pass alone.
+
+- **C++: a first pass that retypes tokens.** Upstream reads C++ without knowing which names are types or templates,
+  so a statement could be a declaration or an expression and `a < b` a template argument list, and left it to
+  full-context prediction (0.05–0.25 MB/s, 21–52% of files failing). `cpp/CppTypes.ts` reads the file's tokens
+  first: the brackets, the `>` closing a `<` after a name, `template` or `operator` (not `<<`, which is two `<`), the
+  names used as types, C-style casts (a type in parentheses where an operand may start, then one) and all-caps macros
+  whose arguments no expression holds. It retypes template brackets (`TemplateLess`/`TemplateGreater`), a cast's `(`
+  (`CastLeftParen`) and such macros (`MacroName`), and the parser's predicates (`CPP14ParserBase.ts`) read the rest:
+  a declaration statement, a user name as a type specifier, a parameter list against an initializer (`Random
+  rnd(Seed())`). The statement, declaration and member decisions are settled from tokens before prediction.
+- **C++: one way to each thing.** A class or enum with a body before one without, template-ids before bare names
+  (SLL takes the first alternative where it cannot tell); `theTypeName` one rule; a function definition and a simple
+  declaration one rule deciding after their shared specifiers (upstream read past a whole class body); the binary
+  operators one flat rule; an assignment's left side a conditional expression; `Club(x)` a call, functional casts
+  keyword types only, `Club{…}` a primary.
+- **C++: what upstream refused.** A unary operator's operand is a cast expression (`*(Club *) p`), an abstract
+  declarator may start with `[]`, a variadic `(...)` parameter list, C++17 nested namespaces, `if`/`switch` init
+  statements, `if constexpr`, structured bindings, `static_assert` without a message, C++20 designated initializers
+  and coroutines, `operator ""_x`, enumerators with attributes, raw strings holding `)`.
+- **C++: unexpanded macros** as in C, plus class-head and declarator attribute macros (`class EXPORT Club`,
+  `GUARDED_BY(mu)`), class-body macros (`Q_OBJECT`, `Q_PROPERTY(…)`, Qt's `signals:`/`slots`), test macros defining
+  a function (`TEST(Cache, Hit) { … }`) or a block (`SECTION("x") { … }`), macros at file scope, macros listing
+  enumerators, and Qt's `emit` skipped.
+
+  On four real C++ repositories 1–11% of files keep the patterns' reading. Cold, the parse runs at 0.5–0.8 MB/s, warm
+  about 1.2 MB/s.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL
 prediction succeed on all but 2 of its files, with no file failing to parse.
