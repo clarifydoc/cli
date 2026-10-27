@@ -251,7 +251,13 @@ function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): He
     const name = (inTemplate ? m[2] : m[5]) as string;
     const argsText = (inTemplate ? m[3] : m[6]) as string;
     const builder = lookupHelper(lookup, site, receiver, name);
-    if (!builder) continue; // unknown or ambiguous — leave verbatim
+    if (!builder) {
+      // An unknown call wrapping a helper call (`route(routes.club(id), query)`): the helper inside.
+      const argsStart = m.index! + m[0].indexOf("(") + 1;
+      const inner = argsText.includes("(") ? firstResolvable(argsText, lookup, site) : null;
+      if (inner) return { start: argsStart + inner.start, end: argsStart + inner.end, rewrites: inner.rewrites };
+      continue; // unknown or ambiguous — leave verbatim
+    }
     const args = splitTopLevel(argsText, ",").map((a) => a.trim()).filter((a) => a.length > 0);
     const named = builder.params.length === 0 && args.length === 1 ? objectArgument(args[0]!) : null;
     const rewrites = named
@@ -303,6 +309,7 @@ function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): s
  */
 export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
   const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
+  keepHelperBases(lookup, analyses);
   if (ctx) lookup.method = methodResolver(ctx);
   if (lookup.global.size === 0 && lookup.local.size === 0 && !lookup.method) return 0;
   let count = 0;
@@ -318,6 +325,27 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
     }
   }
   return count;
+}
+
+/**
+ * A helper whose URL starts with ANOTHER helper's call (`` (slug) => `${groupBase(slug)}/fixtures` ``)
+ * lost that base when its template was read; it is put back — its own parameters as
+ * placeholders — when the call names a helper of the same file or the project, so the
+ * next pass resolves it instead of the URL losing its prefix.
+ */
+function keepHelperBases(lookup: HelperLookup, analyses: FileAnalysis[]): void {
+  for (const a of analyses) {
+    if (a.language !== "typescript" && a.language !== "javascript") continue;
+    for (const fn of a.functions) {
+      const m = fn.urlTemplateBase ? /^((?:[A-Za-z_$][\w$]*\.)*)([A-Za-z_$][\w$]*)\(([^()]*)\)$/.exec(fn.urlTemplateBase.trim()) : null;
+      if (!m || m[2] === fn.name.split(".").pop() || lookupHelper(lookup, { file: a.filePath, line: fn.line }, m[1]!, m[2]!) === null) continue;
+      let base = fn.urlTemplateBase!.trim();
+      for (const p of fn.params) base = base.replace(new RegExp(`(?<![\\w$.{])${p.name.replace(/\$/g, "\\$")}(?![\\w$}])`, "g"), `{${p.name}}`);
+      const builder = fn.name.includes(".") ? lookup.local.get(a.filePath)?.get(fn.name) : lookup.global.get(fn.name);
+      if (!builder || builder.templates.some((t) => t.startsWith("${"))) continue;
+      builder.templates = builder.templates.map((t) => `\${${base}}${t}`);
+    }
+  }
 }
 
 /** Each file's dotted helpers (`routes.tagsSlug: (tag) => `${prefix}/tags/slug/${tag}``). */

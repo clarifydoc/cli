@@ -1257,7 +1257,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = node.childForFieldName("body");
     const paramNames = new Set(params.map((p) => p.name));
-    const templates = extractUrlTemplates(body, paramNames);
+    const stripped: { base?: string | null } = {};
+    const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
     const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
@@ -1273,6 +1274,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
+      ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
     };
@@ -1316,7 +1318,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
     const paramNames = new Set(params.map((p) => p.name));
-    const templates = extractUrlTemplates(body, paramNames);
+    const stripped: { base?: string | null } = {};
+    const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
     const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
@@ -1332,6 +1335,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...urlTemplateFields(templates),
+      ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
     };

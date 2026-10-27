@@ -963,7 +963,8 @@ export interface FunctionInfo {
    * The expression `urlTemplate` started with before the extractor dropped it
    * as a runtime base (`this.baseUrl()` in `` `${this.baseUrl()}/${this.resource}` ``).
    * A getter read as `this.url` is substituted with it put back, so the base
-   * resolves through the class chain instead of being lost.
+   * resolves through the class chain instead of being lost; a helper whose base
+   * is another URL helper's call (`` `${groupBase(slug)}/fixtures` ``) keeps it too.
    */
   urlTemplateBase?: string;
   /**

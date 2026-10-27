@@ -180,6 +180,29 @@ export class TagsAPI {
     ).toEqual(["organizer-tags.ts:10 get /api/organizers/tags/slug/{}", "organizer-tags.ts:11 get /api/organizers/tags"]);
   });
 
+  it("resolves a route-table helper built on another helper, handed to a pass-through wrapper (real-repo FP)", async () => {
+    expect(
+      await linked({
+        "lib/api/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {
+  const url = new URL(parts.prefix + rest, parts.host);
+  return url.toString();
+}`,
+        "lib/api/public/fixtures.ts": `
+import { route } from "../base/route";
+const prefix = "/api";
+const leagueBase = (leagueSlug: string) => \`\${prefix}/public/leagues/\${leagueSlug}\`;
+const routes = {
+  fixtures: (leagueSlug: string) => \`\${leagueBase(leagueSlug)}/fixtures\`,
+};
+export class PublicFixturesApi {
+  constructor(private requests: ApiRequestInstance, private readonly leagueSlug: string) {}
+  search(q: Record<string, string>) { return this.requests.get(route(routes.fixtures(this.leagueSlug), q)); }
+  suggest(q: Record<string, string>) { return this.requests.get(route(\`\${routes.fixtures(this.leagueSlug)}/suggestions\`, { ...q })); }
+}`,
+      }),
+    ).toEqual(["fixtures.ts:10 get /api/public/leagues/{}/fixtures", "fixtures.ts:11 get /api/public/leagues/{}/fixtures/suggestions"]);
+  });
+
   it("does not let a variable argument stand for the segment that names the endpoint", async () => {
     // `/api/v1/{}` would join any `/api/v1/:id` route; the call stays unresolved.
     expect(
