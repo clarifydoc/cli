@@ -819,7 +819,14 @@ export interface CallArgOrigin {
     /** The calling function's own parameter (`index` among its parameters). */
     | { kind: "param"; name: string; index: number }
     /** A route parameter or query-string value of the current URL, by name. */
-    | { kind: "route-param" | "query-param"; name: string };
+    | { kind: "route-param" | "query-param"; name: string }
+    /**
+     * A parameter of a callback a library calls with what its caller hands
+     * one of `via` (TanStack's `mutationFn: ({ id }) => …`, called with what
+     * `mutation.mutate(x)` is given): argument `index` of such a call, or its
+     * property `field` when the callback destructures it.
+     */
+    | { kind: "invoked"; via: string[]; index: number; field?: string };
   /** One wrapper the value passed through (`Number`, `encodeURIComponent`, a template literal). */
   transform?: string;
   /**

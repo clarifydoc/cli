@@ -71,6 +71,34 @@ describe("paramOrigins", () => {
     expect(rows[0]!.route).toMatchObject({ path: "/api/v2/clubs/{id}", param: "id" });
   });
 
+  it("follows a mutation callback's parameter to the mutate call that hands it, through the hook that builds the mutation", () => {
+    const sdk = file("web/client/sdk.gen.ts", [fn("deleteClub", 1, 3, ["options"])], [
+      { kind: "api-call", name: "del", target: "/clubs/{id}", line: 2, calls: [], pathValues: { index: 0, field: "path" } },
+    ]);
+    // `deleteClubOptions = () => mutationOptions({ mutationFn: ({ clubId }) => deleteClub({ path: { id: clubId } }) })`.
+    const queries = file("web/client/queries/clubs.ts", [
+      fn("deleteClubOptions", 1, 5, [], [{ name: "deleteClub", kind: "cross-file", target: null, line: 3, argOrigins: [{ index: 0, field: "path.id", origin: { kind: "invoked", via: ["mutate", "mutateAsync"], index: 0, field: "clubId" } }] }]),
+      fn("useDeleteClub", 7, 7, [], [{ name: "deleteClubOptions", kind: "internal", target: null, line: 7 }]),
+    ]);
+    const view = file("web/views/ClubView.vue", [
+      fn("<setup>", 1, 9, [], [
+        { name: "useDeleteClub", kind: "cross-file", target: null, line: 3 },
+        { name: "remove.mutateAsync", kind: "cross-file", target: null, line: 6, argOrigins: [{ index: 0, field: "clubId", origin: { kind: "route-param", name: "clubId" } }] },
+      ]),
+    ]);
+    const mLinks = [
+      link("web/client/queries/clubs.ts", "deleteClubOptions", 3, "deleteClub", "web/client/sdk.gen.ts", "deleteClub"),
+      link("web/client/queries/clubs.ts", "useDeleteClub", 7, "deleteClubOptions", "web/client/queries/clubs.ts", "deleteClubOptions"),
+      link("web/views/ClubView.vue", "<setup>", 3, "useDeleteClub", "web/client/queries/clubs.ts", "useDeleteClub"),
+      link("web/views/ClubView.vue", "<setup>", 6, "remove.mutateAsync", "web/client/queries/clubs.ts", "useDeleteClub"),
+    ];
+    const mScreens = [{ name: "ClubView", filePath: "web/views/ClubView.vue", routePath: "/clubs/:clubId" }] as unknown as ScreenInfo[];
+    const rows = computeParamOrigins({ analyses: [sdk, queries, view], symbolLinks: mLinks, apiRouteLinks: [], routes, screens: mScreens });
+    expect(rows.map((r) => [r.origin.kind, "name" in r.origin ? r.origin.name : "", r.origin.file, r.hops.map((h) => `${h.symbol}@${h.line}`).join(" > ")])).toEqual([
+      ["route-param", "clubId", "web/views/ClubView.vue", "<setup>@6 > useDeleteClub@7 > deleteClubOptions@3"],
+    ]);
+  });
+
   it("is empty when no plugin reports argument origins", () => {
     const bare = file("web/api/clubs.ts", [fn("getClub", 1, 3, ["id"])], [{ kind: "api-call", name: "http.get", target: "/clubs/${id}", line: 2, calls: [] }]);
     expect(computeParamOrigins({ analyses: [bare], symbolLinks: [], apiRouteLinks: [], routes: [], screens: [] })).toEqual([]);

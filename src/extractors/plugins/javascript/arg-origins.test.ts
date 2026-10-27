@@ -77,4 +77,40 @@ export function ClubView() {
     expect(await originsOf(src, "Garage", "track")).toBeUndefined();
     expect(await originsOf(src, "Garage", "park")).toBeUndefined();
   });
+
+  it("reads a TanStack mutationFn's parameter as what its mutate call is handed — plain, destructured or read off (real-repo FP)", async () => {
+    const src = `export function deleteClubOptions() {
+  return mutationOptions({
+    mutationFn: async (id: number) => (await clubsDelete({ path: { id } })).data,
+  })
+}
+export function renameClubOptions() {
+  return mutationOptions({
+    mutationFn: ({ clubId, name }) => clubsUpdate({ path: { id: clubId }, body: { name } }),
+  })
+}
+export function relegateClubOptions() {
+  return mutationOptions({
+    mutationFn: async (club: Club) => { await clubsRelegate({ path: { id: club.id } }) },
+  })
+}
+export function ClubView() {
+  const { clubId } = useParams();
+  rename.mutateAsync({ clubId, name: "Rovers" });
+}`;
+    expect(await originsOf(src, "deleteClubOptions", "clubsDelete")).toEqual([
+      { index: 0, field: "path.id", origin: { kind: "invoked", via: ["mutate", "mutateAsync"], index: 0 } },
+    ]);
+    expect(await originsOf(src, "renameClubOptions", "clubsUpdate")).toEqual([
+      { index: 0, field: "path.id", origin: { kind: "invoked", via: ["mutate", "mutateAsync"], index: 0, field: "clubId" } },
+    ]);
+    expect(await originsOf(src, "relegateClubOptions", "clubsRelegate")).toEqual([
+      { index: 0, field: "path.id", origin: { kind: "invoked", via: ["mutate", "mutateAsync"], index: 0, field: "id" } },
+    ]);
+    // A mutate call hands every property of its argument to the callback.
+    expect(await originsOf(src, "ClubView", "rename.mutateAsync")).toEqual([
+      { index: 0, field: "clubId", origin: { kind: "route-param", name: "clubId" } },
+      { index: 0, field: "name", origin: { kind: "literal", value: "Rovers" } },
+    ]);
+  });
 });

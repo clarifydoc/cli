@@ -22,9 +22,12 @@ export function argOriginsOf(node: Node): CallArgOrigin[] | null {
   const args = node.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
   if (args.length === 0 || args.length > 8 || args.some((a) => a.type === "spread_element")) return null;
   const out: CallArgOrigin[] = [];
+  // `mutation.mutate({ clubId, name })`: every property is what the callback receives.
+  const callee = node.childForFieldName("function");
+  const invokes = callee?.type === "member_expression" && INVOKER_METHODS.has(callee.childForFieldName("property")?.text ?? "");
   args.forEach((arg, index) => {
     if (arg.type === "object") {
-      fieldOrigins(arg, index, "", 0, out);
+      fieldOrigins(arg, index, "", invokes ? 1 : 0, out);
       return;
     }
     const { node: value, transform } = unwrap(arg);
@@ -33,6 +36,44 @@ export function argOriginsOf(node: Node): CallArgOrigin[] | null {
   });
   // Literals alone say nothing a URL slot needs: kept only beside a parameter or a URL value.
   return out.some((a) => a.origin.kind !== "literal") ? out : null;
+}
+
+/**
+ * Callbacks a library calls with what its caller hands one of its methods:
+ * TanStack Query's `mutationFn`, called with `mutation.mutate(x)` /
+ * `mutateAsync(x)`'s argument. A parameter of such a callback is that
+ * argument (`kind: "invoked"`), followed by the project pass to each call.
+ */
+const INVOKED_CALLBACKS: ReadonlyMap<string, string[]> = new Map([["mutationFn", ["mutate", "mutateAsync"]]]);
+const INVOKER_METHODS = new Set([...INVOKED_CALLBACKS.values()].flat());
+
+/** The methods whose argument `fn` is called with, when it is an invoked callback (`mutationFn: (x) => …`). */
+function invokerOf(fn: Node): string[] | undefined {
+  const pair = fn.parent;
+  if (pair?.type !== "pair" || pair.childForFieldName("value")?.id !== fn.id) return undefined;
+  const key = pair.childForFieldName("key");
+  return INVOKED_CALLBACKS.get(key?.type === "property_identifier" ? key.text : stringValue(key) ?? "");
+}
+
+/** Where `name` sits in a destructuring pattern: `{ id }` → `id`, `{ path: { id: clubId } }` → `path.id` (for `clubId`). */
+function fieldPath(pattern: Node, name: string, prefix = ""): string | null {
+  for (const prop of pattern.namedChildren) {
+    if (!prop) continue;
+    if (prop.type === "shorthand_property_identifier_pattern" && prop.text === name) return prefix + name;
+    if (prop.type === "object_assignment_pattern" && prop.childForFieldName("left")?.text === name) return prefix + name;
+    if (prop.type === "pair_pattern") {
+      const key = prop.childForFieldName("key")?.text;
+      let value = prop.childForFieldName("value");
+      if (value?.type === "assignment_pattern") value = value.childForFieldName("left");
+      if (!key || !value) continue;
+      if (value.type === "identifier" && value.text === name) return prefix + key;
+      if (value.type === "object_pattern") {
+        const inner = fieldPath(value, name, `${prefix}${key}.`);
+        if (inner) return inner;
+      }
+    }
+  }
+  return null;
 }
 
 /** The keys of a request-options object that carry URL values: hey-api's `path`/`query`, openapi-fetch's `params`. */
@@ -154,6 +195,12 @@ function originOf(n: Node, depth: number): Origin | null {
         const bound = paramOf(obj, obj.text) ? null : bindingOf(obj, obj.text);
         if (bound?.kind === "value") return originOf(unwrap(bound.value).node, depth + 1);
       }
+      // `label.id` on an invoked callback's parameter: that property of what the invoker is handed.
+      const prop = n.childForFieldName("property")?.text;
+      if (n.type === "member_expression" && obj?.type === "identifier" && prop && /^[\w$]+$/.test(prop)) {
+        const param = paramOf(obj, obj.text);
+        if (param?.kind === "invoked") return { ...param, field: param.field ? `${param.field}.${prop}` : prop };
+      }
       return paramRead(n, depth);
     }
     case "call_expression": {
@@ -260,13 +307,20 @@ function routerObject(n: Node): boolean {
 const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
 const SCOPE_NODES = new Set(["statement_block", "program", "class_body"]);
 
-/** `name` as a parameter of the innermost enclosing function that declares it. */
+/**
+ * `name` as a parameter of the innermost enclosing function that declares it —
+ * or, where that function is a callback a library invokes (`mutationFn`), the
+ * argument (or the property of it the callback destructures) its invoker is handed.
+ */
 function paramOf(at: Node, name: string): Origin | null {
   for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
     if (!FUNCTION_NODES.has(fn.type)) continue;
     const single = fn.childForFieldName("parameter");
     if (single?.type === "identifier") {
-      if (single.text === name) return { kind: "param", name, index: 0 };
+      if (single.text === name) {
+        const via = invokerOf(fn);
+        return via ? { kind: "invoked", via, index: 0 } : { kind: "param", name, index: 0 };
+      }
       continue;
     }
     const params = fn.childForFieldName("parameters")?.namedChildren.filter((p) => p?.type !== "comment") ?? [];
@@ -274,8 +328,16 @@ function paramOf(at: Node, name: string): Origin | null {
       const p = params[i]!;
       const pattern = p.childForFieldName("pattern") ?? p;
       const id = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
-      if (id?.type === "identifier" && id.text === name) return { kind: "param", name, index: i };
-      if (declares(pattern, name)) return null; // bound by a destructured parameter: not a plain argument
+      if (id?.type === "identifier" && id.text === name) {
+        const via = invokerOf(fn);
+        return via ? { kind: "invoked", via, index: i } : { kind: "param", name, index: i };
+      }
+      if (declares(pattern, name)) {
+        // Bound by a destructured parameter: not a plain argument — unless a library hands it in.
+        const via = invokerOf(fn);
+        const field = via && id?.type === "object_pattern" ? fieldPath(id, name) : null;
+        return via && field ? { kind: "invoked", via, index: i, field } : null;
+      }
     }
   }
   return null;

@@ -119,7 +119,62 @@ export function computeParamOrigins(input: {
         out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         continue;
       }
+      if (o.kind === "invoked") {
+        const caller = fnNamed(link.sourceFile, link.sourceSymbol);
+        if (!caller || depth >= MAX_DEPTH) {
+          out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+          continue;
+        }
+        invoked(caller, o.via, o.index, o.field, 0, depth + 1, seen, [hop, ...hops], conf, out);
+        continue;
+      }
       out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
+    }
+  };
+
+  /**
+   * A callback a library invokes (`mutationFn: ({ id }) => …` inside `owner`)
+   * receives what its invoker is handed: the calls named one of `via`
+   * (`mutation.mutateAsync({ id })`) linked to `owner` — or to a function that
+   * returns what `owner` builds, up the callers with no such call of their own
+   * (`deleteClubOptions` → `useDeleteClub` → the screen) — then on as any argument.
+   */
+  const invoked = (owner: Fn, via: readonly string[], index: number, field: string | undefined, up: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
+    const key = `${owner.file}::${owner.symbol}!${index}${field ? `.${field}` : ""}`;
+    if (seen.has(key) || up > 3 || out.length >= MAX_PER_SLOT * 4) return;
+    seen.add(key);
+    const callers = (callersOf.get(`${owner.file}::${owner.symbol}`) ?? []).slice().sort((a, b) => byOrdinal(a.sourceFile, b.sourceFile) || a.sourceLine - b.sourceLine);
+    const invokes = (l: SymbolLink) => via.includes((l.callName ?? "").split(".").pop() ?? "");
+    const invokingCallers = new Set(callers.filter(invokes).map((l) => `${l.sourceFile}::${l.sourceSymbol}`));
+    for (const link of callers) {
+      const conf = weakest(confidence, link.confidence ?? "INFERRED");
+      if (invokes(link)) {
+        // The invoker's argument at `index` (or its property `field`) is the callback's.
+        const call = callOf(link);
+        const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) };
+        // The property itself, else the whole argument it is read off (`mutateAsync(club)` for `club.id`).
+        const own = call?.argOrigins?.find((a) => a.index === index && a.field === field);
+        const whole = own || !field ? undefined : call?.argOrigins?.find((a) => a.index === index && a.field === undefined && a.origin.kind === "param");
+        const arg = own ?? whole;
+        const caller = fnNamed(link.sourceFile, link.sourceSymbol);
+        if (!arg || !caller) {
+          out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+          continue;
+        }
+        const o = arg.origin;
+        if (o.kind === "param") {
+          const at = caller.fn.params.findIndex((p) => p.name === o.name);
+          if (at >= 0 && depth < MAX_DEPTH) walk(caller, at, whole ? field : undefined, depth + 1, seen, [hop, ...hops], conf, out);
+          else out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        } else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        else if (o.kind === "invoked") out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        else out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
+        continue;
+      }
+      // A caller that only builds or hands on what `owner` returns: its own callers invoke it.
+      if (invokingCallers.has(`${link.sourceFile}::${link.sourceSymbol}`)) continue;
+      const caller = fnNamed(link.sourceFile, link.sourceSymbol);
+      if (caller) invoked(caller, via, index, field, up + 1, depth, seen, [{ file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) }, ...hops], conf, out);
     }
   };
 
