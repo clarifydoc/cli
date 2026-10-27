@@ -684,3 +684,34 @@ describe("symbol-linker — a receiver call reaches a free function only through
       .toEqual(["mod.kickOff->kickOff", "scoring.round->round"]);
   });
 });
+
+describe("symbol-linker — a route body written inside a method", () => {
+  it("resolves the body's calls in the method's scope: an injected interface reaches its implementation (real-repo FP)", () => {
+    const routes = {
+      ...file("api/ScoutRoutes.java", "app", {
+        classes: [{
+          ...cls("ScoutRoutes"),
+          endLine: 40,
+          properties: [{ name: "reports", type: "ScoutService" }],
+          methods: [{ name: "endpoints", line: 10, endLine: 30, params: [], calls: [] }],
+        }],
+      }),
+      language: "java",
+      routes: [{ path: "/scouts/reports", httpMethod: "POST", handler: null, kind: "api", line: 14, middleware: [], calls: [call("reports.fileReport", 15)] }],
+    } as unknown as FileAnalysis;
+    const api = {
+      ...file("service/ScoutService.java", "app", {
+        classes: [{ ...cls("ScoutService"), kind: "interface", endLine: 6, methods: [{ name: "fileReport", line: 3, endLine: 3, params: [], calls: [] }] }],
+      }),
+      language: "java",
+    } as unknown as FileAnalysis;
+    const impl = {
+      ...file("service/ScoutServiceImpl.java", "app", {
+        classes: [{ ...cls("ScoutServiceImpl"), implements: ["ScoutService"], decorators: ["@Service"], endLine: 20, methods: [{ name: "fileReport", line: 5, endLine: 9, params: [], calls: [] }] }],
+      }),
+      language: "java",
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([routes, api, impl]);
+    expect(links.filter((l) => l.sourceSymbol === "route:POST /scouts/reports").map((l) => l.targetSymbol)).toEqual(["ScoutServiceImpl.fileReport"]);
+  });
+});

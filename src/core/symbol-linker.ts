@@ -368,12 +368,15 @@ export function buildSymbolLinks(
         if (specLink) links.push(specLink);
       }
 
-      // Link route → functions it calls
+      // Link route → functions it calls. Its body (a lambda or closure written
+      // inside a method) sees that method's fields, parameters and typed locals,
+      // so its calls resolve in the method's scope and are the route's.
+      const scope = route.calls.length > 0 ? callableAtLine(analysis, route.line) : null;
       for (const call of route.calls) {
         const link = resolveCallToDefinition(
-          sourceFile, sourceSymbol, call, analysis, ctx,
+          sourceFile, scope ?? sourceSymbol, call, analysis, ctx,
         );
-        if (link) links.push(link);
+        if (link) links.push(scope ? { ...link, sourceSymbol } : link);
       }
     }
 
@@ -1981,6 +1984,18 @@ function buildDottedClassSuffixIndex(analyses: FileAnalysis[]): Map<string, Arra
  * The method a route declared at `line` names, when the line lies inside a class
  * that defines a method of that name (the innermost such class): `Class.method`.
  */
+/** The innermost function or method whose body holds `line`, as its symbol (`Class.method`, `fn`). */
+function callableAtLine(analysis: FileAnalysis, line: number): string | null {
+  let best: { symbol: string; span: number } | null = null;
+  const consider = (symbol: string, from: number, to: number | undefined) => {
+    if (to === undefined || line <= from || line > to) return;
+    if (!best || to - from < best.span) best = { symbol, span: to - from };
+  };
+  for (const fn of analysis.functions) consider(fn.name, fn.line, fn.endLine);
+  for (const cls of analysis.classes) for (const m of cls.methods) consider(`${cls.name}.${m.name}`, m.line, m.endLine);
+  return best ? (best as { symbol: string }).symbol : null;
+}
+
 function enclosingMethod(analysis: FileAnalysis, line: number, name: string): { symbol: string; line: number } | null {
   let best: { symbol: string; line: number; span: number } | null = null;
   for (const cls of analysis.classes) {
