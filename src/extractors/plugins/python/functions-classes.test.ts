@@ -43,6 +43,21 @@ def _get_optional_player(token: str):
     expect(functions.find((f) => f.name === "get_squad")!.calls.map((c) => c.name)).toEqual(["make_squad"]);
   });
 
+  it("calls the dependencies a signature asks for: by name when named as a callable, the factory when built by one", async () => {
+    const { functions } = await extract(`
+async def get_player_from_path(
+    player_id: int = Path(..., ge=1),
+    club: Club = Depends(clubs.get_club_from_path),
+    repo: Annotated[PlayersRepo, Depends(get_repository(PlayersRepo))] = None,
+):
+    return await repo.get(player_id, club)
+`);
+    expect(functions[0]!.calls.filter((c) => c.name !== "repo.get").map((c) => [c.name, c.line, c.routeParamsByName ?? false])).toEqual([
+      ["clubs.get_club_from_path", 4, true],
+      ["get_repository", 5, false],
+    ]);
+  });
+
   it("drops self/cls and records what the body reads off request", async () => {
     const { classes, functions } = await extract(`
 class ReportView(View):

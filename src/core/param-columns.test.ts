@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeParamColumns } from "./param-columns.js";
+import { computeParamColumns, fillParamColumnEntities } from "./param-columns.js";
 import type { FileAnalysis, SymbolLink } from "../types/analysis.js";
 
 const fn = (name: string, line: number, endLine: number, params: string[], calls: any[] = []): any =>
@@ -105,6 +105,77 @@ describe("paramColumns", () => {
       ["season", "Player.season", "show/-1 → squad/0"],
       ["slug", "Club.slug", "club_from_path/0 → club/0"],
     ]);
+  });
+
+  it("follows a dependency's own dependencies, which the framework hands the route's parameters by name too", () => {
+    const r = {
+      kind: "api", path: "/clubs/{slug}/players/{player_id}", httpMethod: "DELETE", handler: "remove", line: 5, filePath: "league/routes.py",
+      params: [{ name: "slug", type: null, binding: "route" }, { name: "player_id", type: null, binding: "route" }],
+      calls: [{ name: "check_player_permissions", kind: "internal", target: null, line: 6, routeParamsByName: true }],
+    } as any;
+    const deps = file("league/deps.py", [
+      // check_player_permissions(player = Depends(player_from_path)) → player_from_path(player_id, club = Depends(club_from_path)) → club_from_path(slug)
+      fn("check_player_permissions", 1, 3, ["player"], [{ name: "player_from_path", kind: "internal", target: null, line: 1, routeParamsByName: true }]),
+      fn("player_from_path", 5, 7, ["player_id", "club"], [
+        { name: "club_from_path", kind: "internal", target: null, line: 5, routeParamsByName: true },
+        { name: "repo.player", kind: "internal", target: null, line: 6, argOrigins: [{ index: 0, origin: { kind: "param", name: "player_id", index: 0 } }] },
+      ]),
+      fn("club_from_path", 9, 11, ["slug"], [{ name: "repo.club", kind: "internal", target: null, line: 10, argOrigins: [{ index: 0, origin: { kind: "param", name: "slug", index: 0 } }] }]),
+    ]);
+    const repo = file("league/repo.py", [fn("club", 1, 3, ["slug"]), fn("player", 5, 7, ["id"])], {
+      dataSources: [
+        { kind: "database", name: "SELECT", target: "clubs", entity: "clubs", access: "read", line: 2, calls: [], whereFields: [{ field: "slug", origin: { kind: "param", name: "slug", index: 0 } }] },
+        { kind: "database", name: "SELECT", target: "players", entity: "players", access: "read", line: 6, calls: [], whereFields: [{ field: "id", origin: { kind: "param", name: "id", index: 0 } }] },
+      ],
+    } as any);
+    const rows = computeParamColumns({
+      analyses: [file("league/routes.py", [], { routes: [r] } as any), deps, repo],
+      symbolLinks: [
+        link("league/routes.py", "route:DELETE /clubs/{slug}/players/{player_id}", 6, "check_player_permissions", "league/deps.py", "check_player_permissions"),
+        link("league/deps.py", "check_player_permissions", 1, "player_from_path", "league/deps.py", "player_from_path"),
+        link("league/deps.py", "player_from_path", 5, "club_from_path", "league/deps.py", "club_from_path"),
+        link("league/deps.py", "player_from_path", 6, "repo.player", "league/repo.py", "player"),
+        link("league/deps.py", "club_from_path", 10, "repo.club", "league/repo.py", "club"),
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.route.param, `${x.column.entity}.${x.column.field}`, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([
+      ["player_id", "players.id", "check_player_permissions/-1 → player_from_path/0 → player/0"],
+      ["slug", "clubs.slug", "check_player_permissions/-1 → player_from_path/-1 → club_from_path/0 → club/0"],
+    ]);
+  });
+
+  it("reads a merged request value in a callback the route runs, and fills an entity a later pass settles", () => {
+    const r = {
+      kind: "api", path: "/clubs/:id", httpMethod: "GET", handler: "ClubsController#show", line: 2, filePath: "config/routes.rb",
+      params: [{ name: "id", type: null, binding: "route", inferred: true }],
+      calls: [{ name: "ClubsController.club", kind: "internal", target: null, line: 2 }],
+    } as any;
+    const controller = file("app/controllers/clubs_controller.rb", [], {
+      classes: [{ name: "ClubsController", methods: [fn("show", 4, 5, []), fn("club", 7, 9, [])] }],
+      dataSources: [
+        { kind: "database", name: "Current.league.clubs.find_by!", target: null, access: "read", line: 8, calls: [], whereFields: [{ field: "slug", origin: { kind: "request-param", name: "id" } }] },
+      ],
+    } as any);
+    const analyses = [file("config/routes.rb", [], { routes: [r] } as any), controller];
+    const rows = computeParamColumns({
+      analyses,
+      symbolLinks: [
+        link("config/routes.rb", "route:GET /clubs/:id", 2, "ClubsController#show", "app/controllers/clubs_controller.rb", "ClubsController.show"),
+        link("config/routes.rb", "route:GET /clubs/:id", 2, "ClubsController.club", "app/controllers/clubs_controller.rb", "ClubsController.club"),
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.route.param, `${x.column.entity}.${x.column.field}`, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([["id", "null.slug", "ClubsController.club/-1"]]);
+    // The association join names the model afterwards (a new row object, as the join writes it).
+    controller.dataSources = [{ ...controller.dataSources[0]!, entity: "Club" }];
+    fillParamColumnEntities(rows, analyses);
+    expect(rows[0]!.column.entity).toBe("Club");
+    // A statement the join drops takes its row with it.
+    controller.dataSources = [];
+    rows[0]!.column.entity = null;
+    fillParamColumnEntities(rows, analyses);
+    expect(rows).toEqual([]);
   });
 
   it("follows an overloaded callee only when the declared types agree, and shifts past an extension method's receiver", () => {

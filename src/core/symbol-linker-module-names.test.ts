@@ -61,3 +61,16 @@ describe("a parameter shadows the import of its name", () => {
     expect(named(buildSymbolLinks([journal, pipeline]), "src/pipeline.ts")).toEqual(["handleBatch -> src/journal.ts::startJournal"]);
   });
 });
+
+describe("a name a package import gives may be a module of its own", () => {
+  it("links `deps.get_club()` after `from league.api import deps` to the package's deps module", () => {
+    const init = file("league/api/__init__.py", { language: "python" });
+    const deps = file("league/api/deps.py", { language: "python", functions: [fn("get_club", 3)] });
+    const routes = file("league/routes.py", {
+      language: "python",
+      imports: [{ source: "league.api", specifiers: ["deps"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+      functions: [fn("show", 3, [call("deps.get_club", 4, "cross-file", "league.api")])],
+    });
+    expect(named(buildSymbolLinks([init, deps, routes]), "league/routes.py")).toEqual(["show -> league/api/deps.py::get_club"]);
+  });
+});

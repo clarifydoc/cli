@@ -3,6 +3,7 @@ import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js"
 import { statementAccesses } from "../shared/sql-string-sources.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
+import { phpWhereFields } from "./arg-origins.js";
 
 /**
  * A CodeIgniter Query Builder receiver, including fluent chains: `$this->db`
@@ -396,12 +397,14 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         // `$c->get(SettingsInterface::class)`: a PSR-11 container lookup by class, never a query.
         if (method === "get" && /^\s*\\?[A-Z][\w\\]*::class\s*$/.test(argumentTexts(node)[0] ?? "")) return;
         if (!this.namespaced && !PDO_HANDLE_RE.test(callText)) return;
+        const whereFields = phpWhereFields(node);
         sources.push(this.ds({
           kind: "database",
           name: callText,
           target: null,
           line,
           ...phpAccess(method),
+          ...(whereFields ? { whereFields } : {}),
         }));
         return;
       }
@@ -455,12 +458,14 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         if (continuesEloquentChain(node)) return;
         // `Bridge::create($container)`: an application factory handed the DI container, not a model's insert.
         if (name === "create" && /^\s*\$\w*container\s*$/i.test(argumentTexts(node).join(","))) return;
+        const whereFields = phpWhereFields(node);
         sources.push(this.ds({
           kind: "database",
           name: callText,
           target: relative ? null : scope,
           line,
           ...phpAccess(name),
+          ...(whereFields ? { whereFields } : {}),
         }));
       }
     }

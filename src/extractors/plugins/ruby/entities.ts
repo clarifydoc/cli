@@ -136,9 +136,10 @@ export class RubyEntityExtractor extends EntityExtractor {
    * schema lives in a different file from the models.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
+    const concernAssociations = associationTargets(analyses);
     moveConcernRelations(analyses);
     joinSchemaColumns(analyses);
-    resolveChainAccesses(analyses);
+    resolveChainAccesses(analyses, concernAssociations);
     dropServiceObjectQueries(analyses);
   }
 
@@ -640,7 +641,17 @@ export class RubyEntityExtractor extends EntityExtractor {
  *   - else the row is removed — a collection or a service object sharing the verb.
  * A project without models (plain Ruby) keeps nothing of these.
  */
-function resolveChainAccesses(analyses: FileAnalysis[]): void {
+/** Every association name the project declares, model or concern, → its targets (bare names). */
+function associationTargets(analyses: FileAnalysis[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const a of analyses) {
+    if (a.language !== "ruby") continue;
+    for (const rel of a.entityRelations ?? []) (out.get(rel.fromField) ?? out.set(rel.fromField, new Set()).get(rel.fromField)!).add(rel.toEntity.split("::").pop()!);
+  }
+  return out;
+}
+
+function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: ReadonlyMap<string, ReadonlySet<string>> = new Map()): void {
   const ruby = analyses.filter((a) => a.language === "ruby");
   const models = new Map<string, string>(); // underscored → model name
   const associations = new Map<string, Set<string>>();
@@ -659,7 +670,10 @@ function resolveChainAccesses(analyses: FileAnalysis[]): void {
   const modelNames = new Set(models.values());
   const direct = (before: string): string | null => {
     const targets = associations.get(before);
-    const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? null;
+    // An association only a concern declares, which no model includes by name (a model
+    // that takes it by `prepend`), still names its target: `sla_policies` → SlaPolicy.
+    const declared = targets ? undefined : concernAssociations.get(before);
+    const entity = targets && targets.size === 1 ? [...targets][0]! : models.get(before) ?? (declared?.size === 1 ? [...declared][0]! : null);
     return entity && modelNames.has(entity) ? entity : null;
   };
   const beforeOf = (chain: string): string | null => {

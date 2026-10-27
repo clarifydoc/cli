@@ -845,7 +845,9 @@ export interface CallInfo {
   /**
    * The framework calls the callee with the route's parameters by name (a
    * FastAPI `Depends(get_club)` in a handler's signature): its parameter
-   * named like a route parameter receives that value. On a route's calls.
+   * named like a route parameter receives that value. On a route's calls, and
+   * on a dependency's own (`article = Depends(get_article_from_path)` in its
+   * signature: the framework resolves dependencies of dependencies the same way).
    */
   routeParamsByName?: true;
   /**
@@ -868,6 +870,12 @@ export interface CallArgOrigin {
     | { kind: "param"; name: string; index: number }
     /** A route parameter or query-string value of the current URL, by name. */
     | { kind: "route-param" | "query-param"; name: string }
+    /**
+     * A request value by name where the framework merges the path and the
+     * query string (Rails `params[:id]`): either a route parameter or a query
+     * value of that name.
+     */
+    | { kind: "request-param"; name: string }
     /**
      * A parameter of a callback a library calls with what its caller hands
      * one of `via` (TanStack's `mutationFn: ({ id }) => …`, called with what
@@ -933,7 +941,8 @@ export interface ParamColumn {
   /**
    * The functions the value is handed through, from the route towards the
    * statement, each with the argument position it arrives at (`-1`: the
-   * handler reads it off the request itself, `request.args.get("season")`).
+   * handler reads it off the request itself, `request.args.get("season")`, or
+   * a framework dependency that takes no such parameter asks for one that does).
    */
   hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
   /** One wrapper the value passed through on the last step (`Number`). */

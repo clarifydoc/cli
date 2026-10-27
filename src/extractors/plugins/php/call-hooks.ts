@@ -1,6 +1,7 @@
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { phpLocatorType } from "./di.js";
+import { phpArgOriginsOf } from "./arg-origins.js";
 
 /** Strip PHP's `$` sigil and convert `->` chain separators to `.` so qualified
  *  names look like `this.repo.find` instead of `$this->repo->find`. */
@@ -80,6 +81,9 @@ export const phpCallHooks: CallExtractionHooks = {
 
   // `app(Mailer::class)->send()`, `$container->get(Mailer::class)->send()`,
   // `(new Mailer)->send()`: the receiver expression names its own type.
+  // Where each argument comes from (a parameter, a request read), for `paramColumns`.
+  argOriginsOf: phpArgOriginsOf,
+
   receiverTypeOf(node) {
     if (node.type !== "member_call_expression" && node.type !== "nullsafe_member_call_expression") return null;
     const obj = node.childForFieldName("object");

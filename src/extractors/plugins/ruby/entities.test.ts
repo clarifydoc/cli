@@ -160,3 +160,34 @@ end`, "app/models/player.rb", "ruby");
     expect(rels.sort()).toEqual(["Club.players -> Player", "Player.club -> Club"]);
   });
 });
+
+describe("Ruby chain rows through an association only a concern declares", () => {
+  it("names the concern's target, never the model the chain starts from (real-repo FP)", () => {
+    const concern = extractWithRegex(`module Premium::Concerns::League
+  extend ActiveSupport::Concern
+
+  included do
+    has_many :referee_policies, dependent: :destroy_async
+    has_many :match_monitors, class_name: 'MatchMonitors::Monitor'
+  end
+end`, "premium/app/models/premium/concerns/league.rb", "ruby");
+    const league = extractWithRegex(`class League < ApplicationRecord
+  has_many :clubs
+end`, "app/models/league.rb", "ruby");
+    const policy = extractWithRegex(`class RefereePolicy < ApplicationRecord
+end`, "premium/app/models/referee_policy.rb", "ruby");
+    const monitor = extractWithRegex(`class MatchMonitors::Monitor < ApplicationRecord
+end`, "premium/app/models/match_monitors/monitor.rb", "ruby");
+    const ctl = extractWithRegex(`class RefereePoliciesController < ApplicationController
+  def show
+    @policy = Current.league.referee_policies.find_by(id: params[:id])
+    @monitor = Current.league.match_monitors.visible.find(params[:monitor_id])
+  end
+end`, "premium/app/controllers/referee_policies_controller.rb", "ruby");
+    new RubyEntityExtractor().reconcileProject([concern, league, policy, monitor, ctl]);
+    expect(ctl.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual([
+      "Current.league.referee_policies.find_by RefereePolicy",
+      "Current.league.match_monitors.visible.find Monitor",
+    ]);
+  });
+});

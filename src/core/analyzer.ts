@@ -110,7 +110,7 @@ import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dedupSymbolLinksAppend, dropNameCollisionReferences } from "./symbol-dedup.js";
 import { computeParamOrigins } from "./param-origins.js";
-import { computeParamColumns } from "./param-columns.js";
+import { computeParamColumns, fillParamColumnEntities } from "./param-columns.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import { aggregateTypeBlast, buildClassGraph } from "./data-model-blast.js";
 import { buildDataAccessGraph, attributeDataAccessToSymbols, entityMatcher } from "./data-access-graph.js";
@@ -1716,6 +1716,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // may name the entity of an access whose entity class the project does not
   // declare (a repository typed by an entity from a dependency).
   reconcileProjectEntities(allAnalyses);
+  fillParamColumnEntities(paramColumns, allAnalyses);
   // Single-table-inheritance subclasses share their base's associations, not
   // just its columns — re-home the base's relations onto each subclass so STI
   // children aren't disconnected islands in the Data Model view. Runs last so

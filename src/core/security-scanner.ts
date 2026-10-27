@@ -205,8 +205,15 @@ const THIRD_PARTY_LICENSE_RE =
 /** A library build's banner: `/*! jQuery v1.11.1 | (c) … */`, `/*! jQuery UI - v1.11.1 - 2014-08-13`. */
 const LIBRARY_BANNER_RE = /^\s*\/\*!\s*[A-Za-z][\w.\- ]*?\s(?:-\s*)?v\d+\.\d+/;
 
+/**
+ * A `License: MIT https://opensource.org/licenses/MIT` field of an API description
+ * comment (a swagger `meta` block) names the license the API is offered under — no
+ * grant copied in with someone else's code.
+ */
+const LICENSE_FIELD_RE = /^[^\S\n]*(?:\/\/|#|\*|--)?[^\S\n]*License:[^\n]*$/gm;
+
 export function isVendoredSource(sourceText: string): boolean {
-  return LIBRARY_BANNER_RE.test(sourceText.slice(0, 200)) || THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096));
+  return LIBRARY_BANNER_RE.test(sourceText.slice(0, 200)) || THIRD_PARTY_LICENSE_RE.test(sourceText.slice(0, 4096).replace(LICENSE_FIELD_RE, ""));
 }
 
 /**

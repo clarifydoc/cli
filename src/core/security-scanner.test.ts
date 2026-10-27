@@ -254,6 +254,20 @@ function PopupWindow_getXYPosition() { document.all[x].innerHTML = y; }`;
     expect(isVendoredSource(`/*\n * Copyright (c) 2019 Acme Motors Ltd. All rights reserved.\n */\nclass X {}`)).toBe(false);
   });
 
+  it("does not take an API description's License field for a vendored grant (real-repo FP)", () => {
+    const api = `// Copyright 2016 The League Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+
+// Package v1 League API
+//
+//	Schemes: https, http
+//	License: MIT http://opensource.org/licenses/MIT
+//
+// swagger:meta
+package v1`;
+    expect(isVendoredSource(api)).toBe(false);
+  });
+
   it("vendoredMinoritySet honors the flag only when licensed files are a minority", () => {
     const files = (n: number, vendoredCount: number) =>
       Array.from({ length: n }, (_, i) => ({ filePath: `f${i}.js`, vendored: i < vendoredCount }));

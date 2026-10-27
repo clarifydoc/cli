@@ -36,7 +36,9 @@ type Slot = { kind: "param"; index: number } | { kind: "route-param" | "query-pa
 type Origin = NonNullable<CallInfo["argOrigins"]>[number]["origin"];
 
 const matches = (o: Origin, slot: Slot): boolean =>
-  slot.kind === "param" ? o.kind === "param" && o.index === slot.index : o.kind === slot.kind && o.name === slot.name;
+  slot.kind === "param"
+    ? o.kind === "param" && o.index === slot.index
+    : (o.kind === slot.kind || o.kind === "request-param") && o.name === slot.name;
 
 export function computeParamColumns(input: {
   analyses: readonly FileAnalysis[];
@@ -151,21 +153,43 @@ export function computeParamColumns(input: {
       const found: Row[] = [];
       // An inline handler reading the request: the route's own calls.
       walk(r.filePath, routeSymbol, null, r.calls ?? [], { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name }, [], 0, "EXTRACTED", new Set(), found);
-      // A handler function, or a callee the framework hands the route's parameters by name: its parameter of that name.
-      const byName = new Set((r.calls ?? []).filter((c) => c.routeParamsByName).map((c) => `${c.line}|${leaf(c.name)}`));
+      // A callee the framework hands the route's parameters by name (a FastAPI `Depends(x)`): its
+      // parameter of that name — and so on through the dependencies it asks for in turn.
+      const viaDependencies = (file: string, symbol: string, calls: readonly CallInfo[], hops: ParamColumn["hops"], confidence: Confidence, depth: number, visited: Set<string>): void => {
+        const byName = new Set(calls.filter((c) => c.routeParamsByName).map((c) => `${c.line}|${leaf(c.name)}`));
+        if (byName.size === 0) return;
+        for (const link of linksFrom.get(`${file}::${symbol}`) ?? []) {
+          if (!byName.has(`${link.sourceLine}|${leaf(link.callName)}`)) continue;
+          const dep = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
+          const k = dep && `${dep.file}::${dep.symbol}@${dep.fn.line}`;
+          if (!dep || visited.has(k!)) continue;
+          visited.add(k!);
+          const conf = weakest(confidence, link.confidence ?? "INFERRED");
+          const index = dep.fn.params.findIndex((x) => x.name === p.name);
+          if (index >= 0) walk(dep.file, dep.symbol, dep.fn.line, dep.fn.calls, { kind: "param", index }, [...hops, { file: dep.file, symbol: dep.symbol, line: dep.fn.line, arg: index }], 0, conf, new Set(), found);
+          if (depth < MAX_DEPTH) viaDependencies(dep.file, dep.symbol, dep.fn.calls, [...hops, { file: dep.file, symbol: dep.symbol, line: dep.fn.line, arg: -1 }], conf, depth + 1, visited);
+        }
+      };
+      viaDependencies(r.filePath, routeSymbol, r.calls ?? [], [], "EXTRACTED", 0, new Set());
+      // The handler function: its parameter of that name. Any other function the route runs (a
+      // `before_action` callback, a guard) sees the same request: its own reads of the parameter.
+      const requestSlot: Slot = { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name };
       for (const link of linksFrom.get(`${r.filePath}::${routeSymbol}`) ?? []) {
-        const isHandler = !!r.handler && leaf(link.callName) === leaf(r.handler);
-        if (!isHandler && !byName.has(`${link.sourceLine}|${leaf(link.callName)}`)) continue;
+        if (!r.handler || leaf(link.callName) !== leaf(r.handler)) {
+          const callee = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
+          if (callee) walk(callee.file, callee.symbol, callee.fn.line, callee.fn.calls, requestSlot, [{ file: callee.file, symbol: callee.symbol, line: callee.fn.line, arg: -1 }], 0, link.confidence ?? "INFERRED", new Set(), found);
+          continue;
+        }
         const handler = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
         if (!handler) continue;
-        const index = handler.fn.params.findIndex((x) => x.name === (isHandler ? p.variable ?? p.name : p.name));
+        const index = handler.fn.params.findIndex((x) => x.name === (p.variable ?? p.name));
         if (index >= 0) {
           const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: index };
           walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, { kind: "param", index }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
-        } else if (isHandler) {
+        } else {
           // The handler reads it off the request itself (`req.params.slug`, `request.args.get("season")`).
           const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: -1 };
-          walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, { kind: p.binding === "query" ? "query-param" : "route-param", name: p.name }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+          walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, requestSlot, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
         }
       }
       for (const row of found) rows.push({ ...row, param: p.name, binding: p.binding! });
@@ -180,4 +204,23 @@ export function computeParamColumns(input: {
     }
   }
   return out.sort((a, b) => byOrdinal(a.route.file, b.route.file) || a.route.line - b.route.line || byOrdinal(a.route.param, b.route.param) || byOrdinal(a.column.file, b.column.file) || a.column.line - b.column.line || byOrdinal(a.column.field, b.column.field));
+}
+
+/**
+ * The entity of each row whose statement named none when the walk ran: a
+ * project pass that settles it later (an association chain joined to its
+ * model) fills the statement's `entity`, and the row takes it. A statement
+ * that pass removed (a collection sharing the verb, no model) takes its row
+ * with it. In place.
+ */
+export function fillParamColumnEntities(rows: ParamColumn[], analyses: readonly FileAnalysis[]): void {
+  if (!rows.some((r) => r.column.entity === null)) return;
+  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  for (let k = rows.length - 1; k >= 0; k--) {
+    const r = rows[k]!;
+    if (r.column.entity !== null) continue;
+    const d = byFile.get(r.column.file)?.dataSources.find((x) => x.kind === "database" && x.line === r.column.line && x.name === r.column.call);
+    if (!d) rows.splice(k, 1);
+    else if (d.entity) r.column.entity = d.entity;
+  }
 }

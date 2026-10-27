@@ -166,7 +166,8 @@ export function computeParamOrigins(input: {
         invoked(caller, o.via, o.index, o.field, 0, depth + 1, seen, [hop, ...hops], conf, out);
         continue;
       }
-      out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
+      // A server's merged request value is no screen's URL.
+      out.push({ origin: o.kind === "request-param" ? { kind: "unknown", file: link.sourceFile, line: link.sourceLine } : urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
     }
   };
 
@@ -207,6 +208,7 @@ export function computeParamOrigins(input: {
         } else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         else if (o.kind === "prop") propOrigins(link.sourceFile, o.name, link.sourceLine, depth + 1, seen, [hop, ...hops], conf, out);
         else if (o.kind === "invoked") out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        else if (o.kind === "request-param") out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
         else out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
         continue;
       }

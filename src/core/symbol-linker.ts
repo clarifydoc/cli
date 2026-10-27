@@ -2779,6 +2779,12 @@ function buildClassAt(analyses: FileAnalysis[]): Map<string, ClassInfo> {
   return at;
 }
 
+/** Whether the enclosing callable has a parameter or a typed local of that name, hiding an import. */
+function shadowedLocally(analysis: FileAnalysis, sourceSymbol: string, name: string): boolean {
+  const fn = findEnclosingCallable(analysis, sourceSymbol);
+  return !!fn && (fn.params.some((p) => p.name === name) || !!fn.localTypes?.some((l) => l.name === name));
+}
+
 /**
  * Try to resolve a single call to its definition site.
  * Returns a SymbolLink if resolution succeeds, null otherwise.
@@ -2841,6 +2847,19 @@ function resolveCallToDefinition(
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).
     const ownResolver = pluginFor(analysis.language)?.resolveImport;
     targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : resolveTarget(call.target, sourceFile, filePathMap);
+    // A name a dotted import gives may be a module of its own (`from league.api import deps` →
+    // `deps.get_club()`): the package's file of that name, when the package's entry lacks the call.
+    if (parts.length === 2 && !call.target.includes("/") && !(targetFile && symbolIndex.get(targetFile)?.has(call.name))
+      && analysis.imports.some((i) => i.source === call.target && !i.isType && i.specifiers.includes(parts[0]!) && !i.aliases?.[parts[0]!])
+      && !shadowedLocally(analysis, sourceSymbol, parts[0]!)) {
+      const subSource = `${call.target}${call.target.endsWith(".") ? "" : "."}${parts[0]}`;
+      const sub = ownResolver ? ownResolver(sourceFile, subSource, leafName, importResolveContext(ctx)) : resolveTarget(subSource, sourceFile, filePathMap);
+      // Only a file that IS that module — named so, or the entry of a directory named so — never one a re-export leads to.
+      const isModule = !!sub && (sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === parts[0] || sub.split("/").at(-2) === parts[0]);
+      const subDef = isModule && sub !== sourceFile && sub !== targetFile ? symbolIndex.get(sub!)?.get(leafName) : undefined;
+      // The module's own top-level name — a method of a class in it is no `module.name`.
+      if (subDef && subDef.name === leafName) return mkLink(sub!, subDef.name, subDef.line, "INFERRED", "import-file");
+    }
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
     if (!targetFile) {

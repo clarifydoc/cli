@@ -2,6 +2,7 @@ import { extractGoPathArgCalls } from "./path-arg-calls.js";
 import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
+import { addGoWhereFields, withGoArgOrigins, withGoArgOriginsInClasses } from "./arg-origins.js";
 import type { ParamInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -114,8 +115,9 @@ export const goSpec: RegexLangSpec = {
   classPatterns: [],
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
   // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
-  postProcessFunctions: withCompositeArgs,
-  postProcessClasses: withCompositeArgsInClasses,
+  // Where each call's arguments come from (a parameter, a request read), for `paramColumns`.
+  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, fns)),
+  postProcessClasses: (lines, classes) => withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes)),
 
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
@@ -135,7 +137,12 @@ export const goSpec: RegexLangSpec = {
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
     return [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
   },
-  extractDataSources: (lines) => extractGoDataSources(lines),
+  extractDataSources: (lines) => {
+    const rows = extractGoDataSources(lines);
+    // The fields an ORM statement filters on with a parameter or a request value.
+    addGoWhereFields(lines, rows);
+    return rows;
+  },
   // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
   extractModuleValues: extractGoModuleValues,
   // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).

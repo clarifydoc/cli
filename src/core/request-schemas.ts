@@ -140,11 +140,12 @@ export function attachHandlerParams(routes: RouteRow[], analyses: FileAnalysis[]
     if (!handler) return null;
     const projectId = route.projectId ?? "root";
     // `Class#method`, `Class@method`, `Class.method`, `Class::method`.
-    const qualified = handler.match(/^([\w.\\]+)[#@]([\w]+)$/) ?? handler.match(/^([\w\\]+)(?:::|\.)([\w]+)$/);
+    // `Admin::ClubsController#show` (Rails): the class named by its namespace path, or by its leaf.
+    const qualified = handler.match(/^([\w.\\:]+)[#@]([\w]+)$/) ?? handler.match(/^([\w\\]+)(?:::|\.)([\w]+)$/);
     if (qualified) {
-      const cls = qualified[1]!.split(/[.\\]/).pop()!;
+      const cls = leafName(qualified[1]!);
       const method = qualified[2]!;
-      const hit = uniqueInProject(byQualified.get(`${cls}.${method}`), projectId);
+      const hit = uniqueInProject(byQualified.get(`${qualified[1]}.${method}`), projectId) ?? uniqueInProject(byQualified.get(`${cls}.${method}`), projectId);
       if (hit) return hit;
       // The class exists but has no such method here (or several do): a
       // same-named method on ANOTHER class is not this handler.

@@ -6,6 +6,7 @@ import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, inlineBodyColumn } from "../shared/regex-base.js";
+import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 import {
@@ -836,10 +837,21 @@ export const rubySpec: RegexLangSpec = {
       applyDeclaredParamTypes(lines, fn);
       dropDetachedMemberCalls(lines, fn);
     }
+    withRubyArgOrigins(lines, fns);
     return fns;
   },
 
-  extractDataSources: (lines, classes) => [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes), ...extractModelSelfQueries(lines, classes)],
+  extractDataSources: (lines, classes) => {
+    const rows = [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes), ...extractModelSelfQueries(lines, classes)];
+    // The columns an ActiveRecord statement filters on with a request value or a parameter.
+    addRubyWhereFields(lines, rows, classes);
+    return rows;
+  },
+  // Where each call's arguments come from (a request value, a parameter), for `paramColumns`.
+  postProcessClasses: (lines, classes) => {
+    withRubyArgOriginsInClasses(lines, classes);
+    return classes;
+  },
 
   importPatterns: [
     {

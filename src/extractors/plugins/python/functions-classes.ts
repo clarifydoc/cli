@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, Language } from "../../functions-classes/base.js";
-import type { PropertyInfo } from "../../../types/analysis.js";
+import type { CallInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { scanRequestAccess } from "./request-access.js";
 import { pyStringValue } from "./data-sources.js";
@@ -218,6 +218,13 @@ export class PythonExtractor extends FunctionClassExtractor {
     if (body && /\breturn\b/.test(bodyText)) {
       for (const returned of returnedModuleFunctions(body)) {
         if (!fn.calls.some((c) => c.name === returned.name)) fn.calls.push({ name: returned.name, kind: "internal", target: null, line: returned.line });
+      }
+    }
+    // A FastAPI dependency's own dependencies (`article = Depends(get_article_by_slug_from_path)`):
+    // the framework calls each before the body runs, handing it the route's parameters by name.
+    if (paramsNode && DEPENDS_GATE.test(paramsNode.text)) {
+      for (const call of signatureDependencyCalls(paramsNode)) {
+        if (!fn.calls.some((c) => c.name === call.name && c.line === call.line)) fn.calls.push(call);
       }
     }
     // `*args` / `**kwargs` (bare or annotated) take what the listed parameters do not.
@@ -515,6 +522,40 @@ const SPLAT_TYPES: ReadonlySet<string> = new Set(["list_splat_pattern", "diction
 
 /** A FastAPI dependency marker or dependency-injector `Provide[…]`, as a default or inside `Annotated[…]`. */
 const INJECTION_MARKER_RE = /\b(?:Depends|Security)\s*\(|\bProvide\s*\[/;
+const DEPENDS_GATE = /\b(?:Depends|Security)\s*\(/;
+
+/**
+ * The calls a signature's `Depends(x)` / `Security(x)` markers make — as a
+ * default or in `Annotated[T, Depends(x)]` metadata. A dependency named as a
+ * callable is handed the route's parameters by name (`routeParamsByName`); a
+ * factory call (`Depends(get_repository(ClubsRepo))`) is a call of the factory.
+ */
+function signatureDependencyCalls(paramsNode: Node): CallInfo[] {
+  const out: CallInfo[] = [];
+  const markers: Node[] = [];
+  for (const p of paramsNode.namedChildren) {
+    const value = p.childForFieldName("value");
+    if (value?.type === "call") markers.push(value);
+    const generic = p.childForFieldName("type")?.namedChild(0);
+    if (generic?.type === "generic_type" && generic.namedChild(0)?.text === "Annotated") {
+      for (const m of generic.namedChild(1)?.namedChildren.slice(1) ?? []) {
+        const call = m.namedChild(0);
+        if (call?.type === "call") markers.push(call);
+      }
+    }
+  }
+  for (const marker of markers) {
+    const fn = marker.childForFieldName("function");
+    const name = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : fn?.text;
+    if (name !== "Depends" && name !== "Security") continue;
+    const dep = marker.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "keyword_argument" && a.type !== "comment");
+    if (!dep) continue;
+    const named = dep.type === "identifier" || dep.type === "attribute" ? dep : dep.type === "call" ? dep.childForFieldName("function") : null;
+    if (!named || (named.type !== "identifier" && named.type !== "attribute")) continue;
+    out.push({ name: named.text, kind: "internal", target: null, line: named.startPosition.row + 1, ...(named === dep ? { routeParamsByName: true as const } : {}) });
+  }
+  return out;
+}
 
 /**
  * Annotated class attributes — `name: str = Field(..., alias="user_name")` —
