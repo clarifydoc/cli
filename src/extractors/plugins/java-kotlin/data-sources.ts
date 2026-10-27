@@ -723,10 +723,69 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.topicDefaults = new Map([...text.matchAll(/\b(?:val|var|String)\s+(\w+)\s*(?::\s*String\??\s*)?=\s*[^\n;]*?(?:\?:|\?\s*\S+\s*:)\s*"([^"]+)"/g)].map((m) => [m[1]!, m[2]!]));
   }
 
+  /** The one entity the file's query constants named in `expr` read, with the access the queries agree on. */
+  private constantsQueryTarget(expr: Node): { entity: string; access?: "read" | "write" } | null {
+    const targets = expr.descendantsOfType("identifier")
+      .map((id) => (id ? this.stringConsts.get(id.text) : undefined))
+      .map((text) => (text ? constantQueryTarget(text) : null))
+      .filter((t): t is { entity: string; access?: "read" | "write" } => t !== null);
+    const entities = new Set(targets.map((t) => t.entity));
+    const accesses = new Set(targets.map((t) => t.access));
+    return entities.size === 1 ? { entity: targets[0]!.entity, ...(accesses.size === 1 && targets[0]!.access ? { access: targets[0]!.access } : {}) } : null;
+  }
+
+  /** A String method whose every return hands over the file's query constants of one entity. */
+  private builderQueryRow(method: Node): DataSourceInfo | null {
+    const body = method.childForFieldName("body");
+    if (!body) return null;
+    const returns = body.descendantsOfType("return_statement").filter((r): r is Node => !!r && !insideNestedCallable(r, body));
+    if (returns.length === 0) return null;
+    const hits = returns.map((r) => (r.namedChild(0) ? this.constantsQueryTarget(r.namedChild(0)!) : null));
+    if (hits.some((h) => !h) || new Set(hits.map((h) => h!.entity)).size !== 1) return null;
+    const hit = hits[0]!;
+    return this.ds({
+      kind: "database",
+      name: `query: ${method.childForFieldName("name")?.text ?? "?"}`,
+      target: hit.entity,
+      entity: hit.entity,
+      line: returns[0]!.startPosition.row + 1,
+      ...withAccess(hit.access ?? "read"),
+    });
+  }
+
+  /** `XDescriptorFactory.create(Match.class, FETCH_MATCHES, "m")`: a JPQL constant handed to a descriptor or query factory. */
+  private factoryQueryRow(call: Node): DataSourceInfo | null {
+    const name = call.childForFieldName("name")?.text ?? "";
+    const object = call.childForFieldName("object")?.text ?? "";
+    if (!/descriptor|jpql/i.test(object) || /^(?:createQuery|createNamedQuery|createNativeQuery)$/.test(name)) return null;
+    const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => a?.type === "identifier") ?? [];
+    for (const arg of args) {
+      const text = this.stringConsts.get(arg.text);
+      const hit = text ? constantQueryTarget(text) : null;
+      if (hit) {
+        return this.ds({ kind: "database", name: `${object.split(".").pop()}.${name}`, target: hit.entity, entity: hit.entity, line: call.startPosition.row + 1, ...withAccess(hit.access ?? "read") });
+      }
+    }
+    return null;
+  }
+
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
     if (node.type === "method_invocation" || node.type === "call_expression") {
       const call = resolveCall(node);
       if (call) this.classifyCall(node, call, sources);
+    }
+
+    // A query builder: a method returning a String built from the file's JPQL
+    // constants (`return withFilter(FIND_FIXTURES, ids)`) hands that query to
+    // whoever runs it — the entity it names is what a call of the method reads.
+    if (node.type === "method_declaration" && node.childForFieldName("type")?.text === "String" && this.stringConsts.size > 0) {
+      const row = this.builderQueryRow(node);
+      if (row) sources.push(row);
+    }
+    // A JPQL constant handed to a descriptor factory (`ListDescriptorFactory.create(Match.class, FETCH_MATCHES, "m")`).
+    if (node.type === "method_invocation" && this.stringConsts.size > 0) {
+      const row = this.factoryQueryRow(node);
+      if (row) sources.push(row);
     }
 
     // A JPQL query handed to a constructor — a framework's list or grid
@@ -2232,4 +2291,12 @@ export function extractJavaPathArgCalls(tree: Tree): PathArgCall[] {
     }
   }
   return out;
+}
+
+/** Inside a lambda or a local/anonymous class below `root`: its returns are not `root`'s. */
+function insideNestedCallable(node: Node, root: Node): boolean {
+  for (let at = node.parent; at && at.id !== root.id; at = at.parent) {
+    if (at.type === "lambda_expression" || at.type === "class_body" || at.type === "method_declaration") return true;
+  }
+  return false;
 }

@@ -645,6 +645,32 @@ class CoachServiceImpl {
   });
 });
 
+describe("JPQL a query builder or a descriptor factory is handed (real-repo FP)", () => {
+  it("reads the entity a String method's returned query constant names, and a constant handed to a descriptor factory", async () => {
+    const java = `class StandingsQueryBuilder {
+  private static final String FILTER = "CLUBFILTER ";
+  private static final String FIND_STANDINGS = "SELECT s FROM Standing s WHERE s.season = :season " + FILTER;
+  private static final String FETCH_SQUAD = "SELECT p FROM Player p LEFT JOIN FETCH p.club c";
+  public static String findStandingsQuery(Long clubId) {
+    return replaceFilter(FIND_STANDINGS, clubId);
+  }
+  private static String replaceFilter(String query, Long clubId) {
+    return query.replace(FILTER, clubId == null ? "" : "AND s.club.id = " + clubId);
+  }
+  void squad() {
+    ListDescriptor<Player> d = ListDescriptorFactory.create(Player.class, FETCH_SQUAD, "p");
+    String label = String.format("%s", FILTER);
+  }
+}`;
+    const tree = await parseSource(java, "java", "StandingsQueryBuilder.java");
+    const rows = new JavaKotlinDataSourceExtractor().extract(tree, java).filter((d) => d.kind === "database");
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access} @${d.line}`)).toEqual([
+      "query: findStandingsQuery Standing read @6",
+      "ListDescriptorFactory.create Player read @12",
+    ]);
+  });
+});
+
 describe("Java JPA / Hibernate rows name their entity", () => {
   const db = (rows: DataSourceInfo[]) => rows.filter((r) => r.kind === "database").map((r) => [r.name, r.entity ?? null]);
 
