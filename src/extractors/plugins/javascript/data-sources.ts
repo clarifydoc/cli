@@ -6,6 +6,7 @@ import type { Confidence, DataSourceInfo, CallInfo, FileAnalysis, JsonSchemaNode
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
 import type { ProjectContext } from "../../../types/project.js";
 import { resolveUrlBuilders } from "./url-builders.js";
+import { dropCollectionLookups } from "./collection-lookups.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
@@ -451,6 +452,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * cross-tier linker can join.
    */
   override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
+    // A lookup in a collection another function returned is no request (collection-lookups.ts).
+    dropCollectionLookups(calls, ctx);
     // Calls of Kubb-generated clients (kubb.ts) are added first: the module they name is not on disk.
     return resolveKubbClientCalls(calls, analyses, ctx) + resolveRtkHooks(calls, analyses, ctx) + resolveUrlBuilders(calls, analyses, ctx);
   }
