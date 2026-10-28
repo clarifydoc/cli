@@ -1,7 +1,7 @@
 import type { FileAnalysis, SymbolLink, SymbolLinkStrategy } from "../types/analysis.js";
 
 /**
- * Database data sources that are really calls into the project's own code.
+ * Database data sources (and `db-write` mutations) that are really calls into the project's own code.
  *
  * Data-source extractors recognise ORM access partly by method name
  * (`X.Comments.create(…)` reads as a write on entity `Comments`), and a name
@@ -26,7 +26,10 @@ import type { FileAnalysis, SymbolLink, SymbolLinkStrategy } from "../types/anal
  *  - a method of an interface — a Spring Data `findByEmail` IS the query, and
  *    its implementation is generated, not in the project.
  *
- * Returns the number of data sources dropped.
+ * A `db-write` data mutation (`ClubStore.save(club)` on a static helper
+ * class) goes the same way, matched by its call text.
+ *
+ * Returns the number of data sources and mutations dropped.
  */
 export function demoteProjectCallDataSources(
   analyses: FileAnalysis[],
@@ -40,16 +43,27 @@ export function demoteProjectCallDataSources(
   if (linkAt.size === 0) return 0;
 
   const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const intoProject = (file: string, line: number, callName: string): boolean => {
+    const link = linkAt.get(siteKey(file, line, callName));
+    return !!link && !isPersistenceBoundary(byFile.get(link.targetFile), link.targetSymbol);
+  };
   let dropped = 0;
   for (const a of analyses) {
-    if (!a.dataSources?.some((ds) => ds.kind === "database")) continue;
-    a.dataSources = a.dataSources.filter((ds) => {
-      if (ds.kind !== "database" || ds.declared) return true;
-      const link = linkAt.get(siteKey(a.filePath, ds.line, ds.name));
-      if (!link || isPersistenceBoundary(byFile.get(link.targetFile), link.targetSymbol)) return true;
-      dropped++;
-      return false;
-    });
+    if (a.dataSources?.some((ds) => ds.kind === "database")) {
+      a.dataSources = a.dataSources.filter((ds) => {
+        if (ds.kind !== "database" || ds.declared || !intoProject(a.filePath, ds.line, ds.name)) return true;
+        dropped++;
+        return false;
+      });
+    }
+    // A write recognised by its method name (`ClubStore.save(club)`) on the project's own class.
+    if (a.dataMutations?.some((m) => m.kind === "db-write")) {
+      a.dataMutations = a.dataMutations.filter((m) => {
+        if (m.kind !== "db-write" || !intoProject(a.filePath, m.line, m.target.replace(/\(.*$/s, ""))) return true;
+        dropped++;
+        return false;
+      });
+    }
   }
   return dropped;
 }

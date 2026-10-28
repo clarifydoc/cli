@@ -2118,6 +2118,149 @@ function callableAtLine(analysis: FileAnalysis, line: number): string | null {
 }
 
 /**
+ * Strategy 4: `ClassName.method` — a static/class method of a class the
+ * project declares (`UserService.find_by_id`), searched across files. Without
+ * an explicit import this is at best INFERRED.
+ */
+function classNameMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  parts: string[],
+  mkLink: MkLink,
+): SymbolLink | null {
+  const { symbolIndex, classNameIndex } = ctx;
+  const className = parts[0]!;
+  const methodName = parts.slice(1).join(".");
+
+  // Files defining this class, PROJECT-SCOPED: same-project candidates win
+  // (nearest first); a cross-project class is eligible only when this file
+  // actually IMPORTS it. Without the gate, `Application.Run` in every
+  // Delphi .dpr resolved into an unrelated project's type-library unit that
+  // happens to export a class named Application (Word_97.pas collected 68
+  // cross-project dependents that way).
+  let candidateFiles = classNameIndex.get(className);
+  let declaredClass = className;
+  // A type alias called on (`using ScoreCalc = League.Scoring.Calc;` … `ScoreCalc.Add(1, 2)`).
+  if (!candidateFiles && ctx.typeAliases) {
+    const target = dealias(ctx, className, sourceFile);
+    if (target !== className && classNameIndex.has(target)) {
+      candidateFiles = classNameIndex.get(target);
+      declaredClass = target;
+    }
+  }
+  // A namespace written relative to the caller's (`Routes::Misc.home`
+  // inside `module Invidious`, a Rails `Users::Create` under `Admin`)
+  // names the ONE class whose declared name ends that way; two such
+  // classes are a lookup the linker cannot decide, so neither is taken.
+  if (!candidateFiles) {
+    const matches = ctx.namespaceSuffixIndex.get(className);
+    if (matches && new Set(matches.map((m) => m.name)).size === 1) {
+      candidateFiles = matches.map((m) => m.file);
+      declaredClass = matches[0]!.name;
+    }
+  }
+  // A dotted module called by its trailing names (`QueryBuilder.build` for
+  // `League.Stats.SQL.QueryBuilder`, aliased through `alias League.Stats.SQL`):
+  // the one module ending that way, or the one under a module the file imports.
+  if (!candidateFiles) {
+    let matches = ctx.dottedClassSuffixIndex.get(className) ?? [];
+    if (new Set(matches.map((m) => m.name)).size > 1) {
+      const prefixes = analysis.imports.map((i) => i.source + ".");
+      matches = matches.filter((m) => prefixes.some((p) => m.name.startsWith(p)));
+    }
+    if (matches.length > 0 && new Set(matches.map((m) => m.name)).size === 1) {
+      candidateFiles = matches.map((m) => m.file);
+      declaredClass = matches[0]!.name;
+    }
+  }
+  // `P19LogHelper::P19Logger.log` where the class is declared NESTED —
+  // `module P19LogHelper` … `class P19Logger` — under its simple name.
+  if (!candidateFiles && className.includes("::")) {
+    const segments = className.split("::");
+    const inner = segments[segments.length - 1]!;
+    const outer = segments[segments.length - 2]!;
+    const nested = (classNameIndex.get(inner) ?? []).filter((f) => {
+      const o = ctx.classAt.get(memberKey(f, outer));
+      const i = ctx.classAt.get(memberKey(f, inner));
+      return !!o && !!i && o.line < i.line && i.endLine <= o.endLine;
+    });
+    if (nested.length > 0) {
+      candidateFiles = nested;
+      declaredClass = inner;
+    }
+  }
+  // A class called by name is one of the caller's own language family: a Swift
+  // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
+  const family = extensionFamily(sourceFile);
+  if (candidateFiles && family !== null) {
+    candidateFiles = candidateFiles.filter((f) => {
+      const other = extensionFamily(f);
+      return other === null || other === family;
+    });
+  }
+  if (candidateFiles?.length) {
+    const sameProject = candidateFiles
+      .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
+      .sort(
+        (x, y) =>
+          commonPrefixLength(y, sourceFile) - commonPrefixLength(x, sourceFile),
+      );
+    const imported = candidateFiles.filter((f) => ctx.projectOf.get(f) !== analysis.projectId && importsFile(analysis, f, ctx));
+    // A type whose parts span files (a Rust struct in `source/x.rs`, its `impl`
+    // in `impls/x.rs`): the parts beside an imported one, in its sub-project.
+    const importedProjects = new Set(imported.filter((f) => typesSpanFiles(ctx.languageOf.get(f))).map((f) => ctx.projectOf.get(f)));
+    const eligible =
+      sameProject.length === candidateFiles.length
+        ? sameProject
+        : [
+            ...sameProject,
+            ...imported,
+            ...candidateFiles.filter((f) => !imported.includes(f) && ctx.projectOf.get(f) !== analysis.projectId && importedProjects.has(ctx.projectOf.get(f))),
+          ];
+    for (const filePath of eligible) {
+      const syms = symbolIndex.get(filePath)!;
+      // A call on the class itself reaches its class-level method when the
+      // language names one apart (Ruby `def self.call` → `X.self.call`).
+      // Bare, only where the name IS a class of that file (a member it lists bare): a local
+      // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
+      // The bare entry counts only inside the class's own body: a free
+      // function beside the class (or another class's member) is not its member.
+      const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
+      const bare = cls ? syms.get(methodName) : undefined;
+      const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
+        (bare && bare.line >= cls!.line && bare.line <= cls!.endLine ? bare : undefined);
+      if (classDef) {
+        return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
+      }
+    }
+    // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`).
+    if (!methodName.includes(".")) {
+      for (const filePath of eligible) {
+        if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
+        const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName);
+        if (!inherited) break;
+        const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
+        if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
+        return link;
+      }
+    }
+    // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
+    // through a class-level call the class does not declare by that name.
+    if (constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, methodName))) {
+      for (const filePath of eligible) {
+        const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
+        if (!cls || isDesignFormat(ctx.languageOf.get(filePath))) continue;
+        const ctor = cls.methods.find((m) => isConstructor(m, cls));
+        const d = ctor ? symbolIn(ctx, filePath, `${declaredClass}.${ctor.name}`) : undefined;
+        return mkLink(filePath, d?.name ?? declaredClass, d?.line ?? cls.line, "INFERRED", "constructor");
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * The class a bare call at `line` of `sourceSymbol` runs in, for a lookup of
  * its own members: the class the symbol is a method of (`Club.play`, an
  * out-of-line C++ `Club::play`), the receiver type of an extension function
@@ -3052,7 +3195,11 @@ function resolveCallToDefinition(
   // project's own class. They reach project code only through a DECLARED
   // receiver: an injected `userRepo` whose class defines `save` makes the call
   // a call into the project, and the access is attributed inside it.
-  if (call.kind === "api-call" || call.kind === "database") return throughDeclaredType();
+  // So does a call on a class the project declares (`ClubStore.save(…)`, a static method): the
+  // class's own or inherited member, whatever its name says.
+  if (call.kind === "api-call" || call.kind === "database") {
+    return throughDeclaredType() ?? (parts.length === 2 && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink) : null);
+  }
 
   let targetFile: string | null;
 
@@ -3344,133 +3491,8 @@ function resolveCallToDefinition(
   // For calls like "UserService.find_by_id" — searches all files for the class.
   // Without an explicit import this is at best INFERRED.
   if (!def && isQualified) {
-    const className = parts[0]!;
-    const methodName = parts.slice(1).join(".");
-
-    // Files defining this class, PROJECT-SCOPED: same-project candidates win
-    // (nearest first); a cross-project class is eligible only when this file
-    // actually IMPORTS it. Without the gate, `Application.Run` in every
-    // Delphi .dpr resolved into an unrelated project's type-library unit that
-    // happens to export a class named Application (Word_97.pas collected 68
-    // cross-project dependents that way).
-    let candidateFiles = classNameIndex.get(className);
-    let declaredClass = className;
-    // A type alias called on (`using ScoreCalc = League.Scoring.Calc;` … `ScoreCalc.Add(1, 2)`).
-    if (!candidateFiles && ctx.typeAliases) {
-      const target = dealias(ctx, className, sourceFile);
-      if (target !== className && classNameIndex.has(target)) {
-        candidateFiles = classNameIndex.get(target);
-        declaredClass = target;
-      }
-    }
-    // A namespace written relative to the caller's (`Routes::Misc.home`
-    // inside `module Invidious`, a Rails `Users::Create` under `Admin`)
-    // names the ONE class whose declared name ends that way; two such
-    // classes are a lookup the linker cannot decide, so neither is taken.
-    if (!candidateFiles) {
-      const matches = ctx.namespaceSuffixIndex.get(className);
-      if (matches && new Set(matches.map((m) => m.name)).size === 1) {
-        candidateFiles = matches.map((m) => m.file);
-        declaredClass = matches[0]!.name;
-      }
-    }
-    // A dotted module called by its trailing names (`QueryBuilder.build` for
-    // `League.Stats.SQL.QueryBuilder`, aliased through `alias League.Stats.SQL`):
-    // the one module ending that way, or the one under a module the file imports.
-    if (!candidateFiles) {
-      let matches = ctx.dottedClassSuffixIndex.get(className) ?? [];
-      if (new Set(matches.map((m) => m.name)).size > 1) {
-        const prefixes = analysis.imports.map((i) => i.source + ".");
-        matches = matches.filter((m) => prefixes.some((p) => m.name.startsWith(p)));
-      }
-      if (matches.length > 0 && new Set(matches.map((m) => m.name)).size === 1) {
-        candidateFiles = matches.map((m) => m.file);
-        declaredClass = matches[0]!.name;
-      }
-    }
-    // `P19LogHelper::P19Logger.log` where the class is declared NESTED —
-    // `module P19LogHelper` … `class P19Logger` — under its simple name.
-    if (!candidateFiles && className.includes("::")) {
-      const segments = className.split("::");
-      const inner = segments[segments.length - 1]!;
-      const outer = segments[segments.length - 2]!;
-      const nested = (classNameIndex.get(inner) ?? []).filter((f) => {
-        const o = ctx.classAt.get(memberKey(f, outer));
-        const i = ctx.classAt.get(memberKey(f, inner));
-        return !!o && !!i && o.line < i.line && i.endLine <= o.endLine;
-      });
-      if (nested.length > 0) {
-        candidateFiles = nested;
-        declaredClass = inner;
-      }
-    }
-    // A class called by name is one of the caller's own language family: a Swift
-    // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
-    const family = extensionFamily(sourceFile);
-    if (candidateFiles && family !== null) {
-      candidateFiles = candidateFiles.filter((f) => {
-        const other = extensionFamily(f);
-        return other === null || other === family;
-      });
-    }
-    if (candidateFiles?.length) {
-      const sameProject = candidateFiles
-        .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
-        .sort(
-          (x, y) =>
-            commonPrefixLength(y, sourceFile) - commonPrefixLength(x, sourceFile),
-        );
-      const imported = candidateFiles.filter((f) => ctx.projectOf.get(f) !== analysis.projectId && importsFile(analysis, f, ctx));
-      // A type whose parts span files (a Rust struct in `source/x.rs`, its `impl`
-      // in `impls/x.rs`): the parts beside an imported one, in its sub-project.
-      const importedProjects = new Set(imported.filter((f) => typesSpanFiles(ctx.languageOf.get(f))).map((f) => ctx.projectOf.get(f)));
-      const eligible =
-        sameProject.length === candidateFiles.length
-          ? sameProject
-          : [
-              ...sameProject,
-              ...imported,
-              ...candidateFiles.filter((f) => !imported.includes(f) && ctx.projectOf.get(f) !== analysis.projectId && importedProjects.has(ctx.projectOf.get(f))),
-            ];
-      for (const filePath of eligible) {
-        const syms = symbolIndex.get(filePath)!;
-        // A call on the class itself reaches its class-level method when the
-        // language names one apart (Ruby `def self.call` → `X.self.call`).
-        // Bare, only where the name IS a class of that file (a member it lists bare): a local
-        // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
-        // The bare entry counts only inside the class's own body: a free
-        // function beside the class (or another class's member) is not its member.
-        const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
-        const bare = cls ? syms.get(methodName) : undefined;
-        const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
-          (bare && bare.line >= cls!.line && bare.line <= cls!.endLine ? bare : undefined);
-        if (classDef) {
-          return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
-        }
-      }
-      // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`).
-      if (!methodName.includes(".")) {
-        for (const filePath of eligible) {
-          if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
-          const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName);
-          if (!inherited) break;
-          const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
-          if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
-          return link;
-        }
-      }
-      // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
-      // through a class-level call the class does not declare by that name.
-      if (constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, methodName))) {
-        for (const filePath of eligible) {
-          const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
-          if (!cls || isDesignFormat(ctx.languageOf.get(filePath))) continue;
-          const ctor = cls.methods.find((m) => isConstructor(m, cls));
-          const d = ctor ? symbolIn(ctx, filePath, `${declaredClass}.${ctor.name}`) : undefined;
-          return mkLink(filePath, d?.name ?? declaredClass, d?.line ?? cls.line, "INFERRED", "constructor");
-        }
-      }
-    }
+    const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink);
+    if (link) return link;
   }
 
   // ── Strategy 5: Constructor resolution ──

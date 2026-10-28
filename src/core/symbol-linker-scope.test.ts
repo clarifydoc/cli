@@ -249,3 +249,23 @@ describe("symbol-linker — nested functions of one name resolve to the nearest 
     expect(links.find((l) => l.sourceSymbol === "show" && l.callName === "fetch_page")).toMatchObject({ targetLine: 9, confidence: "INFERRED" });
   });
 });
+
+describe("symbol-linker — a static call on a project class reaches it whatever its name says", () => {
+  it("links `ClubStore.save(…)`, classified as database by its name, to the class's method", () => {
+    const store = file("ClubStore.java", "java", { classes: [cls("ClubStore", 1, 4, [fn("save", 2, 2), fn("find", 3, 3)])] });
+    const coach = file("Coach.java", "java", {
+      classes: [cls("Coach", 1, 5, [fn("run", 2, 4, [call("ClubStore.save", 3, { kind: "database" }), call("jdbc.update", 4, { kind: "database" })])])],
+    });
+    const links = buildSymbolLinks([store, coach]);
+    expect(links.find((l) => l.callName === "ClubStore.save")).toMatchObject({ targetSymbol: "ClubStore.save", strategy: "class-name" });
+    expect(links.find((l) => l.callName === "jdbc.update")).toBeUndefined();
+  });
+
+  it("leaves a database call on a class that does not declare the method alone (an ORM's inherited finder)", () => {
+    const model = file("club.rb", "ruby", { classes: [cls("Club", 1, 3, [fn("captain", 2, 2)], { extends: "ApplicationRecord" })] });
+    const ctrl = file("clubs_controller.rb", "ruby", {
+      classes: [cls("ClubsController", 1, 3, [fn("show", 2, 2, [call("Club.find", 2, { kind: "database" })])])],
+    });
+    expect(buildSymbolLinks([model, ctrl]).filter((l) => l.callName === "Club.find")).toEqual([]);
+  });
+});
