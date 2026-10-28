@@ -43,6 +43,7 @@ These consume a `RegexLangSpec` and produce standard output:
 - `declared-package.ts` `tomlSectionValue(text, sections, key)` — a manifest's own `[package]`/`[project]` name
 - `preprocessor-branches.ts` `readWithBranches(text, cplusplus, read)` — the C-family parser front ends' reading of `#if`: dead blocks (`#if 0`, `__cplusplus` as the language says) blanked; a file that does not parse read again with each conditional's first branch, the left-out branches' calls counted, a second-branch reading's definitions added (C, C++)
 - `token-calls.ts` `tokenCalls`/`defineCalls`/`leftOutCalls` — calls read off a C-family ANTLR lexer's tokens (`TokenKinds`) where a parse reads no expression: macro arguments, a `#define` inside a function, left-out branches
+- `sql-string-sources.ts` — the ONE reader of SQL text: `statementAccesses(sql)` gives every table and routine a statement names, its own target first, then each further source as a `joined` read (JOINs, comma joins, subqueries and CTE bodies, `INSERT … SELECT`, `UPDATE … FROM` with the alias resolved, `DELETE`/`MERGE … USING`; CTE names, JPQL join paths and the engine catalogue never). `extractSqlStringDataSources(lines)` scans a file's string literals with it (regex plugins); a plugin that reads the SQL handed to a call (Python, JS/TS, Java, C#, PHP, MyBatis XML) emits its own row for the statement and `joinedTableRows(sql, own, name, line)` for the rest, or `sqlAccessRow` per access
 
 ### Helpers
 

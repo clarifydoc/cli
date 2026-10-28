@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractSqlStringDataSources, tableFrom } from "./sql-string-sources.js";
+import { extractSqlStringDataSources, tableFrom, joinedTableRows, statementAccesses } from "./sql-string-sources.js";
 
 const sources = (src: string) => extractSqlStringDataSources(src.split("\n"));
 
@@ -255,5 +255,49 @@ q("SELECT * FROM \`league\`.\`matches\`");`)).toEqual(["SELECT matches"]);
   it("never reads LATERAL or AUTO_INCREMENT after a hole as a table", () => {
     expect(tables(`Output("ALTER TABLE " + Target + " AUTO_INCREMENT = 1");
 q("SELECT c.id FROM clubs c CROSS JOIN LATERAL " + Fn + " AS x WHERE 1=1");`)).toEqual(["SELECT clubs"]);
+  });
+});
+
+describe("statementAccesses — every source a statement reads", () => {
+  const acc = (sql: string) => statementAccesses(sql).map((a) => `${a.verb} ${a.table}${a.joined ? " +" : ""}`);
+
+  it("reads a write's FROM, USING and INSERT … SELECT sources beside its target", () => {
+    expect(acc("UPDATE clubs SET tier = 1 FROM standings s WHERE s.club_id = clubs.id")).toEqual(["UPDATE clubs", "SELECT standings +"]);
+    expect(acc("DELETE FROM players USING clubs c, loans l WHERE players.club_id = c.id")).toEqual(["DELETE FROM players", "SELECT clubs +", "SELECT loans +"]);
+    expect(acc("MERGE INTO standings s USING results r ON s.club_id = r.club_id WHEN MATCHED THEN UPDATE SET points = r.points"))
+      .toEqual(["MERGE INTO standings", "SELECT results +"]);
+    expect(acc("INSERT INTO club_archive (id) SELECT id FROM clubs WHERE id IN (SELECT club_id FROM relegations)"))
+      .toEqual(["INSERT INTO club_archive", "SELECT clubs +", "SELECT relegations +"]);
+  });
+
+  it("writes the table an UPDATE's alias names", () => {
+    expect(acc("UPDATE c SET tier = 1 FROM clubs c JOIN standings s ON s.club_id = c.id")).toEqual(["UPDATE clubs", "SELECT standings +"]);
+    expect(acc("UPDATE c SET c.tier = 1 FROM dbo.Clubs AS c")).toEqual(["UPDATE dbo.Clubs"]);
+  });
+
+  it("reads the write CTEs lead into, and what their bodies read", () => {
+    expect(acc("WITH top AS (SELECT club_id FROM standings) UPDATE clubs SET tier = 1 WHERE id IN (SELECT club_id FROM top)"))
+      .toEqual(["UPDATE clubs", "SELECT standings +"]);
+  });
+
+  it("never reads a column USING list, a JPQL join path, IS DISTINCT FROM or a quoted word as a table", () => {
+    expect(acc("SELECT * FROM clubs JOIN standings USING (club_id)")).toEqual(["SELECT clubs", "SELECT standings +"]);
+    expect(acc("ALTER TABLE cars ALTER COLUMN year TYPE int USING year::int")).toEqual(["ALTER TABLE cars"]);
+    expect(acc("SELECT c FROM Club c JOIN c.players p LEFT JOIN FETCH c.league WHERE p.age > 30")).toEqual(["SELECT Club"]);
+    expect(acc("SELECT c FROM Club c JOIN Garage g ON g.club = c")).toEqual(["SELECT Club", "SELECT Garage +"]);
+    expect(acc("SELECT * FROM cars WHERE colour IS DISTINCT FROM paint")).toEqual(["SELECT cars"]);
+    expect(acc("SELECT * FROM transfers WHERE note = 'moved from Lyon' AND fee > 0")).toEqual(["SELECT transfers"]);
+  });
+});
+
+describe("joinedTableRows", () => {
+  it("names each further table once as a joined read, beside the caller's own", () => {
+    const rows = joinedTableRows("SELECT * FROM league.clubs c JOIN league.standings s ON 1 = 1 JOIN standings x ON 1 = 1", "clubs", "cur.execute", 4, { lastPart: true });
+    expect(rows).toEqual([{ kind: "database", name: "cur.execute", target: "standings", access: "read", entity: "standings", joined: true, calls: [], line: 4 }]);
+  });
+
+  it("leaves routines to the caller and drops what the caller vetoes", () => {
+    const rows = joinedTableRows("SELECT * FROM sp_squad(1) s JOIN hole0__ h ON 1 = 1 JOIN kits k ON 1 = 1", null, "q", 1, { keep: (t) => !t.includes("hole") });
+    expect(rows.map((r) => r.target)).toEqual(["kits"]);
   });
 });

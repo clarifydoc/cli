@@ -185,6 +185,8 @@ describe("Python raw SQL in migrations and annotations", () => {
       "Alembic: execute clubs write @7",
       "Alembic: execute club_kits write @8",
       "Django: RunSQL league_group write @13",
+      // The INSERT's own SELECT reads a table too.
+      "Django: RunSQL auth_group read @13",
       "Django: RunSQL players write @14",
       "Django: RawSQL league_club_players read @16",
     ]);
@@ -229,6 +231,27 @@ describe("Python URLs and SQL held in locals", () => {
       ["database", "cars", "cars", "read"],
       ["database", "drivers", "drivers", "write"],
       ["database", "sessions", "sessions", "write"],
+    ]);
+  });
+
+  it("reads every table a statement names: JOINs, comma joins, UPDATE … FROM, DELETE … USING, never a hole", async () => {
+    expect(await rows([
+      "def standings(cur, season):",
+      '    cur.execute("SELECT c.name, s.points FROM clubs c JOIN standings s ON s.club_id = c.id")',
+      '    cur.execute("SELECT c.name FROM clubs c, players p WHERE p.club_id = c.id")',
+      '    cur.execute("UPDATE clubs SET tier = 1 FROM standings s WHERE s.club_id = clubs.id")',
+      '    cur.execute("DELETE FROM players USING clubs WHERE players.club_id = clubs.id")',
+      '    cur.execute(f"SELECT * FROM fixtures f JOIN {season.table} r ON r.id = f.id")',
+    ].join("\n"))).toEqual([
+      ["database", "clubs", "clubs", "read"],
+      ["database", "standings", "standings", "read"],
+      ["database", "clubs", "clubs", "read"],
+      ["database", "players", "players", "read"],
+      ["database", "clubs", "clubs", "write"],
+      ["database", "standings", "standings", "read"],
+      ["database", "players", "players", "write"],
+      ["database", "clubs", "clubs", "read"],
+      ["database", "fixtures", "fixtures", "read"],
     ]);
   });
 

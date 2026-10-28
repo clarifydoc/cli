@@ -1,5 +1,5 @@
 import type { DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
-import { tableFrom } from "../shared/sql-string-sources.js";
+import { joinedTableRows, tableFrom } from "../shared/sql-string-sources.js";
 import { sqlVerbAccess } from "../shared/db-access.js";
 
 /**
@@ -117,8 +117,6 @@ export function mapperFunctions(lines: string[]): FunctionInfo[] {
   }));
 }
 
-const JOIN_RE = /\bJOIN\s+([A-Za-z_][\w.]*)/gi;
-
 export function mapperDataSources(lines: string[]): DataSourceInfo[] {
   const m = parseMapper(lines);
   if (!m) return [];
@@ -128,15 +126,9 @@ export function mapperDataSources(lines: string[]): DataSourceInfo[] {
     if (!found) continue;
     const table = found.table.split(".").pop()!;
     const access = sqlVerbAccess(found.verb);
-    const seen = new Set([table.toLowerCase()]);
     out.push({ kind: "database", name: `<${s.verb}>`, target: table, entity: table, line: s.line, calls: [], ...(access ? { access } : {}) });
-    if (s.verb !== "select") continue;
-    for (const j of s.sql.matchAll(JOIN_RE)) {
-      const t = j[1]!.split(".").pop()!;
-      if (seen.has(t.toLowerCase())) continue;
-      seen.add(t.toLowerCase());
-      out.push({ kind: "database", name: "<select>", target: t, entity: t, line: s.line, calls: [], access: "read" });
-    }
+    // Every further table it reads — a select's JOINs, a write's subqueries — as the shared reader finds them.
+    out.push(...joinedTableRows(s.sql, table, "<select>", s.line, { lastPart: true }));
   }
   return out;
 }

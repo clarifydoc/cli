@@ -3,7 +3,7 @@ import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js"
 import type { DataSourceInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
 import type { ProjectContext } from "../../../types/project.js";
-import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
+import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { pythonResponseReads } from "./response-reads.js";
 import { pythonWhereFields } from "./arg-origins.js";
 import { escapeRegex } from "../shared/path-utils.js";
@@ -269,10 +269,12 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             const sql = pyStringValue(s, node);
             for (const stmt of sql?.split(";") ?? []) {
               // A hole names no table (`f"UPDATE {table} SET …"`).
-              const hit = tableFrom(stmt.replace(/\{[^}]*\}/g, "hole__"));
+              const text = stmt.replace(/\{[^}]*\}/g, "hole__");
+              const hit = tableFrom(text);
               if (!hit || hit.table.includes("hole__") || !/^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(hit.verb)) continue;
               const access = sqlVerbAccess(hit.verb);
               sources.push(this.ds({ kind: "database", name: rawSql, target: hit.table, entity: hit.table, line: node.startPosition.row + 1, ...(access ? { access } : {}) }));
+              sources.push(...joinedTableRows(text, hit.table, rawSql, node.startPosition.row + 1, { keep: (t) => !t.includes("hole__") }));
             }
           }
           return;
@@ -309,6 +311,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           let table: string | null = null;
           // The table is a module value (`"INSERT INTO " + TABLE_NAME + " …"`): its name, for the project pass to read.
           let tableRef: string | null = null;
+          // The statement's further tables (`FROM clubs c JOIN standings s`), rows of their own after this call's.
+          let joined: DataSourceInfo[] = [];
           if (SQL_TEXT_LEAVES.has(leaf) || leaf === "callproc") {
             let arg = positional(node)[0];
             if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
@@ -321,12 +325,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             }
             const refs: string[] = [];
             // An f-string's `{…}` is a run-time value: in a table's place (`FROM {model.__tablename__}`) it names none.
-            const hit = sql ? tableFrom(sql.replace(/\$\{([^}]*)\}|\{[^}]*\}/g, (_m, ref: string | undefined) => (ref ? `hole${refs.push(ref) - 1}__` : "holef__"))) : null;
+            const text = sql ? sql.replace(/\$\{([^}]*)\}|\{[^}]*\}/g, (_m, ref: string | undefined) => (ref ? `hole${refs.push(ref) - 1}__` : "holef__")) : null;
+            const hit = text ? tableFrom(text) : null;
             if (hit) {
               const hole = /^hole(\d+)__$/.exec(hit.table);
               if (hole) tableRef = refs[Number(hole[1])] ?? null;
               else if (!/hole\d+__|holef__/.test(hit.table)) table = hit.table;
               access ??= sqlVerbAccess(hit.verb);
+              joined = joinedTableRows(text!, hit.table, fnName, node.startPosition.row + 1, { keep: (t) => !/hole\d+__|holef__/.test(t) });
             }
           }
           // A model's manager or query attribute (`Order.objects.filter`, `User.query.filter_by`)
@@ -387,6 +393,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(entityAttribute ? { entityAttribute } : {}),
             ...(access ? { access } : {}),
           }));
+          sources.push(...joined);
         }
       }
     }

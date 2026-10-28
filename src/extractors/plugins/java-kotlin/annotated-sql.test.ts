@@ -65,6 +65,30 @@ public interface CarRepository extends JpaRepository<Car, Long> {
     ]);
   });
 
+  it("reads every table a native @Query or a MyBatis @Select joins, never a JPQL join path (Java)", async () => {
+    const SRC = `package x;
+import org.springframework.data.jpa.repository.*;
+import org.apache.ibatis.annotations.Select;
+
+public interface ClubRepository {
+  @Query(value = "SELECT * FROM clubs c LEFT JOIN players p ON p.club_id = c.id", nativeQuery = true)
+  List<Object> withPlayers();
+
+  @Query("SELECT c FROM Club c JOIN c.players p WHERE p.age > 30")
+  List<Club> veterans();
+
+  @Select("SELECT c.* FROM clubs c INNER JOIN leagues l ON l.id = c.league_id")
+  List<Object> byLeague();
+}`;
+    expect(await dbRows(SRC, "java", "ClubRepository.java")).toEqual([
+      "@Query read clubs@7",
+      "@Query read players@7",
+      "@Query read Club@10",
+      "@Select read clubs@13",
+      "@Select read leagues@13",
+    ]);
+  });
+
   it("ignores annotations that are not SQL, and Room write verbs outside Room", async () => {
     const SRC = `package x;
 import javax.ws.rs.*;

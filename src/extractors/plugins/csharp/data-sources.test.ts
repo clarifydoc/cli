@@ -351,11 +351,23 @@ describe("C# raw SQL — the table a command runs against", () => {
     ]);
   });
 
+  it("names every table a statement joins, Dapper's by name, and the table an UPDATE's alias writes", async () => {
+    const rows = (await dbSourcesOf(`    var table = await _connection.QueryAsync<Row>("SELECT c.Name FROM Clubs c JOIN Standings s ON s.ClubId = c.Id");
+    var cmd = new SqlCommand("UPDATE c SET Tier = 1 FROM Clubs c JOIN Standings s ON s.ClubId = c.Id", _connection);
+    cmd.ExecuteNonQuery();`)).map((d) => `${d.name} ${d.target ?? "-"} ${d.access ?? "-"}${d.joined ? " joined" : ""}`);
+    expect(rows).toEqual([
+      "Dapper: QueryAsync Clubs read",
+      "Dapper: QueryAsync Standings read joined",
+      "ADO.NET: ExecuteNonQuery Clubs write",
+      "ADO.NET: ExecuteNonQuery Standings read joined",
+    ]);
+  });
+
   it("reads a Dapper call on any receiver that is handed a statement (real-repo FP)", async () => {
     const rows = (await dbSourcesOf(`    using var mapper = _database.OpenConnection();
     mapper.Execute(@"DELETE FROM ""Fixtures"" WHERE ""Id"" IN (SELECT ""FixtureId"" FROM ""Postponed"")");
     var cache = _cache.Execute(key);`)).map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}`);
-    expect(rows).toEqual(["Dapper: Execute Fixtures write"]);
+    expect(rows).toEqual(["Dapper: Execute Fixtures write", "Dapper: Execute Postponed read"]);
   });
 
   it("reads a FluentMigrator migration's raw statement", async () => {
@@ -835,7 +847,8 @@ describe("C# stored procedures — the routine a command runs", () => {
       "Dapper: QueryFirstAsync usp_NotifyAgent routine",
       "Dapper: ExecuteScalarAsync usp_Wage routine",
       "EF: ExecuteSqlRawAsync dbo.usp_CloseWindow routine",
-      "Dapper: QueryAsync usp_NotARoutine",
+      // Neither a routine nor a table: the statement's text is no store's name.
+      "Dapper: QueryAsync -",
     ]);
   });
 });

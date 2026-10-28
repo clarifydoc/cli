@@ -2,7 +2,7 @@ import { constantString } from "./constant-expr.js";
 import { annotatedQueryWhereFields, derivedQueryWhereFields } from "./arg-origins.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
-import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
+import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import type { CallBaseRef, DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
@@ -888,6 +888,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             ...(access.access ? { access: access.access } : {}),
             ...(whereFields ? { whereFields } : {}),
           }));
+          if (access.sql) sources.push(...joinedTableRows(access.sql, access.table, `@${sqlAnn[1]}`, access.line, { lastPart: true }));
         }
       }
 
@@ -1158,6 +1159,12 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         line,
         ...withAccess(dbAccessFor(method, JDBC_ACCESS) ?? fromConstant?.access),
       }));
+      // Every further table the statement reads (`FROM clubs c JOIN standings s`), or entity a JPQL join names —
+      // never the statement's own table again when a class literal named the row (`createNativeQuery(sql, Club.class)`).
+      if (constant && entity) {
+        const own = fromConstant?.entity ?? entity;
+        sources.push(...joinedTableRows(constant, own, method, line, { lastPart: true }).filter((r) => r.target?.toLowerCase() !== entity.toLowerCase()));
+      }
       return;
     }
 
@@ -2092,14 +2099,15 @@ const ANN_STRING_RE = /"""([\s\S]*?)"""|"((?:[^"\\]|\\.)*)"/g;
 /**
  * The table an SQL-carrying annotation reads or writes, on the line of the
  * method it decorates (so the access belongs to that method, not to whatever
- * precedes it). Concatenated literals (`"SELECT … " + "FROM t"`) are joined.
+ * precedes it), with the statement (`sql`) for the tables it reads beside it.
+ * Concatenated literals (`"SELECT … " + "FROM t"`) are joined.
  */
 function annotatedSqlAccess(
   ann: Node,
   text: string,
   name: string,
   isRoomFile: boolean,
-): { table: string; access?: "read" | "write"; line: number } | null {
+): { table: string; access?: "read" | "write"; line: number; sql?: string } | null {
   let holder: Node | null = ann.parent;
   if (holder && holder.type === "modifiers") holder = holder.parent;
   if (!holder || !/^(method_declaration|function_declaration)$/.test(holder.type)) return null;
@@ -2111,7 +2119,7 @@ function annotatedSqlAccess(
     const found = tableFrom(sql);
     if (!found) return null;
     const access = sqlVerbAccess(found.verb);
-    return { table: found.table.split(".").pop()!, ...(access ? { access } : {}), line };
+    return { table: found.table.split(".").pop()!, ...(access ? { access } : {}), line, sql };
   }
   if (isRoomFile && ROOM_WRITE_ANNOTATIONS.has(name)) {
     const params = holder.childForFieldName("parameters") ?? holder.children.find((c) => c.type === "function_value_parameters");

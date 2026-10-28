@@ -895,6 +895,21 @@ describe("raw SQL handed to a driver", () => {
     ]);
   });
 
+  it("records every table the statement names, the joined ones as reads", async () => {
+    const ds = await dbOf(`
+      export async function f() {
+        await pool.query("SELECT c.name, s.points FROM league.clubs c JOIN standings s ON s.club_id = c.id");
+        await pool.query(\`UPDATE c SET tier = 1 FROM clubs c JOIN standings s ON s.club_id = c.id\`);
+      }
+    `);
+    expect(ds.map((d) => `${d.access} ${d.target}${d.joined ? " (joined)" : ""}`)).toEqual([
+      "read clubs",
+      "read standings (joined)",
+      "write clubs",
+      "read standings (joined)",
+    ]);
+  });
+
   it("never reads prose or a non-SQL first argument as a table", async () => {
     const ds = await dbOf(`
       export function g(map: Map<string, string>) {

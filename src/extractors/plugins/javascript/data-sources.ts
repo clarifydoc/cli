@@ -15,7 +15,7 @@ import { astToValueExpr, buildScope } from "./value-capture.js";
 import { npmPackages } from "./packages.js";
 import { extractGqlOperationCalls } from "../shared/graphql-operations.js";
 import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-clients.js";
-import { tableFrom } from "../shared/sql-string-sources.js";
+import { joinedTableRows, tableFrom } from "../shared/sql-string-sources.js";
 import { sqlVerbAccess } from "../shared/db-access.js";
 import { filterOrigins } from "./arg-origins.js";
 
@@ -171,8 +171,9 @@ const SQL_OPENER = /^\s*\(?\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH|REPLACE|MERGE|
 /**
  * The table and access of raw SQL handed to a driver call, or null. A template
  * literal's substitutions become `?` (only the SQL around them matters).
+ * `sql` is the statement, for the tables it reads beside its own.
  */
-function rawSqlAccess(firstArg: Node | null): { table: string; access?: "read" | "write" } | null {
+function rawSqlAccess(firstArg: Node | null): { table: string; access?: "read" | "write"; sql: string } | null {
   if (!firstArg || (firstArg.type !== "string" && firstArg.type !== "template_string")) return null;
   const text = stripQuotes(firstArg.type === "template_string" ? firstArg.text.replace(/\$\{[^}]*\}/g, "?") : firstArg.text);
   if (!SQL_OPENER.test(text)) return null;
@@ -180,7 +181,7 @@ function rawSqlAccess(firstArg: Node | null): { table: string; access?: "read" |
   if (!found) return null;
   const table = found.table.split(".").pop()!;
   const access = sqlVerbAccess(found.verb);
-  return { table, ...(access ? { access } : {}) };
+  return { table, ...(access ? { access } : {}), sql: text };
 }
 
 /** Kysely query-builder clause verbs whose first argument names the table. */
@@ -1709,15 +1710,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             ...(supabase.access ? { access: supabase.access } : {}),
           }));
         } else if (rawSql) {
+          // A chain split over lines (`db\n  .prepare(…)`) reads as one name.
+          const name = (ormChain ?? fnName!).replace(/\s+/g, "");
           sources.push(this.ds({
             kind: "database",
-            // A chain split over lines (`db\n  .prepare(…)`) reads as one name.
-            name: (ormChain ?? fnName!).replace(/\s+/g, ""),
+            name,
             target: rawSql.table,
             entity: rawSql.table,
             line: node.startPosition.row + 1,
             ...(rawSql.access ? { access: rawSql.access } : {}),
           }));
+          // Every further table the statement reads: `FROM clubs c JOIN standings s`.
+          sources.push(...joinedTableRows(rawSql.sql, rawSql.table, name, node.startPosition.row + 1, { lastPart: true }));
         } else if (!emittedApiCall && kysely) {
           const table = kysely[1]!.split(".").pop()!;
           sources.push(this.ds({

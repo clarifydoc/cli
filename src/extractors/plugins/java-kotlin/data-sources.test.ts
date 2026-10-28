@@ -154,6 +154,23 @@ describe("DAO / Repository receiver → entity (the dominant data path here)", (
     ]);
   });
 
+  it("records every table a JdbcTemplate statement joins, never a JPQL join path", async () => {
+    const s = db(await sourcesOf(
+      `    jdbcTemplate.queryForList("SELECT c.name FROM clubs c JOIN standings s ON s.club_id = c.id");
+    jdbcTemplate.update("UPDATE clubs SET tier = 1 WHERE id IN (SELECT club_id FROM promotions)");
+    em.createQuery("SELECT c FROM Club c JOIN c.players p JOIN FETCH c.league", Club.class);`,
+      "java",
+      `class H { private JdbcTemplate jdbcTemplate; private EntityManager em; }`,
+    ));
+    expect(s.map((d) => `${d.name} ${d.entity ?? "-"} ${d.access ?? "-"}${d.joined ? " joined" : ""}`)).toEqual([
+      "queryForList clubs read",
+      "queryForList standings read joined",
+      "update clubs write",
+      "update promotions read joined",
+      "createQuery Club read",
+    ]);
+  });
+
   it("reads a query held in a local text block, and the entity a TypedQuery's type states", async () => {
     const s = db(await sourcesOf(
       `    String sql = """

@@ -3,7 +3,7 @@ import { csharpWhereFields } from "./arg-origins.js";
 import type { DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
-import { routineCalled, tableFrom } from "../shared/sql-string-sources.js";
+import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-sources.js";
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
@@ -906,14 +906,16 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       for (const stmt of sql?.split(";") ?? []) {
         const hit = tableFrom(stmt);
         if (!hit || !/^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(hit.verb)) continue;
+        const name = `${fluent ? "Migration" : "EF migration"}: ${hit.verb.split(" ")[0]}`;
         sources.push(this.ds({
           kind: "database",
-          name: `${fluent ? "Migration" : "EF migration"}: ${hit.verb.split(" ")[0]}`,
+          name,
           target: hit.table,
           entity: hit.table,
           access: hit.verb === "SELECT" ? "read" : "write",
           line: node.startPosition.row + 1,
         }));
+        sources.push(...joinedTableRows(stmt, hit.table, name, node.startPosition.row + 1));
       }
       return;
     }
@@ -943,14 +945,16 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         }));
         return;
       }
+      // The store is the table the statement names, never the statement's text.
       sources.push(this.ds({
         kind: "database",
         name: `Dapper: ${method}`,
-        target: sql,
+        target: hit?.table ?? null,
         ...(hit ? { entity: hit.table } : {}),
         ...access(method, DAPPER_ACCESS),
         line: node.startPosition.row + 1,
       }));
+      if (sql && hit) sources.push(...joinedTableRows(sql, hit.table, `Dapper: ${method}`, node.startPosition.row + 1));
       return;
     }
 
@@ -974,6 +978,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         ...access(method, ADO_ACCESS),
         line: node.startPosition.row + 1,
       }));
+      if (hit?.sql) sources.push(...joinedTableRows(hit.sql, hit.table, `ADO.NET: ${method}`, node.startPosition.row + 1));
       return;
     }
 
@@ -1861,9 +1866,10 @@ function splitConcat(expr: string): string[] | null {
 /**
  * The table an ADO.NET command runs against, from the SQL the method gave it
  * before this call: the last `cmd.CommandText = "…"`, or the `new SqlCommand("…", conn)`
- * it was made with. Null when the text is built at runtime or names no table.
+ * it was made with, and that text (`sql`) for the tables it reads beside it. Null when
+ * the text is built at runtime or names no table.
  */
-function adoCommandTable(call: Node, command: string): { verb: string; table: string } | null {
+function adoCommandTable(call: Node, command: string): { verb: string; table: string; sql?: string } | null {
   if (!/^\w+$/.test(command)) return null;
   const before = textBefore(call);
   if (before === null) return null;
@@ -1874,7 +1880,8 @@ function adoCommandTable(call: Node, command: string): { verb: string; table: st
     return table ? { verb: mutation[1] === "Delete" ? "DELETE" : mutation[1] === "Update" ? "UPDATE" : "INSERT", table } : null;
   }
   const sql = adoCommandText(call, command, before);
-  return sql === null ? null : tableFrom(sql);
+  const hit = sql === null ? null : tableFrom(sql);
+  return hit && { ...hit, sql: sql! };
 }
 
 /** The SQL an ADO.NET command was given before `call` — `cmd.CommandText = "…"`, `new SqlCommand("…", conn)` — folded; null when built at runtime. */

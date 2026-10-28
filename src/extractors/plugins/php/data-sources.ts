@@ -1,6 +1,6 @@
 import type { Node } from "web-tree-sitter";
-import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
-import { statementAccesses } from "../shared/sql-string-sources.js";
+import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
+import { sqlAccessRow, statementAccesses } from "../shared/sql-string-sources.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { phpWhereFields } from "./arg-origins.js";
@@ -209,18 +209,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
   private pushSqlRows(node: Node, callText: string, line: number, sources: DataSourceInfo[], index = 0): void {
     const sql = this.sqlText(node, index);
     if (!sql) return;
-    for (const hit of statementAccesses(sql)) {
-      const access = hit.routine ? undefined : sqlVerbAccess(hit.verb);
-      sources.push(this.ds({
-        kind: "database",
-        name: callText,
-        target: hit.table,
-        ...(hit.routine ? { routine: true as const } : { entity: hit.table }),
-        ...(access ? { access } : {}),
-        ...(hit.joined ? { joined: true as const } : {}),
-        line,
-      }));
-    }
+    for (const hit of statementAccesses(sql)) sources.push(sqlAccessRow(hit, callText, line));
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {

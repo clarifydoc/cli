@@ -48,6 +48,8 @@ const LINE_TOKEN_RE = /"((?:[^"\\]|\\.)*)"|\b([A-Z][A-Z0-9_]{2,})\b/g;
  */
 const SQL_START_RE =
   /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
+/** {@link SQL_START_RE} where the text starts. */
+const SQL_START_AT_RE = new RegExp(`^${SQL_START_RE.source}`, "i");
 /** MySQL's statement modifiers, dropped from the verb. */
 const VERB_MODIFIER_RE = /\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|QUICK|IGNORE)\b/g;
 
@@ -67,9 +69,12 @@ const TABLE = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\x60[^\x60]+\x60|\w+)\.(?=[\["
  * stored procedures (`FROM SP_PLAYER_HISTORY(:ID, :MATCH_DATE)`, the backbone of many
  * Delphi apps), Postgres `FROM my_func(x)`, SQL Server TVFs. Those are callable
  * routines, not stored relations: they are recorded as a routine call
- * (`routine: true`), never as a table or an ER node.
+ * (`routine: true`), never as a table or an ER node. `USING` is PostgreSQL's
+ * `DELETE … USING b` and `MERGE … USING b` source (a `JOIN … USING (id)`
+ * names columns, never a table); `JOIN FETCH` is JPQL's, and `IS DISTINCT
+ * FROM x` compares a value.
  */
-const FROM_JOIN_RE = new RegExp(String.raw`\b(?:FROM|JOIN)\s+${TABLE}\s*(\()?`, "gi");
+const FROM_JOIN_RE = new RegExp(String.raw`(?<!\bDISTINCT\s+)\b(?:FROM|JOIN(?:\s+FETCH)?|USING)\s+${TABLE}\s*(\()?`, "gi");
 /**
  * Further comma-joined sources after a FROM source and its alias —
  * `FROM PLAYER P, TEAM T WHERE …`, the pre-ANSI join style older code is
@@ -222,8 +227,9 @@ export interface SqlStatementAccess {
  * For each position of `sql`, whether a `FROM` there names a source of the
  * statement: at the top level, or directly inside a subquery's parentheses.
  * `EXTRACT(YEAR FROM created)` and `SUBSTRING(x FROM 2)` are function
- * arguments, and their `FROM` names a column. Also the paren depth, so the
- * statement's own top-level FROM is told from a subquery's.
+ * arguments, and their `FROM` names a column; text inside a quoted literal
+ * (`WHERE note = 'moved from Lyon'`) is no SQL at all. Also the paren depth,
+ * so the statement's own top-level FROM is told from a subquery's.
  */
 function sourceScopes(sql: string): { inScope: (i: number) => boolean; depthAt: (i: number) => number } {
   const scope = new Uint8Array(sql.length);
@@ -234,8 +240,12 @@ function sourceScopes(sql: string): { inScope: (i: number) => boolean; depthAt: 
     const ch = sql[i]!;
     if (inQuote) {
       if (ch === "'") inQuote = false;
+      depth[i] = stack.length;
+      continue;
     } else if (ch === "'") {
       inQuote = true;
+      depth[i] = stack.length;
+      continue;
     } else if (ch === "(") {
       // The subquery may open lines below its `(` (`VALUES ((⏎            SELECT id`).
       stack.push(/^\(\s*(?:SELECT|WITH)\b/i.test(sql.slice(i, i + 80)));
@@ -321,6 +331,50 @@ function opensStatement(text: string): boolean {
 /** A statement opening with its CTEs, its SELECT on a later line (`'WITH ndx AS (' + …`). */
 const CTE_START_RE = /^\s*WITH(?:\s+RECURSIVE)?\s+["\x60[]?\w+["\x60\]]?\s*(?:\([^)]*\))?\s+AS\s*\(/i;
 
+/** Clause words that can follow a source where an alias would. */
+const CLAUSE_WORD_RE = /^(?:WHERE|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|CROSS|NATURAL|ORDER|GROUP|ON|UNION|HAVING|LIMIT|FOR|INTO|SET|VALUES|PLAN|ROWS|FETCH|OFFSET|USING|WITH|WINDOW|EXCEPT|INTERSECT|RETURNING|STRAIGHT_JOIN|APPLY|AND|OR|WHEN|THEN|AS|FROM)$/i;
+
+/**
+ * `alias → source` for each `FROM t a` / `JOIN t AS a` the statement writes
+ * (lower-cased alias). Never after a comma: a select list's `, x.league league`
+ * aliases a column.
+ */
+function sourceAliases(sql: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of sql.matchAll(new RegExp(String.raw`\b(?:FROM|JOIN|USING)\s+${TABLE}\s+(?:AS\s+)?([A-Za-z_]\w*)`, "gi"))) {
+    const alias = m[5]!;
+    const name = captured(m);
+    if (name && !CLAUSE_WORD_RE.test(alias)) out.set(alias.toLowerCase(), name);
+  }
+  return out;
+}
+
+/**
+ * The statement's opening verb and where it starts. A statement whose CTEs
+ * open it (`WITH x AS (SELECT …) UPDATE t SET …`) is the write that follows
+ * them, at the top level; a CTE list ending in a SELECT keeps the first SELECT,
+ * so its own table stays the first one a CTE body reads.
+ */
+function statementStart(stmt: string): RegExpMatchArray | null {
+  const first = stmt.match(SQL_START_RE);
+  const cte = /^\s*\(?\s*WITH\b/i.exec(stmt);
+  if (!first || !cte || first[1]!.toUpperCase() !== "SELECT") return first;
+  let depth = 0;
+  let inQuote = false;
+  for (let i = cte.index + cte[0].length; i < stmt.length; i++) {
+    const ch = stmt[i]!;
+    if (inQuote) inQuote = ch !== "'";
+    else if (ch === "'") inQuote = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (depth === 0 && /[A-Za-z]/.test(ch) && !/\w/.test(stmt[i - 1] ?? "")) {
+      const m = stmt.slice(i, i + 40).match(SQL_START_AT_RE);
+      if (m) return m[1]!.toUpperCase() === "SELECT" ? first : Object.assign(m, { index: i });
+    }
+  }
+  return first;
+}
+
 /**
  * Every table and routine a statement touches, the statement's own target
  * first: the written table of a write, the top-level FROM source of a SELECT.
@@ -332,11 +386,15 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
   const stmt = raw.replace(SYSTEM_QUALIFIED_RE, (_, schema: string, a?: string, b?: string, c?: string) => `${schema}.${a ?? b ?? c}`);
   const proc = procedureCall(stmt);
   if (proc) return [{ verb: "EXEC", table: proc, routine: true }];
-  const start = stmt.match(SQL_START_RE);
+  const start = statementStart(stmt);
   if (!start) return [];
   const sql = stmt.slice(start.index!);
+  // A write after CTEs reads what their bodies read: the sources are scanned from the `WITH`.
+  const sourceSql = start.index! > 0 && /^\s*\(?\s*WITH\b/i.test(stmt) && !/^SELECT/i.test(start[1]!) ? stmt.slice(stmt.search(/\bWITH\b/i)) : sql;
   const verb = start[1]!.toUpperCase().replace(VERB_MODIFIER_RE, "").replace(/\s+/g, " ");
   const ctes = cteNames(stmt);
+  let aliasMap: Map<string, string> | undefined;
+  const aliases = (): Map<string, string> => (aliasMap ??= sourceAliases(sourceSql));
 
   const out: SqlStatementAccess[] = [];
   const seen = new Set<string>();
@@ -353,7 +411,10 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
       return [];
     }
     const m = sql.match(WRITE_RE) ?? sql.match(CREATE_DROP_RE);
-    const table = m ? tableName(m[2] ?? m[3] ?? m[4] ?? m[5], ctes) : null;
+    let written = m ? m[2] ?? m[3] ?? m[4] ?? m[5] : undefined;
+    // `UPDATE c SET … FROM clubs c` (T-SQL, also through a JOIN): the alias names the table its source gives it.
+    if (written && verb.startsWith("UPDATE") && /^\w+$/.test(written)) written = aliases().get(written.toLowerCase()) ?? written;
+    const table = tableName(written, ctes);
     if (!table) return [];
     add({ verb: verb.startsWith("INSERT") ? "INSERT INTO" : verb, table });
   }
@@ -361,19 +422,22 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
   // FROM/JOIN sources, in scope only (never a function argument's FROM). For a
   // SELECT the first top-level one is the statement's own source; the rest,
   // and every source of a write, are reads beside it.
-  const { inScope, depthAt } = sourceScopes(sql);
+  const { inScope, depthAt } = sourceScopes(sourceSql);
   const sources: Array<{ name: string; routine: boolean; top: boolean }> = [];
-  const hasWhere = /\bWHERE\b/i.test(sql);
+  const hasWhere = /\bWHERE\b/i.test(sourceSql);
+  // `USING b` is a source only of a DELETE or MERGE (`ALTER … TYPE int USING c::int` converts a column).
+  const usingSources = /^(?:DELETE|MERGE)/.test(verb);
   FROM_JOIN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = FROM_JOIN_RE.exec(sql)) !== null) {
+  while ((m = FROM_JOIN_RE.exec(sourceSql)) !== null) {
     if (!inScope(m.index)) continue;
+    if (/^USING/i.test(m[0]) && !usingSources) continue;
     const top = depthAt(m.index) === 0;
     sources.push({ name: captured(m) ?? "", routine: m[5] !== undefined, top });
-    if (m[5] !== undefined || !hasWhere || !/^FROM/i.test(m[0])) continue;
+    if (m[5] !== undefined || !hasWhere || !/^(?:FROM|USING)/i.test(m[0])) continue;
     // `FROM a x, b y WHERE …` — only where a WHERE follows, so UI prose
     // ("Select friends from Facebook, Twitter") gains nothing.
-    let rest = sql.slice(m.index + m[0].length);
+    let rest = sourceSql.slice(m.index + m[0].length);
     let more: RegExpMatchArray | null;
     while ((more = rest.match(COMMA_SOURCE_RE)) !== null) {
       sources.push({ name: captured(more) ?? "", routine: more[5] !== undefined, top });
@@ -381,8 +445,13 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
       if (more[5] !== undefined) break;
     }
   }
+  // JPQL/HQL joins a path (`JOIN c.players p`, `JOIN FETCH c.league`): the part before the dot is an alias, never a schema.
+  const isPath = (name: string): boolean => {
+    const dot = name.indexOf(".");
+    return dot > 0 && aliases().has(name.slice(0, dot).toLowerCase());
+  };
   const resolved = sources
-    .map((src) => ({ ...src, name: src.routine ? routineName(src.name) : tableName(src.name, ctes) }))
+    .map((src) => ({ ...src, name: src.routine ? routineName(src.name) : isPath(src.name) ? null : tableName(src.name, ctes) }))
     .filter((src): src is { name: string; routine: boolean; top: boolean } => src.name !== null);
   if (verb === "SELECT") {
     const own = resolved.find((src) => src.top) ?? resolved[0];
@@ -414,6 +483,58 @@ export function tableFrom(stmt: string): { verb: string; table: string } | null 
   return table ? { verb: "SELECT", table: table.table } : null;
 }
 
+/**
+ * The `database` row of one access a statement makes, named `name` (its verb,
+ * or the call that runs it). A routine names no entity; a table is its own
+ * entity (that is what joins raw SQL to the ER model and attributes it to the
+ * containing function) and carries the access its verb implies — DDL none.
+ */
+export function sqlAccessRow(hit: SqlStatementAccess, name: string, line: number): DataSourceInfo {
+  const access = hit.routine ? undefined : sqlVerbAccess(hit.verb);
+  return {
+    kind: "database",
+    name,
+    target: hit.table,
+    ...(hit.routine ? { routine: true as const } : {}),
+    ...(access ? { access } : {}),
+    ...(hit.routine ? {} : { entity: hit.table }),
+    ...(hit.joined ? { joined: true as const } : {}),
+    calls: [],
+    line,
+  };
+}
+
+/**
+ * The tables a statement reads beside the one its caller already recorded as
+ * the statement's own (`own`, compared by last part): JOINed and comma-joined
+ * sources, subqueries and CTE bodies, the source of an `INSERT … SELECT`, an
+ * `UPDATE … FROM` or a `DELETE … USING` — each a `joined` read named `name`,
+ * one per table. For a plugin whose own row for the call carries more than the
+ * table (the call's name, its filter fields, a table held in a constant); a
+ * routine the statement also runs is left to that row. `lastPart` drops a
+ * schema (`league.clubs` → `clubs`), as the caller's own row does; `keep`
+ * vetoes a name the caller knows is no table (a hole it substituted).
+ */
+export function joinedTableRows(
+  sql: string,
+  own: string | null | undefined,
+  name: string,
+  line: number,
+  opts: { lastPart?: boolean; keep?: (table: string) => boolean } = {},
+): DataSourceInfo[] {
+  const leaf = (t: string): string => t.split(".").pop()!;
+  const seen = new Set(own ? [leaf(own).toLowerCase()] : []);
+  const out: DataSourceInfo[] = [];
+  for (const hit of statementAccesses(sql)) {
+    if (hit.routine || (opts.keep && !opts.keep(hit.table))) continue;
+    const table = opts.lastPart ? leaf(hit.table) : hit.table;
+    if (seen.has(leaf(table).toLowerCase())) continue;
+    seen.add(leaf(table).toLowerCase());
+    out.push(sqlAccessRow({ verb: "SELECT", table, joined: true }, name, line));
+  }
+  return out;
+}
+
 /** Extract raw-SQL database accesses from string literals. See file header. */
 export function extractSqlStringDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = [];
@@ -421,39 +542,9 @@ export function extractSqlStringDataSources(lines: string[]): DataSourceInfo[] {
 
   const finalize = () => {
     if (!pending) return;
-    for (const hit of statementAccesses(pending.text)) {
-      if (hit.routine) {
-        // A stored procedure: a real access, but no relation — it names no ER
-        // node, and the trace shows it by name (`routine`).
-        sources.push({
-          kind: "database",
-          name: "EXEC",
-          target: hit.table,
-          routine: true,
-          ...(hit.joined ? { joined: true as const } : {}),
-          calls: [],
-          line: pending.line,
-        });
-        continue;
-      }
-      // The leading verb already says whether the statement reads or writes —
-      // it was computed for the name and then dropped, which is why a Go or C#
-      // `INSERT INTO orders` reported as a read. DDL stays unclassified.
-      const access = sqlVerbAccess(hit.verb);
-      sources.push({
-        kind: "database",
-        name: hit.verb,
-        target: hit.table,
-        ...(access ? { access } : {}),
-        // The table IS the entity for raw SQL — this is what joins the access
-        // to the ER model (synthesizeReferencedTableEntities) and attributes
-        // it to the containing function (attributeDataAccessToSymbols).
-        entity: hit.table,
-        ...(hit.joined ? { joined: true as const } : {}),
-        calls: [],
-        line: pending.line,
-      });
-    }
+    // A stored procedure is a real access but no relation: it names no ER node,
+    // and the trace shows it by name (`routine`).
+    for (const hit of statementAccesses(pending.text)) sources.push(sqlAccessRow(hit, hit.routine ? "EXEC" : hit.verb, pending.line));
     pending = null;
   };
 
