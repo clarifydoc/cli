@@ -3220,6 +3220,13 @@ function resolveCallToDefinition(
           if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
           return link;
         }
+        // A static member an extension adds to the class (C# 14 `extension(Car) { public static Car Build() … }`).
+        for (const filePath of eligible) {
+          if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
+          const ext = extensionMethodFor(ctx, analysis, sourceFile, declaredClass, filePath, methodName);
+          if (ext) return mkLink(ext.file, ext.symbol, ext.line, "INFERRED", "class-name");
+          break;
+        }
       }
       // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
       // through a class-level call the class does not declare by that name.
@@ -3894,7 +3901,11 @@ function chainPoint(
     rest = receiver.slice(1);
   } else if (receiver.length >= 2 && !head.call && SELF_HEADS.has(head.name)) {
     const own = receiver[1]!;
-    point = own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
+    // Inside an extension function, `this` is its receiver (`this.bay.count()` in `fun Garage.total()`).
+    const self = consumer ? null : receiverPoint(ctx, analysis, sourceFile, findEnclosingCallable(analysis, sourceSymbol));
+    point = self
+      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? null
+      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
@@ -4080,7 +4091,13 @@ const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "thi
  */
 function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false): InjectionPoint | null {
   if (!point.typeFile) return null;
-  const hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  let hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  if (!hit) {
+    // An extension function of the type (`fun Garage.inventory(): Report`): the chain goes on from what it returns.
+    ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const owner = ctx.analysisAt.get(point.typeFile);
+    hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
+  }
   if (!hit) return null;
   return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
 }
@@ -4286,7 +4303,31 @@ function scopedName(
   // Where fields need `this.`/`self.`, a bare name is a local or global the
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
-  return ownMember(ctx, sourceFile, consumer, name);
+  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name);
+}
+
+/**
+ * A member of the type an extension function extends, read through the body's implicit `this` — the receiver
+ * parameter the plugin names `this` (`fun Garage.total() = bay.count()`: `bay` is `Garage`'s). An extension
+ * has no fields of its own, so its receiver's come before any class the file declares.
+ */
+function receiverMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  callable: FunctionInfo | null | undefined,
+  name: string,
+): InjectionPoint | null {
+  const point = receiverPoint(ctx, analysis, sourceFile, callable);
+  return point?.typeFile ? ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(analysis.language, name)) ?? null : null;
+}
+
+/** The type an extension function's implicit `this` is: its receiver parameter named `this`/`self`. */
+function receiverPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, callable: FunctionInfo | null | undefined): InjectionPoint | null {
+  const recv = callable?.params.find((p) => p.isReceiver && SELF_HEADS.has(p.name));
+  const typeName = recv ? receiverTypeName(recv.type, analysis.language) : null;
+  const ref = typeName ? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+  return ref ? { ...ref, member: "this", consumer: "", container: false } : null;
 }
 
 /**
