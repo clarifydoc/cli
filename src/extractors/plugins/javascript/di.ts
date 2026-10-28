@@ -321,8 +321,65 @@ export function receiverTypeOfCall(node: Node): InjectedType | null {
   const fn = node.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
   const obj = fn.childForFieldName("object");
+  if (obj?.type === "identifier") return blockLocalType(node, obj.text);
   if (!obj || !TYPED_RECEIVER_NODES.has(obj.type)) return null;
   return expressionType(obj);
+}
+
+/** Where a function's own scope ends: a block directly under one of these is the function's body. */
+const FUNCTION_BOUNDARIES: ReadonlySet<string> = new Set([
+  "function_declaration", "generator_function_declaration", "function_expression", "generator_function",
+  "arrow_function", "method_definition", "class_body", "program",
+]);
+
+/** Per tree: each nested block's `let`/`const` declarations, by name. */
+let blockLocals: { tree: unknown; byBlock: Map<number, Map<string, { line: number; type: InjectedType | null }>> } | null = null;
+
+/**
+ * The type a block-scoped `let`/`const` of a nested block states for `name`,
+ * when one declared before the call encloses it (`if (x) { let v = new Truck();
+ * v.drive() }` inside `g(v: Car)`): that binding shadows the parameter or outer
+ * local of the same name there, and only there. The type is the annotation or
+ * the constructed class (`new Truck()`), or what a cast or container lookup
+ * states. Null when no nested block declares the name, or its declaration
+ * states no type.
+ */
+function blockLocalType(call: Node, name: string): InjectedType | null {
+  const line = call.startPosition.row + 1;
+  for (let p = call.parent; p; p = p.parent) {
+    if (FUNCTION_BOUNDARIES.has(p.type)) return null;
+    if (p.type !== "statement_block" || !p.parent || FUNCTION_BOUNDARIES.has(p.parent.type)) continue;
+    const hit = declarationsOf(p).get(name);
+    if (hit && hit.line <= line) return hit.type;
+  }
+  return null;
+}
+
+function declarationsOf(block: Node): Map<string, { line: number; type: InjectedType | null }> {
+  if (blockLocals?.tree !== block.tree) blockLocals = { tree: block.tree, byBlock: new Map() };
+  const cached = blockLocals.byBlock.get(block.id);
+  if (cached) return cached;
+  const out = new Map<string, { line: number; type: InjectedType | null }>();
+  for (const stmt of block.namedChildren) {
+    if (stmt?.type !== "lexical_declaration") continue;
+    for (const decl of stmt.namedChildren) {
+      if (decl?.type !== "variable_declarator") continue;
+      const id = decl.childForFieldName("name");
+      if (id?.type !== "identifier" || out.has(id.text)) continue;
+      const annotation = decl.childForFieldName("type")?.namedChild(0);
+      const value = decl.childForFieldName("value");
+      let type: InjectedType | null = annotation ? (referenceTypeText(annotation) ? { type: referenceTypeText(annotation)! } : null) : null;
+      if (!type && value?.type === "new_expression") {
+        const ctor = value.childForFieldName("constructor");
+        const written = ctor?.type === "identifier" ? ctor.text : ctor?.type === "member_expression" ? ctor.childForFieldName("property")?.text : null;
+        if (written && /^[A-Z]/.test(written)) type = { type: written };
+      }
+      if (!type && value) type = expressionType(value);
+      out.set(id.text, { line: decl.startPosition.row + 1, type });
+    }
+  }
+  blockLocals.byBlock.set(block.id, out);
+  return out;
 }
 
 // ── Injection decorators ─────────────────────────────────────────────────────

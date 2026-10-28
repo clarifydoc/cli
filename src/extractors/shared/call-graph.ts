@@ -80,7 +80,9 @@ function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<st
     if (value && nested.has(value.type)) return;
   }
   for (const field of fields) {
-    const bound = site.childForFieldName(field);
+    // "*": every name the site lists (`nonlocal a, b`).
+    if (field === "*") for (const child of site.namedChildren) collectPatternNames(child, into);
+    const bound = field === "*" ? null : site.childForFieldName(field);
     if (bound) collectPatternNames(bound, into);
   }
 }
@@ -180,6 +182,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argKinds?: string[] | null;
   }> = [];
   const boundHere = new Set<string>();
+  const localHere = new Set<string>();
 
   const push = (
     name: string,
@@ -211,6 +214,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
     collectBoundNames(node, boundHere, nested);
+    // A body's own bindings (not a function's parameters): what a bare call of that name calls.
+    if (!nested.has(node.type) && !anonymous.has(node.type)) collectBoundNames(node, localHere, nested);
 
     // Standard call expressions
     if (callTypes.has(node.type)) {
@@ -258,14 +263,18 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // `write(ByteArray(2))` may be two overloads of one arity.
     // So is a call handing on values whose origin is known (a parameter, a URL value, a prop): each
     // site is its own claim about what feeds the callee (`load(params.id)` and `load(params.id, page)`).
-    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
+    // So is a call on a receiver whose type the site states apart from the rest (a block's own
+    // `let v = new Truck()` shadowing a parameter `v: Car`): `v.drive()` there is another method.
+    const typed = c.receiver?.type ? `\0<${c.receiver.type}>` : "";
+    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
-      : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}` : c.name;
+      : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
     const site = `${c.name}\0@${c.line}:${c.column}`;
     if (seen.has(seenKey) || seen.has(site)) continue;
     seen.add(site);
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
+    if (!c.isReference && localHere.has(c.name)) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
@@ -471,8 +480,15 @@ export function classifyCalls(
       continue;
     }
 
+    // A name the calling function binds itself — a parameter, destructured or
+    // not (`function k({ boost })`) — is what the body calls, never the import it shadows.
+    // It may still be an API or database call by its name (steps 3-4).
+    // A local destructured from a factory's result (`const { frac } = useFraction()`) is the factory's (step 2b).
+    if (call.boundLocally && variableAliases?.has(call.name)) delete call.boundLocally;
+    const ownParam = call.boundLocally === true || ownBindings?.has(call.name.split(".")[0]!) === true;
+
     // 1. Check cross-file: exact match on import specifier
-    const directMatch = importMap.get(call.name);
+    const directMatch = ownParam ? undefined : importMap.get(call.name);
     if (directMatch) {
       call.kind = "cross-file";
       call.target = directMatch;
@@ -482,7 +498,7 @@ export function classifyCalls(
 
     // 2. Check cross-file: qualified call like `importedModule.method`
     const root = call.name.split(".")[0]!;
-    const defaultSource = defaultImports.get(root);
+    const defaultSource = ownParam ? undefined : defaultImports.get(root);
     if (defaultSource) {
       call.kind = "cross-file";
       call.target = defaultSource;
@@ -491,7 +507,7 @@ export function classifyCalls(
     }
 
     // Also check named imports used as root of qualified call
-    const namedSource = importMap.get(root);
+    const namedSource = ownParam ? undefined : importMap.get(root);
     if (namedSource && call.name.includes(".")) {
       call.kind = "cross-file";
       call.target = namedSource;

@@ -2589,6 +2589,11 @@ function memberClassOf(ctx: LinkContext, file: string, def: SymbolDef): string |
   return null;
 }
 
+/** A destructuring pattern as written (`{ boost }`, `{ tune: boost }`, `[first, ...rest]`) binds `name`. */
+function bindsName(pattern: string, name: string): boolean {
+  return new RegExp(`(?:^|[{\\[,]|:|\\.\\.\\.)\\s*${name.replace(/[$]/g, "\\$")}\\s*(?:$|[}\\],=])`).test(pattern);
+}
+
 function enclosingMethod(analysis: FileAnalysis, line: number, name: string): { symbol: string; line: number } | null {
   let best: { symbol: string; line: number; span: number } | null = null;
   for (const cls of analysis.classes) {
@@ -3380,13 +3385,17 @@ function resolveCallToDefinition(
 
   // `function run(open) { open(); }` beside `import { startJournal as open }`: the
   // parameter is what the body calls, never the import it shadows.
-  if (!isQualified && !reference && call.kind === "cross-file" && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === call.name)) return null;
+  // So is a destructured one (`function k({ boost })`).
+  if (!isQualified && !reference && call.kind === "cross-file"
+    && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === call.name || (/^[{[]/.test(p.name) && bindsName(p.name, call.name)))) return null;
   // A function declared inside the caller, or inside one enclosing it, is what a bare
   // name calls — before the file's top-level namesake or an import of that name.
   const nested = !isQualified && !reference && (call.kind === "internal" || call.kind === "cross-file")
     ? nestedDefinition(ctx, analysis, sourceSymbol, call)
     : undefined;
   if (nested) return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
+  // A variable the caller binds itself (`sprint = len`, `for sprint in …`) is called, not a function.
+  if (call.boundLocally && !isQualified && !reference) return null;
 
   if (call.kind === "cross-file" && call.target) {
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).

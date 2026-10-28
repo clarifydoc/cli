@@ -49,11 +49,13 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     const declared = new Set<string>();
     const locals = extractGoLocalTypes(body, fn.params, constructors, declared);
     if (receiver?.name && receiver.name !== "_") {
-      // A local of the receiver's name shadows it somewhere in the body:
-      // which one a call sees cannot be told, so neither is kept.
+      // A local of the receiver's name shadows it somewhere in the body: the
+      // receiver is no local of the whole method, and each call on the name
+      // states its type where the shadowing is known (see `typeShadowedCalls`).
       const shadow = locals.findIndex((l) => l.name === receiver.name);
       if (shadow >= 0) locals.splice(shadow, 1);
-      else if (!declared.has(receiver.name)) locals.unshift({ name: receiver.name, type: receiver.type });
+      if (shadow >= 0 || declared.has(receiver.name)) typeShadowedCalls(lines, fn, receiver.name!, receiver.type);
+      else locals.unshift({ name: receiver.name, type: receiver.type });
     }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
@@ -64,6 +66,54 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     if (stubs.get(receiver.type) === owner) owner.endLine = Math.max(owner.endLine, fn.endLine);
   }
   return [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
+}
+
+/**
+ * A method whose body declares a local of its receiver's name (`for _, c :=
+ * range parts { c.Fit() }` in `func (c *Car) Service(parts []Part)`): Go
+ * scopes that local to its block. A call `c.m()` outside every such block is
+ * on the receiver, one inside a `range` over a parameter of slice type on its
+ * element (`Part`); each states that type as its `receiverType`. A call in a
+ * block whose local's type is not read here stays untyped.
+ */
+function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: string, receiverType: string): void {
+  const spans: Array<{ from: number; to: number; type: string | null }> = [];
+  const open: Array<{ depth: number; from: number; type: string | null }> = [];
+  const decl = new RegExp(`(?:^|[\\s,(;])${name}\\s*(?:,\\s*[A-Za-z_]\\w*\\s*)*:=|\\bvar\\s+${name}\\b|,\\s*${name}\\s*:=`);
+  const signature = lines.slice(fn.line - 1, fn.line + 2).join(" ");
+  let depth = 0;
+  for (let ln = fn.line; ln <= fn.endLine; ln++) {
+    const code = stripGoComment(lines[ln - 1] ?? "").replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""');
+    const start = depth;
+    if (ln > fn.line && decl.test(code)) {
+      const header = /^\s*(?:for|if|switch|select)\b/.test(code);
+      const range = header ? new RegExp(`^\\s*for\\s+[A-Za-z_]\\w*\\s*,\\s*${name}\\s*:=\\s*range\\s+([A-Za-z_]\\w*)\\s*\\{`).exec(code) : null;
+      const element = range ? new RegExp(`\\b${range[1]}\\s+\\[\\]\\*?([A-Za-z_][\\w.]*)`).exec(signature)?.[1] ?? null : null;
+      // A header's local lives in the block it opens; any other in the block it stands in.
+      open.push({ depth: header ? start : start - 1, from: ln, type: element });
+    }
+    for (const c of code) {
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        while (open.length > 0 && depth <= open[open.length - 1]!.depth) {
+          const o = open.pop()!;
+          spans.push({ from: o.from, to: ln, type: o.type });
+        }
+      }
+    }
+  }
+  for (const o of open) spans.push({ from: o.from, to: fn.endLine, type: o.type });
+  for (const call of fn.calls) {
+    const parts = call.name.split(".");
+    if (parts.length !== 2 || parts[0] !== name || call.receiverType) continue;
+    const inside = spans.filter((s) => call.line >= s.from && call.line <= s.to);
+    if (inside.length === 0) call.receiverType = receiverType;
+    else {
+      const innermost = inside.reduce((a, b) => (b.from >= a.from ? b : a));
+      if (innermost.type) call.receiverType = innermost.type;
+    }
+  }
 }
 
 /** `func (s *Svc) Run(` / `func (Svc) Name(` / `func (s *Stack[T]) Push(` → receiver var, type, method. */

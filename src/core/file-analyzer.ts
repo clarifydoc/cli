@@ -585,7 +585,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     for (const cls of analysis.classes) localSymbols.add(cls.name);
     // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`).
     const paramNames = (fn: FunctionInfo): Set<string> | undefined =>
-      variableAliases && fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
+      fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
     // Declared receiver types, for a language whose DB roots are constrained by type (`dbRootTypes`).
     const typed = hasDbRootTypes(language);
     const receiverTypes = (fn: FunctionInfo, cls?: ClassInfo): Map<string, string> | undefined => {
