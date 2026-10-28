@@ -106,3 +106,44 @@ describe("JS/TS dynamic imports", () => {
     expect(imports.map((i) => [i.source, i.dynamic ?? false])).toEqual([["./router", false], ["./SquadPage.vue", true]]);
   });
 });
+
+describe("JS/TS nested require()", () => {
+  const importsOf = async (src: string) => {
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    return new JavaScriptImportExportExtractor().extractImports(tree, src).map((i) => [i.source, i.line, i.dynamic ?? false]);
+  };
+
+  it("reads a require under a condition as a load-time import, one inside a function as dynamic", async () => {
+    const src = [
+      `import { parentPort } from "worker_threads";`,
+      `require("./engine");`,
+      `const wheel = require("./wheel");`,
+      `if (parentPort) require("./garageWorker");`,
+      `function fit() { require("./mirror"); }`,
+      `require("./seat").adjust();`,
+    ].join("\n");
+    expect(await importsOf(src)).toEqual([
+      ["worker_threads", 1, false],
+      ["./engine", 2, false],
+      ["./wheel", 3, false],
+      ["./garageWorker", 4, false],
+      ["./mirror", 5, true],
+      ["./seat", 6, false],
+    ]);
+  });
+
+  it("records a module once, and a load-time require of a module a function also requires", async () => {
+    const src = [
+      `const { a,`,
+      `  b } = require("./clubs");`,
+      `const lazy = () => require("./players");`,
+      `if (x) { require("./players"); }`,
+      `function again() { require("./clubs"); require("./players"); }`,
+    ].join("\n");
+    expect(await importsOf(src)).toEqual([
+      ["./clubs", 1, false],
+      ["./players", 3, true],
+      ["./players", 4, false],
+    ]);
+  });
+});

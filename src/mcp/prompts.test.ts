@@ -53,6 +53,19 @@ describe("workflow prompts and agent guidance", () => {
     }
   });
 
+  it("has the refactor workflow take the rule-violation baseline before the edit and compare after a refresh", () => {
+    const refactor = WORKFLOW_PROMPTS.find((p) => p.name === "refactor")!;
+    const text = refactor.render({ goal: "move the pricing rules into the garage module", file: "src/garage/pricing.ts", symbol: "PriceList" });
+    const order = calls(text).map((c) => c.tool);
+    const layers = order.flatMap((t, i) => (t === "clarifydoc_health" ? [i] : []));
+    const refresh = order.indexOf("clarifydoc_analyze");
+    expect(layers).toHaveLength(2);
+    expect(layers[0]).toBeLessThan(refresh);
+    expect(layers[1]).toBeGreaterThan(refresh);
+    expect(order.indexOf("clarifydoc_impact")).toBeGreaterThan(refresh);
+    expect(text).toContain('clarifydoc_trace symbol="PriceList" file="src/garage/pricing.ts" direction="callers"');
+  });
+
   it("keeps the guidance a self-contained markdown section", () => {
     expect(AGENT_GUIDANCE.startsWith("## ClarifyDoc\n")).toBe(true);
     expect(AGENT_GUIDANCE).toContain("`clarifydoc_routes`");

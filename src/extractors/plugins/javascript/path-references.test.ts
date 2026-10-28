@@ -43,3 +43,36 @@ describe("path references — typed globs and route configs", () => {
     expect(extractPathReferences(src).sort()).toEqual(["./components/Layout.tsx", "./pages/Home.tsx", "./pages/Game.tsx", "components/Layout.tsx", "pages/Home.tsx", "pages/Game.tsx"].sort());
   });
 });
+
+describe("path references — templates over same-file constants", () => {
+  it("names one script per value of the array a template's hole is mapped over", () => {
+    const src = `
+      const here = path.dirname(fileURLToPath(import.meta.url));
+      const VIEWS = [
+        "squad",
+        'fixtures', // the match list
+      ] as const;
+      export default defineConfig({
+        build: { rollupOptions: { input: Object.fromEntries(VIEWS.map((view) => [view, path.resolve(here, \`src/views/\${view}/main.tsx\`)])) } },
+      });
+    `;
+    expect(extractPathReferences(src)).toEqual(["src/views/squad/main.tsx", "src/views/fixtures/main.tsx"]);
+  });
+
+  it("fills holes from for-of loops and string constants, and skips a hole it has no values for", () => {
+    const src = `
+      const KIND = "garage";
+      const CARS = ["coupe", "estate"];
+      for (const car of CARS) entries.push(\`./\${KIND}/\${car}.ts\`);
+      const other = \`./pages/\${name}.vue\`;
+      const notAPath = \`\${KIND} has \${CARS.length} cars\`;
+      const mixed = \`./\${KIND}/\${car.toUpperCase()}.ts\`;
+    `;
+    expect(extractPathReferences(src)).toEqual(["./garage/coupe.ts", "./garage/estate.ts"]);
+  });
+
+  it("does not expand over an array that holds anything but strings", () => {
+    const src = `const CLUBS = ["home", other]; CLUBS.map((club) => \`./clubs/\${club}.ts\`);`;
+    expect(extractPathReferences(src)).toEqual([]);
+  });
+});

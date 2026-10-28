@@ -345,6 +345,40 @@ describe("detectDeployment — a compose-only repository", () => {
   });
 });
 
+describe("detectDeployment — compose substitution defaults", () => {
+  it("reads `${X:-d}` and `${X-d}` as their defaults, and leaves a bare `${X}` unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-defaults-"));
+    try {
+      await writeFile(join(root, "docker-compose.yml"), [
+        "services:",
+        "  web:",
+        "    image: league/web",
+        "    environment:",
+        "      API_URL: http://${API_HOST:-api}:8080",
+        "  pit:",
+        "    image: league/pit",
+        "    environment:",
+        "      - GARAGE_URL=http://${GARAGE_HOST-garage}:9000/cars",
+        "      - TRACK_URL=http://${TRACK_HOST}:7000",
+        "  api:",
+        "    image: league/api",
+        "  garage:",
+        "    image: league/garage",
+        "",
+      ].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [] });
+      expect(dep!.edges).toContainEqual(expect.objectContaining({ from: "web", to: "api", kind: "http", via: "API_URL" }));
+      expect(dep!.edges).toContainEqual(expect.objectContaining({ from: "pit", to: "garage", kind: "http", via: "GARAGE_URL" }));
+      expect(dep!.services.find((s) => s.name === "web")!.urlEnv).toEqual({ API_URL: "http://api:8080" });
+      expect(dep!.services.find((s) => s.name === "pit")!.urlEnv).toEqual({ GARAGE_URL: "http://garage:9000/cars" });
+      // No external named after a half-read substitution.
+      expect(dep!.externals.map((x) => x.name).filter((n) => n.includes("$"))).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("detectDeployment — a Dockerfile in the build's docker folder", () => {
   it("is the compose service that runs its image, else a service named after the project (real-repo FP: a service called \"docker\")", async () => {
     const root = await mkdtemp(join(tmpdir(), "clarifydoc-dockerdir-"));

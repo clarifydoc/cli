@@ -463,10 +463,16 @@ updates. See [clarifydoc/vscode](https://github.com/clarifydoc/vscode).
 
 `clarifydoc install [path]` writes the MCP server entry for one or more clients — `--client claude-code` (the
 default, `.mcp.json`), `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.json`), `gemini`
-(`.gemini/settings.json`), `zed` (`.zed/settings.json`), `opencode` (`opencode.json`), and `windsurf`, `codex`,
-`claude-desktop` and `cline` (their user-level files) — merged into what is there. A file that is not plain JSON
-(settings with comments) is left as it is, and the entry to add by hand is printed instead.
-`--hooks` adds Claude Code hooks to `.claude/settings.json`; `--skills` writes `.claude/skills/clarifydoc-*`
+(`.gemini/settings.json`), `zed` (`.zed/settings.json`), `opencode` (`opencode.jsonc` or `opencode.json`), `kilo`
+(`kilo.jsonc`, `kilo.json` or `.kilo/`), and the user-level files of `windsurf`, `codex`, `claude-desktop`, `cline`
+and `copilot` (Copilot CLI's `~/.copilot/mcp-config.json`), which start ClarifyDoc by absolute path since the apps
+reading them may not have the shell's `PATH` — merged into what is there. A file with comments or trailing commas
+is edited in place, only the ClarifyDoc entry changing; one that cannot be edited safely is left as it is, and the
+entry to add by hand is printed instead.
+`--hooks` adds the hooks of the clients named: Claude Code's to `.claude/settings.json`, Codex's (`PreToolUse` on
+`Bash`, so its shell searches get the context) to `~/.codex/hooks.json` or `config.toml`, and GitHub Copilot's —
+`copilot` or `vscode`, whose agent mode reads the same hooks — to `~/.copilot/hooks/clarifydoc.json`
+(`PostToolUse` after searches: Copilot's pre-tool hooks can only allow or deny); `--skills` writes `.claude/skills/clarifydoc-*`
 from the MCP workflow prompts; `--guidance` adds or updates a marked ClarifyDoc section of `AGENTS.md` (or the
 file named), with what this project's analysis says an agent should know first. `--print` shows it all instead.
 `--plugin <dir>` writes an agent plugin there instead — the MCP entry, the same skills, and a read-only
@@ -478,7 +484,8 @@ The hooks run `clarifydoc hook <event>`, which reads the host's JSON payload on 
 
 | Event | When | What the agent is told |
 |---|---|---|
-| `pre-search` | before Grep/Glob | what the map knows about the name being searched for, and where |
+| `pre-search` | before Grep/Glob, or a grep/rg in the shell | what the map knows about the name being searched for, and where |
+| `post-search` | after a search (Copilot, `--dialect copilot`) | the same, beside the search's results |
 | `post-edit` | after Edit/Write | who depends on the file just changed, and what to run before finishing |
 | `session-start` | a new session | what the map covers and how fresh it is |
 

@@ -328,7 +328,24 @@ function asStringArray(v: YamlValue | undefined): string[] {
   return Object.keys(v);
 }
 
-/** Normalize both compose environment forms (map, or list of `K=V`) to a map. */
+/** Compose `${X:-default}` / `${X-default}`: the default, which nests no other substitution. */
+const COMPOSE_DEFAULT_RE = /\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}$]*)\}/g;
+
+/**
+ * A compose value as it runs when nothing overrides its variables: each
+ * `${X:-d}` / `${X-d}` takes its default (the `.env` that could set `X` is
+ * never read — discovery treats it as a secret). A bare `${X}` stays as written:
+ * its value is unknown.
+ */
+export function composeDefaults(value: string): string {
+  return value.includes("${") ? value.replace(COMPOSE_DEFAULT_RE, "$1") : value;
+}
+
+/**
+ * Normalize both compose environment forms (map, or list of `K=V`) to a map,
+ * each value with its substitutions' defaults filled in
+ * (`http://${API_HOST:-api}:8080` → `http://api:8080`).
+ */
 function envMap(v: YamlValue | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (v === undefined) return out;
@@ -336,13 +353,13 @@ function envMap(v: YamlValue | undefined): Record<string, string> {
     for (const item of v) {
       if (typeof item !== "string") continue;
       const eq = item.indexOf("=");
-      if (eq > 0) out[item.slice(0, eq).trim()] = unquote(item.slice(eq + 1));
+      if (eq > 0) out[item.slice(0, eq).trim()] = composeDefaults(unquote(item.slice(eq + 1)));
     }
     return out;
   }
   if (typeof v === "object") {
     for (const [k, val] of Object.entries(v)) {
-      if (typeof val === "string") out[k] = val;
+      if (typeof val === "string") out[k] = composeDefaults(val);
     }
   }
   return out;
@@ -411,8 +428,7 @@ export function isImageRef(image: string | undefined): image is string {
  */
 export function composeImage(image: unknown): string | undefined {
   if (typeof image !== "string") return undefined;
-  const expanded = image
-    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}/g, "$1")
+  const expanded = composeDefaults(image)
     // A registry or a tag left to a variable: the repository between them is still known exactly.
     .replace(/^\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)\//, "")
     .replace(/[:@]\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)$/, "");

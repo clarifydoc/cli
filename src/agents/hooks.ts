@@ -6,10 +6,18 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  * Agent-host hooks (Claude Code's hook protocol, which Codex, Gemini CLI and
  * others follow closely): JSON on stdin describing the tool call, JSON on
  * stdout carrying `additionalContext` the agent reads before it goes on.
+ * GitHub Copilot (the CLI, and VS Code's agent mode, which reads the same
+ * hooks) is the `copilot` dialect: its payload may name the tool and its
+ * arguments `toolName`/`toolArgs` (the arguments as a JSON string), names
+ * runtime tools (`bash`, `rg`, `glob`), and takes `additionalContext` at the
+ * top level of the answer.
  *
- *  - `pre-search` (before Grep/Glob): when the map already knows what the
- *    agent is searching for — a route, a symbol, a file — say so, with where
- *    and who calls it. Never blocks the search.
+ *  - `pre-search` (before Grep/Glob, or a shell grep/rg): when the map
+ *    already knows what the agent is searching for — a route, a symbol, a
+ *    file — say so, with where and who calls it. Never blocks the search.
+ *  - `post-search`: the same, after the search ran — for Copilot, whose
+ *    pre-tool hooks can only allow or deny, and whose VS Code runtime calls
+ *    the hook after every tool whatever its matcher says.
  *  - `pre-write` (before Write): when the file does not exist yet, what the
  *    map already holds under a similar name — a helper may already exist.
  *  - `post-edit` (after Edit/Write): who depends on the file just changed,
@@ -21,20 +29,62 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  * has no analysis, and on any error — a hook must never stand in the way.
  * Nothing is analyzed here: the hook reads what the last analysis wrote.
  */
-export type HookEvent = "pre-search" | "pre-write" | "post-edit" | "session-start";
-export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "pre-write", "post-edit", "session-start"];
+export type HookEvent = "pre-search" | "post-search" | "pre-write" | "post-edit" | "session-start";
+export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-search", "pre-write", "post-edit", "session-start"];
+
+/** How a host frames the answer: Claude Code's `hookSpecificOutput`, or Copilot's top-level `additionalContext`. */
+export type HookDialect = "claude" | "copilot";
+export const HOOK_DIALECTS: readonly HookDialect[] = ["claude", "copilot"];
 
 const MAX_CONTEXT = 1800;
-const HOST_EVENT: Record<HookEvent, string> = { "pre-search": "PreToolUse", "pre-write": "PreToolUse", "post-edit": "PostToolUse", "session-start": "SessionStart" };
+const HOST_EVENT: Record<HookEvent, string> = {
+  "pre-search": "PreToolUse",
+  "post-search": "PostToolUse",
+  "pre-write": "PreToolUse",
+  "post-edit": "PostToolUse",
+  "session-start": "SessionStart",
+};
 
-interface HookInput {
+type ToolInput = { pattern?: string; query?: string; file_path?: string; path?: string; command?: string; edits?: unknown };
+
+export interface HookInput {
   cwd?: string;
   tool_name?: string;
-  tool_input?: { pattern?: string; query?: string; file_path?: string; path?: string; command?: string; edits?: unknown };
+  tool_input?: ToolInput;
+  /** Copilot's names for the same two fields; `toolArgs` may be a JSON string. */
+  toolName?: string;
+  toolArgs?: unknown;
+}
+
+/** The tools a search hook reads, by the names hosts give them at run time. */
+const SEARCH_TOOL: Record<string, string> = { Bash: "Bash", Grep: "Grep", Glob: "Glob", bash: "Bash", powershell: "Bash", shell: "Bash", grep: "Grep", rg: "Grep", glob: "Glob" };
+
+/** One payload shape for every dialect: `tool_name`/`tool_input`, the arguments parsed when they came as a string. */
+export function normalizeHookInput(input: HookInput): HookInput {
+  let args: unknown = input.tool_input ?? input.toolArgs;
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args) as unknown;
+    } catch {
+      args = undefined;
+    }
+  }
+  const tool = input.tool_name ?? input.toolName;
+  return {
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(tool ? { tool_name: SEARCH_TOOL[tool] ?? tool } : {}),
+    ...(args && typeof args === "object" && !Array.isArray(args) ? { tool_input: args as ToolInput } : {}),
+  };
 }
 
 /** The hook's output for one event and payload, or null to stay silent. */
-export async function runHook(event: HookEvent, input: HookInput, fallbackCwd = process.cwd()): Promise<string | null> {
+export async function runHook(event: HookEvent, raw: HookInput, fallbackCwd = process.cwd(), dialect: HookDialect = "claude"): Promise<string | null> {
+  const input = normalizeHookInput(raw);
+  const search = event === "pre-search" || event === "post-search";
+  // Before anything is loaded: VS Code's Copilot ignores matchers and calls this after every tool, and most are not searches.
+  if (search && dialect === "copilot" && input.tool_name && !Object.values(SEARCH_TOOL).includes(input.tool_name)) return null;
+  const term = search ? searchTerm(input) : null;
+  if (search && !term) return null;
   const cwd = input.cwd && isAbsolute(input.cwd) ? input.cwd : fallbackCwd;
   const { root } = locateProjectRoot(cwd);
   const analysisDir = defaultAnalysisDir(root);
@@ -49,9 +99,7 @@ export async function runHook(event: HookEvent, input: HookInput, fallbackCwd = 
   };
 
   let context: string | null = null;
-  if (event === "pre-search") {
-    const term = searchTerm(input);
-    if (!term) return null;
+  if (search && term) {
     const text = await call("clarifydoc_search", { query: term, limit: 6 });
     if (!text || /^No |no match/i.test(text.trim())) return null;
     context = framed(
@@ -94,6 +142,7 @@ export async function runHook(event: HookEvent, input: HookInput, fallbackCwd = 
     );
   }
   if (!context) return null;
+  if (dialect === "copilot") return JSON.stringify({ additionalContext: context });
   return JSON.stringify({ hookSpecificOutput: { hookEventName: HOST_EVENT[event], additionalContext: context } });
 }
 

@@ -128,13 +128,16 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
   private mayHaveDynamicImport = true;
   /** A plugin or router loaded inline where it is registered: `register(require("./clubs"))`, `use("/api", require("./api"))`. */
   private mayRegisterRequire = false;
+  /** Any `require(` in the text: a nested one (`if (x) require("./y")`, inside a function) is still an import. */
+  private mayHaveRequire = false;
 
   /** Each static import's local bindings and the statement's text range, for the unused check. */
   private bindings: ImportBindings[] = [];
 
   extractImports(tree: Tree, sourceText: string, opts: { embedded?: boolean } = {}): ImportInfo[] {
     this.mayHaveDynamicImport = sourceText.includes("import(");
-    this.mayRegisterRequire = sourceText.includes("require(") && /\.(?:register|use)\s*\(/.test(sourceText);
+    this.mayHaveRequire = sourceText.includes("require(");
+    this.mayRegisterRequire = this.mayHaveRequire && /\.(?:register|use)\s*\(/.test(sourceText);
     this.bindings = [];
     const imports = super.extractImports(tree, sourceText, opts);
     // Scripts it starts as processes (`fork("./worker.js")`): run, not loaded.
@@ -181,6 +184,31 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     // walk for the common case of a file with no `import(` at all.
     if (this.mayHaveDynamicImport) this.collectDynamicImports(node, imports);
     if (this.mayRegisterRequire) this.collectRegisteredRequires(node, imports);
+    if (this.mayHaveRequire) {
+      // Source → whether a load-time import of it is recorded already.
+      const seen = new Map<string, boolean>();
+      for (const imp of imports) if (!imp.dynamic || !seen.has(imp.source)) seen.set(imp.source, !imp.dynamic);
+      this.collectNestedRequires(node, imports, seen, false);
+    }
+  }
+
+  /**
+   * Every other `require("module")`: under a condition (`if (parentPort) require("./worker")`),
+   * inside a function, or chained (`require("./x").setup()`). A module already imported is not
+   * recorded again. Inside a function the module loads when the function runs, not with the
+   * file — `dynamic`, as a lazy `import()` is, so no cycle it closes is a load-order cycle.
+   */
+  private collectNestedRequires(node: Node, imports: ImportInfo[], seen: Map<string, boolean>, inFunction: boolean): void {
+    const source = requiredSource(node);
+    if (source !== null) {
+      const known = seen.get(source);
+      if (known === undefined || (!known && !inFunction)) {
+        seen.set(source, !inFunction);
+        imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: node.startPosition.row + 1, ...(inFunction ? { dynamic: true as const } : {}) });
+      }
+    }
+    const nested = inFunction || FUNCTION_NODE.test(node.type);
+    for (const child of node.namedChildren) this.collectNestedRequires(child, imports, seen, nested);
   }
 
   /**
@@ -467,6 +495,9 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 }
 
 /** `require("./x")` → `./x`; anything else → null. */
+/** A node whose body runs when it is called, not when the file loads. */
+const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration|generator_function)$/;
+
 export function requiredSource(node: Node): string | null {
   if (node.type !== "call_expression" || node.childForFieldName("function")?.text !== "require") return null;
   const args = node.childForFieldName("arguments")?.namedChildren ?? [];
