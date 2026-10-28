@@ -18,6 +18,10 @@ export interface TokenKinds {
   leftParen: number;
   /** `::`, when the language has it: `Club::create(` names its class, `ns::f(` the function alone. */
   scope?: number;
+  /** `p->kick(` is `p.kick`, as `p.kick(` is (C++); else a member after `->` is named alone (C, where it calls through a function pointer). */
+  memberArrow?: boolean;
+  /** `ns::f(` is `ns.f` with the namespace path as its receiver type (C++), so no project member of the same name takes it. */
+  namespaceQualified?: boolean;
   /** A directive token: `#define` among them. */
   directives: ReadonlySet<number>;
   /** Tokens before a name that make `name(` a declaration: `int f(`. */
@@ -68,12 +72,15 @@ export function leftOutCalls(also: string, kinds: TokenKinds, found: readonly Ca
 }
 
 /**
- * The calls a run of tokens makes, named as the parse names them: `f(`, `a.b(`, a member after `->` alone,
- * `Club::create(` on its class and `ns::f(` as `f`. A name after a type or another name (`int f(`, `T f(`) declares a
- * function rather than calling one.
+ * The calls a run of tokens makes, named as the parse names them: `f(`, `a.b(`, a member after `->` alone (or as
+ * after `.`, where the language says `memberArrow`), `Club::create(` on its class and `ns::f(` as `f` (or on its
+ * namespace, where the language says `namespaceQualified`). A name after a type or another name (`int f(`, `T f(`)
+ * declares a function rather than calling one.
  */
 export function tokenCalls(tokens: readonly Token[], kinds: TokenKinds, calls: PatternCallName[]): void {
   let steps: CalleeStep[] = [];
+  // The namespaces before the name in `steps` (`std`, `chrono` of `std::chrono::now`).
+  let namespaces: string[] = [];
   let before = -1;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i]!;
@@ -84,22 +91,31 @@ export function tokenCalls(tokens: readonly Token[], kinds: TokenKinds, calls: P
         if (steps.length === 0) {
           steps = [{ kind: "other", bare: prev === kinds.arrow }];
           before = -1;
-        } else if (prev === kinds.arrow) steps.push({ kind: "other", bare: true });
+        } else if (prev === kinds.arrow && !(kinds.memberArrow && steps.at(-1)?.kind === "id")) steps.push({ kind: "other", bare: true });
         steps.push(idStep(t));
+        namespaces = [];
       } else if (prev === kinds.scope && steps.length > 0) {
         // `Club::create` keeps its class; `ns::f` and `std::sort` are their function.
         const head = steps.at(-1)!;
-        steps = head.kind === "id" && /^[A-Z]/.test(head.name) ? [head, idStep(t)] : [idStep(t)];
+        const isClass = head.kind === "id" && /^[A-Z]/.test(head.name);
+        if (head.kind === "id" && !isClass && steps.length === 1) namespaces.push(head.name);
+        else namespaces = [];
+        steps = isClass ? [head, idStep(t)] : [idStep(t)];
       } else {
         steps = [idStep(t)];
+        namespaces = [];
         before = prev;
       }
     } else if (t.type !== kinds.dot && t.type !== kinds.arrow && t.type !== kinds.scope) {
       if (t.type === kinds.leftParen && steps.at(-1)?.kind === "id" && !(before === kinds.identifier || kinds.declares.has(before))) {
-        const named = nameCall(steps, CHAIN_DEPTH);
+        const leaf = steps[0]!;
+        const named = kinds.namespaceQualified && namespaces.length > 0 && steps.length === 1 && leaf.kind === "id"
+          ? { name: `${namespaces.at(-1)}.${leaf.name}`, leafName: leaf.name, line: leaf.line, column: leaf.column, receiverType: namespaces.join("::") }
+          : nameCall(steps, CHAIN_DEPTH);
         if (named) calls.push(named);
       }
       steps = [];
+      namespaces = [];
     }
   }
 }

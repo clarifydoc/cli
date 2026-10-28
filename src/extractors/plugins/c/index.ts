@@ -4,6 +4,7 @@ import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppStringConstants } from "../cpp/index.js";
 import { C_CODE, definitionAt } from "../shared/c-family-code.js";
+import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
 
 function stripCType(raw: string): string {
   return stripTypeModifiers(raw, "c");
@@ -107,4 +108,6 @@ export const cSpec: RegexLangSpec = {
   // Raw SQL in string literals (sqlite3_exec / sqlite3_prepare_v2 and friends).
   extractDataSources: (lines) => extractSqlStringDataSources(lines),
   extractStringConstants: extractCppStringConstants,
+  // `struct club *c = club_new();`: the locals a body declares, read as C++'s are.
+  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
 };

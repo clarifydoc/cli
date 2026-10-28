@@ -37,6 +37,8 @@ const CPP_TOKENS: TokenKinds = {
   arrow: CPP14Lexer.Arrow,
   leftParen: CPP14Lexer.LeftParen,
   scope: CPP14Lexer.Doublecolon,
+  memberArrow: true,
+  namespaceQualified: true,
   directives: new Set([CPP14Lexer.Directive, CPP14Lexer.MultiLineMacro]),
   declares: new Set([...TYPE_KEYWORDS, ...SPECIFIER_KEYWORDS, CPP14Lexer.TemplateGreater, CPP14Lexer.Star, CPP14Lexer.And]),
   lexer: (input) => new CPP14Lexer(input),
@@ -51,9 +53,11 @@ const CPP_TOKENS: TokenKinds = {
  * A function is a definition, named as the patterns name it: its declarator's last name (`Club::size` is `size`, the
  * class pass puts it on `Club`), `~Club`, `operator==`; a test macro (`TEST(Cache, Hit) { … }`) by the macro's name. It
  * owns the calls in its body, lambdas' included. A call is named as the C++ patterns name it: `Club::create(` on its
- * class, `std::sort(` and `ns::f(` as the function, `a.b(`, a member after `->` alone, `new Club(` as `Club`, a method
- * on a call's result as the chain from its first call; a statement macro by its name, its arguments read off the
- * tokens, as are a `#define` inside a function's.
+ * class, `std::sort(` and `ns::f(` on their namespace (`std.sort`, the namespace as its receiver type, so no project
+ * member of the same name takes it), `a.b(` and `a->b(` alike (`this->b(` is `this.b`), a member after `->` on what
+ * no name spells alone,
+ * `new Club(` as `Club`, a method on a call's result as the chain from its first call; a statement macro by its name,
+ * its arguments read off the tokens, as are a `#define` inside a function's.
  */
 export function readCpp(source: string): ParsedStructure {
   const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read);
@@ -120,7 +124,7 @@ function read(text: string, also?: string): ParsedStructure {
   const found = walk(tree, stream, text, isType);
   defineCalls(stream, CPP_TOKENS, found);
   if (also) leftOutCalls(also, CPP_TOKENS, found);
-  const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
+  const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls, (c) => c.receiverType !== undefined) }));
   functions.sort((a, b) => a.line - b.line);
   return { functions, topLevelCalls: [], syntaxErrors: errors };
 }
@@ -281,8 +285,9 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       if (named) calls.push(named);
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
-      // The patterns read a member after `->` alone: `p->kick(` is `kick`.
-      if (type === CPP14Lexer.Arrow) steps.push({ kind: "other", bare: true });
+      // `p->kick(` is `p.kick`, as `p.kick(` is: the linker types `p` through its declaration, a field's or a local's.
+      // A member after `->` on what no name spells (`(*it)->kick(`, `this->kick(`) is named alone, as the patterns read it.
+      if (type === CPP14Lexer.Arrow && steps.at(-1)?.kind === "other") steps.push({ kind: "other", bare: true });
       const member = kids.find((k) => k instanceof IdExpressionContext);
       // `p->final()`: a contextual keyword names a member too.
       const keyword = kids.find((k) => k instanceof TerminalNode && (k.symbol.type === CPP14Lexer.Final || k.symbol.type === CPP14Lexer.Override));
@@ -295,14 +300,18 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
   }
 }
 
-/** The first step of a chain: a name, `this` (whose members are named alone), or what no name spells. */
+/**
+ * The first step of a chain: a name, `this` (`this->train(` is `this.train`, the enclosing class's own member, as the
+ * call scan reads it), or what no name spells.
+ */
 function headSteps(link: PostfixExpressionContext): CalleeStep[] {
   const primary = link.children[0];
   if (!(primary instanceof PrimaryExpressionContext)) return [{ kind: "other", bare: false }];
   const id = primary.idExpression();
   if (id) return idSteps(id);
   const head = primary.children[0];
-  return [{ kind: "other", bare: head instanceof TerminalNode && head.symbol.type === CPP14Lexer.This }];
+  if (head instanceof TerminalNode && head.symbol.type === CPP14Lexer.This) return [idStep(head.symbol)];
+  return [{ kind: "other", bare: false }];
 }
 
 /** `new Club(…)`: the type is called, named as the patterns read `Club(`. */

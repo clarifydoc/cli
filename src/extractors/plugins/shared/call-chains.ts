@@ -15,14 +15,14 @@ const ARGS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
  * `head` is the chain's first callee as a regex source with ONE capture group
  * (a function, a package member, a `Type::` path), anchored so it is never the
  * tail of a longer selector; `headName` respells it as the linker reads names
- * (`Club::new` → `Club.new`).
+ * (`Club::new` → `Club.new`); `member` is the regex source of what selects a member (`.`, C++'s `->` too).
  */
-export function callChainPatterns(head: string, headName: (raw: string) => string = (raw) => raw, maxDepth = 3): CallPattern[] {
+export function callChainPatterns(head: string, headName: (raw: string) => string = (raw) => raw, maxDepth = 3, member = String.raw`\.`): CallPattern[] {
   const patterns: CallPattern[] = [];
   for (let depth = 1; depth <= maxDepth; depth++) {
-    const steps = String.raw`\.([A-Za-z_]\w*)\s*${ARGS}`.repeat(depth - 1);
+    const steps = String.raw`${member}([A-Za-z_]\w*)\s*${ARGS}`.repeat(depth - 1);
     patterns.push({
-      pattern: new RegExp(head + String.raw`\s*` + ARGS + steps + String.raw`\.([A-Za-z_]\w*)\s*\(`, "g"),
+      pattern: new RegExp(head + String.raw`\s*` + ARGS + steps + member + String.raw`([A-Za-z_]\w*)\s*\(`, "g"),
       buildName: (m) => {
         const parts = m.slice(1).filter((x): x is string => x !== undefined);
         const leafName = parts[parts.length - 1]!;

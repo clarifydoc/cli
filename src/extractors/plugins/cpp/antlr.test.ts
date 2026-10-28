@@ -58,8 +58,18 @@ describe("C++ through ANTLR", () => {
   Car spare(4);
 }
 `;
-    // A construction `Car spare(4)` declares, it calls nothing.
-    expect(read(source).functions).toEqual([["build", 1, ["Club.create", "sort", "cars.begin", "cars.end", "bay", "lift", "doors.lock", "reset", "Car"]]]);
+    // A construction `Car spare(4)` declares, it calls nothing. `->` selects a member as `.` does, and a namespace
+    // stays on the call it qualifies.
+    expect(read(source).functions).toEqual([["build", 1, ["Club.create", "std.sort", "cars.begin", "cars.end", "g.bay().lift", "g.bay", "doors.lock", "this.reset", "Car"]]]);
+  });
+
+  it("names calls in a macro's arguments as the parse names them: through `->` on the receiver, on the namespace", () => {
+    const source = `void check(Garage *g) {
+  CHECK(g->ready() && std::isnan(g->level));
+  (*g)->lift();
+}
+`;
+    expect(read(source).functions).toEqual([["check", 1, ["std.isnan", "CHECK", "g.ready", "lift"]]]);
   });
 
   it("names a definition by its last name, a destructor and an operator as written, and reads initializer lists", () => {
@@ -146,7 +156,7 @@ void replay(Match *m) {
 }
 END_NAMESPACE
 `;
-    expect(read(source).functions).toEqual([["replay", 2, ["BENCHMARK_LOOP", "rewind", "final", "cast", "SET_SOURCE_PATH", "finish"]]]);
+    expect(read(source).functions).toEqual([["replay", 2, ["BENCHMARK_LOOP", "rewind", "m.final", "cast", "SET_SOURCE_PATH", "finish"]]]);
   });
 
   it("reads an all-caps parameter name, and casts inside a macro's arguments", () => {
@@ -254,7 +264,7 @@ void kickoff(Args... args) {
   x = y ? a < b : c > d;
 }
 `;
-    expect(read(source)).toEqual({ errors: 0, functions: [["kickoff", 7, ["post", "move", "whistle", "to_flag"]]] });
+    expect(read(source)).toEqual({ errors: 0, functions: [["kickoff", 7, ["std.move", "post", "whistle", "to_flag"]]] });
   });
 
   it("reads a header C's grammar takes and C++'s refuses, and block comments a directive opens", () => {
@@ -274,14 +284,9 @@ static inline int open_gate(const char *restrict name, int class) { return lift(
 
 /**
  * Where the two readings of a fixture differ, and why the parser's is the one to keep: `file → [only the patterns,
- * only the parser]`, as `[name, line, calls]`. The patterns miss a template call.
+ * only the parser]`, as `[name, line, calls]`.
  */
-const KNOWN: Record<string, [unknown[], unknown[]]> = {
-  "test-fixtures/sample-cpp-app/main.cpp": [
-    [["main", 16, ["repo.add", "repo.find", "repo.size"]]],
-    [["main", 16, ["repo.add", "make_shared", "repo.find", "repo.size"]]],
-  ],
-};
+const KNOWN: Record<string, [unknown[], unknown[]]> = {};
 
 describe("C++: ANTLR and the patterns agree on the fixtures", () => {
   const root = resolve(__dirname, "../../../..");

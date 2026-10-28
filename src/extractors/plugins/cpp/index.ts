@@ -1,9 +1,10 @@
-import type { ClassInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
-import { extractCppClasses } from "./classes.js";
+import { declaredNamespaces, extractCppClasses } from "./classes.js";
+import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
@@ -24,6 +25,13 @@ const MODIFIERS = String.raw`(?:(?:static|inline|virtual|constexpr|consteval|exp
 const QUALIFIER = String.raw`(?:[A-Za-z_]\w*(?:<[^<>;()]*>)?::)*`;
 /** The defined name: an identifier, a destructor, an operator. */
 const NAME = String.raw`(?!(?:constexpr|consteval|requires|decltype|noexcept|alignas|static_assert)\b)(~?[A-Za-z_]\w*|operator\s*(?:\(\)|\[\]|[^\s\w(]+))`;
+
+/**
+ * What may stand between `class` and the class's name: an all-caps export macro (`CLUB_API`, `Q_DECL_EXPORT`),
+ * `__declspec(…)`, `__attribute__((…))`, `alignas(…)`, `[[…]]` — each only when a name follows it, so `class URL {`
+ * is still `URL`.
+ */
+const CLASS_ATTRIBUTES = String.raw`(?:(?:[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?|__declspec\s*\([^()]*\)|__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)|alignas\s*\([^()]*\)|\[\[[^\]]*\]\])\s+(?=[A-Za-z_]\w*\s*(?:final\b|[:{;]|$)))*`;
 
 /** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
 const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
@@ -56,9 +64,32 @@ export function tagQmlElementClasses(lines: string[], classes: ClassInfo[]): Cla
   return classes;
 }
 
+/**
+ * A call through a namespace the file itself opens (`detail::rank(` beside `namespace detail {`) is the file's own
+ * function as much as a bare `rank(` is: it goes back to the bare name the linker finds in the file. `std` stays: a
+ * file opening it (`namespace std { template <> struct hash<Club> … }`) only specializes the library's templates.
+ */
+export function unqualifyOwnNamespaces(lines: readonly string[], fns: readonly FunctionInfo[]): void {
+  const own = declaredNamespaces(lines as string[]);
+  own.delete("std");
+  if (own.size === 0) return;
+  for (const fn of fns) {
+    for (let i = fn.calls.length - 1; i >= 0; i--) {
+      const call = fn.calls[i]!;
+      const ns = call.receiverType;
+      if (!ns || !/^[a-z_]/.test(ns) || !own.has(ns.split("::").at(-1)!) || call.name !== `${ns.split("::").at(-1)}.${call.name.slice(call.name.indexOf(".") + 1)}`) continue;
+      const bare = call.name.slice(call.name.indexOf(".") + 1);
+      if (fn.calls.some((c) => c.name === bare)) { fn.calls.splice(i, 1); continue; }
+      call.name = bare;
+      delete call.receiverType;
+    }
+  }
+}
+
 function stripCppType(raw: string): string {
-  // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`
-  const noNs = raw.replace(/[\w]+::/g, "");
+  // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`; and a constant pointer's `const`
+  // (`Env* const` is an `Env*`).
+  const noNs = raw.replace(/[\w]+::/g, "").replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
   return stripTypeModifiers(noNs, "cpp");
 }
 
@@ -119,8 +150,20 @@ export const cppSpec: RegexLangSpec = {
       pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*([A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
     },
-    // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`.
-    ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead),
+    // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`,
+    // `Router::instance()->addPath(p)` too (`?.` is how the call scan's lines spell `->`, see c-family-code.ts).
+    ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead, 3, String.raw`(?:\??\.|->)`),
+    // A free function called through its namespace, `std::find(` or `league::detail::rank<T>(`: named on the namespace,
+    // whose path is the receiver type, so no project member of the same name takes the call (`std::find` is never
+    // `Table::find`). A capitalized name after a namespace is a class constructed (`league::Club(`), read as before.
+    // `unqualifyOwnNamespaces` gives a namespace the file itself opens back its bare names.
+    {
+      pattern: /(?<![\w:.>$])((?:[a-z_]\w*\s*::\s*)+)([a-z_]\w*)\s*(?:<[^<>;()]*(?:<[^<>;()]*>[^<>;()]*)*>)?\s*\(/g,
+      buildName: (m) => {
+        const path = m[1]!.split("::").map((s) => s.trim()).filter(Boolean);
+        return { name: `${path.at(-1)}.${m[2]}`, leafName: m[2]!, receiverType: path.join("::") };
+      },
+    },
   ],
 
   functionPatterns: [
@@ -151,12 +194,16 @@ export const cppSpec: RegexLangSpec = {
 
   propertyPatterns: [
     {
-      pattern: /^\s+(?:mutable\s+|static\s+|const\s+)*((?:struct\s+|class\s+|enum\s+)?[\w:<>,*&\s]+?)[\s*&]+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?\s*(?:=\s*[^;]+)?\s*;\s*$/,
+      // An annotation macro may follow the declarator: `Coach coach_ GUARDED_BY(mu_);`.
+      // A trailing comment may follow it: `Version* current_;  // == dummy_versions_.prev_`.
+      pattern: /^\s+(?:mutable\s+|static\s+|const\s+)*((?:struct\s+|class\s+|enum\s+)?[\w:<>,*&\s]+?)[\s*&]+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?(?:\s+[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?)*\s*(?:=\s*[^;]+)?\s*;\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/,
       build: (m): PropertyInfo | null => {
         const rawType = m[1]!.trim();
         const name = m[2]!;
         if (!rawType || /[(){}]/.test(rawType)) return null;
         if (["public", "private", "protected", "return"].includes(rawType)) return null;
+        // `friend class Club;`, `class Builder;`, `typedef … T;`, `X& operator=(…) = delete;` declare no field.
+        if (name === "operator" || /^(?:friend|typedef|using)\b|\b(?:class|struct|enum|union)$/.test(rawType)) return null;
         return {
           name,
           type: stripCppType(rawType),
@@ -170,7 +217,8 @@ export const cppSpec: RegexLangSpec = {
 
   classPatterns: [
     {
-      pattern: /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?/,
+      // An export or attribute macro may stand before the name: `class CLUB_API Kit {`, `struct __declspec(dllexport) Car`.
+      pattern: new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+${CLASS_ATTRIBUTES}([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?`),
       getExtends: (line) => {
         const m = line.match(/:\s*(?:public|private|protected)?\s*([\w:]+)/);
         if (!m) return null;
@@ -210,8 +258,13 @@ export const cppSpec: RegexLangSpec = {
   // their class, and pure virtual declarations are the abstract base's
   // methods (see classes.ts). Overriding `extractClasses` also makes the core
   // drop class methods from the top-level function list.
-  extractClasses: (lines, fns) => extractCppClasses(lines, fns, cppSpec),
+  extractClasses: (lines, fns) => {
+    const classes = extractCppClasses(lines, fns, cppSpec);
+    unqualifyOwnNamespaces(lines, [...fns, ...classes.flatMap((c) => c.methods)]);
+    return classes;
+  },
   postProcessClasses: tagQmlElementClasses,
+  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
   extractStringConstants: extractCppStringConstants,
 
   // Qt Widgets `connect(Widget, &QClass::signal, this, &Dlg::slot)` wiring —

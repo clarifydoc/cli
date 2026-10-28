@@ -4715,6 +4715,12 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Not where one type spans files (partial classes): there the richest
   // declaration below stands for the type.
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
+  // The one file the source imports that declares it, though the import names no type: `#include
+  // "league/iterator.h"` means its `Iterator`, not the one another header nests in its own class.
+  if (source) {
+    const declaring = importedFiles(ctx, source).filter((f) => { const d = declOf(f, typeName); return !!d && !d.extension; });
+    if (declaring.length === 1) return declaring[0]!;
+  }
   // A module reaches another module's class only through an import (`importsBindNames`).
   const reachable = (f: string): boolean => !source || !unboundAcrossModules(ctx, source, typeName, f);
   // The type's name means its declaration, not a part that only extends it (a Rust `impl` block elsewhere).
@@ -4751,6 +4757,23 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // definition sits in where folders mirror namespaces: the one it names.
   const named = files.length > 1 && source ? files.filter((f) => importsDirectoryOf(source, f)) : [];
   return named.length === 1 ? named[0]! : null;
+}
+
+/** The project files a file's imports resolve to, itself left out — once per file and link pass. */
+const importedFilesMemo = new WeakMap<LinkContext, Map<string, string[]>>();
+function importedFiles(ctx: LinkContext, source: FileAnalysis): string[] {
+  let memo = importedFilesMemo.get(ctx);
+  if (!memo) importedFilesMemo.set(ctx, (memo = new Map()));
+  let files = memo.get(source.filePath);
+  if (!files) {
+    const found = new Set<string>();
+    for (const imp of source.imports) {
+      const f = importPath(ctx, imp.source, source.filePath);
+      if (f && f !== source.filePath) found.add(f);
+    }
+    memo.set(source.filePath, (files = [...found]));
+  }
+  return files;
 }
 
 /** A file that imports or exports anything is a module: its top-level names are its own. */
@@ -4885,7 +4908,7 @@ function linkThroughPoint(
     }
   }
 
-  const target = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  const target = findMethodInClass(ctx, point.typeName, point.typeFile, method, sourceFile);
   if (target) {
     const link = mkLink(target.file, target.symbol, target.line, "INFERRED", "injection");
     // Inherited: say on which class it was called (see `SymbolLink.viaType`).
@@ -5288,6 +5311,8 @@ function findMethodInClass(
   className: string,
   classFile: string,
   method: string,
+  /** The calling file: where a split type's member has several definitions, its own is the one it calls. */
+  nearFile?: string,
 ): { file: string; symbol: string; line: number } | null {
   // Several class bases (Python): the C3 method resolution order decides.
   if (pluginFor(ctx.languageOf.get(classFile) as Language)?.multipleInheritance && ctx.classAt.get(memberKey(classFile, className))?.implements.length) {
@@ -5309,7 +5334,7 @@ function findMethodInClass(
     seen.add(key);
     const def = symbolIn(ctx, file, `${name}.${method}`);
     if (def) return { file, symbol: def.name, line: def.line };
-    const elsewhere = methodBesideClass(ctx, name, file, method);
+    const elsewhere = methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
@@ -5456,13 +5481,15 @@ function promotedMethod(
  * language puts it there: a Go method beside its type in the same package
  * directory, a C# partial class's other half (a file that declares the same
  * class in the same sub-project), an `extension` part implementing an
- * interface for the type in any sub-project. Unique-or-nothing.
+ * interface for the type in any sub-project. Unique-or-nothing, but for the
+ * caller's own part (`nearFile`) among several.
  */
 function methodBesideClass(
   ctx: LinkContext,
   className: string,
   classFile: string,
   method: string,
+  nearFile?: string,
 ): { file: string; symbol: string; line: number } | null {
   const language = ctx.languageOf.get(classFile);
   if (!typesSpanFiles(language)) return null;
@@ -5481,9 +5508,12 @@ function methodBesideClass(
     // the crate that defines `Trait`).
     return ctx.projectOf.get(f) === projectId || (part.extension === true && part.implements.length > 0);
   });
-  if (hits.length !== 1) return null;
-  const def = symbolIn(ctx, hits[0]!, qualified);
-  return def ? { file: hits[0]!, symbol: def.name, line: def.line } : null;
+  // Defined in several parts (`spawn_posix.cc` and `spawn_win32.cc`, one per platform): the caller's own part, when
+  // it is one of them, is the one its build compiles.
+  const hit = hits.length === 1 ? hits[0]! : nearFile && hits.includes(nearFile) ? nearFile : null;
+  if (!hit) return null;
+  const def = symbolIn(ctx, hit, qualified);
+  return def ? { file: hit, symbol: def.name, line: def.line } : null;
 }
 
 /** The one non-interface declaration of `name` in `nearFile`'s type space (an interface's base may be an interface). */

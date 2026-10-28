@@ -31,5 +31,8 @@ export const cppMeta: LanguagePluginMeta = {
   antlr: { grammar: "cpp", load: () => import("./antlr.js").then((m) => m.readCpp) },
   knownPackages: nativePackages,
   builtinTypes: CPP_BUILTINS,
+  // Owning pointers a member call goes through (`coach_->drill()` on a `std::unique_ptr<Coach>`). `weak_ptr` is
+  // not one: its value is reached through `lock()`.
+  transparentTypeWrappers: ["unique_ptr", "shared_ptr", "QSharedPointer", "QScopedPointer", "QPointer", "scoped_refptr", "intrusive_ptr", "ComPtr", "CComPtr", "not_null", "observer_ptr"],
   grpcServiceOf: cppGrpcService,
 };
