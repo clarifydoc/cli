@@ -128,16 +128,31 @@ export interface FileResult {
  * fixtures; the class of failure is what a reader needs.
  */
 /**
+ * The longest source (in characters) a parser front end reads. A parse holds
+ * every token and the whole tree at once: measured on C, a file of tables
+ * (a generated parser) costs ~350 MB of heap per MB of source and authored
+ * code ~200 MB, so an 18 MB generated parser ran a 4 GB heap out where the
+ * patterns read it in 1.5 s. The largest authored files measured (1.2 MB of
+ * C tests) stay under it; past it the patterns read the file. Counted, never
+ * timed, so a reading cannot depend on the machine's load.
+ */
+export const FRONT_END_MAX_CHARS = 2_000_000;
+
+/**
  * A parser front end's reading of a regex-language file: the language's ANTLR
  * grammar when the `antlr` feature covers it (`antlr` or `antlr:<grammar>`),
  * else its tree-sitter grammar when `tree-sitter` does. `parsed` is absent —
  * the patterns read the file — when the parse had syntax errors or the reader
- * threw: a recovered tree can give a function the next one's calls.
+ * threw: a recovered tree can give a function the next one's calls. A file
+ * its generator signed (`generated`) or one past `FRONT_END_MAX_CHARS` is
+ * never parsed: nobody reads generated tables call by call, and such a file
+ * is where a parse runs out of memory.
  */
-async function readWithParser(
+export async function readWithParser(
   language: Language,
   source: string,
   filePath: string,
+  generated = false,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
@@ -149,6 +164,8 @@ async function readWithParser(
   const { parser, frontEnd } = choice;
   if (frontEnd.extensions && !frontEnd.extensions.some((ext) => filePath.endsWith(ext))) return null;
   const grammar = frontEnd.grammar;
+  if (generated) return { frontEnd: { parser, grammar, fallback: "generated" } };
+  if (source.length > FRONT_END_MAX_CHARS) return { frontEnd: { parser, grammar, fallback: "too-large" } };
   try {
     const read = await frontEnd.load();
     const parsed = read(source);
@@ -361,7 +378,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const read = await readWithParser(regexLanguage, regexSource, file.relativePath);
+      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated);
       const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
       if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;

@@ -166,6 +166,11 @@ function compare(project, dirA, dirB, examples) {
       samples.add(`${b.language}: kept the regex reading (syntax errors)`, `${file} (${b.frontEnd.syntaxErrors})`);
       continue;
     }
+    if (b.frontEnd.fallback === "generated" || b.frontEnd.fallback === "too-large") {
+      s.files--;
+      samples.add(`${b.language}: not parsed (${b.frontEnd.fallback})`, file);
+      continue;
+    }
     if (b.frontEnd.fallback) {
       s.fallbackError++;
       samples.add(`${b.language}: kept the regex reading (reader failed)`, file);

@@ -301,10 +301,16 @@ export interface FileAnalysis {
   /**
    * Set when a parser front end read this regex-language file (the `antlr` and `tree-sitter` features, on by
    * default): its functions and calls are the parser's. `fallback` says the regex reading was kept instead —
-   * the parse had syntax errors (`syntaxErrors` of them) or the reader failed. Absent when the feature is off
-   * or the language has no grammar.
+   * the parse had syntax errors (`syntaxErrors` of them) or the reader failed, or the file was never parsed:
+   * its generator signed it (`generated`) or it is past the front ends' size budget (`too-large`). Absent when
+   * the feature is off or the language has no grammar.
    */
-  frontEnd?: { parser: "antlr" | "tree-sitter"; grammar: string; fallback?: "syntax-errors" | "parser-error"; syntaxErrors?: number };
+  frontEnd?: {
+    parser: "antlr" | "tree-sitter";
+    grammar: string;
+    fallback?: "syntax-errors" | "parser-error" | "generated" | "too-large";
+    syntaxErrors?: number;
+  };
 
   /**
    * Package names the file uses by path without importing them — Rust's
