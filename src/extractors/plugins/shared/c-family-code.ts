@@ -24,9 +24,18 @@ const CPP_LEXICON: BraceLexicon = {
   },
 };
 
+/**
+ * C++'s `p->kick(` as the call scan reads `p.kick(`, columns kept: `->` before a member is spelled `?.`, which the
+ * scan reads as `.` (a member call through a pointer is one on the value, as the parse names it). C keeps `->`: a
+ * call through it is a function-pointer field's, named alone.
+ */
+function cppCallCode(line: string): string {
+  return line.includes("->") ? line.replace(/->(?=[A-Za-z_])/g, "?.") : line;
+}
+
 /** The code-reading hooks of the C and C++ specs (see brace-code.ts). */
 export const C_CODE: BraceCodeHooks = braceCodeHooks(C_LEXICON);
-export const CPP_CODE: BraceCodeHooks = braceCodeHooks(CPP_LEXICON);
+export const CPP_CODE: BraceCodeHooks = braceCodeHooks(CPP_LEXICON, cppCallCode);
 
 /** What may follow a C/C++ parameter list before the body: qualifiers, an exception spec, a trailing return type. */
 const SIGNATURE_TAIL = /^(?:\s|const\b|volatile\b|noexcept\b\s*(?:\([^)]*\))?|throw\s*\([^)]*\)|override\b|final\b|mutable\b|&&?|->\s*[\w:<>,*&\s]+?(?=\s*[{:]|$)|[A-Z][A-Z0-9_]*\b(?:\([^)]*\))?)*/;

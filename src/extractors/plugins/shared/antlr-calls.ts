@@ -68,10 +68,14 @@ function chainDepthOf(name: string): number {
  * dropped (`callRecorder`) — and in its order: line by line, and on one line the chain patterns' names
  * (shallowest first) before the baseline's, each left to right.
  */
-export function recordPatternCalls(found: PatternCallName[]): CallInfo[] {
+export function recordPatternCalls(
+  found: PatternCallName[],
+  /** Names the language's own patterns give (C++'s `Club::create(`, `std::find(`): the scan records them before the baseline's. */
+  patternNamed?: (c: PatternCallName) => boolean,
+): CallInfo[] {
   const rank = (c: PatternCallName): number => {
     const depth = chainDepthOf(c.name);
-    return depth > 0 ? depth : Number.MAX_SAFE_INTEGER;
+    return depth > 0 ? depth : patternNamed?.(c) ? Number.MAX_SAFE_INTEGER - 1 : Number.MAX_SAFE_INTEGER;
   };
   found.sort((a, b) => a.line - b.line || rank(a) - rank(b) || a.column - b.column);
   const calls: CallInfo[] = [];

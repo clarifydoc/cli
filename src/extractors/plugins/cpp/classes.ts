@@ -85,7 +85,7 @@ export function outOfLineOwner(line: string, name: string): string | null {
 }
 
 /** `namespace app {` / `namespace app::detail {` — names that qualify free functions. */
-function declaredNamespaces(lines: string[]): Set<string> {
+export function declaredNamespaces(lines: string[]): Set<string> {
   const out = new Set<string>();
   for (const line of lines) {
     const m = /^\s*(?:inline\s+)?namespace\s+([\w:]+)/.exec(line);

@@ -1,9 +1,10 @@
-import type { ClassInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
-import { extractCppClasses } from "./classes.js";
+import { declaredNamespaces, extractCppClasses } from "./classes.js";
+import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
@@ -54,6 +55,28 @@ export function tagQmlElementClasses(lines: string[], classes: ClassInfo[]): Cla
     }
   }
   return classes;
+}
+
+/**
+ * A call through a namespace the file itself opens (`detail::rank(` beside `namespace detail {`) is the file's own
+ * function as much as a bare `rank(` is: it goes back to the bare name the linker finds in the file. `std` stays: a
+ * file opening it (`namespace std { template <> struct hash<Club> … }`) only specializes the library's templates.
+ */
+export function unqualifyOwnNamespaces(lines: readonly string[], fns: readonly FunctionInfo[]): void {
+  const own = declaredNamespaces(lines as string[]);
+  own.delete("std");
+  if (own.size === 0) return;
+  for (const fn of fns) {
+    for (let i = fn.calls.length - 1; i >= 0; i--) {
+      const call = fn.calls[i]!;
+      const ns = call.receiverType;
+      if (!ns || !/^[a-z_]/.test(ns) || !own.has(ns.split("::").at(-1)!) || call.name !== `${ns.split("::").at(-1)}.${call.name.slice(call.name.indexOf(".") + 1)}`) continue;
+      const bare = call.name.slice(call.name.indexOf(".") + 1);
+      if (fn.calls.some((c) => c.name === bare)) { fn.calls.splice(i, 1); continue; }
+      call.name = bare;
+      delete call.receiverType;
+    }
+  }
 }
 
 function stripCppType(raw: string): string {
@@ -119,8 +142,20 @@ export const cppSpec: RegexLangSpec = {
       pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*([A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
     },
-    // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`.
-    ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead),
+    // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`,
+    // `Router::instance()->addPath(p)` too (`?.` is how the call scan's lines spell `->`, see c-family-code.ts).
+    ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead, 3, String.raw`(?:\??\.|->)`),
+    // A free function called through its namespace, `std::find(` or `league::detail::rank<T>(`: named on the namespace,
+    // whose path is the receiver type, so no project member of the same name takes the call (`std::find` is never
+    // `Table::find`). A capitalized name after a namespace is a class constructed (`league::Club(`), read as before.
+    // `unqualifyOwnNamespaces` gives a namespace the file itself opens back its bare names.
+    {
+      pattern: /(?<![\w:.>$])((?:[a-z_]\w*\s*::\s*)+)([a-z_]\w*)\s*(?:<[^<>;()]*(?:<[^<>;()]*>[^<>;()]*)*>)?\s*\(/g,
+      buildName: (m) => {
+        const path = m[1]!.split("::").map((s) => s.trim()).filter(Boolean);
+        return { name: `${path.at(-1)}.${m[2]}`, leafName: m[2]!, receiverType: path.join("::") };
+      },
+    },
   ],
 
   functionPatterns: [
@@ -210,8 +245,13 @@ export const cppSpec: RegexLangSpec = {
   // their class, and pure virtual declarations are the abstract base's
   // methods (see classes.ts). Overriding `extractClasses` also makes the core
   // drop class methods from the top-level function list.
-  extractClasses: (lines, fns) => extractCppClasses(lines, fns, cppSpec),
+  extractClasses: (lines, fns) => {
+    const classes = extractCppClasses(lines, fns, cppSpec);
+    unqualifyOwnNamespaces(lines, [...fns, ...classes.flatMap((c) => c.methods)]);
+    return classes;
+  },
   postProcessClasses: tagQmlElementClasses,
+  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
   extractStringConstants: extractCppStringConstants,
 
   // Qt Widgets `connect(Widget, &QClass::signal, this, &Dlg::slot)` wiring —
