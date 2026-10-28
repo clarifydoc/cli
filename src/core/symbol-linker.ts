@@ -3224,7 +3224,16 @@ function resolveCallToDefinition(
         declaredClass = inner;
       }
     }
-    if (candidateFiles) {
+    // A class called by name is one of the caller's own language family: a Swift
+    // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
+    const family = extensionFamily(sourceFile);
+    if (candidateFiles && family !== null) {
+      candidateFiles = candidateFiles.filter((f) => {
+        const other = extensionFamily(f);
+        return other === null || other === family;
+      });
+    }
+    if (candidateFiles?.length) {
       const sameProject = candidateFiles
         .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
         .sort(

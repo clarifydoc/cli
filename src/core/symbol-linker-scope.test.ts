@@ -133,3 +133,20 @@ describe("symbol-linker — a bare call resolves in the caller's own class first
     expect(from(buildSymbolLinks([py]), "Club.play", "train")[0]).toMatchObject({ targetSymbol: "train", targetLine: 5 });
   });
 });
+
+describe("symbol-linker — a class called by name stays in the caller's language family", () => {
+  const coach = file("coach.py", "python", { classes: [cls("Coach", 1, 3, [fn("train", 3, 3)])] });
+
+  it("never links a Swift or Ruby `Coach.train()` to a Python `Coach`", () => {
+    const swift = file("Squad.swift", "swift", { classes: [cls("Squad", 1, 3, [fn("pick", 2, 2, [call("Coach.train", 2)])])] });
+    const ruby = file("garage.rb", "ruby", { classes: [cls("Garage", 1, 5, [fn("open", 2, 4, [call("Coach.train", 3)])])] });
+    const links = buildSymbolLinks([coach, swift, ruby]);
+    expect(links.filter((l) => l.targetFile === "coach.py")).toEqual([]);
+  });
+
+  it("still links a same-family class by name", () => {
+    const caller = file("squad.py", "python", { functions: [fn("pick", 1, 2, [call("Coach.train", 2)])] });
+    const [link] = buildSymbolLinks([coach, caller]).filter((l) => l.callName === "Coach.train");
+    expect(link).toMatchObject({ targetFile: "coach.py", targetSymbol: "Coach.train", strategy: "class-name" });
+  });
+});
