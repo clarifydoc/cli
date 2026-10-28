@@ -14,6 +14,7 @@ import type { FileTask } from "./file-analyzer.js";
  */
 let dir: string;
 let workerUrl: URL;
+let brokenUrl: URL;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "clarifydoc-pool-"));
   const script = join(dir, "worker.mjs");
@@ -22,6 +23,7 @@ beforeAll(() => {
     script,
     `import { parentPort } from "worker_threads";
 parentPort.on("message", ({ id, task }) => {
+  parentPort.postMessage({ id, begin: true });
   const name = task.file.relativePath;
   if (name.startsWith("exit")) process.exit(3);
   if (name.startsWith("throw")) setTimeout(() => { throw new Error("gearbox seized"); });
@@ -31,6 +33,10 @@ parentPort.on("message", ({ id, task }) => {
 `,
   );
   workerUrl = pathToFileURL(script);
+  // A worker that cannot even start (its engine is missing).
+  const broken = join(dir, "broken.mjs");
+  writeFileSync(broken, `throw new Error("no engine");\n`);
+  brokenUrl = pathToFileURL(broken);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -69,13 +75,13 @@ describe("AnalysisWorkerPool", () => {
     }
   });
 
-  it("runs files in-process when the workers die before answering anything", async () => {
+  it("runs files in-process when no worker can start", async () => {
     const fallback = vi.fn(async (t: FileTask) => ({ analysis: { filePath: `main:${t.file.relativePath}` } }) as never);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pool = AnalysisWorkerPool.create(1, fallback, { workerUrl, deadlineMs: 0 })!;
+    const pool = AnalysisWorkerPool.create(1, fallback, { workerUrl: brokenUrl, deadlineMs: 0 })!;
     try {
-      const results = await Promise.all([pool.run(task("exit-first.c")), pool.run(task("tyre.c"))]);
-      expect(results).toEqual([{ analysis: { filePath: "main:exit-first.c" } }, { analysis: { filePath: "main:tyre.c" } }]);
+      const results = await Promise.all([pool.run(task("car.c")), pool.run(task("tyre.c"))]);
+      expect(results).toEqual([{ analysis: { filePath: "main:car.c" } }, { analysis: { filePath: "main:tyre.c" } }]);
     } finally {
       errors.mockRestore();
       await pool.destroy();

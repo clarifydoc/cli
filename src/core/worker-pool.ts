@@ -5,9 +5,11 @@
  * file — out of memory, killed past the per-file deadline, exited — settles
  * that file as failed (`FailedFile`) and is replaced: the file is never re-run
  * in-process, where the same file would take the whole run down with it, and
- * one pathological file cannot hang a run. Only when workers cannot run at all
- * (the first ones die before answering anything, or none can be started
- * again) do tasks go through the in-process fallback.
+ * one pathological file cannot hang a run. The deadline runs from the moment
+ * a worker takes the file up (its `begin` message), so a fresh worker's
+ * start-up is not the file's time. Only when workers cannot run at all (the
+ * first ones die before taking up any file, or none can be started again) do
+ * tasks go through the in-process fallback.
  */
 import { Worker } from "worker_threads";
 import os from "os";
@@ -59,7 +61,7 @@ export class AnalysisWorkerPool {
   private queueHead = 0;
   private pending = new Map<Worker, Pending>();
   private nextId = 0;
-  /** Set once any worker has answered: from then on a dead worker is its file's doing, not the pool's. */
+  /** Set once any worker has taken up a file: from then on a dead worker is its file's doing, not the pool's. */
   private started = false;
   private destroyed = false;
   private readonly fallback: (task: FileTask) => Promise<Outcome>;
@@ -135,13 +137,18 @@ export class AnalysisWorkerPool {
   private attach(worker: Worker): void {
     this.workers.push(worker);
     this.idle.push(worker);
-    worker.on("message", (msg: { id: number; result: Outcome }) => {
+    worker.on("message", (msg: { id: number; result?: Outcome; begin?: true }) => {
       this.started = true;
+      if (msg.begin) {
+        const item = this.pending.get(worker);
+        if (item) this.startDeadline(worker, item);
+        return;
+      }
       const item = this.pending.get(worker);
       this.pending.delete(worker);
       if (item) {
         clearTimeout(item.timer);
-        item.resolve(msg.result);
+        item.resolve(msg.result ?? null);
       }
       this.takeNext(worker);
     });
@@ -157,9 +164,9 @@ export class AnalysisWorkerPool {
   /**
    * Take a dead (or killed) worker out of the pool. Its in-flight file settles
    * as failed and a fresh worker takes its place. Before any worker has
-   * answered, a death that is not the file's own (`fatal`: out of memory, past
-   * the deadline) says workers cannot run here: the file goes to the
-   * in-process fallback and nothing is respawned.
+   * taken up a file, a death that is not the file's own (`fatal`: out of
+   * memory, past the deadline) says workers cannot run here: the file goes to
+   * the in-process fallback and nothing is respawned.
    */
   private retire(worker: Worker, reason: string, fatal: boolean): void {
     if (this.destroyed || !this.workers.includes(worker)) return;
@@ -204,14 +211,17 @@ export class AnalysisWorkerPool {
 
   private dispatch(worker: Worker, item: Pending): void {
     this.pending.set(worker, item);
-    if (this.deadlineMs > 0) {
-      item.timer = setTimeout(() => {
-        this.retire(worker, `no result within ${this.deadlineMs / 1000} s`, true);
-        void worker.terminate();
-      }, this.deadlineMs);
-      item.timer.unref?.();
-    }
     worker.postMessage({ id: this.nextId++, task: item.task });
+  }
+
+  /** From the moment the worker takes the file up (its `begin` message), not from dispatch. */
+  private startDeadline(worker: Worker, item: Pending): void {
+    if (this.deadlineMs <= 0) return;
+    item.timer = setTimeout(() => {
+      this.retire(worker, `no result within ${this.deadlineMs / 1000} s`, true);
+      void worker.terminate();
+    }, this.deadlineMs);
+    item.timer.unref?.();
   }
 
   private takeNext(worker: Worker): void {

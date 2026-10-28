@@ -18,6 +18,9 @@ if (!parentPort) {
 }
 
 parentPort.on("message", (msg: WorkerRequest) => {
+  // The file's deadline runs from here: module and grammar start-up of a
+  // fresh worker are not the file's time.
+  parentPort!.postMessage({ id: msg.id, begin: true });
   void (async () => {
     // analyzeFileOutcome catches per-file errors internally (returns null); this
     // outer catch only guards infrastructure failures so the pool's pending
