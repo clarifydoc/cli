@@ -113,4 +113,34 @@ export const WORKFLOW_PROMPTS: McpPrompt[] = [
       "Then summarize for a reviewer: what changed in behavior a user or client would notice, what to test, and the riskiest file and why.",
     ].join("\n"),
   },
+  {
+    name: "refactor",
+    title: "Plan and verify a multi-file refactor",
+    description: "A rename, move or split across files: map what depends on it and the rule violations today, plan every edit, then check the result against that baseline.",
+    arguments: [
+      { name: "goal", description: "What the refactor does (e.g. \"move the pricing rules into the garage module\").", required: true },
+      { name: "file", description: "Project-relative path of the file (or folder) it starts from.", required: true },
+      { name: "symbol", description: "The function, class or method it renames or moves, if one." },
+    ],
+    render: ({ goal, file, symbol }) => [
+      `Refactor: ${goal}. It starts at \`${file}\`${symbol ? `, \`${symbol}\`` : ""}. Work in four phases with the ClarifyDoc tools, and write the plan down before the first edit.`,
+      "Phase 1 — map, before any edit:",
+      `1. clarifydoc_blast_radius path="${file}" — the files that import it (through re-exports too) and the routes and screens whose execution passes through it.`,
+      symbol
+        ? `2. clarifydoc_trace symbol="${symbol}" file="${file}" direction="callers" depth=3 — every caller with file:line, followed through interfaces and dependency injection.`
+        : `2. clarifydoc_file path="${file}" — what it declares and exports; then clarifydoc_trace symbol=<each export that moves> file="${file}" direction="callers" for its callers.`,
+      `3. clarifydoc_health category="layers" — the layer and team-rule violations today. This is the baseline: note the count and each row.`,
+      `4. clarifydoc_architecture view="cycles" — the import cycles today.`,
+      `5. clarifydoc_context_docs file="${file}" — the decisions the new shape must respect.`,
+      "Phase 2 — plan: list every file to edit and what changes in it — the moved or renamed declarations, each importer and caller from phase 1 (barrel and index re-exports included), and the tests — and where each piece lands. A move that makes a lower layer import a higher one adds a violation; choose the destination so it does not.",
+      "Phase 3 — edit in the planned order: the declaration first, then each importer and caller. References built from strings (dynamic imports, config keys, reflection, templates) are not in the call graph: search the text for the old name and path before calling a step done.",
+      "Phase 4 — verify:",
+      "1. clarifydoc_analyze — refresh the analysis so the checks below see the edit.",
+      "2. clarifydoc_impact — the files the change touched, the routes and screens they reach, the tests to run and the risk with its reasons.",
+      `3. clarifydoc_health category="layers" — compare with the phase-1 baseline: a violation that is new is the refactor's to fix.`,
+      `4. clarifydoc_architecture view="cycles" — no cycle the baseline did not have.`,
+      ...(symbol ? [`5. clarifydoc_trace symbol=<its new name> direction="callers" — every caller from phase 1 reaches the new declaration; one missing still points at the old.`] : []),
+      "Run the tests clarifydoc_impact named. Then report: what moved where, the callers updated, the violations and cycles before → after, and the tests run with their result.",
+    ].join("\n"),
+  },
 ];
