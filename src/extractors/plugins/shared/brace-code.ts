@@ -47,14 +47,38 @@ const CHAR_LITERAL = /'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|u[0-9a-fA-F
  * lines, raw strings and comments are blanked either way.
  */
 export function blankCode(text: string, lex: BraceLexicon, keepSingleLine = false): string {
-  const out = text.split("");
+  // Built from slices — the code between blanked spans as written, each span
+  // with its newlines kept. An array of the text's characters cost 8 bytes a
+  // character (800 MB for a 100 MB generated parser) before the join copied
+  // it. Spans come in order and never overlap; one may run past the end (an
+  // escape as the last character), padded with spaces as the array was.
+  const out: string[] = [];
+  let emitted = 0;
   const blank = (from: number, to: number): void => {
-    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+    if (to <= from) return;
+    if (from > emitted) out.push(text.slice(emitted, from));
+    out.push(text.slice(from, to).replace(/[^\n]/g, " "));
+    if (to > text.length) out.push(" ".repeat(to - text.length));
+    emitted = to;
   };
+  // Most characters open nothing: one whose first character starts no
+  // comment or string, where no raw string or character literal is tried, is
+  // passed over without asking the lexicon.
+  const openers = [lex.blockComment?.open, ...lex.lineComments, ...lex.strings.map((s) => s.open)];
+  const firstChars = openers.every((o) => o === undefined || o.length > 0)
+    ? new Set(openers.filter((o): o is string => o !== undefined).map((o) => o[0]!))
+    : undefined;
   const block = lex.blockComment;
   let i = 0;
   while (i < text.length) {
     const c = text[i]!;
+    if (
+      firstChars && !firstChars.has(c) && !(c === "'" && lex.charLiterals) &&
+      !(lex.rawString && (i === 0 || !IDENT_CHAR.test(text[i - 1]!)))
+    ) {
+      i++;
+      continue;
+    }
     if (block && text.startsWith(block.open, i)) {
       let depth = 1;
       let k = i + block.open.length;
@@ -114,6 +138,7 @@ export function blankCode(text: string, lex: BraceLexicon, keepSingleLine = fals
     }
     i++;
   }
+  if (emitted < text.length) out.push(text.slice(emitted));
   return out.join("");
 }
 

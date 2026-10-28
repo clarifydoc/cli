@@ -461,6 +461,13 @@ export function extractSqlStringDataSources(lines: string[]): DataSourceInfo[] {
     const line = lines[i]!;
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) continue;
 
+    // A line without a quote holds no string: it ends a pending statement and opens none. Most lines of a
+    // big file are such lines, and tokenizing them (every ALL-CAPS name a match) was most of what reading
+    // a generated C parser allocated.
+    if (!line.includes('"')) {
+      if (pending) finalize();
+      continue;
+    }
     const { text, hasString } = tokenStream(line);
 
     if (pending) {

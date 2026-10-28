@@ -157,10 +157,16 @@ class SynthNode implements FlowNode {
  * blanked: comments go, and the text a label shows stays as written.
  */
 export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec, keepStrings = false): string {
-  const out = source.split("");
+  // One byte a character says which ones become spaces; an array of the
+  // characters cost eight, and a long function's went to the large-object space.
+  const blanked = new Uint8Array(source.length);
   const lineComments = spec.lineComments ?? ["//"];
   const blockComment = spec.blockComment ?? ["/*", "*/"];
   const quotes = spec.quotes ?? ['"', "'", "`"];
+  // Whether a comment or a quote can start at a character is first a question of the character: most
+  // start neither, and pass without a lookup (and the closure each lookup made).
+  const tokens = [...lineComments, ...quotes];
+  const starts = tokens.every((t) => t.length > 0) ? new Set(tokens.map((t) => t[0]!)) : undefined;
 
   let i = 0;
   while (i < source.length) {
@@ -168,13 +174,14 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
     if (blockComment[0] && source.startsWith(blockComment[0], i)) {
       const end = source.indexOf(blockComment[1], i + blockComment[0].length);
       const stop = end === -1 ? source.length : end + blockComment[1].length;
-      for (; i < stop; i++) if (source[i] !== "\n") out[i] = " ";
+      for (; i < stop; i++) if (source[i] !== "\n") blanked[i] = 1;
       continue;
     }
 
-    const line = lineComments.find((token) => source.startsWith(token, i));
+    const opens = starts === undefined || starts.has(source[i]!);
+    const line = opens ? lineComments.find((token) => source.startsWith(token, i)) : undefined;
     if (line) {
-      while (i < source.length && source[i] !== "\n") out[i++] = " ";
+      while (i < source.length && source[i] !== "\n") blanked[i++] = 1;
       continue;
     }
 
@@ -185,14 +192,14 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
     if (spec.regexLiterals && source[i] === "/" && expectsValue(source, i)) {
       const end = regexLiteralEnd(source, i);
       if (end > i) {
-        for (; i < end; i++) if (source[i] !== "\n" && !keepStrings) out[i] = " ";
+        for (; i < end; i++) if (source[i] !== "\n" && !keepStrings) blanked[i] = 1;
         continue;
       }
     }
 
-    const quote = quotes.find((q) => source.startsWith(q, i));
+    const quote = opens ? quotes.find((q) => source.startsWith(q, i)) : undefined;
     if (quote) {
-      const blank = keepStrings ? () => {} : (at: number) => void (out[at] = " ");
+      const blank = keepStrings ? () => {} : (at: number) => void (blanked[at] = 1);
       blank(i);
       i += quote.length;
       while (i < source.length) {
@@ -219,7 +226,16 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
 
     i++;
   }
-  return out.join("");
+  // Kept runs as slices, blanked runs as spaces.
+  let out = "";
+  let at = 0;
+  while (at < source.length) {
+    const from = at;
+    const blank = blanked[at];
+    while (at < source.length && blanked[at] === blank) at++;
+    out += blank ? " ".repeat(at - from) : source.slice(from, at);
+  }
+  return out;
 }
 
 /** Whether a value (and so possibly a regex literal) may begin at `i`. */
