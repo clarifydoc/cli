@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalize, parseQuery, rankCandidates, scoreCandidate, splitTokens, type Candidate } from "./search-rank.js";
+import { bestNamed, namesExactly, normalize, parseQuery, rankCandidates, scoreCandidate, splitTokens, type Candidate } from "./search-rank.js";
 
 const candidate = (over: Partial<Candidate> & Pick<Candidate, "name">): Candidate => ({
   kind: "file",
@@ -247,5 +247,40 @@ describe("the loose pass", () => {
   it("scores by how many terms named something", () => {
     const ranked = rankCandidates(rows, "login auth", { loose: true });
     expect(ranked[0]?.score).toBe(101); // name exact + one more term hitting the path segment
+  });
+});
+
+describe("the definition a name names", () => {
+  const helper = candidate({ kind: "symbol", name: "car", path: "src/tests/car.test.ts", line: 2, test: true });
+  const cls = candidate({ kind: "symbol", name: "Car", path: "src/garage/car.ts", line: null });
+
+  it("ranks the exact spelling first at equal score, even over a locatable row", () => {
+    expect(rankCandidates([helper, cls], "Car").map((r) => r.path)).toEqual(["src/garage/car.ts", "src/tests/car.test.ts"]);
+    expect(rankCandidates([cls, helper], "car").map((r) => r.path)).toEqual(["src/tests/car.test.ts", "src/garage/car.ts"]);
+  });
+
+  it("ranks production code before a test at equal score, unless the query asks about tests", () => {
+    const prod = candidate({ kind: "symbol", name: "parkCar", path: "src/garage/park.ts", line: null });
+    const inTest = candidate({ kind: "symbol", name: "parkCar", path: "src/tests/park.test.ts", line: 4, test: true });
+    expect(rankCandidates([inTest, prod], "parkCar")[0]?.path).toBe("src/garage/park.ts");
+    expect(rankCandidates([inTest, prod], "parkCar test")[0]?.path).toBe("src/tests/park.test.ts");
+  });
+
+  it("matches a member by its own name exactly", () => {
+    expect(namesExactly("Garage.Car", "Car")).toBe(true);
+    expect(namesExactly("Garage.car", "Car")).toBe(false);
+  });
+
+  it("keeps the exact spellings, then production over tests, and leaves a real tie to the caller", () => {
+    const defs = [
+      { name: "car", file: "src/tests/car.test.ts", test: true },
+      { name: "Car", file: "src/garage/car.ts", test: false },
+      { name: "Car", file: "src/tests/fakes.ts", test: true },
+    ];
+    const pick = (name: string, items = defs) => bestNamed(name, items, (d) => d.name, (d) => d.test).map((d) => d.file);
+    expect(pick("Car")).toEqual(["src/garage/car.ts"]);
+    expect(pick("car")).toEqual(["src/tests/car.test.ts"]);
+    expect(pick("CAR")).toEqual(["src/garage/car.ts"]);
+    expect(pick("Car", [defs[1]!, { name: "Car", file: "src/showroom/car.ts", test: false }])).toEqual(["src/garage/car.ts", "src/showroom/car.ts"]);
   });
 });

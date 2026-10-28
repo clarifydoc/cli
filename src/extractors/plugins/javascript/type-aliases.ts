@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { TypeAliasInfo } from "../../../types/analysis.js";
+import type { NameAliasInfo, TypeAliasInfo } from "../../../types/analysis.js";
 
 const NAMED_TYPES = new Set(["type_identifier", "nested_type_identifier", "generic_type"]);
 const EMPTY_TYPES = new Set(["null", "undefined"]);
@@ -18,6 +18,28 @@ export function extractTsTypeAliases(tree: Tree): TypeAliasInfo[] {
     const value = decl.childForFieldName("value");
     const named = value ? namedType(value) : null;
     if (name && named) out.push({ name, type: named.text, line: decl.startPosition.row + 1 });
+  }
+  return out;
+}
+
+/**
+ * Top-level `const s = attrs` / `export const s = attrs` (one name bound to
+ * another): a call of `s` is a call of `attrs`. `let`/`var` may be
+ * reassigned, so only `const` counts.
+ */
+export function extractJsNameAliases(tree: Tree): NameAliasInfo[] {
+  const out: NameAliasInfo[] = [];
+  for (const top of tree.rootNode.namedChildren) {
+    const decl = top.type === "export_statement" ? top.childForFieldName("declaration") : top;
+    if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") continue;
+    for (const d of decl.namedChildren) {
+      if (d.type !== "variable_declarator") continue;
+      const name = d.childForFieldName("name");
+      const value = d.childForFieldName("value");
+      if (name?.type === "identifier" && value?.type === "identifier" && value.text !== "undefined") {
+        out.push({ name: name.text, target: value.text, line: d.startPosition.row + 1 });
+      }
+    }
   }
   return out;
 }

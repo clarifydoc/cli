@@ -6,6 +6,7 @@ import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js
 import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
 import { contextIndex } from "./decisions.js";
+import { isTestFile } from "../../core/test-file-detector.js";
 
 export interface ToolContext {
   store: AnalysisStore;
@@ -335,4 +336,9 @@ export function coverageLine(c: ProjectAnalysis["coverage"]): string | undefined
     parts.push(`${plural(c.approximate.files, "file")} read by pattern matching, not a parser (${langs}${c.approximate.languages.length > 3 ? ", …" : ""}): their calls and routes are approximate`);
   }
   return parts.length ? parts.join(" · ") : `every file parsed cleanly${c.imports.local ? `, ${c.imports.local} relative imports resolved` : ""}`;
+}
+
+/** Whether a file is test code: its architecture layer, else its path. */
+export function isTestPath(summary: ProjectAnalysis, file: string): boolean {
+  return summary.fileLayerMap?.[file] === "test" || isTestFile(file);
 }
