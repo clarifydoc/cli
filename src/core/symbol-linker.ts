@@ -799,6 +799,9 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   const touched = new Set<SymbolLink>();
   type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string };
   const overloads = new Map<string, Overload[]>();
+  // `${file}\0${Class}` → the symbol its constructors share (`Club.constructor`, `Garage.Garage`): a call
+  // naming the class (`Club(3)`, `new Garage(4)`) reaches one of them, whether its link names the class or one.
+  const ctorsOf = new Map<string, string>();
   const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
     const variadic = !!fn.variadic || params.some((p) => p.variadic);
@@ -818,7 +821,11 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
     const twins = a.functions.some((fn) => names.size === names.add(fn.name).size);
     const nesting = twins ? callableNesting(a) : null;
     for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn, typeKey);
-    for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
+    for (const cls of a.classes) {
+      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
+      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      if (ctor) ctorsOf.set(`${a.filePath}\u0000${cls.name}`, `${cls.name}.${ctor.name}`);
+    }
   }
   for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
   if (overloads.size === 0) return touched;
@@ -849,24 +856,48 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   // argument made (`Assert.Throws<MyException>(…)` → `MyException`'s constructor).
   const leafOf = (name: string): string =>
     name.replace(/^new\s+/, "").replace(/<.*$/s, "").split(/\.|::/).pop() ?? "";
-  for (const link of links) {
-    const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
-    if (!list || leafOf(link.callName) !== leafOf(link.targetSymbol)) continue;
-    touched.add(link);
+  /** The line of the one overload in `list` the call behind `link` can mean, if the arguments tell. */
+  const choose = (list: Overload[], link: SymbolLink): number | undefined => {
     const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
     const n = site?.call.argCount;
-    if (n === undefined) continue;
+    if (n === undefined) return undefined;
     const fits = list.filter((o) => n >= o.min && n <= o.max);
-    if (fits.length === 1) link.targetLine = fits[0]!.line;
-    else if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
+    if (fits.length === 1) return fits[0]!.line;
+    if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
       const typeKey = fits[0]!.typeKey;
       const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey) : k));
       const best = bestOverload(kinds, fits.map((o) => ({
         types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
         variadic: o.variadic,
       })), typesOf());
-      if (best >= 0) link.targetLine = fits[best]!.line;
+      if (best >= 0) return fits[best]!.line;
     }
+    return undefined;
+  };
+  for (const link of links) {
+    const callLeaf = leafOf(link.callName);
+    const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
+    if (list) {
+      // `Club(3)` → `Club.constructor` (Kotlin): the call names the class, the overloads its constructors.
+      const dot = link.targetSymbol.lastIndexOf(".");
+      const ctorOfCalled = dot > 0 && ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol.slice(0, dot)}`) === link.targetSymbol
+        && leafOf(link.targetSymbol.slice(0, dot)) === callLeaf;
+      if (callLeaf !== leafOf(link.targetSymbol) && !ctorOfCalled) continue;
+      touched.add(link);
+      const line = choose(list, link);
+      if (line !== undefined) link.targetLine = line;
+      continue;
+    }
+    // A link to the class itself (`Club(3)` beside `class Club`): to the constructor the arguments choose.
+    const ctor = callLeaf === leafOf(link.targetSymbol) ? ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol}`) : undefined;
+    const ctors = ctor ? overloads.get(`${link.targetFile}\u0000${ctor}`) : undefined;
+    const line = ctors ? choose(ctors, link) : undefined;
+    if (line === undefined) continue;
+    link.targetSymbol = ctor!;
+    link.targetLine = line;
+    link.strategy = "constructor";
+    link.relation = relationForStrategy("constructor");
+    touched.add(link);
   }
   return touched;
 }
@@ -3754,6 +3785,12 @@ function resolveCallToDefinition(
       : !isQualified
         ? call.name
         : null;
+    // `new Garage(4)` beside `class Garage` (or inside it): the calling file's own class, by name alone.
+    const own = ctorMatch && className ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
+    if (own) {
+      const ctor = own.methods.find((m) => isConstructor(m, own));
+      return mkLink(sourceFile, ctor ? `${className}.${ctor.name}` : className!, ctor?.line ?? own.line, "EXTRACTED", "constructor");
+    }
     if (className) {
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A name declared in several namespaces: the one the caller's namespace and usings reach.
