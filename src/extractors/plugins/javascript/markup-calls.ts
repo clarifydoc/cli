@@ -7,6 +7,12 @@ const CALLEE = /(?:^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*\(/g;
 /** Not calls of project code: the emit a dispatch resolver joins, keywords, globals. */
 const SKIP = /^(?:\$?emit|if|for|while|switch|return|function|typeof|await|new|void|console\..*|JSON\..*|Math\..*|Object\..*|Array\..*|String|Number|Boolean|alert|confirm|setTimeout|clearTimeout|parseInt|parseFloat)$/;
 
+/** A callee the markup spells that may be project code: never a framework `$` member, except a child reached through `$refs`. */
+const projectCallee = (name: string) => !SKIP.test(name) && (!name.startsWith("$") || name.startsWith("$refs."));
+
+/** `editDialog?.open()` calls `editDialog.open`, as the chain is read everywhere else in markup. */
+const plainChains = (handler: string) => handler.replace(/\?\.(?=[A-Za-z_$])/g, ".");
+
 /**
  * What a Vue/Svelte template's handlers call: `@click="markAllRead"` names a
  * function (often one destructured from a composable, which nothing in the
@@ -19,12 +25,12 @@ export function markupCalls(elements: readonly InteractiveElementInfo[], filePat
   const out: CallInfo[] = [];
   const seen = new Set<string>();
   const add = (name: string, line: number) => {
-    if (SKIP.test(name) || name.startsWith("$") || seen.has(`${line}\0${name}`)) return;
+    if (!projectCallee(name) || seen.has(`${line}\0${name}`)) return;
     seen.add(`${line}\0${name}`);
     out.push({ name, kind: "internal", target: null, line });
   };
   for (const el of elements) {
-    const handler = el.handler?.trim();
+    const handler = el.handler ? plainChains(el.handler.trim()) : undefined;
     // A function handed down as a prop, or bound to a child's event, is its own function (`markupFunctions`).
     if (!handler || isPropFunction(el) || isEventFunction(el, declared)) continue;
     const bare = handler.replace(/^(?:void|await)\s+/, "");
@@ -67,9 +73,10 @@ const REEMIT_HANDLER = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(/;
 
 /** The project calls an event binding spells: each callee, or the member a bare reference names. */
 function eventCalls(handler: string): string[] {
-  const bare = handler.replace(/^(?:void|await)\s+/, "");
-  const names = CHAIN.test(bare) ? [bare] : [...handler.matchAll(CALLEE)].map((m) => m[1]!);
-  return [...new Set(names)].filter((name) => !SKIP.test(name) && !name.startsWith("$"));
+  const plain = plainChains(handler);
+  const bare = plain.replace(/^(?:void|await)\s+/, "");
+  const names = CHAIN.test(bare) ? [bare] : [...plain.matchAll(CALLEE)].map((m) => m[1]!);
+  return [...new Set(names)].filter(projectCallee);
 }
 
 /** The name of the function a prop or event binding defines: `<ClubList:add@14>`, `<ClubList@delete@14>`. */
@@ -95,9 +102,9 @@ export function markupFunctions(elements: readonly InteractiveElementInfo[], fil
     if (!isPropFunction(el) || !el.handler) continue;
     const calls: CallInfo[] = [];
     const seen = new Set<string>();
-    for (const m of el.handler.matchAll(CALLEE)) {
+    for (const m of plainChains(el.handler).matchAll(CALLEE)) {
       const name = m[1]!;
-      if (SKIP.test(name) || name.startsWith("$") || seen.has(name)) continue;
+      if (!projectCallee(name) || seen.has(name)) continue;
       seen.add(name);
       calls.push({ name, kind: "internal", target: null, line: el.line });
     }

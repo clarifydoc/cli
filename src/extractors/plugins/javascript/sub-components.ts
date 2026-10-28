@@ -64,12 +64,26 @@ function walkForJsx(
           line: node.startPosition.row + 1,
         });
       }
+      // `<CarForm ref={formRef} />`: the parent reaches the child's handle as `formRef.current`.
+      const ref = name && /^[A-Z]/.test(name) ? jsxRef(node) : null;
+      const sub = ref ? components.find((c) => c.name === name && !c.global) : undefined;
+      if (sub && ref) sub.refs = [...new Set([...(sub.refs ?? []), ref])];
     }
   }
 
   for (const child of node.children) {
     walkForJsx(child, components, seen, importMap);
   }
+}
+
+/** The ref a JSX tag binds, when it is a variable or a field: `ref={formRef}`, `ref={this.formRef}`. */
+function jsxRef(node: Node): string | null {
+  for (const child of node.children) {
+    if (child.type !== "jsx_attribute" || !child.text.startsWith("ref")) continue;
+    const m = /^ref\s*=\s*\{\s*((?:this\.)?[A-Za-z_$][\w$]*)\s*\}$/.exec(child.text);
+    if (m) return m[1]!;
+  }
+  return null;
 }
 
 export function extractJsxProps(node: Node): string[] {

@@ -41,6 +41,8 @@ const GENERIC_NOUNS = new Set(["one", "all", "many", "item", "items", "entity", 
 const FIELDS = new Set(["input", "select", "textarea"]);
 
 const HTTP_CALL = /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) \//;
+/** Every `emit('x')` / `$emit('x')` a handler spells, wherever it sits — as the emit resolver reads markup. */
+const EMIT_ANYWHERE = /(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:.-]+)['"]/g;
 
 const VERBS: Record<string, string> = { POST: "create", PUT: "update", PATCH: "update", DELETE: "delete", GET: "view" };
 const EFFECT_WORDS: Record<string, string> = {
@@ -304,19 +306,26 @@ export function screenSpecs(summary: Summary): BundleFile[] {
     };
   };
 
-  /** The function a handler names: in its screen's files by name or leaf, else the one its file calls by that name. */
-  const handlerKey = (handler: string, files: string[]): Key | null => {
+  /**
+   * The functions a handler runs: the one it names, in its screen's files by name or leaf, else the one its file
+   * calls by that name; or, for a handler that emits, the parent handlers the emit links reach — an emit behind a
+   * condition (`open ? emit('close') : emit('open')`) reaches each event it spells.
+   */
+  const handlerKeys = (handler: string, files: string[]): Key[] => {
+    const emitted = (event: string) => calledByName.get(`${files[0]}||emit:${event}`);
     const emit = /^\$?emit\s*\(\s*['"]([\w:.-]+)['"]/.exec(handler) ?? /^(?:this\.)?([\w$]+)\.emit\b/.exec(handler);
-    if (emit) return calledByName.get(`${files[0]}||emit:${emit[1]}`) ?? null;
+    if (emit) return [emitted(emit[1]!)].filter((k): k is Key => !!k);
     const clean = handler.replace(/\(.*$/s, "").replace(/^(?:void|await|return)\s+|^!/, "").trim();
-    if (!clean || !/^[\w.$]+$/.test(clean)) return null;
-    const leaf = clean.split(".").pop()!;
-    for (const file of files) for (const sym of symbolsIn.get(file) ?? []) if (sym === leaf || sym.endsWith(`.${leaf}`)) return keyOf(file, sym);
-    for (const file of files) {
-      const named = calledByName.get(`${file}||${leaf}`);
-      if (named) return named;
+    if (clean && /^[\w.$]+$/.test(clean)) {
+      const leaf = clean.split(".").pop()!;
+      for (const file of files) for (const sym of symbolsIn.get(file) ?? []) if (sym === leaf || sym.endsWith(`.${leaf}`)) return [keyOf(file, sym)];
+      for (const file of files) {
+        const named = calledByName.get(`${file}||${leaf}`);
+        if (named) return [named];
+      }
+      return [];
     }
-    return null;
+    return unique([...handler.matchAll(EMIT_ANYWHERE)].map((m) => emitted(m[1]!)).filter((k): k is Key => !!k));
   };
 
   // One model per screen.
@@ -348,19 +357,20 @@ export function screenSpecs(summary: Summary): BundleFile[] {
 
   // Actions first: every screen's handlers are known before any screen's load is walked.
   const handlers = new Set<Key>();
-  const actionReach = new Map<Key, Reach>();
+  const actionReach = new Map<string, Reach>();
   const filesOf = (m: Model) => unique([m.screen.filePath, ...(m.screen.codeFiles ?? [])]);
   for (const m of models) {
     const files = filesOf(m);
     for (const el of files.flatMap((f) => elementsByFile.get(f) ?? [])) {
       if (!el.handler && !el.request) continue;
-      const k = el.handler ? handlerKey(el.handler, files) : null;
-      if (k) handlers.add(k);
-      const walked = k ? actionReach.get(k) ?? actionReach.set(k, walk([k], new Set())).get(k)! : null;
+      const ks = el.handler ? handlerKeys(el.handler, files) : [];
+      for (const k of ks) handlers.add(k);
+      const at = ks.join("\u0000");
+      const walked = ks.length ? actionReach.get(at) ?? actionReach.set(at, walk(ks, new Set())).get(at)! : null;
       const reach: Reach = walked ? { ...walked, unrouted: [...walked.unrouted] } : { routes: [], effects: [], unrouted: [] };
       // A server-rendered form or link states its request outright.
       if (el.request) reach.unrouted.push(`${el.request.method.toUpperCase()} ${el.request.target}`);
-      m.actions.push({ el, label: describe(el), field: FIELDS.has(el.element), found: !!k, reach });
+      m.actions.push({ el, label: describe(el), field: FIELDS.has(el.element), found: ks.length > 0, reach });
     }
   }
   // What a screen loads: its component code and what it renders, short of any control's handler — a child's

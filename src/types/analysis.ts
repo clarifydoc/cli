@@ -2179,6 +2179,14 @@ export interface SubComponentInfo {
    * import source's component, wherever it is used.
    */
   global?: true;
+  /**
+   * The names this file reaches the child's instance by: the static `ref`
+   * its tags carry (`<ClubForm ref="formRef">`, read as `formRef.value`,
+   * `this.$refs.formRef` or `formRef` in markup) and a variable bound to that
+   * ref by name (`const form = useTemplateRef('formRef')`). A call on one of
+   * them (`formRef.value?.save()`) is the child's method.
+   */
+  refs?: string[];
 }
 
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */

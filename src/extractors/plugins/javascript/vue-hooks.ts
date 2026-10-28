@@ -3,6 +3,7 @@ import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractVueInteractiveElements } from "./interactive-elements.js";
 import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
+import { addTemplateRefs } from "./template-refs.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -66,6 +67,8 @@ export function vuePreprocess(
           });
         }
       }
+      // `<ClubForm ref="formRef">`: the names the script calls the child's methods through.
+      if (sfc.template) addTemplateRefs(analysis.subComponents, sfc.template, sfc.script ?? "");
     },
   };
 }

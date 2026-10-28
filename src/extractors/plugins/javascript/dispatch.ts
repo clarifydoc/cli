@@ -336,7 +336,7 @@ interface SymbolSpan {
 }
 
 /** Case/kebab-insensitive tag identity: MyButton ≡ my-button; itemClick ≡ item-click. */
-function tagKey(name: string): string {
+export function tagKey(name: string): string {
   return name.toLowerCase().replace(/-/g, "");
 }
 
@@ -374,7 +374,7 @@ function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
  * Components registered app-wide (`app.component("ClubCard", ClubCard)`), by tag key → the component's
  * file. A name two registrations give different files is left out.
  */
-function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string, string>): Map<string, string> {
+export function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string, string>): Map<string, string> {
   const out = new Map<string, string | null>();
   for (const a of analyses) {
     for (const sub of a.subComponents ?? []) {
@@ -411,7 +411,7 @@ const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
  * (`components/club/ClubCard.vue` → `ClubCard`, `ClubClubCard` folded to
  * `ClubCard` as Nuxt does). A name two files claim is left out.
  */
-function autoImportedComponents(analyses: FileAnalysis[]): Map<string, Map<string, string>> {
+export function autoImportedComponents(analyses: FileAnalysis[]): Map<string, Map<string, string>> {
   const nuxt = new Set(analyses.filter((a) => NUXT_CONFIG.test(a.filePath)).map((a) => a.projectId ?? ""));
   const out = new Map<string, Map<string, string | null>>();
   if (nuxt.size === 0) return new Map();

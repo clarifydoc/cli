@@ -57,6 +57,19 @@ describe("Screen specs", () => {
     expect(index).toContain("### parts\n\n- [Create parts](flows/Create-parts.md) — / (frontend/src/App.tsx) → PartsPage\n- [Delete parts](flows/Delete-parts.md) — / (frontend/src/App.tsx) → PartsPage → PartList");
   });
 
+  it("follows each event a control emits behind a condition to the parent's handler", () => {
+    const out = findExportBundle("screens")!.render({
+      screens: [{ name: "MatchCard", filePath: "web/MatchCard.vue" }],
+      interactiveElements: [{ filePath: "web/MatchCard.vue", element: "button", event: "@click", handler: "ongoing ? $emit('end') : $emit('reject')", line: 4 }],
+      symbolLinks: [
+        { sourceFile: "web/MatchCard.vue", sourceSymbol: "<setup>", targetFile: "web/Fixtures.vue", targetSymbol: "rejectMatch", callName: "emit:reject" },
+        { sourceFile: "web/Fixtures.vue", sourceSymbol: "rejectMatch", targetFile: "srv/matches.ts", targetSymbol: "route:DELETE /api/v2/matches/:id", callName: "DELETE /api/v2/matches/:id", relation: "http", targetLine: 9 },
+      ],
+    } as unknown as Summary);
+    const card = out.find((f) => f.path === "screens/MatchCard.md")!.content;
+    expect(card).toContain("### 1. Click the button → `ongoing ? $emit('end') : $emit('reject')`\n\n`@click` at `web/MatchCard.vue:4`\n\n- Sends `DELETE /api/v2/matches/:id`");
+  });
+
   it("writes an index and nothing else for an analysis without screens", () => {
     const empty = findExportBundle("screens")!.render({});
     expect(empty.map((f) => f.path)).toEqual(["README.md"]);

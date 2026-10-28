@@ -57,6 +57,7 @@ import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
 import { JsComponentEmitResolver, JsPropCallbackResolver } from "./dispatch.js";
+import { JsTemplateRefResolver } from "./template-refs.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
@@ -275,7 +276,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, nestInheritedGuards, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
