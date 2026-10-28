@@ -176,8 +176,35 @@ export async function detectSubProjects(
       p.packageEcosystem = first.ecosystem;
     }
     if (rest.length + local.length > 0) p.packages = [...rest, ...local];
+    const implicit = await implicitImports(root, p);
+    if (implicit.length > 0) p.implicitImports = implicit;
   }));
   return subProjects;
+}
+
+/**
+ * What the build imports into every file of a sub-project (the registry's
+ * `PackageManifestSpec.projectImports`), read from the manifests directly at
+ * its root: core reads the files, the plugin reads the format.
+ */
+async function implicitImports(root: string, project: SubProject): Promise<string[]> {
+  const out = new Set<string>();
+  let entries: string[] | null = null;
+  for (const manager of PACKAGE_MANAGERS) {
+    for (const spec of manager.manifests) {
+      if (!spec.projectImports) continue;
+      entries ??= await readdir(join(root, project.root)).catch(() => []);
+      const files = spec.glob
+        ? entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))
+        : spec.files.filter((f) => entries!.includes(f));
+      for (const file of files) {
+        const text = await readFile(join(root, project.root, file), "utf-8").catch(() => null);
+        if (text === null) continue;
+        for (const name of await spec.projectImports(text, selfNameContext(root, project.root, file))) out.add(name);
+      }
+    }
+  }
+  return [...out];
 }
 
 /**

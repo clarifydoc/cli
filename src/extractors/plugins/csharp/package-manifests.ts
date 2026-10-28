@@ -48,6 +48,29 @@ export function projectFileSelfName(text: string, file: SelfNameContext): string
   return name.includes("$(") ? null : name;
 }
 
+/** `<Using Include="League.Clubs" />` — not an alias (`Alias=`) or a static (`Static="true"`) using, nor a `Remove`. */
+const MSBUILD_USING_RE = /<Using\s+Include\s*=\s*"([A-Za-z_][\w.]*)"([^>]*)\/?>/gi;
+
+function msbuildUsings(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(MSBUILD_USING_RE)) {
+    if (/\b(?:Alias|Static)\s*=/i.test(m[2]!) && !/\bStatic\s*=\s*"false"/i.test(m[2]!)) continue;
+    out.push(m[1]!);
+  }
+  return out;
+}
+
+/**
+ * The namespaces MSBuild imports into every file of a project: its own
+ * `<Using Include>` items and those of the nearest `Directory.Build.props`
+ * (beside the project file or above it), which every project below inherits.
+ */
+export async function projectFileUsings(text: string, file: SelfNameContext): Promise<string[]> {
+  if (!/\.(?:cs|vb)proj$/i.test(file.fileName)) return [];
+  const props = (await file.readSibling("Directory.Build.props")) ?? (await file.readAncestors("Directory.Build.props"))[0] ?? "";
+  return [...new Set([...msbuildUsings(text), ...msbuildUsings(props)])];
+}
+
 export const nugetPackageManager: PackageManagerSpec = {
   ecosystem: "nuget",
   manifests: [
@@ -57,6 +80,7 @@ export const nugetPackageManager: PackageManagerSpec = {
       glob: { deep: 3, limit: 50 },
       parse: (text, file) => parseCsproj(text, file.declaredIn),
       selfName: projectFileSelfName,
+      projectImports: projectFileUsings,
     },
   ],
   // The full namespace (`Microsoft.EntityFrameworkCore.Metadata`): it extends

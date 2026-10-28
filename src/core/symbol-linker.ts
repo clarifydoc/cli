@@ -96,6 +96,7 @@ export function buildSymbolLinks(
     packageProjects: buildPackageProjectIndex(subProjects),
     importDirectory: importDirectory ?? buildImportDirectoryResolver(analyses, subProjects),
     packageRoots: packageRootsOf(subProjects),
+    implicitImports: new Map(subProjects.filter((p) => p.implicitImports?.length).map((p) => [p.id, p.implicitImports!])),
     packagesByLanguage: new Map(),
     packageImportsCache: new Map(),
     importedProjectsCache: new Map(),
@@ -1562,6 +1563,10 @@ interface LinkContext {
   importDirectory: ImportDirectoryResolver;
   /** The repository's packages by ecosystem (`import-directories.ts` `packageRootsOf`). */
   packageRoots: Map<string, PackageRoot[]>;
+  /** Per sub-project id: the packages its build imports into every file (`SubProject.implicitImports`). */
+  implicitImports: Map<string, string[]>;
+  /** Per sub-project id: the `projectWide` imports its files write, built on first use. */
+  projectWideImports?: Map<string, string[]>;
   /** Per language: the packages of its ecosystems, built on first use (`importPath`). */
   packagesByLanguage: Map<Language, PackageRoot[]>;
   /** Per package (directory + test flag): the files of the packages its files import (`packageScoped` languages). */
@@ -1830,8 +1835,8 @@ function packageScopeOf(analysis: FileAnalysis, ctx: LinkContext): ReadonlySet<s
     for (const f of files) if (f !== analysis.filePath && (isTest || !packageTest(ctx, f))) set!.add(f);
   };
   for (const pkg of enclosing) add(filesOfPackage(ctx, family, pkg.join(".")));
-  for (const imp of analysis.imports) {
-    const segments = imp.source.split(".").filter(Boolean);
+  for (const source of [...analysis.imports.map((i) => i.source), ...projectImportsOf(ctx, analysis)]) {
+    const segments = source.split(".").filter(Boolean);
     for (const prefix of [[], ...enclosing]) {
       const files = packageImportFiles(ctx, family, [...prefix, ...segments]);
       if (files) {
@@ -1842,6 +1847,57 @@ function packageScopeOf(analysis: FileAnalysis, ctx: LinkContext): ReadonlySet<s
   }
   ctx.packageScopeCache.set(analysis.filePath, set);
   return set;
+}
+
+/**
+ * What every file of the analysis's sub-project imports without writing it:
+ * the `projectWide` imports any of its files declares (C# `global using`) and
+ * the build's `implicitImports`.
+ */
+function projectImportsOf(ctx: LinkContext, analysis: FileAnalysis): readonly string[] {
+  if (!ctx.projectWideImports) {
+    ctx.projectWideImports = new Map();
+    for (const a of ctx.analyses) {
+      for (const imp of a.imports) {
+        if (!imp.projectWide) continue;
+        const list = ctx.projectWideImports.get(a.projectId);
+        if (list) list.push(imp.source);
+        else ctx.projectWideImports.set(a.projectId, [imp.source]);
+      }
+    }
+  }
+  const wide = ctx.projectWideImports.get(analysis.projectId) ?? [];
+  const implicit = ctx.implicitImports.get(analysis.projectId) ?? [];
+  return implicit.length === 0 ? wide : wide.length === 0 ? implicit : [...wide, ...implicit];
+}
+
+/**
+ * `nestedPackageLookup` (C#): the file declaring type `typeName` among
+ * `files`, as the compiler finds it from `source` — its own package first,
+ * then each enclosing one, innermost first (`League.Clubs.Web` sees
+ * `League.Clubs`'s types before `League`'s), then the global package and the
+ * packages the file and its project import. The first level declaring the
+ * name decides: one file, or the parts of one type split across files. Null
+ * when no level decides — two imported packages declaring it, or none of the
+ * files in reach — and the caller's other rules apply.
+ */
+function nestedPackageFile(ctx: LinkContext, source: FileAnalysis, typeName: string, files: readonly string[]): string | null {
+  if (files.length < 2 || !manifestFor(source.language as Language)?.nestedPackageLookup) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const packageOf = (f: string) => ctx.analysisByFile!.get(f)?.packageName ?? "";
+  const decide = (hits: string[]): string | null =>
+    hits.length === 0 ? null : pickDefinition(typeName, hits, source.filePath, (f, n) => ctx.classAt.get(memberKey(f, n)), (f) => ctx.languageOf.get(f));
+  const own = source.packageName?.split(".") ?? [];
+  for (let i = own.length; i > 0; i--) {
+    const pkg = own.slice(0, i).join(".");
+    const hits = files.filter((f) => packageOf(f) === pkg);
+    if (hits.length > 0) return decide(hits);
+  }
+  const global = files.filter((f) => packageOf(f) === "");
+  if (global.length > 0) return decide(global);
+  const imported = new Set([...source.imports.filter((i) => i.isNamespace).map((i) => i.source), ...projectImportsOf(ctx, source)]);
+  const hits = files.filter((f) => imported.has(packageOf(f)));
+  return new Set(hits.map(packageOf)).size === 1 ? decide(hits) : null;
 }
 
 /** True when the analysis imports `file` — by path, by package, or by the package of the sub-project that holds it. */
@@ -3237,6 +3293,15 @@ function resolveCallToDefinition(
         : null;
     if (className) {
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
+      // A name declared in several namespaces: the one the caller's namespace and usings reach.
+      if (entry && entry.count > 1 && manifestFor(analysis.language as Language)?.nestedPackageLookup) {
+        const file = typeFileFor(ctx, className, sourceFile, analysis.projectId);
+        const cls = file ? ctx.classAt.get(memberKey(file, className)) : undefined;
+        if (file && cls) {
+          const ctor = cls.methods.find((m) => isConstructor(m, cls));
+          return mkLink(file, ctor ? `${className}.${ctor.name}` : className, ctor?.line ?? cls.line, "INFERRED", "constructor");
+        }
+      }
       // A constructor of a globally-unique type is unambiguous even across
       // sub-projects (`new GetRoleHoldersQuery()` in Api → its record in
       // Application), so allow cross-project resolution here.
@@ -4377,6 +4442,15 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
     const declared = fs.filter((f) => !declOf(f, typeName)?.extension);
     return declared.length > 0 ? declared : fs;
   };
+  // A language whose types live in nested namespaces finds the name the compiler would.
+  if (source && manifestFor(source.language as Language)?.nestedPackageLookup) {
+    const srcLang = ctx.languageOf.get(sourceFile) ?? "";
+    const candidates = declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
+      sameTypeSpace(sourceFile, srcLang, f, ctx.languageOf.get(f) ?? "") && reachable(f),
+    ));
+    const nested = nestedPackageFile(ctx, source, typeName, candidates);
+    if (nested) return nested;
+  }
   const own = ctx.classByProject.get(`${projectId}\0${typeName}`);
   if (own) {
     const ownFiles = declaredFirst(own.files.filter(reachable));

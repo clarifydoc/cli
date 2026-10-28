@@ -95,6 +95,14 @@ export interface PackageManifestSpec {
    */
   selfName?(text: string, file: SelfNameContext): string | null | Promise<string | null>;
   /**
+   * Namespaces the build imports into every source file of the project
+   * without an import in the file (MSBuild `<Using Include="X" />`, also from
+   * the nearest `Directory.Build.props`). Read like `selfName` — for a `glob`
+   * format, the files directly at the project root — into
+   * `SubProject.implicitImports`.
+   */
+  projectImports?(text: string, file: SelfNameContext): string[] | Promise<string[]>;
+  /**
    * Packages the manifest maps to a directory of this repository instead of a
    * download (go.mod `replace example.com/kit => ./kit`): `path` relative to
    * the manifest's directory. Recorded on `SubProject.packages` with that root.
@@ -1023,6 +1031,15 @@ export interface LanguagePluginManifest {
    * the packages enclosing it.
    */
   importsNamePackages?: boolean;
+  /**
+   * With `importsNamePackages`: a type name is looked up as the C# compiler
+   * does — in the file's own package, then each enclosing one, innermost
+   * first, then among the packages the file imports (its own imports, a
+   * `projectWide` import of any file of its sub-project, the sub-project's
+   * `implicitImports`). The first level declaring the name decides; two
+   * imported packages declaring it decide nothing.
+   */
+  nestedPackageLookup?: boolean;
   /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null

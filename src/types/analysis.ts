@@ -679,6 +679,11 @@ export interface ImportInfo {
    */
   aliases?: Record<string, string>;
   /**
+   * The import applies to every file of the sub-project, not only the one
+   * writing it (C# `global using League.Clubs;`). Absent for a file's own import.
+   */
+  projectWide?: true;
+  /**
    * The names this import binds that nothing else in the file mentions, for a
    * language whose plugin can tell (JS/TS). Absent when every name is used,
    * or when the file holds markup (a Vue / Svelte template) the check cannot read.
@@ -3423,6 +3428,13 @@ export interface SubProject {
    */
   packages?: Array<{ name: string; ecosystem: PackageEcosystem; root?: string }>;
   markers: string[];
+  /**
+   * Namespaces every source file of the sub-project imports without writing an
+   * import, as its build declares them (MSBuild `<Using Include="League.Clubs" />`
+   * in the project file or the `Directory.Build.props` above it). Read by the
+   * package manager's `PackageManifestSpec.projectImports`.
+   */
+  implicitImports?: string[];
   /**
    * Frameworks/ORMs detected from this sub-project's own manifests (its nested
    * `package.json`, `Gemfile`, `*.csproj`, …). A repo whose build files live in

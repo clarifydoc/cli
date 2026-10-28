@@ -80,6 +80,8 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
       isNamespace: !isStatic && !alias,
       isType: false,
       line: node.startPosition.row + 1,
+      // `global using League.Clubs;` (C# 10) imports it into every file of the project.
+      ...(node.children.some((c) => c.type === "global" || c.text === "global") ? { projectWide: true as const } : {}),
     };
   }
 
