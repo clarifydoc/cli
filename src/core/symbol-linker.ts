@@ -2552,10 +2552,12 @@ function nestedDefinition(
     return { node: visible.reduce((a, b) => (b.depth >= a.depth ? b : a)), confidence: "EXTRACTED" };
   }
   if (imported) return undefined;
+  // One function listed twice (a Vue SFC's script read for both the component and its setup) is still one.
+  const one = candidates.every((c) => c.line === candidates[0]!.line && c.endLine === candidates[0]!.endLine);
   // The ONE inner helper of that name, when the caller can hold it: a parameter of its name is handed
   // it (`def _identify(doc, issue)` called with the `issue` its caller declares, a `{ toggle }` prop),
   // or the caller calls the function declaring it, which hands it back (`const { fetchPage } = useClubPages()`).
-  if (candidates.length === 1 && caller) {
+  if (one && caller) {
     let factory = candidates[0]!;
     while (factory.parent) factory = factory.parent;
     const scopes = [caller, ...ancestors];
@@ -2563,6 +2565,11 @@ function nestedDefinition(
       n.fn.params.some((p) => p.name === call.name || (p.name.match(/[A-Za-z_$][\w$]*/g) ?? ([] as string[])).includes(call.name));
     if (scopes.some((n) => handed(n) || n.fn.calls.some((c) => c.name === factory.name))) return { node: candidates[0]!, confidence: "INFERRED" };
   }
+  // A call outside every function of the file — or in a template handler's pseudo-function
+  // (`<CollapsedBar@open@660>`) — reaching the ONE inner function of that name: a template using what
+  // its component's `setup()` returns (`@open="revealBench"`). Module code cannot reach it otherwise.
+  const outside = !caller || (!caller.parent && caller.name.startsWith("<"));
+  if (one && outside) return { node: candidates[0]!, confidence: "INFERRED" };
   return null;
 }
 

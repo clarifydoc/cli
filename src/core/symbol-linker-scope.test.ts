@@ -248,6 +248,23 @@ describe("symbol-linker — nested functions of one name resolve to the nearest 
     expect(links.find((l) => l.sourceSymbol === "validate" && l.callName === "report")).toMatchObject({ targetLine: 2, confidence: "INFERRED" });
     expect(links.find((l) => l.sourceSymbol === "show" && l.callName === "fetch_page")).toMatchObject({ targetLine: 9, confidence: "INFERRED" });
   });
+
+  it("lets a template reach the one inner function its component's setup() returns", () => {
+    // `setup() { const revealBench = () => …; return { revealBench } }` and `@open="revealBench"` below the script.
+    const vue = file("src/MatchView.vue", "vue", {
+      functions: [
+        fn("setup", 2, 6),
+        fn("revealBench", 3, 3),
+        // The SFC reader lists a setup-scoped function twice.
+        fn("revealBench", 3, 3),
+        fn("<setup>", 1, 1, [call("revealBench", 12)]),
+        fn("<BenchBar@open@14>", 14, 14, [call("revealBench", 14)]),
+      ],
+    });
+    const links = buildSymbolLinks([vue]);
+    expect(links.find((l) => l.sourceSymbol === "<setup>" && l.callName === "revealBench")).toMatchObject({ targetLine: 3, confidence: "INFERRED" });
+    expect(links.find((l) => l.sourceSymbol === "<BenchBar@open@14>" && l.callName === "revealBench")).toMatchObject({ targetLine: 3, confidence: "INFERRED" });
+  });
 });
 
 describe("symbol-linker — a static call on a project class reaches it whatever its name says", () => {
