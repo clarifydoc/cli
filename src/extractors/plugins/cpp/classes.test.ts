@@ -86,7 +86,8 @@ int Local::value() const {
   });
 
   it("reads the owner off nested and templated qualifiers", () => {
-    expect(outOfLineOwner("void Outer::Inner::run() {", "run")).toBe("Inner");
+    expect(outOfLineOwner("void Outer::Inner::run() {", "run")).toBe("Outer::Inner");
+    expect(outOfLineOwner("void Paddock<K, C>::Iterator::Next() {", "Next")).toBe("Paddock::Iterator");
     expect(outOfLineOwner("void Stack<T>::push(const T& v) {", "push")).toBe("Stack");
     expect(outOfLineOwner("Player::~Player() {", "~Player")).toBe("Player");
     expect(outOfLineOwner("std::string helper() {", "helper")).toBeNull();

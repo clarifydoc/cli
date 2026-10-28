@@ -1649,6 +1649,8 @@ interface LinkContext {
   namespaceSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
   /** filePath → sub-project id, for project-scoped candidate selection. */
   projectOf: Map<string, string>;
+  /** Lazy: languages some file of which declares a function in a namespace (`FunctionInfo.namespace`). */
+  functionNamespaceLanguages?: Set<string>;
   /** Lazy: sub-projects whose exports are global without an import (`importsBindNames.autoImport`). */
   autoImportProjects?: Set<string>;
   /** filePath → language, for type-space checks on formats without an extension family. */
@@ -2753,9 +2755,14 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
     const lang = languageOfFile.get(consumerFile) ?? "";
     return files.filter((f) => sameTypeSpace(consumerFile, lang, f, languageOfFile.get(f) ?? ""));
   };
+  // The type's name means its declaration, not a part that only extends it (as `typeFileFor` reads it).
+  const declaredFirst = (typeName: string, fs: string[]): string[] => {
+    const declared = fs.filter((f) => !declAt.get(memberKey(f, typeName))?.extension);
+    return declared.length > 0 ? declared : fs;
+  };
   const fileOf = (typeName: string, consumerFile: string): string | null =>
     importedDecl(typeName, consumerFile) ??
-    pickDefinition(typeName, inSpace(classToFiles.get(typeName) ?? [], consumerFile), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
+    pickDefinition(typeName, declaredFirst(typeName, inSpace(classToFiles.get(typeName) ?? [], consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
 
   // One type declared across several files of a directory — a Go struct
   // whose methods sit in sibling files (each file carries a stub class with
@@ -2777,11 +2784,13 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
     const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
     for (const cls of a.classes) {
       const members = new Map<string, InjectionPoint>();
-      const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean): void => {
+      const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean, declaredIn = a.filePath): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
         const written = aliasedType(a, receiverTypeName(type, a.language));
-        const typeName = written ? followTypeAlias(typeAliases, written, a.filePath, (n, near) => inSpace(classToFiles.get(n) ?? [], near).length > 0) : written;
+        const bare = written ? followTypeAlias(typeAliases, written, a.filePath, (n, near) => inSpace(classToFiles.get(n) ?? [], near).length > 0) : written;
+        // `Crew* crew_;` in `Garage`, whose `Garage::Crew` another file declares: the nested class (see `nestedTypeRef`).
+        const typeName = bare ? nestedMemberType(cls.name, bare, declaredIn, (n) => inSpace(classToFiles.get(n) ?? [], a.filePath)) ?? bare : bare;
         // A member injected by key alone (dry-auto_inject `Import["repo"]`,
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
         // registration decides everything.
@@ -2804,6 +2813,14 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       for (const partner of partners.get(`${dir}\0${cls.name}`) ?? []) {
         if (partner.cls === cls || partner.a.language !== a.language) continue;
         for (const prop of partner.cls.properties) add(prop.name, prop.type, prop.qualifier, false);
+      }
+      // A part that only extends a class declared elsewhere (C++ bodies in a `.cc`, the class in its header):
+      // the declaration's fields are the part's own — the one declaration of that name in the sub-project.
+      if (cls.extension && typesSpanFiles(a.language)) {
+        const decls = inSpace(classToFiles.get(cls.name) ?? [], a.filePath).filter((f) =>
+          f !== a.filePath && !declAt.get(memberKey(f, cls.name))?.extension && analysisOf.get(f)?.projectId === a.projectId);
+        const decl = decls.length === 1 ? declAt.get(memberKey(decls[0]!, cls.name)) : undefined;
+        for (const prop of decl?.properties ?? []) add(prop.name, prop.type, prop.qualifier, false, decls[0]);
       }
 
       // Base classes as located from the class that names them (its import,
@@ -3717,6 +3734,14 @@ function resolveCallToDefinition(
         ? call.name
         : null;
     if (className) {
+      // `new Lap(…)` inside `LapLog`, which nests `LapLog::Lap`.
+      const dot = sourceSymbol.indexOf(".");
+      const nested = dot > 0 && !sourceSymbol.startsWith("route:") ? nestedTypeRef(ctx, sourceSymbol.slice(0, dot), className, sourceFile, false) : null;
+      const nestedCls = nested ? ctx.classAt.get(memberKey(nested.typeFile, nested.typeName)) : undefined;
+      if (nested && nestedCls) {
+        const ctor = nestedCls.methods.find((m) => isConstructor(m, nestedCls));
+        return mkLink(nested.typeFile, ctor ? `${nested.typeName}.${ctor.name}` : nested.typeName, ctor?.line ?? nestedCls.line, "INFERRED", "constructor");
+      }
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A name declared in several namespaces: the one the caller's namespace and usings reach.
       if (entry && entry.count > 1 && manifestFor(analysis.language as Language)?.nestedPackageLookup) {
@@ -3810,6 +3835,14 @@ function resolveCallToDefinition(
         ? [ns ? `${ns}\\${name}` : name]
         : ns ? [`${ns}\\${name}`, name] : [name];
     const fn = namespacedFunction(ctx, analysis, candidates);
+    if (fn && !(fn.file === sourceFile && fn.def.name === sourceSymbol)) {
+      return mkLink(fn.file, fn.def.name, fn.def.line, fn.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct");
+    }
+  }
+
+  // ── Strategy 6a′: a function named through its namespace (C++ `league::util::to_hex(x)`) ──
+  if (!def && call.kind === "internal" && hasFunctionNamespaces(ctx, analysis.language)) {
+    const fn = functionThroughNamespace(ctx, analysis, sourceSymbol, call, leafName, isQualified);
     if (fn && !(fn.file === sourceFile && fn.def.name === sourceSymbol)) {
       return mkLink(fn.file, fn.def.name, fn.def.line, fn.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct");
     }
@@ -4222,15 +4255,18 @@ function namespacedFunction(
 ): { file: string; def: SymbolDef } | null {
   if (!ctx.namespacedFunctions) {
     const index = new Map<string, Array<{ file: string; def: SymbolDef }>>();
-    const languages = new Set(ctx.analyses.filter((a) => a.declaredNamespace).map((a) => a.language));
+    const languages = new Set(ctx.analyses.filter((a) => a.declaredNamespace || a.functions.some((f) => f.namespace)).map((a) => a.language));
     for (const a of ctx.analyses) {
       if (!languages.has(a.language)) continue;
       const symbols = ctx.symbolIndex.get(a.filePath);
       for (const fn of a.functions) {
         if (fn.name === "<setup>" || fn.name.includes(".")) continue;
+        // A function the language keeps to its file (C `static`) is not reached from another by its name.
+        if (fn.namespace && fn.isExported === false) continue;
         const def = symbols?.get(fn.name);
         if (!def) continue;
-        const key = `${a.language}\0${(a.declaredNamespace ? `${a.declaredNamespace}\\${fn.name}` : fn.name).toLowerCase()}`;
+        const ns = fn.namespace ?? a.declaredNamespace;
+        const key = `${a.language}\0${namespaceKey(ns ? `${ns}\\${fn.name}` : fn.name)}`;
         const list = index.get(key);
         if (list) list.push({ file: a.filePath, def });
         else index.set(key, [{ file: a.filePath, def }]);
@@ -4239,10 +4275,57 @@ function namespacedFunction(
     ctx.namespacedFunctions = index;
   }
   for (const c of candidates) {
-    const hits = ctx.namespacedFunctions.get(`${analysis.language}\0${c.toLowerCase()}`);
+    const hits = ctx.namespacedFunctions.get(`${analysis.language}\0${namespaceKey(c)}`);
     if (hits) return hits.length === 1 ? hits[0]! : null;
   }
   return null;
+}
+
+/** `league`, `league::util`: a namespace path as a C++ qualifier or `using namespace` directive writes it. */
+const NAMESPACE_PATH = /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$/;
+
+/** Does any `language` file declare a function in a namespace of its own (`FunctionInfo.namespace`)? */
+function hasFunctionNamespaces(ctx: LinkContext, language: string): boolean {
+  ctx.functionNamespaceLanguages ??= new Set(ctx.analyses.filter((a) => a.functions.some((f) => f.namespace)).map((a) => a.language));
+  return ctx.functionNamespaceLanguages.has(language);
+}
+
+/** A namespace-qualified name as the index keys it: `\` and `::` alike, case folded (PHP's names ignore case). */
+function namespaceKey(name: string): string {
+  return name.replace(/::/g, "\\").toLowerCase();
+}
+
+/**
+ * A free function a call names through its namespace — `league::util::to_hex(x)` (the call's receiver type is the
+ * path), or a bare `to_hex(x)` after `using namespace league::util;` — joined on the namespace each definition
+ * declares (`FunctionInfo.namespace`). A qualified name is looked up from the caller's own namespace outwards, as
+ * the compiler does. Only functions some file declares in a namespace are candidates, so a library's (`std::`) never
+ * meets project code.
+ */
+function functionThroughNamespace(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceSymbol: string,
+  call: CallInfo,
+  leafName: string,
+  isQualified: boolean,
+): { file: string; def: SymbolDef } | null {
+  const callerNs = findEnclosingCallable(analysis, sourceSymbol)?.namespace ?? analysis.functions.find((f) => f.namespace)?.namespace;
+  const outward = (path: string): string[] => {
+    const out: string[] = [];
+    const segs = callerNs ? callerNs.split("::") : [];
+    for (let k = segs.length; k >= 0; k--) out.push([...segs.slice(0, k), path].join("::"));
+    return out;
+  };
+  if (isQualified) {
+    const path = call.receiverType?.trim().replace(/^::/, "");
+    if (!path || !NAMESPACE_PATH.test(path) || call.name !== `${path.split("::").at(-1)}.${leafName}`) return null;
+    return namespacedFunction(ctx, analysis, outward(`${path}::${leafName}`));
+  }
+  // `using namespace league::util;`: an import naming a namespace, not a file.
+  const directives = analysis.imports.filter((i) => NAMESPACE_PATH.test(i.source) && (i.source.includes("::") || i.specifiers.join() === i.source));
+  const candidates = [...(callerNs ? outward(leafName).slice(0, -1) : []), ...directives.map((d) => `${d.source}::${leafName}`)];
+  return candidates.length > 0 ? namespacedFunction(ctx, analysis, candidates) : null;
 }
 
 /** `from m import *` — every exported name, none spelled out. */
@@ -4424,7 +4507,10 @@ function resolveThroughDeclaredType(
     let typeName = receiverTypeName(call.receiverType, analysis.language);
     if (!typeName && !call.receiverQualifier) return null;
     if (typeName) typeName = dealias(ctx, typeName, sourceFile);
-    let typeFile = typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+    // `MatchEvent::HashScore(…)` inside `MatchLog`, which nests `MatchLog::MatchEvent`.
+    const nested = typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile, false) : null;
+    if (nested) typeName = nested.typeName;
+    let typeFile = nested?.typeFile ?? (typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null);
     // A language that names a class by its qualified path (`Billing::InvoiceService`)
     // declares it under that name, which the bare name does not find.
     const written = call.receiverType?.trim().replace(/^::/, "");
@@ -4843,7 +4929,7 @@ function scopedName(
   if (declared) {
     const typeName = receiverTypeName(declared.type, analysis.language);
     if (!typeName && !declared.qualifier) return null;
-    const ref = typeName ? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+    const ref = typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile) ?? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
     const point: InjectionPoint = {
       typeName: ref?.typeName ?? typeName ?? "",
       typeFile: ref?.typeFile ?? null,
@@ -4918,7 +5004,10 @@ function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, proj
   const reexported = reexportedType(ctx, typeName, sourceFile);
   if (reexported) return reexported;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
-  return typeFile ? { typeName, typeFile } : null;
+  if (typeFile) return { typeName, typeFile };
+  // A path no nested class is named by (`Engine::Car` where `Engine` is a namespace): its last name.
+  const dc = typeName.lastIndexOf("::");
+  return dc > 0 && !ctx.classFiles.has(typeName) ? typeRefFor(ctx, typeName.slice(dc + 2), sourceFile, projectId) : null;
 }
 
 /** `ScoreCalc.Add()` where `ScoreCalc` aliases a class (`using ScoreCalc = League.Scoring.Calc;`): that class's member. */
@@ -4928,6 +5017,39 @@ function aliasedClassMember(ctx: LinkContext, analysis: FileAnalysis, head: stri
   const file = typeFileFor(ctx, target, analysis.filePath, analysis.projectId);
   const hit = file ? findMethodInClass(ctx, target, file, leafName) : null;
   return hit ? mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "class-name") : null;
+}
+
+/** `T` in class `X` (or `X::Y`) → `X::T` when exactly such a nested class is declared, in another file than `file`. */
+function nestedMemberType(owner: string, typeName: string, file: string, declaring: (name: string) => string[]): string | null {
+  if (typeName.includes("::") || !/^[A-Z]/.test(typeName)) return null;
+  for (let scope = owner; scope; scope = scope.includes("::") ? scope.slice(0, scope.lastIndexOf("::")) : "") {
+    const files = declaring(`${scope}::${typeName}`);
+    if (files.length > 0) return files.includes(file) ? null : `${scope}::${typeName}`;
+  }
+  return null;
+}
+
+/**
+ * A type named bare inside a class that nests one of that name (`Handler` in `TeamSheet::Iterate`, the
+ * class declaring `TeamSheet::Handler`): the nested class, as the compiler looks in the class first —
+ * then in each class around it. Only where nested classes are named by their path (`::`).
+ */
+function nestedTypeRef(
+  ctx: LinkContext,
+  consumer: string,
+  typeName: string,
+  sourceFile: string,
+  /** A declared type: one nested in the source file its plugin already named so where the text means it. */
+  declared = true,
+): { typeName: string; typeFile: string } | null {
+  if (!consumer || typeName.includes("::") || !/^[A-Z]/.test(typeName)) return null;
+  for (let scope = consumer; scope; scope = scope.includes("::") ? scope.slice(0, scope.lastIndexOf("::")) : "") {
+    const name = `${scope}::${typeName}`;
+    if (!ctx.classFiles.has(name) || (declared && ctx.classAt.has(memberKey(sourceFile, name)))) continue;
+    const typeFile = typeFileFor(ctx, name, sourceFile, ctx.projectOf.get(sourceFile) ?? "root");
+    if (typeFile) return { typeName: name, typeFile };
+  }
+  return null;
 }
 
 /** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */

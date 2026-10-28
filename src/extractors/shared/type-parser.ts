@@ -199,6 +199,33 @@ export function registerTransparentTypeWrappers(language: Language, wrappers: re
   if (wrappers && wrappers.length > 0) TRANSPARENT_WRAPPERS.set(language, new Set(wrappers));
 }
 
+/**
+ * Languages whose nested classes are named by their path (`Paddock::Iterator`):
+ * a type written so keeps that path, so it means the nested class and not
+ * another of the bare name. Pushed in by the registry from `meta.nestedTypePaths`.
+ */
+const NESTED_TYPE_PATHS = new Set<Language>();
+
+/** Called by the registry while aggregating plugin metas. */
+export function registerNestedTypePaths(language: Language, on: boolean | undefined): void {
+  if (on) NESTED_TYPE_PATHS.add(language);
+}
+
+/**
+ * `league::Paddock::Iterator` → `Paddock::Iterator`: the class names at the end of a
+ * `::` path, namespaces (lowercase, by convention) and template arguments left off;
+ * null when fewer than two remain.
+ */
+function nestedTypePath(s: string): string | null {
+  if (!s.includes("::")) return null;
+  const parts = s.split("::").map((p) => p.replace(/<.*$/s, "").trim());
+  if (parts.some((p) => !/^[A-Za-z_]\w*$/.test(p))) return null;
+  let i = 0;
+  while (i < parts.length && !/^[A-Z]/.test(parts[i]!)) i++;
+  const tail = parts.slice(i);
+  return tail.length >= 2 && tail.every((p) => /^[A-Z]/.test(p)) ? tail.join("::") : null;
+}
+
 /** Union members that only add absence — `Foo | null` (or PHP's `Foo|false` failure value) still dispatches to Foo. */
 const ABSENT_TYPES: ReadonlySet<string> = new Set(["null", "undefined", "None", "NoneType", "nil", "void", "false"]);
 
@@ -281,6 +308,10 @@ export function receiverTypeName(raw: string | null | undefined, language: Langu
       continue;
     }
     break;
+  }
+  if (NESTED_TYPE_PATHS.has(language)) {
+    const path = nestedTypePath(s);
+    if (path) return path;
   }
   const simple = s.split(/\\|::|\./).filter(Boolean).pop() ?? "";
   if (!/^[A-Za-z_$][\w$]*$/.test(simple)) return null;

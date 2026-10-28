@@ -12,7 +12,8 @@ const CTOR_NAMES: ReadonlySet<string> = new Set(["constructor", "__init__", "__c
 
 /** Is `method` a constructor of `cls` (named one, or Java/C#-style class-named)? */
 export function isConstructor(method: FunctionInfo, cls: ClassInfo): boolean {
-  return CTOR_NAMES.has(method.name) || method.name === cls.name;
+  // A nested class named by its path (`Paddock::Iterator`) is constructed by its own name.
+  return CTOR_NAMES.has(method.name) || method.name === cls.name || method.name === cls.name.slice(cls.name.lastIndexOf("::") + 2);
 }
 
 /**

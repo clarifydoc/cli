@@ -1517,6 +1517,12 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * `Lazy<T>.Value`) must NOT be listed.
    */
   transparentTypeWrappers?: readonly string[];
+  /**
+   * A class declared inside another is named by its path (`Paddock::Iterator`),
+   * and a type written with one (`Paddock<K>::Iterator*`) means that class:
+   * `receiverTypeName` keeps the path's class names instead of the last one.
+   */
+  nestedTypePaths?: boolean;
 
   /** Cyclomatic-complexity counting tables. */
   complexity?: LanguageComplexitySpec;

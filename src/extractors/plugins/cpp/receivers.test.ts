@@ -61,11 +61,12 @@ const linksOf = (read: (src: string, rel: string) => FileAnalysis, files: Record
     .map((l) => `${l.sourceSymbol}@${l.sourceLine} ${l.callName} -> ${l.targetSymbol}`)
     .sort();
 
-describe.each(Object.entries(readers))("C++ receivers (%s)", (_, read) => {
+describe.each(Object.entries(readers))("C++ receivers (%s)", (reader, read) => {
   it("names a call through `->` on its receiver, which the linker types by its declaration", () => {
     expect(linksOf(read, { "src/coach.h": coachH, "src/coach.cc": coachCc, "src/team.h": teamH, "src/team.cc": teamCc })).toEqual([
       "Team.a@3 p.drill -> Coach.drill",
-      "Team.b@10 coach_.drill -> Coach.drill",
+      // The parser names a member path whole; the line scan by its last two names.
+      `Team.b@10 ${reader === "antlr" ? "this." : ""}coach_.drill -> Coach.drill`,
       "Team.b@11 physio_.drill -> Physio.drill",
       "Team.b@7 local.drill -> Coach.drill",
       "Team.b@9 sp.drill -> Physio.drill",
@@ -198,3 +199,129 @@ void Walk(Iterator* it) {
   });
 });
 
+
+describe.each(Object.entries(readers))("C++ nested classes (%s)", (_, read) => {
+  const skipH = `#pragma once
+namespace league {
+class Paddock {
+ public:
+  class Iterator {
+   public:
+    void Next();
+  };
+  void Insert(int key);
+};
+}
+`;
+  const skipCc = `#include "skip_list.h"
+namespace league {
+void Paddock::Iterator::Next() {}
+void Paddock::Insert(int key) {
+  Iterator it;
+  it.Next();
+}
+void Walk(Paddock::Iterator* it) {
+  it->Next();
+}
+}
+`;
+  const iteratorH = `#pragma once
+class Iterator {
+ public:
+  void Next();
+};
+`;
+  const iteratorCc = `#include "iterator.h"
+void Iterator::Next() {}
+void Stroll(Iterator* plain) {
+  plain->Next();
+}
+`;
+
+  it("names a nested class by its path, so a bare one elsewhere keeps its own calls", () => {
+    const a = read(skipH, "src/skip_list.h");
+    expect(a.classes.map((c) => c.name)).toEqual(["Paddock", "Paddock::Iterator"]);
+    expect(linksOf(read, { "src/skip_list.h": skipH, "src/skip_list.cc": skipCc, "src/iterator.h": iteratorH, "src/iterator.cc": iteratorCc })
+      .filter((l) => l.includes("Next ->"))).toEqual([
+      "Paddock.Insert@6 it.Next -> Paddock::Iterator.Next",
+      "Stroll@4 plain.Next -> Iterator.Next",
+      "Walk@9 it.Next -> Paddock::Iterator.Next",
+    ]);
+  });
+});
+
+describe("C++ member paths and namespaces (antlr)", () => {
+  const read = readers.antlr;
+  it("types each member of a path, not the last two names alone", () => {
+    const seasonH = `#pragma once
+class Season {
+ public:
+  void Ref();
+};
+class Squad {
+ public:
+  void Ref();
+};
+class Fixture {
+ public:
+  Season* home_season_;
+};
+`;
+    const seasonCc = `#include "season.h"
+void Season::Ref() {}
+void Squad::Ref() {}
+void Hold(Fixture* c) {
+  c->home_season_->Ref();
+}
+`;
+    expect(linksOf(read, { "src/season.h": seasonH, "src/season.cc": seasonCc }).filter((l) => l.startsWith("Hold"))).toEqual([
+      "Hold@5 c.home_season_.Ref -> Season.Ref",
+    ]);
+  });
+
+  it("joins a call through a namespace, or a using-directive, to the function that namespace declares", () => {
+    const utilH = `#pragma once
+namespace league {
+namespace util {
+int to_hex(int x);
+}
+}
+`;
+    const utilCc = `#include "util.h"
+namespace league {
+namespace util {
+int to_hex(int x) { return x; }
+}
+}
+`;
+    const garageCc = `namespace garage {
+int to_hex(int x) { return x; }
+}
+`;
+    const mainCc = `#include "util.h"
+#include <string>
+int Show(int x) {
+  league::util::to_hex(x);
+  std::to_string(x);
+  return 0;
+}
+`;
+    const usingCc = `#include "strings.h"
+using namespace league::util;
+int Show2(int x) {
+  return to_hex(x);
+}
+`;
+    expect(read(utilCc, "src/util.cc").functions.map((f) => `${f.name} ${f.namespace}`)).toEqual(["to_hex league::util"]);
+    const links = linksOf(read, { "src/util.h": utilH, "src/util.cc": utilCc, "src/garage.cc": garageCc, "src/main.cc": mainCc, "app/show2.cc": usingCc });
+    expect(links.filter((l) => /^Show2?@/.test(l))).toEqual([
+      "Show2@4 to_hex -> to_hex",
+      "Show@4 util.to_hex -> to_hex",
+    ]);
+    const all = buildSymbolLinks(Object.entries({ "src/util.cc": utilCc, "src/garage.cc": garageCc, "src/main.cc": mainCc, "app/show2.cc": usingCc }).map(([rel, src]) => read(src, rel)));
+    expect(all.filter((l) => l.callName.endsWith("to_hex")).map((l) => `${l.sourceFile} -> ${l.targetFile}`).sort()).toEqual([
+      "app/show2.cc -> src/util.cc",
+      "src/main.cc -> src/util.cc",
+    ]);
+  });
+});
