@@ -381,7 +381,16 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
 
   const constants = stringConstants(lines);
   /** Names the file's imports bind: `config` in `config.ApiUri` is a package. */
-  const packages = new Set(extractGoImports(lines).flatMap((i) => i.specifiers));
+  const imports = extractGoImports(lines);
+  const packages = new Set(imports.flatMap((i) => i.specifiers));
+  /**
+   * Names bound to net/http: its `http.Get` / `http.Post(url, contentType, body)`
+   * are client requests, never a registration (`http.Handle` / `HandleFunc` are).
+   */
+  const clientPackages = new Set(imports.filter((i) => i.source === "net/http").flatMap((i) => i.specifiers));
+  /** A verb called on an HTTP client, not a router: `http.Post(…)`, `apiClient.Get(…)`. */
+  const isClientReceiver = (recv: string): boolean =>
+    !routerVars.has(recv) && !packageRouters.has(recv) && (clientPackages.has(recv) || /^\w*[Cc]lient$/.test(recv));
   /**
    * A group prefix held in another package's constant — `config.ApiUri`,
    * `conf.BaseUri(config.ApiUri)`, `config.ApiUri + "/x"` — as a `${config.ApiUri}`
@@ -585,6 +594,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         if (verbs.length > 0) for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         else push(joinPrefix(prefixOf(recv), path), null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }
+    } else if (verb && isClientReceiver(receiver(verb[1]!))) {
+      // A request, which the data-source extractor reads.
     } else if (verb) {
       const recv = receiver(verb[1]!);
       const method = caps ? caps[2]! : HTTP_VERBS_TITLE[title![2]!]!;

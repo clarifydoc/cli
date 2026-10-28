@@ -525,3 +525,41 @@ func kitInfo(id string) {
     ]);
   });
 });
+
+describe("Go routes: a client request is never a route", () => {
+  it("leaves net/http's helpers and a *Client receiver to the data sources, keeping the router's own registration", () => {
+    const src = lines(`
+import (
+	"net/http"
+	"github.com/gin-gonic/gin"
+)
+
+func notifyLeague(base string) error {
+	_, err := http.Post(base+"/v1/clubs", "application/json", nil)
+	return err
+}
+
+func fetchFixtures(apiClient *http.Client) {
+	apiClient.Get("/v1/fixtures")
+}
+
+func main() {
+	r := gin.Default()
+	v1 := r.Group("/v1")
+	v1.POST("/clubs", createClub)
+}
+`);
+    expect(extractGoRoutes(src).map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["POST /v1/clubs createClub"]);
+    const calls = extractGoDataSources(src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toContain("POST ${base}/v1/clubs");
+  });
+
+  it("still reads a router variable named like a client", () => {
+    const routes = extractGoRoutes(lines(`
+func Register(apiClient *gin.RouterGroup) {
+	apiClient.GET("/garages", ListGarages)
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /garages"]);
+  });
+});
