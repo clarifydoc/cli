@@ -25,8 +25,31 @@ function inlineAttributes(prefix: string): string[] {
  * VB block-end detection uses `Sub`/`End Sub`, `Function`/`End Function`, `Class`/`End Class`, etc.
  * The regex must consume whitespace between modifiers — otherwise `Private Async Sub` won't match.
  */
-const VB_OPEN_RE = /^\s*(?:(?:Public|Private|Friend|Protected|Shared|Static|Partial|Async|Overrides|Overridable|Overloads|ReadOnly|WriteOnly|Default|MustOverride|NotOverridable|NotInheritable|MustInherit)\s+)*(Sub|Function|Property|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
-const VB_END_RE = /^\s*End\s+(Sub|Function|Property|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
+const VB_OPEN_RE = /^\s*(?:(?:Public|Private|Friend|Protected|Shared|Static|Partial|Async|Overrides|Overridable|Overloads|ReadOnly|WriteOnly|Default|MustOverride|NotOverridable|NotInheritable|MustInherit|Widening|Narrowing)\s+)*(Sub|Function|Property|Operator|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
+const VB_END_RE = /^\s*End\s+(Sub|Function|Property|Operator|Class|Module|Structure|Interface|Enum|Namespace|If|Select|While|With|For|Try|SyncLock|Using|Do)\b/i;
+
+/**
+ * The name the compiler gives an overloaded operator (`Operator +` →
+ * `op_Addition`): `-` and `+` with one operand are the unary ones, and a
+ * `CType` conversion is `op_Implicit` when `Widening`, else `op_Explicit`.
+ */
+const VB_OPERATOR_NAMES: Readonly<Record<string, string>> = {
+  "+": "op_Addition", "-": "op_Subtraction", "*": "op_Multiply", "/": "op_Division", "\\": "op_IntegerDivision",
+  "mod": "op_Modulus", "^": "op_Exponent", "&": "op_Concatenate", "=": "op_Equality", "<>": "op_Inequality",
+  "<": "op_LessThan", ">": "op_GreaterThan", "<=": "op_LessThanOrEqual", ">=": "op_GreaterThanOrEqual",
+  "<<": "op_LeftShift", ">>": "op_RightShift", "and": "op_BitwiseAnd", "or": "op_BitwiseOr", "xor": "op_ExclusiveOr",
+  "not": "op_OnesComplement", "like": "op_Like", "istrue": "op_True", "isfalse": "op_False",
+};
+
+function vbOperatorName(written: string, line: string): string {
+  const op = written.toLowerCase();
+  if (op === "ctype") return /\bWidening\b/i.test(line) ? "op_Implicit" : "op_Explicit";
+  if (op === "+" || op === "-") {
+    const list = /Operator\s*[-+]\s*\(([^)]*)\)/i.exec(line)?.[1] ?? "";
+    if (list.trim() !== "" && !list.includes(",")) return op === "+" ? "op_UnaryPlus" : "op_UnaryNegation";
+  }
+  return VB_OPERATOR_NAMES[op] ?? `op_${written}`;
+}
 
 /**
  * Words that open a VB statement which is not a call (declarations, control
@@ -176,6 +199,14 @@ const vbBase: RegexLangSpec = {
       pattern: /^\s*(?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Static|Overrides|Overridable|Overloads|NotOverridable|MustOverride|Shadows|Partial|Iterator|Async)\s+)*(?:Sub|Function)\s+\[?([A-Za-z_]\w*)\]?(?=\s*(?:\(|'|$))/i,
       isExported: (line) => !/\b(Private|Friend)\b/i.test(line),
       isAsync: (line) => /\bAsync\b/i.test(line),
+    },
+    {
+      // `Public Shared Operator +(a As Score, b As Score) As Score` … `End Operator`:
+      // a method under the compiler's name, so the calls in its body are kept.
+      pattern: /^\s*(?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)*(?:(?:Public|Private|Friend|Protected|Shared|Overloads|Shadows|Widening|Narrowing)\s+)*Operator\s+(CType|IsTrue|IsFalse|Not|And|Or|Xor|Mod|Like|<<|>>|<>|<=|>=|[-+*\/\\^&=<>])\s*(?=\()/i,
+      isExported: (line) => !/\b(Private|Friend)\b/i.test(line),
+      keywordNames: true,
+      rename: vbOperatorName,
     },
     {
       // Property Get/Set/Let Name()

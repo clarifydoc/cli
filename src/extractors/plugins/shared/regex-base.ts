@@ -24,6 +24,12 @@ export interface FnPattern {
    * `def self.for(x)`, where the `def` already says it is a method.
    */
   keywordNames?: boolean;
+  /**
+   * The name the declaration goes by when group 1 is not one — a VB
+   * `Operator +(a As Score, b As Score)` is `op_Addition`, the name the
+   * compiler gives it. Group 1 still locates the parameter list.
+   */
+  rename?: (written: string, line: string) => string;
 }
 
 export interface ClsPattern {
@@ -439,7 +445,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
     const line = lines[i];
     if (isCommentLine(line, spec.lineCommentPrefixes)) continue;
 
-    for (const { pattern, isExported, isAsync: asyncCheck, accept, keywordNames } of spec.functionPatterns) {
+    for (const { pattern, isExported, isAsync: asyncCheck, accept, keywordNames, rename } of spec.functionPatterns) {
       const m = line.match(pattern);
       if (m && m[1] && (keywordNames || !isControlFlowKeyword(m[1])) && (!accept || accept(lines, i))) {
         const endLine = blockEndLine(lines, i, spec);
@@ -447,7 +453,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
         const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
         const calls = extractCallsFromBody(callLines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
         const fn: FunctionInfo = {
-          name: m[1],
+          name: rename ? rename(m[1], line) : m[1],
           params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
           returnType: spec.parseReturnType?.(line) ?? null,
           isAsync: asyncCheck?.(line, lines, i) ?? false,
@@ -620,7 +626,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
           const bodyLine = bodyLines[j];
           if (isCommentLine(bodyLine, spec.lineCommentPrefixes)) continue;
 
-          for (const { pattern: fnPat, isExported, isAsync: asyncCheck, accept, keywordNames } of spec.functionPatterns) {
+          for (const { pattern: fnPat, isExported, isAsync: asyncCheck, accept, keywordNames, rename } of spec.functionPatterns) {
             const fm = bodyLine.match(fnPat);
             if (fm && accept && !accept(lines, i + 1 + j)) continue;
             if (fm && fm[1] && (keywordNames || !isControlFlowKeyword(fm[1]))) {
@@ -630,7 +636,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
               const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
               const calls = extractCallsFromBody(callLines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
               const method: FunctionInfo = {
-                name: fm[1],
+                name: rename ? rename(fm[1], bodyLine) : fm[1],
                 params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
                 returnType: spec.parseReturnType?.(bodyLine) ?? null,
                 isAsync: asyncCheck?.(bodyLine, lines, methodStart) ?? false,
