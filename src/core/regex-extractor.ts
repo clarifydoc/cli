@@ -74,7 +74,7 @@ export function extractWithRegex(
     analysis.functions = spec.postProcessFunctions(lines, analysis.functions);
   }
   if (spec.postProcessClasses) {
-    analysis.classes = spec.postProcessClasses(lines, analysis.classes);
+    analysis.classes = spec.postProcessClasses(lines, analysis.classes, filePath);
   }
   const setup = topLevelSetup(lines, analysis, spec, filePath, parsed);
   if (setup) analysis.functions.unshift(setup);

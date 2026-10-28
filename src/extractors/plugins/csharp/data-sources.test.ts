@@ -853,3 +853,48 @@ describe("C# a generic method's type parameter", () => {
     expect(rows.filter((d) => d.entity === "T" || d.entity === "TChild")).toEqual([]);
   });
 });
+
+describe("C# Dapr pub/sub", () => {
+  async function queueRowsOf(src: string): Promise<string[]> {
+    const tree = await parseSource(src, "csharp" as any, "Q.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src)
+      .filter((d) => d.kind === "queue-publish" || d.kind === "queue-consume")
+      .map((d) => `${d.kind} ${d.name} ${d.target} ${d.entity} ${d.line}`);
+  }
+
+  it("reads a publish on the topic and a [Topic] action consuming it", async () => {
+    expect(await queueRowsOf(`using Dapr;
+using Dapr.Client;
+namespace League;
+public class ClubsController : ControllerBase {
+  private const string ClubTopic = "club-created";
+  private readonly DaprClient _dapr;
+  public async Task Create(Club club) {
+    await _dapr.PublishEventAsync("pubsub", ClubTopic, club);
+    await _dapr.PublishEventAsync(pubsubName: "pubsub", topicName: "player-signed", data: new PlayerSigned());
+  }
+  [Topic("pubsub", "club-created", DeadLetterTopic = "club-dead")]
+  [HttpPost("/on-club")]
+  public IActionResult OnClub(Club club) => Ok();
+}`)).toEqual([
+      "queue-publish Dapr: PublishEventAsync club-created club-created 8",
+      "queue-publish Dapr: PublishEventAsync player-signed PlayerSigned 9",
+      "queue-consume Dapr: Topic club-created club-created 11",
+    ]);
+  });
+
+  it("reads a minimal-API endpoint's WithTopic as a subscription", async () => {
+    expect(await queueRowsOf(`using Dapr;
+app.MapPost("/on-car", (Car car) => Results.Ok()).WithTopic("pubsub", "car-parked");`)).toEqual([
+      "queue-consume Dapr: WithTopic car-parked car-parked 2",
+    ]);
+  });
+
+  it("reads nothing without Dapr in the file", async () => {
+    expect(await queueRowsOf(`namespace League;
+public class Garage {
+  [Topic("pubsub", "car-parked")]
+  public void Park() { _client.PublishEventAsync("pubsub", "car-parked", car); }
+}`)).toEqual([]);
+  });
+});

@@ -31,6 +31,8 @@ export const csharpManifest: LanguagePluginManifest = {
   typesSpanFiles: true,
   // `using League.Clubs;` names a namespace, which any file may declare.
   importsNamePackages: true,
+  // A type name is found in the file's namespace, each enclosing one, then its usings.
+  nestedPackageLookup: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
   // `ClubTests.cs`, and anything in a .NET test project (`League.Core.Test/`, `League.Api.IntegrationTests/`).
   testFilePatterns: [/(Test|Tests)\.cs$/, /(^|[\\/])[\w.]+\.(?:Unit|Integration|Functional|Acceptance)?Tests?[\\/]/],

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { blazorSpec } from "./index.js";
+import type { FileAnalysis } from "../../../types/analysis.js";
 
 /**
  * Blazor `.razor` markup extraction. A Blazor Hybrid desktop app (73
@@ -249,5 +250,40 @@ describe("Blazor @code methods", () => {
     expect(add.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["Basket.AddAsync", "Nav.NavigateTo"]));
     expect(add.localTypes).toEqual([{ name: "Basket", type: "BasketState" }, { name: "Nav", type: "NavigationManager" }]);
     expect(a.interactiveElements.find((e) => e.event === "onsubmit")?.handler).toBe("AddToGarageAsync");
+  });
+});
+
+describe("Blazor component type (@inherits / @implements)", () => {
+  it("declares the component as a class named after the file, extending its @inherits base", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `@page "/clubs"\n@inherits ClubPageBase\n@implements IDisposable\n@implements IAsyncDisposable\n<button @onclick="SaveClub">Save</button>`;
+    const a = extractWithRegex(src, "Pages/ClubPage.razor", "blazor");
+    expect(a.classes.map((c) => [c.name, c.extends, c.implements])).toEqual([["ClubPage", "ClubPageBase", ["IDisposable", "IAsyncDisposable"]]]);
+  });
+
+  it("keeps a generic base as written", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`@inherits OwningComponentBase<GarageService>\n<p>x</p>`, "Pages/GarageView.razor", "blazor");
+    expect(a.classes[0]?.extends).toBe("OwningComponentBase<GarageService>");
+  });
+
+  it("declares nothing when the markup states no type (the .razor.cs partial owns it)", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`@page "/garage"\n<button @onclick="ParkCar">Park</button>`, "Pages/Garage.razor", "blazor");
+    expect(a.classes).toEqual([]);
+  });
+
+  it("links a click to the method the base class declares", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const { buildSymbolLinks } = await import("../../../core/symbol-linker.js");
+    const page = extractWithRegex(`@page "/clubs"\n@inherits ClubPageBase\n<button @onclick="SaveClub">Save</button>\n<button @onclick="Close">Close</button>\n@code { void Close() { } }`, "Pages/ClubPage.razor", "blazor");
+    page.projectId = "root";
+    const base = {
+      filePath: "Pages/ClubPageBase.cs", language: "csharp", projectId: "root", imports: [], exports: [], functions: [], routes: [], dataSources: [],
+      classes: [{ name: "ClubPageBase", kind: "class", extends: "ComponentBase", implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 9,
+        methods: [{ name: "SaveClub", line: 5, endLine: 5, params: [], calls: [], returnType: null, isAsync: true, isExported: false, decorators: [] }] }],
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([page, base]).filter((l) => l.sourceSymbol === "<component>");
+    expect(links.map((l) => [l.callName, l.targetFile, l.targetSymbol, l.strategy])).toEqual([["SaveClub", "Pages/ClubPageBase.cs", "ClubPageBase.SaveClub", "inheritance"]]);
   });
 });

@@ -75,3 +75,33 @@ describe("what a Blade view loads", () => {
     expect(els.map((e) => `${e.event} ${e.handler}`)).toEqual(["onclick relegate", "input null"]);
   });
 });
+
+describe("Blade Livewire directives", () => {
+  it("reads a wire action's method as the handler, modifiers and arguments dropped", () => {
+    const els = extractBladeInteractiveElements(`<div>
+  <button wire:click="releasePlayer({{ $player->id }})">Release</button>
+  <button wire:click.prevent="signPlayer">Sign</button>
+  <form wire:submit="save"><button type="submit">Go</button></form>
+  <input wire:keydown.enter="search">
+</div>`);
+    expect(els.map((e) => `${e.element} ${e.event} ${e.handler} ${e.line}`)).toEqual([
+      "button onclick releasePlayer 2",
+      "button onclick signPlayer 3",
+      "form onsubmit save 4",
+      "button click null 4",
+      "input onkeydown search 5",
+    ]);
+  });
+
+  it("leaves a magic action without a handler", () => {
+    const els = extractBladeInteractiveElements(`<div><button wire:click="$set('open', true)">Open</button><button wire:click="$refresh">Reload</button></div>`);
+    expect(els.map((e) => e.handler)).toEqual([null, null]);
+  });
+
+  it("binds a wire:model control to its field", () => {
+    const els = extractBladeInteractiveElements(`<div>
+  <input type="text" wire:model.live.debounce.300ms="search"> <select wire:model="squad.position"></select>
+</div>`);
+    expect(els.map((e) => `${e.element} ${e.event} ${e.handler}`)).toEqual(["input bind search", "select bind squad.position"]);
+  });
+});

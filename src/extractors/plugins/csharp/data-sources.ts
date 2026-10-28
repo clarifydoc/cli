@@ -159,6 +159,10 @@ const MQ_OUTBOX_METHOD_RE = /^(?:Add|Save|Publish|Enqueue|Store)\w*Event/;
 const INTEGRATION_EVENT_RE = /^\w+IntegrationEvent$/;
 /** A variable or message property that holds an AMQP routing key. */
 const ROUTING_KEY_RE = /^_?routing_?key$/i;
+/** Dapr's pub/sub client methods: `PublishEventAsync(pubsubName, topicName, data)`. */
+const DAPR_PUBLISH_METHODS = new Set(["PublishEventAsync", "PublishByteEventAsync", "BulkPublishEventAsync"]);
+/** Dapr's subscription attribute on an action (`[Topic("pubsub", "club-created")]`). */
+const DAPR_TOPIC_ATTRIBUTE_RE = /^(?:Dapr\.)?Topic(?:Attribute)?$/;
 /** In-process dispatchers that must never count as broker publishes. */
 const MQ_RECEIVER_DENY_RE = /mediator|dispatcher/i;
 
@@ -256,6 +260,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private refitFile = false;
   /** The file uses Confluent.Kafka. */
   private usesKafka = false;
+  /** The file uses Dapr (`Dapr.Client`, `Dapr.AspNetCore`). */
+  private usesDapr = false;
   /** Fields and parameters declared `IDistributedCache` (`_cache`, `cache`). */
   private cacheNames = new Set<string>();
   /**
@@ -286,6 +292,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
     this.refitFile = REFIT_GATE.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
+    this.usesDapr = /\bDapr\b|\bDaprClient\b/.test(sourceText);
     this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
     this.constStrings = new Map();
     // A method's own `const string url = "…";` is a local of that method (read
@@ -552,6 +559,29 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
+   * Dapr's `[Topic("pubsub", "club-created")]` on an action: the action consumes
+   * the topic (the second argument — a literal, a file const or `Topics.ClubCreated`).
+   */
+  private daprSubscription(node: Node, sources: DataSourceInfo[]): void {
+    const name = node.childForFieldName("name")?.text ?? node.namedChildren[0]?.text ?? "";
+    if (!DAPR_TOPIC_ATTRIBUTE_RE.test(name)) return;
+    const args = (node.namedChildren.find((c) => c.type === "attribute_argument_list")?.namedChildren ?? [])
+      .filter((c) => c.type === "attribute_argument");
+    // Positional only: the named properties (`DeadLetterTopic = "x"`) are not the topic.
+    const positional = args.filter((a) => !/^\w+\s*[=:]/.test(a.text));
+    const topic = this.routingKeyLabel(positional[1]?.namedChildren[positional[1].namedChildren.length - 1] ?? null);
+    if (!topic) return;
+    const member = enclosingMember(node);
+    sources.push(this.ds({
+      kind: "queue-consume",
+      name: "Dapr: Topic",
+      target: topic,
+      entity: topic,
+      line: (member ?? node).startPosition.row + 1,
+    }));
+  }
+
+  /**
    * A consumer dispatching on the routing key of a delivered message
    * (`switch (message.RoutingKey) { case PlanRouting.TrainingCreated: … }`):
    * each constant case is a destination it consumes, named as the publisher
@@ -782,6 +812,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       this.messageHandlers(node, sources);
       return;
     }
+    if (node.type === "attribute") {
+      if (this.usesDapr) this.daprSubscription(node, sources);
+      return;
+    }
     if (node.type === "switch_statement" || node.type === "switch_expression") {
       this.routingKeyCases(node, sources);
       return;
@@ -988,6 +1022,31 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         line: node.startPosition.row + 1,
       }));
       return;
+    }
+
+    // Dapr pub/sub: `daprClient.PublishEventAsync("pubsub", "club-created", club)` publishes on
+    // the topic (the second argument); the component name only picks the broker, so a
+    // subscriber's `[Topic("pubsub", "club-created")]` meets it at the topic.
+    // `.WithTopic("pubsub", "club-created")` subscribes a minimal-API endpoint.
+    if (this.usesDapr && (DAPR_PUBLISH_METHODS.has(method) || method === "WithTopic") && parts.length >= 2) {
+      const args = argumentNodes(node);
+      const named = args.find((a) => /^topicName\s*:/.test(a.text));
+      const topicArg = named ?? (args[1] && !NAMED_ARG_RE.test(args[1].text) ? args[1] : undefined);
+      const topic = this.routingKeyLabel(topicArg?.namedChildren[topicArg.namedChildren.length - 1] ?? null);
+      if (topic) {
+        const publish = method !== "WithTopic";
+        // The message type, when the data is constructed in place (`new ClubCreated(…)`).
+        const data = publish ? args.slice(2).map((a) => a.namedChildren[a.namedChildren.length - 1]).find((e) => e?.type === "object_creation_expression") : undefined;
+        const entity = data?.childForFieldName("type")?.text.replace(/<.*$/, "").split(".").pop() ?? null;
+        sources.push(this.ds({
+          kind: publish ? "queue-publish" : "queue-consume",
+          name: `Dapr: ${method}`,
+          target: topic,
+          entity: entity ?? topic,
+          line: node.startPosition.row + 1,
+        }));
+        return;
+      }
     }
 
     // Broker-publisher wrappers — `_eventPublisher.PublishAsync(...)`,
