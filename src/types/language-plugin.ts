@@ -1213,6 +1213,15 @@ export interface LanguagePluginManifest {
    */
   generatedFilePatterns?: readonly RegExp[];
   /**
+   * Single-file libraries of this language copied into a source tree, known by
+   * the banner a release writes at the top of the file (first 4 KiB): the
+   * SQLite amalgamation, nlohmann's `json.hpp`, `stb_*.h`. A match marks the
+   * file vendored (`FileAnalysis.vendoredLibrary`) wherever it sits: its
+   * functions stay analyzed, but its routes, screens, calls and data are not
+   * the project's, and it leaves the quality signals.
+   */
+  vendoredBanners?: ReadonlyArray<{ library: string; banner: RegExp }>;
+  /**
    * Builtin member/method names (`set.add`, `str.toUpperCase`) — a call whose
    * leaf is one of these never resolves to a project symbol by name-uniqueness
    * heuristics (a project method merely sharing the name is a coincidence).

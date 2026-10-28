@@ -278,6 +278,13 @@ package v1`;
     // none licensed → empty
     expect(vendoredMinoritySet(files(10, 0)).size).toBe(0);
   });
+
+  it("vendoredMinoritySet always keeps a file a known library's banner names", () => {
+    const files = Array.from({ length: 10 }, (_, i) => ({ filePath: `garage/f${i}.c`, vendored: true }));
+    files.push({ filePath: "garage/sqlite3.c", vendored: true, vendoredLibrary: "SQLite" } as never);
+    // Every authored file carries the license header: only the library is vendored.
+    expect([...vendoredMinoritySet(files)]).toEqual(["garage/sqlite3.c"]);
+  });
 });
 
 describe("scanSecurity — credentials by their format", () => {

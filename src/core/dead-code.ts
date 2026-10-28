@@ -53,11 +53,11 @@ const AUTHORED_MIN_OUTSIDE_DEPS = 3;
  * `gen` (a real word) or `external` (apps name integration code that).
  */
 const CONVENTION_SEGMENT_RE =
-  /^(?:generated|__generated__|codegen|node_modules|bower_components|jspm_packages|vendors?|third[-_]?party|thirdparty)$/i;
+  /^(?:generated|__generated__|codegen|node_modules|bower_components|jspm_packages|vendors?|vendored|third[-_]?party|thirdparty)$/i;
 /** The vendoring half of the conventions: someone else's code, copied in.
  *  Not `vendors` — an app's own domain folder as often as a library's (a
  *  marketplace's `vendors/` module), and discovery already skips `vendor/`. */
-const VENDORED_SEGMENT_RE = /^(?:node_modules|bower_components|jspm_packages|third[-_]?party|thirdparty)$/i;
+const VENDORED_SEGMENT_RE = /^(?:node_modules|bower_components|jspm_packages|vendored|third[-_]?party|thirdparty)$/i;
 
 /** Static-asset containers; a `plugins`/`lib(s)` dir below one holds vendored
  *  browser libraries (`public/js/plugins/ckeditor`), not authored code. */

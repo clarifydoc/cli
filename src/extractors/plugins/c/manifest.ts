@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -12,4 +13,5 @@ export const cManifest: LanguagePluginManifest = {
   packageEcosystems: ["vcpkg", "conan"],
   parsing: "regex",
   extensions: [".c"],
+  vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
 };

@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 import { cppFrameworkRules } from "./frameworks.js";
 import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js";
 
@@ -16,6 +17,7 @@ export const cppManifest: LanguagePluginManifest = {
   parsing: "regex",
   // `.cu` / `.cuh`: CUDA — C++ plus kernel qualifiers and `<<<…>>>` launches (see index.ts).
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
+  vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
   typesSpanFiles: true,
   frameworkRules: cppFrameworkRules,

@@ -861,3 +861,12 @@ const GENERATED_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp
 export function generatedFilePatternsFor(language: Language): readonly RegExp[] {
   return GENERATED_FILE_PATTERNS_BY_LANGUAGE.get(language) ?? [];
 }
+
+const VENDORED_BANNERS_BY_LANGUAGE: ReadonlyMap<Language, ReadonlyArray<{ library: string; banner: RegExp }>> = new Map(
+  ALL_MANIFESTS.filter((m) => m.vendoredBanners?.length).map((m) => [m.language, m.vendoredBanners!]),
+);
+
+/** The banners of the language's single-file libraries (`LanguagePluginManifest.vendoredBanners`). */
+export function vendoredBannersFor(language: Language): ReadonlyArray<{ library: string; banner: RegExp }> {
+  return VENDORED_BANNERS_BY_LANGUAGE.get(language) ?? [];
+}

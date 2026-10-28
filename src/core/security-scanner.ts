@@ -220,15 +220,19 @@ export function isVendoredSource(sourceText: string): boolean {
  * The license-headered files to treat as vendored — ONLY when they're a small
  * minority of the repo. An open-source project stamps a license header on
  * every authored file; treating those as vendored would silently disable its
- * scanning, so a repo-wide convention disables the flag instead.
+ * scanning, so a repo-wide convention disables the flag instead. A file a
+ * known library's banner names (`vendoredLibrary`) is always in the set.
  */
 export function vendoredMinoritySet(
-  analyses: ReadonlyArray<{ filePath: string; vendored?: boolean }>,
+  analyses: ReadonlyArray<{ filePath: string; vendored?: boolean; vendoredLibrary?: string }>,
 ): Set<string> {
-  const licensed = analyses.filter((a) => a.vendored).map((a) => a.filePath);
-  return new Set(
-    licensed.length > 0 && licensed.length / analyses.length < 0.25 ? licensed : [],
-  );
+  // A known library's banner is no house style: it counts whatever the share.
+  const libraries = analyses.filter((a) => a.vendoredLibrary).map((a) => a.filePath);
+  const licensed = analyses.filter((a) => a.vendored && !a.vendoredLibrary).map((a) => a.filePath);
+  return new Set([
+    ...libraries,
+    ...(licensed.length > 0 && licensed.length / analyses.length < 0.25 ? licensed : []),
+  ]);
 }
 
 /**

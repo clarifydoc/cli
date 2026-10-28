@@ -23,7 +23,7 @@ import { computeComplexity } from "./complexity-analyzer.js";
 import { attachDocComments } from "./doc-comments.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
 import { isSuppressed } from "./security-rules.js";
-import { isGeneratedSource } from "./generated-file-detector.js";
+import { isGeneratedSource, vendoredLibraryOf } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { ParsedStructure, VariableAliasBinding } from "../types/language-plugin.js";
@@ -343,7 +343,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // Flag minified/bundled artifacts once; every branch below stamps it on
     // the analysis so project-level detectors can exclude these files.
     const minified = isMinifiedSource(rawSource);
-    const vendored = isVendoredSource(rawSource);
+    // A single-file library copied in (the SQLite amalgamation) is vendored
+    // by its banner, wherever it sits and however many licensed files the repo has.
+    const vendoredLibrary = vendoredLibraryOf(rawSource, file.language);
+    const vendored = vendoredLibrary !== undefined || isVendoredSource(rawSource);
     const generated = isGeneratedSource(rawSource);
 
     // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
@@ -354,6 +357,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (vendoredLibrary) analysis.vendoredLibrary = vendoredLibrary;
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       const customTypeRefs = extractTypeReferences(analysis, file.language);
@@ -390,6 +394,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (vendoredLibrary) analysis.vendoredLibrary = vendoredLibrary;
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       attachDocComments(analysis, rawSource, pluginFor(analysis.language)?.docComments);
@@ -448,6 +453,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       analysis.lineCount = countLines(rawSource);
       if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (vendoredLibrary) analysis.vendoredLibrary = vendoredLibrary;
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       attachDocComments(analysis, rawSource, pluginFor(analysis.language)?.docComments);
@@ -466,6 +472,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (parseErrors) analysis.parseErrors = parseErrors;
     if (minified) analysis.minified = true;
       if (vendored) analysis.vendored = true;
+      if (vendoredLibrary) analysis.vendoredLibrary = vendoredLibrary;
       if (generated) analysis.generated = true;
 
     // Language-specific AST hooks (looked up for the effective language —

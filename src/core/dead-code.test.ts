@@ -45,7 +45,8 @@ describe("vendored roots", () => {
       "garage/third_party/tyres/client.py",
       "garage/src/api/__generated__/cars.ts",
       "league-web/resources/js/pages/Fixtures.vue",
-    ])).toEqual(["garage/third_party", "league-web/public/js/plugins"]);
+      "engine/vendored/zstd/zstd.c",
+    ])).toEqual(["engine/vendored", "garage/third_party", "league-web/public/js/plugins"]);
   });
 
   it("contribute no screens, routes, calls or data, and keep their structure", () => {

@@ -56,6 +56,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   securityIssues: "optional",
   minified: "optional",
   vendored: "optional",
+  vendoredLibrary: "optional",
   generated: "optional",
   typeReferences: "optional",
   entityRelations: "optional",
