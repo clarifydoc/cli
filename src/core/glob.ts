@@ -13,6 +13,13 @@
  *   it stays inside the root (see `discoverFiles`).
  * - **`deep` counts as the walks were written against:** `deep: n` reads a
  *   file at most n-1 directories below `cwd` (`deep: 1` is `cwd`'s own files).
+ * - **A linked git worktree of a repository the walk also reads is never
+ *   entered.** `git worktree add wt-feature` inside a checkout leaves a second
+ *   copy of the sources whose `.git` is a FILE (`gitdir: <repo>/.git/worktrees/
+ *   wt-feature`); read again, it became a sub-project of its own and every
+ *   route and symbol had a twin. A submodule's `.git` file points into
+ *   `.git/modules/` and is entered, and so is a worktree whose repository
+ *   lies outside `cwd` (it is the only copy) and `cwd` itself.
  *
  * The engine is tinyglobby (fdir + picomatch). It replaced fast-glob on
  * 2026-10-11: fast-glob's micromatch pulls in `braces`, whose brace expansion
@@ -20,8 +27,8 @@
  * release exists, and `--include` / `--exclude` hand it the user's patterns.
  */
 import { glob as tinyGlob, globSync as tinyGlobSync, type GlobOptions as TinyGlobOptions } from "tinyglobby";
-import { readdir, readdirSync, realpath, realpathSync, stat, statSync, type Dirent } from "fs";
-import { resolve } from "path";
+import { readdir, readdirSync, readFileSync, realpath, realpathSync, stat, statSync, type Dirent } from "fs";
+import { resolve, sep } from "path";
 
 /**
  * The options ClarifyDoc's glob wrapper accepts — the engine's own options
@@ -77,15 +84,50 @@ export class LinkedFiles {
   }
 }
 
+/** The repository directory a `.git` file points at (`gitdir: …`). */
+const GITDIR_RE = /^gitdir:[^\S\n]*(.+?)[^\S\n]*$/m;
+/** A linked worktree's: `<repo>/.git/worktrees/<name>` (a submodule's is `.git/modules/<name>`). */
+const WORKTREE_GITDIR_RE = /[\\/]worktrees[\\/][^\\/]+[\\/]?$/;
+
 /**
- * The file-system adapter a walk runs on when it records links or prunes
- * directories: every listing passes through here before fdir sees it.
+ * Whether the directory listed as `entries` is a linked worktree of a
+ * repository inside `root`: its `.git` is a file naming a `worktrees/` entry
+ * of a git directory below `root`. Only a listing holding a `.git` file is
+ * read.
+ */
+function linkedWorktreeOf(root: string, dir: string, entries: readonly Dirent[]): boolean {
+  if (!entries.some((e) => e.name === ".git" && e.isFile())) return false;
+  let gitdir: string | undefined;
+  try {
+    gitdir = GITDIR_RE.exec(readFileSync(resolve(dir, ".git"), "utf-8").slice(0, 4096))?.[1];
+  } catch {
+    return false;
+  }
+  if (!gitdir || !WORKTREE_GITDIR_RE.test(gitdir)) return false;
+  return realPath(resolve(dir, gitdir)).startsWith(realPath(root) + sep);
+}
+
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The file-system adapter every walk runs on: each listing passes through
+ * here before fdir sees it — linked worktrees emptied, pruned directories
+ * dropped, links recorded.
  */
 function walkFs(
+  cwd: string,
   links: LinkedFiles | undefined,
   prune: ((absoluteDir: string) => boolean) | undefined,
 ): NonNullable<TinyGlobOptions["fs"]> {
+  const root = resolve(cwd);
   const filter = (dir: string, entries: Dirent[]): Dirent[] => {
+    if (linkedWorktreeOf(root, dir, entries) && resolve(dir) !== root) return [];
     const kept = prune ? entries.filter((e) => !(e.isDirectory() && prune(resolve(dir, e.name)))) : entries;
     return links ? links.record(dir, kept) : kept;
   };
@@ -116,7 +158,7 @@ function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links,
   };
   if (ignore) options.ignore = [...ignore];
   if (deep !== undefined) options.deep = deep - 1;
-  if (links || prune) options.fs = walkFs(links, prune);
+  options.fs = walkFs(cwd, links, prune);
   return options;
 }
 

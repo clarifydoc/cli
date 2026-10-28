@@ -139,6 +139,22 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("lib/bin/build-output.js");
     expect(files).not.toContain("App/bin/Debug/Gen.cs");
   });
+
+  it("skips a linked worktree of the repository it reads, and keeps a submodule and a foreign worktree", async () => {
+    write("src/club.ts", "export const club = 1;\n");
+    write(".git/worktrees/wt-feature/HEAD", "ref: refs/heads/feature\n");
+    write("wt-feature/.git", `gitdir: ${join(root, ".git", "worktrees", "wt-feature")}\n`);
+    write("wt-feature/src/club.ts", "export const club = 2;\n");
+    write("vendor-kit/.git", "gitdir: ../.git/modules/vendor-kit\n");
+    write("vendor-kit/garage.ts", "export const garage = 1;\n");
+    write("elsewhere/.git", "gitdir: /nowhere/league/.git/worktrees/elsewhere\n");
+    write("elsewhere/car.ts", "export const car = 1;\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toEqual(["elsewhere/car.ts", "src/club.ts", "vendor-kit/garage.ts"]);
+    // The worktree itself, pointed at, is read.
+    const own = (await discoverFiles(join(root, "wt-feature"))).files.map((f) => f.relativePath);
+    expect(own).toEqual(["src/club.ts"]);
+  });
 });
 
 describe("discoverFiles — a hand-written types package", () => {
