@@ -2816,6 +2816,39 @@ export interface SymbolReachSummary {
   hasTransitive: boolean;
 }
 
+/** A project-declared type a signature names, where it is declared. */
+export interface SignatureModel {
+  name: string;
+  file: string;
+  /** The type is an ORM entity (a node of the Data Model's ER diagram). */
+  entity?: boolean;
+}
+
+/** One parameter or return type of a traced function's signature. */
+export interface SignatureType {
+  /** The parameter's name; absent on a return type. */
+  name?: string;
+  /** The type as written; null when the source declares none. */
+  type: string | null;
+  /** The project types it names (`List<Club>` → `Club`); omitted when it names none the project declares. */
+  models?: SignatureModel[];
+}
+
+/**
+ * The declared signature of a function the Call Traces view shows (an end of
+ * a symbol link, or a function that touches data): what goes into it and
+ * what comes out (symbol-signatures.ts).
+ */
+export interface SymbolSignature {
+  /** Defining file (matches SymbolLink.targetFile). */
+  file: string;
+  /** "Class.method" | "fn" (matches SymbolLink.targetSymbol). */
+  symbol: string;
+  params: SignatureType[];
+  /** Omitted when the function declares no return type. */
+  returns?: SignatureType;
+}
+
 /**
  * A source→sink row: a UI/route entry point that transitively reaches a data
  * effect. The natural payoff of the reach pass — e.g. filter on
@@ -3829,6 +3862,9 @@ export interface ProjectAnalysis {
    *  effects each function reaches through the call graph (data-flow-reach.ts).
    *  Omitted when the project has no data access. */
   symbolReach?: SymbolReachSummary[];
+  /** Parameter and return types of the functions symbol links join, with the
+   *  project types they name (symbol-signatures.ts). Omitted when empty. */
+  symbolSignatures?: SymbolSignature[];
   /** Source→sink rows: UI/route entry points that transitively reach a data
    *  effect (e.g. handlers that reach a DB write). Omitted when empty. */
   dataFlows?: DataFlowPath[];

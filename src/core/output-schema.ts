@@ -152,6 +152,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   entityGraph: "optional",
   symbolDataAccess: "optional",
   symbolReach: "optional",
+  symbolSignatures: "optional",
   dataFlows: "optional",
   migrations: "optional",
   externalPackages: "optional",
