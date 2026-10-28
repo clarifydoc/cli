@@ -4562,7 +4562,7 @@ function linkThroughPoint(
   // The one implementation is not the target when it IS the consumer (a
   // decorator holding another instance of its own interface), nor when an
   // interface extending this one has implementations of its own.
-  if (impls.length === 1 && impls[0]!.className !== point.consumer && !(iface && implementedBelow(iface, sourceIsTest, ctx))) {
+  if (impls.length === 1 && impls[0]!.className !== point.consumer && !(iface && implementedBelow(iface, impls[0]!, sourceIsTest, ctx))) {
     const impl = impls[0]!;
     // An implementation that does not declare the member is an abstract base:
     // the call runs in the one class below it that does (`ServiceImpl extends
@@ -4600,13 +4600,25 @@ function linkThroughPoint(
   return null;
 }
 
-/** Whether an interface extending `iface` (at any depth) has a real implementation (test doubles only for tests). */
-function implementedBelow(iface: InterfaceImplInfo, sourceIsTest: boolean, ctx: LinkContext, seen = new Set<InterfaceImplInfo>()): boolean {
+/**
+ * Whether an interface extending `iface` (at any depth) has a real implementation (test doubles only for tests)
+ * other than `only` and the classes extending it (`ClubRepository : BasicRepository<Club>, IClubRepository`
+ * inherits what `BasicRepository` implements).
+ */
+function implementedBelow(
+  iface: InterfaceImplInfo,
+  only: { className: string; classFile: string },
+  sourceIsTest: boolean,
+  ctx: LinkContext,
+  seen = new Set<InterfaceImplInfo>(),
+): boolean {
   seen.add(iface);
   for (const sub of iface.extendedBy ?? []) {
     if (seen.has(sub)) continue;
-    if (sub.impls.some((im) => sourceIsTest || !(TEST_DOUBLE_PATH_RE.test(im.classFile) || isTestFile(im.classFile, (ctx.languageOf.get(im.classFile) ?? "") as Language)))) return true;
-    if (implementedBelow(sub, sourceIsTest, ctx, seen)) return true;
+    const other = sub.impls.some((im) =>
+      (sourceIsTest || !(TEST_DOUBLE_PATH_RE.test(im.classFile) || isTestFile(im.classFile, (ctx.languageOf.get(im.classFile) ?? "") as Language)))
+      && !baseChain(ctx, im.className, im.classFile).some((c) => c.name === only.className && c.file === only.classFile));
+    if (other || implementedBelow(sub, only, sourceIsTest, ctx, seen)) return true;
   }
   return false;
 }

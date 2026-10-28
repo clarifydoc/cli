@@ -149,3 +149,17 @@ describe("interface redirect with sub-interfaces", () => {
     expect(edges([provider, seasonal, match, user], "TransferDesk.check")).toContain("provider.isValid -> MatchProvider.isValid [interface-redirect/calls]");
   });
 });
+
+describe("interface redirect with sub-interfaces implemented by a subclass", () => {
+  it("keeps the one implementation when the extending interface's implementations inherit from it", () => {
+    const repo = file("league/IRepo.java", [cls("IRepo", { kind: "interface", methods: [method("all", 2)] })]);
+    const clubRepoIface = file("league/IClubRepo.java", [cls("IClubRepo", { kind: "interface", extends: "IRepo" })]);
+    const base = file("league/BasicRepo.java", [cls("BasicRepo", { implements: ["IRepo"], methods: [method("all", 4)] })]);
+    const clubRepo = file("league/ClubRepo.java", [cls("ClubRepo", { extends: "BasicRepo", implements: ["IClubRepo"] })]);
+    const user = file("league/Garage.java", [cls("Garage", {
+      properties: [prop("repo", "IRepo")],
+      methods: [method("park", 10, [call("repo.all")])],
+    })]);
+    expect(edges([repo, clubRepoIface, base, clubRepo, user], "Garage.park")).toContain("repo.all -> BasicRepo.all [interface-redirect/calls]");
+  });
+});

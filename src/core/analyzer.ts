@@ -1893,8 +1893,19 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const genericDataAccess = attributeGenericDataAccess(allAnalyses);
     const classAt = genericDataAccess.length > 0 ? new Map(allAnalyses.flatMap((a) => a.classes.map((c) => [`${a.filePath}\0${c.name}`, c] as const))) : null;
     const matchEntity = genericDataAccess.length > 0 ? entityMatcher(entityGraph) : null;
+    // An abstract method's fan-out to its overrides is navigation here: what reaches the base method runs ONE
+    // of them, which only the caller's own class decides (a route's own override, a single-override redirect)
+    // — following every override would hand each subclass's route its siblings' tables.
+    const abstractMethods = new Set<string>();
+    for (const a of allAnalyses) {
+      for (const c of a.classes) {
+        if (c.kind !== "interface") for (const m of c.methods) if (m.abstract) abstractMethods.add(`${a.filePath}::${c.name}.${m.name}`);
+      }
+    }
+    const reachLinks = abstractMethods.size === 0 ? symbolLinks
+      : symbolLinks.filter((l) => !(l.strategy === "interface-fanout" && abstractMethods.has(`${l.sourceFile}::${l.sourceSymbol}`)));
     const reached = computeSymbolReachWithWitness({
-      symbolLinks,
+      symbolLinks: reachLinks,
       symbolDataAccess,
       apiCallAccess: attributeApiCallsToSymbols(allAnalyses, allApiCalls),
       dbAccessByLine,
