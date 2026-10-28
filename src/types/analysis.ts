@@ -518,6 +518,14 @@ export interface FileAnalysis {
    */
   typeAliases?: TypeAliasInfo[];
   /**
+   * Module-level names bound to another name the module sees (Python
+   * `s = attributes = attrs`, TypeScript `export const s = attrs`): a call of
+   * the alias is a call of what it names. The name as written — core follows
+   * it to the definition, through the module's imports. Omitted when the
+   * file binds none.
+   */
+  nameAliases?: NameAliasInfo[];
+  /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
    * a function by its qualified name (`use function App\Support\money`,
@@ -737,6 +745,13 @@ export interface ExportInfo {
    * A call through the binding that imports it (`import AgentAPI from './agents'`, `AgentAPI.get()`) is a call on that class.
    */
   instanceOf?: string;
+}
+
+/** A module-level name bound to another: `name` stands for `target`, as written (`s = attrs`). */
+export interface NameAliasInfo {
+  name: string;
+  target: string;
+  line: number;
 }
 
 /** A type alias a file declares: `name` stands for `type`, as written. */

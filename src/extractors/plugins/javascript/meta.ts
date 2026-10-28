@@ -2,7 +2,7 @@ import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
-import { extractTsTypeAliases } from "./type-aliases.js";
+import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
@@ -265,6 +265,7 @@ function astHooks(language: Language): AstExtractorHooks {
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,
     typeAliases: (tree) => extractTsTypeAliases(tree),
+    nameAliases: (tree) => extractJsNameAliases(tree),
     topLevelLocalTypes: (tree, sourceText) => topLevelLocalTypes(tree, sourceText),
   };
 }

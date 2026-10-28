@@ -738,8 +738,10 @@ function buildSymbolIndex(
     }
 
     // Exports (fill in symbols not already captured by functions/methods)
+    const exported = new Set<string>();
     for (const exp of analysis.exports) {
       if (!fileSymbols.has(exp.name)) {
+        exported.add(exp.name);
         fileSymbols.set(exp.name, {
           name: exp.name,
           line: exp.line,
@@ -747,6 +749,14 @@ function buildSymbolIndex(
           ...(exp.kind === "re-export" ? { reexport: true } : {}),
         });
       }
+    }
+
+    // An exported module-level alias (`export const s = attrs`) forwards to
+    // another definition, as a re-export does (`forwardedDefinition` follows
+    // it); one that is not exported is no symbol of its own.
+    for (const alias of analysis.nameAliases ?? []) {
+      const own = fileSymbols.get(alias.name);
+      if (own && exported.has(alias.name)) fileSymbols.set(alias.name, { ...own, reexport: true });
     }
 
     index.set(analysis.filePath, fileSymbols);
@@ -2908,6 +2918,19 @@ function resolveCallToDefinition(
   if (!def && !isQualified && !bareIsFunction) {
     def = symbolIn(ctx, targetFile, leafName);
   }
+  // `s = attrs` … `s()` in the same module: the function the alias names.
+  if ((!def || def.reexport) && call.kind === "internal" && !isQualified) {
+    const aliased = aliasedDefinition(ctx, targetFile, call.name, 0, new Set());
+    const cls = aliased && ctx.classAt.get(memberKey(aliased.file, aliased.def.name));
+    if (cls) {
+      const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+      return mkLink(aliased.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
+    }
+    if (aliased && !aliased.namespace) {
+      targetFile = aliased.file;
+      def = aliased.def;
+    }
+  }
   // A barrel / package `__init__` that forwards the name (`export * from
   // "./x"`, `from .x import *`, `from .impl import Service`): the definition
   // is where the re-export leads. A named re-export stays the target only
@@ -2923,7 +2946,9 @@ function resolveCallToDefinition(
     const viaDefault = defaultImport ? defaultDefinition(ctx, targetFile, 0, new Set()) : null;
     // `import * as utils from "./utils"; utils.format()` — the member by its own name.
     const viaNamespace = isQualified && analysis.imports.some((i) => i.isNamespace && i.specifiers.includes(head));
-    const fwd = viaDefault && (viaDefault.def.name !== "default" || !def || def.reexport) ? viaDefault
+    // A default the module names like the binding (`import Club from "./club"`) is the plain lookup's.
+    const sameDef = !!def && !!viaDefault && viaDefault.file === targetFile && viaDefault.def.name === def.name;
+    const fwd = viaDefault && !sameDef && (viaDefault.def.name !== "default" || !def || def.reexport) ? viaDefault
       : !def || def.reexport ? forwardedDefinition(ctx, targetFile, isQualified && !viaNamespace ? head : exported ?? leafName, 0, new Set())
       : null;
     // `export * as paintShop from "./spray"; paintShop.sprayCar()` — the member of the module it names.
@@ -3044,7 +3069,10 @@ function resolveCallToDefinition(
         const suffix = parts.slice(i).join(".");
         const suffixDef = targetSymbols.get(suffix) ?? targetSymbols.get(leafName);
         if (suffixDef) {
-          def = suffixDef;
+          // A name the file only imports and passes on (`from .staleness import compute_staleness`): its definition.
+          const fwd = suffixDef.reexport && suffixDef.name === leafName ? forwardedDefinition(ctx, targetFile, leafName, 0, new Set()) : null;
+          if (fwd && !fwd.namespace) targetFile = fwd.file;
+          def = fwd && !fwd.namespace ? fwd.def : suffixDef;
           defStrategy = "deep-qualified";
           break;
         }
@@ -3615,6 +3643,8 @@ function forwardedDefinition(
 ): ForwardedDefinition | null {
   if (depth > MAX_REEXPORT_DEPTH || seen.has(file)) return null;
   seen.add(file);
+  const aliased = aliasedDefinition(ctx, file, name, depth, seen);
+  if (aliased) return aliased;
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   const exports = ctx.analysisByFile.get(file)?.exports ?? [];
   let found: ForwardedDefinition | null = null;
@@ -3642,6 +3672,30 @@ function forwardedDefinition(
     found = hit;
   }
   return found;
+}
+
+/**
+ * What a module-level alias names (`s = attributes = attrs`, `export const
+ * club = attrs`): the definition in its own file, or the one it imports. Two
+ * bindings of the name to different targets decide nothing.
+ */
+function aliasedDefinition(ctx: LinkContext, file: string, name: string, depth: number, seen: Set<string>): ForwardedDefinition | null {
+  if (depth > MAX_REEXPORT_DEPTH) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const aliases = ctx.analysisByFile.get(file)?.nameAliases?.filter((a) => a.name === name);
+  if (!aliases?.length || aliases.some((a) => a.target !== aliases[0]!.target)) return null;
+  const target = aliases[0]!.target;
+  if (target === name) return null;
+  const own = symbolIn(ctx, file, target);
+  const found = own && own.name === target && !own.reexport ? { file, def: own }
+    : importedDefinition(ctx, file, target, depth + 1, seen) ?? aliasedDefinition(ctx, file, target, depth + 1, seen);
+  // An alias of a value (`DATA_VERSION = CACHE_VERSION`) stays the value's own name.
+  return found && (found.namespace || callableAt(ctx, found.file, found.def.name)) ? found : null;
+}
+
+/** Whether `file` defines `name` as a function or class. */
+function callableAt(ctx: LinkContext, file: string, name: string): boolean {
+  return ctx.classAt.has(memberKey(file, name)) || !!ctx.analysisByFile?.get(file)?.functions.some((f) => f.name === name);
 }
 
 /** A definition a re-export leads to; `namespace` when the name stands for a whole module (`export * as ns from`). */

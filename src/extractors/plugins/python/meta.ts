@@ -1,6 +1,6 @@
 import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
-import { extractPythonTypeAliases } from "./type-aliases.js";
+import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-aliases.js";
 import { extractPythonModuleValues } from "./module-values.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
 import { extractPythonEntryPoints, extractPythonScheduledJobs } from "./entry-points.js";
@@ -207,6 +207,7 @@ export const pythonMeta: LanguagePluginMeta = {
     // providers, `injector` bindings (see di.ts).
     diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
     typeAliases: (tree) => extractPythonTypeAliases(tree),
+    nameAliases: (tree) => extractPythonNameAliases(tree),
     // Module and class string constants another module's URL or route reads (see module-values.ts).
     moduleValues: (tree) => extractPythonModuleValues(tree),
     entryPoints: (tree, sourceText) => [...extractPythonEntryPoints(tree, sourceText), ...extractPythonScheduledJobs(tree, sourceText)],
