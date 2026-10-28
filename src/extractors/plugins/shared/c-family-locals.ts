@@ -196,7 +196,7 @@ function constructedType(value: string): string | null {
     return close > 0 ? cFamilyTypeName(v.slice(open + 1, close)) : null;
   }
   // `Club{…}`, `league::Club{…}`, `Box<int>()`, `std::unique_ptr<Club>(…)`: a type built whole. `Club(…)` may as well
-  // call a function (`NewIterator(…)`, `Slot::Create(…)`): it is the linker's to tell, as an initializer call.
+  // call a function (`NewFixtureList(…)`, `Slot::Create(…)`): it is the linker's to tell, as an initializer call.
   const ctor = /^((?:[A-Za-z_]\w*\s*::\s*)*[A-Za-z_]\w*)(\s*<[^;()]*>)?\s*([({])/.exec(v);
   if (!ctor || closing(v, ctor[0].length - 1, ctor[3] === "(" ? ")" : "}") !== v.length - 1) return null;
   if (ctor[3] === "{" ? /^[A-Z]/.test(ctor[1]!.split("::").at(-1)!.trim()) || ctor[2] : ctor[2]) return cFamilyTypeName(ctor[1]! + (ctor[2] ?? ""));
