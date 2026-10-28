@@ -139,6 +139,14 @@ export interface FileResult {
 export const FRONT_END_MAX_CHARS = 2_000_000;
 
 /**
+ * The longest generated file read at all. A generator's output this size is
+ * tables (a tree-sitter `parser.c` runs to 100 MB), and even the patterns'
+ * reading of one held ~1 GB: a repository vendoring fifty grammars peaked at
+ * 17 GB. Past it the file is skipped like one its plugin refuses.
+ */
+export const GENERATED_MAX_CHARS = 4_000_000;
+
+/**
  * A parser front end's reading of a regex-language file: the language's ANTLR
  * grammar when the `antlr` feature covers it (`antlr` or `antlr:<grammar>`),
  * else its tree-sitter grammar when `tree-sitter` does. `parsed` is absent —
@@ -348,6 +356,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const vendoredLibrary = vendoredLibraryOf(rawSource, file.language);
     const vendored = vendoredLibrary !== undefined || isVendoredSource(rawSource);
     const generated = isGeneratedSource(rawSource);
+    if (generated && rawSource.length > GENERATED_MAX_CHARS) {
+      const skip = `generated, ${(rawSource.length / 1e6).toFixed(1)} MB`;
+      if (verbose) console.log(`    Skipping ${file.relativePath}: ${skip}`);
+      return task.reportSkips ? { skipped: skip } : null;
+    }
 
     // Formats with their own dedicated parser (e.g. Delphi .dfm — no tree-sitter)
     if (filePlugin?.customParse) {
