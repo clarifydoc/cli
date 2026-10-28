@@ -502,7 +502,9 @@ export function classifyCalls(
       // binding that made it is an identity wrapper (`const f = useCallback(() => …)`).
       const ownFunction = !call.name.includes(".") && localSymbols?.has(call.name);
       const shadowed = ownBindings?.has(call.name.includes(".") ? root : call.name);
-      const alias = ownFunction || shadowed ? undefined : variableAliases.get(call.name.includes(".") ? root : call.name);
+      // A member path bound as a whole (a typed prop read off the props object, `props.actions`) before its root.
+      const parts = call.name.split(".");
+      const alias = ownFunction || shadowed ? undefined : (parts.length > 2 ? variableAliases.get(`${parts[0]}.${parts[1]}`) : undefined) ?? variableAliases.get(call.name.includes(".") ? root : call.name);
       // A binding from a factory the file does not import (no source): only the factory is
       // remembered, for a project pass that knows where the framework imports it from.
       // A renamed destructured member (`{ remove: removeCar }`) is called by its local name.

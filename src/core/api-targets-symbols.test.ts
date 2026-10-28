@@ -382,6 +382,36 @@ export class PlayersApi extends BaseCRUDAPI {
     expect(targets.map((t) => t[0]).sort()).toEqual(["/api/players", "/api/players/{}", "/api/players/{}"]);
   });
 
+  it("reads a base route a subclass hands `super(…)` as a call of a URL helper, which builds on another (real-repo FP)", async () => {
+    const targets = await project({
+      "src/base/base-clients.ts": `
+export abstract class BaseReadOnlyAPI {
+  public baseRoute: string;
+  constructor(requests: Requests, baseRoute: string, itemRoute: (id: string) => string) {
+    this.baseRoute = baseRoute;
+    this.itemRouteFn = itemRoute;
+  }
+  itemRoute(itemId: string): string { return this.itemRouteFn(itemId); }
+  async getAll(page = 1) { return await this.requests.get(this.baseRoute); }
+  async getOne(itemId: string) { return await this.requests.get(this.itemRoute(itemId)); }
+}`,
+      "src/public/clubs.ts": `
+import { BaseReadOnlyAPI } from "../base/base-clients";
+const prefix = "/api";
+const leagueSlug = (slug: string) => \`\${prefix}/leagues/\${slug}\`;
+const routes = {
+  clubsInLeague: (slug: string) => \`\${leagueSlug(slug)}/clubs\`,
+  clubsInLeagueId: (slug: string, clubId: string) => \`\${leagueSlug(slug)}/clubs/\${clubId}\`,
+};
+export class PublicClubsApi extends BaseReadOnlyAPI {
+  constructor(requests: Requests, slug: string) {
+    super(requests, routes.clubsInLeague(slug), (clubId: string) => routes.clubsInLeagueId(slug, clubId));
+  }
+}`,
+    });
+    expect(targets.map((t) => t[0])).toEqual(["/api/leagues/{}/clubs", "/api/leagues/{}/clubs/{}"]);
+  });
+
   it("requests the entry of a module's URL table a pass-through helper is handed (real-repo FP)", async () => {
     const targets = await project({
       "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {

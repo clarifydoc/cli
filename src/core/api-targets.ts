@@ -529,6 +529,28 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     return null;
   };
 
+  /** What `this.<member>` holds seen from `self`, as stated and where: a field value, or the `super(…)` argument it was handed. */
+  const memberText = (member: string, self: ClassRef): { text: string; file: string } | null => {
+    const chain = chainOf(self);
+    for (let k = 0; k < chain.length; k++) {
+      const { c } = chain[k]!;
+      const v = c.cls.fieldValues?.[member];
+      if (v === undefined) continue;
+      let index = ctorParamIndex(c, v);
+      if (index < 0) return { text: v, file: c.filePath };
+      for (let j = k - 1; j >= 0; j--) {
+        const below = chain[j]!.c;
+        const passed = below.cls.superArgs?.[index];
+        if (passed === undefined) return null;
+        const next = ctorParamIndex(below, passed);
+        if (next < 0) return { text: passed, file: below.filePath };
+        index = next;
+      }
+      return null;
+    }
+    return null;
+  };
+
   const resolveHole = (expr: string, file: string, cls: ClassRef | null, depth: number): string | null => {
     if (depth > 6) return null;
     // `options.apiVersion || DEFAULT_API_VERSION`: the first side the project states.
@@ -566,6 +588,15 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
         }
         break;
       }
+    }
+    // `routes.clubsId(id)`, `leaguePath(slug)`: a URL helper the file declares or imports, called with
+    // these arguments (a subclass's `super(requests, routes.clubs(slug))` hands the base such a call).
+    const helperCall = /^([A-Za-z_$][\w$]*(?:\.[\w$]+)?)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)$/.exec(expr);
+    if (helperCall) {
+      const fn = helperCall[1]!;
+      const source = ctx.importIndex.localFor(file, fn.split(".")[0]!) ?? file;
+      const helper = byFile.get(source)?.functions.find((f) => f.name === fn && f.urlTemplate);
+      return helper ? resolveThisCallWith(helper, source, splitArgs(helperCall[2]!), cls, depth) : null;
     }
     const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
     if (!name) return null;
@@ -613,6 +644,24 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
             return resolveThisCallWith(inner, source, handed, cls, depth);
           }
         }
+        // `itemRoute(id) { return this.itemRouteFn(id) }`, the field a subclass hands `super(…)` as an
+        // arrow calling a URL helper (`(id) => routes.clubsInLeagueId(slug, id)`): that helper, the
+        // arrow's parameters filled by what the method hands it.
+        const field = only ? /^this\.([\w$]+)$/.exec(only.name)?.[1] : undefined;
+        const stated = field ? memberText(field, cls) : null;
+        const arrow = stated ? /^\$\{\s*\(([^()]*)\)\s*=>\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)?)\s*\(([^()]*)\)\s*\}$/.exec(stated.text) : null;
+        if (arrow && stated) {
+          const outer = splitArgs(argsText);
+          const arrowParams = arrow[1]!.split(",").map((x) => x.split(":")[0]!.trim());
+          const handedTo = (i: number): string => {
+            const o = only!.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform)?.origin;
+            return o?.kind === "param" ? outer[o.index] ?? "" : o?.kind === "literal" ? JSON.stringify(o.value) : "";
+          };
+          const args = splitArgs(arrow[3]!).map((x) => (arrowParams.includes(x.trim()) ? handedTo(arrowParams.indexOf(x.trim())) : x));
+          const source = ctx.importIndex.localFor(stated.file, arrow[2]!.split(".")[0]!) ?? stated.file;
+          const inner = byFile.get(source)?.functions.find((f) => f.name === arrow[2] && f.urlTemplate);
+          if (inner) return resolveThisCallWith(inner, source, args, cls, depth);
+        }
       }
       if (!helper?.urlTemplate) return null;
       return resolveThisCallWith(helper, helperFile, splitArgs(argsText), cls, depth);
@@ -621,7 +670,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   };
 
   /** A URL helper's template with the call's arguments: a literal spliced in, anything else a wildcard. */
-  const resolveThisCallWith = (helper: FunctionInfo, helperFile: string, args: string[], cls: ClassRef, depth: number): string => {
+  const resolveThisCallWith = (helper: FunctionInfo, helperFile: string, args: string[], cls: ClassRef | null, depth: number): string => {
     // The base the extractor dropped from the template (`${this.constructor.getCollectionResource()}`), put back.
     let out = (helper.urlTemplateBase ? `\${${helper.urlTemplateBase}}` : "") + helper.urlTemplate;
     helper.params.forEach((p, i) => {

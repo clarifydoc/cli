@@ -1299,6 +1299,23 @@ describe("JS api-calls — a URL concatenated from a helper's result (real-repo 
   });
 });
 
+describe("JS api-calls — a route-table URL with an optional query string appended (real-repo FP)", () => {
+  it("reads the query string a local holds, or nothing, after the URL", async () => {
+    const rows = await apiCallsOf(`const routes = { base: "/api/leagues/reports" };
+export class LeagueReportsApi extends BaseAPI {
+  async getAll(season: string | null) {
+    const query = season ? \`?season=\${season}\` : "";
+    return await this.requests.get(routes.base + query);
+  }
+  async other(n: number) {
+    const count = n ? 1 : 0;
+    return await this.requests.get(routes.base + count);
+  }
+}`);
+    expect(rows.map((r) => `${r.name} ${r.target}`)).toEqual(["get ${routes.base}?season=${season}"]);
+  });
+});
+
 describe("JS data sources — a generated HTTP client's or a query cache's own API (real-repo FP)", () => {
   it("reads no database access on `client.interceptors…`, `client.setConfig` or TanStack `client.getQueryData`", async () => {
     const rows = await dbOf(`import { client } from './generated/client.gen'

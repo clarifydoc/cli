@@ -79,6 +79,11 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         if (!found && prop?.from) {
           const [head, ...rest] = prop.from.split(".");
           if (knobs.selfHeads.has(head!) && rest.every((s) => /^[\w$]+$/.test(s))) found = resolveChain(rest, className, depth + 1);
+          // A chain on a constructor parameter (`repos.shopping_items`, `repos: AllRepositories`): from its type.
+          if (!found && rest.length > 0 && rest.every((s) => /^[\w$]+$/.test(s))) {
+            const param = cls.methods.find((m) => knobs.isConstructor(m, cls))?.params.find((p) => p.name === head);
+            if (param?.type && written(param.type)) found = resolveChain(rest, written(param.type), depth + 1);
+          }
           // A chain on a function's result (`get_repositories().recipes`): from the class it returns.
           const fn = /^(\w+)\(\)$/.exec(head!)?.[1];
           if (fn && rest.every((s) => /^[\w$]+$/.test(s))) {
@@ -248,9 +253,11 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         const type = start ? resolveChain(parts.slice(1, -1), start) : null;
         let entity = repoEntity(type);
         let write = knobs.writeVerbs.test(leaf);
-        if (!entity && start && parts.length >= 3) {
+        // A wrapper's type arguments that name no entity (`HttpRepo[ClubCreate, ClubOut]`, schemas): the
+        // repository it was built with names the entity, when it does.
+        if ((!entity || !entities.has(entity)) && start && parts.length >= 3) {
           const wrapped = wrappedAccess(resolveChain(parts.slice(1, -2), start), parts[parts.length - 2]!, leaf);
-          if (wrapped) ({ entity, write } = wrapped);
+          if (wrapped && (!entity || entities.has(wrapped.entity))) ({ entity, write } = wrapped);
         }
         if (!entity) continue;
         const key = `${call.line}\0${call.name}`;

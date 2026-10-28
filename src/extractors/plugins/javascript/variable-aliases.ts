@@ -59,6 +59,19 @@ export function extractJsVariableAliases(
     aliases.set(name, { source, factory, ...(member ? { member } : {}) });
   }
 
+  // The locals holding a Vue component's props (`const props = defineProps<{ … }>()`, also through
+  // `withDefaults(…)`): a typed prop read through them (`props.actions.updateOne()`) is that prop.
+  const propsLocals = new Set<string>();
+  const findProps = (node: Node): void => {
+    if (node.type === "variable_declarator") {
+      const value = node.childForFieldName("value");
+      const name = node.childForFieldName("name");
+      if (name?.type === "identifier" && value && /^(?:withDefaults\s*\(\s*)?defineProps\s*[<(]/.test(value.text)) propsLocals.add(name.text);
+    }
+    for (const child of node.namedChildren) if (child) findProps(child);
+  };
+  if (/\bdefineProps\b/.test(tree.rootNode.text)) findProps(tree.rootNode);
+
   function walk(node: Node) {
     // A member typed as what a factory returns — a component prop
     // `actions: ReturnType<typeof useMatches>["actions"]` — is that factory's
@@ -69,7 +82,11 @@ export function extractJsVariableAliases(
       const type = node.childForFieldName("type")?.text.replace(/^:\s*/, "");
       const m = type?.match(/^ReturnType<\s*typeof\s+([A-Za-z_$][\w$]*)\s*>(?:\s*\[\s*["'][\w$]+["']\s*\])?$/);
       // `typeof useMatches` may name a type-only import of the factory: it still names its module.
-      if (name?.type === "property_identifier" && m) bind(name.text, importMap.get(m[1]!) ?? imports.find((i) => i.specifiers.includes(m[1]!))?.source ?? "", m[1]!);
+      if (name?.type === "property_identifier" && m) {
+        const source = importMap.get(m[1]!) ?? imports.find((i) => i.specifiers.includes(m[1]!))?.source ?? "";
+        bind(name.text, source, m[1]!);
+        for (const local of propsLocals) bind(`${local}.${name.text}`, source, m[1]!);
+      }
     }
     // Match: const/let/var <pattern> = importedFn()
     if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
@@ -79,6 +96,13 @@ export function extractJsVariableAliases(
         let valueNode = decl.childForFieldName("value");
         if (valueNode?.type === "await_expression") {
           valueNode = valueNode.namedChild(valueNode.namedChildCount - 1) ?? valueNode;
+        }
+        // `const store = isOwn ? useClubStore() : null`: the one factory a branch calls, the other none.
+        if (valueNode?.type === "ternary_expression") {
+          const arms = [valueNode.childForFieldName("consequence"), valueNode.childForFieldName("alternative")];
+          const empty = (n: Node | null) => !!n && (n.type === "null" || n.type === "undefined" || (n.type === "identifier" && n.text === "undefined"));
+          const call = arms.find((n) => n && !empty(n));
+          if (call && arms.some(empty) && (call.type === "call_expression" || call.type === "new_expression")) valueNode = call;
         }
         if (!nameNode || !valueNode) continue;
         // `const prisma = new PrismaClient()` binds the receiver just as

@@ -173,6 +173,29 @@ interface Props {
     expect(aliases.has("day")).toBe(false);
   });
 
+  it("binds a typed prop read off the props object, and the one factory a conditional initializer calls (real-repo FP)", async () => {
+    const imports = [
+      { source: "~/composables/use-fixtures", specifiers: ["useFixtures"], line: 1, isType: true },
+      { source: "~/composables/store", specifiers: ["useKitStore", "useClubStore"], line: 2 },
+    ] as unknown as ImportInfo[];
+    const src = `import type { useFixtures } from "~/composables/use-fixtures";
+import { useKitStore, useClubStore } from "~/composables/store";
+const props = defineProps<{
+  actions: ReturnType<typeof useFixtures>["actions"];
+}>();
+const kitStore = isOwnClub.value ? useKitStore() : null;
+const either = home ? useClubStore() : useKitStore();
+function postpone(match) { props.actions.updateOne(match); kitStore.actions.updateOne(match); }`;
+    const tree = await parse(src, "x.ts");
+    const aliases = extractJsVariableAliases(tree, imports);
+    expect(aliases.get("props.actions")).toEqual({ source: "~/composables/use-fixtures", factory: "useFixtures" });
+    expect(aliases.get("kitStore")).toEqual({ source: "~/composables/store", factory: "useKitStore" });
+    // Two factories, chosen at run time: no binding.
+    expect(aliases.has("either")).toBe(false);
+    const calls = classifyCalls([{ name: "props.actions.updateOne", kind: "internal", target: null, line: 8 }], imports, "typescript", aliases);
+    expect(calls[0]).toMatchObject({ kind: "cross-file", target: "~/composables/use-fixtures", via: "useFixtures" });
+  });
+
   it("drops a name bound to DIFFERENT sources (ambiguous) rather than guessing", async () => {
     const imports = [
       { source: "./a", specifiers: ["useA"], line: 1 },

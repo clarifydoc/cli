@@ -2352,7 +2352,12 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
         cur = { typeName: returned.name, typeFile: returned.file, member: "", consumer: cls.name };
       } else if (SELF_HEADS.has(segs[0]!)) {
         cur = { typeName: cls.name, typeFile: a.filePath, member: "", consumer: cls.name };
-      } else continue;
+      } else {
+        // A chain on a constructor parameter (`self.items = repos.shopping_items` in `__init__`): starts at
+        // the parameter's type, which the members above already hold.
+        cur = segs.length > 1 ? out.get(key)?.get(nameKey(a.language, segs[0]!)) ?? null : null;
+        if (!cur || !cls.methods.some((m) => isConstructor(m, cls) && m.params.some((x) => x.name === segs[0]))) continue;
+      }
       for (const seg of segs.slice(1)) {
         if (!cur?.typeFile) break;
         cur = out.get(memberKey(cur.typeFile, cur.typeName))?.get(nameKey(languageOfFile.get(cur.typeFile), seg)) ?? null;

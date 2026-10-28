@@ -917,11 +917,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const value = this.bindings()?.valueOf(p.text, p);
       return value?.type === "call_expression" ? value : null;
     };
-    const literal = pieces.some((p) => p.type === "string" || p.type === "template_string");
+    // A local that is a query string or nothing (`const query = season ? `?season=${season}` : ""`),
+    // appended to a URL held elsewhere (`routes.base + query`): the query string, as its literal arm reads.
+    const querySuffix = (p: Node, i: number): Node | null => {
+      if (i === 0 || p.type !== "identifier") return null;
+      const value = this.bindings()?.valueOf(p.text, p);
+      if (value?.type !== "ternary_expression") return null;
+      const arms = [value.childForFieldName("consequence"), value.childForFieldName("alternative")];
+      const text = (n: Node | null) => (n?.type === "string" ? stripQuotes(n.text) : n?.type === "template_string" ? n.text.slice(1, -1) : null);
+      const query = arms.find((n) => /^[?&]/.test(text(n) ?? ""));
+      return query && arms.every((n) => n === query || text(n) === "") ? query : null;
+    };
+    const literal = pieces.some((p, i) => p.type === "string" || p.type === "template_string" || querySuffix(p, i));
     if (!literal && !pieces.some((p) => p.type === "call_expression" || heldCall(p))) return null;
     let out = "";
-    for (const p of pieces) {
-      if (p.type === "string") out += stripQuotes(p.text);
+    for (const [i, p] of pieces.entries()) {
+      const query = querySuffix(p, i);
+      if (query) out += query.type === "string" ? stripQuotes(query.text) : resolveTemplateUrl(query, (name) => this.lookupUrl(name, query));
+      else if (p.type === "string") out += stripQuotes(p.text);
       else if (p.type === "template_string") out += resolveTemplateUrl(p, (name) => this.lookupUrl(name, p));
       else if (p.type === "identifier") {
         const held = heldCall(p);

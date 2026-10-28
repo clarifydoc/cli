@@ -408,7 +408,8 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
       if (/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) {
         const ctor = name.split(".").pop()!;
         type ??= ctor;
-        if (type === ctor) {
+        // Annotated as the class it builds (`-> HttpRepo[A, B]` returning `HttpRepo(…)`): its arguments too.
+        if (type === ctor || type.replace(/\[[\s\S]*$/, "").split(".").pop() === ctor) {
           const args = returned.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
           // Positional only: a keyword or a splat would shift every index after it.
           const stop = args.findIndex((a) => a.type === "keyword_argument" || /splat/.test(a.type));

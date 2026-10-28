@@ -96,6 +96,38 @@ describe("Python generic repository access", () => {
   });
 });
 
+describe("Python repository members assigned from a constructor parameter", () => {
+  it("types `self.players = repos.squad_players` by the parameter's type, and prefers the wrapped repository's entity over schema type arguments (real-repo FP)", () => {
+    const model = file("db/models/player.py", [cls("PlayerModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("SquadRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
+    const factory = file("repos/repository_factory.py", [cls("AllRepositories", { methods: [method("squad_players", [], "SquadRepositoryGeneric[PlayerOut, PlayerModel]")] })]);
+    const schemas = file("schema/player.py", [cls("PlayerCreate"), cls("PlayerOut")]);
+    const service = file("services/squad.py", [cls("SquadService", {
+      props: [["repos", "AllRepositories"]],
+      methods: [
+        method("__init__", [], null, [{ name: "repos", type: "AllRepositories", defaultValue: null }]),
+        method("release", ["self.players.delete_many"]),
+      ],
+    })]);
+    (service.classes[0] as any).properties.push({ name: "players", type: null, visibility: "public", isStatic: false, isReadonly: false, from: "repos.squad_players" });
+    const wrapper = file("routes/_base/mixins.py", [cls("HttpRepo", {
+      methods: [method("__init__", [], null, [{ name: "repo", type: "RepositoryGeneric", defaultValue: null }]), method("get_one", ["self.repo.get_one"])],
+    })]);
+    const controller = file("routes/squad.py", [cls("SquadController", {
+      props: [["repos", "AllRepositories"]],
+      methods: [method("get_one", ["self.mixins.get_one"])],
+    })]);
+    const props = (controller.classes[0] as any).properties;
+    props.push({ name: "repo", type: null, visibility: "public", isStatic: false, isReadonly: true, from: "self.repos.squad_players" });
+    props.push({ name: "mixins", type: "HttpRepo[PlayerCreate, PlayerOut]", visibility: "public", isStatic: false, isReadonly: true, constructedWith: ["self.repo"] });
+
+    new PythonEntityExtractor().reconcileProject([model, generic, factory, schemas, service, wrapper, controller]);
+
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([["self.players.delete_many", "PlayerModel", "write"]]);
+    expect(controller.dataSources.map((d) => [d.name, d.entity])).toEqual([["self.mixins.get_one", "PlayerModel"]]);
+  });
+});
+
 /** `select(self.model)` in a generic repository or a mixin of one: the model each construction hands the constructor. */
 describe("Python model held by an instance attribute", () => {
   const ctor = (params: string[], calls: Array<[string, string[]]> = []): any => ({

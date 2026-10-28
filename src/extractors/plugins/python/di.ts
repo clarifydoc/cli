@@ -600,7 +600,10 @@ export function collectInstanceAttributes(
         }
         const right = a.childForFieldName("right");
         table.assign(name, right ? valueFact(right, scope) : UNKNOWN);
-        const chain = right ? resultChainText(right) : null;
+        // `self.items = repos.shopping_items` in `__init__`, `repos: AllRepositories`: a chain on a typed
+        // constructor parameter, which the project pass types from that parameter.
+        const onParam = right?.type === "attribute" && fn.name === "__init__" && /^\w+(?:\.\w+)+$/.test(right.text) && !!params.get(right.text.split(".")[0]!)?.type;
+        const chain = right ? resultChainText(right) ?? (onParam ? right.text : null) : null;
         chains.set(name, chains.has(name) && chains.get(name) !== chain ? null : chain);
       },
     });

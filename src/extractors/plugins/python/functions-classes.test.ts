@@ -296,6 +296,28 @@ class LeagueController(BaseController):
     // What the wrapper was built with, positional only: a project pass follows the repository into it.
     expect(classes[0]!.properties.find((p) => p.name === "mixins")?.constructedWith).toEqual(["self.repo", "self.logger"]);
   });
+
+  it("keeps a chain on a typed constructor parameter, and what a wrapper annotated as its own class is built with", async () => {
+    const { classes } = await extract(`
+class SquadService:
+    def __init__(self, repos: AllRepositories, size):
+        self.repos = repos
+        self.players = repos.squad_players
+        self.loans = size.loans
+
+    def refresh(self, plain):
+        self.coaches = plain.coaches
+
+class SquadController:
+    @cached_property
+    def mixins(self) -> HttpRepo[PlayerCreate, PlayerOut]:
+        return HttpRepo(self.repo, self.logger)
+`);
+    const props = Object.fromEntries(classes[0]!.properties.map((p) => [p.name, `${p.type ?? "-"} ${p.from ?? ""}`.trim()]));
+    // An untyped parameter's chain, or one outside the constructor, says nothing.
+    expect(props).toEqual({ repos: "AllRepositories", players: "- repos.squad_players" });
+    expect(classes[1]!.properties.find((p) => p.name === "mixins")?.constructedWith).toEqual(["self.repo", "self.logger"]);
+  });
 });
 
 describe("Python constructor parameters held as classes", () => {
