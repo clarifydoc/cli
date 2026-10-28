@@ -27,6 +27,23 @@ const from = (links: SymbolLink[], sourceSymbol: string, callName: string) =>
   links.filter((l) => l.sourceSymbol === sourceSymbol && l.callName === callName);
 
 describe("symbol-linker — unique-global counts definitions, not files", () => {
+  // `sink.add_file()` on an untyped `sink`: `ZipSink` and `FolderSink` override `Sink.add_file` in the same file.
+  it("takes the base's method when the namesakes are its overrides in one file", () => {
+    const sub = (name: string, line: number, methods: FunctionInfo[]) => ({ ...cls(name, line, line + 2, methods), extends: "Sink" });
+    const decl = file("league/export/sinks.py", "python", {
+      classes: [
+        cls("Sink", 1, 3, [fn("add_file", 2, 2)]),
+        sub("ZipSink", 4, [fn("add_file", 5, 5)]),
+        sub("FolderSink", 7, [fn("add_file", 8, 8)]),
+      ],
+    });
+    const caller = file("league/export/run.py", "python", {
+      functions: [fn("export_all", 1, 3, [call("sink.add_file", 2)])],
+    });
+    const [link] = from(buildSymbolLinks([decl, caller]), "export_all", "sink.add_file");
+    expect(link).toMatchObject({ targetSymbol: "Sink.add_file", targetLine: 2, confidence: "AMBIGUOUS" });
+  });
+
   // `foreach (var p in squad) p.Drill()`: the element's type is not tracked,
   // and the file declaring the name declares it twice.
   it("leaves a call unlinked when two classes of one file declare the method (C#)", () => {

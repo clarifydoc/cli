@@ -88,7 +88,7 @@ export function buildSymbolLinks(
     interfaceImplMap: buildInterfaceImplMap(typeDecls),
     classCatalog: buildClassCatalog(typeDecls),
     classByProject: buildClassCatalogByProject(typeDecls),
-    leafCatalog: buildLeafCatalog(symbolIndex, projectOf),
+    leafCatalog: buildLeafCatalog(symbolIndex, projectOf, buildClassAt(analyses)),
     dirTailIndex: buildDirTailIndex(symbolIndex),
     classNameIndex: buildClassNameIndex(symbolIndex),
     namespaceSuffixIndex: buildNamespaceSuffixIndex(symbolIndex),
@@ -1317,26 +1317,44 @@ interface LeafCatalogEntry {
  * only names defined exactly once are linkable, which is what keeps the
  * heuristic safe on large projects — common names are never unique. A file's
  * index keys a bare name once, so its definitions are counted from the
- * qualified keys: `Coach.Drill` and `Player.Drill` in one file are two.
+ * qualified keys: `Coach.Drill` and `Player.Drill` in one file are two. A
+ * subclass overriding its base's method in the same file (`ZipSink.add` below
+ * `Sink.add`) is that method again: the base's declaration stands for both,
+ * and dispatch fans out from it.
  */
 function buildLeafCatalog(
   symbolIndex: Map<string, Map<string, SymbolDef>>,
   projectOf: Map<string, string>,
+  classAt: Map<string, ClassInfo>,
 ): Map<string, LeafCatalogEntry> {
   const map = new Map<string, LeafCatalogEntry>();
   for (const [filePath, syms] of symbolIndex) {
-    // How many classes of this file declare each bare name as a method.
-    const methods = new Map<string, number>();
+    // The classes of this file that declare each bare name as a method.
+    const methods = new Map<string, string[]>();
     for (const [name, def] of syms) {
       const dot = name.lastIndexOf(".");
       if (dot <= 0 || def.reexport) continue;
       const leaf = name.slice(dot + 1);
-      methods.set(leaf, (methods.get(leaf) ?? 0) + 1);
+      (methods.get(leaf) ?? methods.set(leaf, []).get(leaf)!).push(name.slice(0, dot));
     }
-    for (const [name, def] of syms) {
+    // The topmost class of the file, up `extends`, that declares the method: where an override's method is declared.
+    const rootOf = (cls: string, leaf: string): string => {
+      let root = cls;
+      const seen = new Set([cls]);
+      for (let base = bareClassName(classAt.get(memberKey(filePath, cls))?.extends); base && !seen.has(base); ) {
+        seen.add(base);
+        if (syms.has(`${base}.${leaf}`)) root = base;
+        base = bareClassName(classAt.get(memberKey(filePath, base))?.extends);
+      }
+      return root;
+    };
+    for (const [name, bare] of syms) {
       if (name.includes(".")) continue;
+      const roots = new Set((methods.get(name) ?? []).map((cls) => rootOf(cls, name)));
+      // One method of one hierarchy stands as its root's declaration.
+      const def = bare.name.includes(".") && roots.size === 1 ? syms.get(`${[...roots][0]}.${name}`) ?? bare : bare;
       // A free function (or class) of the name is one more.
-      const count = Math.max(1, (methods.get(name) ?? 0) + (def.name.includes(".") ? 0 : 1));
+      const count = Math.max(1, roots.size + (bare.name.includes(".") ? 0 : 1));
       const existing = map.get(name);
       if (existing) {
         existing.count += count;
