@@ -1264,15 +1264,17 @@ interface LeafCatalogEntry {
   file: string;
   projectId: string;
   def: SymbolDef;
-  /** How many files define this name (1 = unambiguous). */
+  /** How many definitions of this name there are, in every file (1 = unambiguous). */
   count: number;
 }
 
 /**
- * Global unqualified-name catalog: symbolName → the single file defining it.
+ * Global unqualified-name catalog: symbolName → the single definition of it.
  * Backs the last-resort heuristic for untracked receivers (`processor.run()`):
- * only names defined in exactly one file are linkable, which is what keeps the
- * heuristic safe on large projects — common names are never unique.
+ * only names defined exactly once are linkable, which is what keeps the
+ * heuristic safe on large projects — common names are never unique. A file's
+ * index keys a bare name once, so its definitions are counted from the
+ * qualified keys: `Coach.Drill` and `Player.Drill` in one file are two.
  */
 function buildLeafCatalog(
   symbolIndex: Map<string, Map<string, SymbolDef>>,
@@ -1280,13 +1282,23 @@ function buildLeafCatalog(
 ): Map<string, LeafCatalogEntry> {
   const map = new Map<string, LeafCatalogEntry>();
   for (const [filePath, syms] of symbolIndex) {
+    // How many classes of this file declare each bare name as a method.
+    const methods = new Map<string, number>();
+    for (const [name, def] of syms) {
+      const dot = name.lastIndexOf(".");
+      if (dot <= 0 || def.reexport) continue;
+      const leaf = name.slice(dot + 1);
+      methods.set(leaf, (methods.get(leaf) ?? 0) + 1);
+    }
     for (const [name, def] of syms) {
       if (name.includes(".")) continue;
+      // A free function (or class) of the name is one more.
+      const count = Math.max(1, (methods.get(name) ?? 0) + (def.name.includes(".") ? 0 : 1));
       const existing = map.get(name);
       if (existing) {
-        existing.count++; // Map keys are unique per file, so this is a new file
+        existing.count += count;
       } else {
-        map.set(name, { file: filePath, projectId: projectOf.get(filePath) ?? "root", def, count: 1 });
+        map.set(name, { file: filePath, projectId: projectOf.get(filePath) ?? "root", def, count });
       }
     }
   }
