@@ -21,6 +21,7 @@ import { phpViewKey, readPhpView } from "./views.js";
 import { CodeIgniterViewResolver } from "./view-resolver.js";
 import { LaravelEventResolver } from "./laravel-events.js";
 import { LaravelViewResolver } from "./laravel-view-resolver.js";
+import { LivewireViewResolver } from "./livewire.js";
 import { phpRequestSchema } from "./request-schema.js";
 import { phpReachability } from "./reachability.js";
 import { phpDiBindings } from "./di.js";
@@ -46,8 +47,9 @@ export const phpMeta: LanguagePluginMeta = {
   routes: phpRouteExtractor,
   // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
   routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver],
-  // A controller's `$this->load->view('x')` reaches that template.
-  dispatchResolvers: [new CodeIgniterViewResolver(), new LaravelEventResolver(), new LaravelViewResolver()],
+  // A controller's `$this->load->view('x')` reaches that template; a Livewire view's
+  // `wire:click` reaches its component's method.
+  dispatchResolvers: [new CodeIgniterViewResolver(), new LaravelEventResolver(), new LaravelViewResolver(), new LivewireViewResolver()],
   // A plain-PHP view template (`views/**.php`, not Blade) is read for the page
   // around its code: forms, links, inline AJAX and the screen (views.ts).
   // An `.inc` is PHP only when it holds a PHP tag: Delphi's `{$I x.inc}` compiler switches and

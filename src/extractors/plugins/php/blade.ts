@@ -21,7 +21,7 @@ const BLADE_FILE_RE = /\.blade\.php$/i;
 /** Blade-authored content: a directive or an echo — present in practice in every template — or,
  *  in a partial with neither, Alpine.js markup (`x-data`, `@click=`). */
 const BLADE_MARKER_RE =
-  /@(extends|section|yield|include|includeIf|csrf|method|foreach|endforeach|if|endif|auth|guest|push|stack)\b|\{\{\s*[$\w]|\sx-(?:data|on:\w+)\s*=|\s@(?:click|submit|change|input|keyup|keydown)[.=]/;
+  /@(extends|section|yield|include|includeIf|csrf|method|foreach|endforeach|if|endif|auth|guest|push|stack)\b|\{\{\s*[$\w]|\sx-(?:data|on:\w+)\s*=|\s@(?:click|submit|change|input|keyup|keydown)[.=]|\swire:[\w.-]+\s*=/;
 
 /** `@section('title', 'Product Catalog')` → "Product Catalog". */
 const SECTION_TITLE_RE = /@section\s*\(\s*['"]title['"]\s*,\s*['"]([^'"]+)['"]/;
@@ -60,6 +60,19 @@ const ROUTE_ECHO_RE = /\{\{\s*route\(\s*(['"])([\w.-]+)\1[^}]*\}\}|\{!!\s*route\
 /** What a route echo is rewritten to, so the html reader takes it for an app path. */
 const ROUTE_MARK = "/__route__/";
 
+/**
+ * A Livewire action (`wire:click="releasePlayer({{ $player->id }})"`,
+ * `wire:click.prevent="signPlayer"`, `<form wire:submit="save">`): the
+ * component method the element calls on the server. Spelled as the event
+ * directive the html reader takes a handler from, modifiers dropped. A magic
+ * action (`$set('x', 1)`, `$refresh`, `$dispatch('saved')`, `$parent.save()`)
+ * calls no method of the component and is left alone.
+ */
+const WIRE_ACTION_RE = /(^|\s)wire:(click|dblclick|submit|change|input|keyup|keydown|keypress|focus|blur|mouseenter|mouseleave)(?:\.[\w-]+)*\s*=\s*("[^"$]*"|'[^'$]*')/g;
+/** `wire:model.live="search"`: the field the control binds (its `updatedSearch` hook runs on change). */
+const WIRE_MODEL_RE = /(?:^|\s)wire:model(?:\.[\w-]+)*\s*=\s*(?:"([A-Za-z_][\w.]*)"|'([A-Za-z_][\w.]*)')/g;
+const BOUND_CONTROLS: ReadonlySet<InteractiveElementInfo["element"]> = new Set(["input", "select", "textarea"]);
+
 export function extractBladeInteractiveElements(sourceText: string): InteractiveElementInfo[] {
   if (!BLADE_MARKER_RE.test(sourceText)) return [];
   // A named route's URL stands in as a marked path the html reader keeps as the
@@ -70,15 +83,33 @@ export function extractBladeInteractiveElements(sourceText: string): Interactive
     .split(/\r?\n/)
     // Dots spelled `~`: a marked `clubs.show` must not read as a file with an extension.
     .map((l) => l.replace(ROUTE_ECHO_RE, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/\./g, "~"))
-      .replace(/\{\{.*?\}\}|\{!!.*?!!\}/g, ""));
+      .replace(/\{\{.*?\}\}|\{!!.*?!!\}/g, "")
+      .replace(WIRE_ACTION_RE, "$1x-on:$2=$3"));
   // A form or link to a named route requests `route:<name>`, which the Laravel view
   // resolver maps to the route's controller action; literal paths are left to that resolver too.
-  return extractHtmlInteractiveElements(lines, { requests: true }).map((el) => {
+  const elements = extractHtmlInteractiveElements(lines, { requests: true });
+  if (sourceText.includes("wire:model")) bindWireModels(lines, elements);
+  return elements.map((el) => {
     if (!el.request) return el;
     if (!el.request.target.startsWith(ROUTE_MARK)) return { ...el, handler: el.handler ?? handlerOf(el.request.method, el.request.target) };
     const name = el.request.target.slice(ROUTE_MARK.length).replace(/~/g, ".");
     return { ...el, handler: handlerOf(el.request.method, "/" + name.replace(/\./g, "/")), request: { method: el.request.method, target: `route:${name}` } };
   });
+}
+
+/** Each `wire:model` names the field its control binds, in order on its line, as a Blazor `@bind` does. */
+function bindWireModels(lines: string[], elements: InteractiveElementInfo[]): void {
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]!.includes("wire:model")) continue;
+    const controls = elements.filter((e) => e.line === i + 1 && BOUND_CONTROLS.has(e.element) && e.handler === null);
+    let k = 0;
+    for (const m of lines[i]!.matchAll(WIRE_MODEL_RE)) {
+      const control = controls[k++];
+      if (!control) break;
+      control.event = "bind";
+      control.handler = (m[1] ?? m[2])!;
+    }
+  }
 }
 
 /** `@vite(['js/pages/clubs/show.js', 'sass/app.scss'])` / `@vite('resources/js/app.ts')` — the entry points a view loads. */

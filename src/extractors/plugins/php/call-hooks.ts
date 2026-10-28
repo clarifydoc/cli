@@ -75,8 +75,10 @@ export const phpCallHooks: CallExtractionHooks = {
     const arg = node.childForFieldName("arguments")?.namedChildren.find((c) => c.type === "argument")?.namedChildren[0];
     if (!arg || (arg.type !== "string" && arg.type !== "encapsed_string")) return null;
     const view = arg.text.replace(/^['"]|['"]$/g, "").replace(/\.php$/, "");
-    // Laravel's `view('shop.catalog')` names a Blade template in dot notation: not this.
-    return /^[\w/-]+$/.test(view) ? `ci-view:${view}` : null;
+    if (/^[\w/-]+$/.test(view)) return `ci-view:${view}`;
+    // Laravel's `view('livewire.squad-list')` names a Blade template in dot notation
+    // (a Livewire component's `render()` names its own view that way).
+    return node.type === "function_call_expression" && /^[\w-]+(?:\.[\w-]+)+$/.test(view) ? `laravel-view:${view}` : null;
   },
 
   // `app(Mailer::class)->send()`, `$container->get(Mailer::class)->send()`,
