@@ -655,11 +655,13 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
   const ruby = analyses.filter((a) => a.language === "ruby");
   const models = new Map<string, string>(); // underscored → model name
   const associations = new Map<string, Set<string>>();
+  const scopes = new Map<string, Set<string>>(); // model name → the scopes it declares (`scope :x`, enum values)
   for (const a of ruby) {
     for (const cls of a.classes) {
       if (!cls.decorators.includes("entity")) continue;
       const bare = cls.name.split("::").pop()!;
       models.set(railsUnderscore(bare), bare);
+      for (const m of cls.methods) if (m.decorators.includes("scope")) (scopes.get(bare) ?? scopes.set(bare, new Set()).get(bare)!).add(m.name);
     }
     for (const rel of a.entityRelations ?? []) {
       const set = associations.get(rel.fromField) ?? new Set<string>();
@@ -682,9 +684,21 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
     // A scope between the association and the verb keeps its model:
     // `Current.account.users.order_by_full_name.includes` is users' — the
     // rightmost segment an association or model names, else the one before the verb.
+    // A segment the model to its left declares as a scope is that model's, whatever
+    // else shares its name: `calls.remote.find`, `Call` declaring `enum provider: { remote: … }`,
+    // is a Call row though a `Remote` model exists.
+    const bare = (k: number) => segments[k]!.replace(/^(?:@{1,2}|\$)/, "");
     for (let k = segments.length - 2; k >= 1; k--) {
-      const seg = segments[k]!.replace(/^(?:@{1,2}|\$)/, "");
-      if (direct(seg)) return seg;
+      const seg = bare(k);
+      if (!direct(seg)) continue;
+      for (let j = k - 1; j >= 1; j--) {
+        const owner = direct(bare(j));
+        if (!owner) continue;
+        const declared = scopes.get(owner);
+        if (declared && segments.slice(j + 1, k + 1).every((_, x) => declared.has(bare(j + 1 + x)))) return bare(j);
+        break;
+      }
+      return seg;
     }
     return segments[segments.length - 2]!.replace(/^(?:@{1,2}|\$)/, "");
   };

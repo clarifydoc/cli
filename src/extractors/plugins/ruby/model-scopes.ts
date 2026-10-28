@@ -33,26 +33,83 @@ function statementEnd(lines: readonly string[], from: number, indent: string, li
   return from;
 }
 
-/** `scope :active, -> { … }` → a class method `active` spanning the scope's lines. */
+const MEMBER_MACRO_RE = /^\s*(?:has_one|has_many|belongs_to|has_and_belongs_to_many|has_one_attached|has_many_attached|has_rich_text|attribute|attr_accessor|attr_reader|store_accessor)\s+((?::[a-z_]\w*\s*,?\s*)+)/;
+const ENUM_RE = /^\s*enum\s+(?::([a-z_]\w*)\s*,|([a-z_]\w*):(?!:))\s*/;
+
+/**
+ * The scopes an `enum` declares — one per value, named as Rails names them:
+ *   enum :provider, { field: 0, remote: 1 }        → field, remote
+ *   enum status: %i[open closed], _prefix: true   → status_open, status_closed
+ *   enum role: [:coach, :player], suffix: :role    → coach_role, player_role
+ * None for values the source computes (`enum kind: KINDS`) or `scopes: false`.
+ */
+export function enumScopes(text: string): string[] {
+  const head = ENUM_RE.exec(text);
+  if (!head) return [];
+  const attr = head[1] ?? head[2]!;
+  const rest = text.slice(head[0].length);
+  const open = /^(?:%[wi])?([{[])/.exec(rest);
+  if (!open) return [];
+  const close = open[1] === "{" ? "}" : "]";
+  let depth = 0;
+  let end = -1;
+  for (let i = open[0].length - 1; i < rest.length; i++) {
+    if (rest[i] === open[1]) depth++;
+    else if (rest[i] === close && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return [];
+  const body = rest.slice(open[0].length, end);
+  const options = rest.slice(end + 1);
+  if (/\bscopes:\s*false\b/.test(options)) return [];
+  const values = open[0].startsWith("%")
+    ? body.split(/\s+/).filter(Boolean)
+    : open[1] === "{"
+      ? [...body.matchAll(/(?:^|[{,\s]):?([a-z_]\w*)(?::(?!:)|\s*=>)/g)].map((m) => m[1]!)
+      : [...body.matchAll(/:([a-z_]\w*)/g)].map((m) => m[1]!);
+  const affix = (key: string): string | null => {
+    const m = new RegExp(String.raw`\b_?${key}:\s*(true|:([a-z_]\w*)|["']([a-z_]\w*)["'])`).exec(options);
+    return m ? (m[1] === "true" ? attr : m[2] ?? m[3]!) : null;
+  };
+  const prefix = affix("prefix");
+  const suffix = affix("suffix");
+  return values.filter((v) => /^[a-z_]\w*$/.test(v)).map((v) => `${prefix ? `${prefix}_` : ""}${v}${suffix ? `_${suffix}` : ""}`);
+}
+
+/**
+ * `scope :active, -> { … }` → a class method `active` spanning the scope's
+ * lines; an `enum`'s values → a scope each (`Club.field`), on the enum's line.
+ */
 export function addScopeMethods(lines: readonly string[], cls: ClassInfo): void {
   if (!isModelClass(cls)) return;
   const have = new Set(cls.methods.map((m) => m.name));
-  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+  const add = (name: string, line: number, endLine: number) => {
+    have.add(name);
+    cls.methods.push({ name, params: [], returnType: null, isAsync: false, isExported: true, decorators: ["scope"], calls: [], line, endLine });
+  };
+  const last = Math.min(cls.endLine, lines.length) - 1;
+  // What an instance answers to by the macros that declare it (`has_one_attached :kit`, `belongs_to :club`):
+  // a bare `kit` in the model reads that, never an enum value's scope of the same name.
+  const members = new Set<string>();
+  for (let i = cls.line; i <= last; i++) {
+    const m = MEMBER_MACRO_RE.exec(lines[i] ?? "");
+    if (m) for (const n of m[1]!.matchAll(/:([a-z_]\w*)/g)) members.add(n[1]!);
+  }
+  for (let i = cls.line; i <= last; i++) {
     const m = SCOPE_RE.exec(lines[i] ?? "");
-    if (!m || have.has(m[2]!)) continue;
-    have.add(m[2]!);
-    const end = statementEnd(lines, i, m[1]!, Math.min(cls.endLine, lines.length) - 1);
-    cls.methods.push({
-      name: m[2]!,
-      params: [],
-      returnType: null,
-      isAsync: false,
-      isExported: true,
-      decorators: ["scope"],
-      calls: [],
-      line: i + 1,
-      endLine: end + 1,
-    });
+    if (m) {
+      if (!have.has(m[2]!)) add(m[2]!, i + 1, statementEnd(lines, i, m[1]!, last) + 1);
+      continue;
+    }
+    if (!ENUM_RE.test(lines[i] ?? "")) continue;
+    // The statement, over the lines its brackets span.
+    let text = (lines[i] ?? "").replace(/\s#.*$/, "");
+    let j = i;
+    const open = (t: string) => [...t].reduce((d, ch) => d + ("{[(".includes(ch) ? 1 : ")]}".includes(ch) ? -1 : 0), 0);
+    while (open(text) > 0 && j < last && j - i < 30) text += " " + (lines[++j] ?? "").replace(/\s#.*$/, "");
+    for (const name of enumScopes(text)) if (!have.has(name) && !members.has(name)) add(name, i + 1, j + 1);
   }
 }
 

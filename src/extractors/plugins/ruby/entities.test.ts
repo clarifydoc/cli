@@ -191,3 +191,31 @@ end`, "premium/app/controllers/referee_policies_controller.rb", "ruby");
     ]);
   });
 });
+
+describe("Ruby chain rows through a scope that shares a model's name", () => {
+  it("keeps the model whose scope it is, never the same-named model (real-repo FP)", () => {
+    const transfer = extractWithRegex(`class Transfer < ApplicationRecord
+  enum :channel, { agent: 0, loan: 1 }
+  scope :pending, -> { where(status: 0) }
+end`, "premium/app/models/transfer.rb", "ruby");
+    const loan = extractWithRegex(`class Squad::Loan < ApplicationRecord
+end`, "app/models/squad/loan.rb", "ruby");
+    const club = extractWithRegex(`class Club < ApplicationRecord
+  has_many :transfers
+  has_many :loans, class_name: 'Squad::Loan'
+end`, "app/models/club.rb", "ruby");
+    const ctl = extractWithRegex(`class TransfersController < ApplicationController
+  def show
+    @transfer = Current.club.transfers.loan.find(params[:id])
+    @pending = Current.club.transfers.loan.pending.find_by(id: params[:id])
+    @loan = Current.club.loans.find(params[:loan_id])
+  end
+end`, "premium/app/controllers/transfers_controller.rb", "ruby");
+    new RubyEntityExtractor().reconcileProject([transfer, loan, club, ctl]);
+    expect(ctl.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity ?? "-"}`)).toEqual([
+      "Current.club.transfers.loan.find Transfer",
+      "Current.club.transfers.loan.pending.find_by Transfer",
+      "Current.club.loans.find Loan",
+    ]);
+  });
+});
