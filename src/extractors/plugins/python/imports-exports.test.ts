@@ -149,3 +149,21 @@ from typing import Any
   });
 });
 
+
+describe("Python import aliases", () => {
+  it("maps each renamed name to the module's own, absolute and relative", async () => {
+    const src = `from league.goals import score_goal as sg, own_goal
+from .goals import own_goal as og
+from . import goals as g
+import league.scoring as scoring`;
+    const tree = await parseSource(src, "python" as never, "a.py");
+    const out = new PythonImportExportExtractor().extractImports(tree, src).map((i) => [i.source, i.specifiers, i.aliases]);
+    expect(out).toEqual([
+      ["league.goals", ["sg", "score_goal", "own_goal"], { sg: "score_goal" }],
+      [".goals", ["og", "own_goal"], { og: "own_goal" }],
+      [".", ["g", "goals"], { g: "goals" }],
+      // A whole-module import binds the module itself: nothing to rename.
+      ["league.scoring", ["scoring"], undefined],
+    ]);
+  });
+});

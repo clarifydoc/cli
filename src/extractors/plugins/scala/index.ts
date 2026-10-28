@@ -16,6 +16,11 @@ import {
 } from "./di.js";
 
 /** Words after which a name followed by `{` or `:` is a declaration or a type, not a call. */
+/** A renaming import selector's arrow: `Club => Team`, Scala 3's `Club as Team`. */
+const SCALA_RENAME = /\s*=>\s*|\s+as\s+/;
+/** `league.model.Club as Team` (Scala 3, no braces) → `Club`, `Team`. */
+const SCALA_RENAMED_IMPORT = /(?:^|\.)(\w+)\s+as\s+(\w+)\s*$/;
+
 const NOT_CALLED_AFTER = String.raw`(?<!\b(?:extends|with|new|class|object|trait|enum|case|def|val|var|given|type|derives|import|package|if|then|else|while|do|yield|match|try|catch|finally|for|return|throw|extension|using|implicit|lazy|override|private|protected|final|sealed|abstract)\s+)`;
 /** Keywords that read like a call taking a block or an indented argument. */
 const BLOCK_KEYWORDS = /^(?:if|then|else|while|do|yield|match|try|catch|finally|for|new|case|given|extension|end|return|throw|object|class|trait|enum|def|val|var|type)$/;
@@ -341,12 +346,25 @@ export const scalaSpec: RegexLangSpec = {
   importPatterns: [
     {
       pattern: /^\s*import\s+(.+)/,
-      getSource: (m) => m[1].replace(/\.\{.*/, "").replace(/\._$/, ""),
+      getSource: (m) => m[1].replace(/\.\{.*/, "").replace(/\._$/, "").replace(/\s+as\s+\w+\s*$/, ""),
       getSpecifiers: (m) => {
         const braces = m[1].match(/\{([^}]+)\}/);
-        if (braces) return braces[1].split(",").map((s) => s.trim().split(" => ").pop()!.trim());
+        if (braces) return braces[1].split(",").map((s) => s.trim().split(SCALA_RENAME).pop()!.trim());
+        const renamed = SCALA_RENAMED_IMPORT.exec(m[1]);
+        if (renamed) return [renamed[2]!];
         const parts = m[1].replace(/_$/, "").split(".");
         return [parts[parts.length - 1]].filter((s) => s && s !== "_");
+      },
+      // `import league.model.{Club => Team}` (Scala 3: `{Club as Team}`, `import league.model.Club as Team`):
+      // the file calls the module's `Club` `Team`. A rename to `_` hides the name.
+      getAliases: (m) => {
+        const aliases: Record<string, string> = {};
+        const braces = m[1].match(/\{([^}]+)\}/);
+        const renames = braces
+          ? braces[1].split(",").map((s) => s.trim().split(SCALA_RENAME).map((p) => p.trim()))
+          : [SCALA_RENAMED_IMPORT.exec(m[1])?.slice(1, 3) ?? []];
+        for (const [from, to] of renames) if (from && to && to !== "_" && to !== from) aliases[to] = from;
+        return aliases;
       },
     },
   ],

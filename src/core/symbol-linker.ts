@@ -2286,6 +2286,14 @@ function classNameMember(
   // cross-project dependents that way).
   let candidateFiles = classNameIndex.get(className);
   let declaredClass = className;
+  // A class an import renames (`use App\Models\Player as Footballer;` … `Footballer::find(1)`):
+  // the module's class, never another one that happens to be called `Footballer`.
+  const imported = importedTypeRef(ctx, className, sourceFile, analysis.projectId);
+  if (imported) {
+    candidateFiles = imported.typeFile ? [imported.typeFile] : undefined;
+    declaredClass = imported.typeName;
+    if (!candidateFiles) return null;
+  }
   // A type alias called on (`using ScoreCalc = League.Scoring.Calc;` … `ScoreCalc.Add(1, 2)`).
   if (!candidateFiles && ctx.typeAliases) {
     const target = dealias(ctx, className, sourceFile);
@@ -2739,7 +2747,9 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
   let pathMap: Map<string, string> | null = null;
   const importedDecl = (typeName: string, consumerFile: string): string | null => {
     if ((classToFiles.get(typeName)?.length ?? 0) < 2) return null;
-    const imps = analysisOf.get(consumerFile)?.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName) ?? [];
+    // An import renaming the type (`import { Engine as Motor }`, `import Lathe from`) names its module too.
+    const imps = analysisOf.get(consumerFile)?.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName
+      || Object.values(i.aliases ?? {}).includes(typeName) || i.isDefault) ?? [];
     for (const imp of imps) {
       pathMap ??= buildFilePathMap(analyses);
       const f = resolveTarget(imp.source, consumerFile, pathMap);
@@ -2752,6 +2762,22 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
   const inSpace = (files: readonly string[], consumerFile: string): string[] => {
     const lang = languageOfFile.get(consumerFile) ?? "";
     return files.filter((f) => sameTypeSpace(consumerFile, lang, f, languageOfFile.get(f) ?? ""));
+  };
+  // The module's own name for a type an import renames (`importRename`, here before the link context exists).
+  const renamedType = (a: FileAnalysis, typeName: string | null): string | null => {
+    if (!typeName) return typeName;
+    for (const imp of a.imports) {
+      if (!defaultBinding(imp, typeName)) {
+        const exported = imp.aliases?.[typeName];
+        if (exported) return exported;
+        continue;
+      }
+      pathMap ??= buildFilePathMap(analyses);
+      const target = resolveTarget(imp.source, a.filePath, pathMap);
+      const own = target ? analysisOf.get(target)?.exports.find((e) => e.kind === "default")?.sourceName : undefined;
+      if (own) return own;
+    }
+    return aliasedType(a, typeName);
   };
   const fileOf = (typeName: string, consumerFile: string): string | null =>
     importedDecl(typeName, consumerFile) ??
@@ -2780,7 +2806,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
-        const written = aliasedType(a, receiverTypeName(type, a.language));
+        const written = renamedType(a, receiverTypeName(type, a.language));
         const typeName = written ? followTypeAlias(typeAliases, written, a.filePath, (n, near) => inSpace(classToFiles.get(n) ?? [], near).length > 0) : written;
         // A member injected by key alone (dry-auto_inject `Import["repo"]`,
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
@@ -2809,15 +2835,16 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       // Base classes as located from the class that names them (its import,
       // its directory, its type space) — never a same-named class elsewhere.
       const seen = new Set<string>([memberKey(a.filePath, cls.name)]);
-      let base = bareClassName(cls.extends);
+      let base = renamedType(a, bareClassName(cls.extends));
       let baseFile = base ? fileOf(base, a.filePath) : null;
       let child: FileAnalysis["classes"][number] | null = cls;
       while (base && baseFile && !seen.has(memberKey(baseFile, base))) {
         seen.add(memberKey(baseFile, base));
         const baseCls = declAt.get(memberKey(baseFile, base))!;
         for (const prop of baseCls.properties) add(prop.name, (child && handedType(child, baseCls, prop.name)) ?? prop.type, prop.qualifier, false);
-        base = bareClassName(baseCls.extends);
-        baseFile = base ? fileOf(base, baseFile) : null;
+        const from: string = baseFile;
+        base = renamedType(analysisOf.get(from)!, bareClassName(baseCls.extends));
+        baseFile = base ? fileOf(base, from) : null;
         child = null;
       }
       if (members.size > 0) out.set(memberKey(a.filePath, cls.name), members);
@@ -3388,14 +3415,17 @@ function resolveCallToDefinition(
     const ownResolver = pluginFor(analysis.language)?.resolveImport;
     targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : importPath(ctx, call.target, sourceFile);
     // A name a dotted import gives may be a module of its own (`from league.api import deps` →
-    // `deps.get_club()`): the package's file of that name, when the package's entry lacks the call.
-    if (parts.length === 2 && !call.target.includes("/") && !(targetFile && symbolIndex.get(targetFile)?.has(call.name))
-      && analysis.imports.some((i) => i.source === call.target && !i.isType && i.specifiers.includes(parts[0]!) && !i.aliases?.[parts[0]!])
-      && !shadowedLocally(analysis, sourceSymbol, parts[0]!)) {
-      const subSource = `${call.target}${call.target.endsWith(".") ? "" : "."}${parts[0]}`;
+    // `deps.get_club()`, `from league import scoring as sc` → `sc.tally()`): the package's file
+    // of that name, when the package's entry lacks the call.
+    const moduleImport = parts.length === 2 && !call.target.includes("/") && !(targetFile && symbolIndex.get(targetFile)?.has(call.name))
+      ? analysis.imports.find((i) => i.source === call.target && !i.isType && i.specifiers.includes(parts[0]!))
+      : undefined;
+    if (moduleImport && !shadowedLocally(analysis, sourceSymbol, parts[0]!)) {
+      const moduleName = moduleImport.aliases?.[parts[0]!] ?? parts[0]!;
+      const subSource = `${call.target}${call.target.endsWith(".") ? "" : "."}${moduleName}`;
       const sub = ownResolver ? ownResolver(sourceFile, subSource, leafName, importResolveContext(ctx)) : resolveTarget(subSource, sourceFile, filePathMap);
       // Only a file that IS that module — named so, or the entry of a directory named so — never one a re-export leads to.
-      const isModule = !!sub && (sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === parts[0] || sub.split("/").at(-2) === parts[0]);
+      const isModule = !!sub && (sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === moduleName || sub.split("/").at(-2) === moduleName);
       const subDef = isModule && sub !== sourceFile && sub !== targetFile ? symbolIndex.get(sub!)?.get(leafName) : undefined;
       // The module's own top-level name — a method of a class in it is no `module.name`.
       if (subDef && subDef.name === leafName) return mkLink(sub!, subDef.name, subDef.line, "INFERRED", "import-file");
@@ -3717,6 +3747,15 @@ function resolveCallToDefinition(
       : !isQualified
         ? call.name
         : null;
+    // A class an import renames (`new Footballer()` for `use App\Models\Player as Footballer`,
+    // Kotlin `Fixer()` for `import garage.Mechanic as Fixer`): the module's class, or nothing.
+    const imported = className ? importedTypeRef(ctx, className, sourceFile, analysis.projectId) : undefined;
+    if (imported) {
+      const cls = imported.typeFile ? ctx.classAt.get(memberKey(imported.typeFile, imported.typeName)) : undefined;
+      if (!cls) return null;
+      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      return mkLink(imported.typeFile!, ctor ? `${imported.typeName}.${ctor.name}` : imported.typeName, ctor?.line ?? cls.line, "INFERRED", "constructor");
+    }
     if (className) {
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A name declared in several namespaces: the one the caller's namespace and usings reach.
@@ -4427,8 +4466,9 @@ function resolveThroughDeclaredType(
   if (call.receiverType || call.receiverQualifier) {
     let typeName = receiverTypeName(call.receiverType, analysis.language);
     if (!typeName && !call.receiverQualifier) return null;
-    if (typeName) typeName = dealias(ctx, typeName, sourceFile);
-    let typeFile = typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+    const imported = typeName ? importedTypeRef(ctx, typeName, sourceFile, analysis.projectId) : undefined;
+    if (typeName) typeName = imported?.typeName ?? dealias(ctx, typeName, sourceFile);
+    let typeFile = imported ? imported.typeFile : typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null;
     // A language that names a class by its qualified path (`Billing::InvoiceService`)
     // declares it under that name, which the bare name does not find.
     const written = call.receiverType?.trim().replace(/^::/, "");
@@ -4501,8 +4541,9 @@ function chainPoint(
     rest = receiver.slice(1);
     // `Factory::getInstance()->run()` — a call on a project class itself.
     if (!point && rest[0]?.call && /^[A-Z]/.test(head.name)) {
-      const typeFile = typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
-      if (typeFile) point = { typeName: head.name, typeFile, member: "", consumer, container: false };
+      const imported = importedTypeRef(ctx, head.name, sourceFile, analysis.projectId);
+      const typeFile = imported ? imported.typeFile : typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
+      if (typeFile) point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };
     }
     // `store.NewRepo()` — a function reached through an imported package or
     // module: the chain goes on from what that function is declared to return.
@@ -4918,11 +4959,60 @@ function receiverPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: str
  * called `UserApi` — else the file defining it.
  */
 function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null {
+  const imported = importedTypeRef(ctx, typeName, sourceFile, projectId);
+  if (imported !== undefined) return imported?.typeFile ? { typeName: imported.typeName, typeFile: imported.typeFile } : null;
   typeName = dealias(ctx, typeName, sourceFile);
   const reexported = reexportedType(ctx, typeName, sourceFile);
   if (reexported) return reexported;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   return typeFile ? { typeName, typeFile } : null;
+}
+
+/**
+ * The import that binds `local` under a name other than the module's own
+ * (`import { Engine as Motor }`, `import Machine from "./lathe"`, PHP `use
+ * App\Models\Player as Footballer`, Kotlin `import garage.Mechanic as Fixer`,
+ * Scala `import league.model.{Club => Team}`, Rust `use crate::car::Car as Motor`),
+ * and that name; null when no import of the file renames `local`.
+ */
+function importRename(ctx: LinkContext, local: string, sourceFile: string): { imp: ImportInfo; exported: string } | null {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  for (const imp of ctx.analysisByFile.get(sourceFile)?.imports ?? []) {
+    // A default binding names the module's default, whatever the module calls it.
+    if (defaultBinding(imp, local)) {
+      const target = importPath(ctx, imp.source, sourceFile);
+      const own = target ? ctx.analysisByFile.get(target)?.exports.find((e) => e.kind === "default")?.sourceName : undefined;
+      if (own && own !== local) return { imp, exported: own };
+      continue;
+    }
+    const exported = imp.aliases?.[local];
+    if (exported && exported !== local) return { imp, exported };
+  }
+  return null;
+}
+
+/**
+ * Class `typeName` as an import renaming it makes it (`importRename`): the
+ * class the module declares under its own name, in the file the import names
+ * (or a barrel there forwards it to), else wherever that name is declared.
+ * `undefined` when no import renames `typeName`; `typeFile: null` when one does
+ * but its class is not found — the name never means another class called so.
+ */
+function importedTypeRef(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string | null } | undefined {
+  const renamed = importRename(ctx, typeName, sourceFile);
+  if (!renamed) return undefined;
+  const { imp, exported } = renamed;
+  const target = importPath(ctx, imp.source, sourceFile);
+  if (target && target !== sourceFile) {
+    if (ctx.classAt.has(memberKey(target, exported))) return { typeName: exported, typeFile: target };
+    const forwarded = forwardedClass(ctx, target, exported, 0, new Set());
+    if (forwarded) return forwarded;
+  }
+  // Where an import names its module by path (`importsBindNames`), one that leads to no project
+  // file is a package's: its class is not some project class sharing the name.
+  const language = ctx.languageOf.get(sourceFile) as Language | undefined;
+  if (!target && language && pluginFor(language)?.importsBindNames) return { typeName: exported, typeFile: null };
+  return { typeName: exported, typeFile: typeFileFor(ctx, exported, sourceFile, projectId) };
 }
 
 /** `ScoreCalc.Add()` where `ScoreCalc` aliases a class (`using ScoreCalc = League.Scoring.Calc;`): that class's member. */
@@ -4990,7 +5080,9 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   const source = ctx.analysisByFile.get(sourceFile);
   if (source) {
-    const named = source.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName);
+    // An import renaming it (`import { Engine as Motor }`) names the module's `Engine` too.
+    const named = source.imports.filter((i) => i.specifiers.includes(typeName) || i.source.split(/[\\/.:]+/).pop() === typeName
+      || Object.values(i.aliases ?? {}).includes(typeName));
     for (const imp of named) {
       const f = importPath(ctx, imp.source, sourceFile);
       if (f && f !== sourceFile && declOf(f, typeName)) return f;
@@ -5626,11 +5718,14 @@ function findMethodInClass(
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
-    const base = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
-    if (!base) return null;
+    const written = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
+    if (!written) return null;
+    // `class Turbo extends Motor` for `import { Engine as Motor }`: the module's `Engine`.
+    const imported = importedTypeRef(ctx, written, file, ctx.projectOf.get(file) ?? "root");
+    const base = imported?.typeName ?? written;
     // A class extends a class: an interface of the same name (`Contracts\Repository`
     // beside the abstract `Repository`) is no candidate when the name ties.
-    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root")
+    const baseFile = imported ? imported.typeFile : locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root")
       ?? onlyConcrete(ctx, base, ctx.classAt.get(key)?.kind === "interface", file);
     if (!baseFile) return null;
     name = base;
@@ -5646,8 +5741,10 @@ function baseChain(ctx: LinkContext, className: string, classFile: string): Arra
   let file = classFile;
   for (let depth = 0; depth < MAX_BASE_DEPTH && !out.some((c) => c.name === name && c.file === file); depth++) {
     out.push({ name, file });
-    const base = bareClassName(ctx.classAt.get(memberKey(file, name))?.extends ?? null);
-    const baseFile = base ? locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root") : null;
+    const written = bareClassName(ctx.classAt.get(memberKey(file, name))?.extends ?? null);
+    const imported = written ? importedTypeRef(ctx, written, file, ctx.projectOf.get(file) ?? "root") : undefined;
+    const base = imported?.typeName ?? written;
+    const baseFile = imported ? imported.typeFile : base ? locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root") : null;
     if (!base || !baseFile) break;
     name = base;
     file = baseFile;

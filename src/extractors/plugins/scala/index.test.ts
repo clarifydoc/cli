@@ -95,3 +95,24 @@ describe("scala package clause", () => {
     expect(pkg(`object Main`)).toBeNull();
   });
 });
+
+describe("scala renaming imports", () => {
+  it("binds the new name and maps it to the declared one, in Scala 2 and 3 spellings", async () => {
+    const { extractImportsWithSpec } = await import("../shared/regex-base.js");
+    const src = [
+      "import league.model.{Club => Team, Fixture}",
+      "import league.model.{Player as Footballer}",
+      "import league.garage.Car as Motor",
+      "import league.legacy.{Coach => _}",
+      "import league.util.Format",
+    ].join("\n");
+    expect(extractImportsWithSpec(src.split("\n"), scalaSpec).map((i) => [i.source, i.specifiers, i.aliases])).toEqual([
+      ["league.model", ["Team", "Fixture"], { Team: "Club" }],
+      ["league.model", ["Footballer"], { Footballer: "Player" }],
+      ["league.garage.Car", ["Motor"], { Motor: "Car" }],
+      // A rename to `_` hides the name: nothing is bound under another one.
+      ["league.legacy", ["_"], undefined],
+      ["league.util.Format", ["Format"], undefined],
+    ]);
+  });
+});
