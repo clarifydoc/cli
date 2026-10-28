@@ -63,13 +63,18 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     const lastPart = parts[parts.length - 1];
     const isWildcard = lastPart === "*";
 
+    const source = isWildcard ? parts.slice(0, -1).join(".") : importPath;
     return {
-      source: isWildcard ? parts.slice(0, -1).join(".") : importPath,
+      source,
       specifiers: isWildcard ? [] : [lastPart],
       isDefault: false,
       isNamespace: isWildcard,
       isType: !isStatic && false, // Java doesn't have type-only imports
       line: node.startPosition.row + 1,
+      // `import static a.Scores.tally;` / `a.Scores.*`: the type's static members, called bare.
+      ...(isStatic && parts.length > 1
+        ? { inScope: isWildcard ? { module: source } : { module: parts.slice(0, -1).join("."), names: [lastPart] } }
+        : {}),
     };
   }
 
@@ -116,6 +121,11 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
       isNamespace: isWildcard,
       isType: false,
       line: node.startPosition.row + 1,
+      // A lower-case last segment is a function or property, not a type: a package's top-level
+      // one (`import league.util.blowFullTime`) or an object's member (`import a.Config.limit`).
+      ...(!isWildcard && parts.length > 1 && /^[a-z_]/.test(lastPart!)
+        ? { inScope: { module: parts.slice(0, -1).join("."), names: [lastPart!] } }
+        : {}),
     };
   }
 

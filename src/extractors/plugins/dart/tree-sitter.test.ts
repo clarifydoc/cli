@@ -109,7 +109,6 @@ const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
   "test-fixtures/sample-dart-app/lib/screens/player_list_screen.dart": {
     "PlayerListScreen.PlayerListScreen": [[], ["super"]],
     "_PlayerListScreenState._PlayerListScreenState": [[], ["locateService"]],
-    "_PlayerListScreenState._openDetail": [[], ["Navigator.of().pushNamed"]],
   },
   "test-fixtures/sample-dart-app/lib/services/player_service.dart": {
     "PlayerService.fetchPlayers": [[], ["data.map().toList"]],

@@ -6,7 +6,7 @@ import type {
   ParamInfo,
 } from "../../../types/analysis.js";
 import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo, UiComponentInfo } from "../../../types/analysis.js";
-import type { RegexLangSpec } from "../shared/regex-base.js";
+import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
@@ -24,6 +24,7 @@ import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
 import { goRoutes } from "./go-router.js";
+import { extractDartImports } from "./imports.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
@@ -191,21 +192,16 @@ function parseDartParamText(text: string): ParamInfo | null {
   return { name, type, defaultValue };
 }
 
-// ─── Imports ──────────────────────────────────────────────────────────────
-
-/** Split a `show`/`hide`/`as` tail into its specifier identifiers. */
-function importSpecifiers(tail: string): string[] {
-  const specs: string[] = [];
-  const asM = tail.match(/\bas\s+([A-Za-z_$]\w*)/);
-  if (asM) specs.push(asM[1]!);
-  for (const c of tail.matchAll(/\b(?:show|hide)\s+([A-Za-z_$][\w$,\s]*)/g)) {
-    for (const id of c[1]!.split(",")) {
-      const t = id.trim().split(/\s+/)[0];
-      if (t) specs.push(t);
-    }
-  }
-  return specs;
-}
+/**
+ * A call on what a class's static method returns (`ClubRepo.make().save()`):
+ * named as the tree-sitter front end names it, so the linker types the
+ * receiver by `make`'s declared return. The baseline matcher drops a call on
+ * a call's result, since it cannot name the receiver.
+ */
+const STATIC_CHAIN_CALL: CallPattern = {
+  pattern: /(?<![\w$.])([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\([^()]*\)\s*[!?]?\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/,
+  buildName: (m) => ({ name: `${m[1]}.${m[2]}().${m[3]}`, leafName: m[3]! }),
+};
 
 // ─── Data sources (the screen → API → DB half) ──────────────────────────────
 
@@ -1170,17 +1166,13 @@ export const dartSpec: RegexLangSpec = {
 
   extractClasses: (lines, fns) => extractDartClasses(lines, fns),
 
-  callPatterns: dartDiCallPatterns,
+  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL],
   extractLocalTypes: extractDartLocalTypes,
   extractDiBindings: (lines) => extractDartDiBindings(lines),
 
-  importPatterns: [
-    {
-      pattern: /^\s*(?:import|export)\s+['"]([^'"]+)['"]([^;]*);/,
-      getSource: (m) => m[1]!,
-      getSpecifiers: (m) => importSpecifiers(m[2] ?? ""),
-    },
-  ],
+  // Directives over several lines, conditional imports and `part`s need more than one line each.
+  extractImports: (lines) => extractDartImports(lines),
+  importPatterns: [],
 
   extractDataSources: (lines) => extractDartDataSources(lines),
   // Call sites of a project request wrapper (`ApiConnection().request(RequestType.GET, '/x')`).

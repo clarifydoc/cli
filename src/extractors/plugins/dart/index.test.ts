@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { dartSpec } from "./index.js";
 import {
+  extractCallsFromBody,
   extractFunctionsWithSpec,
-  extractImportsWithSpec,
 } from "../shared/regex-base.js";
 
 const fns = (src: string) => extractFunctionsWithSpec(src.split("\n"), dartSpec);
 const fnNames = (src: string) => fns(src).map((f) => f.name);
 const classes = (src: string) => dartSpec.extractClasses!(src.split("\n"), []);
-const imports = (src: string) => extractImportsWithSpec(src.split("\n"), dartSpec);
+const imports = (src: string) => dartSpec.extractImports!(src.split("\n"));
 const dataSources = (src: string) => dartSpec.extractDataSources!(src.split("\n"), []);
 const routes = (src: string) => dartSpec.extractRoutes!(src.split("\n"), []);
 
@@ -131,6 +131,51 @@ describe("dartSpec — imports", () => {
     expect(bySource["package:http/http.dart"]!.specifiers).toEqual(["http"]);
     expect(bySource["../models/player.dart"]!.specifiers).toEqual(["Player", "Game"]);
     expect(bySource["dart:convert"]).toBeDefined();
+  });
+
+  it("puts an unprefixed import's names in scope — those `show` names — and never a prefixed one's or an export's", () => {
+    const imp = imports(`
+      import 'src/util.dart';
+      import 'src/kit.dart' show washCar, polishCar;
+      import 'src/garage.dart' as garage;
+      export 'src/widget.dart';
+    `);
+    expect(imp.map((x) => [x.source, x.inScope])).toEqual([
+      ["src/util.dart", { module: "src/util.dart" }],
+      ["src/kit.dart", { module: "src/kit.dart", names: ["washCar", "polishCar"] }],
+      ["src/garage.dart", undefined],
+      ["src/widget.dart", undefined],
+    ]);
+  });
+
+  it("reads every branch of a conditional import over several lines, the first one in scope", () => {
+    const imp = imports(`
+      import 'src/io_stub.dart'
+          if (dart.library.io) 'src/io_native.dart'
+          if (dart.library.html) 'src/io_web.dart'
+          as io;
+      import 'src/clock_stub.dart' if (dart.library.html) 'src/clock_web.dart';
+    `);
+    expect(imp.map((x) => [x.source, x.specifiers, x.inScope?.module ?? null, x.line])).toEqual([
+      ["src/io_stub.dart", ["io"], null, 2],
+      ["src/io_native.dart", ["io"], null, 2],
+      ["src/io_web.dart", ["io"], null, 2],
+      ["src/clock_stub.dart", [], "src/clock_stub.dart", 6],
+      ["src/clock_web.dart", [], null, 6],
+    ]);
+  });
+
+  it("reads a part as one scope with its library, and nothing from \`part of\`", () => {
+    expect(imports(`part 'club.g.dart';`).map((x) => [x.source, x.inScope])).toEqual([["club.g.dart", { module: "club.g.dart", shared: true }]]);
+    expect(imports(`part of 'club.dart';`)).toEqual([]);
+  });
+});
+
+describe("dartSpec — calls", () => {
+  it("names a call on what a static method returns as the tree-sitter front end does", () => {
+    const lines = ["void main() {", "  ClubRepo.make().save(club);", "}"];
+    const calls = extractCallsFromBody(lines, 0, 3, dartSpec.lineCommentPrefixes, dartSpec.callPatterns).map((c) => c.name);
+    expect(calls).toContain("ClubRepo.make().save");
   });
 });
 

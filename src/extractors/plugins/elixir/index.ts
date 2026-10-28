@@ -45,8 +45,25 @@ export function extractElixirImports(lines: string[]): ImportInfo[] {
     }
     const as = kind === "alias" ? /,\s*as:\s*([A-Z]\w*)/.exec(rest!) : null;
     push(mod!, as ? as[1]! : lastSeg(mod!), i + 1);
+    if (kind === "import") out[out.length - 1]!.inScope = importScope(mod!, lines, i);
   }
   return out;
+}
+
+/**
+ * `import League.Rules` puts the module's functions in scope, called bare
+ * (`offside(x)`); `only: [offside: 1]` — over several lines too — names the ones it binds.
+ */
+function importScope(mod: string, lines: string[], i: number): NonNullable<ImportInfo["inScope"]> {
+  const line = (k: number): string => (lines[k] ?? "").replace(/#.*$/, "");
+  let text = line(i);
+  // The options go on after a trailing comma, the list until its `]`.
+  for (let j = i; j + 1 < lines.length && j - i < 20 && (/,\s*$/.test(text) || /\[[^\]]*$/.test(text)); ) text += " " + line(++j);
+  if (!text.includes("only:")) return { module: mod };
+  const list = /only:\s*\[([^\]]*)\]/.exec(text);
+  // `only: :functions` / `:macros` narrows by kind, not by name.
+  if (!list) return { module: mod };
+  return { module: mod, names: [...list[1]!.matchAll(/([a-z_]\w*[?!]?)\s*:/g)].map((m) => m[1]!) };
 }
 
 // ─── Ecto data access ──────────────────────────────────────────────────────

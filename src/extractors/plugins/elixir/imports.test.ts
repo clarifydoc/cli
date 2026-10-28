@@ -24,4 +24,22 @@ end`;
       ["Ecto.Query", "Query"],
     ]);
   });
+
+  it("puts an import's functions in scope — every one, or those `only:` names", () => {
+    const src = `defmodule League.Referee do
+  import League.Rules
+  import League.Cards, only: [book: 2, send_off: 1]
+  import League.Var,
+    only: [
+      review?: 1
+    ]
+  alias League.Clubs
+end`;
+    expect(extractElixirImports(src.split("\n")).map((i) => i.inScope)).toEqual([
+      { module: "League.Rules" },
+      { module: "League.Cards", names: ["book", "send_off"] },
+      { module: "League.Var", names: ["review?"] },
+      undefined,
+    ]);
+  });
 });
