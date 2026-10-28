@@ -139,6 +139,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   confidenceCounts: "optional",
   skippedSensitive: "optional",
   skippedSymlinks: "optional",
+  failedFiles: "optional",
   communities: "optional",
   cohesion: "optional",
   godNodes: "optional",

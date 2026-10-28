@@ -48,7 +48,8 @@ import {
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload, loadReportSummary } from "./report-payload.js";
 import { analyzeFileOutcome, importRewriteStamp, type FileTask, type FileResult, type SkippedFile } from "./file-analyzer.js";
-import { AnalysisWorkerPool } from "./worker-pool.js";
+import { AnalysisWorkerPool, type FailedFile } from "./worker-pool.js";
+import { byOrdinal } from "./ordinal.js";
 import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { clearWorkspacePackageCache } from "../extractors/shared/workspace-packages.js";
 import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } from "../extractors/shared/link-scoring.js";
@@ -861,8 +862,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // (e.g. running from source, CLARIFYDOC_WORKERS=0, or tiny projects).
   const poolSize = AnalysisWorkerPool.defaultSize(files.length);
   const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFileOutcome) : null;
-  const runTask = (task: FileTask): Promise<FileResult | SkippedFile | null> =>
+  const runTask = (task: FileTask): Promise<FileResult | SkippedFile | FailedFile | null> =>
     pool ? pool.run(task) : analyzeFileOutcome(task);
+  // Files a worker died on (out of memory, past the per-file deadline): left
+  // out of the analysis, never retried in-process, and said so in the summary.
+  const failedFiles: { path: string; reason: string }[] = [];
   // With a pool, keep a couple of extra slots so the main thread can overlap
   // manifest classification / cache reads while every worker stays busy.
   const fileConcurrency = pool ? poolSize + 2 : 8;
@@ -924,6 +928,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
           ...(options.incremental ? { reportSkips: true as const } : {}),
         });
+        if (outcome && "failed" in outcome) {
+          failedFiles.push({ path: file.relativePath, reason: outcome.failed });
+          delete newManifestEntries[manifestKey];
+          return null;
+        }
         if (outcome && "skipped" in outcome) {
           const entry = newManifestEntries[manifestKey] ?? stamped(await classifyFileForCache(file.absolutePath, undefined).then((c) => ({ mtime: c.mtime, sha256: c.sha256 })));
           newSkipped[manifestKey] = entry;
@@ -959,6 +968,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   if (options.incremental) {
     progress.detail(`  Incremental: ${unchangedCount} unchanged, ${reparsedCount} reparsed`);
+  }
+  failedFiles.sort((x, y) => byOrdinal(x.path, y.path));
+  if (failedFiles.length > 0) {
+    progress.detail(`Skipped ${failedFiles.length} file(s) their analysis worker died on: ${failedFiles.map((f) => f.path).join(", ")}`);
   }
 
   // Collect successful results
@@ -1434,7 +1447,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   {
     const loaded = new Map<ReachabilityHooks, ReachabilityModel>();
     // Unreadable files are still files: an import of one resolves to it.
-    const analyzedFiles = new Set([...allAnalyses.map((a) => a.filePath), ...skippedSensitive, ...skippedSymlinks]);
+    const analyzedFiles = new Set([...allAnalyses.map((a) => a.filePath), ...skippedSensitive, ...skippedSymlinks, ...failedFiles.map((f) => f.path)]);
     // One context for every model: plugins share per-analysis work through it
     // (the configuration-file listing).
     const loadContext = { projectRoot, roots: subProjects.map((sp) => sp.root), files: analyzedFiles };
@@ -2061,7 +2074,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectRoots: new Map(subProjects.map((sp) => [sp.id, sp.root])),
     isTest: isTestFile,
     isUnauthored,
-    opaqueFiles: [...skippedSensitive, ...skippedSymlinks],
+    opaqueFiles: [...skippedSensitive, ...skippedSymlinks, ...failedFiles.map((f) => f.path)],
     readSource: (f) => {
       const raw = rawSources.get(f);
       if (raw !== undefined) return raw;
@@ -2213,6 +2226,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     confidenceCounts,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
+    failedFiles: failedFiles.length > 0 ? failedFiles : undefined,
     communities: Object.keys(communities).length > 0 ? communities : undefined,
     ...(Object.keys(communities).length > 0
       ? {

@@ -3708,6 +3708,12 @@ export interface ProjectAnalysis {
    * descended at all.
    */
   skippedSymlinks?: string[];
+  /**
+   * Files left out because the worker analyzing them died — out of memory, or
+   * killed past the per-file deadline (`CLARIFYDOC_FILE_DEADLINE_MS`) — with
+   * the reason. Never retried in-process: the same file would end the run.
+   */
+  failedFiles?: { path: string; reason: string }[];
   /** Louvain-detected communities (community ID → file paths). Largest first. */
   communities?: Record<string, string[]>;
   /**
