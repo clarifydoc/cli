@@ -792,14 +792,16 @@ program
 program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
-  .argument("<event>", "pre-search | post-edit | session-start")
-  .action(async (event: string) => {
+  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start")
+  .option("--dialect <name>", "The host's payload and answer format: claude (Claude Code, Codex) | copilot (GitHub Copilot CLI and VS Code)", "claude")
+  .action(async (event: string, options) => {
     // A hook must never stand in the agent's way: any failure is silence.
     try {
-      const { HOOK_EVENTS, runHook, readHookInput } = await import("./agents/hooks.js");
+      const { HOOK_DIALECTS, HOOK_EVENTS, runHook, readHookInput } = await import("./agents/hooks.js");
       if (!(HOOK_EVENTS as readonly string[]).includes(event)) return;
+      if (!(HOOK_DIALECTS as readonly string[]).includes(options.dialect)) return;
       const timer = setTimeout(() => process.exit(0), 8000);
-      const out = await runHook(event as never, readHookInput());
+      const out = await runHook(event as never, readHookInput(), process.cwd(), options.dialect);
       clearTimeout(timer);
       if (out) process.stdout.write(out + "\n");
     } catch {
@@ -811,8 +813,8 @@ program
   .command("install")
   .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
   .argument("[path]", "Project root", ".")
-  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline (default claude-code)")
-  .option("--hooks", "Also add Claude Code hooks (.claude/settings.json): context before searches, after edits, at session start", false)
+  .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot (default claude-code)")
+  .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
   .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout) that refresh the analysis in the background", false)
@@ -823,7 +825,7 @@ program
   .option("--plugin <dir>", "Write an agent plugin into <dir> instead (Claude Code, Codex, Copilot CLI): the MCP server entry, the skills and an explorer subagent")
   .action(async (path: string, options) => {
     const root = resolve(path);
-    const { CLIENTS, applyPlans, planClaudeHooks, planGitHooks, planGuidance, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
+    const { CLIENTS, applyPlans, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
     // A launcher that outlives this install (an editor's stable shim) instead of this process's own path.
     const self = options.command ? { command: options.command as string, args: [] } : selfCommand();
     if (options.plugin) {
@@ -842,7 +844,7 @@ program
     // `install --git-hooks` alone is about git, not an agent host: no MCP entry unless a client is named.
     const gitOnly = options.gitHooks && !options.client && !options.hooks && !options.skills && !options.guidance;
     const plans = gitOnly || options.mcp === false ? [] : clients.map((c) => planMcpConfig(c as never, root, self));
-    if (options.hooks) plans.push(planClaudeHooks(root, self));
+    if (options.hooks) plans.push(...planHooks(clients as never, root, self, plans));
     if (options.skills) plans.push(...planSkills(root));
     if (options.gitHooks) {
       try {
@@ -984,7 +986,7 @@ program
   .option("--max-files <n>", "Maximum number of files to analyze", wholeNumber(1))
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
-  .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | all")
+  .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot | all")
   .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {
