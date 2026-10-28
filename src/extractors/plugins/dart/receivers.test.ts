@@ -53,6 +53,8 @@ void run(Player player, List<Club> clubs) {
       .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol} ${l.strategy}`)
       .sort();
     expect(links).toEqual([
+      // `league.Club.empty()`: a factory constructor, called on the class whatever its name.
+      "Club.empty -> lib/club.dart::Club.empty class-name",
       "Club.fromJson -> lib/club.dart::Club.fromJson class-name",
       "a.kickOff -> lib/club.dart::Club.kickOff injection",
       "b.kickOff -> lib/club.dart::Club.kickOff injection",

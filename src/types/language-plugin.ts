@@ -1163,6 +1163,14 @@ export interface LanguagePluginManifest {
    */
   importsShareScope?: boolean;
   /**
+   * Extensions of the files that DECLARE what a same-named file defines (C/C++
+   * headers: `helpers.h` declares `int helper(int)`, `helpers.c` holds its
+   * body). With `importsShareScope`, an include of such a file also brings in
+   * the functions its same-stem files of the family define — never one they
+   * keep to themselves (`isExported: false`, a C `static` function).
+   */
+  declarationExtensions?: readonly string[];
+  /**
    * A class lists several bases that are all classes (Python `class D(B, C)`):
    * its `extends` and `implements` together, in order, are its bases, and a
    * member is looked up along the C3 method resolution order.
@@ -1203,6 +1211,15 @@ export interface LanguagePluginManifest {
    * leave it unset, so a bare name may still be a field.
    */
   explicitSelfMembers?: boolean;
+  /**
+   * The call extractor reads some member calls without their receiver (C++
+   * `coach->drill()` is `drill`), so a bare call the caller's class and its
+   * bases do not answer — or any call from a free function — may still be
+   * another class's method: a same-file one is kept, as a guess (INFERRED).
+   * Unset, such a call never reaches another class's member — `load()` in
+   * Java is the caller's own, or an enclosing class's.
+   */
+  bareCallsHideReceivers?: boolean;
   /**
    * A module's top-level names reach another file only through an import
    * naming them (JS/TS, Python): in a module, a class name the file neither

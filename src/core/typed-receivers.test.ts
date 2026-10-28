@@ -76,6 +76,34 @@ class Svc {
     expect(callsOf(a, "Svc", "run")).toContain("_repo.delete");
     expect(callsOf(a, "Svc", "run")).not.toContain("delete");
   });
+
+  it("Java: a static call on a class comes back whatever its leaf; a constant's or a builtin's does not", async () => {
+    const a = await analyze(`
+class Coach {
+  void run() {
+    ClubStore.find(1L);
+    ClubStore.log("kickoff");
+    LOG.info("x");
+    String.join(",", "a", "b");
+  }
+}`, "java", "Coach.java");
+    expect(callsOf(a, "Coach", "run")).toEqual(["ClubStore.find", "ClubStore.log"]);
+  });
+
+  it("TypeScript: only a class the module imports or declares counts", async () => {
+    await ensureLanguagesLoaded(["typescript"]);
+    const src = `
+export function run(x: object) {
+  ClubStore.find(1);
+  Object.keys(x);
+}`;
+    const tree = await parseSource(src, "typescript", "coach.ts");
+    const a = createEmptyAnalysis("coach.ts", "typescript");
+    a.functions = extractFunctions(tree, src, "typescript");
+    a.imports = [{ source: "./store", specifiers: ["ClubStore"], isDefault: false, isNamespace: false, isType: false, line: 1 }];
+    restoreTypedReceiverCalls(a);
+    expect(a.functions.find((f) => f.name === "run")!.calls.map((c) => c.name)).toEqual(["ClubStore.find"]);
+  });
 });
 
 describe("restoreTypedReceiverCalls — the enclosing class's own noise-named methods", () => {

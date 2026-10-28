@@ -14,4 +14,7 @@ export const cManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".c"],
   vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
+  // `#include "helpers.h"` puts what `helpers.h` declares in scope; `helpers.c` holds the bodies.
+  importsShareScope: true,
+  declarationExtensions: [".h"],
 };

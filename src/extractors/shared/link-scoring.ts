@@ -371,12 +371,13 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   const importExt = posix.extname(importSource);
   const family = extensionFamily(sourceFile);
   const ext = ownExt && (importSource.endsWith(ownExt) || (importExt && family !== null && extensionFamily(importSource) === family)) ? importExt : "";
-  if (ext && importSource.includes("/")) {
+  // A bare file name (`#include "helpers.h"`) is looked up the same way, before any file of that name elsewhere.
+  if (ext) {
     const fromRoot = filePathMap.get(posix.normalize(importSource));
     if (fromRoot) return fromRoot;
     const beside = filePathMap.get(posix.normalize(posix.join(posix.dirname(sourceFile), importSource)));
     if (beside) return beside;
-    if (!importSource.startsWith("../")) {
+    if (importSource.includes("/") && !importSource.startsWith("../")) {
       const hit = uniqueSuffixMatch(posix.normalize(importSource).slice(0, -ext.length), filePathMap);
       if (hit) return hit;
     }

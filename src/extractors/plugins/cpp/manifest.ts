@@ -18,8 +18,13 @@ export const cppManifest: LanguagePluginManifest = {
   // `.cu` / `.cuh`: CUDA — C++ plus kernel qualifiers and `<<<…>>>` launches (see index.ts).
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
   vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
+  // `#include "helpers.h"` puts what the header declares in scope; `helpers.cc` holds the bodies.
+  importsShareScope: true,
+  declarationExtensions: [".h", ".hpp", ".hxx", ".hh", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
   typesSpanFiles: true,
+  // `p->kick()` is read as `kick`: a bare call may be another class's member.
+  bareCallsHideReceivers: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
 };

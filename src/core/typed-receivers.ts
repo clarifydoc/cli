@@ -2,7 +2,7 @@ import type { ClassInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { restoreHeldCalls } from "../extractors/shared/call-graph.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
-import { pluginFor } from "../extractors/registry.js";
+import { manifestFor, pluginFor } from "../extractors/registry.js";
 
 /** Receiver heads that name the current instance (VB spells it `Me`). */
 export const SELF_HEADS: ReadonlySet<string> = new Set(["this", "self", "Self", "$this", "cls", "Me", "me"]);
@@ -67,9 +67,22 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     return names;
   };
 
+  // A class the file can name: one it declares, one an import binds (where imports name what a
+  // module uses), or — where a package's types need no import — any name shaped like a type.
+  const bindsNames = manifestFor(language)?.importsBindNames !== undefined;
+  const imported = new Set<string>();
+  for (const imp of analysis.imports) for (const n of [...imp.specifiers, ...Object.keys(imp.aliases ?? {})]) imported.add(fold(n));
+  const namesClass = (head: string): boolean => {
+    if (!TYPE_SHAPED.test(head) || receiverTypeName(head, language) === null) return false;
+    return classByName.has(head) || imported.has(fold(head)) || !bindsNames;
+  };
+
   const restore = (fn: FunctionInfo, members: ReadonlySet<string>, own: ReadonlySet<string>): void => {
     const scope = scopeOf(fn, members);
-    restoreHeldCalls(fn.calls, (call) => receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold));
+    restoreHeldCalls(
+      fn.calls,
+      (call) => receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
+    );
   };
 
   const none: ReadonlySet<string> = new Set();
@@ -87,6 +100,19 @@ function ownMethodCall(callName: string, own: ReadonlySet<string>, bareIsMember:
   const parts = callName.split(".");
   if (parts.length === 1) return bareIsMember && own.has(fold(parts[0]!));
   return parts.length === 2 && SELF_HEADS.has(parts[0]!) && own.has(fold(parts[1]!));
+}
+
+/** A type's spelling: capitalized, with a lower-case letter (`ClubStore`, never a `LOG` constant). */
+const TYPE_SHAPED = /^[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*$/;
+
+/**
+ * `ClubStore.find(…)` — a static call on a class (no name in scope spells the
+ * head): the leaf is the class's method, never `Array#find` or a logger's
+ * `log`. Whether the project declares the class is the linker's to say.
+ */
+function classReceiver(callName: string, scope: ReadonlySet<string>, fold: (n: string) => string, namesClass: (head: string) => boolean): boolean {
+  const parts = callName.split(".");
+  return parts.length === 2 && !scope.has(fold(parts[0]!)) && namesClass(parts[0]!);
 }
 
 /**

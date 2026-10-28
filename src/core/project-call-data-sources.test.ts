@@ -50,4 +50,22 @@ describe("demoteProjectCallDataSources", () => {
     expect(n).toBe(0);
     expect(names(svc)).toEqual(["Player.active", "players.findByEmail"]);
   });
+
+  it("drops a db-write mutation made by a call into a project class, keeping one into an entity", () => {
+    const coach = file("Coach.java", {
+      dataMutations: [
+        { kind: "db-write", target: "ClubStore.save(club)", value: null, line: 5 },
+        { kind: "db-write", target: "Player.save(p)", value: null, line: 6 },
+        { kind: "db-write", target: "jdbc.update(sql)", value: null, line: 7 },
+      ],
+    });
+    const store = file("ClubStore.java", { classes: [{ name: "ClubStore", decorators: [], methods: [] }] as any });
+    const player = file("Player.java", { classes: [{ name: "Player", decorators: ["entity"], methods: [] }] as any });
+    const n = demoteProjectCallDataSources([coach, store, player], [
+      link("Coach.java", 5, "ClubStore.save", "ClubStore.java", "ClubStore.save", { strategy: "class-name", confidence: "INFERRED" }),
+      link("Coach.java", 6, "Player.save", "Player.java", "Player.save", { strategy: "class-name", confidence: "INFERRED" }),
+    ]);
+    expect(n).toBe(1);
+    expect(coach.dataMutations.map((m) => m.target)).toEqual(["Player.save(p)", "jdbc.update(sql)"]);
+  });
 });
