@@ -207,6 +207,8 @@ export interface RegexLangSpec {
    * same arguments; core joins them to screens across files.
    */
   extractUiComponents?: (lines: string[], filePath: string, classes: ClassInfo[]) => UiComponentInfo[];
+  /** Functions of the file that open the component they are handed (`FileAnalysis.navigationHelpers`). */
+  extractNavigationHelpers?: (lines: string[], functions: FunctionInfo[]) => string[];
   /**
    * Rendered sub-components from a template/markup file (the regex-path analog of
    * `AstExtractorHooks.subComponents`, used by Blazor `.razor`). Feeds the

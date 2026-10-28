@@ -49,4 +49,15 @@ describe("composeScreenNavigation", () => {
     composeScreenNavigation(analyses, {});
     expect(nav(analyses)).toEqual(["GaragePage → DownloadPage, PitPage", "ShowroomPage → DownloadPage, SlideshowPage"]);
   });
+  it("navigates where a component hands a widget to a navigation helper, and nowhere through a function that is not one", () => {
+    const helpers = file("packages/pit_utils/lib/navigation.dart", []);
+    helpers.navigationHelpers = ["openPage"];
+    const analyses = [
+      helpers,
+      file("lib/pages/garage.page.dart", [c("GaragePage", ["CarCard"], [], { navigatesVia: { openPage: ["ServicePage"], logEvent: ["Tyre"] } })], ["GaragePage"]),
+      file("lib/widgets/car_card.dart", [c("CarCard", [], [], { navigatesVia: { openPage: ["CarDetailPage"] } })]),
+    ];
+    expect(composeScreenNavigation(analyses, {})).toBe(2);
+    expect(nav(analyses)).toEqual(["GaragePage → CarDetailPage, ServicePage"]);
+  });
 });

@@ -61,6 +61,8 @@ export function extractWithRegex(
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   const uiComponents = spec.extractUiComponents?.(lines, filePath, analysis.classes);
   if (uiComponents?.length) analysis.uiComponents = uiComponents;
+  const navigationHelpers = spec.extractNavigationHelpers?.(lines, analysis.functions);
+  if (navigationHelpers?.length) analysis.navigationHelpers = navigationHelpers;
   // UI markup files (Blazor .razor) contribute component usage + interactive
   // elements the same way Vue/React do via AST hooks — the screen builder's flat
   // fallback turns these into a screen tree.

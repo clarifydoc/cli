@@ -176,6 +176,30 @@ describe("dartSpec — data sources", () => {
     ]);
   });
 
+  it("reads a call on a client its declared type names, whatever the field is called (real-repo shape)", () => {
+    const ds = dataSources(`
+      class LeagueGateway {
+        final Dio _leagueDio;
+        final http.Client transport;
+        LeagueGateway(this._leagueDio, this.transport);
+        Future<void> load() async {
+          final response = await _leagueDio.get("/clubs/sessions");
+          await _leagueDio.post(
+            "/clubs/restore",
+            data: {"id": id},
+          );
+          await transport.get(Uri.parse('https://league.example.com/table'));
+          final cached = _cache.get(key);
+        }
+      }
+    `).filter((d) => d.kind === "api-call");
+    expect(ds.map((d) => `${d.name} ${d.target} @${d.line}`)).toEqual([
+      "_leagueDio.get /clubs/sessions @7",
+      "_leagueDio.post /clubs/restore @8",
+      "transport.get https://league.example.com/table @12",
+    ]);
+  });
+
   it("does NOT treat non-client receivers as HTTP calls", () => {
     const ds = dataSources(`
       list.get(0);
@@ -420,6 +444,77 @@ class _Unused extends StatelessWidget {
       "GaragePage → CarDetailPage, ServiceHistoryPage",
       "ServiceHistoryPage → TyrePage",
     ]);
+  });
+});
+
+describe("Flutter navigation helpers", () => {
+  it("names a function that pushes the widget it is handed, and the widgets a page hands to a function", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const util = extractWithRegex(`import 'package:flutter/material.dart';
+
+Future<T?> openPage<T extends Object>(
+  BuildContext context,
+  Widget page, {
+  bool fade = false,
+}) {
+  return Navigator.of(context).push(_buildPageRoute(page));
+}
+
+PageRouteBuilder<T> _buildPageRoute<T extends Object>(Widget page) {
+  return PageRouteBuilder(pageBuilder: (context, a, b) => page);
+}
+
+void logTap(BuildContext context, Widget source) {
+  print(source);
+}
+`, "packages/pit_utils/lib/navigation.dart", "dart");
+    expect(util.navigationHelpers).toEqual(["openPage"]);
+
+    const page = extractWithRegex(`class GaragePage extends StatelessWidget {
+  const GaragePage({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: ListTile(
+        onTap: () async {
+          await openPage<bool>(
+            context,
+            const ServiceHistoryPage(),
+          );
+          openPage(context, CarDetailPage(car: car));
+        },
+      ),
+    );
+  }
+}`, "lib/ui/garage_page.dart", "dart");
+    expect(page.uiComponents?.find((c) => c.name === "GaragePage")?.navigatesVia).toEqual({ openPage: ["CarDetailPage", "ServiceHistoryPage"] });
+  });
+
+  it("makes a StatefulWidget a screen when its State renders the Scaffold, but not a private body widget (real-repo shape)", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const a = extractWithRegex(`class TyreSettings extends StatefulWidget {
+  const TyreSettings({super.key});
+  @override
+  State<TyreSettings> createState() => _TyreSettingsState();
+}
+
+class _TyreSettingsState
+    extends State<TyreSettings> {
+  @override
+  Widget build(BuildContext context) => Scaffold(body: const _TyreBody());
+}
+
+class _TyreBody extends StatefulWidget {
+  const _TyreBody();
+  @override
+  State<_TyreBody> createState() => _TyreBodyState();
+}
+
+class _TyreBodyState extends State<_TyreBody> {
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Text("tyres"));
+}`, "lib/ui/settings/tyre_settings.dart", "dart");
+    expect(a.screens.map((sc) => sc.name)).toEqual(["TyreSettings"]);
   });
 });
 

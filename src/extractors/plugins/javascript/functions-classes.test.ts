@@ -594,3 +594,23 @@ function init() { window.onload = function () { start(); }; }`;
     expect(names).not.toContain("onload");
   });
 });
+
+describe("an export made by handing a function to a wrapper", () => {
+  it("names the handler it is given, never a factory returning an object", async () => {
+    const src = `import handler from "./libs/handler-lib";
+export const main = handler(async (event) => {
+  await table.put(event.body);
+});
+export const getClub = asyncHandler(function (req, res) {
+  res.json(clubs.find(req.params.id));
+});
+export const useGarageStore = create((set) => ({ cars: [], add: (car) => set(car) }));
+const local = handler(async () => save());`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "main")?.calls.map((c) => c.name)).toEqual(["table.put"]);
+    expect(fns.find((f) => f.name === "getClub")?.line).toBe(5);
+    expect(fns.map((f) => f.name)).not.toContain("useGarageStore");
+    expect(fns.map((f) => f.name)).not.toContain("local");
+  });
+});

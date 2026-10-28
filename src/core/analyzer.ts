@@ -2375,7 +2375,10 @@ function extractNavigationTargets(source: string): string[] {
   const patterns = [
     /navigate\(\s*['"`]([^'"`\s]+)['"`]/g,
     /router\.push\(\s*['"`]([^'"`\s]+)['"`]/g,
-    /<Link\s+[^>]*to\s*=\s*['"`]([^'"`]+)['"`]/g,
+    // A history object's push (`history.push("/")`, `this.props.history.replace(…)`).
+    /\bhistory\.(?:push|replace)\(\s*['"`]([^'"`\s]+)['"`]/g,
+    // A link element's `to`, as a string or a template in braces (`to={`/clubs/${id}`}`); its wrappers too (`NavLink`, `LinkContainer`).
+    /<(?:Link|NavLink|LinkContainer)\s+[^>]*?\bto\s*=\s*\{?\s*['"`]([^'"`]+)['"`]/g,
     // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
     /location(?:\.href)?\s*=\s*['"`]([^'"`]+)['"`]/g,
   ];

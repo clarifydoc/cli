@@ -114,7 +114,7 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[], facts?: R
     node.type === "jsx_self_closing_element"
   ) {
     const nameNode = node.childForFieldName("name") ?? node.child(1);
-    if (nameNode?.text === "Route") {
+    if (nameNode?.text === "Route" || (hasAttr(node, "path") && inSwitch(node))) {
       const mapped = mappedPath(node);
       if (mapped) {
         const data: RouteMapFact = { array: mapped.array, head: mapped.head, pathProp: mapped.prop, componentProp: mappedComponentProp(node, mapped.param), prefix: ancestorRoutePrefix(node) };
@@ -154,6 +154,19 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[], facts?: R
       }
     }
   }
+}
+
+/**
+ * A child of v5's `<Switch>`: the switch matches every child element by its `path`
+ * prop whatever its type, so `<AuthenticatedRoute path="/settings"><Settings /></AuthenticatedRoute>`
+ * (a wrapper rendering `<Route {...rest}>`) is a route of its own.
+ */
+function inSwitch(node: Node): boolean {
+  const element = node.type === "jsx_self_closing_element" ? node : node.parent;
+  const parent = element?.parent;
+  if (parent?.type !== "jsx_element") return false;
+  const open = parent.childForFieldName("open_tag") ?? parent.child(0);
+  return (open?.childForFieldName("name") ?? open?.child(1))?.text === "Switch";
 }
 
 /** Attributes that name what a `<Route>` renders, strongest first (v5, v6.4 data router, v6, v5 render prop). */

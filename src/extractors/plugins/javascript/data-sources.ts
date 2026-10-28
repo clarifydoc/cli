@@ -44,6 +44,8 @@ const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax", "needle
  * all resolved and all four DELETEs went missing.
  */
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "del"]);
+/** `import { API } from "aws-amplify"` (or `@aws-amplify/api`): Amplify's REST client, `API.get(apiName, path)`. */
+const AMPLIFY_API_IMPORT = /\bimport\s*\{[^}]*\bAPI\b[^}]*\}\s*from\s*["'](?:aws-amplify|@aws-amplify\/api)["']/;
 
 /** React hook patterns that indicate data sources */
 const STATE_HOOKS = new Set([
@@ -1274,6 +1276,12 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               callName = verb.toLowerCase();
               firstArg = positional[1]!;
             }
+          }
+          // Amplify's REST client names the API first and the path second: `API.get("notes", `/notes/${id}`)`
+          // requests that path of the endpoint the app configured under "notes".
+          if (recv === "API" && HTTP_VERBS.has(callName.toLowerCase()) && positional.length > 1 && positional[0]!.type === "string" &&
+            AMPLIFY_API_IMPORT.test(this.sourceText)) {
+            firstArg = positional[1]!;
           }
           // `fetch(url, { method: "POST" })`, `oazapfts.fetchJson(url, oazapfts.json({ ...opts, method: "POST" }))`:
           // a client named for fetching carries its verb in the options.

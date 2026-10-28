@@ -138,6 +138,17 @@ describe("linkApiCallsToRoutes", () => {
     expect(links[0]).toMatchObject({ handler: "Delete", method: "DELETE", confidence: "EXTRACTED" });
   });
 
+  it("reads the verb off a call named with its client (`_leagueDio.put`, `requests.del`)", () => {
+    const links = linkApiCallsToRoutes(
+      [apiCall("app/lib/players_gateway.dart", "_leagueDio.delete", "/api/players/${id}"), apiCall("tools/sync.py", "session.del", "/api/players/7", 2)],
+      routes,
+    );
+    expect(links.map((l) => [l.method, l.handler, l.confidence])).toEqual([
+      ["DELETE", "Delete", "EXTRACTED"],
+      ["DELETE", "Delete", "EXTRACTED"],
+    ]);
+  });
+
   it("drops unmatched and external calls", () => {
     const links = linkApiCallsToRoutes(
       [

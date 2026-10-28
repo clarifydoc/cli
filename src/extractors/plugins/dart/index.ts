@@ -261,9 +261,18 @@ function dartStringArg(lines: string[], i: number, col: number): string | null {
   return end < 0 ? null : body.slice(0, end);
 }
 
+/** A field, getter, local or parameter the file declares as an HTTP client by type: `final Dio _leagueDio;`, `http.Client client`, `Dio get api =>`. */
+const TYPED_CLIENT_RE = /(?<![\w.])(?:Dio|http\.Client)\??\s+(?:get\s+)?(_*[A-Za-z]\w*)\s*(?=[;=,)]|=>|\{)/g;
+
 function extractDartDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
+  // A client whose name says nothing (`_leagueDio`, `_gateway`) is still one when its declared type is.
+  const typedClients = new Set<string>();
+  for (const line of lines) {
+    if (!line.includes("Dio") && !line.includes("Client")) continue;
+    for (const m of line.matchAll(TYPED_CLIENT_RE)) typedClients.add(m[1]!);
+  }
   const push = (d: DataSourceInfo) => {
     const key = `${d.kind}:${d.name}@${d.line}`;
     if (seen.has(key)) return;
@@ -286,7 +295,7 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     if (split && splitReceiver) httpCalls.unshift({ receiver: splitReceiver, verb: split[2]!, index: split[1]!.length, text: split[0]!.slice(split[1]!.length) });
     for (const m of httpCalls) {
       const { receiver, verb } = m;
-      if (!isDartHttpReceiver(receiver)) continue;
+      if (!isDartHttpReceiver(receiver) && !typedClients.has(receiver)) continue;
       // `apiConnection.request(RequestType.GET, '/x')` is the project's own
       // wrapper, not a client: its call site is a `pathArgCalls` entry.
       const after = line.slice(m.index + m.text.length);
@@ -727,6 +736,34 @@ const FLUTTER_NAV_RE = [
 ];
 
 /**
+ * A function called with a context and a widget it constructs: `openPage(context, const ClubPage())`,
+ * `pushPage<bool>(\n  context,\n  ClubPage(id: id),\n)` — the shape of a navigation helper's call.
+ */
+const FLUTTER_HANDED_RE = /(?<![\w$.])([a-z]\w*)\s*(?:<[^<>()]*>)?\(\s*[\w.!]*[cC]ontext\s*,\s*(?:const\s+)?([A-Z]\w*)(?:\.\w+)?\s*(?:<[^<>()]*>)?\(/g;
+
+/** A navigator push: `Navigator.of(context).push(`, `Navigator.pushReplacement(`, `navigator.pushAndRemoveUntil(`. */
+const NAVIGATOR_PUSH_RE = /\b[Nn]avigator(?:State)?\b[^;]*?\.push\w*\s*\(|\bNavigator\.push\w*\s*\(/;
+
+/**
+ * Functions that open the widget they are handed: a `Widget` parameter the body
+ * mentions, beside a navigator push (`openPage(BuildContext context, Widget page)`
+ * → `Navigator.of(context).push(_buildPageRoute(page))`).
+ */
+function flutterNavigationHelpers(lines: string[], functions: FunctionInfo[]): string[] {
+  const out: string[] = [];
+  for (const fn of functions) {
+    const widgetParams = fn.params.filter((p) => p.type === "Widget" || p.type === "Widget?");
+    if (widgetParams.length === 0) continue;
+    const body = lines.slice(fn.line - 1, fn.endLine).join("\n");
+    const open = body.indexOf("{");
+    const inner = open < 0 ? body : body.slice(open);
+    if (!NAVIGATOR_PUSH_RE.test(inner)) continue;
+    if (widgetParams.some((p) => new RegExp(`(?<![\\w$])${p.name}(?![\\w$])`).test(inner))) out.push(fn.name);
+  }
+  return out;
+}
+
+/**
  * Framework widgets a dialog or sheet builder returns first (`AlertDialog`, `MultiBlocProvider(…)`
  * around the app's own dialog, a bloc it creates): never a screen of the app.
  */
@@ -860,10 +897,13 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
     const own = bodyOf(cls);
     const state = stateOf.get(cls.name);
     const annotated = cls.decorators.some((d) => /^RoutePage\b/.test(d)) || /@RoutePage\b/.test(lines[Math.max(0, cls.line - 2)] ?? "");
-    // Whether it is a screen is read off the widget's own body: a routed widget often wraps
-    // another of its file whose State renders the `Scaffold`.
-    const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(own);
-    widgets.set(cls.name, { cls, body: own + (state ? "\n" + bodyOf(state) : ""), screen: annotated || scaffold || /(?:Page|Screen)$/.test(cls.name) });
+    // Whether it is a screen is read off the widget's own body and its State's — a StatefulWidget
+    // page renders its `Scaffold` from the State. A private widget is read off its own body alone:
+    // a routed widget often wraps another of its file whose State renders the `Scaffold`, and that
+    // one is the page's body, not a page.
+    const body = own + (state ? "\n" + bodyOf(state) : "");
+    const scaffold = /\b(?:Scaffold|CupertinoPageScaffold|CupertinoTabScaffold|AdaptiveScaffold)\s*(?:\.\w+\s*)?\(/.test(cls.name.startsWith("_") ? own : body);
+    widgets.set(cls.name, { cls, body, screen: annotated || scaffold || /(?:Page|Screen)$/.test(cls.name) });
   }
   /** Adds where `body` navigates to `into`; returns the names it shows as a dialog or route (opened, not built in place). */
   const navigationOf = (body: string, self: string, into: Set<string>): Set<string> => {
@@ -889,8 +929,18 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
   // default (`this.appBar = const MainAppBar()`) is built only when a builder leaves that
   // parameter out: kept apart, with the named arguments each builder passes.
   const declared = new Set(classes.map((c) => c.name));
+  /** `openPage(context, ClubPage(…))`: a function handed a widget this body constructs — a navigation helper, if core finds one of that name. */
+  const handedOf = (body: string, into: Map<string, Set<string>>): void => {
+    FLUTTER_HANDED_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = FLUTTER_HANDED_RE.exec(body)) !== null) {
+      if (FLUTTER_FRAMEWORK_TARGET_RE.test(m[2]!)) continue;
+      (into.get(m[1]!) ?? into.set(m[1]!, new Set()).get(m[1]!)!).add(m[2]!);
+    }
+  };
   const closure = (name: string, body: string) => {
     const navigatesTo = new Set<string>();
+    const navigatesVia = new Map<string, Set<string>>();
     const builds = new Set<string>();
     const passes = new Map<string, Set<string>>();
     const defaults = new Map<string, Set<string>>();
@@ -918,6 +968,7 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
     while (queue.length > 0) {
       const next = queue.shift()!;
       const opened = navigationOf(next.body, name, navigatesTo);
+      handedOf(next.body, navigatesVia);
       const ctor = constructorDefaults(next.body, next.self);
       for (const [param, names] of ctor.defaults) {
         for (const built of names) {
@@ -938,12 +989,12 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
       }
     }
     for (const [param, names] of defaults) for (const n of names) if (builds.has(n)) names.delete(n);
-    return { navigatesTo, builds, passes, defaults };
+    return { navigatesTo, builds, passes, defaults, navigatesVia };
   };
   for (const cls of classes) {
     const own = widgets.get(cls.name);
     if (own) {
-      const { navigatesTo, builds, passes, defaults } = closure(cls.name, own.body);
+      const { navigatesTo, builds, passes, defaults, navigatesVia } = closure(cls.name, own.body);
       if (own.screen) {
         screens.push({
           name: cls.name,
@@ -958,8 +1009,9 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
       }
       const defaultBuilds = [...defaults].filter(([, names]) => names.size > 0);
       // A private widget is folded into the widgets of its file that build it.
-      if ((own.screen || !cls.name.startsWith("_")) && (builds.size > 0 || navigatesTo.size > 0 || defaultBuilds.length > 0)) {
+      if ((own.screen || !cls.name.startsWith("_")) && (builds.size > 0 || navigatesTo.size > 0 || defaultBuilds.length > 0 || navigatesVia.size > 0)) {
         const component: UiComponentInfo = { name: cls.name, line: cls.line, builds: [...builds].sort(), navigatesTo: [...navigatesTo].sort() };
+        if (navigatesVia.size > 0) component.navigatesVia = Object.fromEntries([...navigatesVia].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([f, names]) => [f, [...names].sort()]));
         const passed = [...passes].filter(([, args]) => args.size > 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
         if (passed.length > 0) component.passes = Object.fromEntries(passed.map(([n, args]) => [n, [...args].sort()]));
         if (defaultBuilds.length > 0) component.defaults = Object.fromEntries(defaultBuilds.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([p, names]) => [p, [...names].sort()]));
@@ -1145,4 +1197,5 @@ export const dartSpec: RegexLangSpec = {
   },
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
   extractUiComponents: (lines, filePath, classes) => flutterUi(lines, filePath, classes).components,
+  extractNavigationHelpers: flutterNavigationHelpers,
 };

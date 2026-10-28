@@ -24,12 +24,12 @@ describe("calls a single-file component's template makes", () => {
 
   it("reads an optional chain as the chain, and keeps a child reached through `$refs`", () => {
     const calls = markupCalls([
-      el("editDialogRef?.open()", 3),
+      el("squadDialogRef?.open()", 3),
       el("$refs.playerDialog.close()", 4),
       el("$router.push('/clubs')", 5),
     ], "web/components/ClubList.vue");
     expect(calls.map((c) => [c.name, c.line])).toEqual([
-      ["editDialogRef.open", 3],
+      ["squadDialogRef.open", 3],
       ["$refs.playerDialog.close", 4],
     ]);
   });

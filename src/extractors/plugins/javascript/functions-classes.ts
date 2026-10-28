@@ -127,6 +127,22 @@ function wrappedFunction(value: Node): Node | null {
 }
 
 /**
+ * An exported binding made by handing a function to a wrapper of the project or a
+ * library — `export const main = handler(async (event) => {…})`, `export const
+ * getClub = asyncHandler(async (req, res) => {…})`, `export const GET =
+ * withAuth(async (req) => {…})`: what the export runs is that function, so the
+ * binding names it. Only a handler-shaped argument — async, or a block body; a
+ * factory returning an object (`create((set) => ({…}))`) is no handler.
+ */
+function exportedHandlerOf(value: Node): Node | null {
+  if (value.type !== "call_expression" || value.childForFieldName("function")?.type !== "identifier") return null;
+  const first = value.childForFieldName("arguments")?.namedChildren[0];
+  if (!first || !FUNCTION_EXPRESSIONS.has(first.type)) return null;
+  const body = first.childForFieldName("body");
+  return first.text.startsWith("async") || body?.type === "statement_block" ? first : null;
+}
+
+/**
  * One walk over a function body for what `extractCalls` does not collect:
  *
  * - Dynamic `import("./x.vue")` calls, surfaced as cross-file call edges so
@@ -1230,7 +1246,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           if (decl.type === "variable_declarator") {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
-            const wrapped = value ? wrappedFunction(value) : null;
+            const wrapped = value ? wrappedFunction(value) ?? (moduleLevel && isExported ? exportedHandlerOf(value) : null) : null;
             const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
             if (store) {
               functions.push(this.piniaStoreFunction(store, decl, isExported));

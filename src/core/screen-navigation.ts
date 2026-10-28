@@ -39,6 +39,7 @@ interface Declared {
  * @returns How many navigation edges were added
  */
 export function composeScreenNavigation(analyses: FileAnalysis[], importGraph: Record<string, string[]>): number {
+  let added = applyNavigationHelpers(analyses, importGraph);
   const declaring = new Map<string, Declared[]>();
   const screensIn = new Map<string, Set<string>>();
   const testFile = new Map<string, boolean>();
@@ -53,7 +54,7 @@ export function composeScreenNavigation(analyses: FileAnalysis[], importGraph: R
     }
     if (a.screens.length > 0) screensIn.set(a.filePath, new Set(a.screens.map((s) => s.name)));
   }
-  if (declaring.size === 0) return 0;
+  if (declaring.size === 0) return added;
 
   const resolve = (name: string, fromFile: string, project: string | undefined): Declared | null => {
     let candidates = (declaring.get(name) ?? []).filter((d) => d.file !== fromFile);
@@ -75,7 +76,6 @@ export function composeScreenNavigation(analyses: FileAnalysis[], importGraph: R
     return names;
   };
 
-  let added = 0;
   for (const a of analyses) {
     if (!a.uiComponents?.length || a.screens.length === 0) continue;
     for (const screen of a.screens) {
@@ -104,6 +104,53 @@ export function composeScreenNavigation(analyses: FileAnalysis[], importGraph: R
           }
         }
         frontier = next;
+      }
+    }
+  }
+  return added;
+}
+
+/**
+ * A component that hands what it constructs to a navigation helper
+ * (`openPage(context, ClubPage())`, `UiComponentInfo.navigatesVia`) navigates
+ * there, as a direct push would. The helper is the one function of that name
+ * a file declares as one (`FileAnalysis.navigationHelpers`): the declaring file
+ * the caller imports when one does, else the one in its sub-project, else the
+ * one in the whole analysis — a helper usually lives in a shared package. The
+ * component's own screen gets the target too.
+ *
+ * @returns How many navigation edges were added
+ */
+function applyNavigationHelpers(analyses: FileAnalysis[], importGraph: Record<string, string[]>): number {
+  const helpers = new Map<string, Array<{ file: string; project: string | undefined }>>();
+  for (const a of analyses) {
+    for (const name of a.navigationHelpers ?? []) {
+      (helpers.get(name) ?? helpers.set(name, []).get(name)!).push({ file: a.filePath, project: a.projectId });
+    }
+  }
+  if (helpers.size === 0) return 0;
+  const isHelper = (name: string, fromFile: string, project: string | undefined): boolean => {
+    const candidates = helpers.get(name) ?? [];
+    if (candidates.length <= 1) return candidates.length === 1;
+    const imported = new Set(importGraph[fromFile] ?? []);
+    if (candidates.some((c) => imported.has(c.file))) return true;
+    return candidates.filter((c) => c.project === project).length === 1;
+  };
+  let added = 0;
+  for (const a of analyses) {
+    for (const component of a.uiComponents ?? []) {
+      if (!component.navigatesVia) continue;
+      const screen = a.screens.find((sc) => sc.name === component.name);
+      for (const [helper, targets] of Object.entries(component.navigatesVia)) {
+        if (!isHelper(helper, a.filePath, a.projectId)) continue;
+        for (const t of targets) {
+          if (t === component.name) continue;
+          if (!component.navigatesTo.includes(t)) component.navigatesTo.push(t);
+          if (screen && !screen.navigatesTo.includes(t)) {
+            screen.navigatesTo.push(t);
+            added++;
+          }
+        }
       }
     }
   }

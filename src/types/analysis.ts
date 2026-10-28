@@ -437,6 +437,13 @@ export interface FileAnalysis {
    * builds across files (`core/screen-navigation.ts`). Omitted when none.
    */
   uiComponents?: UiComponentInfo[];
+  /**
+   * Functions the file declares that open the component they are handed — a
+   * `Widget page` parameter pushed onto the navigator (`openPage(context, page)`).
+   * A call of one with a constructed component (`UiComponentInfo.navigatesVia`)
+   * navigates to that component. Omitted when none.
+   */
+  navigationHelpers?: string[];
   /** Schema-validation warnings produced by validateFileAnalysis(). Omitted when empty. */
   extractorWarnings?: ExtractorWarning[];
   /**
@@ -2383,6 +2390,13 @@ export interface UiComponentInfo {
    * built only when the builder does not pass that parameter. Not in `builds`.
    */
   defaults?: Record<string, string[]>;
+  /**
+   * A project function it calls with a component it constructs: function → the
+   * names handed to it (`openPage(context, ClubPage())` → `openPage: [ClubPage]`).
+   * When the function is a navigation helper (`FileAnalysis.navigationHelpers`), core adds
+   * them to `navigatesTo`.
+   */
+  navigatesVia?: Record<string, string[]>;
 }
 
 export interface ScreenInfo {
