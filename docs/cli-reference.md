@@ -455,6 +455,7 @@ nothing. With no option it writes the Claude Code MCP entry (`.mcp.json`).
 | Variable | Effect |
 |----------|--------|
 | `CLARIFYDOC_WORKERS=<n>` | Worker threads for per-file extraction. They start at 200 files or more, at most 8 by default; `0` keeps everything in one thread. |
+| `CLARIFYDOC_HEAP_GROWING_PERCENT=<n>` | How far, in percent of what is live, a heap may grow past it before the next full collection while worker threads run (default 50; `0` leaves V8's own heuristic). Lower uses less memory and more collection time. |
 | `CLARIFYDOC_GIT=<path>` | The git binary used to read history. |
 | `CLARIFYDOC_LSP_DEBUG=1` | Log raw language-server answers and failed queries. |
 | `CLARIFYDOC_MCP_LOG=<file>` | Append one JSON line per MCP tool call — tool, arguments (long values cut), answer length, time, error, empty — to a local file. Sent nowhere. |
