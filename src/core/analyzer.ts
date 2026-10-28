@@ -123,6 +123,7 @@ import {
   computeSymbolReachWithWitness,
   attributeGenericDataAccess,
 } from "./data-flow-reach.js";
+import { buildSymbolSignatures } from "./symbol-signatures.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
@@ -1819,6 +1820,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     symbolLinks = dedupSymbolLinksAppend(symbolLinks, queueSymbolLinks);
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
   }
+  // What goes into and comes out of each traced function, for the trace diagram.
+  const symbolSignatures = buildSymbolSignatures(allAnalyses, symbolLinks, symbolDataAccess, classGraph, importIndex);
 
   // Project level: which sub-project calls or messages which, made of the
   // HTTP and broker links above, with the deployment edge that agrees.
@@ -2267,6 +2270,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     entityGraph: entityGraph.nodes.length > 0 ? entityGraph : undefined,
     symbolDataAccess: symbolDataAccess.length > 0 ? symbolDataAccess : undefined,
     symbolReach: symbolReach.length > 0 ? symbolReach : undefined,
+    symbolSignatures: symbolSignatures.length > 0 ? symbolSignatures : undefined,
     dataFlows: dataFlows.length > 0 ? dataFlows : undefined,
     migrations: migrations.length > 0 ? migrations : undefined,
     apiRouteLinks: apiRouteLinks.length > 0 ? apiRouteLinks : undefined,

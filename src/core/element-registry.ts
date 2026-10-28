@@ -578,6 +578,12 @@ function optional<K extends string, V>(key: K, value: V | undefined): Partial<Re
  * with fresh objects/arrays for every rewritten field — the input (and any shape
  * it shares with the caller's in-memory `ProjectAnalysis`) is never mutated.
  */
+/** A signature type's `models[].file` page references, rewritten by `ref`. */
+function modelRefs(t: Record<string, unknown>, ref: (v: unknown) => unknown): Record<string, unknown> {
+  if (!Array.isArray(t.models)) return t;
+  return { ...t, models: (t.models as Record<string, unknown>[]).map((m) => ({ ...m, file: ref(m.file) })) };
+}
+
 function rewritePageRefs<T extends object>(
   src: T,
   ref: (v: unknown) => unknown,
@@ -620,6 +626,12 @@ function rewritePageRefs<T extends object>(
   arr("surprisingConnections", (s) => ({ ...s, source: ref(s.source), target: ref(s.target) }));
   arr("godNodes", (n) => ({ ...n, file: ref(n.file) }));
   arr("symbolDataAccess", (s) => ({ ...s, file: ref(s.file) }));
+  arr("symbolSignatures", (s) => ({
+    ...s,
+    params: Array.isArray(s.params) ? (s.params as Record<string, unknown>[]).map((t) => modelRefs(t, ref)) : s.params,
+    ...optional("returns", s.returns ? modelRefs(s.returns as Record<string, unknown>, ref) : undefined),
+    file: ref(s.file),
+  }));
   arr("symbolReach", (s) => ({
     ...s,
     file: ref(s.file),

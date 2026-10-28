@@ -81,6 +81,8 @@ export interface ReportPayload {
   entityGraph: any;
   symbolDataAccess: any[];
   symbolReach: any[];
+  /** Parameter and return types of traced functions (`SymbolSignature[]`), plain paths. Absent when none / on old artifacts. */
+  symbolSignatures?: any[];
   dataFlows: any[];
   migrations: any[];
   externalPackages: any[];
@@ -419,6 +421,8 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     // Transitive data-access reach + source→sink flows (dataflow-lite). Stored
     // verbatim like symbolDataAccess; the viewer consumes them in a follow-up.
     symbolReach: s.symbolReach ?? [],
+    // Parameter and return types of traced functions (the Traces diagram's in/out boxes); plain paths.
+    ...(s.symbolSignatures?.length ? { symbolSignatures: s.symbolSignatures } : {}),
     dataFlows: s.dataFlows ?? [],
     migrations: s.migrations ?? [],
     externalPackages: s.externalPackages ?? [],
