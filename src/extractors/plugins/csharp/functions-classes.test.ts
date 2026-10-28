@@ -307,3 +307,21 @@ public class LeagueDataV2HttpClient : BaseLeagueDataHttpClient {
     expect(sub!.superArgs).toEqual(["v2", "${httpClient}"]);
   });
 });
+
+describe("C# abstract classes and methods", () => {
+  it("marks an abstract class and its abstract method", async () => {
+    const classes = await classesOf(`
+public abstract class Notifier {
+  public void NotifyClub(string c) { Send(c); }
+  protected abstract void Send(string c);
+}
+public class MailNotifier : Notifier { protected override void Send(string c) { } }`);
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "Send")!.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "NotifyClub")!.abstract).toBeUndefined();
+    const mail = classes.find((c) => c.name === "MailNotifier")!;
+    expect(mail.abstract).toBeUndefined();
+    expect(mail.methods[0]!.abstract).toBeUndefined();
+  });
+});

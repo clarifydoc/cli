@@ -364,6 +364,8 @@ export class PythonExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    // `@abstractmethod`: a member its subclasses supply, and a class that has one is never instantiated.
+    for (const m of methods) if (m.decorators.some((d) => ABSTRACT_DECORATOR.test(d))) m.abstract = true;
     if (isEnum) cls.kind = "enum";
     else if (baseTexts.some((t) => /^(?:typing(?:_extensions)?\.)?Protocol(?:\s*\[.*\])?$/s.test(t))) {
       // PEP 544: a Protocol is implemented by having its methods, never by
@@ -378,6 +380,8 @@ export class PythonExtractor extends FunctionClassExtractor {
       // a value typed by it is always one of its subclasses. (An ABC with no
       // abstract member is an ordinary, instantiable base class.)
       cls.kind = "interface";
+    } else if (methods.some((m) => m.abstract)) {
+      cls.abstract = true;
     }
     return cls;
   }

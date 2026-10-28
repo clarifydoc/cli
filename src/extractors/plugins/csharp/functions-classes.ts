@@ -224,6 +224,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       kind,
+      ...(kind === "class" && this.hasModifier(node, "abstract") ? { abstract: true as const } : {}),
     };
   }
 
@@ -277,6 +278,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    if (!body && this.hasModifier(node, "abstract")) fn.abstract = true;
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
     typeCsharpVariableArgs(fn.calls, params, body);

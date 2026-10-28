@@ -614,3 +614,23 @@ const local = handler(async () => save());`;
     expect(fns.map((f) => f.name)).not.toContain("local");
   });
 });
+
+describe("TypeScript abstract classes", () => {
+  it("marks an abstract class with behaviour of its own, and its abstract members", async () => {
+    const classes = await classesOf(`
+export abstract class Notifier {
+  notifyClub(c: string) { this.send(c); }
+  protected abstract send(c: string): void;
+}
+export abstract class Logger { abstract write(m: string): void; }`);
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.abstract).toBe(true);
+    expect(notifier.kind).toBeUndefined();
+    expect(notifier.methods.find((m) => m.name === "send")!.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "notifyClub")!.abstract).toBeUndefined();
+    // Nothing but abstract members: an interface in all but name.
+    const logger = classes.find((c) => c.name === "Logger")!;
+    expect(logger.kind).toBe("interface");
+    expect(logger.abstract).toBeUndefined();
+  });
+});

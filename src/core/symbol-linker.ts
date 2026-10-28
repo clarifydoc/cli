@@ -409,6 +409,8 @@ export function buildSymbolLinks(
     links.push(...handed);
   }
 
+  abstractDispatchLinks(links, ctx);
+
   // Fan-out: emit a link from each interface method to every implementation's
   // matching method so the trace tab can navigate from interface → impls. A
   // call is redirected to a single implementation at the call site already
@@ -2623,7 +2625,7 @@ function buildBindingIndex(analyses: FileAnalysis[]): Map<string, IndexedBinding
     for (const binding of a.diBindings) {
       if (binding.allInterfaces) {
         decls ??= indexClassDecls(analyses);
-        for (const service of declaredInterfaces(binding.implementation, a, decls)) add({ ...binding, service }, a, isTest);
+        for (const service of declaredInterfaces(binding.implementation, a, decls, binding.abstractBases === true)) add({ ...binding, service }, a, isTest);
         continue;
       }
       add(binding, a, isTest);
@@ -2658,6 +2660,7 @@ function declaredInterfaces(
   name: string,
   reg: FileAnalysis,
   decls: Map<string, Array<{ a: FileAnalysis; cls: ClassInfo }>>,
+  abstractBases = false,
   seen = new Set<string>(),
 ): string[] {
   const inSpace = (d: { a: FileAnalysis }) => sameTypeSpace(reg.filePath, reg.language, d.a.filePath, d.a.language);
@@ -2671,8 +2674,8 @@ function declaredInterfaces(
     for (const sup of declaredSupertypes(d.cls, d.a)) {
       const base = bareSupertypeName(sup);
       if (seen.has(base)) continue;
-      if ((decls.get(base) ?? []).some((x) => x.cls.kind === "interface" && inSpace(x))) out.add(base);
-      if (seen.size < MAX_BASE_DEPTH * 4) for (const inherited of declaredInterfaces(base, reg, decls, seen)) out.add(inherited);
+      if ((decls.get(base) ?? []).some((x) => (x.cls.kind === "interface" || (abstractBases && x.cls.abstract)) && inSpace(x))) out.add(base);
+      if (seen.size < MAX_BASE_DEPTH * 4) for (const inherited of declaredInterfaces(base, reg, decls, abstractBases, seen)) out.add(inherited);
     }
   }
   return [...out];
@@ -2773,7 +2776,14 @@ export function buildInterfaceImplMap(
   };
   for (const a of analyses) {
     for (const cls of a.classes) {
-      if (cls.kind === "interface") continue;
+      if (cls.kind === "interface") {
+        const sub = map.get(memberKey(a.filePath, cls.name));
+        for (const ifaceName of declaredSupertypes(cls, a)) {
+          const entry = definitionFor(bareSupertypeName(ifaceName), a.filePath);
+          if (entry && sub && entry !== sub) (entry.extendedBy ??= []).push(sub);
+        }
+        continue;
+      }
       for (const ifaceName of declaredSupertypes(cls, a)) {
         const entry = definitionFor(bareSupertypeName(ifaceName), a.filePath);
         if (!entry) continue;
@@ -2881,6 +2891,8 @@ export interface InterfaceImplInfo {
     classFile: string;
     methods: Map<string, { name: string; line: number }>;
   }[];
+  /** The interfaces that extend this one (`ISeriesService : IProviderService`): their implementations are its too. */
+  extendedBy?: InterfaceImplInfo[];
 }
 
 /**
@@ -3390,6 +3402,13 @@ function resolveCallToDefinition(
           const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
           if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
           return link;
+        }
+        // A static member an extension adds to the class (C# 14 `extension(Car) { public static Car Build() … }`).
+        for (const filePath of eligible) {
+          if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
+          const ext = extensionMethodFor(ctx, analysis, sourceFile, declaredClass, filePath, methodName);
+          if (ext) return mkLink(ext.file, ext.symbol, ext.line, "INFERRED", "class-name");
+          break;
         }
       }
       // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
@@ -4174,7 +4193,11 @@ function chainPoint(
     rest = receiver.slice(1);
   } else if (receiver.length >= 2 && !head.call && SELF_HEADS.has(head.name)) {
     const own = receiver[1]!;
-    point = own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
+    // Inside an extension function, `this` is its receiver (`this.bay.count()` in `fun Garage.total()`).
+    const self = consumer ? null : receiverPoint(ctx, analysis, sourceFile, findEnclosingCallable(analysis, sourceSymbol));
+    point = self
+      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? null
+      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
@@ -4360,7 +4383,13 @@ const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "thi
  */
 function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false): InjectionPoint | null {
   if (!point.typeFile) return null;
-  const hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  let hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  if (!hit) {
+    // An extension function of the type (`fun Garage.inventory(): Report`): the chain goes on from what it returns.
+    ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const owner = ctx.analysisAt.get(point.typeFile);
+    hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
+  }
   if (!hit) return null;
   return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
 }
@@ -4566,7 +4595,31 @@ function scopedName(
   // Where fields need `this.`/`self.`, a bare name is a local or global the
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
-  return ownMember(ctx, sourceFile, consumer, name);
+  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name);
+}
+
+/**
+ * A member of the type an extension function extends, read through the body's implicit `this` — the receiver
+ * parameter the plugin names `this` (`fun Garage.total() = bay.count()`: `bay` is `Garage`'s). An extension
+ * has no fields of its own, so its receiver's come before any class the file declares.
+ */
+function receiverMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  callable: FunctionInfo | null | undefined,
+  name: string,
+): InjectionPoint | null {
+  const point = receiverPoint(ctx, analysis, sourceFile, callable);
+  return point?.typeFile ? ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(analysis.language, name)) ?? null : null;
+}
+
+/** The type an extension function's implicit `this` is: its receiver parameter named `this`/`self`. */
+function receiverPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, callable: FunctionInfo | null | undefined): InjectionPoint | null {
+  const recv = callable?.params.find((p) => p.isReceiver && SELF_HEADS.has(p.name));
+  const typeName = recv ? receiverTypeName(recv.type, analysis.language) : null;
+  const ref = typeName ? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+  return ref ? { ...ref, member: "this", consumer: "", container: false } : null;
 }
 
 /**
@@ -4808,8 +4861,9 @@ function linkThroughPoint(
     sourceIsTest || !(TEST_DOUBLE_PATH_RE.test(im.classFile) || isTestFile(im.classFile, (ctx.languageOf.get(im.classFile) ?? analysis.language) as Language)),
   );
   // The one implementation is not the target when it IS the consumer (a
-  // decorator holding another instance of its own interface).
-  if (impls.length === 1 && impls[0]!.className !== point.consumer) {
+  // decorator holding another instance of its own interface), nor when an
+  // interface extending this one has implementations of its own.
+  if (impls.length === 1 && impls[0]!.className !== point.consumer && !(iface && implementedBelow(iface, impls[0]!, sourceIsTest, ctx))) {
     const impl = impls[0]!;
     // An implementation that does not declare the member is an abstract base:
     // the call runs in the one class below it that does (`ServiceImpl extends
@@ -4817,6 +4871,18 @@ function linkThroughPoint(
     const target = findMethodInClass(ctx, impl.className, impl.classFile, method)
       ?? overrideBelow(ctx, impl.className, impl.classFile, method, sourceIsTest);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "interface-redirect"));
+  }
+  // An abstract class is never what a value of its type is: with ONE concrete class below it, that class's
+  // member runs — its override, or what it inherits.
+  if (!iface && ctx.classAt.get(memberKey(point.typeFile, point.typeName))?.abstract) {
+    const concrete = concreteBelow(ctx, point.typeName, point.typeFile, sourceIsTest);
+    if (concrete.length === 1 && concrete[0]!.name !== point.consumer) {
+      const target = findMethodInClass(ctx, concrete[0]!.name, concrete[0]!.file, method);
+      const declared = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+      if (target && (target.file !== declared?.file || target.symbol !== declared.symbol)) {
+        return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "interface-redirect"));
+      }
+    }
   }
 
   const target = findMethodInClass(ctx, point.typeName, point.typeFile, method);
@@ -4833,6 +4899,29 @@ function linkThroughPoint(
     return Object.assign(mkLink(viaInterface.file, viaInterface.symbol, viaInterface.line, "INFERRED", "injection"), { viaType: point.typeName, viaTypeFile: point.typeFile });
   }
   return null;
+}
+
+/**
+ * Whether an interface extending `iface` (at any depth) has a real implementation (test doubles only for tests)
+ * other than `only` and the classes extending it (`ClubRepository : BasicRepository<Club>, IClubRepository`
+ * inherits what `BasicRepository` implements).
+ */
+function implementedBelow(
+  iface: InterfaceImplInfo,
+  only: { className: string; classFile: string },
+  sourceIsTest: boolean,
+  ctx: LinkContext,
+  seen = new Set<InterfaceImplInfo>(),
+): boolean {
+  seen.add(iface);
+  for (const sub of iface.extendedBy ?? []) {
+    if (seen.has(sub)) continue;
+    const other = sub.impls.some((im) =>
+      (sourceIsTest || !(TEST_DOUBLE_PATH_RE.test(im.classFile) || isTestFile(im.classFile, (ctx.languageOf.get(im.classFile) ?? "") as Language)))
+      && !baseChain(ctx, im.className, im.classFile).some((c) => c.name === only.className && c.file === only.classFile));
+    if (other || implementedBelow(sub, only, sourceIsTest, ctx, seen)) return true;
+  }
+  return false;
 }
 
 /** Extension methods by name: their receiver parameter's normalized type. */
@@ -4948,6 +5037,154 @@ function overrideBelow(
     frontier = next;
   }
   return found.length === 1 ? found[0]! : null;
+}
+
+/** Whether class `className` in `file` declares `method` only abstractly (every declaration of the name bodyless). */
+function isAbstractMethod(ctx: LinkContext, file: string, className: string, method: string): boolean {
+  const decls = ctx.classAt.get(memberKey(file, className))?.methods.filter((m) => m.name === method) ?? [];
+  return decls.length > 0 && decls.every((m) => m.abstract);
+}
+
+/**
+ * The concrete classes below `className` — its subclasses, theirs, … — that
+ * are neither abstract nor interfaces, test classes left out of production
+ * calls.
+ */
+function concreteBelow(ctx: LinkContext, className: string, classFile: string, sourceIsTest: boolean): Array<{ name: string; file: string }> {
+  const below = (ctx.subclasses ??= buildSubclassIndex(ctx));
+  const out: Array<{ name: string; file: string }> = [];
+  const seen = new Set([memberKey(classFile, className)]);
+  let frontier = [memberKey(classFile, className)];
+  for (let depth = 0; depth < MAX_BASE_DEPTH && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const k of frontier) {
+      for (const sub of below.get(k) ?? []) {
+        const key = memberKey(sub.file, sub.name);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!sourceIsTest && (TEST_DOUBLE_PATH_RE.test(sub.file) || isTestFile(sub.file, (ctx.languageOf.get(sub.file) ?? "") as Language))) continue;
+        next.push(key);
+        const cls = ctx.classAt.get(key);
+        if (cls && !cls.abstract && cls.kind !== "interface") out.push(sub);
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+/**
+ * Every override of `method` below `className`: on each path down from it,
+ * the nearest class declaring the method with a body (an abstract
+ * re-declaration is passed through). Test classes left out of production
+ * calls.
+ */
+function overridesBelow(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  method: string,
+  sourceIsTest: boolean,
+): Array<{ file: string; symbol: string; line: number }> {
+  const below = (ctx.subclasses ??= buildSubclassIndex(ctx));
+  const found: Array<{ file: string; symbol: string; line: number }> = [];
+  const seen = new Set([memberKey(classFile, className)]);
+  let frontier = [memberKey(classFile, className)];
+  for (let depth = 0; depth < MAX_BASE_DEPTH && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const k of frontier) {
+      for (const sub of below.get(k) ?? []) {
+        const key = memberKey(sub.file, sub.name);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!sourceIsTest && (TEST_DOUBLE_PATH_RE.test(sub.file) || isTestFile(sub.file, (ctx.languageOf.get(sub.file) ?? "") as Language))) continue;
+        const def = isAbstractMethod(ctx, sub.file, sub.name, method) ? undefined : symbolIn(ctx, sub.file, `${sub.name}.${method}`);
+        if (def) found.push({ file: sub.file, symbol: def.name, line: def.line });
+        else next.push(key);
+      }
+    }
+    frontier = next;
+  }
+  return found;
+}
+
+/**
+ * Dispatch through abstract methods. A call that landed on an abstract method
+ * runs an override: with ONE override below the class the call dispatches on,
+ * it is re-aimed there (`interface-redirect`), keeping a `reference` edge to
+ * the abstract method. The class it dispatches on is the caller's own when the
+ * caller calls it on itself from the declaring class or one below it (`send()`
+ * in the base's `notifyClub`), else the receiver's declared class, else the
+ * declaring one. Every abstract method of a class also fans out to all its
+ * overrides (`interface-fanout`, navigational), as an interface method does to
+ * its implementations — what reaches the abstract method reaches them.
+ */
+function abstractDispatchLinks(links: SymbolLink[], ctx: LinkContext): void {
+  const added: SymbolLink[] = [];
+  for (let i = 0; i < links.length; i++) {
+    const l = links[i]!;
+    if (l.navigational || (l.relation && l.relation !== "calls")) continue;
+    const dot = l.targetSymbol.lastIndexOf(".");
+    if (dot <= 0) continue;
+    const owner = l.targetSymbol.slice(0, dot);
+    const method = l.targetSymbol.slice(dot + 1);
+    if (!isAbstractMethod(ctx, l.targetFile, owner, method)) continue;
+    const ownerClass = ctx.classAt.get(memberKey(l.targetFile, owner))!;
+    const parts = l.callName.split(".");
+    const onSelf = parts.length === 1 || (parts.length === 2 && SELF_HEADS.has(parts[0]!));
+    const sourceDot = l.sourceSymbol.lastIndexOf(".");
+    const caller = sourceDot > 0 ? l.sourceSymbol.slice(0, sourceDot) : "";
+    let root: { name: string; file: string } | null = null;
+    if (onSelf && caller && ctx.classAt.has(memberKey(l.sourceFile, caller))
+      && baseChain(ctx, caller, l.sourceFile).some((c) => c.name === owner && c.file === l.targetFile)) {
+      root = { name: caller, file: l.sourceFile };
+    } else if (ownerClass.kind !== "interface") {
+      // An interface's typed receivers are dispatched by its implementations' own rules.
+      root = l.viaType && l.viaTypeFile ? { name: l.viaType, file: l.viaTypeFile } : { name: owner, file: l.targetFile };
+    }
+    if (!root) continue;
+    const sourceIsTest = isTestFile(l.sourceFile, (ctx.languageOf.get(l.sourceFile) ?? "") as Language) || TEST_DOUBLE_PATH_RE.test(l.sourceFile);
+    const overrides = overridesBelow(ctx, root.name, root.file, method, sourceIsTest);
+    if (overrides.length !== 1) continue;
+    const target = overrides[0]!;
+    added.push({ ...l, strategy: "injection", relation: "reference" });
+    links[i] = {
+      ...l,
+      targetFile: target.file,
+      targetSymbol: target.symbol,
+      targetLine: target.line,
+      confidence: "INFERRED",
+      strategy: "interface-redirect",
+      relation: relationForStrategy("interface-redirect"),
+    };
+  }
+  links.push(...added);
+
+  for (const [key, cls] of ctx.classAt) {
+    if (cls.kind === "interface" || !cls.methods.some((m) => m.abstract)) continue;
+    const file = key.slice(0, key.indexOf("\0"));
+    const baseIsTest = isTestFile(file, (ctx.languageOf.get(file) ?? "") as Language) || TEST_DOUBLE_PATH_RE.test(file);
+    const done = new Set<string>();
+    for (const m of cls.methods) {
+      if (!m.abstract || done.has(m.name)) continue;
+      done.add(m.name);
+      for (const target of overridesBelow(ctx, cls.name, file, m.name, baseIsTest)) {
+        links.push({
+          sourceFile: file,
+          sourceSymbol: `${cls.name}.${m.name}`,
+          sourceLine: m.line,
+          callName: m.name,
+          targetFile: target.file,
+          targetSymbol: target.symbol,
+          targetLine: target.line,
+          confidence: "INFERRED",
+          strategy: "interface-fanout",
+          relation: "implements",
+          navigational: true,
+        });
+      }
+    }
+  }
 }
 
 /** `${file}\0${class}` → the classes that extend it, each base located as `findMethodInClass` locates it. */

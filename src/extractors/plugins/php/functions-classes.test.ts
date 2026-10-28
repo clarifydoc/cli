@@ -280,3 +280,19 @@ function warm_up() { if (true) { function never_top_level() {} } }
     expect(ex.extractClasses(tree, src).map((c) => c.name)).toEqual(["Gearbox"]);
   });
 });
+
+describe("PHP abstract classes and methods", () => {
+  it("marks an abstract class and its abstract method", async () => {
+    const classes = await classesOf(`<?php
+abstract class Notifier {
+  public function notifyClub($c) { $this->send($c); }
+  abstract protected function send($c);
+}
+class MailNotifier extends Notifier { protected function send($c) {} }`);
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "send")!.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "notifyClub")!.abstract).toBeUndefined();
+    expect(classes.find((c) => c.name === "MailNotifier")!.abstract).toBeUndefined();
+  });
+});

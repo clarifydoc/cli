@@ -30,7 +30,7 @@ import { csharpReachability } from "./reachability.js";
 import { extractCsharpDiBindings } from "./di-bindings.js";
 import { extractCsharpHttpClientRegistrations } from "./http-clients.js";
 import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
-import { preprocessCsharpScript } from "./script.js";
+import { preprocessCsharp } from "./extension-blocks.js";
 import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
 import { csharpGrpcStub, csharpGrpcService } from "../shared/grpc-stubs.js";
 import { hotChocolateResolver } from "./graphql.js";
@@ -42,8 +42,8 @@ export const csharpMeta: LanguagePluginMeta = {
   reachability: csharpReachability,
   ...csharpManifest,
   docComments: C_STYLE_DOCS,
-  // `.csx` scripts: blank `#r`/`#load`, restore them as imports.
-  preprocess: preprocessCsharpScript,
+  // `.csx` scripts: blank `#r`/`#load`, restore them as imports; C# 14 `extension(T x) { … }` blocks.
+  preprocess: preprocessCsharp,
   routes: csharpRouteExtractor,
   functionsClasses: new CSharpExtractor(),
   importsExports: new CSharpImportExportExtractor(),

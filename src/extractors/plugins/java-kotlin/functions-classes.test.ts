@@ -345,3 +345,48 @@ class Garage {
     expect(method(classes.find((c) => c.name === "Garage"), "park").isExported).toBe(true);
   });
 });
+
+describe("Java/Kotlin abstract classes and methods", () => {
+  it("marks an abstract class and its bodyless abstract method, never an interface's", async () => {
+    const classes = await classesOf(`
+public abstract class Notifier {
+  public void notifyClub(String c) { send(c); }
+  protected abstract void send(String c);
+}
+public interface Kit { void wear(); }
+public class Boots implements Kit { public void wear() {} }`, "java");
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.abstract).toBe(true);
+    expect(method(notifier, "send").abstract).toBe(true);
+    expect(method(notifier, "notifyClub").abstract).toBeUndefined();
+    expect(classes.find((c) => c.name === "Kit")!.abstract).toBeUndefined();
+    expect(method(classes.find((c) => c.name === "Kit"), "wear").abstract).toBeUndefined();
+    expect(classes.find((c) => c.name === "Boots")!.abstract).toBeUndefined();
+  });
+
+  it("marks Kotlin abstract and sealed classes and abstract members", async () => {
+    const classes = await classesOf(`
+abstract class Notifier {
+  fun notifyClub(c: String) { send(c) }
+  abstract fun send(c: String)
+}
+sealed class Result
+open class Base`, "kotlin");
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.abstract).toBe(true);
+    expect(method(notifier, "send").abstract).toBe(true);
+    expect(method(notifier, "notifyClub").abstract).toBeUndefined();
+    expect(classes.find((c) => c.name === "Result")!.abstract).toBe(true);
+    expect(classes.find((c) => c.name === "Base")!.abstract).toBeUndefined();
+  });
+
+  it("keeps a bare call of the class's own method even when its name reads as noise", async () => {
+    const classes = await classesOf(`
+public abstract class Notifier {
+  public void notifyClub(String c) { send(c); this.send(c); }
+  protected abstract void send(String c);
+}`, "java");
+    // Extraction holds `send` back as noise; the per-file pass restores it (typed-receivers.test.ts).
+    expect(method(classes[0], "notifyClub").calls).toEqual([]);
+  });
+});

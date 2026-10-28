@@ -20,7 +20,7 @@ import {
   koinQualifier,
   type ExprFact,
 } from "./di-expressions.js";
-import { jvmSupertypes, lastExpressionFact } from "./functions-classes.js";
+import { isAbstract, jvmSupertypes, lastExpressionFact } from "./functions-classes.js";
 
 /**
  * Container registrations a Java/Kotlin file makes (`meta.ast.diBindings`) —
@@ -202,12 +202,13 @@ function classBindings(node: Node, ctx: Ctx): void {
     const extra = qualifierAnn ? annotationValues(qualifierAnn, ["value"])?.[0] : undefined;
     for (const service of inherits ? [...services, ""] : services) {
       const b: DiBinding = { service, implementation: className, line, via: `@${stereotype}`, qualifier: beanName, matchesMemberName: true };
-      if (!service) b.allInterfaces = true;
+      // …and under an abstract base class: a bean is injected by any supertype.
+      if (!service) Object.assign(b, { allInterfaces: true, abstractBases: true });
       if (primary) b.primary = true;
       ctx.out.push(b);
       if (extra && extra !== beanName) {
         const q: DiBinding = { service, implementation: className, line, via: "@Qualifier", qualifier: extra };
-        if (!service) q.allInterfaces = true;
+        if (!service) Object.assign(q, { allInterfaces: true, abstractBases: true });
         if (primary) q.primary = true;
         ctx.out.push(q);
       }
@@ -251,15 +252,6 @@ function classBindings(node: Node, ctx: Ctx): void {
     }
     return;
   }
-}
-
-function isAbstract(node: Node): boolean {
-  const mods = node.children.find((c) => c.type === "modifiers");
-  if (!mods) return false;
-  for (const m of mods.children) {
-    if (m.type === "abstract" || m.text === "abstract" || m.text === "sealed") return true;
-  }
-  return false;
 }
 
 // ─── Provider methods: @Bean / @Provides / @Binds / @Produces ────────────

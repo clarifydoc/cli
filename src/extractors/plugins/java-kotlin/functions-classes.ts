@@ -165,6 +165,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     return {
       name,
       kind: isInterface ? "interface" : isEnum ? "enum" : "class",
+      ...(!isInterface && !isEnum && isAbstract(node) ? { abstract: true as const } : {}),
       extends: extendsName,
       implements: implementsList,
       decorators,
@@ -465,6 +466,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes.length > 0 ? { localTypes } : {}),
+      // `abstract void send(…);` — a class method without a body (an interface's stays unmarked).
+      ...(!body && isAbstract(node) ? { abstract: true as const } : {}),
     };
   }
 
@@ -481,6 +484,19 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   ): "public" | "private" | "protected" | null {
     return sharedGetVisibility(node);
   }
+}
+
+/**
+ * A declaration written `abstract` (Java, Kotlin) or `sealed` (Kotlin — a class only its own subclasses
+ * instantiate): its `modifiers` say so.
+ */
+export function isAbstract(node: Node): boolean {
+  const mods = node.children.find((c) => c.type === "modifiers");
+  if (!mods) return false;
+  for (const m of mods.children) {
+    if (m.type === "abstract" || m.text === "abstract" || m.text === "sealed") return true;
+  }
+  return false;
 }
 
 /** Kotlin parses to a `source_file` root; Java to a `program` root. */

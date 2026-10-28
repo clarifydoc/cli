@@ -2,6 +2,7 @@ import type { ClassInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { restoreHeldCalls } from "../extractors/shared/call-graph.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { pluginFor } from "../extractors/registry.js";
 
 /** Receiver heads that name the current instance (VB spells it `Me`). */
 export const SELF_HEADS: ReadonlySet<string> = new Set(["this", "self", "Self", "$this", "cls", "Me", "me"]);
@@ -24,10 +25,13 @@ export function isConstructor(method: FunctionInfo, cls: ClassInfo): boolean {
  *
  * Run once per file, after extraction and before call classification. Calls
  * whose receiver type is unknown stay dropped — exactly the old behaviour —
- * so untyped code (plain JS, Ruby) sees no new noise.
+ * so untyped code (plain JS, Ruby) sees no new noise. A call of the enclosing
+ * class's own method (`this.send(…)`, and a bare `send(…)` where members need
+ * no `this.`) — declared by it or a base class in the same file — comes back too.
  */
 export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitive = false): void {
   const language = analysis.language;
+  const bareIsMember = pluginFor(language)?.explicitSelfMembers !== true;
   const fold = (n: string): string => (caseInsensitive ? n.toLowerCase() : n);
   const declared = (type: string | null | undefined): boolean => receiverTypeName(type, language) !== null;
   const classByName = new Map(analysis.classes.map((c) => [c.name, c]));
@@ -53,17 +57,36 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     return names;
   };
 
-  const restore = (fn: FunctionInfo, members: ReadonlySet<string>): void => {
+  const methodsOf = (cls: ClassInfo): Set<string> => {
+    const names = new Set<string>();
+    const seen = new Set<string>();
+    for (let c: ClassInfo | undefined = cls; c && !seen.has(c.name); c = c.extends ? classByName.get(c.extends) : undefined) {
+      seen.add(c.name);
+      for (const m of c.methods) if (!isConstructor(m, c)) names.add(fold(m.name));
+    }
+    return names;
+  };
+
+  const restore = (fn: FunctionInfo, members: ReadonlySet<string>, own: ReadonlySet<string>): void => {
     const scope = scopeOf(fn, members);
-    restoreHeldCalls(fn.calls, (call) => receiverIn(call.name, scope, fold));
+    restoreHeldCalls(fn.calls, (call) => receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold));
   };
 
   const none: ReadonlySet<string> = new Set();
-  for (const fn of analysis.functions) restore(fn, none);
+  for (const fn of analysis.functions) restore(fn, none, none);
   for (const cls of analysis.classes) {
     const members = membersOf(cls);
-    for (const m of cls.methods) restore(m, members);
+    const own = methodsOf(cls);
+    for (const m of cls.methods) restore(m, members, own);
   }
+}
+
+/** `send` / `this.send` naming a method of the enclosing class (a bare name only where members need no `this.`). */
+function ownMethodCall(callName: string, own: ReadonlySet<string>, bareIsMember: boolean, fold: (n: string) => string): boolean {
+  if (own.size === 0) return false;
+  const parts = callName.split(".");
+  if (parts.length === 1) return bareIsMember && own.has(fold(parts[0]!));
+  return parts.length === 2 && SELF_HEADS.has(parts[0]!) && own.has(fold(parts[1]!));
 }
 
 /**
