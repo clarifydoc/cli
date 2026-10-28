@@ -191,3 +191,80 @@ end`, "app/api/league/admin/garages.rb");
     expect(files.flatMap(sig)).toEqual(["GET /clubs/:id @6"]);
   });
 });
+
+describe("Grape `route` DSL", () => {
+  it("reads `route :any`, a verb list and a string list, each verb a row", () => {
+    const a = rb(`class Garages < Grape::API
+  resource :garages do
+    route :any, '*path' do
+      Garage.first
+    end
+    route [:get, :post], 'kits' do
+      Kit.all
+    end
+    route ['PUT'] do
+      Garage.update_all
+    end
+  end
+end`, "app/api/garages.rb");
+    expect(a.routes.map((r) => `${r.httpMethod ?? "ANY"} ${r.path}`)).toEqual([
+      "ANY /garages/*path",
+      "GET /garages/kits",
+      "POST /garages/kits",
+      "PUT /garages",
+    ]);
+    expect(a.routes[1]!.calls.map((c) => c.name)).toContain("Kit.all");
+  });
+});
+
+describe("Grape APIs on a project base", () => {
+  const base = () => rb(`module League
+  module API
+    class Base < Grape::API
+      prefix :api
+      mount V1::Clubs
+    end
+  end
+end`, "app/api/league/api/base.rb");
+  const mid = () => rb(`module League
+  module API
+    class Versioned < Base
+      version 'v1', using: :path
+    end
+  end
+end`, "app/api/league/api/versioned.rb");
+  const clubs = () => rb(`module League
+  module V1
+    class Clubs < API::Versioned
+      resource :clubs do
+        get ':id' do
+          Club.find(params[:id])
+        end
+      end
+    end
+  end
+end`, "app/api/league/v1/clubs.rb");
+  const sinatraLike = () => rb(`module League
+  class Board < Panel
+    get '/board' do
+      Board.first
+    end
+  end
+end`, "app/web/board.rb");
+
+  it("keeps a subclass's endpoints only once its base chain reaches Grape::API", () => {
+    const c = clubs();
+    expect(c.routes).toEqual([]);
+    const files = [base(), mid(), c, sinatraLike()];
+    resolve(files);
+    // Clubs is mounted by Base; its own class sets no version (Grape does not inherit settings).
+    expect(files.flatMap(sig)).toEqual(["GET /api/clubs/:id @5"]);
+    expect(c.routes[0]!.calls.map((x) => x.name)).toContain("Club.find");
+  });
+
+  it("leaves a subclass of a base that is no Grape API without routes", () => {
+    const files = [sinatraLike()];
+    resolve(files);
+    expect(files.flatMap(sig)).toEqual([]);
+  });
+});

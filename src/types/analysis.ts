@@ -1116,6 +1116,13 @@ export interface FunctionInfo {
    */
   localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean }>;
   /**
+   * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
+   * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's
+   * `declaredNamespace`. A call naming the function through it (`league::util::to_hex(x)`, or `to_hex(x)` after
+   * `using namespace league::util;`) is joined on it. Omitted outside a named namespace.
+   */
+  namespace?: string;
+  /**
    * For a URL-builder helper — a function whose return value is an
    * app-relative request URL assembled from string concatenation / a template
    * (`requestUri(endpoint, version) → /api/{version}/institution/{}/{endpoint}`)
@@ -1938,6 +1945,15 @@ export interface DataSourceInfo {
    * call's resolved link and its `CallInfo.args`.
    */
   channelParameter?: string;
+  /**
+   * For `queue-publish`/`queue-consume` on an event sent within a topic (a
+   * Phoenix channel: `socket.channel("match:1").push("new_goal")` reaches the
+   * `handle_in("new_goal")` of the channel joined as `"match:" <> id`): the
+   * topic, `*` at the end standing for any rest (`match:*`). Core keeps rows
+   * of one event apart when they state topics that cannot meet; a row
+   * without one still meets them all.
+   */
+  topic?: string;
   /**
    * For `queue-consume`: the function or method of this file that handles the
    * message (`Class.method`), when it is not the one the registration sits in —

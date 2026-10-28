@@ -1,6 +1,7 @@
 import type { EntryPointInfo, RouteAuthInfo, RouteInfo } from "../../../types/analysis.js";
 import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { extractDaprSubscriptions } from "./dapr.js";
 
 /**
  * Serverless routes, read from the deployment descriptor that declares them:
@@ -263,6 +264,9 @@ export const serverlessSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
   lineCommentPrefixes: ["#"],
-  extractRoutes: (lines) => extractServerlessRoutes(lines),
+  extractRoutes: (lines, _classes, _filePath, _functions, facts) => {
+    extractDaprSubscriptions(lines, facts);
+    return extractServerlessRoutes(lines);
+  },
   extractEntryPoints: (lines) => extractServerlessEntryPoints(lines),
 };

@@ -172,12 +172,15 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
   return type ? [{ name, type }] : null;
 }
 
-/** A declared type as the parameters spell theirs: `const std::vector<league::Club>&` → `vector<Club>`. */
+/**
+ * A declared type as the parameters spell theirs: `const std::vector<league::Club>&` → `vector<Club>`; a class
+ * scope stays, its template arguments dropped (`Paddock<K, C>::Iterator` → `Paddock::Iterator`, a nested class).
+ */
 export function cFamilyTypeName(raw: string): string | null {
   const text = raw
     .replace(/\b(?:const|volatile|struct|class|enum|union|typename)\b/g, " ")
     .replace(/(?:^|(?<=[<,\s]))::/g, "")
-    .replace(/[A-Za-z_]\w*\s*(?:<[^<>]*>)?\s*::\s*/g, "")
+    .replace(/([A-Za-z_]\w*)\s*(?:<[^<>]*>)?\s*::\s*/g, (_m, scope: string) => (/^[A-Z]/.test(scope) ? `${scope}::` : ""))
     .replace(/[*&\s]+$/, "")
     .replace(/\s+/g, " ")
     .trim();

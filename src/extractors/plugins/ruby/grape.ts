@@ -43,6 +43,15 @@ const VERB_RE = new RegExp(String.raw`^\s*(get|post|put|patch|delete|head|option
 /** Blocks that declare no endpoint and whose bodies are not the class's: skipped whole. */
 const SKIPPED_BLOCK_RE = new RegExp(String.raw`^\s*(?:helpers|desc|rescue_from|after|after_validation|before_validation|finally|namespace_setting|route_setting|class\s*<<|def\b|class\b|module\b).*?` + BLOCK_TAIL);
 const MOUNT_RE = /^\s*mount\s*\(?\s*((?:::)?[A-Z][\w:]*)\s*(?:=>\s*(['"])([^'"]*)\2)?/;
+/**
+ * `route :any, '*path' do`, `route [:get, :post], 'kits' do`, `route ['GET', 'PUT'] do`:
+ * the verbs (a symbol, a string or a list of them) and the path.
+ */
+const ROUTE_DSL_RE = new RegExp(String.raw`^\s*route\b\s*\(?\s*(\[[^\]]*\]|:\w+|(['"])\w+\2)\s*(?:,\s*(?::(\w+)|(['"])([^'"]*)\4))?.*?` + BLOCK_TAIL);
+/** A class subclassing some other constant — a Grape API when that constant is one (`class Clubs < API::Base`). */
+const SUBCLASS_RE = /^(\s*)class\s+((?:::)?[A-Z][\w:]*)\s*<\s*(?!(?:::)?Sinatra::)((?:::)?[A-Z][\w:]*)\s*$/;
+/** A line only a Grape API body has at its top: the gate for reading a subclass of a project base as one. */
+const GRAPE_BODY_RE = /^\s*(?:(?:get|post|put|patch|delete|head|options|route|resources?|namespace|route_param|segment|group)\b.*\bdo\b\s*(?:\|[^|]*\|)?\s*$|mount\s+(?:::)?[A-Z])/;
 
 /** Path segments of a symbol or string scope (`:clubs` → `clubs`, `'clubs/:id'` → `clubs/:id`). */
 function joinPath(...parts: Array<string | undefined>): string {
@@ -74,9 +83,20 @@ function declaredParams(code: readonly string[], start: number, end: number): Ar
   return out;
 }
 
-/** True when the file declares a Grape API. */
+/**
+ * True when the file declares a Grape API — or a class subclassing another
+ * constant whose body reads like one, which `grapeMounts` keeps only when
+ * that base turns out to be a Grape API (`class Base < Grape::API` in another file).
+ */
 export function isGrapeFile(lines: readonly string[]): boolean {
-  return lines.some((l) => GRAPE_CLASS_RE.test(l));
+  return lines.some((l) => GRAPE_CLASS_RE.test(l)) || (lines.some((l) => SUBCLASS_RE.test(l)) && lines.some((l) => GRAPE_BODY_RE.test(l)));
+}
+
+/** The verbs a `route` DSL call names (`:any` → every verb, `null`). */
+function routeVerbs(written: string): Array<string | null> {
+  const names = [...written.matchAll(/:(\w+)|['"](\w+)['"]/g)].map((m) => (m[1] ?? m[2])!.toUpperCase());
+  if (names.includes("ANY")) return [null];
+  return names.filter((n) => /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(n));
 }
 
 interface Scope {
@@ -101,122 +121,157 @@ export function extractGrapeRoutes(
   const code = rubyCodeLinesOf(lines);
   const routes: RouteInfo[] = [];
   for (let c = 0; c < lines.length; c++) {
-    const head = GRAPE_CLASS_RE.exec(code[c] ?? "");
-    if (!head) continue;
-    const written = head[2]!.replace(/^::/, "");
+    const direct = GRAPE_CLASS_RE.exec(code[c] ?? "");
+    const sub = direct ? null : SUBCLASS_RE.exec(code[c] ?? "");
+    if (!direct && !sub) continue;
+    const written = (direct ?? sub)![2]!.replace(/^::/, "");
     const cls = classes.find((k) => k.line === c + 1);
     const owner = cls ? [...enclosingModules(cls, classes), written.split("::").pop()!].join("::") : written;
     const classEnd = rubyBodyEnd(lines, c);
-    let prefix: string | undefined;
-    let versions: string[] | undefined;
-    let pathVersions: string[] | undefined;
-    const classGuards: GuardAttr[] = [];
-    const scopes: Scope[] = [];
-    let pending: Array<{ name: string; type: string | null }> = [];
-    const guardsHere = (): GuardAttr[] => [...classGuards, ...scopes.flatMap((s) => s.guards)];
-    const addGuards = (gs: GuardAttr[]): void => {
-      (scopes.length > 0 ? scopes[scopes.length - 1]!.guards : classGuards).push(...gs);
-    };
-
-    for (let i = c + 1; i < classEnd; i++) {
-      while (scopes.length > 0 && i >= scopes[scopes.length - 1]!.end) scopes.pop();
-      const line = code[i] ?? "";
-      const t = line.trim();
-      if (!t) continue;
-      let m: RegExpExecArray | null;
-      if ((m = /^prefix\s*\(?\s*(?::(\w+)|['"]([^'"]*)['"])/.exec(t)) && scopes.length === 0) {
-        prefix = (m[1] ?? m[2])!;
-        continue;
-      }
-      if (/^version\b/.test(t) && scopes.length === 0) {
-        const v = versionsOf(t.slice("version".length));
-        if (v.versions.length > 0) {
-          versions = v.versions;
-          pathVersions = v.inPath ? v.versions : undefined;
-        }
-        continue;
-      }
-      if (/^params\s+do\b/.test(t)) {
-        const end = rubyBodyEnd(lines, i);
-        pending = declaredParams(code, i + 1, end);
-        i = end;
-        continue;
-      }
-      if (/^before\b.*\bdo\b/.test(t)) {
-        const end = rubyBodyEnd(lines, i);
-        addGuards(guardsInBody(lines.slice(i + 1, end)));
-        i = end;
-        continue;
-      }
-      if ((m = /^before\s*\{(.*)\}\s*$/.exec(t))) {
-        addGuards(guardsInBody([m[1]!]));
-        continue;
-      }
-      if (/^http_(?:basic|digest)\b/.test(t)) {
-        const scheme = /^http_digest/.test(t) ? "digest" : "basic";
-        addGuards([{ text: t.startsWith("http_digest") ? "http_digest" : "http_basic", schemes: [scheme], policies: [`http_${scheme}`] }]);
-        if (/\bdo\b/.test(t)) i = rubyBodyEnd(lines, i);
-        continue;
-      }
-      if ((m = MOUNT_RE.exec(line))) {
-        const at = /\bat:\s*(['"])([^'"]*)\1/.exec(t)?.[2];
-        facts?.push({
-          kind: "grape-mount",
-          line: i + 1,
-          owner,
-          data: { target: m[1]!, ns: joinPath(...scopes.map((s) => s.seg)), path: m[3] ?? at ?? "", guards: guardsHere() },
-        });
-        continue;
-      }
-      if ((m = VERB_RE.exec(line))) {
-        const end = rubyBodyEnd(lines, i);
-        const verb = m[1]!.toUpperCase();
-        const rel = joinPath(...scopes.map((s) => s.seg), m[2] ?? m[4]);
-        const body = lines.slice(i + 1, end);
-        for (const v of pathVersions ?? [undefined]) {
-          const path = joinPath(prefix, v, rel);
-          const route: RouteInfo = {
-            path,
-            httpMethod: verb,
-            kind: "api",
-            handler: null,
-            calls: callsOf(i + 1, end),
-            middleware: [],
-            line: i + 1,
-            owner,
-          };
-          const fallback = verb === "GET" || verb === "DELETE" || verb === "HEAD" ? "query" : "body";
-          const declared = pending.map((p) => inferredParam(p.name, p.type, path, fallback));
-          const named = new Set(declared.map((p) => p.name));
-          const read = paramsFromAccess(extractRubyRequestAccess(body), path).filter((p) => !named.has(p.name));
-          applyRouteMeta(route, {
-            inheritedGuards: guardsHere(),
-            guards: guardsInBody(body),
-            params: [...declared, ...read],
-            ...(versions ? { versions: v ? [v] : versions } : {}),
-          });
-          routes.push(route);
-        }
-        pending = [];
-        i = end;
-        continue;
-      }
-      if ((m = ROUTE_PARAM_RE.exec(line))) {
-        scopes.push({ end: rubyBodyEnd(lines, i), seg: `:${m[1]}`, guards: [] });
-        continue;
-      }
-      if ((m = NAMESPACE_RE.exec(line))) {
-        scopes.push({ end: rubyBodyEnd(lines, i), seg: m[1] ?? m[3] ?? "", guards: [] });
-        continue;
-      }
-      if (SKIPPED_BLOCK_RE.test(line) || /^def\b/.test(t)) {
-        i = rubyBodyEnd(lines, i);
-        continue;
-      }
+    if (sub && (!facts || !code.slice(c + 1, classEnd).some((l) => GRAPE_BODY_RE.test(l)))) continue;
+    const own: RouteFact[] = [];
+    const found = readGrapeClass(lines, code, c, classEnd, owner, callsOf, own);
+    if (direct) {
+      routes.push(...found);
+      facts?.push(...own);
+    } else if (found.length > 0 || own.some((f) => f.kind === "grape-mount")) {
+      // `class Clubs < API::Base`: an API only if `API::Base` is one, which another file says.
+      const data: GrapeCandidate = { base: sub![3]!, routes: found, facts: own };
+      facts!.push({ kind: "grape-candidate", line: c + 1, owner, data });
     }
-    facts?.push({ kind: "grape-api", line: c + 1, owner, data: { ...(prefix ? { prefix } : {}), ...(pathVersions ? { versions: pathVersions } : {}) } });
     c = classEnd;
   }
+  return routes;
+}
+
+/** A class whose base may be a Grape API: its endpoints and facts, kept until `grapeMounts` knows. */
+interface GrapeCandidate {
+  base: string;
+  routes: RouteInfo[];
+  facts: RouteFact[];
+}
+
+/** One Grape API class body (lines `c+1 … classEnd`): its endpoints; its settings and mounts go to `facts`. */
+function readGrapeClass(
+  lines: string[],
+  code: readonly string[],
+  c: number,
+  classEnd: number,
+  owner: string,
+  callsOf: (start: number, end: number) => RouteInfo["calls"],
+  facts: RouteFact[],
+): RouteInfo[] {
+  const routes: RouteInfo[] = [];
+  let prefix: string | undefined;
+  let versions: string[] | undefined;
+  let pathVersions: string[] | undefined;
+  const classGuards: GuardAttr[] = [];
+  const scopes: Scope[] = [];
+  let pending: Array<{ name: string; type: string | null }> = [];
+  const guardsHere = (): GuardAttr[] => [...classGuards, ...scopes.flatMap((s) => s.guards)];
+  const addGuards = (gs: GuardAttr[]): void => {
+    (scopes.length > 0 ? scopes[scopes.length - 1]!.guards : classGuards).push(...gs);
+  };
+
+  for (let i = c + 1; i < classEnd; i++) {
+    while (scopes.length > 0 && i >= scopes[scopes.length - 1]!.end) scopes.pop();
+    const line = code[i] ?? "";
+    const t = line.trim();
+    if (!t) continue;
+    let m: RegExpExecArray | null;
+    if ((m = /^prefix\s*\(?\s*(?::(\w+)|['"]([^'"]*)['"])/.exec(t)) && scopes.length === 0) {
+      prefix = (m[1] ?? m[2])!;
+      continue;
+    }
+    if (/^version\b/.test(t) && scopes.length === 0) {
+      const v = versionsOf(t.slice("version".length));
+      if (v.versions.length > 0) {
+        versions = v.versions;
+        pathVersions = v.inPath ? v.versions : undefined;
+      }
+      continue;
+    }
+    if (/^params\s+do\b/.test(t)) {
+      const end = rubyBodyEnd(lines, i);
+      pending = declaredParams(code, i + 1, end);
+      i = end;
+      continue;
+    }
+    if (/^before\b.*\bdo\b/.test(t)) {
+      const end = rubyBodyEnd(lines, i);
+      addGuards(guardsInBody(lines.slice(i + 1, end)));
+      i = end;
+      continue;
+    }
+    if ((m = /^before\s*\{(.*)\}\s*$/.exec(t))) {
+      addGuards(guardsInBody([m[1]!]));
+      continue;
+    }
+    if (/^http_(?:basic|digest)\b/.test(t)) {
+      const scheme = /^http_digest/.test(t) ? "digest" : "basic";
+      addGuards([{ text: t.startsWith("http_digest") ? "http_digest" : "http_basic", schemes: [scheme], policies: [`http_${scheme}`] }]);
+      if (/\bdo\b/.test(t)) i = rubyBodyEnd(lines, i);
+      continue;
+    }
+    if ((m = MOUNT_RE.exec(line))) {
+      const at = /\bat:\s*(['"])([^'"]*)\1/.exec(t)?.[2];
+      facts.push({
+        kind: "grape-mount",
+        line: i + 1,
+        owner,
+        data: { target: m[1]!, ns: joinPath(...scopes.map((s) => s.seg)), path: m[3] ?? at ?? "", guards: guardsHere() },
+      });
+      continue;
+    }
+    const verbs = (m = VERB_RE.exec(line)) ? { methods: [m[1]!.toUpperCase()], path: m[2] ?? m[4] }
+      : (m = ROUTE_DSL_RE.exec(line)) ? { methods: routeVerbs(m[1]!), path: m[3] ?? m[5] }
+      : null;
+    if (verbs) {
+      const end = rubyBodyEnd(lines, i);
+      const rel = joinPath(...scopes.map((s) => s.seg), verbs.path);
+      const body = lines.slice(i + 1, end);
+      for (const verb of verbs.methods) for (const v of pathVersions ?? [undefined]) {
+        const path = joinPath(prefix, v, rel);
+        const route: RouteInfo = {
+          path,
+          httpMethod: verb,
+          kind: "api",
+          handler: null,
+          calls: callsOf(i + 1, end),
+          middleware: [],
+          line: i + 1,
+          owner,
+        };
+        const fallback = verb === null || verb === "GET" || verb === "DELETE" || verb === "HEAD" ? "query" : "body";
+        const declared = pending.map((p) => inferredParam(p.name, p.type, path, fallback));
+        const named = new Set(declared.map((p) => p.name));
+        const read = paramsFromAccess(extractRubyRequestAccess(body), path).filter((p) => !named.has(p.name));
+        applyRouteMeta(route, {
+          inheritedGuards: guardsHere(),
+          guards: guardsInBody(body),
+          params: [...declared, ...read],
+          ...(versions ? { versions: v ? [v] : versions } : {}),
+        });
+        routes.push(route);
+      }
+      pending = [];
+      i = end;
+      continue;
+    }
+    if ((m = ROUTE_PARAM_RE.exec(line))) {
+      scopes.push({ end: rubyBodyEnd(lines, i), seg: `:${m[1]}`, guards: [] });
+      continue;
+    }
+    if ((m = NAMESPACE_RE.exec(line))) {
+      scopes.push({ end: rubyBodyEnd(lines, i), seg: m[1] ?? m[3] ?? "", guards: [] });
+      continue;
+    }
+    if (SKIPPED_BLOCK_RE.test(line) || /^def\b/.test(t)) {
+      i = rubyBodyEnd(lines, i);
+      continue;
+    }
+  }
+  facts.push({ kind: "grape-api", line: c + 1, owner, data: { ...(prefix ? { prefix } : {}), ...(pathVersions ? { versions: pathVersions } : {}) } });
   return routes;
 }
 
@@ -229,6 +284,61 @@ export function extractRackMounts(lines: readonly string[], facts?: RouteFact[])
     if (!m) continue;
     const at = /\bat:\s*(['"])([^'"]*)\1/.exec(code[i]!)?.[2];
     facts.push({ kind: "rack-mount", line: i + 1, data: { target: m[1]!, path: m[3] ?? at ?? "/" } });
+  }
+}
+
+/**
+ * A class subclassing a project base (`class Clubs < API::Base`) is a Grape
+ * API when that base is one — `class Base < Grape::API`, or a base of a base.
+ * Its endpoints and facts, held in a `grape-candidate` fact, join the file's
+ * own then; any other subclass (a Sinatra app's, a Rails controller's) is left alone.
+ */
+function adoptGrapeSubclasses(analyses: FileAnalysis[]): void {
+  const pending: Array<{ a: FileAnalysis; owner: string; c: GrapeCandidate }> = [];
+  const known = new Set<string>();
+  for (const a of analyses) {
+    for (const f of a.routeFacts ?? []) {
+      if (f.kind === "grape-api" && f.owner) known.add(f.owner);
+      else if (f.kind === "grape-candidate" && f.owner) pending.push({ a, owner: f.owner, c: f.data as GrapeCandidate });
+    }
+  }
+  if (pending.length === 0 || known.size === 0) return;
+  // Every Ruby class's base as written, by qualified name — an intermediate base may declare nothing at all.
+  const bases = new Map<string, string | null>();
+  for (const a of analyses) {
+    if (a.language !== "ruby") continue;
+    for (const cls of a.classes) {
+      if (!cls.extends) continue;
+      const name = [...enclosingModules(cls, a.classes), cls.name.split("::").pop()!].join("::");
+      bases.set(name, bases.has(name) && bases.get(name) !== cls.extends ? null : cls.extends);
+    }
+  }
+  // Ruby's constant lookup for a superclass: the class's enclosing namespaces outwards, then a unique suffix.
+  const lookup = (target: string, owner: string): string | null => {
+    const has = (n: string): boolean => known.has(n) || !!bases.get(n);
+    if (target.startsWith("::")) return has(target.slice(2)) ? target.slice(2) : null;
+    const outer = owner.split("::").slice(0, -1);
+    for (let k = outer.length; k >= 0; k--) {
+      const name = [...outer.slice(0, k), target].join("::");
+      if (has(name)) return name;
+    }
+    const tail = [...new Set([...known, ...bases.keys()])].filter((n) => has(n) && n.endsWith(`::${target}`));
+    return tail.length === 1 ? tail[0]! : null;
+  };
+  const isApi = (base: string, from: string): boolean => {
+    const seen = new Set<string>();
+    for (let name = lookup(base, from); name && !seen.has(name); ) {
+      if (known.has(name)) return true;
+      seen.add(name);
+      const next = bases.get(name);
+      name = next ? lookup(next, name) : null;
+    }
+    return false;
+  };
+  for (const { a, owner, c } of pending) {
+    if (known.has(owner) || !isApi(c.base, owner)) continue;
+    a.routes.push(...c.routes);
+    (a.routeFacts ??= []).push(...c.facts);
   }
 }
 
@@ -264,6 +374,7 @@ export const grapeMounts: RouteResolver = {
   languages: ["ruby"],
   priority: 40,
   resolve(analyses: FileAnalysis[]): void {
+    adoptGrapeSubclasses(analyses);
     const apis = new Map<string, ApiFacts | null>();
     const mounts: MountFact[] = [];
     const rack: Array<{ target: string; path: string }> = [];

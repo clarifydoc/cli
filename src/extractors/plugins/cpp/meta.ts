@@ -35,4 +35,6 @@ export const cppMeta: LanguagePluginMeta = {
   // not one: its value is reached through `lock()`.
   transparentTypeWrappers: ["unique_ptr", "shared_ptr", "QSharedPointer", "QScopedPointer", "QPointer", "scoped_refptr", "intrusive_ptr", "ComPtr", "CComPtr", "not_null", "observer_ptr"],
   grpcServiceOf: cppGrpcService,
+  // `class Paddock { class Iterator … }` is `Paddock::Iterator` (see classes.ts).
+  nestedTypePaths: true,
 };

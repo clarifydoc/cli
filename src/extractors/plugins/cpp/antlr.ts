@@ -281,7 +281,7 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
     if (type === CPP14Lexer.LeftParen) {
       const source = `${text.slice(start.start, op.symbol.start)}(`;
       const byPattern = patternNamedCall(source, cppSpec.callPatterns ?? [], start.line, start.column);
-      const named = byPattern === undefined ? nameCall(steps, CHAIN_DEPTH) : byPattern;
+      const named = byPattern === undefined ? memberPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH) : byPattern;
       if (named) calls.push(named);
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
@@ -298,6 +298,23 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       steps.push({ kind: "other", bare: false });
     }
   }
+}
+
+/** Longest member path named whole (`c->home_season_->Ref(` is `c.home_season_.Ref`): what the linker follows. */
+const MEMBER_PATH_DEPTH = 5;
+
+/**
+ * A call through a path of members — `c->home_season_->Ref(`, `this->crew_->pit_lane.OpenGate(` — named by the
+ * whole path, so the linker types each member through the declaring class's fields, as it does `this.a.b.m()`
+ * elsewhere; the shared naming keeps only the last two names, which no declaration types. Null when a step is not a
+ * name or the path is two names or fewer.
+ */
+function memberPathCall(steps: readonly CalleeStep[]): PatternCallName | null {
+  if (steps.length < 3 || steps.length > MEMBER_PATH_DEPTH || steps.some((s) => s.kind !== "id")) return null;
+  const ids = steps as ReadonlyArray<Extract<CalleeStep, { kind: "id" }>>;
+  const head = ids[0]!;
+  const leaf = ids.at(-1)!.name;
+  return { name: ids.map((s) => s.name).join("."), leafName: leaf, line: head.line, column: head.column };
 }
 
 /**

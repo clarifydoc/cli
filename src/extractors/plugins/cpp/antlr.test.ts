@@ -58,9 +58,9 @@ describe("C++ through ANTLR", () => {
   Car spare(4);
 }
 `;
-    // A construction `Car spare(4)` declares, it calls nothing. `->` selects a member as `.` does, and a namespace
-    // stays on the call it qualifies.
-    expect(read(source).functions).toEqual([["build", 1, ["Club.create", "std.sort", "cars.begin", "cars.end", "g.bay().lift", "g.bay", "doors.lock", "this.reset", "Car"]]]);
+    // A construction `Car spare(4)` declares, it calls nothing. `->` selects a member as `.` does, a path of members
+    // is named whole, and a namespace stays on the call it qualifies.
+    expect(read(source).functions).toEqual([["build", 1, ["Club.create", "std.sort", "cars.begin", "cars.end", "g.bay().lift", "g.bay", "g.doors.lock", "this.reset", "Car"]]]);
   });
 
   it("names calls in a macro's arguments as the parse names them: through `->` on the receiver, on the namespace", () => {

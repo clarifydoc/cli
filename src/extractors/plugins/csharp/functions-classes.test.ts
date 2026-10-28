@@ -325,3 +325,31 @@ public class MailNotifier : Notifier { protected override void Send(string c) { 
     expect(mail.methods[0]!.abstract).toBeUndefined();
   });
 });
+
+describe("C# functions-classes — operator declarations", () => {
+  it("reports operators under the compiler's names, with the calls in their bodies", async () => {
+    const SRC = `namespace League;
+public class Score {
+  public static Score operator +(Score a, Score b) { return Combine(a, b); }
+  public static Score operator -(Score a) => Negate(a);
+  public static Score operator -(Score a, Score b) => Combine(a, Negate(b));
+  public static bool operator ==(Score a, Score b) => Same(a, b);
+  public static bool operator !=(Score a, Score b) => !Same(a, b);
+  public static implicit operator int(Score s) => s.Total();
+  public static explicit operator Score(int v) { return Make(v); }
+  public static bool operator true(Score s) => s.Ok();
+  public static Score Combine(Score a, Score b) => a;
+}`;
+    const score = (await classesOf(SRC)).find((c) => c.name === "Score")!;
+    const byName = new Map(score.methods.map((m) => [m.name, m]));
+    expect([...byName.keys()]).toEqual([
+      "op_Addition", "op_UnaryNegation", "op_Subtraction", "op_Equality", "op_Inequality",
+      "op_Implicit", "op_Explicit", "op_True", "Combine",
+    ]);
+    expect(byName.get("op_Addition")!.calls.map((c) => c.name)).toContain("Combine");
+    expect(byName.get("op_UnaryNegation")!.calls.map((c) => c.name)).toContain("Negate");
+    expect(byName.get("op_Explicit")!.calls.map((c) => c.name)).toContain("Make");
+    expect(byName.get("op_Implicit")!.returnType).toBe("int");
+    expect(byName.get("op_Addition")!.params.map((p) => p.type)).toEqual(["Score", "Score"]);
+  });
+});

@@ -23,16 +23,35 @@ const PIPED_SEND_RE = /\|>\s*(?:Phoenix\.Channel\.)?(push|broadcast!?|broadcast_
 /** `LeagueWeb.Endpoint.broadcast("match:1", "goal_scored", payload)`: topic, then event. */
 const ENDPOINT_SEND_RE = /\b(?:[A-Z]\w*\.)*Endpoint\.(broadcast!?|local_broadcast|broadcast_from!?|local_broadcast_from)\s*\(([^\n]*)/g;
 
+/** `def join("match:" <> _id, _payload, socket)` / `def join("lobby", …)`: the topic the clause accepts. */
+const JOIN_RE = /^\s*def\s+join\s*\(\s*([^,]+?)\s*,/;
+
+/**
+ * A topic as written → the pattern it names: `"lobby"` → `lobby`, `"match:" <> id`
+ * and `"match:#{id}"` → `match:*`; null when it is not one of those.
+ */
+export function topicPattern(written: string): string | null {
+  const w = written.trim();
+  let m = /^"([^"#\\]*)"$/.exec(w);
+  if (m) return m[1]!;
+  m = /^"([^"#\\]+)"\s*<>\s*[a-z_]\w*$/.exec(w) ?? /^"([^"#\\]+)#\{[^}]*\}"$/.exec(w);
+  return m ? `${m[1]}*` : null;
+}
+
 /** The channel events a file's channel modules handle and send, and its endpoint broadcasts. */
 export function phoenixChannelEvents(lines: string[]): DataSourceInfo[] {
   const text = lines.join("\n");
   const channelFile = lines.some((l) => CHANNEL_MODULE_RE.test(l));
   if (!channelFile && !/Endpoint\.(?:local_)?broadcast/.test(text)) return [];
+  // The topic the channel is joined on, when its `join` clauses name exactly one —
+  // what its handlers hear and its pushes and broadcasts go out on.
+  const joined = channelFile ? new Set(lines.map((l) => JOIN_RE.exec(l)?.[1]).filter((t): t is string => !!t).map((t) => topicPattern(t))) : new Set<string | null>();
+  const channelTopic = joined.size === 1 ? [...joined][0] ?? null : null;
   const out: DataSourceInfo[] = [];
-  const add = (kind: DataSourceInfo["kind"], verb: string, event: string, line: number): void => {
+  const add = (kind: DataSourceInfo["kind"], verb: string, event: string, line: number, topic: string | null): void => {
     // `phx_join`, `phx_reply`…: the protocol's own messages.
     if (event.startsWith("phx_")) return;
-    out.push({ kind, name: `Phoenix.Channel: ${verb}`, target: event, calls: [], line });
+    out.push({ kind, name: `Phoenix.Channel: ${verb}`, target: event, ...(topic ? { topic } : {}), calls: [], line });
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -40,15 +59,16 @@ export function phoenixChannelEvents(lines: string[]): DataSourceInfo[] {
     if (!code.trim()) continue;
     if (channelFile) {
       const h = HANDLER_RE.exec(code);
-      if (h) add("queue-consume", h[1]!, h[2]!, i + 1);
-      for (const m of code.matchAll(CHANNEL_SEND_RE)) add("queue-publish", m[1]!, m[2]!, i + 1);
-      for (const m of code.matchAll(PIPED_SEND_RE)) add("queue-publish", m[1]!, m[2]!, i + 1);
+      if (h) add("queue-consume", h[1]!, h[2]!, i + 1, channelTopic);
+      for (const m of code.matchAll(CHANNEL_SEND_RE)) add("queue-publish", m[1]!, m[2]!, i + 1, channelTopic);
+      for (const m of code.matchAll(PIPED_SEND_RE)) add("queue-publish", m[1]!, m[2]!, i + 1, channelTopic);
     }
     for (const m of code.matchAll(ENDPOINT_SEND_RE)) {
-      // `broadcast_from(pid, topic, event, msg)` names its event third.
-      const arg = topLevelArgs(m[2]!)[/_from/.test(m[1]!) ? 2 : 1];
-      const event = arg && /^"([^"#\\]+)"$/.exec(arg)?.[1];
-      if (event) add("queue-publish", `Endpoint.${m[1]}`, event, i + 1);
+      // `broadcast_from(pid, topic, event, msg)` names its topic second and its event third.
+      const args = topLevelArgs(m[2]!);
+      const from = /_from/.test(m[1]!) ? 1 : 0;
+      const event = args[from + 1] && /^"([^"#\\]+)"$/.exec(args[from + 1]!)?.[1];
+      if (event) add("queue-publish", `Endpoint.${m[1]}`, event, i + 1, args[from] ? topicPattern(args[from]!) : null);
     }
   }
   return out;

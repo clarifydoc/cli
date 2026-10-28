@@ -135,6 +135,11 @@ export class CSharpExtractor extends FunctionClassExtractor {
           if (member.type === "constructor_declaration") {
             noteKeyedAssignments(this.assignmentsIn(member.childForFieldName("body")), keyedParams(fn.params), fieldKeys);
           }
+        } else if (member.type === "operator_declaration" || member.type === "conversion_operator_declaration") {
+          // `operator +(Score a, Score b)`, `implicit operator int(Score s)`: a
+          // method under the compiler's name, so the calls in its body are kept.
+          const name = csharpOperatorName(member);
+          if (name) methods.push(this.parseCsharpMethod(member, name));
         } else if (member.type === "property_declaration") {
           const propName =
             member.childForFieldName("name")?.text ?? "unknown";
@@ -254,8 +259,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
     };
   }
 
-  private parseCsharpMethod(node: Node): FunctionInfo {
-    const name = node.childForFieldName("name")?.text ?? "anonymous";
+  private parseCsharpMethod(node: Node, compiledName?: string): FunctionInfo {
+    const name = compiledName ?? node.childForFieldName("name")?.text ?? "anonymous";
     const paramsNode = node.childForFieldName("parameters");
     const params = paramsNode ? this.parseCsharpParams(paramsNode) : [];
 
@@ -411,6 +416,33 @@ export function baseTypeTexts(decl: Node): string[] {
     out.push(base.text);
   }
   return out;
+}
+
+/**
+ * The name the compiler gives an overloaded operator (`operator +` →
+ * `op_Addition`); `+`/`-` with one operand are the unary ones. Keyed by the
+ * token the grammar writes in the `operator` field.
+ */
+const CSHARP_OPERATOR_NAMES: Readonly<Record<string, string>> = {
+  "+": "op_Addition", "-": "op_Subtraction", "*": "op_Multiply", "/": "op_Division", "%": "op_Modulus",
+  "&": "op_BitwiseAnd", "|": "op_BitwiseOr", "^": "op_ExclusiveOr", "<<": "op_LeftShift", ">>": "op_RightShift",
+  ">>>": "op_UnsignedRightShift", "==": "op_Equality", "!=": "op_Inequality", "<": "op_LessThan",
+  ">": "op_GreaterThan", "<=": "op_LessThanOrEqual", ">=": "op_GreaterThanOrEqual", "!": "op_LogicalNot",
+  "~": "op_OnesComplement", "++": "op_Increment", "--": "op_Decrement", "true": "op_True", "false": "op_False",
+};
+
+/** `operator_declaration` / `conversion_operator_declaration` → `op_Addition`, `op_Implicit`, …; null when unreadable. */
+export function csharpOperatorName(node: Node): string | null {
+  if (node.type === "conversion_operator_declaration") {
+    return node.children.some((c) => c.type === "explicit") ? "op_Explicit" : "op_Implicit";
+  }
+  const op = node.childForFieldName("operator")?.text;
+  if (!op) return null;
+  if (op === "+" || op === "-") {
+    const operands = node.childForFieldName("parameters")?.namedChildren.filter((c) => c.type === "parameter").length ?? 0;
+    if (operands === 1) return op === "+" ? "op_UnaryPlus" : "op_UnaryNegation";
+  }
+  return CSHARP_OPERATOR_NAMES[op] ?? null;
 }
 
 const ASSIGNMENT: ReadonlySet<string> = new Set(["assignment_expression"]);

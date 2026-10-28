@@ -143,6 +143,7 @@ import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
 import { expandChannelFactories } from "./channel-factories.js";
+import { scopeChannelTopics } from "./channel-topics.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -1752,6 +1753,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A wrapper publishing on the channel its caller names: a row at each call site handing it a literal.
   const channelRows = expandChannelFactories(allAnalyses, symbolLinks);
   if (channelRows > 0) progress.detail(`  Channel wrapper call sites: ${channelRows}`);
+  // An event sent within a topic meets only the handlers of channels joined on that topic.
+  const topicRows = scopeChannelTopics(allAnalyses);
+  if (topicRows > 0 && verbose) progress.detail(`  Channel events kept apart by topic: ${topicRows} row(s)`);
 
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),

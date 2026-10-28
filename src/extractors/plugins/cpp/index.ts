@@ -87,9 +87,12 @@ export function unqualifyOwnNamespaces(lines: readonly string[], fns: readonly F
 }
 
 function stripCppType(raw: string): string {
-  // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`; and a constant pointer's `const`
+  // Drop namespace qualifiers: `std::vector<User>` → `vector<User>` → `vector`; and a constant pointer's `const`
   // (`Env* const` is an `Env*`).
-  const noNs = raw.replace(/[\w]+::/g, "").replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
+  // A class scope stays (`Paddock::Iterator`, a nested class), its template arguments dropped.
+  const noNs = raw
+    .replace(/(\w+)\s*(?:<[^<>;()]*>)?\s*::/g, (_m, scope: string) => (/^[A-Z]/.test(scope) ? `${scope}::` : ""))
+    .replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
   return stripTypeModifiers(noNs, "cpp");
 }
 
