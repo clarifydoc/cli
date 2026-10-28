@@ -109,7 +109,6 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
           });
 
           const properties: PropertyInfo[] = [];
-          const targets = new Set<string>();
           // Property names present on the entity — used for FK conventions and
           // for `@PrimaryKeyJoinColumn` default-name derivation.
 
@@ -126,8 +125,9 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
 
               const rel = this.relationFor(cls.name, field, ann, orm);
               if (rel) {
+                // The association lives in `entityRelations` only: listing its
+                // target in `implements` drew a false supertype edge.
                 relations.push(rel);
-                targets.add(rel.toEntity);
                 continue; // an association is not also a scalar column.
               }
 
@@ -160,7 +160,6 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
               name: cls.name,
               orm,
               properties,
-              implementsList: [...targets],
               extends: cls.extends ?? null,
               line: cls.line,
               endLine: cls.endLine,
