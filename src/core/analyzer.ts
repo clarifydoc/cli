@@ -1360,6 +1360,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles, importIndex);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
+  addViewCodeNavigation(allScreens, allAnalyses, rawSources);
+  resolveLinkHelpers(allScreens, allAnalyses, rawSources, importIndex);
   canonicalNavigationTargets(allScreens, allRoutes.filter((r) => r.kind === "frontend"), (f) => analysisByPath.get(f)?.projectId);
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
@@ -1374,10 +1376,41 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // value it imports from a component's file (`import { BreadcrumbsContext } from "./MainLayout"`);
   // the modules it imports that are no screen stay (a hook, column definitions rendering row actions).
   const screenFiles = new Set(allScreens.map((sc) => sc.filePath));
+  // A component found by name, not import (Blazor's `<HeaderBar />` in the namespace): the one UI
+  // file of that name — the renderer's sub-project first, then any but tests.
+  const uiByStem = new Map<string, string[]>();
+  for (const f of screenFiles) {
+    const stem = f.slice(f.lastIndexOf("/") + 1).replace(/\..*$/, "");
+    (uiByStem.get(stem) ?? uiByStem.set(stem, []).get(stem)!).push(f);
+  }
+  // Which sub-projects each one uses — imports and the calls joined to them (a Razor app reaching its
+  // component library by namespace): a component found by name lives in one of them.
+  const projectImports = new Map<string, Set<string>>();
+  for (const [f, deps] of Object.entries(componentGraph)) {
+    const from = analysisByPath.get(f)?.projectId ?? "root";
+    for (const d of deps) {
+      const to = analysisByPath.get(d)?.projectId ?? "root";
+      if (to !== from) (projectImports.get(from) ?? projectImports.set(from, new Set()).get(from)!).add(to);
+    }
+  }
+  const screenNamed = (name: string, from: FileAnalysis): string | null => {
+    // A name the file imports comes from where the import says (a package's `<Button>`), never a namesake.
+    if (from.imports.some((i) => i.specifiers.includes(name) || Object.keys(i.aliases ?? {}).includes(name))) return null;
+    const project = from.projectId ?? "root";
+    const reach = projectImports.get(project);
+    const files = (uiByStem.get(name) ?? []).filter((f) => {
+      if (f === from.filePath || isTestFile(f, analysisByPath.get(f)?.language ?? from.language)) return false;
+      const p = analysisByPath.get(f)?.projectId ?? "root";
+      return p === project || !!reach?.has(p);
+    });
+    const same = files.filter((f) => (analysisByPath.get(f)?.projectId ?? "root") === project);
+    const pick = same.length > 0 ? same : files;
+    return pick.length === 1 ? pick[0]! : null;
+  };
   const usesGraph: Record<string, string[]> = {};
   for (const a of allAnalyses) {
-    const imported = importsOnly[a.filePath];
-    if (!imported?.length) continue;
+    const imported = importsOnly[a.filePath] ?? [];
+    if (imported.length === 0 && (!screenFiles.has(a.filePath) || a.subComponents.length === 0)) continue;
     if (!screenFiles.has(a.filePath)) {
       usesGraph[a.filePath] = imported;
       continue;
@@ -1385,10 +1418,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const rendered = new Set<string>();
     for (const sub of a.subComponents) {
       const pascal = sub.name.replace(/(?:^|-)([a-z])/g, (_, c: string) => c.toUpperCase());
-      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal);
+      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal) ?? screenNamed(pascal, a);
       if (target) rendered.add(target);
     }
-    usesGraph[a.filePath] = imported.filter((d) => rendered.has(d) || !screenFiles.has(d));
+    usesGraph[a.filePath] = [...new Set([...imported.filter((d) => rendered.has(d) || !screenFiles.has(d)), ...rendered])];
   }
   const screenFlow = buildScreenFlow({
     screens: allScreens,
@@ -1397,10 +1430,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     elements: allInteractiveElements,
     componentGraph: usesGraph,
     outlets: new Set(allAnalyses.filter((a) => {
-      const names = manifestFor(a.language as Language)?.routerOutlets;
-      return !!names?.length && a.subComponents.some((c) => names.includes(c.name));
+      const outlet = manifestFor(a.language as Language)?.routerOutlet;
+      return !!outlet && screenFiles.has(a.filePath) && outlet.test(rawSources.get(a.filePath) ?? "");
     }).map((a) => a.filePath)),
     projectOf: (f) => analysisByPath.get(f)?.projectId,
+    // Two apps' pages are no link targets of each other: only sub-projects one imports from the other share pages.
+    related: (a, b) => a === b || !!projectImports.get(a ?? "root")?.has(b ?? "root") || !!projectImports.get(b ?? "root")?.has(a ?? "root"),
   });
 
   // Cross-tier join: match each outbound api-call to the inbound route serving
@@ -2446,8 +2481,35 @@ function extractPageTitle(source: string): string | null {
 const TITLE_PLACEHOLDER_RE = /^(?:\{\{[^{}]*\}\}|\{%[^%]*%\}|<%=?[^%]*%>|%[A-Za-z_][\w.]*%|\$\{[^}]*\}|\[\[[^\]]*\]\]|__[A-Z][A-Z0-9_]*__)$/;
 
 /** Extract navigation targets from source (navigate(), router.push(), Link, href) */
-function extractNavigationTargets(source: string): string[] {
+/**
+ * Source with its comments blanked (`//` outside strings and URLs, block, markup and Razor
+ * comments), line breaks kept: a link commented out leads nowhere.
+ */
+function withoutComments(source: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, " ");
+  return source
+    .replace(/\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|@\*[\s\S]*?\*@/g, blank)
+    .replace(/(^|[^:"'`\\\w/])\/\/[^\n]*/gm, (m, lead: string) => lead + blank(m.slice(lead.length)));
+}
+
+function extractNavigationTargets(raw: string, fromBase = false): string[] {
+  const source = withoutComments(raw);
   const targets = new Set<string>();
+  // A navigation manager's `NavigateTo("/orders")` (Blazor), and — where links are relative to the
+  // document's base `/` — `NavigateTo("orders")`, `<a href="cart">`, `<a href="">` (home).
+  // MAUI Shell's `GoToAsync("Basket")` / `GoToAsync("//Main/Catalog")` (an absolute Shell route) the same way.
+  for (const m of source.matchAll(/\b(?:NavigateTo|GoTo)(?:Async)?\(\s*\$?["'`]([^"'`]*)["'`]/g)) {
+    const v = m[1]!;
+    if (v.startsWith("/") && !v.startsWith("//")) targets.add(v);
+    else if (fromBase && !/^[a-z][\w+.-]*:|^[#@~{]/i.test(v)) targets.add("/" + v.replace(/^\/+/, "").split(/[?#]/)[0]!);
+  }
+  if (fromBase) {
+    for (const m of source.matchAll(/<a\b[^>]*?\shref\s*=\s*"([^"]*)"/g)) {
+      const v = m[1]!.trim();
+      if (v.startsWith("/") || /^[a-z][\w+.-]*:|^[#@~{]/i.test(v)) continue;
+      targets.add("/" + v.split(/[?#]/)[0]!);
+    }
+  }
   const patterns = [
     /navigate\(\s*['"`]([^'"`\s]+)['"`]/g,
     /router\.(?:push|replace)\(\s*['"`]([^'"`\s]+)['"`]/g,
@@ -2538,6 +2600,103 @@ function extractNavigationTargets(source: string): string[] {
 }
 
 /**
+ * A screen is its markup and the code behind it: where its code-behind class (a class of the
+ * screen's name in another file of its sub-project, `CatalogView.xaml.cs`), the files it names as
+ * its code (`codeFiles`) and the view model it binds against (`viewModel`, `CatalogViewModel`)
+ * navigate — `GoToAsync("Basket")` in the view model — the screen navigates.
+ */
+function addViewCodeNavigation(screens: ScreenInfo[], analyses: FileAnalysis[], rawSources: Map<string, string>): void {
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const classFiles = new Map<string, FileAnalysis[]>();
+  for (const a of analyses) for (const c of a.classes) (classFiles.get(c.name) ?? classFiles.set(c.name, []).get(c.name)!).push(a);
+  const targetsCache = new Map<string, string[]>();
+  const targetsOf = (a: FileAnalysis): string[] => {
+    let t = targetsCache.get(a.filePath);
+    if (!t) targetsCache.set(a.filePath, (t = extractNavigationTargets(rawSources.get(a.filePath) ?? "", manifestFor(a.language as Language)?.linksFromBase === true)));
+    return t;
+  };
+  for (const sc of screens) {
+    const own = byPath.get(sc.filePath);
+    if (!own) continue;
+    const classIn = (name: string | undefined): FileAnalysis[] => {
+      if (!name) return [];
+      const files = (classFiles.get(name) ?? []).filter((a) => a.filePath !== sc.filePath && a.projectId === own.projectId && !isTestFile(a.filePath, a.language));
+      return files.length === 1 ? files : [];
+    };
+    const files = [...classIn(sc.name), ...classIn(sc.viewModel), ...(sc.codeFiles ?? []).map((f) => byPath.get(f)).filter((a): a is FileAnalysis => !!a)];
+    if (files.length === 0) continue;
+    const add = new Set(sc.navigatesTo);
+    for (const a of files) for (const t of targetsOf(a)) add.add(t);
+    sc.navigatesTo = [...add];
+  }
+}
+
+/** A link or navigation call handed a function's result: `href="@ItemHelper.Url(Item)"`, `NavigateTo(Club.Url(id))`. */
+const LINK_HELPER_CALL = /(?:\s:?href\s*=\s*["{]\s*@?|\bNavigateTo(?:Async)?\(\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bto\s*=\s*\{\s*)(?:(?:[A-Z][\w$]*\.)*([A-Z][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/;
+
+/**
+ * A link whose target is what a project function returns — `href="@ItemHelper.Url(Item)"` (Razor),
+ * `href={clubUrl(club)}` (JSX), `NavigateTo(LogIn.Url(Nav))` — leads where that function's body
+ * spells: its app-path literals (`$"item/{item.Id}"` → `/item/{}` where links are relative to the
+ * base). The function is `Class.method` of the one class of that name, or a bare function the
+ * file imports (else the one of that name in its sub-project).
+ */
+function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], rawSources: Map<string, string>, importIndex: ImportIndex): void {
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const classes = new Map<string, Array<{ file: string; methods: FunctionInfo[] }>>();
+  const functions = new Map<string, Array<{ file: string; fn: FunctionInfo }>>();
+  for (const a of analyses) {
+    for (const c of a.classes) (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push({ file: a.filePath, methods: c.methods });
+    for (const f of a.functions) (functions.get(f.name) ?? functions.set(f.name, []).get(f.name)!).push({ file: a.filePath, fn: f });
+  }
+  const LINK_CALL = new RegExp(LINK_HELPER_CALL.source, "g");
+  const cache = new Map<string, string[]>();
+  const pathsOf = (file: string, fn: FunctionInfo, fromBase: boolean): string[] => {
+    const key = `${file}:${fn.line}:${fromBase}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const body = (rawSources.get(file) ?? "").split("\n").slice(fn.line - 1, fn.endLine).join("\n");
+    const out: string[] = [];
+    for (const m of body.matchAll(/\$?@?["'`]([^"'`\n]*)["'`]/g)) {
+      const v = m[1]!.split(/[?#]/)[0]!.trim();
+      if (v.startsWith("/") && !v.startsWith("//")) out.push(v);
+      else if (fromBase && /^[a-z][\w-]*(?:\/[^\s"'`]*)?$/i.test(v) && v.includes("/")) out.push("/" + v);
+    }
+    cache.set(key, out);
+    return out;
+  };
+  for (const sc of screens) {
+    const a = byPath.get(sc.filePath);
+    const raw = rawSources.get(sc.filePath);
+    const source = raw ? withoutComments(raw) : undefined;
+    if (!a || !source || !LINK_CALL.test(source)) continue;
+    LINK_CALL.lastIndex = 0;
+    const fromBase = manifestFor(a.language as Language)?.linksFromBase === true;
+    const add = new Set(sc.navigatesTo);
+    for (const m of source.matchAll(LINK_CALL)) {
+      const [, owner, name] = m;
+      let found: { file: string; fn: FunctionInfo } | null = null;
+      if (owner) {
+        const cls = classes.get(owner) ?? [];
+        const fn = cls.length === 1 ? cls[0]!.methods.find((x) => x.name === name) : undefined;
+        if (fn) found = { file: cls[0]!.file, fn };
+        // A component's own static helper (`LogIn.Url(Nav)` in `LogIn.razor`'s `@code`): its file's function.
+        else {
+          const inFile = (functions.get(name!) ?? []).filter((f) => f.file.slice(f.file.lastIndexOf("/") + 1).replace(/\..*$/, "") === owner);
+          if (inFile.length === 1) found = inFile[0]!;
+        }
+      } else {
+        const imported = importIndex.localFor(sc.filePath, name!);
+        const cands = (functions.get(name!) ?? []).filter((f) => (imported ? f.file === imported : byPath.get(f.file)?.projectId === a.projectId));
+        if (cands.length === 1) found = cands[0]!;
+      }
+      if (found) for (const p of pathsOf(found.file, found.fn, fromBase)) add.add(p);
+    }
+    sc.navigatesTo = [...add];
+  }
+}
+
+/**
  * A navigation target written as a path (`/clubs/{}/view`) names the screen
  * whose route that is however the router spells it (`clubs/:id/view`): each
  * target is rewritten to the one screen route path it matches, segment for
@@ -2621,6 +2780,13 @@ function buildScreensFromRoutes(
     }
     const viaImport = importIndex.localFor(configFile, spec);
     if (viaImport) return viaImport;
+    // A view class whose screen is its markup (`CatalogView` → `CatalogView.xaml`, its code-behind a
+    // `.xaml.cs`): the one file of the sub-project with a screen of that name.
+    if (/^[A-Za-z_$][\w$]*$/.test(spec)) {
+      const project = byPath.get(configFile)?.projectId;
+      const screened = allAnalyses.filter((a) => a.projectId === project && a.screens.some((s) => s.name === spec));
+      if (screened.length === 1) return screened[0]!.filePath;
+    }
     // A module path the alias pass made project-relative (`@/views/Home.vue` → `frontend/src/views/Home.vue`).
     if (spec.includes("/")) return resolveImportSource(configFile, spec, knownFiles);
     if (!/^[A-Za-z_$][\w$]*$/.test(spec)) return null;
@@ -2793,8 +2959,9 @@ function buildScreensFromComponents(
       /* isComponent */ true,
     );
     // Skip files that produced nothing to show (no template nesting, no
-    // sub-components, no interactive elements) — they'd render an empty tree.
-    if (screen.components.length === 0) continue;
+    // sub-components, no interactive elements, no links) — they'd render an empty tree.
+    // A footer of plain links has no tree but leads somewhere (itself, or through a link helper): it stays.
+    if (screen.components.length === 0 && screen.navigatesTo.length === 0 && !LINK_HELPER_CALL.test(rawSources.get(analysis.filePath) ?? "")) continue;
     screens.push(screen);
   }
   return screens;
@@ -2986,7 +3153,7 @@ function buildScreen(
     routePath,
     // What the source navigates to, and the client routes its links name (`routerLink`).
     navigatesTo: [...new Set([
-      ...extractNavigationTargets(rawSource),
+      ...extractNavigationTargets(rawSource, manifestFor(analysis.language as Language)?.linksFromBase === true),
       ...analysis.interactiveElements.flatMap((el) => (el.element === "link" && el.request?.method === "GET" && el.request.target.startsWith("/") ? [el.request.target] : [])),
     ])],
   };
@@ -3574,7 +3741,7 @@ export function enrichLinkGraphFromComponentGraph(
   }
 }
 
-import type { ImportInfo, RouteInfo } from "../types/analysis.js";
+import type { FunctionInfo, ImportInfo, RouteInfo } from "../types/analysis.js";
 import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";

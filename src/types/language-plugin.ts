@@ -1076,11 +1076,17 @@ export interface LanguagePluginManifest {
    */
   blockingCalls?: RegExp;
   /**
-   * The components a client router renders its pages into (`RouterView`, `Outlet`), as the
-   * component names `subComponents` carry. A UI file rendering one that no page uses is the
-   * app's shell: what its components link to is offered around every page (core/screen-flow.ts).
+   * Where a client router renders its pages, as it reads in a UI file's source (`<RouterView`,
+   * `<Outlet`, Blazor's `@Body`). A UI file rendering it that no page uses is the app's shell:
+   * what its components link to is offered around every page (core/screen-flow.ts).
    */
-  routerOutlets?: readonly string[];
+  routerOutlet?: RegExp;
+  /**
+   * The language's pages write links relative to the document's base `/` (Blazor's
+   * `<base href="/">`): `href="cart"` and `NavigateTo("user/orders")` mean `/cart` and
+   * `/user/orders`, `href=""` the home page.
+   */
+  linksFromBase?: true;
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
   /**

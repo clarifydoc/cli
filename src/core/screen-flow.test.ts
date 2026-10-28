@@ -344,7 +344,8 @@ describe("screen flow of a React Router app", () => {
     expect(edges.filter((e) => e.endsWith("src/pages/NotFound.tsx"))).toEqual([]);
     // CarList imports only the layout's context: the layout's own link is not CarList's.
     expect(flow.edges.filter((e) => e.from === "src/pages/CarList.tsx").map((e) => e.via)).toEqual(["/sign-in"]);
-    expect(flow.nodes.find((n) => n.start)?.id).toBe("src/pages/SignIn.tsx");
+    // The page at `/`, and the layout framing the routes inside it (`<Outlet />`), a shell.
+    expect(flow.nodes.filter((n) => n.start).map((n) => n.id).sort()).toEqual(["src/layout/GarageLayout.tsx", "src/pages/SignIn.tsx"]);
   });
 });
 
@@ -447,5 +448,141 @@ describe("screen flow of a Vue app framed by a layout", () => {
     expect(edges).toContain("src/pages/CarDetails.vue -> src/pages/CarList.vue");
     // The download is read as a target but names no screen: no edge.
     expect(summary.screenFlow!.edges.filter((e) => e.from === "src/pages/CarDetails.vue").map((e) => e.to)).toEqual(["src/pages/CarList.vue"]);
+  });
+});
+
+/** Real-repo FP: a Blazor shop with a shared component library, and a MAUI Shell app navigating from its view models. */
+const DOTNET_FILES: Record<string, string> = {
+  "Garage.Web/Garage.Web.csproj": `<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup><ProjectReference Include="../Garage.Components/Garage.Components.csproj" /></ItemGroup></Project>\n`,
+  "Garage.Web/Components/Layout/MainLayout.razor": `@inherits LayoutComponentBase
+<TopBar />
+<main>@Body</main>
+`,
+  "Garage.Web/Components/Layout/TopBar.razor": `<nav>
+  <a href="">Showroom</a>
+  <a href="cart">Cart</a>
+</nav>
+`,
+  "Garage.Web/Components/Pages/Showroom.razor": `@page "/"
+@foreach (var car in cars)
+{
+    <CarCard Car="car" />
+}
+@code {
+    private List<Car> cars = new();
+}
+`,
+  "Garage.Web/Components/Pages/CartPage.razor": `@page "/cart"
+@inject NavigationManager Nav
+<button @onclick="Order">Order</button>
+@code {
+    void Order()
+    {
+        // Nav.NavigateTo("secret");
+        Nav.NavigateTo("orders");
+    }
+}
+`,
+  "Garage.Web/Components/Pages/Orders.razor": `@page "/orders"\n<h1>Orders</h1>\n`,
+  "Garage.Web/Components/Pages/CarPage.razor": `@page "/car/{carId:int}"\n<h1>Car</h1>\n`,
+  "Garage.Web/Services/CarService.cs": `namespace Garage.Web.Services;
+using Garage.Components;
+public class CarService
+{
+    public string LinkTo(Car car) => CarLinks.Url(car);
+}
+`,
+  "Garage.Components/Garage.Components.csproj": `<Project Sdk="Microsoft.NET.Sdk.Razor"></Project>\n`,
+  "Garage.Components/CarCard.razor": `<a class="car" href="@CarLinks.Url(Car)">@Car.Name</a>
+@code {
+    [Parameter] public Car Car { get; set; } = default!;
+}
+`,
+  "Garage.Components/CarLinks.cs": `namespace Garage.Components;
+public record Car(int Id, string Name);
+public static class CarLinks
+{
+    public static string Url(Car car) => $"car/{car.Id}";
+}
+`,
+  "Pit.App/Pit.App.csproj": `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><UseMaui>true</UseMaui></PropertyGroup></Project>\n`,
+  "Pit.App/AppShell.xaml": `<?xml version="1.0" encoding="utf-8" ?>
+<Shell xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" xmlns:views="clr-namespace:Pit.App.Views" x:Class="Pit.App.AppShell">
+    <TabBar Route="Main">
+        <ShellContent Title="Garage" Route="Garage" ContentTemplate="{DataTemplate views:GarageView}" />
+    </TabBar>
+</Shell>
+`,
+  "Pit.App/AppShell.xaml.cs": `namespace Pit.App;
+public partial class AppShell : Shell
+{
+    public AppShell()
+    {
+        InitializeComponent();
+        Routing.RegisterRoute("Service", typeof(Views.ServiceView));
+    }
+}
+`,
+  "Pit.App/Views/GarageView.xaml": `<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" xmlns:viewmodels="clr-namespace:Pit.App.ViewModels" x:Class="Pit.App.Views.GarageView" x:DataType="viewmodels:GarageViewModel" Title="Garage">
+    <Button Text="Service" Command="{Binding ServiceCommand}" />
+</ContentPage>
+`,
+  "Pit.App/Views/GarageView.xaml.cs": `namespace Pit.App.Views;
+public partial class GarageView : ContentPage
+{
+    public GarageView() { InitializeComponent(); }
+}
+`,
+  "Pit.App/Views/ServiceView.xaml": `<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="Pit.App.Views.ServiceView" Title="Service">
+    <Label Text="Service" />
+</ContentPage>
+`,
+  "Pit.App/Views/ServiceView.xaml.cs": `namespace Pit.App.Views;
+public partial class ServiceView : ContentPage
+{
+    public ServiceView() { InitializeComponent(); }
+}
+`,
+  "Pit.App/ViewModels/GarageViewModel.cs": `namespace Pit.App.ViewModels;
+public class GarageViewModel
+{
+    public async Task ServiceAsync() => await Shell.Current.GoToAsync("Service");
+}
+`,
+};
+
+describe("screen flow of Blazor and MAUI apps", () => {
+  let dir: string;
+  let flow: NonNullable<ProjectAnalysis["screenFlow"]>;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "screen-flow-dotnet-"));
+    for (const [rel, text] of Object.entries(DOTNET_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    flow = (await loadReportSummary(join(dir, "out"))).screenFlow!;
+  }, 180_000);
+  afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
+  const edges = () => flow.edges.map((e) => `${e.from} -> ${e.to}`);
+
+  it("frames Blazor pages with the layout that writes @Body, its bar's base-relative links its own", () => {
+    expect(flow.nodes.find((n) => n.id === "Garage.Web/Components/Layout/MainLayout.razor")).toMatchObject({ kind: "shell" });
+    expect(edges()).toContain("Garage.Web/Components/Layout/MainLayout.razor -> Garage.Web/Components/Pages/CartPage.razor");
+    expect(edges()).toContain("Garage.Web/Components/Layout/MainLayout.razor -> Garage.Web/Components/Pages/Showroom.razor");
+  });
+
+  it("follows a library component's link helper to the page of the app rendering it, and skips a commented-out call", () => {
+    expect(edges()).toContain("Garage.Web/Components/Pages/Showroom.razor -> Garage.Web/Components/Pages/CarPage.razor");
+    expect(flow.edges.filter((e) => e.from === "Garage.Web/Components/Pages/CartPage.razor").map((e) => e.via)).toEqual(["/orders"]);
+  });
+
+  it("routes MAUI Shell pages and follows the view model's navigation", () => {
+    expect(flow.nodes.find((n) => n.id === "Pit.App/AppShell.xaml")).toMatchObject({ kind: "shell" });
+    expect(edges()).toContain("Pit.App/AppShell.xaml -> Pit.App/Views/GarageView.xaml");
+    expect(edges()).toContain("Pit.App/Views/GarageView.xaml -> Pit.App/Views/ServiceView.xaml");
+    expect(flow.nodes.find((n) => n.id === "Pit.App/Views/GarageView.xaml")?.path).toBe("/Main/Garage");
   });
 });

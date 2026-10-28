@@ -831,9 +831,26 @@ const CONTROLLER_CLASS_GATE = /\bclass\s+\w*Controller\b|\[\s*(?:Api)?Controller
 // A project's own routing attribute (`class V3ApiControllerAttribute : …`).
 const ATTRIBUTE_CLASS_GATE = /\bclass\s+\w+Attribute\s*:/;
 
+/**
+ * `Routing.RegisterRoute("Basket", typeof(BasketView))` / `(nameof(BasketView), typeof(BasketView))`:
+ * a page `GoToAsync("Basket")` pushes — a frontend route at `/Basket` whose component is the view class.
+ */
+function registeredShellRoutes(sourceText: string): RouteInfo[] {
+  const routes: RouteInfo[] = [];
+  for (const m of sourceText.matchAll(/\bRouting\.RegisterRoute\(\s*(?:nameof\(\s*([\w.]+)\s*\)|\$?"([^"]+)")\s*,\s*typeof\(\s*([\w.]+)\s*\)\s*\)/g)) {
+    const name = (m[2] ?? m[1]!.split(".").pop()!).replace(/^\/+/, "");
+    const view = m[3]!.split(".").pop()!;
+    const line = sourceText.slice(0, m.index).split("\n").length;
+    routes.push({ path: "/" + name, httpMethod: null, kind: "frontend", handler: view, componentPath: view, calls: [], middleware: [], line });
+  }
+  return routes;
+}
+
 export const csharpRouteExtractor: RouteExtractor = {
   languages: ["csharp"],
   extractRoutes(tree, sourceText, _filePath, facts) {
+    // MAUI Shell routes registered in code: `Routing.RegisterRoute("Basket", typeof(BasketView))`.
+    const shell = sourceText.includes("RegisterRoute(") ? registeredShellRoutes(sourceText) : [];
     // HotChocolate root-type registrations (`AddQueryType<Query>()`), for hotChocolateResolver.
     collectHotChocolateFacts(sourceText, facts);
     // `app.MapClubsApi().RequireAuthorization()`: a guard on the group a project method returns.
@@ -849,9 +866,9 @@ export const csharpRouteExtractor: RouteExtractor = {
       !ATTRIBUTE_CLASS_GATE.test(sourceText) &&
       !CONVENTIONAL_ROUTE_GATE.test(sourceText)
     ) {
-      return [];
+      return shell;
     }
-    const routes: RouteInfo[] = [];
+    const routes: RouteInfo[] = [...shell];
     extractAspnetRoutes(tree.rootNode, routes, facts, sourceText);
     // Minimal APIs (`app.MapGet("/x", Handler)`, see minimal-api.ts).
     if (minimal) extractMinimalApiRoutes(tree.rootNode, routes, facts);

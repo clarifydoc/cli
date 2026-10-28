@@ -13,4 +13,8 @@ export const blazorManifest: LanguagePluginManifest = {
   extensions: [".razor"],
   importTarget: false,
   frameworkImportHints: { "Microsoft.AspNetCore.Components": "blazor" },
+  // A layout renders the routed page where it writes `@Body`.
+  routerOutlet: /@Body\b/,
+  // `<base href="/">`: `href="cart"`, `Nav.NavigateTo("user/orders")` are app-root paths.
+  linksFromBase: true,
 };

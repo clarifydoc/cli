@@ -46,11 +46,14 @@ export function buildScreenFlow(input: {
   /** File → the files it uses: for a screen, the components its markup renders and the non-screen modules it imports. */
   componentGraph: Record<string, string[]>;
   projectOf: (file: string) => string | undefined;
-  /** UI files rendering their router's outlet (the language's `routerOutlets`). */
+  /** UI files rendering their router's outlet (the language's `routerOutlet`). */
   outlets?: ReadonlySet<string>;
+  /** Whether a page of sub-project `b` can be a link target from sub-project `a` (same app, or a library it uses). */
+  related?: (a: string | undefined, b: string | undefined) => boolean;
 }): ScreenFlow | undefined {
   const { screens, routes, launches, elements, componentGraph, projectOf } = input;
   const outlets = input.outlets ?? new Set<string>();
+  const related = input.related ?? (() => true);
   if (screens.length === 0) return undefined;
 
   // One node id per screen: its file, or `file#Name` where a file holds several.
@@ -126,7 +129,7 @@ export function buildScreenFlow(input: {
     const k = pathKey(p);
     const hits = byExact.has(p) ? [...byExact.get(p)!] : byKey.has(k) ? [...byKey.get(k)!] : byParams(k);
     const same = hits.filter((s) => projectOf(s.filePath) === project);
-    return one(same.length > 0 ? same : hits);
+    return one(same.length > 0 ? same : hits.filter((s) => related(project, projectOf(s.filePath))));
   };
 
   // Client redirects and server routes by path.
@@ -200,8 +203,7 @@ export function buildScreenFlow(input: {
     return found;
   };
 
-  const resolveTarget = (s: ScreenInfo, t: string): ScreenInfo | null => {
-    const project = projectOf(s.filePath);
+  const resolveTarget = (s: ScreenInfo, t: string, project = projectOf(s.filePath)): ScreenInfo | null => {
     if (t.startsWith("/")) return screenAtPath(t, project);
     const named = byName.get(t);
     if (named) {
@@ -217,7 +219,9 @@ export function buildScreenFlow(input: {
   };
 
   // Navigation and requests from each screen file; a non-page source is lifted.
-  type Out = { to: string; kind: ScreenFlowKind; via?: string };
+  // `to` resolved where the screen is, or `target` resolved where it is used: a shared component
+  // library's link (`/item/{id}`) leads to the page of the app rendering it.
+  type Out = { to: string; kind: ScreenFlowKind; via?: string } | { target: string; from: ScreenInfo; kind: ScreenFlowKind; via?: string };
   const outOf = new Map<string, Out[]>();
   const push = (file: string, o: Out) => (outOf.get(file) ?? outOf.set(file, []).get(file)!).push(o);
   const sources = new Map<string, string>(); // scratch node id per file, for the server-route walk
@@ -237,7 +241,7 @@ export function buildScreenFlow(input: {
       }
       const scratch = `scratch:${s.filePath}`;
       sources.set(scratch, s.filePath);
-      viaServer(scratch, "GET", t, project, "navigate");
+      if (!viaServer(scratch, "GET", t, project, "navigate")) push(s.filePath, { target: t, from: s, kind: "navigate", via: t });
     }
     // A rendered page whose route also redirects (a sign-in check before the page).
     for (const r of s.renderedBy ?? []) {
@@ -344,7 +348,15 @@ export function buildScreenFlow(input: {
     const own = fileNode(file);
     let from = own && nodes.has(own) ? [own] : screensUsing(file);
     if (from.length === 0) from = shellsAbove(file);
-    for (const f of from) for (const o of outs) addEdge(f, o.to, o.kind, o.via);
+    for (const f of from) {
+      for (const o of outs) {
+        if ("to" in o) addEdge(f, o.to, o.kind, o.via);
+        else {
+          const to = resolveTarget(o.from, o.target, nodes.get(f)?.projectId ?? projectOf(f));
+          if (to) addEdge(f, addScreen(to), o.kind, o.via);
+        }
+      }
+    }
   }
 
   return {

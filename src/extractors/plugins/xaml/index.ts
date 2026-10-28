@@ -1,5 +1,6 @@
 import type {
   InteractiveElementInfo,
+  RouteInfo,
   ScreenComponentCategory,
   ScreenComponentInfo,
   ScreenInfo,
@@ -211,7 +212,8 @@ export function extractXamlScreens(lines: string[], filePath: string): ScreenInf
       components: root.children.map(toScreenComponent).filter((c): c is ScreenComponentInfo => c !== null),
       filePath,
       routePath: null,
-      navigatesTo: [],
+      // A MAUI Shell offers the pages its tabs and flyout items hold.
+      navigatesTo: root.name === "Shell" ? extractShellRoutes(lines).map((r) => r.path) : [],
       ...(root.attrs["x:DataType"] ? { viewModel: root.attrs["x:DataType"].replace(/^\{x:Type\s+|\}$/g, "").split(":").pop()!.split(".").pop()! } : {}),
     },
   ];
@@ -238,6 +240,29 @@ export function extractXamlSubComponents(lines: string[]): SubComponentInfo[] {
   return out;
 }
 
+/**
+ * A MAUI `<Shell>`'s routes: each `<ShellContent Route="Catalog" ContentTemplate="{DataTemplate
+ * views:CatalogView}">` is a page at its route under the routes of the `<TabBar>`, `<FlyoutItem>`
+ * or `<Tab>` holding it — `/Main/Catalog`, what `GoToAsync("//Main/Catalog")` opens. The view
+ * class is the route's component; core finds the screen of that name.
+ */
+export function extractShellRoutes(lines: string[]): RouteInfo[] {
+  const { root } = parseXaml(lines.join("\n"));
+  if (!root || root.name !== "Shell") return [];
+  const routes: RouteInfo[] = [];
+  const walk = (tag: XamlTag, above: string[]): void => {
+    const own = tag.attrs["Route"];
+    const path = own && !tag.isProperty ? [...above, own] : above;
+    if (tag.name === "ShellContent" && own) {
+      const view = /\{DataTemplate\s+(?:[\w]+:)?([\w.]+)\s*\}/.exec(tag.attrs["ContentTemplate"] ?? "")?.[1]?.split(".").pop() ?? null;
+      if (view) routes.push({ path: "/" + path.join("/"), httpMethod: null, kind: "frontend", handler: view, componentPath: view, calls: [], middleware: [], line: tag.line });
+    }
+    for (const child of tag.children) walk(child, path);
+  };
+  walk(root, []);
+  return routes;
+}
+
 export const xamlSpec: RegexLangSpec = {
   language: "xaml",
   extensions: [".xaml", ".axaml"],
@@ -249,6 +274,7 @@ export const xamlSpec: RegexLangSpec = {
   importPatterns: [],
 
   extractScreens: (lines, filePath) => extractXamlScreens(lines, filePath),
+  extractRoutes: (lines) => extractShellRoutes(lines),
   extractInteractiveElements: extractXamlInteractiveElements,
   extractSubComponents: extractXamlSubComponents,
 };

@@ -17,6 +17,8 @@ export const csharpManifest: LanguagePluginManifest = {
   testCommand: dotnetTestCommand,
   projectCommands: dotnetProjectCommands,
   language: "csharp",
+  // Blazor code-behind's `Nav.NavigateTo("orders")` and MAUI Shell's `GoToAsync("Basket")` name app-root routes.
+  linksFromBase: true,
   family: "dotnet",
   // `var u = await repo.FindAsync(id)` holds the `User` a declared `Task<User>` resolves to.
   asyncResultTypes: ["Task", "ValueTask"],

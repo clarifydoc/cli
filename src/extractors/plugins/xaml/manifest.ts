@@ -12,4 +12,6 @@ export const xamlManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".xaml", ".axaml"],
   importTarget: false,
+  // A MAUI `<Shell>` is the frame its tabs and flyout pages show in.
+  routerOutlet: /<Shell[\s>]/,
 };
