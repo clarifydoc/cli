@@ -19,6 +19,7 @@ export const pythonCallHooks: CallExtractionHooks = {
     for_in_clause: ["left"],
     named_expression: ["name"],
     as_pattern: ["alias"], // with … as f, except E as e
+    nonlocal_statement: ["*"], // the enclosing function's local, never the module's import
   },
   bindingPatterns: {
     parameters: ["*"],

@@ -15,8 +15,14 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  * one path) is tried as the item of its parent module too. Leaf code.
  */
 export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext): string | null {
-  const segs = source.split("::").filter((s) => s && s !== "*");
+  // A path may come joined with `.` (`crate::garage.tools`: a module path and the name an import binds).
+  const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
   if (segs.length === 0) return null;
+  // `self` alone is the importing module itself; `mod tools;` names its child `tools`.
+  if (segs.length === 1 && segs[0] === "self") {
+    const child = specifier ? exactModuleFile(selfDirOf(importingFile), [specifier], ctx) : null;
+    return child ?? importingFile;
+  }
   let base = moduleDirOf(importingFile, segs[0]!, ctx);
   let rest = segs.slice(1);
   // Neither a path keyword nor a crate: a child module of the importing one (`pub use club_sql::*` in `persistence/mod.rs`).
@@ -35,6 +41,9 @@ export function resolveRustImport(importingFile: string, source: string, specifi
   }
   const module = moduleFile(dir, path, ctx);
   if (!module) return null;
+  // `use crate::garage::tools;` binds the module `tools` itself.
+  const child = specifier && !ctx.declares(module, specifier) ? exactModuleFile(dir, [...path, specifier], ctx) : null;
+  if (child) return child;
   if (!specifier || ctx.declares(module, specifier)) return module;
   // `pub use chat_sql::*` — the module re-exports a child's items.
   for (const glob of ctx.globImportsOf(module)) {
@@ -112,6 +121,13 @@ function moduleFile(dir: string, path: string[], ctx: ImportResolveContext): str
   for (const f of [`${rel}.rs`, `${rel}/mod.rs`]) if (ctx.files.has(join(dir, f))) return join(dir, f);
   // The last segment is an item, not a module (`use crate::util::is_hidden`).
   return path.length > 1 ? moduleFile(dir, path.slice(0, -1), ctx) : moduleFile(dir, [], ctx);
+}
+
+/** `a/b.rs` or `a/b/mod.rs` under `dir`, exactly — no fallback to a parent module. */
+function exactModuleFile(dir: string, path: string[], ctx: ImportResolveContext): string | null {
+  const rel = path.join("/");
+  for (const f of [`${rel}.rs`, `${rel}/mod.rs`]) if (ctx.files.has(join(dir, f))) return join(dir, f);
+  return null;
 }
 
 const join = (dir: string, f: string): string => (dir ? `${dir}/${f}` : f);

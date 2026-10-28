@@ -72,7 +72,6 @@ export class RubyEntityExtractor extends EntityExtractor {
       // which `reconcileProject` hands them to. An abstract base is no table either.
       const concern = /^\s*module\s/.test(declaration);
 
-      const targets = new Set<string>();
       let body: string[];
       try {
         body = this.bodyOf(ctx, cls);
@@ -96,10 +95,9 @@ export class RubyEntityExtractor extends EntityExtractor {
       for (const stmt of statements) {
         try {
           const rel = this.parseAssociation(cls.name, stmt.text, orm);
-          if (rel) {
-            relations.push(rel);
-            targets.add(rel.toEntity);
-          }
+          // An association is a relation only: `has_many :players` is no
+          // module the model implements.
+          if (rel) relations.push(rel);
         } catch {
           // skip unparseable statement
         }
@@ -117,7 +115,6 @@ export class RubyEntityExtractor extends EntityExtractor {
           name: cls.name,
           orm,
           properties: [] as PropertyInfo[],
-          implementsList: [...targets],
           extends: cls.extends ?? null,
           line: cls.line,
           endLine: cls.endLine,
@@ -817,11 +814,8 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
     for (const cls of a.classes) {
       if (!cls.decorators.includes("entity")) continue;
       entities.add(cls.name);
-      // An entity's `implements` also lists its relations' targets: only the
-      // rest are the modules it mixes in.
-      const targets = new Set((a.entityRelations ?? []).filter((r) => r.fromEntity === cls.name).map((r) => r.toEntity));
+      // An entity's `implements` are the modules it mixes in.
       for (const mixin of cls.implements) {
-        if (targets.has(mixin)) continue;
         const name = mixin.replace(/^::/, "");
         includers.set(name, [...(includers.get(name) ?? []), { a, model: cls.name }]);
       }

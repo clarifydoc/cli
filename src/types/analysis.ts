@@ -877,6 +877,13 @@ export interface CallInfo {
    */
   member?: string;
   /**
+   * The bare name called is a variable the calling function binds itself — a
+   * parameter, an assignment, a loop or `with` target, a `nonlocal` (`sprint =
+   * len` … `sprint(xs)`): a value it calls, never the import or file-level
+   * function of that name. Only a function nested in reach may answer it.
+   */
+  boundLocally?: true;
+  /**
    * The type the call's receiver is, when the call expression itself says
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,

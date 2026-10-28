@@ -13,6 +13,7 @@ import {
   type TypeRefContext,
 } from "../extractors/shared/type-parser.js";
 import { isBuiltinType } from "../extractors/shared/builtin-types.js";
+import { declaredSupertypes } from "./typed-receivers.js";
 
 /**
  * Walk a FileAnalysis and emit TypeReferences for every type-position usage
@@ -39,7 +40,7 @@ export function extractTypeReferences(a: FileAnalysis, language: Language): Type
   const refs: TypeReference[] = [];
 
   for (const cls of a.classes) {
-    emitClassRefs(cls, a.filePath, language, refs);
+    emitClassRefs(cls, a, language, refs);
     // Class-method calls inside this class body: `User.find(id)`, `Foo.new(x)`.
     // The leading PascalCase identifier is the class being used.
     for (const method of cls.methods ?? []) {
@@ -58,15 +59,20 @@ export function extractTypeReferences(a: FileAnalysis, language: Language): Type
 
 /**
  * Type references a class declaration makes: its base class, interfaces,
- * property types and, through `emitFunctionRefs`, each method's signature.
+ * property types, the entities an ORM model relates to and, through
+ * `emitFunctionRefs`, each method's signature.
  */
-function emitClassRefs(cls: ClassInfo, filePath: string, language: Language, refs: TypeReference[]): void {
+function emitClassRefs(cls: ClassInfo, a: FileAnalysis, language: Language, refs: TypeReference[]): void {
+  const filePath = a.filePath;
   const classSymbol = cls.name;
   const baseCtx: TypeRefContext = { filePath, language, line: cls.line, sourceSymbol: classSymbol, sourceClass: cls.name };
 
+  // Only what the class declares is a supertype; an entity extractor's relation
+  // targets in `implements` are associations, referenced from the relation's field.
   if (cls.extends) emitTypeRefs(cls.extends, "extends", baseCtx, refs);
-  for (const iface of cls.implements ?? []) {
-    emitTypeRefs(iface, "implements", baseCtx, refs);
+  for (const iface of declaredSupertypes(cls, a).slice(cls.extends ? 1 : 0)) emitTypeRefs(iface, "implements", baseCtx, refs);
+  for (const r of a.entityRelations ?? []) {
+    if (r.fromEntity === cls.name) emitTypeRefs(r.toEntity, "field", { ...baseCtx, sourceSymbol: `${classSymbol}.${r.fromField}` }, refs);
   }
 
   for (const prop of cls.properties ?? []) {

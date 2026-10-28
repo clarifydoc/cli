@@ -55,7 +55,7 @@ describe("Rust through ANTLR", () => {
       "Club.new().squad",
       "Club.new().squad().captain",
       "Club.new",
-      "insert",
+      "db::insert",
       "confirm",
       "plate.normalize",
       "wash_car",

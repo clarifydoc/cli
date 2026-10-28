@@ -252,6 +252,24 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     expect(graded([routes, controller, other])[0]).toEqual(["PlayerController#index", "AMBIGUOUS"]);
   });
 
+  it("serves a route a resolver anchored on its handler by that method, never a namesake class's", () => {
+    // `resources :clubs` moved onto `def index` of `ClubsController`; `Api::V1::ClubsController`
+    // declares `index` too, and the name search took whichever came first.
+    const ruby = (path: string, opts: Parameters<typeof file>[2]) =>
+      ({ ...file(path, "web", opts), language: "ruby" }) as unknown as FileAnalysis;
+    const api = ruby("app/controllers/api/v1/clubs_controller.rb", {
+      classes: [{ ...cls("ClubsController"), line: 3, endLine: 9, methods: [{ ...fn("index", []), line: 4, endLine: 6 }] }],
+    });
+    const web = {
+      ...ruby("app/controllers/clubs_controller.rb", {
+        classes: [{ ...cls("ClubsController"), line: 1, endLine: 9, methods: [{ ...fn("index", []), line: 2, endLine: 4 }] }],
+      }),
+      routes: [{ ...route("/clubs", "ClubsController#index"), line: 2 }],
+    } as unknown as FileAnalysis;
+    const links = buildSymbolLinks([api, web]).filter((l) => l.sourceSymbol.startsWith("route:"));
+    expect(links.map((l) => [l.targetFile, l.targetSymbol, l.confidence])).toEqual([["app/controllers/clubs_controller.rb", "ClubsController.index", "INFERRED"]]);
+  });
+
   it("never serves a route by another class's member of the same name beside the handler's class", () => {
     // `ClubViewSet` takes `create` from a framework base; `MatchViewSet` in the same file
     // declares its own. The route for clubs is not served by the match one.

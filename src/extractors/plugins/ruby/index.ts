@@ -5,7 +5,7 @@ import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractCallsFromBody, extractClassesWithSpec, inlineBodyColumn } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -134,13 +134,44 @@ function bodyLines(lines: readonly string[], fn: FunctionInfo): Array<[number, s
   const name = fn.name.replace(/^self\./, "");
   const at = def < 0 ? -1 : decl.indexOf(name, def + 3);
   if (at < 0) return [];
-  let col = inlineBodyColumn(decl, at + name.length);
-  if (col < 0) {
-    const semi = decl.indexOf(";", at + name.length);
-    if (semi < 0) return [];
-    col = semi + 1;
-  }
+  const col = rubyInlineBodyColumn(decl, at + name.length);
+  if (col < 0) return [];
   return [[fn.line - 1, " ".repeat(col) + decl.slice(col)]];
+}
+
+/**
+ * Where a one-line method's body starts on its `def` line: after an endless
+ * method's `=` (`def range = window.current`), after the `;` that ends the
+ * signature (`def x; y; end`, `def f(a); g(a); end`), or after a parenthesized
+ * parameter list followed by code (`def f(a) g(a) end`). `from` is the end of
+ * the method's name. -1 when the body starts on the next line.
+ */
+export function rubyInlineBodyColumn(line: string, from: number): number {
+  let k = from;
+  while (line[k] === " " || line[k] === "\t") k++;
+  let parens = false;
+  if (line[k] === "(") {
+    let depth = 0;
+    for (; k < line.length; k++) {
+      if (line[k] === "(") depth++;
+      else if (line[k] === ")" && --depth === 0) break;
+    }
+    if (depth !== 0) return -1;
+    k++;
+    parens = true;
+  }
+  const rest = line.slice(k);
+  const lead = rest.length - rest.trimStart().length;
+  const next = rest.trimStart();
+  if (next === "" || next.startsWith("#")) return -1;
+  if (/^=(?![=~>])/.test(next)) return k + lead + 1;
+  if (next.startsWith(";")) return k + lead + 1;
+  // `def look a, b` — parameters without parentheses, up to a `;` when on one line.
+  if (!parens) {
+    const semi = line.indexOf(";", k);
+    return semi < 0 ? -1 : semi + 1;
+  }
+  return lead > 0 ? k + lead : -1;
 }
 
 /**
@@ -662,6 +693,8 @@ export const rubySpec: RegexLangSpec = {
   topLevelCalls: /\.(?:rake|jbuilder)$/,
   lineCommentPrefixes: ["#"],
 
+  inlineBodyColumn: rubyInlineBodyColumn,
+
   functionPatterns: [
     {
       // `def name`, `def self.name`, `def Const.name`, after a visibility call
@@ -859,6 +892,12 @@ export const rubySpec: RegexLangSpec = {
       pattern: /^\s*require(?:_relative)?\s+['"]([^'"]+)['"]/,
       getSource: (m) => m[1],
       getSpecifiers: (m) => { const parts = m[1].split("/"); return [parts[parts.length - 1]]; },
+    },
+    {
+      // `autoload :Club, "league/club"` loads that file the first time `Club` is named.
+      pattern: /^\s*autoload\s*\(?\s*:(\w+)\s*,\s*['"]([^'"]+)['"]/,
+      getSource: (m) => m[2],
+      getSpecifiers: (m) => [m[1]],
     },
     {
       // Rails autoload: `ActiveAdmin.register UserRole` administers (and thus

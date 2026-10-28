@@ -61,6 +61,7 @@ import {
   ensureLanguagesLoaded,
   classifyKnownPackage,
   pluginFor,
+  manifestFor,
   PARTIAL_PREFIX_BY_LANGUAGE,
   importsNameDirectories,
   isApiContractLanguage,
@@ -146,7 +147,7 @@ import { expandChannelFactories } from "./channel-factories.js";
 import { scopeChannelTopics } from "./channel-topics.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
-import { buildImportIndex, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
+import { buildImportIndex, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { buildModuleValueLookup, resolveRouteTemplates, resolveTargetRefs } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
@@ -173,7 +174,7 @@ import {
   type DataFlowPath,
   type ProxyRule,
 } from "../types/analysis.js";
-import type { ReachabilityHooks, ReachabilityModel } from "../types/language-plugin.js";
+import type { ImportResolveContext, ReachabilityHooks, ReachabilityModel } from "../types/language-plugin.js";
 
 /**
  * Everything `analyzeProject` needs to run one analysis.
@@ -3100,6 +3101,7 @@ export function buildComponentGraph(
   // anywhere ending `lib/util`, often another app's).
   const filePathMap = buildFilePathMap(analyses);
   const knownFiles = new Set(byPath.keys());
+  let ownResolveCtx: ImportResolveContext | undefined;
   // Where a language searches load paths too (Sass): the one same-family file
   // whose extension-less path ends with what the import names.
   const loadPathCache = new Map<string, string | undefined>();
@@ -3243,6 +3245,24 @@ export function buildComponentGraph(
         classifyKnownPackage(imp.source) !== undefined ||
         classifyKnownPackage(packageRoot) !== undefined;
       if (isExternal) continue;
+
+      // 1c. A language that resolves its own import paths (`resolveImport`: a Rust
+      // `crate::garage::tools`, a Ruby `require "league"` on the load path) names
+      // the file: the name heuristics below took `tools.rs` beside `main.rs`, or
+      // the `league/` directory over `league.rb`.
+      const ownResolver = manifestFor(a.language)?.resolveImport;
+      if (ownResolver) {
+        ownResolveCtx ??= importResolveContext(analyses, knownFiles);
+        const targets = new Set<string>();
+        for (const spec of imp.specifiers.length > 0 ? imp.specifiers : [undefined]) {
+          const hit = ownResolver(a.filePath, imp.source, spec && (imp.aliases?.[spec] ?? spec), ownResolveCtx);
+          if (hit && hit !== a.filePath) targets.add(hit);
+        }
+        if (targets.size > 0) {
+          for (const t of targets) addRef(t);
+          continue;
+        }
+      }
 
       // 2. Resolve non-relative imports via specifier names → exported names
       // Works for Java (import com.example.api.service.UserService → specifier "UserService")

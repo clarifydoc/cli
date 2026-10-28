@@ -38,7 +38,8 @@ const CHAIN_DEPTH = 8;
  * is any `fn` — free, in an `impl` or `trait`, or nested — spanning its name to its body's `}` (or its `;`), and
  * owns the calls in its body except those of a function declared inside it; a closure's calls are its owner's.
  * A call is named as the Rust spec's call patterns name it: `Club::new(` is `Club.new` on the type `Club`,
- * `Self::check(` is `Self.check`, a call through a lowercase module path (`db::query(`) is its last name, a
+ * `Self::check(` is `Self.check`, a call through a lowercase module path is named as written (`db::query`,
+ * `crate::garage::tools::spanner`; `self::f(` is `f`), a
  * method on a name path (`self.repo.find(`) is its last two names, a method on a call's result the chain from
  * its first call (`Club::new(id).register(` is `Club.new().register`, `repo.find(id).unwrap(` is
  * `repo.find().unwrap`), and one on a value
@@ -325,7 +326,11 @@ function pathCallName(callee: ParseTree): PatternCallName | null {
   const owner = names.at(-2)!;
   // `Self::new(` too: the patterns' `Type::f` rule reads `Self` as a type.
   if (/^[A-Z]/.test(owner.name)) return call(`${owner.name}.${leaf.name}`, leaf.name, owner.token, owner.name);
-  return call(leaf.name, leaf.name, leaf.token);
+  // `self::helper(` is the module's own function, by its name; so is a type built through a path (`core::NodeId(1)`).
+  if ((names.length === 2 && owner.name === "self") || /^[A-Z]/.test(leaf.name)) return call(leaf.name, leaf.name, leaf.token);
+  // A module path (`tools::wrench(`, `crate::garage::tools::spanner(`, `super::load(`) is named as written,
+  // so the plugin can follow it to the module (module-calls.ts).
+  return call(names.map((n) => n.name).join("::"), leaf.name, names[0]!.token);
 }
 
 /** `Html(body)`: a call of a capitalized name builds a value of that tuple struct, so its methods are the type's. */

@@ -859,8 +859,10 @@ export interface CallExtractionHooks {
    *
    * Node type → the fields holding the bound pattern: the parameter list of
    * a function-like node (`arrow_function` → `parameter`, `parameters`),
-   * `variable_declarator` → `name`, Python `assignment` → `left`. Unioned
-   * across plugins.
+   * `variable_declarator` → `name`, Python `assignment` → `left`; `"*"` for
+   * every name the node lists (Python `nonlocal a, b`). Unioned across
+   * plugins. A bare call of a name so bound is a call of that value
+   * (`CallInfo.boundLocally`), never of an import of the same name.
    */
   bindingSites?: Readonly<Record<string, readonly string[]>>;
   /**

@@ -52,8 +52,12 @@ const RUST_CODE = braceCodeHooks(RUST_LEXICON, (line) => {
 /** A chain's head: a function, a `Type::function` / `Self::function` path — never the tail of a longer path or selector. */
 const RUST_CHAIN_HEAD = String.raw`(?<![\w.:])((?:[A-Z]\w*\s*::\s*)?[A-Za-z_]\w*)`;
 
-function parseRustReturnType(line: string): string | null {
-  const m = line.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/);
+function parseRustReturnType(line: string, nameColumn?: number): string | null {
+  // From the function's own name on: a one-line impl declares several (`fn new() -> Club {…} fn save(&self) {…}`).
+  const head = nameColumn !== undefined && nameColumn >= 0 ? line.slice(nameColumn) : line;
+  // The arrow right after the parameter list, else the first on the line from there.
+  const m = /^[^(]*\((?:[^()]|\([^()]*\))*\)\s*->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/.exec(head)
+    ?? (/^[^(]*\((?:[^()]|\([^()]*\))*\)/.test(head) ? null : head.match(/->\s*([^{]+?)(?:\s+where\s|\s*\{|\s*;|\s*$)/));
   if (!m || !m[1]) return null;
   return stripRustTypeModifiers(m[1].trim());
 }
@@ -134,6 +138,15 @@ export const rustSpec: RegexLangSpec = {
     {
       pattern: /\bSelf::([a-zA-Z_]\w*)\s*\(/g,
       buildName: (m) => ({ name: `Self.${m[1]}`, leafName: m[1]! }),
+    },
+    {
+      // A function through a module path (`tools::wrench(`, `crate::garage::tools::spanner(`,
+      // `super::load(`), named as written (module-calls.ts follows it). `self::f(` is `f`.
+      pattern: /(?<![\w:.])((?:[a-z_]\w*\s*::\s*)+)([a-z_]\w*)\s*\(/g,
+      buildName: (m) => {
+        const path = m[1]!.replace(/\s+/g, "");
+        return path === "self::" ? { name: m[2]!, leafName: m[2]! } : { name: `${path}${m[2]}`, leafName: m[2]! };
+      },
     },
     // A method on a call's result, named as the chain: `Club::new(id).register()` is `Club.new().register`.
     ...callChainPatterns(RUST_CHAIN_HEAD, (head) => head.replace(/\s*::\s*/, ".")),
