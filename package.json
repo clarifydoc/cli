@@ -1,6 +1,6 @@
 {
   "name": "clarifydoc",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Extract structured information from any codebase — routes, endpoints, data flow, components",
   "type": "module",
   "main": "dist/index.js",
