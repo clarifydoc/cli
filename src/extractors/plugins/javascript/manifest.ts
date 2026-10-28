@@ -6,6 +6,7 @@ import { NOISE_CALLS } from "../../shared/call-graph.js";
 import { javascriptFrameworkRules } from "./frameworks.js";
 import { npmPackageManager } from "./package-manifests.js";
 import { jsServiceConfig } from "./service-config.js";
+import { jsImportedFile } from "./node-builtins.js";
 
 /**
  * Prototype members of core JS builtins (Array/Set/Map/String/Object/Promise/
@@ -130,6 +131,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   projectCommands: jsProjectCommands,
   language: "typescript",
   family: "script",
+  // `import assert from "assert"` is Node's, never a project file of that name.
+  importedFile: jsImportedFile,
   packageManagers: [npmPackageManager],
   packageEcosystems: ["npm"],
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
@@ -164,6 +167,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   language: "javascript",
   family: "script",
+  // `import assert from "assert"` is Node's, never a project file of that name.
+  importedFile: jsImportedFile,
   // Any parameter may be left out (it is `undefined`) and extra arguments are ignored.
   callArity: { missingAllowed: true, extraAllowed: true },
   // A package's `bin/` scripts, when its package.json declares `bin`.

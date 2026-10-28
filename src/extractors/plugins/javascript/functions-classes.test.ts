@@ -634,3 +634,28 @@ export abstract class Logger { abstract write(m: string): void; }`);
     expect(logger.abstract).toBeUndefined();
   });
 });
+
+describe("CommonJS member-assigned functions", () => {
+  it("names each function after the export member, and a module-level `module.exports = function` after its own name", async () => {
+    const src = `const Club = require("../models/club");
+exports.listClubs = async (req, res) => {
+  const clubs = await Club.find();
+  res.json(clubs);
+};
+module.exports.createClub = function (req, res) {
+  return Club.create(req.body);
+};
+exports.renameClub = function rename(req, res) { return Club.updateOne(); };
+exports.season = 2026;
+module.exports = function kickoff(team) { return team; };
+function later() { exports.inner = () => 1; }`;
+    const tree = await parseSource(src, "javascript" as any, "clubController.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const byName = new Map(fns.map((f) => [f.name, f]));
+    for (const name of ["listClubs", "createClub", "renameClub", "kickoff"]) expect(byName.get(name)?.isExported, name).toBe(true);
+    expect([byName.get("listClubs")!.line, byName.get("listClubs")!.endLine]).toEqual([2, 5]);
+    // A value is no function, and an assignment inside a function body stays that body's.
+    expect(byName.has("season")).toBe(false);
+    expect(byName.has("inner")).toBe(false);
+  });
+});

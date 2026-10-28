@@ -345,6 +345,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
       const source = stripQuotes(firstArg.text);
       const specifiers: string[] = [];
+      let aliases: Record<string, string> | undefined;
       let isDefault = false;
       let isNamespace = false;
 
@@ -359,8 +360,11 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
             if (prop.type === "shorthand_property_identifier_pattern" || prop.type === "identifier") {
               specifiers.push(prop.text);
             } else if (prop.type === "pair_pattern") {
+              // `const { getClub: fetchClub } = require("./api")`: `fetchClub` is the module's `getClub`.
               const alias = prop.childForFieldName("value");
+              const key = prop.childForFieldName("key");
               specifiers.push(alias?.text ?? prop.text);
+              if (alias?.type === "identifier" && key?.type === "property_identifier" && key.text !== alias.text) (aliases ??= {})[alias.text] = key.text;
             }
           }
         }
@@ -373,6 +377,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         isNamespace,
         isType: false,
         line: declNode.startPosition.row + 1,
+        ...(aliases ? { aliases } : {}),
       });
     }
   }
@@ -406,6 +411,13 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
   protected collectExports(node: Node, exports: ExportInfo[]): void {
     for (const child of node.children) {
+      // CommonJS `module.exports = function kickoff() {…}` / `module.exports = kickoff`: the
+      // module's default, as `export default kickoff` — what `const k = require("./kickoff")` binds.
+      if (child.type === "expression_statement") {
+        const local = cjsDefaultName(child.namedChild(0));
+        if (local) exports.push({ name: "default", kind: "default", line: child.startPosition.row + 1, sourceName: local });
+        continue;
+      }
       if (child.type !== "export_statement") continue;
       const line = child.startPosition.row + 1;
       const kids = child.children;
@@ -497,6 +509,15 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 /** `require("./x")` → `./x`; anything else → null. */
 /** A node whose body runs when it is called, not when the file loads. */
 const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration|generator_function)$/;
+
+/** `module.exports = function kickoff() {…}` / `= class Kickoff {…}` / `= kickoff` → `kickoff`; anything else → null. */
+function cjsDefaultName(node: Node | null): string | null {
+  if (node?.type !== "assignment_expression" || node.childForFieldName("left")?.text.replace(/\s+/g, "") !== "module.exports") return null;
+  const right = node.childForFieldName("right");
+  if (right?.type === "identifier") return right.text;
+  if (right?.type === "function_expression" || right?.type === "class") return right.childForFieldName("name")?.text ?? null;
+  return null;
+}
 
 export function requiredSource(node: Node): string | null {
   if (node.type !== "call_expression" || node.childForFieldName("function")?.text !== "require") return null;

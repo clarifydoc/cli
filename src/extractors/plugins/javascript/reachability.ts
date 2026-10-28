@@ -8,6 +8,7 @@ import type {
 } from "../../../types/language-plugin.js";
 import { stripJsonc } from "../../shared/tsconfig-aliases.js";
 import { JS_PLATFORM_SUFFIXES } from "./manifest.js";
+import { NODE_BUILTINS } from "./node-builtins.js";
 import { findShebangScripts, SCRIPT_DIRS } from "../shared/shebang-scripts.js";
 
 /**
@@ -46,13 +47,6 @@ const COMPONENT_FILE_RE = /\.(?:vue|svelte|[jt]sx)$/;
 
 /** Specifiers that are never project files: builtins and bundler virtual modules. */
 const VIRTUAL_RE = /^(?:node:|virtual:|bun:|deno:|#app\b|#imports\b|#build\b|#components\b|\$app\/|\$env\/|\$service-worker\b|~icons\/|~build\/|vue-router\/auto)/;
-const NODE_BUILTINS = new Set([
-  "assert", "async_hooks", "buffer", "child_process", "cluster", "console", "constants", "crypto",
-  "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "http", "http2", "https",
-  "inspector", "module", "net", "os", "path", "perf_hooks", "process", "punycode", "querystring",
-  "readline", "repl", "stream", "string_decoder", "sys", "timers", "tls", "trace_events", "tty",
-  "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib", "test",
-]);
 
 type Rule = readonly [RegExp, string];
 

@@ -3383,9 +3383,10 @@ function resolveCallToDefinition(
   if (nested) return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
 
   if (call.kind === "cross-file" && call.target) {
-    // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).
+    // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`,
+    // and `importedFile`: a Node built-in is never the project's `assert.js`).
     const ownResolver = pluginFor(analysis.language)?.resolveImport;
-    targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : resolveTarget(call.target, sourceFile, filePathMap);
+    targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : importPath(ctx, call.target, sourceFile);
     // A name a dotted import gives may be a module of its own (`from league.api import deps` →
     // `deps.get_club()`): the package's file of that name, when the package's entry lacks the call.
     if (parts.length === 2 && !call.target.includes("/") && !(targetFile && symbolIndex.get(targetFile)?.has(call.name))
@@ -4204,9 +4205,12 @@ function importedDefinition(ctx: LinkContext, file: string, local: string, depth
   return definitionIn(ctx, target, defaultBinding(imp, local) ? "default" : imp.aliases?.[local] ?? local, depth, seen);
 }
 
-/** Whether `local` is the default binding of an import (`import pump from "./tyre"`, `import pump, { x } from`). */
-function defaultBinding(imp: { isDefault: boolean; specifiers: readonly string[] }, local: string): boolean {
-  return imp.isDefault && imp.specifiers[0] === local;
+/**
+ * Whether `local` is the default binding of an import (`import pump from "./tyre"`, `import pump, { x } from`,
+ * `import { default as pump }`, `const { default: pump } = require("./tyre")`).
+ */
+function defaultBinding(imp: { isDefault: boolean; specifiers: readonly string[]; aliases?: Record<string, string> }, local: string): boolean {
+  return (imp.isDefault && imp.specifiers[0] === local) || imp.aliases?.[local] === "default";
 }
 
 /**
