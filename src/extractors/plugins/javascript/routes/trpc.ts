@@ -42,8 +42,12 @@ const keyOf = (pair: Node): string | null => {
   return k.type === "string" ? stripQuotes(k.text) : k.text;
 };
 
-/** `x.input(…).use(…).query(fn)` → the verb, the handler, the builder the chain starts on, and a named `.input(schema)`. */
-function procedureOf(value: Node): { verb: string; handler: Node | null; builder: string; input: string | null; inlineInput: boolean } | null {
+/**
+ * `x.input(…).use(…).query(fn)` → the verb, the handler (an inline function, or
+ * the name of one handed by reference), the builder the chain starts on, and a
+ * named `.input(schema)`.
+ */
+function procedureOf(value: Node): { verb: string; handler: Node | null; handlerRef: string | null; builder: string; input: string | null; inlineInput: boolean } | null {
   if (value.type !== "call_expression") return null;
   const fn = value.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
@@ -52,7 +56,13 @@ function procedureOf(value: Node): { verb: string; handler: Node | null; builder
   let root: Node | null = fn.childForFieldName("object");
   let input: string | null = null;
   let inlineInput = false;
+  /** The procedure the chain builds on, when it hangs off an instance: `t.procedure`, `t.protectedProcedure`. */
+  let member: string | null = null;
   while (root && (root.type === "call_expression" || root.type === "member_expression")) {
+    if (root.type === "member_expression") {
+      const prop = root.childForFieldName("property")?.text ?? "";
+      if (/^(?:procedure|\w+Procedure)$/.test(prop)) member = prop;
+    }
     if (root.type === "call_expression") {
       const f = root.childForFieldName("function");
       const arg = root.childForFieldName("arguments")?.namedChildren[0];
@@ -64,9 +74,12 @@ function procedureOf(value: Node): { verb: string; handler: Node | null; builder
     }
     root = root.type === "call_expression" ? root.childForFieldName("function") : root.childForFieldName("object");
   }
-  const builder = root?.type === "identifier" ? root.text : "";
+  const builder = member ?? (root?.type === "identifier" ? root.text : "");
   const handler = value.childForFieldName("arguments")?.namedChildren[0] ?? null;
-  return { verb, handler: handler && /function|arrow_function/.test(handler.type) ? handler : null, builder, input, inlineInput };
+  const inline = !!handler && /function|arrow_function/.test(handler.type);
+  // `.query(getGarage)`, `.mutation(garages.create)`: the function serving it.
+  const handlerRef = handler && (handler.type === "identifier" || handler.type === "member_expression") ? handler.text.replace(/\s+/g, "") : null;
+  return { verb, handler: inline ? handler : null, handlerRef, builder, input, inlineInput };
 }
 
 /** Collect the procedures and mounts of one router object, recursing into nested routers. */
@@ -84,7 +97,7 @@ function collectRouter(obj: Node, owner: string, prefix: string, routes: RouteIn
         path: `${TRPC_PREFIX}${prefix}${key}`,
         httpMethod: PROCEDURE_VERBS[proc.verb]!,
         kind: "api",
-        handler: null,
+        handler: proc.handlerRef,
         calls: proc.handler ? collectCallNames(proc.handler) : [],
         middleware: proc.builder && !PLAIN_BUILDERS.has(proc.builder) ? [proc.builder] : [],
         line: pair.startPosition.row + 1,

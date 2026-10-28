@@ -1235,6 +1235,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const chain = fn.text.replace(/\s+/g, "");
         const parts = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}$/.test(chain) ? chain.split(".") : [];
         const path = parts.slice(1, -1).filter((p, i) => !(i === 0 && p === "client"));
+        // `t.procedure.query(getGarage)`, `t.protectedProcedure.mutation(…)`: the server
+        // defining a procedure (routes/trpc.ts reads it), never a request.
+        if (parts.some((p) => /^(?:procedure|\w+Procedure)$/.test(p))) return;
         if (parts.length && parts[0] !== "this" && path.length) {
           sources.push(this.ds({ kind: "api-call", name: TRPC_CLIENT_VERBS.get(fnName)!, target: `/trpc/${path.join(".")}`, line: node.startPosition.row + 1 }));
           return;
@@ -1270,7 +1273,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
-        if ((isRoot || isVerb) && fn && (!!jqueryVerb || !isServerRouteDef(fn, node, this.serverRouterReceivers())) && node.parent?.type !== "decorator") {
+        if ((isRoot || isVerb) && fn && (!!jqueryVerb || (!isServerRouteDef(fn, node, this.serverRouterReceivers()) && !isPluginInstanceCall(fn, node))) && node.parent?.type !== "decorator") {
           const args = node.childForFieldName("arguments");
           let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
@@ -2455,8 +2458,8 @@ function calleeLeaf(fn: Node | null): string | null {
 /** Object names that denote a server router, not an HTTP client. */
 const SERVER_ROUTER_OBJECTS = new Set(["app", "router", "route", "server", "Router"]);
 
-/** `const x = Router()`, `express.Router()`, `new Router()`, `express()`, `new Hono()`, `new Koa()`, `fastify()`, `new Elysia()`. */
-const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:new\s+)?(?:(?:express|koa|Koa)\s*\.\s*)?(?:Router|express|Hono|Koa|fastify|Fastify|Elysia)\s*(?:<[^>\n]*>)?\s*\(/g;
+/** `const x = Router()`, `express.Router()`, `new Router()`, `express()`, `new Hono()`, `new Koa()`, `fastify()`, `new Elysia()`, `require("fastify")()`. */
+const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:new\s+)?(?:(?:express|koa|Koa)\s*\.\s*)?(?:Router|express|Hono|Koa|fastify|Fastify|Elysia|require\s*\(\s*['"](?:fastify|express|koa)['"]\s*\))\s*(?:<[^>\n]*>)?\s*\(/g;
 
 /**
  * Whether a verb call is a server-side route/middleware registration
@@ -2490,6 +2493,32 @@ function isServerRouteDef(fn: Node, callNode: Node, routers: Set<string>): boole
     }
   }
   return false;
+}
+
+/**
+ * A route registered on the server instance a plugin function is handed:
+ * Fastify's `async function clubRoutes(instance, opts) { instance.get('/clubs', listClubs) }`
+ * (also `fastify: FastifyInstance`, `(app, options, done)`). The receiver is the
+ * enclosing function's first parameter, typed as a Fastify instance — or, followed
+ * by the plugin's options parameter, not named like a client and handed a
+ * handler last (`apiClient.get('/x', options)` stays a request).
+ */
+function isPluginInstanceCall(fn: Node, callNode: Node): boolean {
+  if (fn.type !== "member_expression") return false;
+  const recv = fn.childForFieldName("object");
+  if (recv?.type !== "identifier") return false;
+  let scope: Node | null = callNode.parent;
+  while (scope && !isFunctionNode(scope) && scope.type !== "function_declaration" && scope.type !== "method_definition") scope = scope.parent;
+  const params = scope?.childForFieldName("parameters")?.namedChildren.filter((p) => p.type !== "comment") ?? [];
+  const nameOf = (p: Node | undefined): string => (p?.childForFieldName("pattern") ?? p)?.text ?? "";
+  if (params.length < 1 || nameOf(params[0]) !== recv.text) return false;
+  const type = params[0]!.childForFieldName("type")?.text ?? "";
+  if (/\bFastify(?:Instance|PluginInstance)?\b/.test(type)) return true;
+  // Untyped, the signature alone: an instance not named like a client, handed a handler last.
+  if (!/^_?(?:opts|options)$/.test(nameOf(params[1])) || HTTP_RECEIVER_RE.test(recv.text) || /client$/i.test(recv.text)) return false;
+  const args = callNode.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+  const last = args[args.length - 1];
+  return args.length >= 2 && !!last && (last.type === "identifier" || last.type === "member_expression" || isFunctionNode(last));
 }
 
 function isFunctionNode(n: Node): boolean {

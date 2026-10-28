@@ -1396,3 +1396,24 @@ describe("JS client instances named like a library", () => {
     expect(library.map((c) => c.client)).toEqual([undefined]);
   });
 });
+
+describe("JS server registrations are no client calls", () => {
+  it("reads nothing from a Fastify plugin's instance, a required Fastify app or a tRPC server procedure", async () => {
+    const calls = await apiCallsOf(`
+      import type { FastifyInstance } from 'fastify';
+      import { initTRPC } from '@trpc/server';
+      const app = require('fastify')({ logger: true });
+      const t = initTRPC.create();
+      async function partsRoutes(instance, opts) { instance.get('/parts', listParts); }
+      export default async function carRoutes(server: FastifyInstance) { server.post('/cars', createCar); }
+      app.get('/health', health);
+      export const garageRouter = t.router({ garage: t.procedure.query(getGarage) });`);
+    expect(calls).toEqual([]);
+  });
+
+  it("still reads a client handed in with its options", async () => {
+    const calls = await apiCallsOf(`
+      export async function loadGarage(apiClient, options) { return apiClient.get('/garages', options); }`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /garages"]);
+  });
+});
