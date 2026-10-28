@@ -110,7 +110,7 @@ export function propagateHelperAccess(lines: string[], classes: ClassInfo[]): vo
 }
 
 /** Route-level params from what the body reads, re-bound by the path template. */
-function paramsFromAccess(access: readonly RouteParamInfo[] | undefined, path: string): RouteParamInfo[] {
+export function paramsFromAccess(access: readonly RouteParamInfo[] | undefined, path: string): RouteParamInfo[] {
   if (!access || access.length === 0) return [];
   const tokens = pathParamNames(path);
   return access.map((p) => ({
