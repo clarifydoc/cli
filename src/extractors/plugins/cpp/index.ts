@@ -26,6 +26,13 @@ const QUALIFIER = String.raw`(?:[A-Za-z_]\w*(?:<[^<>;()]*>)?::)*`;
 /** The defined name: an identifier, a destructor, an operator. */
 const NAME = String.raw`(?!(?:constexpr|consteval|requires|decltype|noexcept|alignas|static_assert)\b)(~?[A-Za-z_]\w*|operator\s*(?:\(\)|\[\]|[^\s\w(]+))`;
 
+/**
+ * What may stand between `class` and the class's name: an all-caps export macro (`CLUB_API`, `Q_DECL_EXPORT`),
+ * `__declspec(…)`, `__attribute__((…))`, `alignas(…)`, `[[…]]` — each only when a name follows it, so `class URL {`
+ * is still `URL`.
+ */
+const CLASS_ATTRIBUTES = String.raw`(?:(?:[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?|__declspec\s*\([^()]*\)|__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)|alignas\s*\([^()]*\)|\[\[[^\]]*\]\])\s+(?=[A-Za-z_]\w*\s*(?:final\b|[:{;]|$)))*`;
+
 /** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
 const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
 /** `[static] const[expr] <type> NAME = [QStringLiteral(]"value"[)];` */
@@ -80,8 +87,9 @@ export function unqualifyOwnNamespaces(lines: readonly string[], fns: readonly F
 }
 
 function stripCppType(raw: string): string {
-  // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`
-  const noNs = raw.replace(/[\w]+::/g, "");
+  // Drop namespace qualifier: `std::vector<User>` → `vector<User>` → `vector`; and a constant pointer's `const`
+  // (`Env* const` is an `Env*`).
+  const noNs = raw.replace(/[\w]+::/g, "").replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
   return stripTypeModifiers(noNs, "cpp");
 }
 
@@ -186,12 +194,16 @@ export const cppSpec: RegexLangSpec = {
 
   propertyPatterns: [
     {
-      pattern: /^\s+(?:mutable\s+|static\s+|const\s+)*((?:struct\s+|class\s+|enum\s+)?[\w:<>,*&\s]+?)[\s*&]+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?\s*(?:=\s*[^;]+)?\s*;\s*$/,
+      // An annotation macro may follow the declarator: `Coach coach_ GUARDED_BY(mu_);`.
+      // A trailing comment may follow it: `Version* current_;  // == dummy_versions_.prev_`.
+      pattern: /^\s+(?:mutable\s+|static\s+|const\s+)*((?:struct\s+|class\s+|enum\s+)?[\w:<>,*&\s]+?)[\s*&]+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?(?:\s+[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?)*\s*(?:=\s*[^;]+)?\s*;\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/,
       build: (m): PropertyInfo | null => {
         const rawType = m[1]!.trim();
         const name = m[2]!;
         if (!rawType || /[(){}]/.test(rawType)) return null;
         if (["public", "private", "protected", "return"].includes(rawType)) return null;
+        // `friend class Club;`, `class Builder;`, `typedef … T;`, `X& operator=(…) = delete;` declare no field.
+        if (name === "operator" || /^(?:friend|typedef|using)\b|\b(?:class|struct|enum|union)$/.test(rawType)) return null;
         return {
           name,
           type: stripCppType(rawType),
@@ -205,7 +217,8 @@ export const cppSpec: RegexLangSpec = {
 
   classPatterns: [
     {
-      pattern: /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?/,
+      // An export or attribute macro may stand before the name: `class CLUB_API Kit {`, `struct __declspec(dllexport) Car`.
+      pattern: new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+${CLASS_ATTRIBUTES}([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?`),
       getExtends: (line) => {
         const m = line.match(/:\s*(?:public|private|protected)?\s*([\w:]+)/);
         if (!m) return null;

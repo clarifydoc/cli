@@ -100,6 +100,41 @@ int table() { return detail::rank(2) + std::max(1, 2); }
     expect(linksOf(read, { "src/table.cc": src })).toEqual(["table@5 rank -> rank"]);
   });
 
+  it("reads the class after an export macro, and a field before an annotation macro", () => {
+    const kitH = `#pragma once
+class Mutex {};
+class Coach { public: void drill(); };
+class CLUB_API Kit {
+ public:
+  void wash();
+ private:
+  Mutex mu_;
+  Coach coach_ GUARDED_BY(mu_);
+};
+class URL { public: void open(); };
+`;
+    const kit = read(kitH, "kit.h");
+    expect(kit.classes.map((c) => `${c.name}(${c.properties.map((p) => `${p.name}:${p.type}`).join(",")})`)).toEqual(["Mutex()", "Coach()", "Kit(mu_:Mutex,coach_:Coach)", "URL()"]);
+    const kitCc = `#include "kit.h"
+void Coach::drill() {}
+void Kit::wash() { coach_.drill(); }
+`;
+    expect(linksOf(read, { "kit.h": kitH, "kit.cc": kitCc })).toEqual(["Kit.wash@3 coach_.drill -> Coach.drill"]);
+  });
+
+  it("reads a field before a trailing comment and a constant pointer, and no class from a forward declaration", () => {
+    const src = `#pragma once
+class Slice;
+class Garage {
+ private:
+  Car* const car_;  // the one it services
+  Lift lift_;       /* owned */
+  friend class Inspector;
+};
+`;
+    expect(read(src, "garage.h").classes.map((c) => `${c.name}(${c.properties.map((p) => `${p.name}:${p.type}`).join(",")})`)).toEqual(["Garage(car_:Car,lift_:Lift)"]);
+  });
+
   it("types a local built by a call through what the call makes", () => {
     const src = `#include "coach.h"
 void pick() {

@@ -30,7 +30,9 @@ import {
  * capitalized name the file does not open as a namespace.
  */
 export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
-  const classes = extractClassesWithSpec(lines, spec);
+  // `class Slice;` only says a class exists: its declaration is the header defining it, which a forward declaration
+  // in every header that names it must not stand in for.
+  const classes = extractClassesWithSpec(lines, spec).filter((cls) => !FORWARD_DECLARATION.test(lines[cls.line - 1] ?? ""));
   for (const cls of classes) addPureVirtualMethods(lines, cls, spec);
 
   const namespaces = declaredNamespaces(lines);
@@ -83,6 +85,9 @@ export function outOfLineOwner(line: string, name: string): string | null {
   const segments = m[1]!.split("::").map((s) => s.replace(/<.*$/s, "").trim()).filter(Boolean);
   return segments[segments.length - 1] ?? null;
 }
+
+/** `class Slice;`, `struct CLUB_API Car;`, `template <typename T> class Box;` — a declaration with no body. */
+const FORWARD_DECLARATION = /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(?:[A-Za-z_][\w()"\s]*\s)?[A-Za-z_]\w*\s*;\s*(?:\/\/.*)?$/;
 
 /** `namespace app {` / `namespace app::detail {` — names that qualify free functions. */
 export function declaredNamespaces(lines: string[]): Set<string> {
