@@ -419,17 +419,22 @@ export function buildSymbolLinks(
   // `@Path` on the API, the class in another module) anchors on the interface
   // method itself, and reaches what it does only through this link.
   for (const [, info] of interfaceImplMap) {
-    if (info.impls.length < 1) continue;
+    // A class implementing an interface that extends this one (`SeasonProvider : ISeasonProvider`,
+    // `ISeasonProvider : IProvider`) implements this one's methods too, at any depth.
+    const family = interfaceFamily(info);
+    const impls = family.length === 1 ? info.impls : uniqueImpls(family.flatMap((f) => f.impls));
+    if (impls.length < 1) continue;
     for (const ifaceMethod of info.methods) {
       if (ifaceMethod.inherited) continue; // its own interface's fan-out links it
       const ifaceSymbol = `${info.interfaceName}.${ifaceMethod.name}`;
-      for (const impl of info.impls) {
+      for (const impl of impls) {
         // Where the method actually is: the class body, a sibling file of its
         // package (Go), or a base class it inherits from.
         const implMethod = findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
         // A class that declares none takes the interface's own (a C# `class Match : Club`
-        // whose base list names the interface): no implementation to fan out to.
-        if (!implMethod || (implMethod.file === info.interfaceFile && implMethod.symbol === ifaceSymbol)) continue;
+        // whose base list names the interface), or an extending interface's restatement
+        // of it: no implementation to fan out to.
+        if (!implMethod || family.some((f) => implMethod.file === f.interfaceFile && implMethod.symbol === `${f.interfaceName}.${ifaceMethod.name}`)) continue;
         links.push({
           sourceFile: info.interfaceFile,
           sourceSymbol: ifaceSymbol,
@@ -450,7 +455,7 @@ export function buildSymbolLinks(
   }
 
   // Phase B: Reverse reference scanning — find which files import each exported symbol
-  const reverseLinks = buildReverseReferenceLinks(analyses, ctx.filePathMap, symbolIndex);
+  const reverseLinks = buildReverseReferenceLinks(analyses, ctx, symbolIndex);
   links.push(...reverseLinks);
 
   // Each call to an overloaded method points at the overload it means, before
@@ -795,6 +800,9 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   const touched = new Set<SymbolLink>();
   type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string };
   const overloads = new Map<string, Overload[]>();
+  // `${file}\0${Class}` → the symbol its constructors share (`Club.constructor`, `Garage.Garage`): a call
+  // naming the class (`Club(3)`, `new Garage(4)`) reaches one of them, whether its link names the class or one.
+  const ctorsOf = new Map<string, string>();
   const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
     const variadic = !!fn.variadic || params.some((p) => p.variadic);
@@ -814,7 +822,11 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
     const twins = a.functions.some((fn) => names.size === names.add(fn.name).size);
     const nesting = twins ? callableNesting(a) : null;
     for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn, typeKey);
-    for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
+    for (const cls of a.classes) {
+      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
+      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      if (ctor) ctorsOf.set(`${a.filePath}\u0000${cls.name}`, `${cls.name}.${ctor.name}`);
+    }
   }
   for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
   if (overloads.size === 0) return touched;
@@ -845,24 +857,48 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   // argument made (`Assert.Throws<MyException>(…)` → `MyException`'s constructor).
   const leafOf = (name: string): string =>
     name.replace(/^new\s+/, "").replace(/<.*$/s, "").split(/\.|::/).pop() ?? "";
-  for (const link of links) {
-    const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
-    if (!list || leafOf(link.callName) !== leafOf(link.targetSymbol)) continue;
-    touched.add(link);
+  /** The line of the one overload in `list` the call behind `link` can mean, if the arguments tell. */
+  const choose = (list: Overload[], link: SymbolLink): number | undefined => {
     const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
     const n = site?.call.argCount;
-    if (n === undefined) continue;
+    if (n === undefined) return undefined;
     const fits = list.filter((o) => n >= o.min && n <= o.max);
-    if (fits.length === 1) link.targetLine = fits[0]!.line;
-    else if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
+    if (fits.length === 1) return fits[0]!.line;
+    if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
       const typeKey = fits[0]!.typeKey;
       const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey) : k));
       const best = bestOverload(kinds, fits.map((o) => ({
         types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
         variadic: o.variadic,
       })), typesOf());
-      if (best >= 0) link.targetLine = fits[best]!.line;
+      if (best >= 0) return fits[best]!.line;
     }
+    return undefined;
+  };
+  for (const link of links) {
+    const callLeaf = leafOf(link.callName);
+    const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
+    if (list) {
+      // `Club(3)` → `Club.constructor` (Kotlin): the call names the class, the overloads its constructors.
+      const dot = link.targetSymbol.lastIndexOf(".");
+      const ctorOfCalled = dot > 0 && ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol.slice(0, dot)}`) === link.targetSymbol
+        && leafOf(link.targetSymbol.slice(0, dot)) === callLeaf;
+      if (callLeaf !== leafOf(link.targetSymbol) && !ctorOfCalled) continue;
+      touched.add(link);
+      const line = choose(list, link);
+      if (line !== undefined) link.targetLine = line;
+      continue;
+    }
+    // A link to the class itself (`Club(3)` beside `class Club`): to the constructor the arguments choose.
+    const ctor = callLeaf === leafOf(link.targetSymbol) ? ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol}`) : undefined;
+    const ctors = ctor ? overloads.get(`${link.targetFile}\u0000${ctor}`) : undefined;
+    const line = ctors ? choose(ctors, link) : undefined;
+    if (line === undefined) continue;
+    link.targetSymbol = ctor!;
+    link.targetLine = line;
+    link.strategy = "constructor";
+    link.relation = relationForStrategy("constructor");
+    touched.add(link);
   }
   return touched;
 }
@@ -3232,6 +3268,28 @@ export function buildInterfaceImplMap(
   return map;
 }
 
+/** An interface and every interface extending it, at any depth, itself first. */
+function interfaceFamily(iface: InterfaceImplInfo): InterfaceImplInfo[] {
+  if (!iface.extendedBy?.length) return [iface];
+  const family = [iface];
+  const seen = new Set(family);
+  for (let i = 0; i < family.length; i++) {
+    for (const sub of family[i]!.extendedBy ?? []) if (!seen.has(sub)) { seen.add(sub); family.push(sub); }
+  }
+  return family;
+}
+
+/** Implementations once each: a class implementing an interface and one extending it is listed under both. */
+function uniqueImpls(impls: InterfaceImplInfo["impls"]): InterfaceImplInfo["impls"] {
+  const seen = new Set<string>();
+  return impls.filter((im) => {
+    const key = `${im.classFile}\0${im.className}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Interface definitions grouped by name. */
 export function interfacesNamed(map: Map<string, InterfaceImplInfo>): Map<string, InterfaceImplInfo[]> {
   const byName = new Map<string, InterfaceImplInfo[]>();
@@ -3399,6 +3457,17 @@ function resolveCallToDefinition(
       const subDef = isModule && sub !== sourceFile && sub !== targetFile ? symbolIndex.get(sub!)?.get(leafName) : undefined;
       // The module's own top-level name — a method of a class in it is no `module.name`.
       if (subDef && subDef.name === leafName) return mkLink(sub!, subDef.name, subDef.line, "INFERRED", "import-file");
+    }
+    // `import league` … `league._make.s()`: the dotted name walks the package's modules down to the
+    // one defining, aliasing (`s = attrs`) or forwarding the called name.
+    if (parts.length >= 3 && !call.target.includes("/")) {
+      const hit = dottedModuleMember(ctx, analysis, sourceFile, sourceSymbol, call, parts, targetFile);
+      const cls = hit && ctx.classAt.get(memberKey(hit.file, hit.def.name));
+      if (cls) {
+        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        return mkLink(hit!.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
+      }
+      if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, "EXTRACTED", "direct");
     }
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
@@ -3717,6 +3786,12 @@ function resolveCallToDefinition(
       : !isQualified
         ? call.name
         : null;
+    // `new Garage(4)` beside `class Garage` (or inside it): the calling file's own class, by name alone.
+    const own = ctorMatch && className ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
+    if (own) {
+      const ctor = own.methods.find((m) => isConstructor(m, own));
+      return mkLink(sourceFile, ctor ? `${className}.${ctor.name}` : className!, ctor?.line ?? own.line, "EXTRACTED", "constructor");
+    }
     if (className) {
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A name declared in several namespaces: the one the caller's namespace and usings reach.
@@ -4069,6 +4144,44 @@ function findEnclosingCallable(
     if (method) return method;
   }
   return null;
+}
+
+/**
+ * What a call written through a whole-module import reaches when its dotted name walks further modules
+ * (`import league` … `league.cup.draw.pick()`, `import league._make` … `league._make.s()`): the called
+ * name as the last module the path names defines, aliases or forwards it. Null when the path is not
+ * modules down to one name (a class member, a value's attribute) — other strategies read those.
+ */
+function dottedModuleMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  parts: string[],
+  entry: string | null,
+): ForwardedDefinition | null {
+  // The binding the call is written on: the package (`league`) or the module path imported whole.
+  const bound = analysis.imports
+    .flatMap((i) => i.source === call.target && i.isNamespace && !i.isType ? i.specifiers.filter((s) => call.name.startsWith(`${s}.`)) : [])
+    .sort((a, b) => b.length - a.length)[0];
+  if (!bound || shadowedLocally(analysis, sourceSymbol, bound.split(".")[0]!)) return null;
+  const rest = parts.slice(bound.split(".").length);
+  const leaf = rest[rest.length - 1];
+  if (!leaf) return null;
+  let module = entry;
+  if (rest.length > 1) {
+    const source = `${call.target}${call.target!.endsWith(".") ? "" : "."}${rest.slice(0, -1).join(".")}`;
+    const ownResolver = pluginFor(analysis.language)?.resolveImport;
+    const sub = ownResolver ? ownResolver(sourceFile, source, leaf, importResolveContext(ctx)) : resolveTarget(source, sourceFile, ctx.filePathMap);
+    // Only a file that IS that module — named so, or the entry of a directory named so.
+    const name = rest[rest.length - 2]!;
+    if (!sub || sub === sourceFile || !(sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === name || sub.split("/").at(-2) === name)) return null;
+    module = sub;
+  }
+  if (!module || module === sourceFile) return null;
+  const hit = definitionIn(ctx, module, leaf, 0, new Set());
+  return hit && !hit.namespace ? hit : null;
 }
 
 /** Longest chain of re-exports followed to a definition. */
@@ -6022,13 +6135,16 @@ function decideBinding(
 
 /**
  * Build reverse reference links: for each exported symbol, find all files
- * that import it and create a reference link.
+ * that import it and create a reference link — to the definition, as a call
+ * through the import reaches it, when the imported module only forwards the
+ * name (a barrel's re-export, a package `__init__`, a module-level alias).
  */
 function buildReverseReferenceLinks(
   analyses: FileAnalysis[],
-  filePathMap: Map<string, string>,
+  ctx: LinkContext,
   symbolIndex: Map<string, Map<string, SymbolDef>>,
 ): SymbolLink[] {
+  const { filePathMap } = ctx;
   const links: SymbolLink[] = [];
   const analysisAt = new Map(analyses.map((a) => [a.filePath, a]));
 
@@ -6048,7 +6164,17 @@ function buildReverseReferenceLinks(
         const own = defaultBinding(imp, spec) && !targetSymbols.has(spec)
           ? analysisAt.get(targetFile)?.exports.find((e) => e.kind === "default")?.sourceName
           : undefined;
-        const def = targetSymbols.get(own ?? imp.aliases?.[spec] ?? spec);
+        const name = own ?? imp.aliases?.[spec] ?? spec;
+        let def = targetSymbols.get(name);
+        let defFile = targetFile;
+        const forwarded = !def || def.reexport
+          ? defaultBinding(imp, spec) && !def ? defaultDefinition(ctx, targetFile, 0, new Set()) : forwardedDefinition(ctx, targetFile, name, 0, new Set())
+          : null;
+        // Not back into the importing file: a module taking its own name through a barrel depends on the barrel.
+        if (forwarded && !forwarded.namespace && forwarded.file !== analysis.filePath) {
+          def = forwarded.def;
+          defFile = forwarded.file;
+        }
         if (def) {
           // Reference reverse-link: an explicit import with matching named specifier.
           links.push({
@@ -6056,7 +6182,7 @@ function buildReverseReferenceLinks(
             sourceSymbol: "(reference)",
             sourceLine: imp.line,
             callName: spec,
-            targetFile,
+            targetFile: defFile,
             targetSymbol: def.name,
             targetLine: def.line,
             confidence: "EXTRACTED",

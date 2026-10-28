@@ -104,3 +104,44 @@ describe("symbol links through barrel chains", () => {
     expect(callsFrom([barrel, shim, main], "src/main.ts")).toEqual(["Toast -> src/ui/index.ts::Toast"]);
   });
 });
+
+/** The import references `from` makes, as `name -> file::symbol`. */
+function referencesFrom(analyses: FileAnalysis[], from: string): string[] {
+  return buildSymbolLinks(analyses)
+    .filter((l) => l.sourceFile === from && l.sourceSymbol === "(reference)")
+    .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
+    .sort();
+}
+
+describe("import references through barrels", () => {
+  it("name the definition a barrel chain forwards, as the call does", () => {
+    const tuning = file("src/engine/tuning.ts", { functions: [fn("revLimiter", 1)], exports: [{ name: "revLimiter", kind: "function", line: 1 }] });
+    const engine = file("src/engine/index.ts", { exports: [{ name: "limitRevs", kind: "re-export", line: 1, source: "./tuning", sourceName: "revLimiter" }] });
+    const root = file("src/index.ts", { exports: [{ name: "*", kind: "re-export", line: 1, source: "./engine" }] });
+    const pads = file("src/brakes/pads.ts", { functions: [fn("fitPads", 1)], exports: [{ name: "fitPads", kind: "function", line: 1 }] });
+    const brakes = file("src/brakes/index.ts", { imports: [imp("./pads", ["fitPads"])], exports: [{ name: "fitPads", kind: "re-export", line: 2 }] });
+    const service = file("src/garage/service.ts", {
+      imports: [imp("../index", ["limitRevs"]), imp("../engine", ["limitRevs"]), imp("../brakes", ["fitPads"])],
+      functions: [fn("serviceCar", 2, [call("limitRevs", 3, "../index")])],
+    });
+    expect(referencesFrom([tuning, engine, root, pads, brakes, service], "src/garage/service.ts")).toEqual([
+      "fitPads -> src/brakes/pads.ts::fitPads",
+      "limitRevs -> src/engine/tuning.ts::revLimiter",
+    ]);
+  });
+
+  it("name a default export's definition through `export { default as x } from`", () => {
+    const players = file("src/api/players.js", { functions: [fn("listPlayers", 2)], exports: [{ name: "default", kind: "default", line: 3, sourceName: "listPlayers" }] });
+    const barrel = file("src/api/index.js", { exports: [{ name: "fetchPlayers", kind: "re-export", line: 1, source: "./players", sourceName: "default" }] });
+    const main = file("src/main.js", { imports: [imp("./api", ["fetchPlayers"])] });
+    expect(referencesFrom([players, barrel, main], "src/main.js")).toEqual(["fetchPlayers -> src/api/players.js::listPlayers"]);
+  });
+
+  it("keep a re-export that leads out of the project, and one that leads back into the importing file", () => {
+    const barrel = file("src/ui/index.ts", { exports: [{ name: "Toast", kind: "re-export", line: 1, source: "toast-kit" }, { name: "openDoor", kind: "re-export", line: 2, source: "./door" }] });
+    const door = file("src/ui/door.ts", { imports: [imp("./index", ["openDoor"])], functions: [fn("openDoor", 3)], exports: [{ name: "openDoor", kind: "function", line: 3 }] });
+    const main = file("src/main.ts", { imports: [imp("./ui", ["Toast"])] });
+    expect(referencesFrom([barrel, door, main], "src/main.ts")).toEqual(["Toast -> src/ui/index.ts::Toast"]);
+    expect(referencesFrom([barrel, door, main], "src/ui/door.ts")).toEqual(["openDoor -> src/ui/index.ts::openDoor"]);
+  });
+});

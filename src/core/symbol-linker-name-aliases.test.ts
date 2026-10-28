@@ -81,6 +81,33 @@ describe("module-level function aliases", () => {
     expect(callsFrom(analyses, "league/match.py").filter((l) => l.includes("rules.py::strict") || l.includes("rules.py::relaxed"))).toEqual([]);
   });
 
+  it("Python: a call through a package's dotted module path reaches the name the last module defines or aliases", async () => {
+    const analyses = await analyzeAll({
+      "league/__init__.py": "from ._make import attrs\n",
+      "league/_make.py": "def attrs(cls=None):\n    return cls\n\n\ns = attrs\n",
+      "league/cup/__init__.py": "",
+      "league/cup/draw.py": "def pick(n):\n    return n\n\n\nlots = pick\n",
+      "league/players.py": [
+        "import league",
+        "import league.cup.draw",
+        "",
+        "",
+        "def build_player():",
+        "    league._make.s()",
+        "    league.cup.draw.pick(1)",
+        "    league.cup.draw.lots(2)",
+        "",
+      ].join("\n"),
+      "league/coach.py": "import league._make as unused\nimport league._make\n\n\ndef train():\n    league._make.s()\n",
+    }, "python");
+    expect(callsFrom(analyses, "league/players.py")).toEqual([
+      "league._make.s -> league/_make.py::attrs",
+      "league.cup.draw.lots -> league/cup/draw.py::pick",
+      "league.cup.draw.pick -> league/cup/draw.py::pick",
+    ]);
+    expect(callsFrom(analyses, "league/coach.py")).toEqual(["league._make.s -> league/_make.py::attrs"]);
+  });
+
   it("TypeScript: follows `export const s = attrs` in the defining module and through an import", async () => {
     const analyses = await analyzeAll({
       "src/make.ts": "export function attrs(x?: number) { return x; }\nexport const s = attrs;\nlet later = attrs;\n",
