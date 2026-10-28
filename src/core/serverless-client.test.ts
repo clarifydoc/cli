@@ -166,6 +166,7 @@ describe("a serverless API and its Amplify client", () => {
     const screens = new Map(s.screens.filter((x) => x.filePath.includes("/containers/")).map((x) => [x.name, x]));
     expect(screens.get("Club")?.routePath).toBe("/clubs/:id");
     expect(screens.get("Club")?.navigatesTo).toEqual(["/"]);
-    expect(screens.get("Clubs")?.navigatesTo).toEqual(["/clubs/${c.id}"]);
+    // `/clubs/${c.id}` reads as the page's own route.
+    expect(screens.get("Clubs")?.navigatesTo).toEqual(["/clubs/:id"]);
   });
 });

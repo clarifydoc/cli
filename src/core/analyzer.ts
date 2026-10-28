@@ -1396,6 +1396,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     launches: componentLaunches,
     elements: allInteractiveElements,
     componentGraph: usesGraph,
+    outlets: new Set(allAnalyses.filter((a) => {
+      const names = manifestFor(a.language as Language)?.routerOutlets;
+      return !!names?.length && a.subComponents.some((c) => names.includes(c.name));
+    }).map((a) => a.filePath)),
     projectOf: (f) => analysisByPath.get(f)?.projectId,
   });
 
@@ -2457,12 +2461,20 @@ function extractNavigationTargets(source: string): string[] {
     /\bto\s*:\s*['"`](\/[^'"`\s]*)['"`]/g,
     // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
     /location(?:\.href)?\s*=\s*['"`]([^'"`]+)['"`]/g,
+    // A page opened in another tab: `window.open('/cases/' + id, '_blank')` (a download's `/api/…` names no screen).
+    /\bwindow\.open\(\s*['"`](\/(?!\/)[^'"`\s?#]*)/g,
+    // An anchor to an app path — `<a href="/login">`, `:href="`/cases/${id}`"`. One naming no screen
+    // (a download, an API URL) resolves to nothing; `//host` and `#` are no app paths.
+    /<a\b[^>]*?\s:?href\s*=\s*["']\s*['`]?(\/(?!\/)[^"'`#\s]*)/g,
   ];
   for (const re of patterns) {
     let m: RegExpExecArray | null;
     while ((m = re.exec(source)) !== null) {
-      const path = m[1];
-      if (path && path.startsWith("/")) targets.add(path);
+      let path = m[1];
+      if (!path || !path.startsWith("/")) continue;
+      // `"/cases/" + id`: the literal is the path up to a parameter.
+      if (path.endsWith("/") && path.length > 1 && /^\s*(?:\+|\.concat\()\s*[\w$@(]/.test(source.slice(m.index + m[0].length))) path += "{}";
+      targets.add(path);
     }
   }
   // A route location object: `:to="{ name: 'clubs' }"`, `to: { path: '/clubs' }`, `router.push({ name: 'club', params })`.
@@ -2493,7 +2505,36 @@ function extractNavigationTargets(source: string): string[] {
     if (/^(https?:|\/\/|mailto:|tel:|javascript:)/i.test(href)) continue;
     targets.add(href);
   }
-  return [...targets];
+  // A path built in a variable first and then navigated to — `let url = origin + '/cases/' + id;
+  // window.open(url)`, `router.push(target)`: the app paths the variable's assignments spell. Only a
+  // variable that reaches a navigation call counts, so a URL built for a request stays out.
+  const sinks = new Set<string>();
+  for (const m of source.matchAll(/(?:\brouter\.(?:push|replace)\(|\bwindow\.open\(|\blocation\.(?:assign|replace)\(|\blocation(?:\.href)?\s*=(?!=))\s*([A-Za-z_$][\w$]*)\s*[,);\n]/g)) sinks.add(m[1]!);
+  for (const name of sinks) {
+    if (/^(?:true|false|null|undefined|this)$/.test(name)) continue;
+    for (const assign of source.matchAll(new RegExp(String.raw`(?:^|[^\w$.])${name.replace(/\$/g, "\\$")}\s*(?:=(?!=)|\+=)\s*([^;\n]+)`, "g"))) {
+      const rhs = assign[1]!;
+      for (const lit of rhs.matchAll(/['"`](\/(?!\/)[^'"`\s?#]*)['"`]/g)) {
+        let path = lit[1]!;
+        if (path.endsWith("/") && path.length > 1 && /^\s*\+\s*[\w$@(]/.test(rhs.slice(lit.index! + lit[0].length))) path += "{}";
+        targets.add(path);
+      }
+    }
+  }
+  // A link bound to a property of the items it is rendered for — `<router-link :to="link.ref">` over
+  // `{ text: "Roles", ref: "administration/roles" }`, `to={item.url}`, `router.push(item.path)`: the
+  // values the file's objects give that property (a bare `administration/roles` is from the app's root).
+  const props = new Set<string>();
+  for (const m of source.matchAll(/(?:\s:?(?:to|href)\s*=\s*["{]\s*|\brouter\.(?:push|replace)\(\s*|\bwindow\.open\(\s*)[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*["}),]/g)) props.add(m[1]!);
+  for (const prop of props) {
+    for (const m of source.matchAll(new RegExp(String.raw`["']?\b${prop}["']?\s*:\s*['"\`]([^'"\`\s]+)['"\`]`, "g"))) {
+      const v = m[1]!;
+      if (v.startsWith("/") && !v.startsWith("//")) targets.add(v.split(/[?#]/)[0]!);
+      else if (/^[A-Za-z][\w-]*(?:\/[\w:.{}$-]+)*$/.test(v) && v.includes("/")) targets.add("/" + v);
+    }
+  }
+  // `/cases/${id}` compares as `/cases/{}`.
+  return [...new Set([...targets].map((t) => t.replace(/\$\{[^}]*\}/g, "{}")))];
 }
 
 /**

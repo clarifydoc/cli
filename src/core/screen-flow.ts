@@ -32,7 +32,9 @@ import { byOrdinal } from "./ordinal.js";
  * navigates to or opens counts for every page and dialog that imports it,
  * through the components between them however deep (a sidebar inside the
  * layout the `/` route renders), never through another screen and never
- * through two non-component modules in a row (`screensUsing`). A launcher module's own
+ * through two non-component modules in a row (`screensUsing`). What no screen uses but a
+ * component rendering the router's outlet frames (a sidebar in the layout `App` mounts around
+ * `<router-view>`) hangs off that component as a `shell` node, a start of the map. A launcher module's own
  * rows (`sourceSymbol` is the launcher) say what it opens, not who opens it,
  * and are skipped. Starts are the main form, the screen at `/` and a redirect from `/`.
  */
@@ -44,8 +46,11 @@ export function buildScreenFlow(input: {
   /** File → the files it uses: for a screen, the components its markup renders and the non-screen modules it imports. */
   componentGraph: Record<string, string[]>;
   projectOf: (file: string) => string | undefined;
+  /** UI files rendering their router's outlet (the language's `routerOutlets`). */
+  outlets?: ReadonlySet<string>;
 }): ScreenFlow | undefined {
   const { screens, routes, launches, elements, componentGraph, projectOf } = input;
+  const outlets = input.outlets ?? new Set<string>();
   if (screens.length === 0) return undefined;
 
   // One node id per screen: its file, or `file#Name` where a file holds several.
@@ -306,9 +311,39 @@ export function buildScreenFlow(input: {
     }
     return [...pages];
   };
+  /**
+   * The shells framing a component no screen uses: the files rendering the router's outlet it
+   * sits in (itself, or the components above it), which become `shell` nodes and starts.
+   */
+  const shellsAbove = (file: string): string[] => {
+    const found = new Set<string>();
+    const seen = new Set([file]);
+    let frontier = [file];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const f of frontier) {
+        if (outlets.has(f) && perFile.has(f)) {
+          found.add(f);
+          continue;
+        }
+        for (const imp of importers.get(f) ?? []) if (!seen.has(imp) && perFile.has(imp)) { seen.add(imp); next.push(imp); }
+      }
+      frontier = next;
+    }
+    return [...found].map((f) => {
+      const s = perFile.get(f)![0]!;
+      const id = idOf(s);
+      if (!nodes.has(id)) {
+        const projectId = projectOf(f);
+        nodes.set(id, { id, name: s.caption || s.name, kind: "shell", ...(projectId ? { projectId } : {}), start: true });
+      }
+      return id;
+    });
+  };
   for (const [file, outs] of outOf) {
     const own = fileNode(file);
-    const from = own && nodes.has(own) ? [own] : screensUsing(file);
+    let from = own && nodes.has(own) ? [own] : screensUsing(file);
+    if (from.length === 0) from = shellsAbove(file);
     for (const f of from) for (const o of outs) addEdge(f, o.to, o.kind, o.via);
   }
 

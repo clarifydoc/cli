@@ -2620,7 +2620,8 @@ export interface ScreenFlowNode {
   /** The screen's file, or `path:<path>` for a client route that only redirects. */
   id: string;
   name: string;
-  kind: "page" | "dialog" | "path";
+  /** `shell`: a component framing every page — it renders the router's outlet and no page uses it. */
+  kind: "page" | "dialog" | "path" | "shell";
   /** The route the screen is served at. */
   path?: string;
   projectId?: string;

@@ -98,6 +98,9 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
 };
 
 /** React Native's platform files (`Button.ios.tsx`), react-native-web's `.web`. */
+/** Vue Router's `<router-view>`, React Router's `<Outlet>`, Nuxt's `<NuxtPage>`: where a route's page renders. */
+const JS_ROUTER_OUTLETS = ["RouterView", "router-view", "Outlet", "NuxtPage", "nuxt-page"] as const;
+
 export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as const;
 
 /**
@@ -127,6 +130,7 @@ export function isTypesOnlyPackage(text: string): boolean {
 
 export const typescriptManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
+  routerOutlets: JS_ROUTER_OUTLETS,
   testCommand: jsTestCommand,
   projectCommands: jsProjectCommands,
   language: "typescript",
@@ -164,6 +168,7 @@ export const typescriptManifest: LanguagePluginManifest = {
 export const javascriptManifest: LanguagePluginManifest = {
   migrationFiles: jsMigrationFiles,
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
+  routerOutlets: JS_ROUTER_OUTLETS,
   testCommand: jsTestCommand,
   language: "javascript",
   family: "script",

@@ -1075,6 +1075,12 @@ export interface LanguagePluginManifest {
    * every caller (`readFileSync`, `time.sleep`, `requests.get`).
    */
   blockingCalls?: RegExp;
+  /**
+   * The components a client router renders its pages into (`RouterView`, `Outlet`), as the
+   * component names `subComponents` carry. A UI file rendering one that no page uses is the
+   * app's shell: what its components link to is offered around every page (core/screen-flow.ts).
+   */
+  routerOutlets?: readonly string[];
   /** How files of this language are parsed. */
   parsing: "tree-sitter" | "regex" | "custom";
   /**

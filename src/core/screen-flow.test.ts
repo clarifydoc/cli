@@ -347,3 +347,105 @@ describe("screen flow of a React Router app", () => {
     expect(flow.nodes.find((n) => n.start)?.id).toBe("src/pages/SignIn.tsx");
   });
 });
+
+/** Real-repo FP: a Vue app whose layout (mounted by `<component :is>`) frames the router view, and pages that build their links. */
+const SHELL_FILES: Record<string, string> = {
+  "package.json": `{ "name": "garage-admin", "dependencies": { "vue": "^2.7.0", "vue-router": "^3.6.0" } }\n`,
+  "src/router.js": `import VueRouter from "vue-router";
+const routes = [
+  { path: "/", component: () => import("./pages/Home.vue") },
+  { path: "/cars", component: () => import("./pages/CarList.vue") },
+  { path: "/cars/:id", component: () => import("./pages/CarDetails.vue") },
+  { path: "/garage/settings", component: () => import("./pages/Settings.vue") },
+];
+export default new VueRouter({ mode: "history", routes });
+`,
+  "src/App.vue": `<template>
+  <component :is="layout" />
+</template>
+
+<script>
+import MainLayout from "./layouts/MainLayout.vue";
+export default { components: { MainLayout }, computed: { layout() { return "MainLayout"; } } };
+</script>
+`,
+  "src/layouts/MainLayout.vue": `<template>
+  <div><GarageMenu /><router-view /></div>
+</template>
+
+<script>
+import GarageMenu from "../components/GarageMenu.vue";
+export default { components: { GarageMenu } };
+</script>
+`,
+  "src/components/GarageMenu.vue": `<template>
+  <ul><li v-for="link in links" :key="link.ref"><router-link :to="link.ref">{{ link.text }}</router-link></li></ul>
+</template>
+
+<script>
+export default { data: () => ({ links: [{ text: "Cars", ref: "/cars" }, { text: "Settings", ref: "garage/settings" }] }) };
+</script>
+`,
+  "src/pages/Home.vue": `<template><h1>Garage</h1></template>\n`,
+  "src/pages/CarList.vue": `<template>
+  <div>
+    <button @click="open(car)">Open</button>
+    <a :href="\`/cars/\${car.id}\`">Details</a>
+  </div>
+</template>
+
+<script>
+export default {
+  methods: {
+    open(car) { this.$router.push("/cars/" + car.id); },
+    popOut(id) { window.open("/cars/" + id, "_blank"); },
+  },
+};
+</script>
+`,
+  "src/pages/CarDetails.vue": `<template><button @click="back">Back</button></template>
+
+<script>
+export default {
+  methods: {
+    back() {
+      let url = window.location.origin + "/cars";
+      window.open(url);
+    },
+    download(id) { window.open("/api/files?id=" + id); },
+  },
+};
+</script>
+`,
+  "src/pages/Settings.vue": `<template><h1>Settings</h1></template>\n`,
+};
+
+describe("screen flow of a Vue app framed by a layout", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "screen-flow-shell-"));
+    for (const [rel, text] of Object.entries(SHELL_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it("hangs the menu's links off the layout that frames the router view", () => {
+    const flow = summary.screenFlow!;
+    expect(flow.nodes.find((n) => n.id === "src/layouts/MainLayout.vue")).toMatchObject({ kind: "shell", start: true });
+    const fromShell = flow.edges.filter((e) => e.from === "src/layouts/MainLayout.vue").map((e) => e.to).sort();
+    expect(fromShell).toEqual(["src/pages/CarList.vue", "src/pages/Settings.vue"]);
+  });
+
+  it("reads links built by concatenation, interpolation and a URL variable, not a download", () => {
+    const edges = summary.screenFlow!.edges.map((e) => `${e.from} -> ${e.to}`);
+    expect(edges).toContain("src/pages/CarList.vue -> src/pages/CarDetails.vue");
+    expect(edges).toContain("src/pages/CarDetails.vue -> src/pages/CarList.vue");
+    // The download is read as a target but names no screen: no edge.
+    expect(summary.screenFlow!.edges.filter((e) => e.from === "src/pages/CarDetails.vue").map((e) => e.to)).toEqual(["src/pages/CarList.vue"]);
+  });
+});
