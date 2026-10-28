@@ -305,3 +305,27 @@ describe("container wiring is no data access (real-repo FP)", () => {
     expect(rows.map((r) => r.name)).toEqual(["Club::create"]);
   });
 });
+
+describe("curl sessions carry their verb", () => {
+  it("reads GET by default, POST from CURLOPT_POST / CURLOPT_POSTFIELDS and a custom request", async () => {
+    const src = `<?php
+class Garage_sync {
+  function run() {
+    $a = curl_init('/api/cars');
+    curl_exec($a);
+    $b = curl_init('/api/cars');
+    curl_setopt($b, CURLOPT_POST, true);
+    curl_exec($b);
+    $c = curl_init('/api/cars/1');
+    curl_setopt_array($c, [CURLOPT_CUSTOMREQUEST => 'DELETE', CURLOPT_RETURNTRANSFER => true]);
+    curl_exec($c);
+    $d = curl_init('/api/cars');
+    curl_setopt($d, CURLOPT_POSTFIELDS, $body);
+    curl_exec($d);
+  }
+}`;
+    const tree = await parseSource(src, "php" as any, "app/GarageSync.php");
+    const calls = new PhpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((d) => `${d.httpMethod} ${d.target}`)).toEqual(["GET /api/cars", "POST /api/cars", "DELETE /api/cars/1", "POST /api/cars"]);
+  });
+});

@@ -123,6 +123,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    * calls in noise (photo-booth: 398 of 431 "api calls" were curl/file plumbing).
    */
   private curlUrls = new Map<string, string>();
+  /** curl handle → the verb its options set (`CURLOPT_POST`, `CURLOPT_CUSTOMREQUEST`); GET when none does. */
+  private curlMethods = new Map<string, string>();
   /** String constants the file defines: `define('API_URL', "https://…")`, `const API_URL = '…'`. */
   private constants = new Map<string, string>();
   /**
@@ -135,6 +137,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
 
   override beginFile(_tree: unknown, sourceText: string): void {
     this.curlUrls = new Map();
+    this.curlMethods = new Map();
     this.constants = new Map();
     this.namespaced = /^\s*(?:namespace\s+[\w\\]+|use\s+\\?[A-Z][\w\\]*)/m.test(sourceText);
     if (!sourceText.includes("define") && !sourceText.includes("const")) return;
@@ -256,6 +259,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           ? (this.argText(node, 1) === "CURLOPT_URL" ? this.urlExprAt(node, 2) : null)
           : (node.text.match(/CURLOPT_URL\s*=>\s*['"]([^'"]+)['"]/)?.[1] ?? null);
         if (handle && url) this.curlUrls.set(handle, url);
+        const method = curlMethodOf(fnName === "curl_setopt" ? `${this.argText(node, 1)} => ${this.argText(node, 2)}` : node.text);
+        if (handle && method) this.curlMethods.set(handle, method);
         return;
       }
       if (fnName === "curl_exec") {
@@ -264,6 +269,8 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           kind: "api-call",
           name: "curl",
           target: (handle ? this.curlUrls.get(handle) : null) ?? null,
+          // curl requests with GET unless an option says otherwise.
+          httpMethod: (handle ? this.curlMethods.get(handle) : undefined) ?? "GET",
           line,
         }));
         return;
@@ -671,6 +678,20 @@ function isHttpRequest(obj: Node, call: Node): boolean {
  * The variable a `curl_init(...)` result is assigned to (`$ch = curl_init($url)`
  * → "$ch"), so a URL passed to curl_init can be recalled at curl_exec time.
  */
+/**
+ * The verb curl options set, from `OPTION => value` text (one `curl_setopt`, or a
+ * `curl_setopt_array`): `CURLOPT_CUSTOMREQUEST => 'PUT'`, `CURLOPT_POST => true`
+ * or `CURLOPT_POSTFIELDS` (POST), `CURLOPT_NOBODY => true` (HEAD), `CURLOPT_HTTPGET => true`.
+ */
+function curlMethodOf(text: string): string | null {
+  const custom = /CURLOPT_CUSTOMREQUEST\s*=>\s*['"]([A-Za-z]+)['"]/.exec(text)?.[1];
+  if (custom) return custom.toUpperCase();
+  if (/CURLOPT_POST\s*=>\s*(?:true|1)\b|CURLOPT_POSTFIELDS\s*=>/i.test(text)) return "POST";
+  if (/CURLOPT_NOBODY\s*=>\s*(?:true|1)\b/i.test(text)) return "HEAD";
+  if (/CURLOPT_HTTPGET\s*=>\s*(?:true|1)\b/i.test(text)) return "GET";
+  return null;
+}
+
 function curlInitHandle(callNode: Node): string | null {
   const parent = callNode.parent;
   if (parent?.type !== "assignment_expression") return null;

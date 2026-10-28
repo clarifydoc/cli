@@ -1838,6 +1838,12 @@ export interface DataSourceInfo {
     | "queue-consume";
   name: string;
   /**
+   * An api-call's HTTP verb when its name does not spell it: a curl session
+   * (`curl_exec`) is a GET unless its options say `CURLOPT_POST` or
+   * `CURLOPT_CUSTOMREQUEST`. The route linker reads it before the name.
+   */
+  httpMethod?: string;
+  /**
    * For queue kinds: the broker destination — exchange (RabbitMQ publish),
    * queue (consume / sendToQueue), or topic (Kafka). May be a non-literal
    * expression's source text (`_eventConsumerConfiguration.Queue`) when the
