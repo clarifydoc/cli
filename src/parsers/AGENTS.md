@@ -60,7 +60,9 @@ on every read (`c/CKeywords.ts` holds keyword sets by token type, found by lexin
 spellings has no literal name). Nor may a predicate read tokens before the decision (`lt(-1)`): C++'s
 `IsInitStatement` did, and a DFA state one file built carried its choice into another's `if` condition — such a
 decision is settled from tokens instead. Check a change for this by reading a corpus forward and in reverse in two
-processes and comparing every file's reading.
+processes and comparing every file's reading. That independence is also what lets `parseWithAntlr` empty a grammar's cache between parses once it holds more than
+10,000 DFA states (`boundPredictionCache`): every state keeps the ATN configuration set it was built from, the cache only grows,
+and a worker reading a thousand varied C files held 450 MB of it.
 
 A predicate at an alternative's left edge costs more than its own evaluation: every DFA state of a decision whose
 start reaches one carries semantic contexts, and antlr4ng's SLL conflict check copies the whole configuration set
