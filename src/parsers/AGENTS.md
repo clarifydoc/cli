@@ -48,7 +48,7 @@ antlr4ng parsers that read the functions and calls of regex languages (Go, Lua, 
 feature (`core/feature-flags.ts`; `--feature no-antlr` switches them off). Generated from
 `grammars/antlr/<lang>/*.g4` by `node scripts/generate-antlr.mjs` and committed. Hand-written beside them: each
 grammar's base class ported from the `antlr4` runtime (`GoParserBase.ts`, `LuaLexerBase.ts`, …) and `run.ts`
-(`parseWithAntlr`: error counting, SLL first and full LL only when SLL fails; with `firstError` the LL pass gives up at its first error too, for a reader that discards a file with any — full-context error recovery is where a parse spends seconds — and past a time budget of 250 ms plus 20 ms per KB, so an ambiguity no fix has reached costs a regex reading, not seconds). The tree walk that turns a parse into
+(`parseWithAntlr`: error counting, SLL first and full LL only when SLL fails; with `firstError` the LL pass gives up at its first error too, for a reader that discards a file with any — full-context error recovery is where a parse spends seconds — and past a budget of 2,500 tokens of full-context lookahead plus one per 5 characters — counted, never timed, so a reading cannot depend on the machine's load — so an ambiguity no fix has reached costs a regex reading, not seconds). The tree walk that turns a parse into
 functions and calls is language knowledge, so it lives in the plugin (`plugins/go/antlr.ts`) and is reached through
 `meta.antlr`. A base class must not import the parser that extends it (read token types from the lexer), or the
 bundle can evaluate the subclass first. A semantic predicate must read tokens only: the prediction DFA is shared by
@@ -57,7 +57,10 @@ symbol table) makes a file's parse depend on the file before it. State fixed bef
 read per-token facts its first pass computes (`c/CTypes.ts` — the names used as types, macro names, the `)` closing
 each `(`), so no prediction scans forward or reads a token's text, which antlr4ng rebuilds from the character stream
 on every read (`c/CKeywords.ts` holds keyword sets by token type, found by lexing each keyword: a rule with several
-spellings has no literal name).
+spellings has no literal name). Nor may a predicate read tokens before the decision (`lt(-1)`): C++'s
+`IsInitStatement` did, and a DFA state one file built carried its choice into another's `if` condition — such a
+decision is settled from tokens instead. Check a change for this by reading a corpus forward and in reverse in two
+processes and comparing every file's reading.
 
 A predicate at an alternative's left edge costs more than its own evaluation: every DFA state of a decision whose
 start reaches one carries semantic contexts, and antlr4ng's SLL conflict check copies the whole configuration set

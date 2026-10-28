@@ -121,6 +121,40 @@ static int open_pit(void) { return pit_open(); }
     expect(shape(source)).toEqual({ errors: 0, functions: [["play", 1, 12, ["next", "TYPE_MAP", "FRAME", "CONFIG"]]] });
   });
 
+  it("reads lowercase macros by where they stand: types, attributes after a declarator, file-scope generators", () => {
+    const source = `struct squad { list_elm(player_t) link; tree_node(player_t) node; SQUAD_HEADER; COMPAT_BEGIN(5) COMPAT_END };
+typedef list_head(player_t) bench_t;
+extern const char chants[] attribute_hidden;
+static int rank(int n) internal_function;
+void *(*copy_kit)(kit *k, const void *badge __stored_badge);
+typedef int lineup_fn(int argc, char **argv);
+heap_gen(, squad_heap, squad_t, link, squad_cmp)
+weak_alias (__rank, rank)
+int pick(int argv) { return argv[0] + rank(1); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["pick", 9, 9, ["rank"]]] });
+  });
+
+  it("reads enum macros, asm strings joined to macros, calling conventions and SEH blocks", () => {
+    const source = `enum gear { GEAR_MAP(XX) GEAR_MAX = 1 };
+enum { FIRST, CUP_A DEPRECATED(8.3, "") = 3, LAST };
+typedef int (WINAPI *start_fn)(int engine);
+static inline int lock(int *l) {
+  __asm__ volatile (SMP_LOCK "cmpxchgl %3, %1;" "sete %0;" : "=a" (res) : "m" (*l));
+  if (__builtin_available(macOS 10.12, *)) { tune(l); }
+  __try { ignite(l); __leave; } __finally { cool(l); }
+  return res;
+}
+static int test_garage(void) {
+  TEST_BEGIN
+  fail_unless(open_garage() == 0, "opens");
+  size_t bays SILENCE_INIT(0);
+  return bays;
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["lock", 4, 9, ["tune", "ignite", "cool"]], ["test_garage", 10, 15, ["fail_unless", "open_garage"]]] });
+  });
+
   it("counts a syntax error and reads nothing more of the file, so core keeps the patterns' reading", () => {
     expect(shape("int f(void) { return (1; }\n")).toEqual({ errors: 1, functions: [] });
   });

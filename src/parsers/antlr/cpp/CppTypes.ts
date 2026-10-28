@@ -43,6 +43,8 @@ const AFTER_TEMPLATE: ReadonlySet<number> = new Set([
   CPP14Lexer.Final, CPP14Lexer.Override,
   // A variable template's member or element, `names_v<T>.size()`, `ids_v<T>[0]`; an attribute after a requires clause.
   CPP14Lexer.Dot, CPP14Lexer.LeftBracket,
+  // `size_v<T> / 2`, `{v.data, extent_v<V>}`, `view<Opts> operator[](…)`: no comparison goes on with these either.
+  CPP14Lexer.Div, CPP14Lexer.Mod, CPP14Lexer.RightBrace, CPP14Lexer.Operator, CPP14Lexer.Or, CPP14Lexer.Caret,
 ]);
 
 /** A declaration's keywords, which follow a template only: `requires Kickable<T> void play(`. */
@@ -90,6 +92,15 @@ const NON_EXPRESSION: ReadonlySet<number> = new Set([...TYPE_KEYWORDS, ...SPECIF
 
 /** The keywords whose parenthesized header a statement follows. */
 const CONTROL_HEADER: ReadonlySet<number> = new Set([CPP14Lexer.If, CPP14Lexer.While, CPP14Lexer.For, CPP14Lexer.Switch]);
+
+/** What only an expression's parentheses follow: `= (a & b)`, `return (a * b)`, `x && (a & b)`. */
+const EXPRESSION_BEFORE: ReadonlySet<number> = new Set([
+  CPP14Lexer.Assign, CPP14Lexer.Return, CPP14Lexer.PlusAssign, CPP14Lexer.MinusAssign, CPP14Lexer.StarAssign,
+  CPP14Lexer.DivAssign, CPP14Lexer.ModAssign, CPP14Lexer.XorAssign, CPP14Lexer.AndAssign, CPP14Lexer.OrAssign,
+  CPP14Lexer.AndAnd, CPP14Lexer.OrOr, CPP14Lexer.Equal, CPP14Lexer.NotEqual, CPP14Lexer.Question, CPP14Lexer.Not,
+  CPP14Lexer.Plus, CPP14Lexer.Minus, CPP14Lexer.Div, CPP14Lexer.Mod, CPP14Lexer.Or, CPP14Lexer.Caret,
+  CPP14Lexer.LessEqual, CPP14Lexer.GreaterEqual,
+]);
 
 /** What a cast's operand starts with: `(Club *) p`, `(int) -x`. */
 const OPERAND_START: ReadonlySet<number> = new Set([
@@ -200,6 +211,8 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
 
   // Template arguments: a `<` after a name whose `>` comes before the statement ends, followed by what may follow one.
   const angle = new Int32Array(n).fill(-1);
+  // 1 inside the arguments of a template whose arguments may hold logical operators: so may the templates' there.
+  const inArguments = new Uint8Array(n);
   // `<<` is two `<` tokens with nothing between them: a shift, never a bracket.
   const shift = (i: number) =>
     (type(i + 1) === CPP14Lexer.Less && tokens[i + 1]!.start === tokens[i]!.stop + 1) || (type(i - 1) === CPP14Lexer.Less && tokens[i - 1]!.stop + 1 === tokens[i]!.start);
@@ -212,10 +225,18 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     let depth = 1;
     // `std::enable_if<!A::value && B>`: after a qualified name the `<` is a template's, whose constant arguments may
     // hold logical operators; elsewhere `&&` ends the scan (`if (a < b && c > d)`).
-    // So may a template's parameters, `template <class T, bool B = A<T>::value && C>`.
-    const qualified = type(i - 2) === CPP14Lexer.Doublecolon || type(i - 1) === CPP14Lexer.Template;
+    // So may a template's parameters, `template <class T, bool B = A<T>::value && C>`, and an alias's type,
+    // `using Bits = conditional_t<size<T>() <= 32 && B, int, long>`.
+    const alias = type(i - 2) === CPP14Lexer.Assign && type(i - 4) === CPP14Lexer.Using;
+    // A class head's, `struct formatter<T, enable_if_t<A || B>>`, and any inside one of these.
+    const head = CLASS_KEYWORDS.has(type(i - 2));
+    const qualified = type(i - 2) === CPP14Lexer.Doublecolon || type(i - 1) === CPP14Lexer.Template || alias || head || inArguments[i] === 1;
     // `bool_constant<is_integral<T>::value && …>`: a template's member constant before the operator.
     const constant = (j: number) => isId(j - 1) && type(j - 2) === CPP14Lexer.Doublecolon && type(j - 3) === CPP14Lexer.Greater;
+    // The `>` closing the last template inside these arguments: `to_sv<is_copyable_v<T> && B>` holds the `&&`.
+    let nested = -1;
+    // A `,` among the arguments: `f(a < b, c > -1)` compares twice, `count_v<T, X> - 1` subtracts.
+    let comma = false;
     for (let j = i + 1; j < n; j++) {
       const t = type(j);
       // `write<Opts{.indent = 2}>(…)`: a braced initializer among the arguments; any other `{` ends the scan.
@@ -223,12 +244,25 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
         if (close[j] < 0) break;
         j = close[j]!;
       } else if (t === CPP14Lexer.Less && !shift(j) && (isId(j - 1) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;
-      else if (t === CPP14Lexer.Greater && --depth === 0) {
-        // `template <…>` opens a parameter list whatever follows it.
-        if (AFTER_TEMPLATE.has(type(j + 1)) || AFTER_TEMPLATE_KEYWORDS.has(type(j + 1)) || j + 1 === n || type(i - 1) === CPP14Lexer.Template) angle[i] = j;
+      else if (t === CPP14Lexer.Greater && --depth > 0) nested = j;
+      else if (t === CPP14Lexer.Comma && depth === 1 && (comma = true)) continue;
+      else if (t === CPP14Lexer.Greater) {
+        // `template <…>` opens a parameter list whatever follows it; `name_v<T> << "x"` shifts after it.
+        const shifted = type(j + 1) === CPP14Lexer.Less && shift(j + 1);
+        // After `=` or `return` a `,` would make a comma expression: `n = count_v<T, X> + 1`.
+        const initializer = type(i - 2) === CPP14Lexer.Assign || type(i - 2) === CPP14Lexer.Return;
+        const sign = (type(j + 1) === CPP14Lexer.Plus || type(j + 1) === CPP14Lexer.Minus) && (!comma || qualified || initializer);
+        if (AFTER_TEMPLATE.has(type(j + 1)) || sign || AFTER_TEMPLATE_KEYWORDS.has(type(j + 1)) || shifted || j + 1 === n || type(i - 1) === CPP14Lexer.Template) {
+          angle[i] = j;
+          if (qualified) inArguments.fill(1, i + 1, j);
+        }
         break;
-      } else if (t === CPP14Lexer.AndAnd && (qualified || constant(j) || RVALUE_SUFFIX.has(type(j + 1)))) continue;
-      else if (t === CPP14Lexer.OrOr && (qualified || constant(j))) continue;
+      } else if (t === CPP14Lexer.AndAnd && (qualified || constant(j) || nested === j - 1 || RVALUE_SUFFIX.has(type(j + 1)))) continue;
+      else if (t === CPP14Lexer.OrOr && (qualified || constant(j) || nested === j - 1)) continue;
+      // `integral_constant<F, same<T> ? A : B>`.
+      else if (t === CPP14Lexer.Question && qualified) continue;
+      // `x = y ? a < b : c > d` compares: a `:` stands in arguments only after their `?`.
+      else if (t === CPP14Lexer.Colon && !qualified) break;
       else if (ENDS_TEMPLATE.has(t)) break;
     }
   }
@@ -289,8 +323,10 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const path = pathAt(i);
     if (!path) continue;
     const after = type(path.after);
-    // `Club x;`, `const Club &c`, `std::vector<Club> squad(…)`, `Club *find(`: a declaration at its start.
-    if (boundary(i) || type(i - 1) === CPP14Lexer.Const) {
+    // `Club x;`, `const Club &c`, `std::vector<Club> squad(…)`, `Club *find(`: a declaration at its start — never in
+    // parentheses an operator opens, `lhs = (lhs & rhs)`, but for an operator's parameters, `operator&(Club lhs, …)`.
+    const inExpression = type(i - 1) === CPP14Lexer.LeftParen && EXPRESSION_BEFORE.has(type(i - 2)) && type(i - 3) !== CPP14Lexer.Operator;
+    if ((boundary(i) || type(i - 1) === CPP14Lexer.Const) && !inExpression) {
       let j = path.after;
       while (type(j) === CPP14Lexer.Star || type(j) === CPP14Lexer.And || type(j) === CPP14Lexer.AndAnd || type(j) === CPP14Lexer.Const) j++;
       if (isId(j) && (AFTER_NAME.has(type(j + 1)) || type(j + 1) === CPP14Lexer.LeftParen) && !(after === CPP14Lexer.Star && type(i - 1) === CPP14Lexer.LeftParen && isId(i - 2))) add(path.last);
@@ -310,8 +346,8 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const c = close[i]!;
     if (type(i) !== CPP14Lexer.LeftParen || c < 0 || !OPERAND_START.has(type(c + 1))) continue;
     const prev = type(i - 1);
-    // `operator++(int)`, `operator<<(…)`: an operator's parameters.
-    if ([1, 2, 3].some((back) => type(i - back) === CPP14Lexer.Operator)) continue;
+    // `operator++(int)`, `operator<<(…)`: an operator's parameters, but not `operator new((size_t)8)`'s argument.
+    if (prev !== CPP14Lexer.LeftParen && [1, 2, 3].some((back) => type(i - back) === CPP14Lexer.Operator)) continue;
     // `(int)(long) x`: a cast's `)` may precede another, and a statement starts after a control header's,
     // `for (…) (void)kick(…);`.
     if (i > 0 && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)) && !(prev === CPP14Lexer.RightParen && castAfterParen(i - 1))) continue;
@@ -366,7 +402,9 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     // A fold's own parentheses stand where an operand may start; after a name they are a call's or a parameter list's
     // (`run(Args &&...args)`); after `requires` they hold a constraint, `requires (Comparable<Ts> && ...)`.
     const prev = type(i - 1);
-    if (type(i) !== CPP14Lexer.LeftParen || close[i]! < 0 || (i > 0 && prev !== CPP14Lexer.Requires && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)))) continue;
+    // After a cast too, `(void)(kick(p), ...)`.
+    const afterCast = prev === CPP14Lexer.RightParen && cast[open_(i - 1)] === 1;
+    if (type(i) !== CPP14Lexer.LeftParen || close[i]! < 0 || (i > 0 && prev !== CPP14Lexer.Requires && !afterCast && (!BEFORE_CAST.has(prev) || closesTemplate.has(i - 1)))) continue;
     for (let j = i + 1; j < close[i]!; j++) {
       if (OPENS.has(type(j)) && close[j]! >= 0) {
         j = close[j]!;
@@ -424,6 +462,13 @@ function facts(
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
   };
+  // `#define std_trait(x) …`: a function-like macro the file defines, whatever its case.
+  const defined = new Set<string>();
+  for (const t of all) {
+    if (t.type !== CPP14Lexer.Directive && t.type !== CPP14Lexer.MultiLineMacro) continue;
+    const m = /^#\s*define\s+(\w+)\(/.exec(t.text ?? "");
+    if (m) defined.add(m[1]!);
+  }
   // The innermost open `(` at each token: a type keyword or block there is not an expression's — a `{` after a name or
   // template arguments is a braced temporary, `(Seq<Ts...>{})`.
   const closesTemplate = new Set<number>();
@@ -448,7 +493,7 @@ function facts(
     const name = names[i];
     if (name === undefined) return;
     if (types.has(name)) out.known[k] = 1;
-    if (MACRO_NAME.test(name) || name.startsWith("__")) out.macro[k] = 1;
+    if (MACRO_NAME.test(name) || name.startsWith("__") || (defined.has(name) && tokens[i + 1]?.type === CPP14Lexer.LeftParen)) out.macro[k] = 1;
   });
   return out;
 }

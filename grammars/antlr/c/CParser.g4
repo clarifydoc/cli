@@ -141,6 +141,7 @@ primaryExpression
     | '__PRETTY_FUNCTION__' //GNU
     | '__extension__'? '(' compoundStatement ')' //GNU
     | '__builtin_va_arg' '(' unaryExpression ',' typeName ')' //GNU
+    | '__builtin_available' '(' gnuAttributeList ')' // [ClarifyDoc] clang: platforms and versions
     | {this.IsVaArg()}? Identifier '(' unaryExpression ',' typeName ')' // [ClarifyDoc] `va_arg(ap, char *)`, the macro unexpanded
     | '__builtin_offsetof' '(' typeName ',' unaryExpression ')' //GNU
     | '__builtin_choose_expr' '(' unaryExpression ',' unaryExpression ',' unaryExpression ')' //GNU
@@ -377,6 +378,8 @@ memberDeclarationList
 memberDeclaration
     : {this.IsMacroMember() && this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' ';' // [ClarifyDoc] `BIT(can_substitute);`
     | {this.IsMacroMember() && !this.SemiAfterMacro()}? Identifier '(' gnuAttributeList ')' // [ClarifyDoc] each form its own: an optional `;` is also an empty statement
+    | {this.IsBareMacroMember()}? Identifier ';' // [ClarifyDoc] `CommonHeader;`: a name alone declares nothing
+    | {this.IsLastMacroMember()}? Identifier // [ClarifyDoc] `COMPAT_END }`
     | attributeSpecifierSequence? specifierQualifierList memberDeclaratorList? ';'
     | staticAssertDeclaration
     | '__extension__' memberDeclaration // GNU extension.
@@ -408,18 +411,24 @@ memberDeclarator
 
 // ISO C: enum-specifier (6.7.3.3)
 enumSpecifier
-    : 'enum' attributeSpecifierSequence? gnuAttributes? Identifier? enumTypeSpecifier? '{' enumeratorList ','? '}'
+    : 'enum' attributeSpecifierSequence? gnuAttributes? Identifier? enumTypeSpecifier? '{' enumeratorList? ','? '}' // [ClarifyDoc] empty where an `#include` lists them
     | 'enum' Identifier enumTypeSpecifier?
     ;
 
 // ISO C: enumerator-list (6.7.3.3)
 enumeratorList
-    : enumerator (',' enumerator)*
+    : enumeratorItem (','? enumeratorItem)* // [ClarifyDoc] a macro listing enumerators ends without a `,`
+    ;
+
+// [ClarifyDoc] A macro listing enumerators: `STATUS_MAP(XX)`; a name with arguments is never an enumerator.
+enumeratorItem
+    : Identifier '(' gnuAttributeList ')'
+    | enumerator
     ;
 
 // ISO C: enumerator (6.7.3.3)
 enumerator
-    : enumerationConstant attributeSpecifierSequence? gnuAttributes? ('=' constantExpression)?
+    : enumerationConstant attributeSpecifierSequence? gnuAttributes? macroAttributeSuffix? ('=' constantExpression)? // [ClarifyDoc] `CUP_A DEPRECATED(8.3) = 3`
     ;
 
 // ISO C: enum-type-specifier (6.7.3.3)
@@ -664,6 +673,12 @@ statement
     | iterationStatement
     | jumpStatement
     | asmStatement
+    | sehStatement // [ClarifyDoc]
+    ;
+
+// [ClarifyDoc] MSVC structured exception handling: `__try { … } __except (filter) { … }`.
+sehStatement
+    : '__try' compoundStatement ('__except' '(' expression ')' compoundStatement | '__finally' compoundStatement)
     ;
 
 // ISO C: unlabeled-statement (6.8.1) - No ANTLR4 rule
@@ -751,6 +766,7 @@ jumpStatement
         | 'break'
         | 'return' expression?
         | 'goto' unaryExpression // GCC extension
+        | '__leave' // [ClarifyDoc] MSVC
     ) ';'
     ;
 
@@ -927,7 +943,7 @@ asmStatement
 
 // GNU: asmStringLiteral
 asmStringLiteral
-    : StringLiteral
+    : stringMacro* StringLiteral (StringLiteral | stringMacro)* // [ClarifyDoc] `SMP_LOCK "cmpxchgl %3, %1;"`
     ;
 
 // GNU: gccDeclaratorExtension

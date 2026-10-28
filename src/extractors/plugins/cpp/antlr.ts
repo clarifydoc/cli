@@ -24,6 +24,7 @@ import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { defineCalls, leftOutCalls, tokenCalls, type CallOwner, type TokenKinds } from "../shared/token-calls.js";
+import { readC } from "../c/antlr.js";
 import { cppSpec } from "./index.js";
 
 /** How many calls deep a chain is named. */
@@ -55,8 +56,21 @@ const CPP_TOKENS: TokenKinds = {
  * tokens, as are a `#define` inside a function's.
  */
 export function readCpp(source: string): ParsedStructure {
-  return readWithBranches(blankRawStrings(normalizeSource(source)), true, read);
+  const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read);
+  if (parsed.syntaxErrors === 0 || CPP_ONLY.test(codeOnly(source))) return parsed;
+  // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
+  // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
+  const asC = readC(source);
+  return asC.syntaxErrors === 0 ? asC : parsed;
 }
+
+/** The text without comments and string literals, where `::` may stand in prose. */
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, " ");
+}
+
+/** What only C++ writes: a scope, a template, a namespace or a class with a base or body. */
+const CPP_ONLY = /::|\btemplate\s*<|\bnamespace\s+\w*\s*\{|\bclass\s+\w+\s*[:{]/;
 
 /** A raw string's start: an optional encoding prefix, `R"`, a delimiter of up to 16 characters, `(`. */
 const RAW_STRING = /(?<![\w\\"'])(?:u8|u|U|L)?R"([^ ()\\\t\v\f\n"]{0,16})\(/g;

@@ -220,6 +220,52 @@ void print(Table &t) {
     expect(read(source)).toEqual({ errors: 0, functions: [["print", 5, ["render"]]] });
   });
 
+  it("reads brace initializers holding calls, and what follows template arguments in an expression", () => {
+    const source = `#define club_trait(x) static constexpr int x = trait_of<x>()
+struct Club {
+  std::string name{load_name(id)};
+  club_trait(founded);
+  static constexpr auto half = squad_size_v<Club> / 2;
+  static constexpr auto bench = count_v<Club, Substitute> + reserves;
+};
+static Garage garage{open_garage(1)};
+int line_up(Squad (&squads)[2], Result (*pick)(Player)) {
+  std::cout << name_v<Club> << "x";
+  auto flags = (bits_v<Car> | wash_flag) ^ shift_v<Car>;
+  auto tied = Score{totals_v<Car>};
+  auto copy = decltype(squads){};
+  (void)(squads[0].template operator()<0>(), ...);
+  return finish(a < b, c > -1);
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["line_up", 9, ["finish"]]] });
+  });
+
+  it("reads C++20 lambdas and packs, and logical operators in a class head's or an alias's template arguments", () => {
+    const source = `template <class T>
+struct rating<T, enable_if_t<std::is_integral<T>::value || is_goal<T>::value>> : std::integral_constant<int, is_home<T>::value ? 1 : 2> {
+  using T::operator()...;
+};
+template <class T>
+using Points = conditional_t<goals_of<T>() <= 3 && !Draw, int, long>;
+void kickoff(Args... args) {
+  post([... args = std::move(args)] mutable { whistle(args...); });
+  bool ok = to_flag<is_fit_v<Player> && is_paid_v<Player>>();
+  x = y ? a < b : c > d;
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["kickoff", 7, ["post", "move", "whistle", "to_flag"]]] });
+  });
+
+  it("reads a header C's grammar takes and C++'s refuses, and block comments a directive opens", () => {
+    const source = `#define GATES 4 /* the gates
+   if the gate number matches */
+typedef void *(alloc_fn)(void *pitch);
+static inline int open_gate(const char *restrict name, int class) { return lift(name, class); }
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["open_gate", 4, ["lift"]]] });
+  });
+
   it("counts a syntax error and reads nothing more of the file, so core keeps the patterns' reading", () => {
     expect(readCpp("int f() { return (1; }\n")).toMatchObject({ functions: [] });
     expect(readCpp("int f() { return (1; }\n").syntaxErrors).toBeGreaterThan(0);

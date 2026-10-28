@@ -52,6 +52,11 @@ channels {
 Attribute: '__attribute__' | '__attribute' ;
 KW__builtin_offsetof: '__builtin_offsetof';
 KW__builtin_va_arg: '__builtin_va_arg';
+KW__builtin_available: '__builtin_available'; // [ClarifyDoc] clang's `__builtin_available(macOS 10.12, *)`
+KW__try: '__try'; // [ClarifyDoc] MSVC structured exception handling
+KW__except: '__except';
+KW__finally: '__finally';
+KW__leave: '__leave';
 KW__builtin_choose_expr: '__builtin_choose_expr';
 KW__builtin_types_compatible_p: '__builtin_types_compatible_p';
 KW__builtin_tgmath: '__builtin_tgmath';

@@ -87,6 +87,12 @@ interface MemberAlts {
   member: number;
 }
 
+/** After a declaration's specifiers: a function definition, or declarators (a declaration's or a member's). */
+interface DefinitionAlts {
+  function: number;
+  declarators: number;
+}
+
 /** The simulators whose decisions are settled already. */
 const settled = new WeakSet<object>();
 
@@ -108,6 +114,25 @@ function altReaching(atn: ATN, decision: number, rule: number): number {
     }
   }
   return 0;
+}
+
+/** The decision of `rule` where `first` and `second` are reached by different alternatives. */
+function decisionBetween(atn: ATN, rule: number, first: number, second: number): DefinitionAlts & { decision: number } {
+  const [found] = decisionsBetween(atn, rule, first, second);
+  if (!found) throw new Error(`C++ grammar: no decision of rule ${rule} between rules ${first} and ${second}`);
+  return found;
+}
+
+/** Every decision of `rule` where `first` and `second` are reached by different alternatives. */
+function decisionsBetween(atn: ATN, rule: number, first: number, second: number): Array<DefinitionAlts & { decision: number }> {
+  const found: Array<DefinitionAlts & { decision: number }> = [];
+  for (let d = 0; d < atn.decisionToState.length; d++) {
+    if (atn.decisionToState[d]!.ruleIndex !== rule) continue;
+    const a = altReaching(atn, d, first);
+    const b = altReaching(atn, d, second);
+    if (a > 0 && b > 0 && a !== b) found.push({ decision: d, function: a, declarators: b });
+  }
+  return found;
 }
 
 /** The decision of `rule` whose alternatives reach every one of `rules`. */
@@ -150,11 +175,22 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   const [memberDeclaration, memberMacro, memberDeclaratorList] = ["memberDeclaration", "memberMacro", "memberDeclaratorList"].map(rule) as [number, number, number];
   const m = decisionOf(atn, memberDeclaration, [memberMacro, memberDeclaratorList]);
   const memberAlts: MemberAlts = { macro: altReaching(atn, m, memberMacro), member: altReaching(atn, m, memberDeclaratorList) };
+  const functionDefinition = rule("functionDefinition");
+  const atScope = decisionBetween(atn, declaration, functionDefinition, declarationTail);
+  const inClass = decisionBetween(atn, memberDeclaration, functionDefinition, memberDeclaratorList);
   table = new Map([
     [s, (p) => p.settleStatement(statementAlts)],
     [d, (p) => p.settleDeclaration(declarationAlts)],
     [m, (p) => p.settleMember(memberAlts)],
+    [atScope.decision, (p) => p.settleDefinition(atScope)],
+    [inClass.decision, (p) => p.settleDefinition(inClass)],
   ]);
+  // `if (init; condition)`, `switch (…)`: whether an init statement comes first. Its predicate reads the `(` before
+  // the decision, and prediction that met it through a cached state had read another file's choice there.
+  const [selectionStatement, initStatement, condition] = ["selectionStatement", "initStatement", "condition"].map(rule) as [number, number, number];
+  const inits = decisionsBetween(atn, selectionStatement, initStatement, condition);
+  if (inits.length === 0) throw new Error("C++ grammar: no init-statement decision");
+  for (const init of inits) table.set(init.decision, (p) => p.settleInit(init.function, init.declarators));
   return table;
 }
 
@@ -247,6 +283,28 @@ export abstract class CPP14ParserBase extends Parser {
     if (t === CPP14Lexer.MacroName) return alts.macro;
     if (t === CPP14Lexer.Identifier) return this.IsMacroMember() ? alts.macro : alts.member;
     return t === CPP14Lexer.Doublecolon || t === CPP14Lexer.Tilde || t === CPP14Lexer.Operator || TYPE_KEYWORDS.has(t) || MEMBER_START.has(t) ? alts.member : 0;
+  }
+
+  /**
+   * `Club club{make(1)};` initializes: a function's declarator holds a `(` before its body, and without one the braces
+   * are an initializer's, though `{ make(1) }` also reads as a body holding a statement macro with no `;`.
+   */
+  settleDefinition(alts: DefinitionAlts): number {
+    let i = this.lt(1).tokenIndex;
+    for (let steps = 0; steps < 64 && i >= 0; steps++) {
+      const t = this.typeAt(i);
+      if (t === CPP14Lexer.LeftBrace) return alts.declarators;
+      if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon && t !== CPP14Lexer.TemplateLess && !POINTER_OPERATORS.has(t) && t !== CPP14Lexer.LeftBracket) return 0;
+      // `Squad<T>::bench`, `squads[3]{…}`.
+      const end = t === CPP14Lexer.TemplateLess ? this.facts.angle[i] ?? -1 : t === CPP14Lexer.LeftBracket ? this.facts.close[i] ?? -1 : i;
+      if (end < 0) return 0;
+      i = this.following(end);
+    }
+    return 0;
+  }
+
+  settleInit(init: number, condition: number): number {
+    return this.IsInitStatement() ? init : condition;
   }
 
   /** The names the first pass read as types. */
@@ -386,6 +444,8 @@ export abstract class CPP14ParserBase extends Parser {
     if (!path) return false;
     const after = this.typeAt(path.after);
     if (DECLARATOR_START.has(after) || after === CPP14Lexer.Assign) return true;
+    // `op(Squad (&squads)[N])`, `check(Result (*f)(Arg))`: a declarator in parentheses.
+    if (after === CPP14Lexer.LeftParen && this.parenDeclaratorAt(path.after)) return true;
     if (after !== CPP14Lexer.Comma && after !== CPP14Lexer.RightParen) return false;
     const close = this.facts.close[open.tokenIndex] ?? -1;
     // `void open(QString);`: a capitalized name, no macro's, is more likely a type than a variable.
@@ -454,7 +514,8 @@ export abstract class CPP14ParserBase extends Parser {
     const type = this.typeAt(after);
     if (t.type === CPP14Lexer.MacroName) return type !== CPP14Lexer.LeftBrace;
     if (type === CPP14Lexer.Semi) return this.holdsNonExpression(this.lt(2).tokenIndex);
-    return type === CPP14Lexer.RightBrace || STATEMENT_KEYWORDS.has(type) || this.macroIndex(after);
+    // `PRAGMA_POP()⏎const Car car = …;`: before a declaration's keyword no expression goes on.
+    return type === CPP14Lexer.RightBrace || STATEMENT_KEYWORDS.has(type) || DECLARATION_KEYWORDS.has(type) || this.macroIndex(after);
   }
 
   /** `SECTION("x") {`, `Q_FOREACH(x, list) use(x);`: a macro before a statement it takes as its body. */

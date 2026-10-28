@@ -43,7 +43,7 @@ UserDefinedLiteral:
 
 MultiLineMacro: '#' (~[\n]*? '\\' '\r'? '\n')+ ~ [\n]+ -> channel (HIDDEN);
 
-Directive: '#' ~ [\n]* -> channel (HIDDEN);
+Directive: '#' ('/*' .*? '*/' | ~ [\n])* -> channel (HIDDEN); // [ClarifyDoc] a block comment it opens may end on a later line
 /*Keywords*/
 
 Alignas: 'alignas';
@@ -193,6 +193,15 @@ Throw: 'throw';
 True_: 'true';
 
 Try: 'try';
+
+// [ClarifyDoc] MSVC structured exception handling.
+SehTry: '__try';
+
+SehExcept: '__except';
+
+SehFinally: '__finally';
+
+SehLeave: '__leave';
 
 Typedef: 'typedef';
 

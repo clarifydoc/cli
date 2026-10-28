@@ -79,7 +79,12 @@ nestedNameSpecifier
     ;
 
 lambdaExpression
-    : lambdaIntroducer (TemplateLess templateParameterList TemplateGreater requiresClause?)? lambdaDeclarator? compoundStatement // [ClarifyDoc] C++20
+    : lambdaIntroducer (TemplateLess templateParameterList TemplateGreater requiresClause?)? (lambdaDeclarator | lambdaSpecifiers)? compoundStatement // [ClarifyDoc] C++20
+    ;
+
+// [ClarifyDoc] C++23: specifiers without a parameter list, `[h = std::move(h)] mutable { … }`.
+lambdaSpecifiers
+    : (Mutable | Constexpr | Consteval | Static)+ exceptionSpecification? attributeSpecifierSeq? trailingReturnType?
     ;
 
 lambdaIntroducer
@@ -111,7 +116,7 @@ simpleCapture
     ;
 
 initCapture
-    : And? Identifier initializer
+    : And? Ellipsis? Identifier initializer // [ClarifyDoc] C++20 packs, `...args = std::move(args)`
     ;
 
 lambdaDeclarator
@@ -122,7 +127,7 @@ postfixExpression
     : primaryExpression
     | postfixExpression LeftBracket (expression | bracedInitList) RightBracket
     | postfixExpression LeftParen expressionList? RightParen
-    | (keywordTypeSpecifier+ | typeNameSpecifier) ( // [ClarifyDoc] `int(x)`; `Club(x)` is a call, `Club{}` a primary
+    | (keywordTypeSpecifier+ | typeNameSpecifier | decltypeSpecifier) ( // [ClarifyDoc] `int(x)`; `Club(x)` is a call, `Club{}` a primary; `decltype(x){1, 2}`
         LeftParen expressionList? RightParen
         | bracedInitList
     )
@@ -245,7 +250,7 @@ binaryOperator
 // [ClarifyDoc] The same in a template argument, where `>` closes the list: `Fixture<kRounds - 1>`. Upstream left it
 // to full-context prediction.
 templateArgumentExpression
-    : pointerMemberExpression (templateArgumentOperator pointerMemberExpression)*
+    : pointerMemberExpression (templateArgumentOperator pointerMemberExpression)* (Question templateArgumentExpression Colon templateArgumentExpression)? // [ClarifyDoc] `B ? A : C`
     ;
 
 templateArgumentOperator
@@ -382,7 +387,7 @@ forRangeInitializer
     ;
 
 jumpStatement
-    : (Break | Continue | (Return | Co_return) (expression | bracedInitList)? | Goto Identifier) Semi // [ClarifyDoc] co_return
+    : (Break | Continue | SehLeave | (Return | Co_return) (expression | bracedInitList)? | Goto Identifier) Semi // [ClarifyDoc] co_return, MSVC `__leave`
     ;
 
 declarationStatement
@@ -650,7 +655,7 @@ qualifiedNamespaceSpecifier
     ;
 
 usingDeclaration
-    : Using (Typename_? nestedNameSpecifier | Doublecolon) unqualifiedId Semi
+    : Using (Typename_? nestedNameSpecifier | Doublecolon) unqualifiedId Ellipsis? Semi // [ClarifyDoc] C++17 `using Bases::operator()...;`
     ;
 
 usingDirective
@@ -1005,7 +1010,7 @@ baseSpecifier
     ;
 
 classOrDeclType
-    : nestedNameSpecifier? className
+    : nestedNameSpecifier? Template? className // [ClarifyDoc] `pop_back<M...>::template rebind<Club>`
     | decltypeSpecifier
     ;
 
@@ -1160,6 +1165,7 @@ explicitSpecialization
 
 tryBlock
     : Try compoundStatement handlerSeq
+    | SehTry compoundStatement (SehExcept LeftParen expression RightParen compoundStatement | SehFinally compoundStatement) // [ClarifyDoc] MSVC
     ;
 
 functionTryBlock

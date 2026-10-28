@@ -98,7 +98,15 @@ per target at its `// Insert here @header` marker.
   read past the whole operand first); the ten binary-operator levels are one rule, without precedence. The same
   strings parse.
 
-  Without the preprocessor 1–11% of the files of six real C repositories still fail and keep the patterns' reading.
+- **C: lowercase macros by position.** The first pass flags a name only a macro can be where it stands: `name(…)
+  name;` where a declaration starts (`list_elm(T) link;`), a name after a declarator's `]`, after `*name`
+  (`__stored_key`) or after a prototype's `)` at file scope; it retypes an all-caps name opening a body before a call
+  or declaration, and reads `int (WINAPI *fn)` whatever it took the name for. The grammar takes enum items listed by
+  macros (no `,` after one, an empty body, an attribute macro on an enumerator), `asm` strings joined to macros, a bare
+  member macro, `__builtin_available(…)`, MSVC `__try`/`__except`/`__finally`/`__leave`, and invocations at file scope
+  followed by more of them, a declaration (a `(` before any `{` — a K&R definition reaches its body first) or the end.
+
+  Without the preprocessor 0–11% of the files of six real C repositories still fail and keep the patterns' reading.
   The reader runs at 0.8–2.9 MB/s.
 
 - **C++: a first pass that retypes tokens.** Upstream reads C++ without knowing which names are types or templates,
@@ -138,9 +146,25 @@ per target at its `// Insert here @header` marker.
   `""` and spaces, lines kept) before lexing: their text holds anything up to the delimiter, which the lexer could
   match only with a predicate, and a lexer predicate turns off the lexer's DFA.
 
-  On seven real C++ repositories 0–16% of files keep the patterns' reading (the C++20 ones 3–16%, mostly C++26
-  reflection and explicit `operator()<T>` calls on a member). Cold, the parse runs at 0.4–0.8 MB/s, warm about 1.2
-  MB/s.
+- **C++: C's headers.** A header is the C++ plugin's whichever language includes it; one that fails here and holds no
+  C++ (`::`, `template <`, a namespace or class body) is read by C's grammar (`plugins/cpp/antlr.ts`), whose reading
+  is kept when it parses. A directive's block comment may end on a later line, as in C's lexer.
+- **C++: decisions settled from tokens, and order.** The `if`/`switch` init-statement decision is settled as the
+  statement, declaration and member ones are: its predicate reads the token before the decision, and a DFA state
+  another file had built carried its choice into the next file (forward and reverse order now read every file of
+  thirteen repositories alike). A statement macro without `;` may precede a declaration's keyword.
+- **C++: what the corpus asked for next.** Brace initializers holding a call are settled from tokens (the function
+  definition / declarator decisions at namespace and class scope, `CPP14ParserBase.settleDefinition`: no `(` before
+  the `{`, no function), function-like macros the file `#define`s are macros whatever their case, parenthesized
+  declarators as parameters, init-capture packs, C++23 lambda specifiers without parameters, `using …::operator()...`,
+  `::template` in a base, `decltype(x){…}`, and in the first pass: template arguments of a class head, of an alias
+  and of the templates inside them may hold `&&`, `||` and `?:`; `&&` after a nested template-id is an argument's; a
+  `:` outside such arguments ends them; and `/`, `%`, `|`, `^`, `}`, `operator`, `<<` and — without a comma at the
+  template's depth, or after `=`/`return` — `+`/`-` may follow a template-id.
+
+  On seven real C++ repositories 0–10% of files keep the patterns' reading (what is left: C++26 reflection and
+  annotations, `operator()<T>` called on its own, macros standing for types), and of six C repositories' headers
+  0–8%. Cold, the parse runs at 0.4–0.8 MB/s, warm about 1.2 MB/s.
 
 The Go changes together made the parse about 12× faster cold and 14× warm on a sample of that codebase, and let SLL
 prediction succeed on all but 2 of its files, with no file failing to parse.

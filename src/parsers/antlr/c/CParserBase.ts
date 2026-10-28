@@ -184,12 +184,32 @@ export abstract class CParserBase extends Parser {
   protected IsTopLevelMacro(): boolean {
     const name = this.lt(1);
     if (name.type !== CLexer.Identifier || this.known(name) || this.lt(2).type !== CLexer.LeftParen) return false;
-    // `DEFINE_WATCHER(idle, IDLE)` as the file's last line.
-    if (this.macroName(name) && (this.facts.close[this.lt(2).tokenIndex] ?? -1) >= 0 && !this.afterClosing(this.lt(2))) return true;
+    // `DEFINE_WATCHER(idle, IDLE)`, `gen_heap(0)` as the file's last line: no definition ends a file so.
+    if ((this.facts.close[this.lt(2).tokenIndex] ?? -1) >= 0 && !this.afterClosing(this.lt(2))) return true;
     const next = this.macroCall();
     if (!next) return false;
     if (next.type === CLexer.Semi) return true;
-    return this.macroName(this.lt(1)) && (next.type === Token.EOF || SPECIFIER_KEYWORDS.has(next.type) || this.macroName(next));
+    if (this.macroName(this.lt(1)) && (next.type === Token.EOF || SPECIFIER_KEYWORDS.has(next.type) || this.macroName(next))) return true;
+    // `heap_gen(…)⏎weak_alias (a, b)⏎int f(…)`: more invocations, then the file's end or a declaration — a K&R
+    // definition's parameters (`f(a) int a; {`) reach its body's `{` before any `(`.
+    let after: Token | null = next;
+    for (let more = 0; after && more < 8 && after.type === CLexer.Identifier && !this.known(after); more++) {
+      const open = this.following(after);
+      if (open?.type !== CLexer.LeftParen || (this.facts.close[open.tokenIndex] ?? -1) < 0) break;
+      after = this.afterClosing(open);
+    }
+    if (!after) return true;
+    return (SPECIFIER_KEYWORDS.has(after.type) || this.known(after)) && this.declarationFollows(after);
+  }
+
+  /** From `t`, a `(` comes before a `{`, or the file ends. */
+  private declarationFollows(t: Token): boolean {
+    let at: Token | null = t;
+    for (let steps = 0; at && steps < 256; steps++, at = this.following(at)) {
+      if (at.type === CLexer.LeftParen) return true;
+      if (at.type === CLexer.LeftBrace) return false;
+    }
+    return at === null;
   }
 
   /** A `;` ends the macro at 1 and its arguments: the form with `;` applies, else the one without. */
@@ -219,10 +239,19 @@ export abstract class CParserBase extends Parser {
     const next = this.lt(k + 1).type;
     return next === CLexer.Star || next === CLexer.Comma || next === CLexer.RightParen;
   }
+  /** A name alone as a struct member, not a type the file knows: a macro expanding to members, `CommonHeader;`. */
+  protected IsBareMacroMember(): boolean {
+    return this.lt(1).type === CLexer.Identifier && this.lt(2).type === CLexer.Semi && !this.known(this.lt(1));
+  }
+  /** An all-caps name alone before the struct's `}`: `COMPAT_END }`. */
+  protected IsLastMacroMember(): boolean {
+    return this.macroName(this.lt(1)) && this.lt(2).type === CLexer.RightBrace;
+  }
   /** A macro as a struct member: `BIT(can_substitute);`. */
   protected IsMacroMember(): boolean {
     const next = this.macroCall();
-    return !!next && (next.type === CLexer.Semi || next.type === CLexer.RightBrace);
+    // `COMPAT_BEGIN(5) COMPAT_END }`: another macro after it.
+    return !!next && (next.type === CLexer.Semi || next.type === CLexer.RightBrace || (this.macroName(this.lt(1)) && this.macroName(next)));
   }
   /** A statement macro holding a declaration or a block: `VERBOSE(size_t calls = 0);`, `EACH(x, { … });`. */
   protected IsMacroStatement(): boolean {

@@ -14,6 +14,27 @@ recorded in the git history only.
 
 ### Added
 
+- **C and C++: fewer files left to the patterns, again.** Of six C repositories 0–11% of `.c` files keep the
+  patterns' reading (was 1–11%; one 8% → 5%, one 2% → 0%) and 0–8% of headers (was 3–16%); of seven C++ repositories
+  0–10% of files (was 0–16%).
+  - A header C++'s grammar refuses is read by C's when no C++ is in it: a C project's headers (`char *restrict p`,
+    `int class;`, `typedef void *(fn)(void *)`).
+  - C reads lowercase macros by where they stand — a type (`list_elm(T) link;`), an attribute after a declarator or a
+    prototype (`x[] attribute_hidden;`, `f(int n) internal_function;`, `*key __stored_key`), invocations at file scope
+    before a declaration or the file's end (`heap_gen(…)`, `weak_alias (a, b)`) —, enum bodies listed by macros,
+    `asm` strings joined to macros, a bare macro as a member or opening a body, `int (WINAPI *fn)(…)`,
+    `__builtin_available(…)` and MSVC `__try`/`__except`/`__finally`. A function type's parameter is no longer taken
+    for a type (`typedef int fn(int argc, char **argv)` made `argv[0] = x;` a declaration).
+  - C++ reads brace initializers holding a call (`Club club{make(1)};` — and `QSet<X> m{};` is no longer a function),
+    function-like macros the file defines in any case, parenthesized declarators as parameters, init-capture packs,
+    lambdas with `mutable` and no parameters, `using Base::operator()...;`, `::template` in a base, `decltype(x){…}`,
+    conditionals and logical operators in template arguments, what an expression continues a template-id with
+    (`size_v<T> / 2`, `name_v<T> << x`, `count_v<T, U> + 1`), a statement macro without `;` before a declaration, and
+    MSVC SEH blocks. A block comment a `#define` line opens no longer reads as code.
+- **C and C++: a file's reading no longer depends on the machine or the files read before it.** The full-context
+  pass's budget is counted in lookahead tokens instead of milliseconds, and the `if (init; condition)` decision is
+  settled from tokens: prediction through a state another file had cached could read an `if` condition as an init
+  statement. Read in forward and reverse order, every file of thirteen C and C++ repositories reads the same.
 - **C++20 and C++23 are read by the parser.** Concepts, requires clauses, template lambdas, `<=>`, `consteval`,
   `if consteval`, `using enum`, modules and raw strings no longer send a file back to the patterns: of three C++20
   repositories 3–16% of files keep their reading (was 10–47%). A definition with a trailing return type
