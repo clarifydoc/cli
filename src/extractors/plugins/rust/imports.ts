@@ -6,8 +6,8 @@ import type { ImportInfo } from "../../../types/analysis.js";
  * and the per-line pattern read only the single-line ones — a file importing
  * its models in the common multi-line form imported nothing, so its
  * `Site::read(…)` calls had no type to resolve against. Each leaf is an import
- * of its parent path naming the leaf (or its `as` alias): `{ source:
- * "league_db_schema::source::site", specifiers: ["Site"] }`; a glob
+ * of its parent path naming the leaf (or its `as` alias, with the leaf in
+ * `aliases`): `{ source: "league_db_schema::source::site", specifiers: ["Site"] }`; a glob
  * (`traits::*`) imports the module itself with no specifier. Imports of one
  * declaration sharing a parent path are grouped.
  */
@@ -21,6 +21,7 @@ export function extractRustImports(lines: string[]): ImportInfo[] {
     // ` as ` survives the whitespace collapse as a marker.
     const body = m[1]!.replace(/\/\/[^\n]*/g, "").replace(/\s+as\s+/g, "@as@").replace(/\s+/g, "");
     const bySource = new Map<string, string[]>();
+    const aliasesBySource = new Map<string, Record<string, string>>();
     for (const leaf of expand(body)) {
       const alias = /^(.*)@as@(\w+)$/.exec(leaf);
       const path = (alias ? alias[1]! : leaf).replace(/::$/, "");
@@ -36,9 +37,15 @@ export function extractRustImports(lines: string[]): ImportInfo[] {
       const list = bySource.get(source) ?? bySource.set(source, []).get(source)!;
       if (name === "self") continue;
       if (cut >= 0 && !list.includes(name)) list.push(name);
+      // `Car as Motor`: the file names the module's `Car` as `Motor`.
+      const original = path.slice(cut + 2);
+      if (alias && cut >= 0 && name !== "_" && name !== original) {
+        (aliasesBySource.get(source) ?? aliasesBySource.set(source, {}).get(source)!)[name] = original;
+      }
     }
     for (const [source, specifiers] of bySource) {
-      out.push({ source, specifiers, isDefault: false, isNamespace: specifiers.length === 0, isType: false, line });
+      const aliases = aliasesBySource.get(source);
+      out.push({ source, specifiers, isDefault: false, isNamespace: specifiers.length === 0, isType: false, line, ...(aliases ? { aliases } : {}) });
     }
   }
   return out;

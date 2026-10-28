@@ -87,6 +87,9 @@ const FUNCTION_OPTION_KEY = /^["']?\w*Fn["']?$/;
 /** Function expressions — anonymous ones run on the enclosing function's behalf. */
 const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
 
+/** A CommonJS export member, `exports.listClubs` / `module.exports.listClubs`: the member's name. */
+const CJS_EXPORT_MEMBER = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/;
+
 /**
  * Wrappers that return (a memoized, debounced or ref-forwarding version of)
  * the function they are given: `useCallback(fn, deps)`, `memo(Component)`,
@@ -1212,7 +1215,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const left = expr.childForFieldName("left");
           const right = expr.childForFieldName("right");
           const path = left?.type === "member_expression" ? left.text.replace(/\s+/g, "") : "";
-          if (path && right && (right.type === "function_expression" || right.type === "arrow_function") &&
+          const isFunction = !!right && (right.type === "function_expression" || right.type === "arrow_function");
+          // CommonJS exports: `exports.listClubs = async (req, res) => {…}` and
+          // `module.exports.createClub = function () {…}` are the module's `listClubs` /
+          // `createClub`, which a requirer calls as `ctl.listClubs(…)`; `module.exports =
+          // function kickoff() {…}` is the module itself, named by its own name.
+          const member = moduleLevel && isFunction
+            ? CJS_EXPORT_MEMBER.exec(path)?.[1] ?? (path === "module.exports" ? right!.childForFieldName("name")?.text : undefined)
+            : undefined;
+          if (member) {
+            functions.push(this.parseJsArrowOrExpr(member, right!, true));
+            const body = right!.childForFieldName("body");
+            if (body?.type === "statement_block") this.extractJsFunctions(body, functions, false);
+          } else if (path && right && isFunction &&
             !/^(?:module\.)?exports\b|^this\./.test(path) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(path)) {
             const parts = path.split(".");
             const proto = parts.lastIndexOf("prototype");

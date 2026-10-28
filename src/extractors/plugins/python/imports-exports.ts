@@ -96,6 +96,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     const moduleRow = moduleNode?.startPosition.row ?? -1;
     const moduleCol = moduleNode?.startPosition.column ?? -1;
     const specifiers: string[] = [];
+    const aliases: Record<string, string> = {};
     let isNamespace = false;
     let pastImportKeyword = false;
 
@@ -130,7 +131,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
           if (spec.type === "dotted_name" || spec.type === "identifier") {
             specifiers.push(spec.text);
           } else if (spec.type === "aliased_import") {
-            pushAliased(spec, specifiers);
+            pushAliased(spec, specifiers, aliases);
           }
         }
         continue;
@@ -140,7 +141,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       if (part.type === "dotted_name" || part.type === "identifier") {
         specifiers.push(part.text);
       } else if (part.type === "aliased_import") {
-        pushAliased(part, specifiers);
+        pushAliased(part, specifiers, aliases);
       }
     }
 
@@ -151,6 +152,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       isNamespace,
       isType,
       line: node.startPosition.row + 1,
+      ...(Object.keys(aliases).length > 0 ? { aliases } : {}),
     });
   }
 
@@ -260,13 +262,17 @@ function reExportsOf(stmt: Node, exports: ExportInfo[], packageDirs: ReadonlySet
 /**
  * `bar as b`: the local name first (what call classification looks up), then
  * the imported name when it differs — `from pkg import sub as s` loads
- * `pkg/sub.py`, which only the original name can find.
+ * `pkg/sub.py`, which only the original name can find — and `b` → `bar` in
+ * the import's alias map, so a call of `b` is the module's `bar`.
  */
-function pushAliased(node: Node, specifiers: string[]): void {
+function pushAliased(node: Node, specifiers: string[], aliases: Record<string, string>): void {
   const name = node.childForFieldName("name")?.text;
   const alias = node.childForFieldName("alias")?.text;
   specifiers.push(alias ?? name ?? node.text);
-  if (alias && name && alias !== name) specifiers.push(name);
+  if (alias && name && alias !== name) {
+    specifiers.push(name);
+    aliases[alias] = name;
+  }
 }
 
 /**

@@ -25,4 +25,17 @@ pub(crate) use super::helpers::{self, fmt};
       "11 super::helpers {fmt}",
     ]);
   });
+
+  it("keeps which declared name an aliased use binds", () => {
+    const imports = extractRustImports(`use crate::garage::car::{Car as Motor, Wheel};
+use crate::fleet::Van as _;
+use std::collections::HashMap as Map;
+`.split("\n"));
+    expect(imports.map((i) => [i.source, i.specifiers, i.aliases])).toEqual([
+      ["crate::garage::car", ["Motor", "Wheel"], { Motor: "Car" }],
+      // An anonymous import (a trait brought into scope) binds no name.
+      ["crate::fleet", ["_"], undefined],
+      ["std::collections", ["Map"], { Map: "HashMap" }],
+    ]);
+  });
 });

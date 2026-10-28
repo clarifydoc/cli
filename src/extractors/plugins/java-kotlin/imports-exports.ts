@@ -78,8 +78,14 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     // Kotlin import_header children: "import" keyword, identifier/dot_qualified_expression
     let importPath = "";
     let isWildcard = false;
+    // `import garage.Mechanic as Fixer`: the file calls it `Fixer`.
+    let alias: string | undefined;
 
     for (const child of node.children) {
+      if (child.type === "import_alias") {
+        alias = child.namedChildren.find((c) => c.type === "type_identifier" || c.type === "simple_identifier")?.text;
+        continue;
+      }
 
       // The import path is a dot_qualified_expression or identifier
       if (
@@ -107,15 +113,17 @@ export class JavaKotlinImportExportExtractor extends ImportExportExtractor {
     }
 
     const parts = importPath.split(".");
-    const lastPart = parts[parts.length - 1];
+    const lastPart = parts[parts.length - 1]!;
+    const aliased = !isWildcard && alias && alias !== lastPart ? alias : undefined;
 
     return {
       source: importPath,
-      specifiers: isWildcard ? [] : [lastPart],
+      specifiers: isWildcard ? [] : [aliased ?? lastPart],
       isDefault: false,
       isNamespace: isWildcard,
       isType: false,
       line: node.startPosition.row + 1,
+      ...(aliased ? { aliases: { [aliased]: lastPart } } : {}),
     };
   }
 

@@ -85,8 +85,14 @@ export class PhpImportExportExtractor extends ImportExportExtractor {
     // (`use App\{Models\User, function helpers\fmt}` mixes them).
     const own = clause.children.find((c) => c.type === "function" || c.type === "const")?.type as "function" | "const" | undefined;
     if (own) useType = own;
+    // tree-sitter-php ≥0.23 writes the alias as a bare `name` after `as` (field `alias`).
+    let afterAs = false;
     for (const c of clause.children) {
-      if (
+      if (c.type === "as") {
+        afterAs = true;
+      } else if (afterAs && c.type === "name") {
+        alias = c.text;
+      } else if (
         !pathText &&
         (c.type === "qualified_name" ||
           c.type === "namespace_name" ||
@@ -103,7 +109,8 @@ export class PhpImportExportExtractor extends ImportExportExtractor {
     const fullPath = prefix ? `${prefix}\\${pathText}` : pathText;
     const cleanPath = fullPath.replace(/^\\/, "");
     const segments = cleanPath.split("\\");
-    const leaf = alias ?? segments[segments.length - 1]!;
+    const declared = segments[segments.length - 1]!;
+    const leaf = alias ?? declared;
 
     imports.push({
       source: cleanPath,
@@ -112,6 +119,8 @@ export class PhpImportExportExtractor extends ImportExportExtractor {
       isNamespace: false,
       isType: useType === null,
       line,
+      // `use App\Models\Player as Footballer`: the file's `Footballer` is the namespace's `Player`.
+      ...(leaf !== declared ? { aliases: { [leaf]: declared } } : {}),
     });
   }
 

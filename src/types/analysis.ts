@@ -700,9 +700,14 @@ export interface ImportInfo {
    */
   dynamic?: true;
   /**
-   * A named import bound under another local name (`import { addPlayer as signPlayer }`):
-   * local → exported. `specifiers` lists the local name only; the module defines
-   * the exported one.
+   * A named import bound under another local name: local → the name the module
+   * declares (`import { addPlayer as signPlayer }`, `const { getClub: fetchClub } =
+   * require()`, Python `from m import f as g`, PHP `use App\Models\Player as
+   * Footballer`, Kotlin `import a.Mechanic as Fixer`, Scala `import m.{Club => Team}`,
+   * Rust `use a::Car as Motor`). `specifiers` lists the local name (Python also
+   * the declared one, which finds `from pkg import mod as m`'s module file); the
+   * symbol linker reads every use of the local name — calls, constructions, base
+   * classes, declared types — as the module's own.
    */
   aliases?: Record<string, string>;
   /**

@@ -1150,10 +1150,12 @@ function resolveEloquentEntity(
   const { cls, fn } = enclosing(a, ds.line);
   const enclosingModel = cls && models.has(cls.name) ? cls.name : null;
 
+  // `use App\Models\Player as Footballer;`: the file's `Footballer` is the model `Player`.
+  const unaliased = (short: string): string => (a.imports ?? []).find((i) => i.aliases?.[short])?.aliases?.[short] ?? short;
   const staticRoot = /^([A-Za-z_\\]\w*(?:\\\w+)*)::/.exec(name)?.[1] ?? null;
   if (staticRoot) {
     if (RELATIVE_SCOPE_RE.test(staticRoot)) return enclosingModel;
-    const short = staticRoot.split("\\").pop()!;
+    const short = staticRoot.includes("\\") ? staticRoot.split("\\").pop()! : unaliased(staticRoot);
     return models.has(short) ? short : null;
   }
 
@@ -1169,7 +1171,7 @@ function resolveEloquentEntity(
         ?? c.methods.find((m) => m.name === "__construct")?.params.find((p) => p.name === prop)?.type;
       if (!declared) continue;
       const type = shortType(declared);
-      if (type && models.has(type)) return type;
+      if (type && models.has(unaliased(type))) return unaliased(type);
       break;
     }
   }
@@ -1180,7 +1182,7 @@ function resolveEloquentEntity(
     const declared = fn.params.find((p) => p.name === variable)?.type
       ?? fn.localTypes?.find((l) => l.name === variable)?.type;
     const type = shortType(declared);
-    if (type && models.has(type)) return type;
+    if (type && models.has(unaliased(type))) return unaliased(type);
   }
 
   // Inside a model: its own query builder / instance is the model's table.

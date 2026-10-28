@@ -147,3 +147,21 @@ describe("JS/TS nested require()", () => {
     ]);
   });
 });
+
+describe("CommonJS module shapes", () => {
+  it("records `module.exports = <named function | name>` as the module's default", async () => {
+    expect((await exportsOf(`module.exports = function kickoff(team) { return team; };`, "javascript")).map(brief)).toEqual(["default default kickoff"]);
+    expect((await exportsOf(`function whistle() {}\nmodule.exports = whistle;`, "javascript")).map(brief)).toEqual(["default default whistle"]);
+    // An object of members, or an anonymous function, names no single definition.
+    expect(await exportsOf(`module.exports = { whistle };\nexports.x = 1;`, "javascript")).toEqual([]);
+    expect(await exportsOf(`module.exports = function () {};`, "javascript")).toEqual([]);
+  });
+
+  it("keeps which member a renamed destructured require binds", async () => {
+    const src = `const { getClub: fetchClub, listClubs } = require("./api");`;
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    const [imp] = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imp!.specifiers).toEqual(["fetchClub", "listClubs"]);
+    expect(imp!.aliases).toEqual({ fetchClub: "getClub" });
+  });
+});

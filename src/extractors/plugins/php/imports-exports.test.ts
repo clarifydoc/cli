@@ -88,3 +88,21 @@ require APPPATH . $dir . '/x.php';
     ]);
   });
 });
+
+describe("PHP use aliases", () => {
+  it("binds the alias, flat and grouped, and maps it to the declared name", async () => {
+    const src = `<?php
+use App\\Models\\Player as Footballer;
+use App\\Http\\{ClubController as Clubs, StandingsController};
+use App\\Models\\Club;
+`;
+    const tree = await parseSource(src, "php" as never, "a.php");
+    const out = new PhpImportExportExtractor().extractImports(tree, src).map((i) => [i.source, i.specifiers, i.aliases]);
+    expect(out).toEqual([
+      ["App\\Models\\Player", ["Footballer"], { Footballer: "Player" }],
+      ["App\\Http\\ClubController", ["Clubs"], { Clubs: "ClubController" }],
+      ["App\\Http\\StandingsController", ["StandingsController"], undefined],
+      ["App\\Models\\Club", ["Club"], undefined],
+    ]);
+  });
+});
