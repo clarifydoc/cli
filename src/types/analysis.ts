@@ -721,6 +721,17 @@ export interface ImportInfo {
    * or when the file holds markup (a Vue / Svelte template) the check cannot read.
    */
   unused?: string[];
+  /**
+   * The import puts members of a module or type into the file's scope by
+   * their bare names (Java `import static a.Scores.tally` / `a.Scores.*`,
+   * Kotlin `import a.Config.limit`, Go `import . "x/util"`, Elixir `import
+   * League.Rules`, an unprefixed Dart `import`). `module` names that module or
+   * type as written — a file path, a package or a declared name; `names` the
+   * members it binds, absent for every one it declares (`only:`, `show`).
+   * `shared`: the module is part of this file's own scope, and this file of
+   * its (a Dart `part`) — each sees the other's declarations and imports.
+   */
+  inScope?: { module: string; names?: string[]; shared?: true };
 }
 
 /**

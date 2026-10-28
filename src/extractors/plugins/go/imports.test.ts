@@ -31,6 +31,11 @@ var contentTypes = []string{
     ]);
   });
 
+  it("puts a dot import's names in scope", () => {
+    const imports = extractGoImports(["import (", '\t. "league.dev/modules/whistle"', '\t"fmt"', ")"]);
+    expect(imports.map((i) => i.inScope)).toEqual([{ module: "league.dev/modules/whistle" }, undefined]);
+  });
+
   it("reads a one-line import block", () => {
     expect(extractGoImports([`import ("os")`]).map((i) => i.source)).toEqual(["os"]);
   });

@@ -1301,15 +1301,17 @@ interface LeafCatalogEntry {
   file: string;
   projectId: string;
   def: SymbolDef;
-  /** How many files define this name (1 = unambiguous). */
+  /** How many definitions of this name there are, in every file (1 = unambiguous). */
   count: number;
 }
 
 /**
- * Global unqualified-name catalog: symbolName → the single file defining it.
+ * Global unqualified-name catalog: symbolName → the single definition of it.
  * Backs the last-resort heuristic for untracked receivers (`processor.run()`):
- * only names defined in exactly one file are linkable, which is what keeps the
- * heuristic safe on large projects — common names are never unique.
+ * only names defined exactly once are linkable, which is what keeps the
+ * heuristic safe on large projects — common names are never unique. A file's
+ * index keys a bare name once, so its definitions are counted from the
+ * qualified keys: `Coach.Drill` and `Player.Drill` in one file are two.
  */
 function buildLeafCatalog(
   symbolIndex: Map<string, Map<string, SymbolDef>>,
@@ -1317,13 +1319,23 @@ function buildLeafCatalog(
 ): Map<string, LeafCatalogEntry> {
   const map = new Map<string, LeafCatalogEntry>();
   for (const [filePath, syms] of symbolIndex) {
+    // How many classes of this file declare each bare name as a method.
+    const methods = new Map<string, number>();
+    for (const [name, def] of syms) {
+      const dot = name.lastIndexOf(".");
+      if (dot <= 0 || def.reexport) continue;
+      const leaf = name.slice(dot + 1);
+      methods.set(leaf, (methods.get(leaf) ?? 0) + 1);
+    }
     for (const [name, def] of syms) {
       if (name.includes(".")) continue;
+      // A free function (or class) of the name is one more.
+      const count = Math.max(1, (methods.get(name) ?? 0) + (def.name.includes(".") ? 0 : 1));
       const existing = map.get(name);
       if (existing) {
-        existing.count++; // Map keys are unique per file, so this is a new file
+        existing.count += count;
       } else {
-        map.set(name, { file: filePath, projectId: projectOf.get(filePath) ?? "root", def, count: 1 });
+        map.set(name, { file: filePath, projectId: projectOf.get(filePath) ?? "root", def, count });
       }
     }
   }
@@ -1619,6 +1631,8 @@ interface LinkContext {
   filesByName?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
+  /** File → the files whose scope it is part of (`ImportInfo.inScope.shared`), built on first use. */
+  scopeLibraries?: Map<string, string[]>;
   /** Analyzed files by lowercased stem, built on first use (`declarationExtensions`). */
   filesByStem?: Map<string, string[]>;
   /** Per file, how its callables nest (null: none nests in another), built on first use. */
@@ -3468,6 +3482,14 @@ function resolveCallToDefinition(
     : undefined;
   if (nested) return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
 
+  // A bare name an import binds as a member of a module or type (`import static
+  // a.Scores.tally`, Kotlin `import a.Config.limit`): that member, before the
+  // import's own path is read as a file.
+  if (!isQualified && !reference && call.kind === "cross-file") {
+    const hit = inScopeMember(ctx, analysis, call.name);
+    if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, hit.named ? "EXTRACTED" : "INFERRED", "import-file");
+  }
+
   if (call.kind === "cross-file" && call.target) {
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`,
     // and `importedFile`: a Node built-in is never the project's `assert.js`).
@@ -3506,7 +3528,8 @@ function resolveCallToDefinition(
       // `use function App\Support\money;` — the import names a function, not a file.
       const fn = !isQualified && call.target.includes("\\") ? namespacedFunction(ctx, analysis, [call.target.replace(/^\\/, "")]) : null;
       if (fn) return mkLink(fn.file, fn.def.name, fn.def.line, "EXTRACTED", "direct");
-      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType()
+      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink)
+        ?? packagedTypeMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType()
         ?? (parts.length === 2 ? aliasedClassMember(ctx, analysis, parts[0]!, leafName, mkLink) : null);
     }
   } else if (call.kind === "internal") {
@@ -3976,6 +3999,15 @@ function resolveCallToDefinition(
     if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, "EXTRACTED", "direct");
   }
 
+  // ── Strategy 6d: a bare call an import puts in scope by name ──
+  // Go `import . "x/util"` then `Helper(1)`, Elixir `import League.Rules` then
+  // `offside(x)`, a Dart import or `part` (`ImportInfo.inScope`). After the
+  // caller's own package: Go's unexported namesake there is the one it means.
+  if (!def && !isQualified && !reference && call.kind === "internal") {
+    const hit = inScopeMember(ctx, analysis, call.name);
+    if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, hit.named ? "EXTRACTED" : "INFERRED", "import-file");
+  }
+
   // ── Strategy 7: Unique global definition (heuristic) ──
   // Qualified internal call whose receiver type we can't track
   // (`parser.tokenize()`): if exactly one file in the whole project defines the
@@ -4434,6 +4466,140 @@ function declaredModuleMember(
   if (pool.length !== 1) return null;
   const hit = findMethodInClass(ctx, module, pool[0]!, receiverSegment(parts[1]!));
   return hit ? mkLink(hit.file, hit.symbol, hit.line, "EXTRACTED", "import-file") : null;
+}
+
+/**
+ * The files declaring the type a package-qualified name names (`a.Clock`):
+ * its last segment, declared in a directory whose path ends with the
+ * package's (`…/a/`), whatever the file is called — a Kotlin `object Clock`
+ * may live in `Timing.kt`. The caller's own sub-project first.
+ */
+function packagedTypeFiles(ctx: LinkContext, analysis: FileAnalysis, qualified: string): { typeName: string; files: string[] } | null {
+  const dot = qualified.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const typeName = qualified.slice(dot + 1);
+  const pkgDir = `/${qualified.slice(0, dot).replace(/\./g, "/")}/`;
+  const files = (ctx.classFiles.get(typeName) ?? []).filter((f) =>
+    `/${f.slice(0, f.lastIndexOf("/") + 1)}`.endsWith(pkgDir) &&
+    sameTypeSpace(analysis.filePath, analysis.language, f, ctx.languageOf.get(f) ?? ""),
+  );
+  const own = files.filter((f) => ctx.projectOf.get(f) === analysis.projectId);
+  return { typeName, files: own.length > 0 ? own : files };
+}
+
+/** `Clock.tick()` under `import a.Clock`, where no file is named after `Clock`: the one `Clock` package `a` declares. */
+function packagedTypeMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  target: string,
+  parts: string[],
+  mkLink: MkLink,
+): SymbolLink | null {
+  if (parts.length !== 2 || !target.endsWith(`.${parts[0]}`)) return null;
+  const found = packagedTypeFiles(ctx, analysis, target);
+  if (found?.files.length !== 1) return null;
+  const hit = findMethodInClass(ctx, found.typeName, found.files[0]!, receiverSegment(parts[1]!));
+  return hit ? mkLink(hit.file, hit.symbol, hit.line, "EXTRACTED", "import-file") : null;
+}
+
+/**
+ * The ONE definition a bare `name` reaches through the imports that put a
+ * module's members in scope (`ImportInfo.inScope`) — the file's own, and
+ * those of every file whose scope it is part of (a Dart library and its other
+ * `part`s), with that library's own declarations. `named` when the import
+ * lists the name (`import static a.Scores.tally`, `only: [offside: 1]`).
+ */
+function inScopeMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  name: string,
+): { file: string; def: SymbolDef; named: boolean } | null {
+  const scopes: Array<{ scope: NonNullable<ImportInfo["inScope"]>; from: string }> = [];
+  for (const imp of analysis.imports) if (imp.inScope) scopes.push({ scope: imp.inScope, from: analysis.filePath });
+  const hits = new Map<string, { file: string; def: SymbolDef; named: boolean }>();
+  for (const lib of scopeLibraries(ctx, analysis.filePath)) {
+    const d = symbolIn(ctx, lib, name);
+    if (d && d.name === name) hits.set(`${lib}\0${d.name}`, { file: lib, def: d, named: false });
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    for (const imp of ctx.analysisByFile.get(lib)?.imports ?? []) if (imp.inScope) scopes.push({ scope: imp.inScope, from: lib });
+  }
+  if (scopes.length === 0) return null;
+  for (const { scope, from } of scopes) {
+    if (scope.names && !scope.names.includes(name)) continue;
+    for (const hit of moduleMembers(ctx, analysis, scope.module, from, name)) {
+      if (hit.file !== analysis.filePath) hits.set(`${hit.file}\0${hit.def.name}`, { ...hit, named: !!scope.names });
+    }
+  }
+  return hits.size === 1 ? [...hits.values()][0]! : null;
+}
+
+/** The files whose `inScope.shared` import names `file` (a Dart library of its `part`), built on first use. */
+function scopeLibraries(ctx: LinkContext, file: string): string[] {
+  if (!ctx.scopeLibraries) {
+    ctx.scopeLibraries = new Map();
+    for (const a of ctx.analyses) {
+      for (const imp of a.imports) {
+        if (!imp.inScope?.shared) continue;
+        const part = importPath(ctx, imp.inScope.module, a.filePath);
+        if (part && part !== a.filePath) (ctx.scopeLibraries.get(part) ?? ctx.scopeLibraries.set(part, []).get(part)!).push(a.filePath);
+      }
+    }
+  }
+  return ctx.scopeLibraries.get(file) ?? [];
+}
+
+/**
+ * The definitions of `name` among the members of `module`, as an import in
+ * `from` names it: the file it names (a top-level function, or a member of
+ * the type the module is — `a.Scores` → `Scores.tally`), else the type it
+ * names by its declared name, else the package directory it names (a Go
+ * dot-import, a Kotlin package's top-level function).
+ */
+function moduleMembers(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  module: string,
+  from: string,
+  name: string,
+): Array<{ file: string; def: SymbolDef }> {
+  const typeName = module.split(/[./\\:]+/).pop() ?? module;
+  const memberOf = (file: string, types: string[]): SymbolDef | undefined => {
+    for (const t of types) {
+      const d = symbolIn(ctx, file, `${t}.${name}`);
+      if (d) return d;
+    }
+    const d = symbolIn(ctx, file, name);
+    return d && d.name === name ? d : undefined;
+  };
+  const inDirectory = (): Array<{ file: string; def: SymbolDef }> => {
+    const dir = ctx.importDirectory(module, from);
+    if (!dir) return [];
+    ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
+    const family = extensionFamily(from);
+    const out: Array<{ file: string; def: SymbolDef }> = [];
+    for (const file of ctx.directoryFiles.get(`${dir}/`) ?? []) {
+      if (extensionFamily(file) !== family || isTestFile(file, (ctx.languageOf.get(file) ?? analysis.language) as Language)) continue;
+      const d = symbolIn(ctx, file, name);
+      if (d && d.name === name) out.push({ file, def: d });
+    }
+    return out;
+  };
+  // Where an import names a directory (Go), the directory is what it loads.
+  if (importsNameDirectories(analysis.language)) return inDirectory();
+  const file = importPath(ctx, module, from);
+  if (file) {
+    const d = memberOf(file, [module, typeName]);
+    if (d) return [{ file, def: d }];
+  }
+  // A module declared under that name (Elixir `League.Rules`), or a type of the package the name gives.
+  const declared = (ctx.classFiles.get(module) ?? []).filter((f) => sameTypeSpace(from, analysis.language, f, ctx.languageOf.get(f) ?? ""));
+  const typeFiles = declared.length > 0 ? { typeName: module, files: declared } : packagedTypeFiles(ctx, analysis, module);
+  if (typeFiles && typeFiles.files.length === 1) {
+    const hit = findMethodInClass(ctx, typeFiles.typeName, typeFiles.files[0]!, name);
+    const d = hit ? symbolIn(ctx, hit.file, hit.symbol) : undefined;
+    if (hit && d) return [{ file: hit.file, def: d }];
+  }
+  return inDirectory();
 }
 
 /**

@@ -13,13 +13,18 @@ const BLOCK_OPEN = /^\s*import\s*\(/;
  *
  * Specifiers name the package as the file refers to it — the alias when one
  * is given (`packages_router.CommonRoutes()`), else the path's last segment;
- * a blank import binds nothing.
+ * a blank import binds nothing, and a dot import puts the package's names
+ * in scope (`inScope`).
  */
 export function extractGoImports(lines: string[]): ImportInfo[] {
   const out: ImportInfo[] = [];
   const push = (name: string | undefined, source: string, line: number) => {
     const specifiers = name === "_" ? [] : name && name !== "." ? [name] : [source.slice(source.lastIndexOf("/") + 1)];
-    out.push({ source, specifiers, isDefault: false, isNamespace: false, isType: false, line });
+    out.push({
+      source, specifiers, isDefault: false, isNamespace: false, isType: false, line,
+      // A dot import's exported names are called bare (`Helper(1)`).
+      ...(name === "." ? { inScope: { module: source } } : {}),
+    });
   };
   let inBlock = false;
   for (let i = 0; i < lines.length; i++) {
