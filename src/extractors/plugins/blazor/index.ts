@@ -1,4 +1,5 @@
 import type {
+  ClassInfo,
   FunctionInfo,
   RouteInfo,
   RouteParamInfo,
@@ -28,7 +29,9 @@ import { extractCallsFromBody } from "../shared/regex-base.js";
  *
  * Components, methods, and `@code` C# are intentionally NOT extracted here — the
  * code-behind `.razor.cs` owns them, and re-declaring the partial class would
- * collide. `@code` blocks and `@* … *@` comments are blanked before markup
+ * collide. The one exception is a component whose markup states its type
+ * (`@inherits ClubPageBase`, `@implements IDisposable`): that is declared as a
+ * class named after the file, so a handler the base class declares links. `@code` blocks and `@* … *@` comments are blanked before markup
  * scanning so C# generics (`Dictionary<String, …>`) inside them never read as
  * component tags.
  */
@@ -454,6 +457,51 @@ function extractBlazorInteractiveElements(lines: string[]): InteractiveElementIn
   return out;
 }
 
+// ─── The component's own type (`@inherits` / `@implements`) ─────────────────
+
+const INHERITS_RE = /^\s*@inherits\s+([A-Za-z_][\w.]*(?:<[^>\n]*>)?)/;
+const IMPLEMENTS_RE = /^\s*@implements\s+([A-Za-z_][\w.]*(?:<[^>\n]*>)?)/;
+
+/**
+ * The component class `Foo.razor` compiles to, when the markup states its base
+ * (`@inherits ClubPageBase` — the `XBase : ComponentBase` code-behind pattern)
+ * or an interface (`@implements IDisposable`, repeatable). Without either the
+ * markup says nothing a `.razor.cs` partial does not, so no class is declared.
+ */
+export function extractBlazorComponentClass(lines: string[], filePath: string): ClassInfo | null {
+  let base: string | null = null;
+  const interfaces: string[] = [];
+  let line = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i] ?? "";
+    const inh = INHERITS_RE.exec(text);
+    if (inh) {
+      base ??= inh[1]!.trim();
+      line ||= i + 1;
+      continue;
+    }
+    const imp = IMPLEMENTS_RE.exec(text);
+    if (imp) {
+      interfaces.push(imp[1]!.trim());
+      line ||= i + 1;
+    }
+  }
+  if (!base && interfaces.length === 0) return null;
+  const name = filePath.split("/").pop()!.replace(/\.razor$/i, "");
+  if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+  return {
+    name,
+    extends: base,
+    implements: interfaces,
+    decorators: [],
+    methods: [],
+    properties: [],
+    isExported: true,
+    line,
+    endLine: lines.length,
+  };
+}
+
 // ─── Imports (`@using`) ─────────────────────────────────────────────────────
 
 export const blazorSpec: RegexLangSpec = {
@@ -478,6 +526,10 @@ export const blazorSpec: RegexLangSpec = {
   extractRoutes: (lines) => extractBlazorRoutes(lines),
   extractSubComponents: (lines) => extractBlazorSubComponents(lines),
   extractInteractiveElements: (lines) => extractBlazorInteractiveElements(lines),
+  postProcessClasses: (lines, classes, filePath) => {
+    const component = filePath ? extractBlazorComponentClass(lines, filePath) : null;
+    return component ? [...classes, component] : classes;
+  },
   // The component's own `@code` methods (see `extractCodeBlockFunctions`).
   postProcessFunctions: (lines, fns) => [...fns, ...extractCodeBlockFunctions(lines, ["//"])],
 };

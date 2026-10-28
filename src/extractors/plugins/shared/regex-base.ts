@@ -229,7 +229,7 @@ export interface RegexLangSpec {
   postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
   /** Post-process extracted classes (e.g. C++ tagging QML_NAMED_ELEMENT registrations
    *  as decorators so the QML→C++ bridge resolver can join on them). */
-  postProcessClasses?: (lines: string[], classes: ClassInfo[]) => ClassInfo[];
+  postProcessClasses?: (lines: string[], classes: ClassInfo[], filePath?: string) => ClassInfo[];
   /** Named string constants (`#define CUE_TABLE "cues"`) — feeds the project-level
    *  dataSource target/entity macro resolution. */
   extractStringConstants?: (lines: string[]) => Record<string, string>;
