@@ -77,6 +77,8 @@ const GENERATED_HEADER_RES: readonly RegExp[] = [
  */
 const GENERATOR_BOILERPLATE_RE =
   /The following schema fragment specifies the expected content contained within this class|This object contains factory methods for each\s*(?:\*\s*)?Java content interface and Java element interface/;
+/** A tree-sitter `parser.c` from before the generator signed it: the runtime header, then the table sizes it defines. */
+const TREE_SITTER_PARSER_RE = /^#include\s+["<]tree_sitter\/parser\.h[">][\s\S]*?^#define\s+LANGUAGE_VERSION\s+\d+\s*\n#define\s+STATE_COUNT\s+\d+/m;
 /** A head line that both says the file is generated and asks not to edit it. */
 const GENERATED_NOTICE_RE = /\b(?:auto-?generated|automatically generated|generated (?:by|from|with))\b[^\n]*?\b(?:do not (?:edit|modify)|don'?t (?:edit|modify))\b/i;
 
@@ -89,7 +91,7 @@ const GENERATED_NOTICE_RE = /\b(?:auto-?generated|automatically generated|genera
  */
 export function isGeneratedSource(sourceText: string): boolean {
   const head = sourceText.slice(0, 4096);
-  if (GENERATOR_BOILERPLATE_RE.test(head)) return true;
+  if (GENERATOR_BOILERPLATE_RE.test(head) || TREE_SITTER_PARSER_RE.test(head)) return true;
   if (!/generated|Bison|\$ANTLR/i.test(head)) return false;
   return GENERATED_HEADER_RES.some((re) => re.test(head)) || GENERATED_NOTICE_RE.test(head);
 }
