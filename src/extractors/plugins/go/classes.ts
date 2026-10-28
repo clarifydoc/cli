@@ -214,6 +214,19 @@ function matchingParen(text: string, open: number): number {
 }
 
 /**
+ * The request value a binder writes into a tagged field: Echo's `param:"club"`,
+ * Gin's `uri:"club"`, Fiber's `params:"club"` (a route parameter) — and Echo's
+ * or Fiber's `query:"season"` (a query value; `-` opts out).
+ */
+function boundFromTags(tags: readonly string[]): PropertyInfo["boundFrom"] | undefined {
+  for (const t of tags) {
+    const m = /^(param|uri|params|query):"([\w-]+)/.exec(t);
+    if (m && m[2] !== "-") return { kind: m[1] === "query" ? "query-param" : "route-param", name: m[2]! };
+  }
+  return undefined;
+}
+
+/**
  * One struct member → its fields:
  *   `Name string \`json:"name"\``  → Name (tags as decorators)
  *   `a, b *PgRepo`                 → a, b
@@ -239,6 +252,8 @@ export function parseGoFields(member: string): PropertyInfo[] {
     };
     const decorators = embedded ? [...tags, "embedded"] : tags;
     if (decorators.length > 0) prop.decorators = decorators;
+    const bound = boundFromTags(tags);
+    if (bound) prop.boundFrom = bound;
     return prop;
   };
 

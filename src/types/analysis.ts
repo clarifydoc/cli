@@ -869,7 +869,7 @@ export interface CallInfo {
 
 /** One argument of a call and where its value comes from (`CallInfo.argOrigins`). */
 export interface CallArgOrigin {
-  /** Position of the argument, 0-based. */
+  /** Position of the argument, 0-based; -1 for the object the call is made on (`receiver` origins only). */
   index: number;
   origin:
     | { kind: "literal"; value: string }
@@ -897,7 +897,21 @@ export interface CallArgOrigin {
      * to the value each parent binds (`FileAnalysis.propBindings`) and to the
      * URL value a route hands it (`RouteInfo.propsFromRoute`).
      */
-    | { kind: "prop"; name: string };
+    | { kind: "prop"; name: string }
+    /**
+     * A field of the object the method is called on (`p.ID` in Go
+     * `func (p *Club) Delete(…)`), which the method does not assign: what a
+     * framework bound into that object (`PropertyInfo.boundFrom`) reaches the
+     * method through it.
+     */
+    | { kind: "receiver-field"; name: string }
+    /** A field `member` of the calling function's parameter (`c.ID` of `func load(s Session, c *Club)`), which it does not assign. */
+    | { kind: "param-field"; name: string; index: number; member: string }
+    /**
+     * The method's receiver itself (`loadClub(s, c)` in `func (c *Club) ReadOne(…)`).
+     * At `index` -1: the call is made on it (`c.load(s)`), so the callee works on the same object.
+     */
+    | { kind: "receiver" };
   /** One wrapper the value passed through (`Number`, `encodeURIComponent`, a template literal). */
   transform?: string;
   /**
@@ -951,7 +965,18 @@ export interface ParamColumn {
    * handler reads it off the request itself, `request.args.get("season")`, or
    * a framework dependency that takes no such parameter asks for one that does).
    */
-  hops: Array<{ file: string; symbol: string; line: number; arg: number }>;
+  hops: Array<{
+    file: string;
+    symbol: string;
+    line: number;
+    arg: number;
+    /**
+     * The value arrives as this field of the argument (`ID` of `&Club{ID: id}`),
+     * or — with `arg` -1 — of the object the method is called on (a field the
+     * framework bound from the route, or one its caller's object carries).
+     */
+    field?: string;
+  }>;
   /** One wrapper the value passed through on the last step (`Number`). */
   transform?: string;
   confidence: Confidence;
@@ -1096,6 +1121,13 @@ export interface PropertyInfo {
    * member's, which the file does not state.
    */
   ref?: string;
+  /**
+   * The request value a framework binder writes into the member when it binds
+   * the request into an instance (a Go field tagged `param:"club"` for Echo,
+   * `uri:"club"` for Gin; `query:"season"`): a handler that binds the route into
+   * the class hands its methods that value as this field.
+   */
+  boundFrom?: { kind: "route-param" | "query-param"; name: string };
 }
 
 export interface ClassInfo {

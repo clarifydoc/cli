@@ -1,4 +1,4 @@
-import type { CallInfo, Confidence, DataSourceInfo, FileAnalysis, FunctionInfo, ParamColumn, RouteInfo, SymbolLink } from "../types/analysis.js";
+import type { CallInfo, ClassInfo, Confidence, DataSourceInfo, FileAnalysis, FunctionInfo, ParamColumn, RouteInfo, SymbolLink } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -15,7 +15,12 @@ import { byOrdinal } from "./ordinal.js";
  * route's parameter forward over the symbol links — from the route's own
  * calls (an inline handler reading the request), or from the handler
  * function's parameter of the same name — to each statement filtering on it.
- * A call the linker did not resolve ends the walk.
+ * A handler built for a type that binds the request into an instance of it
+ * (`RouteInfo.handlerTypes`) hands the type's methods the parameter as the
+ * field the binder writes it into (`PropertyInfo.boundFrom`); the walk then
+ * carries that field — of the receiver, and of whatever parameter the object
+ * or a literal holding it is handed to. A call the linker did not resolve
+ * ends the walk.
  */
 
 const MAX_DEPTH = 6;
@@ -30,15 +35,26 @@ interface Fn {
   fn: FunctionInfo;
 }
 
-/** What the walk carries: an argument position of the function, or a request value read inline by name. */
-type Slot = { kind: "param"; index: number } | { kind: "route-param" | "query-param"; name: string };
+/**
+ * What the walk carries: an argument position of the function, a request value
+ * read inline by name, or a field of an object — the method's receiver
+ * (`of: -1`) or the parameter at `of` — that holds it.
+ */
+type Slot = { kind: "param"; index: number } | { kind: "route-param" | "query-param"; name: string } | { kind: "field"; of: number; name: string };
 
 type Origin = NonNullable<CallInfo["argOrigins"]>[number]["origin"];
 
-const matches = (o: Origin, slot: Slot): boolean =>
-  slot.kind === "param"
-    ? o.kind === "param" && o.index === slot.index
-    : (o.kind === slot.kind || o.kind === "request-param") && o.name === slot.name;
+const matches = (o: Origin, slot: Slot): boolean => {
+  if (slot.kind === "param") return o.kind === "param" && o.index === slot.index;
+  if (slot.kind === "field") return slot.of < 0 ? o.kind === "receiver-field" && o.name === slot.name : o.kind === "param-field" && o.index === slot.of && o.member === slot.name;
+  return (o.kind === slot.kind || o.kind === "request-param") && o.name === slot.name;
+};
+
+/** The whole object a field slot lives in, as an argument hands it on (`load(s, p)`, `p.load(s)`). */
+const handsObject = (o: Origin, slot: Slot): boolean =>
+  slot.kind === "field" && (slot.of < 0 ? o.kind === "receiver" : o.kind === "param" && o.index === slot.of);
+
+const slotKey = (slot: Slot): string => (slot.kind === "param" ? String(slot.index) : slot.kind === "field" ? `${slot.of}.${slot.name}` : `${slot.kind}:${slot.name}`);
 
 export function computeParamColumns(input: {
   analyses: readonly FileAnalysis[];
@@ -106,9 +122,33 @@ export function computeParamColumns(input: {
   const linksOfCall = (file: string, symbol: string, call: CallInfo, byName: boolean): SymbolLink[] =>
     (linksFrom.get(`${file}::${symbol}`) ?? []).filter((l) => l.sourceLine === call.line && leaf(l.callName) === leaf(call.name) && (byName || !l.strategy?.startsWith("dispatch:")));
 
+  /**
+   * The fields of class `name` a binder writes the request value `slot` into. Of several classes of
+   * that name, the declaration in the method's own file, else in its directory, else the only one.
+   */
+  let boundIn: Map<string, Array<{ file: string; fields: NonNullable<ClassInfo["properties"]> }>> | undefined;
+  const boundFields = (name: string, file: string, slot: Slot): string[] => {
+    if (!boundIn) {
+      boundIn = new Map();
+      for (const a of analyses) {
+        for (const c of a.classes) {
+          const fields = (c.properties ?? []).filter((x) => x.boundFrom);
+          if (fields.length > 0) (boundIn.get(c.name) ?? boundIn.set(c.name, []).get(c.name)!).push({ file: a.filePath, fields });
+        }
+      }
+    }
+    const all = boundIn.get(name) ?? [];
+    const dir = (f: string) => f.slice(0, f.lastIndexOf("/") + 1);
+    const here = all.filter((c) => c.file === file);
+    const near = here.length > 0 ? here : all.filter((c) => dir(c.file) === dir(file));
+    const decl = near.length > 0 ? near : all.length === 1 ? all : [];
+    if (slot.kind !== "route-param" && slot.kind !== "query-param") return [];
+    return [...new Set(decl.flatMap((c) => c.fields.filter((x) => x.boundFrom!.kind === slot.kind && x.boundFrom!.name === slot.name).map((x) => x.name)))];
+  };
+
   type Row = Omit<ParamColumn, "route">;
   const walk = (file: string, symbol: string, at: number | null, calls: readonly CallInfo[], slot: Slot, hops: ParamColumn["hops"], depth: number, confidence: Confidence, seen: Set<string>, out: Row[]): void => {
-    const key = `${file}::${symbol}@${at}#${slot.kind === "param" ? slot.index : `${slot.kind}:${slot.name}`}`;
+    const key = `${file}::${symbol}@${at}#${slotKey(slot)}`;
     if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_ROUTE) return;
     seen.add(key);
     for (const d of statementsOf.get(`${file}::${symbol}@${at}`) ?? []) {
@@ -124,19 +164,36 @@ export function computeParamColumns(input: {
     }
     for (const call of calls) {
       for (const arg of call.argOrigins ?? []) {
-        // A property of an object argument arrives as a field of the callee's parameter: not followed.
-        if (arg.field !== undefined || !matches(arg.origin, slot)) continue;
+        // What the callee receives the value as: its parameter, a field of its parameter (a
+        // property of an object argument, or the object itself handed on), or — for a call made
+        // on the object (`index` -1) — a field of its own receiver.
+        const whole = handsObject(arg.origin, slot);
+        if (!whole && !matches(arg.origin, slot)) continue;
+        // A call made on some other object, or the object nested in another one's literal.
+        if ((arg.index < 0 && !whole) || (whole && arg.field !== undefined)) continue;
+        const field = whole ? (slot as Extract<Slot, { kind: "field" }>).name : arg.field;
+        // A property of an object argument is followed only where the callee can read it by name.
+        if (field !== undefined && field.includes(".")) continue;
         for (const link of linksOfCall(file, symbol, call, arg.param !== undefined)) {
           const target = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
-          // Handed by name: the callee's parameter of that name, wherever it sits. An extension
-          // method's receiver parameter is written before the dot (`clubs.ForLeague(id)`).
-          const shift = target?.fn.params[0]?.isReceiver && call.name.includes(".") ? 1 : 0;
-          const index = !target ? -1 : arg.param !== undefined ? target.fn.params.findIndex((p) => p.name === arg.param) : arg.index + shift;
-          if (!target || index < 0 || index >= target.fn.params.length) continue;
-          // Of overloads sharing a name the linker may have picked the wrong one: followed only when the declared types agree.
-          if (slot.kind === "param" && overloaded(target) && !sameType(fnNamed(file, symbol, at ?? undefined)?.fn.params[slot.index]?.type, target.fn.params[index]!.type)) continue;
-          const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: index };
-          walk(target.file, target.symbol, target.fn.line, target.fn.calls, { kind: "param", index }, [...hops, hop], depth + 1, weakest(confidence, link.confidence ?? "INFERRED"), seen, out);
+          if (!target) continue;
+          let next: Slot;
+          let index: number;
+          if (arg.index < 0) {
+            index = -1;
+            next = { kind: "field", of: -1, name: field! };
+          } else {
+            // Handed by name: the callee's parameter of that name, wherever it sits. An extension
+            // method's receiver parameter is written before the dot (`clubs.ForLeague(id)`).
+            const shift = target.fn.params[0]?.isReceiver && call.name.includes(".") ? 1 : 0;
+            index = arg.param !== undefined ? target.fn.params.findIndex((p) => p.name === arg.param) : arg.index + shift;
+            if (index < 0 || index >= target.fn.params.length) continue;
+            // Of overloads sharing a name the linker may have picked the wrong one: followed only when the declared types agree.
+            if (slot.kind === "param" && overloaded(target) && !sameType(fnNamed(file, symbol, at ?? undefined)?.fn.params[slot.index]?.type, target.fn.params[index]!.type)) continue;
+            next = field !== undefined ? { kind: "field", of: index, name: field } : { kind: "param", index };
+          }
+          const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: index, ...(field !== undefined ? { field } : {}) };
+          walk(target.file, target.symbol, target.fn.line, target.fn.calls, next, [...hops, hop], depth + 1, weakest(confidence, link.confidence ?? "INFERRED"), seen, out);
         }
       }
     }
@@ -190,6 +247,22 @@ export function computeParamColumns(input: {
           // The handler reads it off the request itself (`req.params.slug`, `request.args.get("season")`).
           const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: -1 };
           walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, requestSlot, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+        }
+      }
+      // A handler built for a type binds the request into an instance of it (`RouteInfo.handlerTypes`: a Go
+      // `WebHandler{EmptyStruct: … &models.Club{}}` serving `h.ReadOneWeb`, which `c.Bind`s it): each method
+      // of that type the route runs reads the parameter as the field the binder writes it into
+      // (`PropertyInfo.boundFrom`) — `p.ID` in `func (p *Club) ReadOne(…)`.
+      if (r.handlerTypes?.length) {
+        const types = new Set(r.handlerTypes.map((t) => leaf(t.replace(/[^\w.]/g, ""))));
+        for (const link of linksFrom.get(`${r.filePath}::${routeSymbol}`) ?? []) {
+          const callee = fnNamed(link.targetFile, link.targetSymbol, link.targetLine);
+          const dot = callee ? callee.symbol.lastIndexOf(".") : -1;
+          if (!callee || dot < 0 || !types.has(callee.symbol.slice(0, dot))) continue;
+          for (const field of boundFields(callee.symbol.slice(0, dot), callee.file, requestSlot)) {
+            const hop = { file: callee.file, symbol: callee.symbol, line: callee.fn.line, arg: -1, field };
+            walk(callee.file, callee.symbol, callee.fn.line, callee.fn.calls, { kind: "field", of: -1, name: field }, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+          }
         }
       }
       for (const row of found) rows.push({ ...row, param: p.name, binding: p.binding! });

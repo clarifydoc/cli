@@ -38,6 +38,65 @@ func GetSquad(ctx context.Context, clubID, season int64) {
   });
 });
 
+describe("Go receiver and parameter fields", () => {
+  const SRC = `package models
+
+type Club struct {
+	ID       int64 \`xorm:"pk" json:"id" param:"club"\`
+	LeagueID int64 \`json:"league_id" param:"league"\`
+	Season   string \`query:"season"\`
+	Name     string \`json:"name" query:"-"\`
+}
+
+func (c *Club) ReadOne(s *xorm.Session, a web.Auth) error {
+	views, err := loadViews(s, c.ID, []int64{c.LeagueID})
+	if err := c.loadCoach(s); err != nil {
+		return err
+	}
+	*c, err = GetClubSimple(s, c.ID)
+	touchClub(s, c.ID)
+	return markRead(s, &Player{ClubID: c.ID, Name: "x"}, c)
+}
+
+func (c *Club) Rename(s *xorm.Session) error {
+	c.Name = strings.TrimSpace(c.Name)
+	_, err := s.Where("id = ? AND name = ?", c.ID, c.Name).Get(&Club{})
+	return err
+}
+
+func touchSquad(s *xorm.Session, p *Player) error {
+	_, err := s.ID(p.ClubID).Cols("updated").Update(p)
+	return err
+}
+`;
+  it("binds a tagged field from the route or the query", () => {
+    const club = analyze(SRC, "models/club.go").classes.find((c) => c.name === "Club")!;
+    expect(club.properties.map((p) => [p.name, p.boundFrom ?? null])).toEqual([
+      ["ID", { kind: "route-param", name: "club" }],
+      ["LeagueID", { kind: "route-param", name: "league" }],
+      ["Season", { kind: "query-param", name: "season" }],
+      ["Name", null],
+    ]);
+  });
+
+  it("reads the receiver's fields, the receiver itself, and the fields of a composite argument — until the method writes them", () => {
+    expect(callsOf(SRC, "ReadOne")).toEqual([
+      ["loadViews", [{ index: 1, origin: { kind: "receiver-field", name: "ID" } }, { index: 2, origin: { kind: "receiver-field", name: "LeagueID" }, transform: "[]int64" }]],
+      ["c.loadCoach", [{ index: -1, origin: { kind: "receiver" } }]],
+      // Read on the line that writes `*c`: before the write.
+      ["GetClubSimple", [{ index: 1, origin: { kind: "receiver-field", name: "ID" } }]],
+    ]);
+  });
+
+  it("filters on a receiver field the method does not write, and on a parameter's field", () => {
+    const a = analyze(SRC, "models/club.go");
+    expect(a.dataSources.filter((d) => d.whereFields).map((d) => [d.line, d.whereFields])).toEqual([
+      [22, [{ field: "id", origin: { kind: "receiver-field", name: "ID" } }]],
+      [27, [{ field: "id", origin: { kind: "param-field", name: "p", index: 1, member: "ClubID" } }]],
+    ]);
+  });
+});
+
 describe("Go ORM filter fields", () => {
   it("reads xorm and GORM conditions compared with a parameter", () => {
     const a = analyze(`package league

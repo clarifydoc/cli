@@ -21,7 +21,18 @@ type Origin = CallArgOrigin["origin"];
  * (`c.Param("id")`, `ctx.PathParam("id")`, `chi.URLParam(r, "id")`,
  * `mux.Vars(r)["id"]`, `c.Query("q")`, `r.URL.Query().Get("q")`), a string
  * literal, or a local the function assigns once from one of those — through
- * one conversion (`strconv.ParseInt(x, 10, 64)`, `strconv.Atoi(x)`).
+ * one conversion (`strconv.ParseInt(x, 10, 64)`, `strconv.Atoi(x)`) or a
+ * one-element slice (`[]int64{id}`). A method's receiver and its exported
+ * fields are values too, and a parameter's fields — what a handler that binds
+ * the request into a struct hands its methods:
+ *
+ *   type Club struct { ID int64 `param:"club"` }                       ← the route's `:club` (`boundFrom`)
+ *   func (c *Club) Delete(s *xorm.Session) error {
+ *       s.Where("id = ?", c.ID).Delete(&Club{})                       ← filters id on the receiver's ID
+ *       return touchLeague(s, &League{ID: c.LeagueID}, c)             ← a composite's field; the receiver whole
+ *   }
+ *
+ * Each only up to a write the body makes first (`c.ID = 0`, `*c = loaded`).
  */
 
 const ROUTE_READS: RegExp[] = [
@@ -41,6 +52,8 @@ const IDENT = /^[A-Za-z_]\w*$/;
 
 interface Scope {
   params: string[];
+  /** A method's receiver name (`p` of `func (p *Club) Delete(…)`). */
+  receiver?: string;
   /** 0-based, inclusive. */
   start: number;
   end: number;
@@ -93,8 +106,13 @@ export function splitTopLevel(text: string): string[] {
 
 const stripComment = (line: string): string => line.replace(/\/\/.*$/, "");
 
-/** `strconv.ParseInt(x, 10, 64)` → x and the conversion; anything else as it is. */
+/** A one-element slice literal: `[]int64{p.ID}`. */
+const ONE_SLICE = /^\[\](\*?[\w.]+)\s*\{\s*([^{},]+?)\s*,?\s*\}$/;
+
+/** `strconv.ParseInt(x, 10, 64)` → x and the conversion; `[]int64{x}` → x; anything else as it is. */
 function unwrap(expr: string): { expr: string; transform?: string } {
+  const slice = ONE_SLICE.exec(expr);
+  if (slice) return { expr: slice[2]!, transform: `[]${slice[1]}` };
   const m = CONVERSION.exec(expr);
   if (!m) return { expr };
   const openAt = expr.indexOf("(", m[1]!.length);
@@ -118,8 +136,23 @@ function assignmentsOf(scope: Scope, name: string): string[] {
   return out;
 }
 
+/**
+ * `name` (or its field `field`) is written in the body before line `line0` (0-based, in the file) —
+ * `p.ID = x`, `p.ID++`, `*p = x`, `*p, err = load(…)`, `p := …` — so a read there may see another value.
+ * Without a line: anywhere in the body.
+ */
+function writes(scope: Scope, name: string, field?: string, line0?: number): boolean {
+  const before = (m: RegExpMatchArray) => line0 === undefined || scope.start + 1 + (scope.code.slice(0, m.index).match(/\n/g)?.length ?? 0) < line0;
+  const whole = new RegExp(String.raw`(?:^|[^\w.])(?:[\w_]+\s*,\s*)*\*?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))`, "g");
+  for (const m of scope.code.matchAll(whole)) if (before(m)) return true;
+  if (field === undefined) return false;
+  const own = new RegExp(String.raw`(?:^|[^\w.])${name}\.${field}\s*(?:,\s*[\w_.]+\s*)*(?:[-+*/|&]?=(?!=)|\+\+|--)`, "g");
+  for (const m of scope.code.matchAll(own)) if (before(m)) return true;
+  return false;
+}
+
 /** The origin of one value written in `scope`; null when unknown. */
-export function goValueOrigin(raw: string, scope: Scope, depth = 0): { origin: Origin; transform?: string } | null {
+export function goValueOrigin(raw: string, scope: Scope, depth = 0, line0?: number): { origin: Origin; transform?: string } | null {
   const { expr, transform } = unwrap(raw.trim().replace(/^&/, ""));
   const lit = STRING_LIT.exec(expr);
   if (lit) return { origin: { kind: "literal", value: lit[1] ?? lit[2] ?? "" } };
@@ -131,13 +164,25 @@ export function goValueOrigin(raw: string, scope: Scope, depth = 0): { origin: O
     const m = re.exec(expr);
     if (m) return { origin: { kind: "query-param", name: m[1]! }, ...(transform ? { transform } : {}) };
   }
+  // An exported field of the receiver or of a parameter the body does not write first (`p.ID`,
+  // `c.ClubID`) — exported, as a binder can only set those.
+  const member = /^([A-Za-z_]\w*)\.([A-Z]\w*)$/.exec(expr);
+  if (member) {
+    const [, base, field] = member as unknown as [string, string, string];
+    if (writes(scope, base, field, line0)) return null;
+    const t = transform ? { transform } : {};
+    if (base === scope.receiver) return { origin: { kind: "receiver-field", name: field }, ...t };
+    const index = scope.params.indexOf(base);
+    return index >= 0 ? { origin: { kind: "param-field", name: base, index, member: field }, ...t } : null;
+  }
   if (!IDENT.test(expr)) return null;
+  if (expr === scope.receiver) return writes(scope, expr, undefined, line0) || transform ? null : { origin: { kind: "receiver" } };
   const assigned = assignmentsOf(scope, expr);
   const index = scope.params.indexOf(expr);
   if (index >= 0) return assigned.length === 0 ? { origin: { kind: "param", name: expr, index }, ...(transform ? { transform } : {}) } : null;
   // A local assigned once from a parameter, a request read or another such local.
   if (depth >= 2 || assigned.length !== 1 || !assigned[0]) return null;
-  const inner = goValueOrigin(assigned[0], scope, depth + 1);
+  const inner = goValueOrigin(assigned[0], scope, depth + 1, line0);
   if (!inner || inner.origin.kind === "literal") return null;
   const t = inner.transform ?? transform;
   return { origin: inner.origin, ...(t ? { transform: t } : {}) };
@@ -148,7 +193,8 @@ function scopesOf(lines: readonly string[]): Scope[] {
   const blank = (text: string) => text.replace(/"(?:[^"\\\n]|\\.)*"|`[^`]*`/g, (m) => m[0] + m.slice(1, -1).replace(/[^\n]/g, " ") + m[0]);
   return goFunctions(lines).map((f) => {
     const body = lines.slice(f.start + 1, f.end + 1).map(stripComment).join("\n");
-    return { params: f.params, start: f.start, end: f.end, body, code: blank(body) };
+    const receiver = f.method ? /^func\s*\(\s*([A-Za-z_]\w*)\s+/.exec(lines[f.start]!)?.[1] : undefined;
+    return { params: f.params, ...(receiver && receiver !== "_" ? { receiver } : {}), start: f.start, end: f.end, body, code: blank(body) };
   });
 }
 
@@ -192,14 +238,28 @@ function addArgOrigins(lines: readonly string[], fn: FunctionInfo, scopes: reado
     const args = callArgsAt(lines, call.line - 1, call.name, scope.end);
     if (!args || args.length === 0 || args.length > 12) continue;
     const out: CallArgOrigin[] = [];
+    /** Only what a statement can compare a column with, or a same-package object whose fields it can: no
+     *  literal (a server's literal names no request value), no request context or writer, no other
+     *  package's struct handed on whole. */
+    const kept = (o: ReturnType<typeof goValueOrigin>): o is NonNullable<ReturnType<typeof goValueOrigin>> =>
+      !!o && o.origin.kind !== "literal" && ((o.origin.kind !== "param" && o.origin.kind !== "param-field") || scalarParam(fn.params[o.origin.index]?.type));
+    // A call on the method's own receiver (`p.load(s)`): the callee works on the same object.
+    if (scope.receiver && call.name.startsWith(`${scope.receiver}.`) && !call.name.slice(scope.receiver.length + 1).includes(".") && !writes(scope, scope.receiver, undefined, call.line - 1)) {
+      out.push({ index: -1, origin: { kind: "receiver" } });
+    }
     args.forEach((a, index) => {
       if (a.endsWith("...")) return;
-      const o = goValueOrigin(a, scope);
-      // Only what a statement can compare a column with: no literal (a server's literal names no
-      // request value), no request context or writer, no struct handed on whole.
-      if (!o || o.origin.kind === "literal") return;
-      if (o.origin.kind === "param" && !scalarParam(fn.params[o.origin.index]?.type)) return;
-      out.push({ index, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
+      // A composite literal's fields (`&Club{ID: p.ClubID}`): each value at its field of the argument.
+      const composite = /^&?[A-Za-z_][\w.]*\s*\{([\s\S]*)\}$/.exec(a);
+      if (composite) {
+        for (const [field, value] of pairsOf(composite[1]!, false)) {
+          const o = goValueOrigin(value, scope, 0, call.line - 1);
+          if (kept(o) && o.origin.kind !== "receiver") out.push({ index, field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
+        }
+        return;
+      }
+      const o = goValueOrigin(a, scope, 0, call.line - 1);
+      if (kept(o)) out.push({ index, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
     });
     if (out.length > 0) call.argOrigins = out;
   }
@@ -304,8 +364,8 @@ export function addGoWhereFields(lines: readonly string[], sources: DataSourceIn
     const verb = d.name.replace(/^[^:]*:\s*/, "");
     const fields: NonNullable<DataSourceInfo["whereFields"]> = [];
     for (const [field, value] of filtersOf(statementAt(lines, d.line - 1, scope), verb)) {
-      const o = goValueOrigin(value, scope);
-      if (!o || o.origin.kind === "literal" || fields.some((f) => f.field === field)) continue;
+      const o = goValueOrigin(value, scope, 0, d.line - 1);
+      if (!o || o.origin.kind === "literal" || o.origin.kind === "receiver" || fields.some((f) => f.field === field)) continue;
       fields.push({ field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
     }
     if (fields.length > 0) d.whereFields = fields;

@@ -206,4 +206,51 @@ describe("paramColumns", () => {
     });
     expect(rows.map((x) => [x.column.line, x.column.field, x.hops.map((h) => `${h.symbol}/${h.arg}`).join(" → ")])).toEqual([[11, "Id", "ClubsController.Show/0 → ClubQueries.ForClub/1"]]);
   });
+
+  it("follows a parameter a generic handler binds into its type's field, through the methods that read it and the objects they hand on", () => {
+    // GET /clubs/:club served by `h.ReadOneWeb`, whose handler binds the request into a models.Club.
+    const r = { kind: "api", path: "/clubs/:club", httpMethod: "GET", handler: "h.ReadOneWeb", handlerTypes: ["models.Club"], line: 4, filePath: "routes/routes.go", params: [{ name: "club", type: null, binding: "route", inferred: true }], calls: [] } as any;
+    const routesFile = file("routes/routes.go", [], { routes: [r] } as any);
+    const recv = (index: number) => ({ index, origin: { kind: "receiver" } });
+    const club = file("models/club.go", [], {
+      classes: [{
+        name: "Club",
+        properties: [{ name: "ID", type: "int64", boundFrom: { kind: "route-param", name: "club" } }, { name: "LeagueID", type: "int64", boundFrom: { kind: "route-param", name: "league" } }],
+        methods: [
+          fn("ReadOne", 10, 20, ["s", "a"], [
+            { name: "loadClub", kind: "internal", target: null, line: 12, argOrigins: [recv(1)] },
+            { name: "c.touch", kind: "internal", target: null, line: 13, argOrigins: [recv(-1)] },
+            { name: "GetPlayers", kind: "internal", target: null, line: 14, argOrigins: [{ index: 1, field: "ClubID", origin: { kind: "receiver-field", name: "ID" } }] },
+          ]),
+          fn("touch", 22, 25, ["s"]),
+        ],
+      }],
+      dataSources: [{ kind: "database", name: "xorm: Update", target: "Club", entity: "Club", access: "write", line: 23, calls: [], whereFields: [{ field: "id", origin: { kind: "receiver-field", name: "ID" } }, { field: "league_id", origin: { kind: "receiver-field", name: "LeagueID" } }] }],
+    } as any);
+    const load = file("models/load.go", [fn("loadClub", 1, 4, ["s", "c"]), fn("GetPlayers", 6, 9, ["s", "p"])], {
+      dataSources: [
+        { kind: "database", name: "xorm: Get", target: "Club", entity: "Club", access: "read", line: 2, calls: [], whereFields: [{ field: "id", origin: { kind: "param-field", name: "c", index: 1, member: "ID" } }] },
+        // The parameter itself, not its field: no row.
+        { kind: "database", name: "xorm: Find", target: "Player", entity: "Player", access: "read", line: 7, calls: [], whereFields: [{ field: "club_id", origin: { kind: "param-field", name: "p", index: 1, member: "ClubID" } }, { field: "id", origin: { kind: "param", name: "p", index: 1 } }] },
+      ],
+    } as any);
+    const rows = computeParamColumns({
+      analyses: [routesFile, club, load],
+      symbolLinks: [
+        link("routes/routes.go", "route:GET /clubs/:club", 4, "obj.ReadOne", "models/club.go", "Club.ReadOne"),
+        link("models/club.go", "Club.ReadOne", 12, "loadClub", "models/load.go", "loadClub"),
+        link("models/club.go", "Club.ReadOne", 13, "c.touch", "models/club.go", "Club.touch"),
+        link("models/club.go", "Club.ReadOne", 14, "GetPlayers", "models/load.go", "GetPlayers"),
+      ],
+      routes: [r],
+    });
+    const hop = (h: { symbol: string; arg: number; field?: string }) => `${h.symbol}/${h.arg}${h.field ? `.${h.field}` : ""}`;
+    expect(rows.map((x) => [x.route.param, `${x.column.entity}.${x.column.field}`, x.hops.map(hop).join(" → ")])).toEqual([
+      ["club", "Club.id", "Club.ReadOne/-1.ID → Club.touch/-1.ID"],
+      ["club", "Club.id", "Club.ReadOne/-1.ID → loadClub/1.ID"],
+      ["club", "Player.club_id", "Club.ReadOne/-1.ID → GetPlayers/1.ClubID"],
+    ]);
+    // A type the handler is not built for binds nothing on this route.
+    expect(computeParamColumns({ analyses: [routesFile, club, load], symbolLinks: [link("routes/routes.go", "route:GET /clubs/:club", 4, "obj.ReadOne", "models/club.go", "Club.ReadOne")], routes: [{ ...r, handlerTypes: ["models.Season"] }] })).toEqual([]);
+  });
 });
