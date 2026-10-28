@@ -60,7 +60,7 @@ export async function detectFileBasedRoutes(
         httpMethod: null,
         kind: "frontend",
         handler: handlerName(path),
-        ...(named ? { routeName: fileToRouteName(fp.slice(prefix.length)) } : {}),
+        ...(named ? { name: fileToRouteName(fp.slice(prefix.length)) } : {}),
         componentPath: null, // the page file itself is the component
         calls: [],
         middleware: [],

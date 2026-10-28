@@ -212,7 +212,7 @@ describe("screen flow of a file-routed Vue app", () => {
   afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 
   it("names file-based routes as unplugin-vue-router does", () => {
-    const name = (path: string) => summary.routeMap.find((r) => r.kind === "frontend" && r.path === path)?.routeName;
+    const name = (path: string) => summary.routeMap.find((r) => r.kind === "frontend" && r.path === path)?.name;
     expect(name("/clubs")).toBe("//clubs/");
     expect(name("/league/table")).toBe("//league/table");
   });

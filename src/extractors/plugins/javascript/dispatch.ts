@@ -191,6 +191,18 @@ const REEMIT_OUTPUT = /^(?:this\.)?([\w$]+)\.emit\b/;
  * Angular components by the tag their selector gives them (`selector: 'app-cover-image'`)
  * → the declaring file. A selector two files declare is left out.
  */
+/** The selectors of the Angular components a file declares (`app-cover-image`). */
+export function angularSelectorsOf(a: FileAnalysis): string[] {
+  const out: string[] = [];
+  for (const cls of a.classes ?? []) {
+    for (const d of cls.decorators ?? []) {
+      const m = /^Component\s*\(\s*\{[\s\S]*?\bselector\s*:\s*['"`]([\w-]+)['"`]/.exec(d);
+      if (m) out.push(m[1]!);
+    }
+  }
+  return out;
+}
+
 function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
   const out = new Map<string, string>();
   const clash = new Set<string>();

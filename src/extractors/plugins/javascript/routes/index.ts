@@ -7,6 +7,7 @@ import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
 import { collectRouteArrays, resolveRouteWrappers, visitReactRouterRoute } from "./react-router.js";
 import { collectNestClassGuards, visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
+import { mayDeclareAngularJsRoutes, visitAngularJsRoute } from "./angularjs.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
 import { collectCdkRoutes } from "./cdk.js";
@@ -41,6 +42,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const navigation: RouteInfo[] = [];
     const maybeNavigation = mayDeclareReactNavigation(sourceText);
     const maybeTanstack = sourceText.includes("FileRoute(") || sourceText.includes("createRoute(");
+    const maybeAngularJs = mayDeclareAngularJsRoutes(sourceText);
 
     const walk = (node: Node): void => {
       visitExpressRoute(node, express);
@@ -49,6 +51,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
       visitReactRouterRoute(node, reactRouter, facts);
       visitNestjsRoute(node, nestjs, facts);
       visitVueRouterRoute(node, vueRouter, facts);
+      if (maybeAngularJs) visitAngularJsRoute(node, vueRouter);
       if (maybeTanstack) visitTanstackFileRoute(node, tanstack);
       if (maybeTrpc) visitTrpcRouter(node, trpc, facts);
       if (maybeNavigation) {

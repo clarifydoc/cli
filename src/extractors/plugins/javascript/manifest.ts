@@ -98,8 +98,8 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
 };
 
 /** React Native's platform files (`Button.ios.tsx`), react-native-web's `.web`. */
-/** Vue Router's `<router-view>`, React Router's `<Outlet>`, Nuxt's `<NuxtPage>`: where a route's page renders. */
-const JS_ROUTER_OUTLET = /<(?:RouterView|router-view|Outlet|NuxtPage|nuxt-page)\b/;
+/** Vue Router's `<router-view>`, React Router's `<Outlet>`, Nuxt's `<NuxtPage>`, Angular's `<router-outlet>`: where a route's page renders. */
+const JS_ROUTER_OUTLET = /<(?:RouterView|router-view|Outlet|NuxtPage|nuxt-page|router-outlet)\b/;
 
 export const JS_PLATFORM_SUFFIXES = [".native", ".ios", ".android", ".web"] as const;
 

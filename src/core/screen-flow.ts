@@ -179,6 +179,18 @@ export function buildScreenFlow(input: {
     }
   }
 
+  // Routes by the name their framework registers (`RouteInfo.name`).
+  const byRouteName = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
+  for (const r of routes) if (r.name) (byRouteName.get(r.name) ?? byRouteName.set(r.name, []).get(r.name)!).push(r);
+  /** The paths a route name stands for: its own sub-project's routes, the verb's first. */
+  const pathsNamed = (name: string, method: string, project: string | undefined): string[] => {
+    const all = byRouteName.get(name) ?? [];
+    const own = all.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
+    const rows = own.length > 0 ? own : all.filter((r) => related(project, r.projectId));
+    const verb = rows.filter((r) => !r.httpMethod || r.httpMethod === method.toUpperCase());
+    return [...new Set((verb.length > 0 ? verb : rows).map((r) => r.path))];
+  };
+
   /** Follow a request to a server route: the page it renders, and where it redirects. */
   const viaServer = (from: string, method: string, target: string, project: string | undefined, kind: "navigate" | "submit"): boolean => {
     const rs = (serverRoutes.get(pathKey(target)) ?? []).filter((r) => !method || !r.httpMethod || r.httpMethod === method.toUpperCase());
@@ -193,10 +205,10 @@ export function buildScreenFlow(input: {
         }
       }
     }
-    if (!found && kind === "submit") {
+      if (!found) {
       const page = screenAtPath(target, project);
       if (page) {
-        addEdge(from, addScreen(page), "submit", `${method || "GET"} ${target}`);
+        addEdge(from, addScreen(page), kind, kind === "submit" ? `${method || "GET"} ${target}` : target);
         found = true;
       }
     }
@@ -205,6 +217,8 @@ export function buildScreenFlow(input: {
 
   const resolveTarget = (s: ScreenInfo, t: string, project = projectOf(s.filePath)): ScreenInfo | null => {
     if (t.startsWith("/")) return screenAtPath(t, project);
+    // A route path as its router spells it (Angular's `clubs/:id`, a flow state): the screen at it.
+    if (byExact.has(t)) return screenAtPath(t, project);
     const named = byName.get(t);
     if (named) {
       const same = named.filter((x) => projectOf(x.filePath) === project);
@@ -250,11 +264,17 @@ export function buildScreenFlow(input: {
       viaServer(scratch, r.method ?? "GET", r.path, project, "navigate");
     }
   }
+  // A link or form's request: an app path, or a route by name (`route('clubs.show')`, `{% url 'clubs:detail' %}`).
   for (const el of elements) {
-    if (!el.request?.target.startsWith("/") || (el.element === "link" && el.request.method === "GET")) continue;
+    const target = el.request?.target;
+    if (!target) continue;
+    const project = projectOf(el.filePath);
+    const method = el.request!.method;
+    const paths = target.startsWith("/") ? [target] : target.startsWith("route:") ? pathsNamed(target.slice(6), method, project) : [];
+    const kind = el.element === "link" && (method === "GET" || method === "") ? "navigate" : "submit";
     const scratch = `scratch:${el.filePath}`;
     sources.set(scratch, el.filePath);
-    viaServer(scratch, el.request.method, el.request.target, projectOf(el.filePath), "submit");
+    for (const p of paths) viaServer(scratch, method, p, project, kind);
   }
   // A dialog no screen describes: a node of its own, named after the file.
   const launchNode = (file: string): string => {

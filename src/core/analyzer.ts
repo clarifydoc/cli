@@ -1362,7 +1362,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
   addViewCodeNavigation(allScreens, allAnalyses, rawSources);
   resolveLinkHelpers(allScreens, allAnalyses, rawSources, importIndex);
-  canonicalNavigationTargets(allScreens, allRoutes.filter((r) => r.kind === "frontend"), (f) => analysisByPath.get(f)?.projectId);
+  canonicalNavigationTargets(allScreens, allRoutes, (f) => analysisByPath.get(f)?.projectId);
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
   markStartupScreens(allAnalyses, allScreens, rawSources);
@@ -1393,6 +1393,22 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if (to !== from) (projectImports.get(from) ?? projectImports.set(from, new Set()).get(from)!).add(to);
     }
   }
+  // Tags a plugin says its components are used by (Angular selectors): tag → the one file declaring it.
+  const tagged = new Map<string, string[]>();
+  for (const a of allAnalyses) {
+    const tags = pluginFor(a.language as Language)?.componentTags?.(a) ?? [];
+    for (const t of tags) {
+      const k = t.toLowerCase().replace(/-/g, "");
+      (tagged.get(k) ?? tagged.set(k, []).get(k)!).push(a.filePath);
+    }
+  }
+  const taggedFile = (name: string, from: FileAnalysis): string | null => {
+    const files = (tagged.get(name.toLowerCase().replace(/-/g, "")) ?? []).filter((f) => {
+      const p = analysisByPath.get(f)?.projectId ?? "root";
+      return p === (from.projectId ?? "root") || !!projectImports.get(from.projectId ?? "root")?.has(p);
+    });
+    return files.length === 1 ? files[0]! : null;
+  };
   const screenNamed = (name: string, from: FileAnalysis): string | null => {
     // A name the file imports comes from where the import says (a package's `<Button>`), never a namesake.
     if (from.imports.some((i) => i.specifiers.includes(name) || Object.keys(i.aliases ?? {}).includes(name))) return null;
@@ -1410,15 +1426,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const usesGraph: Record<string, string[]> = {};
   for (const a of allAnalyses) {
     const imported = importsOnly[a.filePath] ?? [];
-    if (imported.length === 0 && (!screenFiles.has(a.filePath) || a.subComponents.length === 0)) continue;
+    if (imported.length === 0 && (!screenFiles.has(a.filePath) || (a.subComponents.length === 0 && !a.templateTree?.length))) continue;
     if (!screenFiles.has(a.filePath)) {
       usesGraph[a.filePath] = imported;
       continue;
     }
     const rendered = new Set<string>();
-    for (const sub of a.subComponents) {
+    // What the markup renders: its sub-components, and the components of its template tree
+    // (an Angular component's external template, read into the tree after per-file analysis).
+    const treeNames: Array<{ name: string }> = [];
+    const walkTree = (nodes: TemplateComponentNode[] | undefined) => { for (const n of nodes ?? []) { if (!n.element) treeNames.push({ name: n.name }); walkTree(n.children); } };
+    walkTree(a.templateTree);
+    for (const sub of [...a.subComponents, ...treeNames]) {
       const pascal = sub.name.replace(/(?:^|-)([a-z])/g, (_, c: string) => c.toUpperCase());
-      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal) ?? screenNamed(pascal, a);
+      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal) ?? taggedFile(sub.name, a) ?? screenNamed(pascal, a);
       if (target) rendered.add(target);
     }
     usesGraph[a.filePath] = [...new Set([...imported.filter((d) => rendered.has(d) || !screenFiles.has(d)), ...rendered])];
@@ -1431,7 +1452,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     componentGraph: usesGraph,
     outlets: new Set(allAnalyses.filter((a) => {
       const outlet = manifestFor(a.language as Language)?.routerOutlet;
-      return !!outlet && screenFiles.has(a.filePath) && outlet.test(rawSources.get(a.filePath) ?? "");
+      if (!outlet || !screenFiles.has(a.filePath)) return false;
+      // An Angular component's outlet is in its external template.
+      const template = a.angularTemplateUrl ? posixJoin(a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1), a.angularTemplateUrl) : null;
+      return outlet.test(rawSources.get(a.filePath) ?? "") || (!!template && outlet.test(rawSources.get(template) ?? ""));
     }).map((a) => a.filePath)),
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     // Two apps' pages are no link targets of each other: only sub-projects one imports from the other share pages.
@@ -2492,9 +2516,22 @@ function withoutComments(source: string): string {
     .replace(/(^|[^:"'`\\\w/])\/\/[^\n]*/gm, (m, lead: string) => lead + blank(m.slice(lead.length)));
 }
 
+/**
+ * A base-URL expression a link starts with, before its app path — `{{AppSubUrl}}/user/login`,
+ * `${window.App.urlBase}/movie/…`, `${baseUrl}/x`, JSP's `${pageContext.request.contextPath}/x`:
+ * the app is served under it, so the path after it is the link.
+ */
+const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;
+
 function extractNavigationTargets(raw: string, fromBase = false): string[] {
-  const source = withoutComments(raw);
+  const source = withoutComments(raw).replace(BASE_URL_PREFIX, "");
   const targets = new Set<string>();
+  // Hash routes (AngularJS, hash-mode routers): `href="#/devices"`, `ng-href="#!/log"`, `$location.path('/devices')`.
+  for (const m of source.matchAll(/\b(?:ng-)?href\s*=\s*["']#!?(\/(?:\{\{[^}]*\}\}|[^"'\s])*)|\$location\.(?:path|url)\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);
+  // ui-router by state name: `ui-sref="garage"`, `$state.go('garage')`.
+  for (const m of source.matchAll(/\bui-sref\s*=\s*["']([\w.-]+)|\$state\.go\(\s*['"]([\w.-]+)['"]/g)) targets.add(`route:${m[1] ?? m[2]}`);
+  // SvelteKit's `goto('/albums')`.
+  for (const m of source.matchAll(/\bgoto\(\s*['"`](\/(?!\/)[^'"`]*)['"`]/g)) targets.add(m[1]!);
   // A navigation manager's `NavigateTo("/orders")` (Blazor), and — where links are relative to the
   // document's base `/` — `NavigateTo("orders")`, `<a href="cart">`, `<a href="">` (home).
   // MAUI Shell's `GoToAsync("Basket")` / `GoToAsync("//Main/Catalog")` (an absolute Shell route) the same way.
@@ -2527,7 +2564,7 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
     /\bwindow\.open\(\s*['"`](\/(?!\/)[^'"`\s?#]*)/g,
     // An anchor to an app path — `<a href="/login">`, `:href="`/cases/${id}`"`. One naming no screen
     // (a download, an API URL) resolves to nothing; `//host` and `#` are no app paths.
-    /<a\b[^>]*?\s:?href\s*=\s*["']\s*['`]?(\/(?!\/)[^"'`#\s]*)/g,
+    /<(?!link\b|base\b)[A-Za-z][\w.:-]*\b[^>]*?\s:?href\s*=\s*[{"']\s*['`]?(\/(?!\/)[^"'`#\s}]*)/g,
   ];
   for (const re of patterns) {
     let m: RegExpExecArray | null;
@@ -2545,7 +2582,17 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
     if (m[1] === "name") targets.add(`route:${m[2]!}`);
     else if (m[2]!.startsWith("/")) targets.add(m[2]!);
   }
-  // A path given as segments (`navigate(['/clubs', id, 'view'])`): literal segments kept, the rest `{}`.
+  // Angular: `routerLink="/clubs/{{club.id}}"`, `navigateByUrl('/home')`.
+  for (const m of source.matchAll(/\brouterLink\s*=\s*"(\/[^"]*)"|\bnavigateByUrl\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);
+  // A path given as segments (`navigate(['/clubs', id, 'view'])`, `[routerLink]="['/clubs', id]"`; Angular's
+  // `router.navigate(['clubs', id])` without `relativeTo` is from the root too): literal segments kept, the rest `{}`.
+  for (const m of source.matchAll(/(?:\brouter\.navigate\(\s*\[\s*|\[routerLink\]\s*=\s*"\[\s*)(['"`])([\w/:.-]+)\1([^\]]*)\]/g)) {
+    const rest = m[3]!.split(",").slice(1).map((seg) => {
+      const lit = /^\s*(['"`])([^'"`$]*)\1\s*$/.exec(seg);
+      return lit ? lit[2]!.replace(/^\/+|\/+$/g, "") : "{}";
+    });
+    targets.add(["/" + m[2]!.replace(/^\/+|\/+$/g, ""), ...rest.filter(Boolean)].join("/").replace(/\/{2,}/g, "/"));
+  }
   for (const m of source.matchAll(/\bnavigate\(\s*\[\s*(['"`])(\/[^'"`]*)\1([^\]]*)\]/g)) {
     const rest = m[3]!.split(",").slice(1).map((seg) => {
       const lit = /^\s*(['"`])([^'"`$]*)\1\s*$/.exec(seg);
@@ -2570,24 +2617,28 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   // A path built in a variable first and then navigated to — `let url = origin + '/cases/' + id;
   // window.open(url)`, `router.push(target)`: the app paths the variable's assignments spell. Only a
   // variable that reaches a navigation call counts, so a URL built for a request stays out.
+  // A link bound to a variable (`:to="loginRoute"`, `to={target}`, `[routerLink]="home"`) reads the same way.
   const sinks = new Set<string>();
   for (const m of source.matchAll(/(?:\brouter\.(?:push|replace)\(|\bwindow\.open\(|\blocation\.(?:assign|replace)\(|\blocation(?:\.href)?\s*=(?!=))\s*([A-Za-z_$][\w$]*)\s*[,);\n]/g)) sinks.add(m[1]!);
+  for (const m of source.matchAll(/\s(?::to|:href|\[routerLink\]|to|href)\s*=\s*(?:"\s*|\{\s*)([A-Za-z_$][\w$]*)\s*["}]/g)) sinks.add(m[1]!);
   for (const name of sinks) {
     if (/^(?:true|false|null|undefined|this)$/.test(name)) continue;
-    for (const assign of source.matchAll(new RegExp(String.raw`(?:^|[^\w$.])${name.replace(/\$/g, "\\$")}\s*(?:=(?!=)|\+=)\s*([^;\n]+)`, "g"))) {
-      const rhs = assign[1]!;
+    for (const assign of source.matchAll(new RegExp(String.raw`(?:^|[^\w$.])${name.replace(/\$/g, "\\$")}\s*(?:=(?!=)|\+=)\s*([^;]{1,300})`, "g"))) {
+      // The definition up to its statement's end (`computed(() => ({ name: 'login' }))` may span lines).
+      const rhs = assign[1]!.split(/\n\s*\n|\n\s*(?:const|let|var|function|export)\b/)[0]!;
       for (const lit of rhs.matchAll(/['"`](\/(?!\/)[^'"`\s?#]*)['"`]/g)) {
         let path = lit[1]!;
         if (path.endsWith("/") && path.length > 1 && /^\s*\+\s*[\w$@(]/.test(rhs.slice(lit.index! + lit[0].length))) path += "{}";
         targets.add(path);
       }
+      for (const named of rhs.matchAll(/\bname\s*:\s*['"`]([^'"`]+)['"`]/g)) targets.add(`route:${named[1]!}`);
     }
   }
   // A link bound to a property of the items it is rendered for — `<router-link :to="link.ref">` over
   // `{ text: "Roles", ref: "administration/roles" }`, `to={item.url}`, `router.push(item.path)`: the
   // values the file's objects give that property (a bare `administration/roles` is from the app's root).
   const props = new Set<string>();
-  for (const m of source.matchAll(/(?:\s:?(?:to|href)\s*=\s*["{]\s*|\brouter\.(?:push|replace)\(\s*|\bwindow\.open\(\s*)[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*["}),]/g)) props.add(m[1]!);
+  for (const m of source.matchAll(/(?:\s(?::?(?:to|href)|\[routerLink\])\s*=\s*["{]\s*|\brouter\.(?:push|replace)\(\s*|\bwindow\.open\(\s*)[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*["}),]/g)) props.add(m[1]!);
   for (const prop of props) {
     for (const m of source.matchAll(new RegExp(String.raw`["']?\b${prop}["']?\s*:\s*['"\`]([^'"\`\s]+)['"\`]`, "g"))) {
       const v = m[1]!;
@@ -2595,8 +2646,8 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
       else if (/^[A-Za-z][\w-]*(?:\/[\w:.{}$-]+)*$/.test(v) && v.includes("/")) targets.add("/" + v);
     }
   }
-  // `/cases/${id}` compares as `/cases/{}`.
-  return [...new Set([...targets].map((t) => t.replace(/\$\{[^}]*\}/g, "{}")))];
+  // `/cases/${id}`, `/cases/{{case.id}}` compare as `/cases/{}`.
+  return [...new Set([...targets].map((t) => t.replace(/\$\{[^}]*\}|\{\{[^}]*\}\}/g, "{}")))];
 }
 
 /**
@@ -2605,6 +2656,16 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
  * its code (`codeFiles`) and the view model it binds against (`viewModel`, `CatalogViewModel`)
  * navigate — `GoToAsync("Basket")` in the view model — the screen navigates.
  */
+/** `dir/` + a relative path, `./` and `../` resolved. */
+function posixJoin(dir: string, rel: string): string {
+  const out: string[] = [];
+  for (const seg of (dir + rel).split("/")) {
+    if (seg === "..") out.pop();
+    else if (seg !== "." && seg !== "") out.push(seg);
+  }
+  return out.join("/");
+}
+
 function addViewCodeNavigation(screens: ScreenInfo[], analyses: FileAnalysis[], rawSources: Map<string, string>): void {
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
   const classFiles = new Map<string, FileAnalysis[]>();
@@ -2623,16 +2684,23 @@ function addViewCodeNavigation(screens: ScreenInfo[], analyses: FileAnalysis[], 
       const files = (classFiles.get(name) ?? []).filter((a) => a.filePath !== sc.filePath && a.projectId === own.projectId && !isTestFile(a.filePath, a.language));
       return files.length === 1 ? files : [];
     };
+    // An Angular component's external template (`templateUrl: './club.component.html'`) is its markup.
+    const template = own.angularTemplateUrl ? byPath.get(posixJoin(own.filePath.slice(0, own.filePath.lastIndexOf("/") + 1), own.angularTemplateUrl)) : undefined;
     const files = [...classIn(sc.name), ...classIn(sc.viewModel), ...(sc.codeFiles ?? []).map((f) => byPath.get(f)).filter((a): a is FileAnalysis => !!a)];
-    if (files.length === 0) continue;
+    if (files.length === 0 && !template) continue;
     const add = new Set(sc.navigatesTo);
     for (const a of files) for (const t of targetsOf(a)) add.add(t);
+    // The template is read with its component: `[routerLink]="item.link"` there, `link: '/clubs'` in the class.
+    if (template) {
+      const text = `${rawSources.get(own.filePath) ?? ""}\n${rawSources.get(template.filePath) ?? ""}`;
+      for (const t of extractNavigationTargets(text, manifestFor(own.language as Language)?.linksFromBase === true)) add.add(t);
+    }
     sc.navigatesTo = [...add];
   }
 }
 
 /** A link or navigation call handed a function's result: `href="@ItemHelper.Url(Item)"`, `NavigateTo(Club.Url(id))`. */
-const LINK_HELPER_CALL = /(?:\s:?href\s*=\s*["{]\s*@?|\bNavigateTo(?:Async)?\(\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bto\s*=\s*\{\s*)(?:(?:[A-Z][\w$]*\.)*([A-Z][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/;
+const LINK_HELPER_CALL = /(?:\s:?href\s*=\s*["{]\s*@?|\bgoto\(\s*|\bNavigateTo(?:Async)?\(\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bto\s*=\s*\{\s*)(?:(?:[A-Z][\w$]*\.)*([A-Z][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/;
 
 /**
  * A link whose target is what a project function returns — `href="@ItemHelper.Url(Item)"` (Razor),
@@ -2680,9 +2748,11 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
         const cls = classes.get(owner) ?? [];
         const fn = cls.length === 1 ? cls[0]!.methods.find((x) => x.name === name) : undefined;
         if (fn) found = { file: cls[0]!.file, fn };
-        // A component's own static helper (`LogIn.Url(Nav)` in `LogIn.razor`'s `@code`): its file's function.
+        // A component's own static helper (`LogIn.Url(Nav)` in `LogIn.razor`'s `@code`), or a function of an
+        // object the file imports (`Route.albums()` from `routes.ts`): that file's function of the name.
         else {
-          const inFile = (functions.get(name!) ?? []).filter((f) => f.file.slice(f.file.lastIndexOf("/") + 1).replace(/\..*$/, "") === owner);
+          const objectFile = importIndex.localFor(sc.filePath, owner);
+          const inFile = (functions.get(name!) ?? []).filter((f) => f.file === objectFile || f.file.slice(f.file.lastIndexOf("/") + 1).replace(/\..*$/, "") === owner);
           if (inFile.length === 1) found = inFile[0]!;
         }
       } else {
@@ -2705,14 +2775,15 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
  */
 function canonicalNavigationTargets(
   screens: ScreenInfo[],
-  routes: ReadonlyArray<{ path: string; routeName?: string; projectId?: string }>,
+  routes: ReadonlyArray<{ path: string; name?: string; projectId?: string; kind: string }>,
   projectOf: (file: string) => string | undefined,
 ): void {
-  const routePaths = routes.map((r) => r.path);
+  // Paths a screen can be at are the client router's; names are any route's (a Laravel or Django page by name).
+  const routePaths = routes.filter((r) => r.kind === "frontend").map((r) => r.path);
   // A target named rather than spelled (`route:clubs`): the path of the route by that name,
   // the screen's own sub-project's first; a name two routes answer to stays as written.
   const named = new Map<string, Array<{ path: string; projectId?: string }>>();
-  for (const r of routes) if (r.routeName) (named.get(r.routeName) ?? named.set(r.routeName, []).get(r.routeName)!).push(r);
+  for (const r of routes) if (r.name) (named.get(r.name) ?? named.set(r.name, []).get(r.name)!).push(r);
   const pathOfName = (name: string, project: string | undefined): string | null => {
     const all = named.get(name) ?? [];
     const own = all.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
@@ -2865,6 +2936,16 @@ function buildScreensFromRoutes(
 
   const screens: ScreenInfo[] = [];
 
+  // A page routing itself (an HTML file at its own path) that a route table also routes
+  // (`$routeProvider.when('/garage', { templateUrl: 'garage.html' })`) is one screen: the table's
+  // route and its own path both lead to it.
+  for (let i = inline.length - 1; i >= 0; i--) {
+    const entry = byComponent.get(inline[i]!.analysis.filePath);
+    if (!entry) continue;
+    entry.routes.push(inline[i]!.route);
+    inline.splice(i, 1);
+  }
+
   // A file several screen classes live in (three view controllers in one Swift file): one screen per class.
   const pages: Array<{ analysis: FileAnalysis; routes: RouteInfo[] }> = [];
   for (const entry of byComponent.values()) {
@@ -2946,7 +3027,8 @@ function buildScreensFromComponents(
     // Frontend SFC/JSX files, OR any file that yielded a component tree (e.g. an
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
-    return hasTree || /\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath);
+    // An Angular component with an external template is UI even when its tree is empty (a shell of links and an outlet).
+    return hasTree || !!analysis.angularTemplateUrl || /\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath);
   });
   const parts = importIndex ? routerlessParts(allAnalyses, candidates, importIndex) : new Set<string>();
   for (const analysis of candidates) {
@@ -3153,7 +3235,13 @@ function buildScreen(
     routePath,
     // What the source navigates to, and the client routes its links name (`routerLink`).
     navigatesTo: [...new Set([
-      ...extractNavigationTargets(rawSource, manifestFor(analysis.language as Language)?.linksFromBase === true),
+      // An Angular component's links are in its external template as well as its class.
+      ...extractNavigationTargets(
+        analysis.angularTemplateUrl
+          ? `${rawSource}\n${rawSources.get(posixJoin(analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1), analysis.angularTemplateUrl)) ?? ""}`
+          : rawSource,
+        manifestFor(analysis.language as Language)?.linksFromBase === true,
+      ),
       ...analysis.interactiveElements.flatMap((el) => (el.element === "link" && el.request?.method === "GET" && el.request.target.startsWith("/") ? [el.request.target] : [])),
     ])],
   };

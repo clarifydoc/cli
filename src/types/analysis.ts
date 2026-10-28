@@ -1376,13 +1376,6 @@ export interface RouteInfo {
    */
   redirectTo?: string;
   /**
-   * Frontend routes only: the name the client router knows the route by — Vue
-   * Router's `name: 'clubs'`, unplugin-vue-router's file-based name
-   * (`index/clubs/index.vue` → `//clubs/`). Navigation by name
-   * (`<RouterLink :to="{ name: 'clubs' }">`, `router.push({ name })`) reaches it.
-   */
-  routeName?: string;
-  /**
    * Frontend routes only: the routes a person goes on to from this route's page,
    * as its own declaration states them — a Web Flow view-state's transitions,
    * followed through action and decision states, a subflow to that flow's start
@@ -1543,9 +1536,12 @@ export interface RouteInfo {
    */
   aliases?: string[];
   /**
-   * The name the framework registers the route under, which templates build its
-   * URL from: Laravel `->name('clubs.show')` / `'as' => …` (group prefixes
-   * included, `clubs.index` for a resource action).
+   * The name the framework registers the route under, which templates and code build its
+   * URL from: Laravel `->name('clubs.show')` / `'as' => …` (group prefixes included,
+   * `clubs.index` for a resource action), Django `name=` under its `app_name`, and a client
+   * router's — Vue Router's `name: 'clubs'`, unplugin-vue-router's file-based name
+   * (`index/clubs/index.vue` → `//clubs/`). A link by name (`route('clubs.show')`,
+   * `{% url 'clubs:detail' %}`, `{ name: 'clubs' }`) is read as `route:<name>` and reaches it.
    */
   name?: string;
 }

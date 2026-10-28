@@ -319,7 +319,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
         componentPath,
         ...(onlyRedirect ? { redirectTo: redirectTo! } : {}),
         ...(propsFromRoute && componentPath !== null ? { propsFromRoute } : {}),
-        ...(routeName ? { routeName } : {}),
+        ...(routeName ? { name: routeName } : {}),
         calls: [],
         middleware: [],
         line: node.startPosition.row + 1,

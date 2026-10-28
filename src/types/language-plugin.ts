@@ -1513,6 +1513,12 @@ export type AntlrFrontEnd = ParserFrontEnd;
  * shared leaf helpers only — never core or the registry.
  */
 export interface LanguagePluginMeta extends LanguagePluginManifest {
+  /**
+   * The markup tags this file's components are used by when no import names them — Angular's
+   * `@Component({ selector: 'app-club-card' })`. A screen rendering `<app-club-card>` uses this
+   * file (core/screen-flow.ts composes a screen from what it renders).
+   */
+  componentTags?(analysis: FileAnalysis): string[];
   /** Parser for `parsing: "custom"` formats (e.g. .dfm). */
   customParse?(rawSource: string, relativePath: string): FileAnalysis;
   /**

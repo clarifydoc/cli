@@ -56,7 +56,7 @@ import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
-import { JsComponentEmitResolver, JsPropCallbackResolver } from "./dispatch.js";
+import { JsComponentEmitResolver, JsPropCallbackResolver, angularSelectorsOf } from "./dispatch.js";
 import { JsTemplateRefResolver } from "./template-refs.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
@@ -309,6 +309,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   requestSchema: javascriptRequestSchema,
   grpcStubService: jsGrpcStub,
   reachability: javascriptReachability,
+  componentTags: angularSelectorsOf,
 };
 
 export const javascriptMeta: LanguagePluginMeta = {
@@ -340,4 +341,5 @@ export const javascriptMeta: LanguagePluginMeta = {
   requestSchema: javascriptRequestSchema,
   grpcStubService: jsGrpcStub,
   reachability: javascriptReachability,
+  componentTags: angularSelectorsOf,
 };
