@@ -13,6 +13,7 @@
  */
 import { Worker } from "worker_threads";
 import os from "os";
+import v8 from "v8";
 import type { FileTask, FileResult, SkippedFile } from "./file-analyzer.js";
 
 /** A file its worker died on, and why: the run goes on without it. */
@@ -27,6 +28,38 @@ interface Pending {
   task: FileTask;
   resolve: (r: Outcome) => void;
   timer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * How far past its live size a heap may grow before the next full collection, as V8's
+ * `--heap-growing-percent`, while a pool runs (`CLARIFYDOC_HEAP_GROWING_PERCENT`, `0` leaves V8's own).
+ * V8 sizes that headroom for throughput — up to four times what survived the last collection — and every
+ * worker has a heap of its own, so eight workers reading large files held several times the memory their
+ * files needed: a mostly-C repository peaked at 10 GB, at 50 % 6 GB, in the same time. A collection
+ * never changes what a file reads as.
+ */
+const POOL_HEAP_GROWING_PERCENT = heapGrowingPercentFromEnv();
+
+function heapGrowingPercentFromEnv(): number {
+  const raw = process.env.CLARIFYDOC_HEAP_GROWING_PERCENT;
+  const n = raw === undefined || raw === "" ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 50;
+}
+
+/** Pools running now: the bound is set while one runs and lifted when the last one ends. */
+let runningPools = 0;
+
+/** Whether the process was started with its own heap growth, which a pool then leaves alone. */
+function heapGrowthGivenByUser(): boolean {
+  return [...process.execArgv, process.env.NODE_OPTIONS ?? ""].some((a) => a.includes("heap-growing-percent"));
+}
+
+function boundHeapGrowth(on: boolean): void {
+  if (POOL_HEAP_GROWING_PERCENT <= 0 || heapGrowthGivenByUser()) return;
+  runningPools += on ? 1 : -1;
+  if (on && runningPools === 1) v8.setFlagsFromString(`--heap-growing-percent=${POOL_HEAP_GROWING_PERCENT}`);
+  // 0 is V8's own default: growth by its throughput heuristic.
+  if (!on && runningPools === 0) v8.setFlagsFromString("--heap-growing-percent=0");
 }
 
 /** How long one file may take in a worker before it is killed and reported failed. */
@@ -64,6 +97,8 @@ export class AnalysisWorkerPool {
   /** Set once any worker has taken up a file: from then on a dead worker is its file's doing, not the pool's. */
   private started = false;
   private destroyed = false;
+  /** Whether this pool holds the heap-growth bound (`boundHeapGrowth`), released once by `destroy`. */
+  private bounded = false;
   private readonly fallback: (task: FileTask) => Promise<Outcome>;
   private readonly workerUrl: URL;
   private readonly deadlineMs: number;
@@ -86,6 +121,8 @@ export class AnalysisWorkerPool {
   ): AnalysisWorkerPool | null {
     const workerUrl = options.workerUrl ?? new URL("./analyze-worker.js", import.meta.url);
     const pool = new AnalysisWorkerPool(fallback, workerUrl, options.deadlineMs ?? deadlineFromEnv());
+    boundHeapGrowth(true);
+    pool.bounded = true;
     try {
       for (let i = 0; i < size; i++) {
         const worker = new Worker(workerUrl);
@@ -126,6 +163,8 @@ export class AnalysisWorkerPool {
   }
 
   async destroy(): Promise<void> {
+    if (this.bounded) boundHeapGrowth(false);
+    this.bounded = false;
     this.destroyed = true;
     const workers = this.workers;
     this.workers = [];

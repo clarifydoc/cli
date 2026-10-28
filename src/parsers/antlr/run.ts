@@ -70,6 +70,37 @@ export function parseWithAntlr<P extends Parser, T extends ParserRuleContext>(
   entry: (parser: P) => T,
   options?: { firstError: true },
 ): AntlrCheck<T> {
+  let made: P | undefined;
+  try {
+    return parseOnce(source, makeLexer, (tokens) => (made = makeParser(tokens)), entry, options);
+  } finally {
+    if (made) boundPredictionCache(made);
+  }
+}
+
+/** DFA states one grammar's prediction cache may hold before it is emptied (see `boundPredictionCache`). */
+const MAX_DFA_STATES = 10_000;
+
+/**
+ * Empties a grammar's prediction cache once it holds more than `MAX_DFA_STATES` states. The cache (one DFA per
+ * decision, shared by every parse of the grammar in the process) only ever grows: each state keeps the ATN
+ * configuration set it was built from, and a worker reading a thousand varied C files held 450 MB of them. A
+ * prediction never depends on what the cache holds — a cold parse reads a file as a warm one does — so emptying
+ * it between parses costs only the time to rebuild the states the next files need.
+ */
+export function boundPredictionCache(parser: Parser, maxStates = MAX_DFA_STATES): void {
+  let states = 0;
+  for (const dfa of parser.interpreter.decisionToDFA) states += dfa.length;
+  if (states > maxStates) parser.interpreter.clearDFA();
+}
+
+function parseOnce<P extends Parser, T extends ParserRuleContext>(
+  source: string,
+  makeLexer: (input: CharStream) => Lexer,
+  makeParser: (tokens: CommonTokenStream) => P,
+  entry: (parser: P) => T,
+  options?: { firstError: true },
+): AntlrCheck<T> {
   const lexer = makeLexer(CharStream.fromString(normalizeSource(source)));
   const errors = new ErrorCounter();
   lexer.removeErrorListeners();

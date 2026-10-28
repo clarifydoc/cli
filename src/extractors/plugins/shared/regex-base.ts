@@ -916,14 +916,21 @@ export function blankStringLiterals(line: string, commentPrefixes: readonly stri
   // VB-family: `'` starts a comment, never a string, and strings have no
   // backslash escapes (`"C:\temp\"` ends at its last quote; `""` is a quote).
   const vbStyle = commentPrefixes.includes("'");
-  const commentAt = (i: number): boolean => commentPrefixes.some((p) => line.startsWith(p, i));
   if (!line.includes('"') && !line.includes("'") && !commentPrefixes.some((p) => line.includes(p))) return line;
+  // A comment can only start where one of its prefixes' first characters stands.
+  const commentStarts = commentPrefixes.length > 0 && commentPrefixes.every((p) => p.length > 0)
+    ? new Set(commentPrefixes.map((p) => p[0]!))
+    : undefined;
+  const commentAt = (i: number): boolean =>
+    (commentStarts === undefined || commentStarts.has(line[i]!)) && commentPrefixes.some((p) => line.startsWith(p, i));
+  // The code between literals is copied as one slice, never a character at a time.
   let out = "";
+  let from = 0;
   let i = 0;
   while (i < line.length) {
     const c = line[i]!;
     // A trailing comment is not code: blank the rest of the line.
-    if (commentAt(i)) return out + " ".repeat(line.length - i);
+    if (commentPrefixes.length > 0 && commentAt(i)) return out + line.slice(from, i) + " ".repeat(line.length - i);
     const opens =
       c === '"' ||
       (c === "'" && !vbStyle && !(i > 0 && /[\w&<'"]/.test(line[i - 1]!)));
@@ -937,54 +944,53 @@ export function blankStringLiterals(line: string, commentPrefixes: readonly stri
           break;
         }
       }
-      if (close < 0) return out + line.slice(i);
+      if (close < 0) return out + line.slice(from);
       // `$"Hi {name.Trim()}"` (C#/VB interpolation, also `$@"…"`/`@$"…"`).
       const braceHoles = /\$@?$|@\$$/.test(line.slice(Math.max(0, i - 2), i));
-      out += c + keepInterpolations(line.slice(i + 1, close), braceHoles) + c;
+      out += line.slice(from, i) + c + keepInterpolations(line.slice(i + 1, close), braceHoles) + c;
       i = close + 1;
+      from = i;
       continue;
     }
-    out += c;
     i++;
   }
-  return out;
+  return out + line.slice(from);
 }
 
 function keepInterpolations(body: string, braceHoles = false): string {
+  // Runs of blanked characters are written at once, and a hole is told by its
+  // two characters without slicing them out.
   let out = "";
+  let blanks = 0;
+  const keep = (from: number, open: string): number => {
+    const closeCh = open === "{" ? "}" : ")";
+    let depth = 0;
+    let k = from;
+    for (; k < body.length; k++) {
+      if (body[k] === open) depth++;
+      else if (body[k] === closeCh && --depth === 0) break;
+    }
+    return k;
+  };
   let i = 0;
   while (i < body.length) {
-    const two = body.slice(i, i + 2);
-    const hole = two === "${" || two === "#{" || two === "\\(";
-    if (braceHoles && body[i] === "{" && body[i + 1] !== "{") {
-      // `{expr}` hole of a `$"…"` string (`{{` is a literal brace).
-      let depth = 0;
-      let k = i;
-      for (; k < body.length; k++) {
-        if (body[k] === "{") depth++;
-        else if (body[k] === "}" && --depth === 0) break;
-      }
-      out += body.slice(i, k + 1);
-      i = k + 1;
+    const c = body[i]!;
+    const next = body[i + 1];
+    let end = -1;
+    // `{expr}` hole of a `$"…"` string (`{{` is a literal brace).
+    if (braceHoles && c === "{" && next !== "{") end = keep(i, "{");
+    else if (((c === "$" || c === "#") && next === "{") || (c === "\\" && next === "(")) end = keep(i + 1, next);
+    if (end < 0) {
+      blanks++;
+      i++;
       continue;
     }
-    if (hole) {
-      const open = body[i + 1]!;
-      const closeCh = open === "{" ? "}" : ")";
-      let depth = 0;
-      let k = i + 1;
-      for (; k < body.length; k++) {
-        if (body[k] === open) depth++;
-        else if (body[k] === closeCh && --depth === 0) break;
-      }
-      out += body.slice(i, k + 1);
-      i = k + 1;
-      continue;
-    }
-    out += " ";
-    i++;
+    if (blanks > 0) out += " ".repeat(blanks);
+    blanks = 0;
+    out += body.slice(i, end + 1);
+    i = end + 1;
   }
-  return out;
+  return blanks > 0 ? out + " ".repeat(blanks) : out;
 }
 
 /**

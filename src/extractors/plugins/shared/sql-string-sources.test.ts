@@ -24,6 +24,19 @@ void markTrackLocationsAsDeleted(const QSqlDatabase& database) {
     });
   });
 
+  it("ends a pending statement at the first line without a string", () => {
+    const s = sources(`
+    q.prepare("SELECT id FROM clubs "
+              "WHERE league = 1"
+    );
+    q.prepare("UPDATE players SET club = 2");
+    `);
+    expect(s.map((x) => [x.name, x.target, x.line])).toEqual([
+      ["SELECT", "clubs", 2],
+      ["UPDATE", "players", 5],
+    ]);
+  });
+
   it("never reads IF as the table when CREATE TABLE names a runtime variable", () => {
     const s = sources(`
     query.prepare(

@@ -33,6 +33,19 @@ describe("blankCode", () => {
     expect(blankCode("g(`a(\nb(`)", lex, true)).toBe("g(   \n   )");
   });
 
+  it("pads an escape on the last character past the end, as it always has", () => {
+    // `"a\` at the end: the escape steps over a character that is not there, and that position is blanked too.
+    expect(blankCode('kick("a\\', C_LIKE)).toBe("kick(    ");
+    expect(blankCode('kick("a\\', C_LIKE)).toHaveLength(9);
+  });
+
+  it("copies code between literals as written, outside the basic plane too", () => {
+    // One space a UTF-16 unit: a surrogate pair blanks to two.
+    expect(blankCode('Club("⚽") /* 🏆 */ Player', C_LIKE)).toBe("Club(   )          Player");
+    // A line comment runs to the `\n`, so the `\r` before it goes with it.
+    expect(blankCode("Garage\r\n// lift\r\nCar", C_LIKE)).toBe("Garage\r\n        \nCar");
+  });
+
   it("blanks a raw string the lexicon recognizes", () => {
     const lex: BraceLexicon = { ...C_LIKE, rawString: (t, i) => (t.startsWith('r#"', i) ? t.indexOf('"#', i + 3) + 2 : -1) };
     expect(blankCode('x(r#"{"#) y', lex)).toBe("x(      ) y");

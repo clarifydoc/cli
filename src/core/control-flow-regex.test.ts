@@ -42,6 +42,15 @@ describe("blankNonCode", () => {
     expect(out).not.toContain("note");
   });
 
+  it("blanks exactly the characters it did character by character", () => {
+    const source = 'kick("ball{") // net}\n/* var { */ score(\'}\', `goal\n{`)';
+    // A backtick string the language does not let span lines ends at the newline; the closing tick then opens one.
+    expect(blankNonCode(source, js)).toBe("kick(       )        \n            score(   ,      \n{  ");
+    expect(blankNonCode(source, js, true)).toBe("kick(\"ball{\")        \n            score('}', `goal\n{`)");
+    // A string the language lets span lines blanks its newline too.
+    expect(blankNonCode('f("a\nb")', { ...js, multilineStrings: true })).toBe("f(     )");
+  });
+
   it("stops a brace inside a string from moving the nesting", () => {
     // The whole point: `"}"` used to close a block that was never open.
     const out = blankNonCode('if (x) { say("}"); }', js);

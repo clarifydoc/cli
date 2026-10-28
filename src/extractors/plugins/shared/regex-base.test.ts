@@ -159,6 +159,15 @@ describe("one-line bodies and string literals in regex call extraction", () => {
     expect(blankStringLiterals('let s = "\\(repo.load())"')).toContain("\\(repo.load())");
     expect(blankStringLiterals("fn f<'a>(x: &'a Foo) { x.bar() }")).toBe("fn f<'a>(x: &'a Foo) { x.bar() }");
   });
+
+  it("keeps the code between literals and every interpolation hole in place", async () => {
+    const { blankStringLiterals } = await import("./regex-base.js");
+    expect(blankStringLiterals('club.sign("Player") + garage.park("Car")')).toBe('club.sign("      ") + garage.park("   ")');
+    expect(blankStringLiterals('log($"Score {match.Home()} to {match.Away()}")')).toBe('log($"      {match.Home()}    {match.Away()}")');
+    expect(blankStringLiterals('x = "a ${{b}} c" // "note"', ["//"])).toBe('x = "  ${{b}}  "          ');
+    expect(blankStringLiterals("Dim s = \"Car\" ' \"Garage\"", ["'"])).toBe('Dim s = "   "           ');
+    expect(blankStringLiterals('open("unclosed(club)')).toBe('open("unclosed(club)');
+  });
 });
 
 describe("class properties under a wrapped header", () => {
