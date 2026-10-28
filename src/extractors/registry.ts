@@ -361,6 +361,8 @@ export const MIGRATION_FILE_RULES: readonly MigrationFileRule[] = ALL_MANIFESTS.
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
 export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
+/** Every manifest's `packageRoots` (`src/main/java/`, …): below them, a directory named like build output is a package. */
+export const PACKAGE_ROOTS: readonly RegExp[] = ALL_MANIFESTS.flatMap((m) => m.packageRoots ?? []);
 /** Files a default ignore skips that a marker says are source (`readmitFiles`). */
 export const READMIT_FILES: ReadonlyArray<{ marker: string; pattern: string; markerIs(text: string): boolean }> = ALL_MANIFESTS.flatMap((m) => m.readmitFiles ?? []);
 

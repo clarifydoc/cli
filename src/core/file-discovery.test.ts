@@ -140,6 +140,30 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("App/bin/Debug/Gen.cs");
   });
 
+  it("reads a JVM package named like build output, never a build tool's output (real-repo FP)", async () => {
+    write("league/pom.xml", "<project/>\n");
+    for (const pkg of ["target", "out", "bin", "obj", "dist", "vendor"]) {
+      write(`league/src/main/java/com/example/league/${pkg}/Club.java`, `package com.example.league.${pkg};\nclass Club {}\n`);
+    }
+    write("league/src/main/java/com/example/league/vendor/target/Kit.java", "class Kit {}\n");
+    write("league/src/test/kotlin/com/example/league/out/CarTest.kt", "class CarTest\n");
+    write("league/target/classes/Gen.java", "class Gen {}\n");
+    write("league/vendor/lib/src/main/java/com/example/Lib.java", "class Lib {}\n");
+    write("garage/dist/main.js", "x();\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toEqual([
+      "league/pom.xml",
+      "league/src/main/java/com/example/league/bin/Club.java",
+      "league/src/main/java/com/example/league/dist/Club.java",
+      "league/src/main/java/com/example/league/obj/Club.java",
+      "league/src/main/java/com/example/league/out/Club.java",
+      "league/src/main/java/com/example/league/target/Club.java",
+      "league/src/main/java/com/example/league/vendor/Club.java",
+      "league/src/main/java/com/example/league/vendor/target/Kit.java",
+      "league/src/test/kotlin/com/example/league/out/CarTest.kt",
+    ]);
+  });
+
   it("skips a linked worktree of the repository it reads, and keeps a submodule and a foreign worktree", async () => {
     write("src/club.ts", "export const club = 1;\n");
     write(".git/worktrees/wt-feature/HEAD", "ref: refs/heads/feature\n");

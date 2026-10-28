@@ -22,6 +22,8 @@ export const scalaManifest: LanguagePluginManifest = {
   // `.sc`: Scala CLI / Ammonite scripts, worksheets and Mill's `build.sc`
   // (SuperCollider also writes `.sc` — meta.ts skips those).
   extensions: [".scala", ".sc"],
+  // sbt/Maven/Gradle source sets: below `src/<set>/scala/` every directory is a package.
+  packageRoots: [/(?:^|\/)src\/[^/]+\/scala\//],
   testFilePatterns: [/Spec\.scala$/, /Test\.scala$/, /\/src\/test\//],
   // Without these an sbt module is not a sub-project, so every Scala file in a
   // multi-module build lands in the enclosing repo's bucket.

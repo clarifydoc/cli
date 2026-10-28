@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { byOrdinal } from "./ordinal.js";
-import { basename, dirname, resolve, sep } from "path";
+import { basename, dirname, relative, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
-import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, READMIT_FILES, SOURCE_DIRS } from "../extractors/registry.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, READMIT_FILES, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
@@ -120,6 +120,15 @@ export const DEFAULT_IGNORE = [
 ];
 
 /**
+ * The default ignores that skip a directory by a build-output name — which,
+ * below a plugin's `packageRoots` (`src/main/java/`), is a package like any
+ * other: `com/example/league/vendor/` is source there.
+ */
+const PACKAGE_NAMED_IGNORES: ReadonlyMap<string, string> = new Map(
+  ["target", "out", "bin", "obj", "dist", "vendor"].map((name) => [name, `**/${name}/**`]),
+);
+
+/**
  * A source file discovery decided to analyze, with the language its extension
  * maps to.
  */
@@ -212,7 +221,17 @@ export async function discoverFiles(
   const ignore = [...DEFAULT_IGNORE.filter((p) => p !== "**/build/**"), ...(options.exclude ?? [])];
   const ignorePatterns = loadIgnorePatterns(root);
   const pruneIgnored = ignoredDirectories(root, ignorePatterns);
-  const prune = (dir: string): boolean => (pruneIgnored?.(dir) ?? false) || buildOutput(root, dir);
+  // A directory named like build output below a package root: the walk still
+  // skips it (the ignore), and it is read on its own below.
+  const packaged = new Set<string>();
+  const prune = (dir: string): boolean => {
+    if (pruneIgnored?.(dir) || buildOutput(root, dir)) return true;
+    if (PACKAGE_ROOTS.length > 0 && ignore.includes(PACKAGE_NAMED_IGNORES.get(basename(dir).toLowerCase()) ?? "")) {
+      const rel = relative(root, dir).split(sep).join("/") + "/";
+      if (PACKAGE_ROOTS.some((re) => re.test(rel))) packaged.add(rel.slice(0, -1));
+    }
+    return false;
+  };
 
   // Not following links, the walk would drop every linked file; list them
   // and decide per link below.
@@ -226,6 +245,22 @@ export async function discoverFiles(
     links,
     prune,
   });
+
+  // Packages named like build output (`src/main/java/…/league/vendor/`), read
+  // with those names' ignores lifted. Nested ones come with the outermost.
+  if (!options.include?.length && packaged.size > 0) {
+    const seen = new Set(entries);
+    const named = new Set(PACKAGE_NAMED_IGNORES.values());
+    const lifted = [...DEFAULT_IGNORE.filter((p) => p !== "**/build/**" && !named.has(p)), ...(options.exclude ?? [])];
+    const dirs = [...packaged].sort(byOrdinal);
+    for (const dir of dirs.filter((d) => !dirs.some((o) => d.startsWith(o + "/")))) {
+      const inner = await glob(patterns, { cwd: resolve(root, dir), ignore: lifted, caseSensitiveMatch: false, links, prune });
+      for (const e of inner) {
+        const path = `${dir}/${e}`;
+        if (!seen.has(path)) { seen.add(path); entries.push(path); }
+      }
+    }
+  }
 
   // A skipped directory a plugin says holds source (`bin/` with a `dune`
   // file, or beside a `META6.json`): read it too, with the default ignores below it.

@@ -1301,6 +1301,15 @@ export interface LanguagePluginManifest {
    */
   readmitFiles?: ReadonlyArray<{ marker: string; pattern: string; markerIs(text: string): boolean }>;
   /**
+   * Source roots below which every directory is a package, whatever it is
+   * called: a relative posix path ending in `/` matches when it lies at or
+   * below one. Java's `src/<set>/java/`: `…/com/example/league/vendor/` is the
+   * package `com.example.league.vendor`, not a vendored tree, so the build-output
+   * names discovery skips (`target`, `out`, `bin`, `obj`, `dist`, `vendor`) are
+   * read there. A root inside a skipped tree is never reached.
+   */
+  packageRoots?: readonly RegExp[];
+  /**
    * A file named with this prefix is also importable without it — Sass's
    * partials: `@use "buttons"` loads `_buttons.scss` (and `@use "theme"`
    * a `theme/_index.scss`). Import resolution tries the prefixed name.

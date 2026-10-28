@@ -14,6 +14,8 @@ export const groovyManifest: LanguagePluginManifest = {
   packageEcosystems: ["maven"],
   parsing: "regex",
   extensions: [".groovy", ".gvy", ".gy", ".gsh"],
+  // Gradle/Maven source sets: below `src/<set>/groovy/` every directory is a package.
+  packageRoots: [/(?:^|\/)src\/[^/]+\/groovy\//],
   // A Jenkins pipeline is a Groovy script with no extension.
   namedFiles: ["Jenkinsfile"],
   testFilePatterns: [/Spec\.groovy$/, /Tests?\.groovy$/, /(?:^|\/)src\/(?:test|integration-test)\//],

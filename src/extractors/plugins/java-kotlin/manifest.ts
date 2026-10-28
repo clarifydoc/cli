@@ -97,6 +97,8 @@ export const javaManifest: LanguagePluginManifest = {
   serviceConfig: jvmServiceConfig,
   parsing: "tree-sitter",
   extensions: [".java"],
+  // Maven/Gradle source sets: below `src/<set>/java/` every directory is a package.
+  packageRoots: [/(?:^|\/)src\/[^/]+\/java\//],
   grammar: { variants: { java: { pkg: "tree-sitter-java", wasm: "tree-sitter-java.wasm" } } },
   // The name suffix outside Maven/Gradle's `src/main/java/`, which holds production
   // code only (a `@RestController` named `AuthCheckTest` there is served).
@@ -120,6 +122,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   serviceConfig: jvmServiceConfig,
   parsing: "tree-sitter",
   extensions: [".kt", ".kts"],
+  // Gradle source sets (`src/main/kotlin/`, multiplatform `src/commonMain/kotlin/`).
+  packageRoots: [/(?:^|\/)src\/[^/]+\/kotlin\//],
   grammar: { variants: { kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" } } },
   testFilePatterns: [/^(?!(?:.*[\\/])?src[\\/]main[\\/](?:kotlin|java)[\\/]).*(Test|Tests|IT|ITCase)\.kt$/],
   externalModulePrefixes: ["java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.", "io.ktor.", "io.netty.", "com.google.", "com.fasterxml.", "com.amazonaws."],
