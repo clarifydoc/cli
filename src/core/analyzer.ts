@@ -3256,14 +3256,22 @@ export function buildComponentGraph(
       // exactly that name. Step 3 splits on dots, so its "last segment" is the
       // extension (`h`, `sh`), which names no file — every such include was
       // edgeless. An exact file name is required: `java.sql` names no file.
-      const fileName = imp.source.replace(/\\/g, "/").split("/").pop() ?? "";
+      // A path with directories (`#include "league/base.h"`) names the file
+      // whose path ends with ALL of it, never another `base.h`: with none in
+      // the tree the include is external, and nothing below may guess.
+      const includePath = imp.source.replace(/\\/g, "/");
+      const fileName = includePath.split("/").pop() ?? "";
       if (STRIP_SOURCE_EXTENSION_RE.test(fileName)) {
-        const candidates = fileNameToFiles.get(fileName.toLowerCase());
-        const target = candidates ? pickScoped(candidates, a.filePath) : null;
+        const named = fileNameToFiles.get(fileName.toLowerCase());
+        const qualified = includePath.includes("/") && !includePath.startsWith("/");
+        const suffix = "/" + includePath.toLowerCase();
+        const candidates = qualified ? named?.filter((f) => ("/" + f.toLowerCase()).endsWith(suffix)) : named;
+        const target = candidates && candidates.length > 0 ? pickScoped(candidates, a.filePath) : null;
         if (target) {
           addRef(target);
           continue;
         }
+        if (qualified) continue;
       }
 
       // 3. A package import (Go, Rust, Ruby): the files of the one directory

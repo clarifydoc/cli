@@ -251,3 +251,27 @@ describe("buildComponentGraph — a barrel's re-exports", () => {
     expect([...(graph["src/index.ts"] ?? [])].sort()).toEqual(["src/clubs.ts", "src/players.ts"]);
   });
 });
+
+describe("buildComponentGraph — an include that names a file", () => {
+  const c = (filePath: string, includes: string[] = []) =>
+    file(filePath, { language: "c", imports: includes.map((source) => ({ source, specifiers: [], isNamespace: false })) });
+
+  it("takes a bare file name to the closest file so named", () => {
+    const graph = buildComponentGraph([c("garage/bay.h"), c("garage/bay.c", ["bay.h"])]);
+    expect(graph["garage/bay.c"]).toEqual(["garage/bay.h"]);
+  });
+
+  it("takes a path with directories only to a file whose path ends with all of it", () => {
+    const graph = buildComponentGraph([
+      c("include/league/base.h"),
+      c("service/base.h"),
+      c("service/api.c", ["league/base.h"]),
+    ]);
+    expect(graph["service/api.c"]).toEqual(["include/league/base.h"]);
+  });
+
+  it("gives a path with directories no edge when no file ends with it (real-repo FP)", () => {
+    const graph = buildComponentGraph([c("service/base.h"), c("service/api.c", ["league/base.h"])]);
+    expect(graph["service/api.c"]).toBeUndefined();
+  });
+});
