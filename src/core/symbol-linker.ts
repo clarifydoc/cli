@@ -2071,6 +2071,44 @@ function callableAtLine(analysis: FileAnalysis, line: number): string | null {
   return best ? (best as { symbol: string }).symbol : null;
 }
 
+/**
+ * The class a bare call at `line` of `sourceSymbol` runs in, for a lookup of
+ * its own members: the class the symbol is a method of (`Club.play`, an
+ * out-of-line C++ `Club::play`), the receiver type of an extension function
+ * (Kotlin `fun Club.extra()`), else the innermost class whose body holds the
+ * line. `""` for a free function; `undefined` when the extension's type is
+ * declared elsewhere, which this file cannot judge.
+ */
+function callerClass(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: string, line: number): string | undefined {
+  const file = analysis.filePath;
+  if (!sourceSymbol.startsWith("route:")) {
+    for (const dot of [sourceSymbol.lastIndexOf("."), sourceSymbol.indexOf(".")]) {
+      if (dot > 0 && ctx.classAt.has(memberKey(file, sourceSymbol.slice(0, dot)))) return sourceSymbol.slice(0, dot);
+    }
+    const receiver = analysis.functions.find((f) => f.name === sourceSymbol && line >= f.line && line <= f.endLine)?.params.find((p) => p.isReceiver);
+    if (receiver) {
+      const type = receiverTypeName(receiver.type, analysis.language as Language);
+      return type && ctx.classAt.has(memberKey(file, type)) ? type : undefined;
+    }
+  }
+  let best: ClassInfo | null = null;
+  for (const cls of analysis.classes) {
+    if (line < cls.line || line > cls.endLine) continue;
+    if (!best || cls.endLine - cls.line < best.endLine - best.line) best = cls;
+  }
+  return best?.name ?? "";
+}
+
+/** The class of `file` that `def` (an entry of its symbol index) is a method of, or null for a free function. */
+function memberClassOf(ctx: LinkContext, file: string, def: SymbolDef): string | null {
+  for (const dot of [def.name.lastIndexOf("."), def.name.indexOf(".")]) {
+    if (dot <= 0) continue;
+    const cls = ctx.classAt.get(memberKey(file, def.name.slice(0, dot)));
+    if (cls && cls.methods.some((m) => m.line === def.line)) return cls.name;
+  }
+  return null;
+}
+
 function enclosingMethod(analysis: FileAnalysis, line: number, name: string): { symbol: string; line: number } | null {
   let best: { symbol: string; line: number; span: number } | null = null;
   for (const cls of analysis.classes) {
@@ -2908,6 +2946,28 @@ function resolveCallToDefinition(
   if (!def && !isQualified && !bareIsFunction) {
     def = symbolIn(ctx, targetFile, leafName);
   }
+  // A bare name where members need no `this.` is the caller's own class's
+  // member, then its bases' — never whichever class of the file declares it
+  // first — and never another class's from a free function.
+  const ownerClass = !isQualified && !reference && !bareIsFunction && call.kind === "internal" && targetFile === sourceFile
+    ? callerClass(ctx, analysis, sourceSymbol, call.line)
+    : undefined;
+  if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null)) {
+    const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName) : null;
+    if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
+      if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
+    } else if (hit) {
+      return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: ownerClass, viaTypeFile: sourceFile });
+    } else if (def) {
+      // Another class's member is in reach only from a class it encloses (a Java inner class) —
+      // or, where the extractor drops receivers (`p->kick()`), as a guess.
+      const other = ctx.classAt.get(memberKey(sourceFile, memberClassOf(ctx, sourceFile, def)!));
+      if (!other || call.line < other.line || call.line > other.endLine) {
+        if (pluginFor(analysis.language)?.bareCallsHideReceivers) return mkLink(sourceFile, def.name, def.line, "INFERRED", "direct");
+        def = undefined;
+      }
+    }
+  }
   // A barrel / package `__init__` that forwards the name (`export * from
   // "./x"`, `from .x import *`, `from .impl import Service`): the definition
   // is where the re-export leads. A named re-export stays the target only
@@ -2973,7 +3033,8 @@ function resolveCallToDefinition(
   // class's own `find` must not capture it (Strategy 2 follows the field).
   const onSelf = (!isQualified && !bareIsFunction) || (parts.length === 2 && (SELF_HEADS.has(parts[0]!) || SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, ""))));
   if (!def && call.kind === "internal" && onSelf) {
-    const currentClasses = analysis.classes;
+    // A bare call walks the caller's own class only; a free function has none.
+    const currentClasses = ownerClass === undefined ? analysis.classes : analysis.classes.filter((c) => c.name === ownerClass);
     for (const cls of currentClasses) {
       let parentInfo = parentClassOf(ctx, cls.name, sourceFile);
       const visited = new Set<string>();

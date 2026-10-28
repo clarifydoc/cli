@@ -1166,6 +1166,15 @@ export interface LanguagePluginManifest {
    */
   explicitSelfMembers?: boolean;
   /**
+   * The call extractor reads some member calls without their receiver (C++
+   * `coach->drill()` is `drill`), so a bare call the caller's class and its
+   * bases do not answer — or any call from a free function — may still be
+   * another class's method: a same-file one is kept, as a guess (INFERRED).
+   * Unset, such a call never reaches another class's member — `load()` in
+   * Java is the caller's own, or an enclosing class's.
+   */
+  bareCallsHideReceivers?: boolean;
+  /**
    * A module's top-level names reach another file only through an import
    * naming them (JS/TS, Python): in a module, a class name the file neither
    * declares nor imports is a global (`Map`, `Response`), never another

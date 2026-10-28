@@ -18,6 +18,8 @@ export const cppManifest: LanguagePluginManifest = {
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
   typesSpanFiles: true,
+  // `p->kick()` is read as `kick`: a bare call may be another class's member.
+  bareCallsHideReceivers: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
 };
