@@ -1,8 +1,9 @@
 import type { FileAnalysis } from "../types/analysis.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
-import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, manifestFor } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, isStandardImport, manifestFor } from "../extractors/registry.js";
 import type { ImportResolveContext } from "../types/language-plugin.js";
+import { isExternalPackage } from "../extractors/shared/link-scoring.js";
 
 /**
  * Project-wide import index, built once after per-file extraction. Works
@@ -429,6 +430,14 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   };
 }
 
+/**
+ * An import source naming a package or the importing language's standard
+ * library (`pydantic`, Python `types`): what it binds is never a project name.
+ */
+export function isExternalImportSource(importingFile: string, source: string, hasFile: (path: string) => boolean): boolean {
+  return isExternalPackage(source) || isStandardImport(importingFile, source, hasFile);
+}
+
 /** Extension and index-file spellings tried, in order, for an extension-less specifier. */
 const PROJECT_PATH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", ".svelte", "/index.ts", "/index.tsx", "/index.js", "/index.vue"];
 
@@ -455,6 +464,8 @@ export function resolveImportSource(
   const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
 
   if (!src.startsWith(".") && !src.startsWith("/")) {
+    // The language's standard library (`import types`), unless a project module shadows it.
+    if (isStandardImport(norm, src, (p) => knownFiles.has(p))) return null;
     if (norm.endsWith(".py")) return resolvePythonModule(norm, dir, src, knownFiles, specifier);
     // A tsconfig alias (`@/foo`, a `baseUrl` path) is rewritten to a
     // project-relative path before this runs; it names a project file only if

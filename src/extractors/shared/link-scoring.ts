@@ -15,13 +15,18 @@ let partialPrefixByLanguage: ReadonlyMap<string, string> = new Map();
 /** Language → its platform infixes (`.ios`, `.android`) — see `LanguagePluginManifest.platformSuffixes`. */
 let platformSuffixesByLanguage: ReadonlyMap<string, readonly string[]> = new Map();
 
+/** The importing file's language says the import names its standard library (`LanguagePluginManifest.standardImport`). */
+let standardImportRule: (importingFile: string, source: string, hasFile: (path: string) => boolean) => boolean = () => false;
+
 /** Called once by the registry after aggregating every plugin's data. */
 export function registerLinkScoringData(
   prefixes: readonly string[],
   stripRe: RegExp,
   partialPrefixes: ReadonlyMap<string, string> = new Map(),
   platformSuffixes: ReadonlyMap<string, readonly string[]> = new Map(),
+  standardImport?: (importingFile: string, source: string, hasFile: (path: string) => boolean) => boolean,
 ): void {
+  if (standardImport) standardImportRule = standardImport;
   externalModulePrefixes = prefixes;
   stripSourceExtensionReSlot = stripRe;
   partialPrefixByLanguage = partialPrefixes;
@@ -360,6 +365,8 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
 
   // 2. Skip well-known external packages/standard libraries
   if (isExternalPackage(importSource)) return null;
+  // ...and the importing language's own standard library, unless a project module shadows it.
+  if (standardImportRule(sourceFile, importSource, (p) => filePathMap.get(p) === p)) return null;
 
   // 2b. A file path with an extension of the importer's own family, written without `./`
   // (`include 'inc/header.php'`, `include 'lib/db.inc'`, `source lib/x.sh`): the language

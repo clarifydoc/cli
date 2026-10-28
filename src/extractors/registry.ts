@@ -557,6 +557,17 @@ export const BUILTIN_MEMBERS_BY_LANGUAGE: ReadonlyMap<Language, ReadonlySet<stri
 })();
 
 /**
+ * Whether an import names the standard library of the importing file's
+ * language rather than a project module (`LanguagePluginManifest.standardImport`).
+ */
+export function isStandardImport(importingFile: string, source: string, hasFile: (path: string) => boolean): boolean {
+  const dot = importingFile.lastIndexOf(".");
+  const language = dot >= 0 ? EXTENSION_TO_LANGUAGE[importingFile.slice(dot).toLowerCase()] : undefined;
+  const rule = language ? manifestFor(language)?.standardImport : undefined;
+  return !!rule && rule(importingFile, source, hasFile);
+}
+
+/**
  * Matches import sources whose first segment is a well-known external
  * namespace root (e.g. "System.Windows.Forms", "com.example.app") — used to
  * skip directory-name matching for such imports.
@@ -578,7 +589,7 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
 // Push the aggregates into link-scoring (it cannot import the registry: it is
 // imported by plugin code, and metas are imported by the registry — a static
 // import here would close an ESM cycle and TDZ plugin classes).
-registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE);
+registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE, isStandardImport);
 
 // ─── Framework detection rules ───────────────────────────────────────────
 
