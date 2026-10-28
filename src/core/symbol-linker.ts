@@ -418,17 +418,22 @@ export function buildSymbolLinks(
   // `@Path` on the API, the class in another module) anchors on the interface
   // method itself, and reaches what it does only through this link.
   for (const [, info] of interfaceImplMap) {
-    if (info.impls.length < 1) continue;
+    // A class implementing an interface that extends this one (`SeasonProvider : ISeasonProvider`,
+    // `ISeasonProvider : IProvider`) implements this one's methods too, at any depth.
+    const family = interfaceFamily(info);
+    const impls = family.length === 1 ? info.impls : uniqueImpls(family.flatMap((f) => f.impls));
+    if (impls.length < 1) continue;
     for (const ifaceMethod of info.methods) {
       if (ifaceMethod.inherited) continue; // its own interface's fan-out links it
       const ifaceSymbol = `${info.interfaceName}.${ifaceMethod.name}`;
-      for (const impl of info.impls) {
+      for (const impl of impls) {
         // Where the method actually is: the class body, a sibling file of its
         // package (Go), or a base class it inherits from.
         const implMethod = findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
         // A class that declares none takes the interface's own (a C# `class Match : Club`
-        // whose base list names the interface): no implementation to fan out to.
-        if (!implMethod || (implMethod.file === info.interfaceFile && implMethod.symbol === ifaceSymbol)) continue;
+        // whose base list names the interface), or an extending interface's restatement
+        // of it: no implementation to fan out to.
+        if (!implMethod || family.some((f) => implMethod.file === f.interfaceFile && implMethod.symbol === `${f.interfaceName}.${ifaceMethod.name}`)) continue;
         links.push({
           sourceFile: info.interfaceFile,
           sourceSymbol: ifaceSymbol,
@@ -3229,6 +3234,28 @@ export function buildInterfaceImplMap(
   }
 
   return map;
+}
+
+/** An interface and every interface extending it, at any depth, itself first. */
+function interfaceFamily(iface: InterfaceImplInfo): InterfaceImplInfo[] {
+  if (!iface.extendedBy?.length) return [iface];
+  const family = [iface];
+  const seen = new Set(family);
+  for (let i = 0; i < family.length; i++) {
+    for (const sub of family[i]!.extendedBy ?? []) if (!seen.has(sub)) { seen.add(sub); family.push(sub); }
+  }
+  return family;
+}
+
+/** Implementations once each: a class implementing an interface and one extending it is listed under both. */
+function uniqueImpls(impls: InterfaceImplInfo["impls"]): InterfaceImplInfo["impls"] {
+  const seen = new Set<string>();
+  return impls.filter((im) => {
+    const key = `${im.classFile}\0${im.className}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Interface definitions grouped by name. */

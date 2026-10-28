@@ -163,3 +163,34 @@ describe("interface redirect with sub-interfaces implemented by a subclass", () 
     expect(edges([repo, clubRepoIface, base, clubRepo, user], "Garage.park")).toContain("repo.all -> BasicRepo.all [interface-redirect/calls]");
   });
 });
+
+describe("interface fan-out to implementations of extending interfaces", () => {
+  const provider = () => file("league/IProvider.java", [cls("IProvider", { kind: "interface", methods: [method("isValid", 2)] })]);
+  const seasonal = () => file("league/ISeasonProvider.java", [cls("ISeasonProvider", { kind: "interface", extends: "IProvider", methods: [method("season", 3)] })]);
+  const cup = () => file("league/ICupProvider.java", [cls("ICupProvider", { kind: "interface", extends: "ISeasonProvider" })]);
+  const match = () => file("league/MatchProvider.java", [cls("MatchProvider", { implements: ["IProvider"], methods: [method("isValid", 4)] })]);
+  const season = () => file("league/SeasonProvider.java", [cls("SeasonProvider", { implements: ["ISeasonProvider"], methods: [method("isValid", 4), method("season", 6)] })]);
+  const final = () => file("league/CupFinalProvider.java", [cls("CupFinalProvider", { implements: ["ICupProvider"], methods: [method("isValid", 5)] })]);
+
+  it("reaches a class implementing an interface that extends the declared one, at any depth", () => {
+    expect(edges([provider(), seasonal(), cup(), match(), season(), final()], "IProvider.isValid")).toEqual([
+      "isValid -> CupFinalProvider.isValid [interface-fanout/implements]",
+      "isValid -> MatchProvider.isValid [interface-fanout/implements]",
+      "isValid -> SeasonProvider.isValid [interface-fanout/implements]",
+    ]);
+    // The extending interface's own methods fan out from there only.
+    expect(edges([provider(), seasonal(), cup(), match(), season(), final()], "ISeasonProvider.season"))
+      .toEqual(["season -> SeasonProvider.season [interface-fanout/implements]"]);
+  });
+
+  it("does not fan out to an extending interface's restatement of the method", () => {
+    const restated = file("league/ISeasonProvider.java", [cls("ISeasonProvider", { kind: "interface", extends: "IProvider", methods: [method("isValid", 3)] })]);
+    const bare = file("league/SeasonProvider.java", [cls("SeasonProvider", { implements: ["ISeasonProvider"] })]);
+    expect(edges([provider(), restated, bare], "IProvider.isValid")).toEqual([]);
+  });
+
+  it("lists a class implementing both the interface and an extending one once", () => {
+    const both = file("league/SeasonProvider.java", [cls("SeasonProvider", { implements: ["IProvider", "ISeasonProvider"], methods: [method("isValid", 4)] })]);
+    expect(links([provider(), seasonal(), both]).filter((l) => l.sourceSymbol === "IProvider.isValid")).toHaveLength(1);
+  });
+});
