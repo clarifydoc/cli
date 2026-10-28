@@ -3426,6 +3426,17 @@ function resolveCallToDefinition(
       // The module's own top-level name — a method of a class in it is no `module.name`.
       if (subDef && subDef.name === leafName) return mkLink(sub!, subDef.name, subDef.line, "INFERRED", "import-file");
     }
+    // `import league` … `league._make.s()`: the dotted name walks the package's modules down to the
+    // one defining, aliasing (`s = attrs`) or forwarding the called name.
+    if (parts.length >= 3 && !call.target.includes("/")) {
+      const hit = dottedModuleMember(ctx, analysis, sourceFile, sourceSymbol, call, parts, targetFile);
+      const cls = hit && ctx.classAt.get(memberKey(hit.file, hit.def.name));
+      if (cls) {
+        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        return mkLink(hit!.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
+      }
+      if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, "EXTRACTED", "direct");
+    }
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
     if (!targetFile) {
@@ -4095,6 +4106,44 @@ function findEnclosingCallable(
     if (method) return method;
   }
   return null;
+}
+
+/**
+ * What a call written through a whole-module import reaches when its dotted name walks further modules
+ * (`import league` … `league.cup.draw.pick()`, `import league._make` … `league._make.s()`): the called
+ * name as the last module the path names defines, aliases or forwards it. Null when the path is not
+ * modules down to one name (a class member, a value's attribute) — other strategies read those.
+ */
+function dottedModuleMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  parts: string[],
+  entry: string | null,
+): ForwardedDefinition | null {
+  // The binding the call is written on: the package (`league`) or the module path imported whole.
+  const bound = analysis.imports
+    .flatMap((i) => i.source === call.target && i.isNamespace && !i.isType ? i.specifiers.filter((s) => call.name.startsWith(`${s}.`)) : [])
+    .sort((a, b) => b.length - a.length)[0];
+  if (!bound || shadowedLocally(analysis, sourceSymbol, bound.split(".")[0]!)) return null;
+  const rest = parts.slice(bound.split(".").length);
+  const leaf = rest[rest.length - 1];
+  if (!leaf) return null;
+  let module = entry;
+  if (rest.length > 1) {
+    const source = `${call.target}${call.target!.endsWith(".") ? "" : "."}${rest.slice(0, -1).join(".")}`;
+    const ownResolver = pluginFor(analysis.language)?.resolveImport;
+    const sub = ownResolver ? ownResolver(sourceFile, source, leaf, importResolveContext(ctx)) : resolveTarget(source, sourceFile, ctx.filePathMap);
+    // Only a file that IS that module — named so, or the entry of a directory named so.
+    const name = rest[rest.length - 2]!;
+    if (!sub || sub === sourceFile || !(sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === name || sub.split("/").at(-2) === name)) return null;
+    module = sub;
+  }
+  if (!module || module === sourceFile) return null;
+  const hit = definitionIn(ctx, module, leaf, 0, new Set());
+  return hit && !hit.namespace ? hit : null;
 }
 
 /** Longest chain of re-exports followed to a definition. */

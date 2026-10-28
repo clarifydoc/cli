@@ -459,6 +459,8 @@ export function classifyCalls(
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
+  // Module paths a file imports whole by their dotted name (`import league._make`), longest first.
+  const dottedSpecs = [...importMap.keys()].filter((s) => s.includes(".")).sort((a, b) => b.length - a.length);
 
   outer:
   for (const call of calls) {
@@ -495,6 +497,15 @@ export function classifyCalls(
     if (namedSource && call.name.includes(".")) {
       call.kind = "cross-file";
       call.target = namedSource;
+      call.confidence = "EXTRACTED";
+      continue;
+    }
+
+    // A module path imported whole and called through it (`import league._make` … `league._make.s()`).
+    const dotted = dottedSpecs.length > 0 ? dottedSpecs.find((s) => call.name.startsWith(`${s}.`)) : undefined;
+    if (dotted) {
+      call.kind = "cross-file";
+      call.target = importMap.get(dotted)!;
       call.confidence = "EXTRACTED";
       continue;
     }
