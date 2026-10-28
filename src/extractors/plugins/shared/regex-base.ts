@@ -176,6 +176,12 @@ export interface RegexLangSpec {
   propertyPatterns?: PropertyPattern[];
   /** Parse a single param "token" (e.g. `String $name`, `name: Type`, `users As UserService`). */
   parseParam?: ParamParser;
+  /**
+   * Column where a declaration line's own body starts, when the language opens
+   * a one-line body other than with `{`, `=>` or `=` ({@link inlineBodyColumn}):
+   * Ruby's `def x; y; end` and `def f(a) g(a) end`. -1 when the line opens none.
+   */
+  inlineBodyColumn?: (line: string, from: number) => number;
   /** Pull the declared return type from a function-declaration line. Languages
    *  like Go (`func foo() Type`), Rust (`fn foo() -> Type`), or VB
    *  (`Function Foo() As Type`) need to override the default (null). */
@@ -449,7 +455,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
       const m = line.match(pattern);
       if (m && m[1] && (keywordNames || !isControlFlowKeyword(m[1])) && (!accept || accept(lines, i))) {
         const endLine = blockEndLine(lines, i, spec);
-        const inline = inlineBodyColumn(line, line.indexOf(m[1], m.index ?? 0) + m[1].length);
+        const inline = (spec.inlineBodyColumn ?? inlineBodyColumn)(line, line.indexOf(m[1], m.index ?? 0) + m[1].length);
         const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
         const calls = extractCallsFromBody(callLines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
         const fn: FunctionInfo = {
@@ -485,7 +491,7 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
     const line = lines[i] ?? "";
     const pattern = spec.functionPatterns.find((p) => p.pattern.test(line));
     const at = line.indexOf(span.name);
-    const inline = at >= 0 ? inlineBodyColumn(line, at + span.name.length) : -1;
+    const inline = at >= 0 ? (spec.inlineBodyColumn ?? inlineBodyColumn)(line, at + span.name.length) : -1;
     const fn: FunctionInfo = {
       name: span.name,
       params: extractParamsFromDeclaration(lines, i, span.name, spec.parseParam),
@@ -632,7 +638,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
             if (fm && fm[1] && (keywordNames || !isControlFlowKeyword(fm[1]))) {
               const methodStart = i + 1 + j;
               const methodEnd = blockEndLine(lines, methodStart, spec);
-              const inline = inlineBodyColumn(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0) + fm[1].length);
+              const inline = (spec.inlineBodyColumn ?? inlineBodyColumn)(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0) + fm[1].length);
               const callLines = (spec.callSourceLines?.(lines) ?? lines) as string[];
               const calls = extractCallsFromBody(callLines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
               const method: FunctionInfo = {
@@ -1113,7 +1119,7 @@ function headerLineMethods(line: string, row: number, spec: RegexLangSpec): Func
   }
   return starts.map((s, k) => {
     const segment = line.slice(s.at, starts[k + 1]?.at ?? line.length);
-    const inline = inlineBodyColumn(segment, segment.indexOf(s.name) + s.name.length);
+    const inline = (spec.inlineBodyColumn ?? inlineBodyColumn)(segment, segment.indexOf(s.name) + s.name.length);
     const calls = inline >= 0
       ? extractCallsFromBody([segment], 1, 1, spec.lineCommentPrefixes, spec.callPatterns, { line: 0, column: inline }).map((c) => ({ ...c, line: row + 1 }))
       : [];

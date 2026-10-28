@@ -344,6 +344,25 @@ function rootIdentifier(callName: string): string | null {
   return /^[A-Za-z_$][\w$]*$/.test(head) ? head : null;
 }
 
+/** What a plugin's own import resolver (`resolveImport`) may read of the project. */
+export function importResolveContext(analyses: readonly FileAnalysis[], knownFiles: ReadonlySet<string>): ImportResolveContext {
+  const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+  const declared = new Map<string, Set<string>>();
+  return {
+    files: knownFiles,
+    declares: (file, name) => {
+      let names = declared.get(file);
+      if (!names) {
+        const a = byPath.get(file);
+        names = new Set([...(a?.functions ?? []).map((f) => f.name), ...(a?.classes ?? []).map((c) => c.name)]);
+        declared.set(file, names);
+      }
+      return names.has(name);
+    },
+    globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+  };
+}
+
 /**
  * Index every file's imports so later passes can answer "what does this local
  * name refer to" without re-reading the import lists.
@@ -363,20 +382,7 @@ export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
   const namespaces = new Map<string, string[]>();
   // A language whose imports name modules by a path of its own resolves them itself.
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
-  const declared = new Map<string, Set<string>>();
-  const resolveCtx: ImportResolveContext = {
-    files: knownFiles,
-    declares: (file, name) => {
-      let names = declared.get(file);
-      if (!names) {
-        const a = byPath.get(file);
-        names = new Set([...(a?.functions ?? []).map((f) => f.name), ...(a?.classes ?? []).map((c) => c.name)]);
-        declared.set(file, names);
-      }
-      return names.has(name);
-    },
-    globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
-  };
+  const resolveCtx = importResolveContext(analyses, knownFiles);
 
   for (const a of analyses) {
     const lm = new Map<string, string>();

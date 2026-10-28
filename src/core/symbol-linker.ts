@@ -293,7 +293,13 @@ export function buildSymbolLinks(
             pushRouteLink(sourceFile, ownDef, "EXTRACTED", "route-self");
             componentLinked = true;
           }
-          if (!componentLinked) {
+          // A row a route resolver moved onto its handler's definition (a Rails
+          // `resources` row on `def index`) is served by that method: the name
+          // search below took the first namesake (`Api::V1::ClubsController#index`).
+          const anchoredOn = componentLinked ? null : enclosingMethod(analysis, route.line, handlerName);
+          if (anchoredOn && anchoredOn.line === route.line) {
+            pushRouteLink(sourceFile, { name: anchoredOn.symbol, line: anchoredOn.line }, "INFERRED", "route-scan");
+          } else if (!componentLinked) {
             // Fallback: search all files for the handler name — best-effort, no
             // import proof. Two guards keep it from linking noise (pit-stop: a
             // Laravel `DashboardController#create` bound the first `create`

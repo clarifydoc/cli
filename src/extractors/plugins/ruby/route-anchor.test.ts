@@ -189,3 +189,34 @@ end`;
     expect(handlers).toEqual(["ClubsController#index", "Staff::SessionsController#destroy", "Staff::SessionsController#new"]);
   });
 });
+
+describe("rails-route-anchor — controllers the router never names", () => {
+  const router = `Rails.application.routes.draw do
+  resources :clubs, only: [:index]
+end`;
+  const guess = (handler: string, path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler, calls: [], middleware: [], line });
+  const run = (withRouter: boolean): string[] => {
+    const out = [
+      ...(withRouter ? [file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb"))] : []),
+      file("app/controllers/application_controller.rb", [cls("ApplicationController", "ActionController::Base", [])]),
+      file("app/controllers/clubs_controller.rb", [cls("ClubsController", "ApplicationController", [["index", 2]])], [
+        guess("ClubsController#index", "/clubs", 2),
+      ] as FileAnalysis["routes"]),
+      file("app/controllers/reports_controller.rb", [cls("ReportsController", "ApplicationController", [["index", 2]])], [
+        guess("ReportsController#index", "/reports", 2),
+      ] as FileAnalysis["routes"]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    return out.flatMap((a) => a.routes.map((r) => r.handler!)).sort();
+  };
+
+  it("drops every guess of a controller no route names when the project has a router", () => {
+    expect(run(true)).toEqual(["ClubsController#index"]);
+  });
+
+  it("keeps the guesses when no router was read", () => {
+    expect(run(false)).toEqual(["ClubsController#index", "ReportsController#index"]);
+  });
+});

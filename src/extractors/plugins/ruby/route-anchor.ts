@@ -63,17 +63,18 @@ export const railsRouteAnchor: RouteResolver = {
     // row for an action the router declares is a second, often wrong, path.
     const declared = new Set<string>();
     for (const a of analyses) for (const r of a.routes) if (r.handler && HANDLER_RE.test(r.handler) && !isGuess(a, r)) declared.add(r.handler);
-    // A controller the router routes is served only where it says: a guess for
-    // an action it never names (a public helper) is no endpoint — unless a
-    // legacy `/:controller(/:action)` route serves any action, or the controller
-    // is built on a gem's (Devise's), whose own routing DSL (`devise_for`) serves it.
-    const routedControllers = new Set([...declared].map((h) => h.split("#")[0]!));
+    // Where a sub-project has a router, a controller is served only where it
+    // says: a guess for an action it never names (a public helper), or for a
+    // controller it never routes at all, is no endpoint — unless a legacy
+    // `/:controller(/:action)` route serves any action, or the controller is
+    // built on a gem's (Devise's), whose own routing DSL (`devise_for`) serves it.
+    const routedProjects = new Set<string | undefined>();
+    for (const a of analyses) if (a.routes.some((r) => r.handler && HANDLER_RE.test(r.handler) && !isGuess(a, r))) routedProjects.add(a.projectId);
     const catchAll = analyses.some((a) => a.routes.some((r) => !isGuess(a, r) && /:action\b/.test(r.path)));
     const guessDropped = (handler: string): boolean => {
-      const controller = handler.split("#")[0]!;
-      if (catchAll || !routedControllers.has(controller)) return false;
-      const ref = byName.get(controller);
-      return !!ref && /^(?:::)?ActionController::(?:Base|API)$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "");
+      const ref = byName.get(handler.split("#")[0]!);
+      if (catchAll || !ref || !routedProjects.has(byPath.get(ref.filePath)?.projectId)) return false;
+      return /^(?:::)?ActionController::(?:Base|API)$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "");
     };
 
     // What a guess knew that the router row does not: the controller's filters

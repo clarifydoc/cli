@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
 import { rubyAutoloadedFiles, rubyTypeNamedByReceiver } from "./autoload.js";
+import { resolveRubyRequire } from "./require-paths.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -21,6 +22,8 @@ export const rubyManifest: LanguagePluginManifest = {
   // `Foo.new(…)` runs `initialize`.
   constructorCalls: ["new"],
   importsNameDirectories: true,
+  // `require "league"` loads `league.rb` from the load path (require-paths.ts).
+  resolveImport: resolveRubyRequire,
   // Rails loads a constant from the file its name spells: the constants a file names are its imports.
   autoloadedFiles: rubyAutoloadedFiles,
   typeNamedByReceiver: rubyTypeNamedByReceiver,

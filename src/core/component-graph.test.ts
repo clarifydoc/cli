@@ -275,3 +275,16 @@ describe("buildComponentGraph — an include that names a file", () => {
     expect(graph["service/api.c"]).toBeUndefined();
   });
 });
+
+describe("buildComponentGraph — a language's own import resolver", () => {
+  it("follows `resolveImport` before the directory and name heuristics (Ruby `require \"league\"`)", async () => {
+    const { ensureLanguagesLoaded } = await import("../extractors/registry.js");
+    await ensureLanguagesLoaded(["ruby"]);
+    const graph = buildComponentGraph([
+      file("lib/league.rb", { language: "ruby" }),
+      file("lib/league/club.rb", { language: "ruby" }),
+      file("lib/runner.rb", { language: "ruby", imports: [{ source: "league", specifiers: ["league"], isNamespace: false }] }),
+    ]);
+    expect(graph["lib/runner.rb"]).toEqual(["lib/league.rb"]);
+  });
+});
