@@ -4514,8 +4514,9 @@ function inScopeMember(
   analysis: FileAnalysis,
   name: string,
 ): { file: string; def: SymbolDef; named: boolean } | null {
-  const scopes: Array<{ scope: NonNullable<ImportInfo["inScope"]>; from: string }> = [];
-  for (const imp of analysis.imports) if (imp.inScope) scopes.push({ scope: imp.inScope, from: analysis.filePath });
+  // An alias the import gives the member (`import league.util.formatScore as fmt`) is looked up by its exported name.
+  const scopes: Array<{ scope: NonNullable<ImportInfo["inScope"]>; from: string; aliases?: Record<string, string> }> = [];
+  for (const imp of analysis.imports) if (imp.inScope) scopes.push({ scope: imp.inScope, from: analysis.filePath, aliases: imp.aliases });
   const hits = new Map<string, { file: string; def: SymbolDef; named: boolean }>();
   for (const lib of scopeLibraries(ctx, analysis.filePath)) {
     const d = symbolIn(ctx, lib, name);
@@ -4524,9 +4525,10 @@ function inScopeMember(
     for (const imp of ctx.analysisByFile.get(lib)?.imports ?? []) if (imp.inScope) scopes.push({ scope: imp.inScope, from: lib });
   }
   if (scopes.length === 0) return null;
-  for (const { scope, from } of scopes) {
-    if (scope.names && !scope.names.includes(name)) continue;
-    for (const hit of moduleMembers(ctx, analysis, scope.module, from, name)) {
+  for (const { scope, from, aliases } of scopes) {
+    const exported = aliases?.[name] ?? name;
+    if (scope.names && !scope.names.includes(exported)) continue;
+    for (const hit of moduleMembers(ctx, analysis, scope.module, from, exported)) {
       if (hit.file !== analysis.filePath) hits.set(`${hit.file}\0${hit.def.name}`, { ...hit, named: !!scope.names });
     }
   }

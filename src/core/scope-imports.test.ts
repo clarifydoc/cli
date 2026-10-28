@@ -79,6 +79,21 @@ class Referee {
     }
 }
 `,
+  // A function imported under another name is called by that name; a decoy declares the alias itself.
+  "kotlin/src/main/kotlin/league/app/Scoreboard.kt": `package league.app
+
+import league.util.blowFullTime as whistle
+
+class Scoreboard {
+    fun close(): Int {
+        return whistle()
+    }
+}
+`,
+  "kotlin/src/main/kotlin/league/other/Whistles.kt": `package league.other
+
+fun whistle(): Int = 0
+`,
   // A same-named class in another package (generated table classes) is never the imported one.
   "kotlin/src/main/kotlin/league/model/Kit.kt": `package league.model
 
@@ -251,6 +266,10 @@ describe("imports that put a callee in scope by name", () => {
     expect(linkOf(referee, "Referee.finish", "blowFullTime")).toBe("kotlin/src/main/kotlin/league/util/Whistle.kt blowFullTime EXTRACTED");
     expect(linkOf(referee, "Referee.finish", "substitutes")).toBe("kotlin/src/main/kotlin/league/rules/Limits.kt Limits.substitutes EXTRACTED");
     expect(linkOf(referee, "Referee.finish", "Stopwatch.tick")).toBe("kotlin/src/main/kotlin/league/rules/Timing.kt Stopwatch.tick EXTRACTED");
+  });
+
+  it("links a Kotlin function imported under an alias by its exported name", () => {
+    expect(linkOf("kotlin/src/main/kotlin/league/app/Scoreboard.kt", "Scoreboard.close", "whistle")).toBe("kotlin/src/main/kotlin/league/util/Whistle.kt blowFullTime EXTRACTED");
   });
 
   it("constructs the imported class, never a namesake of another package", () => {
