@@ -374,8 +374,12 @@ interface MqEvidence {
   /** Queue name by the receiver holding it; null when the file does not import Bull/BullMQ. */
   bullQueues: Map<string, string> | null;
   socketIo: boolean;
-  /** Receivers holding a Phoenix channel; null when the file does not import `phoenix`. */
-  phoenixChannels: Set<string> | null;
+  /**
+   * Receivers holding a Phoenix channel, each with the topic it was joined on
+   * (`match:*` for `` `match:${id}` ``; null when bound twice or not literal);
+   * null when the file does not import `phoenix`.
+   */
+  phoenixChannels: Map<string, string | null> | null;
   /** The file imports NestJS's event emitter (`@nestjs/event-emitter`). */
   nestEvents: boolean;
   /** Receivers the file creates as an in-process emitter (`new EventEmitter()`, `mitt()`), or `this` in a class extending one. */
@@ -442,13 +446,31 @@ function mqEvidence(src: string): MqEvidence {
   return {
     bullQueues,
     socketIo: SOCKET_IO_IMPORT_RE.test(src),
-    phoenixChannels: PHOENIX_IMPORT_RE.test(src)
-      ? new Set([...src.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:this\.)?[\w$.]*\.channel\s*\(/g)].map((m) => m[1]!))
-      : null,
+    phoenixChannels: PHOENIX_IMPORT_RE.test(src) ? phoenixChannelBindings(src) : null,
     nestEvents: /['"]@nestjs\/event-emitter['"]/.test(src),
     emitters: emitterReceivers(src),
     redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
   };
+}
+
+/** `const channel = socket.channel(<topic>, …)`: each receiver bound to a channel, with its topic pattern. */
+function phoenixChannelBindings(src: string): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (const m of src.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:this\.)?[\w$.]*\.channel\s*\(\s*([^,)\n]*)/g)) {
+    const topic = phoenixTopicPattern(m[2]!);
+    out.set(m[1]!, out.has(m[1]!) && out.get(m[1]!) !== topic ? null : topic);
+  }
+  return out;
+}
+
+/** A topic as written → `lobby`, or `match:*` for `` `match:${id}` `` / `"match:" + id`; null otherwise. */
+export function phoenixTopicPattern(written: string): string | null {
+  const w = written.trim();
+  let m = /^(['"`])([^'"`$\\]*)\1$/.exec(w);
+  if (m) return m[2]!;
+  m = /^`([^`$\\]+)\$\{[^}]*\}`$/.exec(w) ?? /^(?:'([^'\\]+)'|"([^"\\]+)")\s*\+\s*[\w$.]+$/.exec(w);
+  if (!m) return null;
+  return `${m[1] ?? m[2]}*`;
 }
 
 /** Method names that are chaining noise, not meaningful calls */
@@ -1428,7 +1450,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const leaf = recv.replace(/^this\./, "");
             const event = literalString(mqArgs[0] ?? null);
             if (phx && event && !event.startsWith("phx_") && /^[A-Za-z_$][\w$]*$/.test(leaf) && (phx.has(leaf) || PHOENIX_CHANNEL_RECEIVER_RE.test(leaf))) {
-              sources.push(this.ds({ kind: fnName === "push" ? "queue-publish" : "queue-consume", name: `Phoenix.Channel: ${fnName}`, target: event, line }));
+              const topic = phx.get(leaf);
+              sources.push(this.ds({ kind: fnName === "push" ? "queue-publish" : "queue-consume", name: `Phoenix.Channel: ${fnName}`, target: event, ...(topic ? { topic } : {}), line }));
               return;
             }
           }

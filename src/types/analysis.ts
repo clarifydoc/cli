@@ -1917,6 +1917,15 @@ export interface DataSourceInfo {
    */
   channelParameter?: string;
   /**
+   * For `queue-publish`/`queue-consume` on an event sent within a topic (a
+   * Phoenix channel: `socket.channel("match:1").push("new_goal")` reaches the
+   * `handle_in("new_goal")` of the channel joined as `"match:" <> id`): the
+   * topic, `*` at the end standing for any rest (`match:*`). Core keeps rows
+   * of one event apart when they state topics that cannot meet; a row
+   * without one still meets them all.
+   */
+  topic?: string;
+  /**
    * For `queue-consume`: the function or method of this file that handles the
    * message (`Class.method`), when it is not the one the registration sits in —
    * `events.RegisterListener(name, &SendNotification{})` is consumed by

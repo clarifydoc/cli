@@ -220,6 +220,29 @@ end`;
     expect(a.classes[0]!.methods.map((m) => m.name)).toEqual(["join", 'handle_in("new_goal")', 'handle_in("ping")', 'handle_out("goal_scored")']);
   });
 
+  it("gives a channel's rows the topic its join clauses accept, and none when they accept several", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const one = extractWithRegex(`defmodule LeagueWeb.MatchChannel do
+  use Phoenix.Channel
+  def join("match:" <> _id, _payload, socket), do: {:ok, socket}
+  def handle_in("new_goal", _p, socket), do: {:noreply, socket}
+end`, "lib/league_web/channels/match_channel.ex", "elixir");
+    expect(one.dataSources.map((d) => `${d.target} ${d.topic}`)).toEqual(["new_goal match:*"]);
+    const lobby = extractWithRegex(`defmodule LeagueWeb.LobbyChannel do
+  use Phoenix.Channel
+  def join("lobby", _payload, socket), do: {:ok, socket}
+  def handle_in("new_goal", _p, socket), do: {:noreply, socket}
+end`, "lib/league_web/channels/lobby_channel.ex", "elixir");
+    expect(lobby.dataSources.map((d) => `${d.target} ${d.topic}`)).toEqual(["new_goal lobby"]);
+    const two = extractWithRegex(`defmodule LeagueWeb.ClubChannel do
+  use Phoenix.Channel
+  def join("club:" <> _id, _payload, socket), do: {:ok, socket}
+  def join("lobby", _payload, socket), do: {:ok, socket}
+  def handle_in("new_goal", _p, socket), do: {:noreply, socket}
+end`, "lib/league_web/channels/club_channel.ex", "elixir");
+    expect(two.dataSources.map((d) => `${d.target} ${d.topic}`)).toEqual(["new_goal undefined"]);
+  });
+
   it("reads an endpoint broadcast anywhere, and push outside a channel module is nothing", async () => {
     const { extractWithRegex } = await import("../../../core/regex-extractor.js");
     const src = `defmodule League.Scores do
@@ -230,9 +253,9 @@ end`;
   end
 end`;
     const a = extractWithRegex(src, "lib/league/scores.ex", "elixir");
-    expect(a.dataSources.map((d) => `${d.line} ${d.kind} ${d.name} ${d.target}`)).toEqual([
-      "3 queue-publish Phoenix.Channel: Endpoint.broadcast goal_scored",
-      "4 queue-publish Phoenix.Channel: Endpoint.broadcast_from table_changed",
+    expect(a.dataSources.map((d) => `${d.line} ${d.kind} ${d.name} ${d.target} ${d.topic}`)).toEqual([
+      "3 queue-publish Phoenix.Channel: Endpoint.broadcast goal_scored match:*",
+      "4 queue-publish Phoenix.Channel: Endpoint.broadcast_from table_changed match:lobby",
     ]);
   });
 });

@@ -252,6 +252,19 @@ export function scoreGoal(id, minute) {
   room.on("phx_error", () => {});
 }`);
     expect(brief(s)).toEqual(["queue-publish Phoenix.Channel: push new_goal @6", "queue-consume Phoenix.Channel: on goal_scored @7"]);
+    expect(s.map((d) => d.topic)).toEqual(["match:*", "match:*"]);
+  });
+
+  it("gives each channel the topic it was joined on, literal or built", async () => {
+    const s = await jsSourcesOf(`import { Socket } from "phoenix";
+const socket = new Socket("/socket", {});
+const lobby = socket.channel("lobby");
+const club = socket.channel("club:" + clubId);
+const other = socket.channel(topicFor(clubId));
+lobby.push("new_goal", {});
+club.push("new_goal", {});
+other.push("new_goal", {});`);
+    expect(s.map((d) => `${d.line} ${d.topic}`)).toEqual(["6 lobby", "7 club:*", "8 undefined"]);
   });
 
   it("needs the import: an array's push and a channel named elsewhere stay what they were", async () => {

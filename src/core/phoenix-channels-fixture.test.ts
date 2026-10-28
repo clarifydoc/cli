@@ -34,6 +34,16 @@ end
   end
 end
 `,
+  "lib/league_web/channels/lobby_channel.ex": `defmodule LeagueWeb.LobbyChannel do
+  use Phoenix.Channel
+  def join("lobby", _payload, socket), do: {:ok, socket}
+
+  def handle_in("new_goal", payload, socket) do
+    League.Repo.insert!(%League.Headline{minute: payload["minute"]})
+    {:noreply, socket}
+  end
+end
+`,
   "assets/js/match.js": `import { Socket } from "phoenix";
 const socket = new Socket("/socket", {});
 export function scoreGoal(id, minute) {
@@ -66,7 +76,8 @@ describe("Phoenix channels across the socket", () => {
       .map((r) => `${r.symbol} ${r.access ?? "db"} ${r.entity}`).sort();
     expect(rows).toEqual([
       'LeagueWeb.MatchChannel.handle_in("new_goal") db Goal',
-      'LeagueWeb.MatchChannel.handle_in("new_goal") queue-consume new_goal',
+      // The lobby channel handles a `new_goal` too: the event is kept apart by topic.
+      'LeagueWeb.MatchChannel.handle_in("new_goal") queue-consume new_goal@match:*',
       'LeagueWeb.MatchChannel.handle_in("new_goal") queue-publish goal_scored',
       'LeagueWeb.MatchChannel.handle_in("substitute") db Substitution',
       'LeagueWeb.MatchChannel.handle_in("substitute") queue-consume substitute',
@@ -78,7 +89,7 @@ describe("Phoenix channels across the socket", () => {
       .map((l) => `${l.sourceSymbol} → ${l.targetSymbol} (${l.callName})`).sort();
     expect(hops).toEqual([
       'LeagueWeb.MatchChannel.handle_in("new_goal") → scoreGoal (MQ goal_scored)',
-      'scoreGoal → LeagueWeb.MatchChannel.handle_in("new_goal") (MQ new_goal)',
+      'scoreGoal → LeagueWeb.MatchChannel.handle_in("new_goal") (MQ new_goal@match:*)',
     ]);
   });
 });
