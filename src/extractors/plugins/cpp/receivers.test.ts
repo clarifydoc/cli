@@ -147,5 +147,54 @@ void pick() {
       "pick@4 c.drill -> Coach.drill",
     ]);
   });
+
+  it("calls the caller's own part of a type whose member each platform's file defines", () => {
+    const h = `#pragma once
+struct Spawner {
+  bool Start(int n);
+  int pid_;
+  int status_;
+};
+`;
+    const posix = `#include "spawner.h"
+bool Spawner::Start(int n) { return n > 0; }
+void Launch() {
+  Spawner* s = new Spawner();
+  s->Start(1);
+}
+`;
+    const win = `#include "spawner.h"
+bool Spawner::Start(int n) { return n > 1; }
+`;
+    expect(linksOf(read, { "src/spawner.h": h, "src/spawner-posix.cc": posix, "src/spawner-win32.cc": win })
+      .filter((l) => l.includes("s.Start"))).toEqual(["Launch@5 s.Start -> Spawner.Start"]);
+    const links = buildSymbolLinks([read(h, "src/spawner.h"), read(posix, "src/spawner-posix.cc"), read(win, "src/spawner-win32.cc")]);
+    expect(links.find((l) => l.callName === "s.Start")?.targetFile).toBe("src/spawner-posix.cc");
+  });
+
+  it("takes a type from the header the file includes over a same-named class another header nests", () => {
+    const iteratorH = `#pragma once
+class Iterator {
+ public:
+  virtual void Next() = 0;
+};
+`;
+    const tableH = `#pragma once
+class Table {
+ public:
+  class Iterator {
+   public:
+    void Next() { step(); }
+  };
+};
+`;
+    const cc = `#include "league/iterator.h"
+void Walk(Iterator* it) {
+  it->Next();
+}
+`;
+    const links = buildSymbolLinks([read(iteratorH, "include/league/iterator.h"), read(tableH, "src/table.h"), read(cc, "src/walk.cc")]);
+    expect(links.filter((l) => l.callName === "it.Next").map((l) => `${l.targetFile}:${l.targetSymbol}`)).toEqual(["include/league/iterator.h:Iterator.Next"]);
+  });
 });
 
