@@ -1,7 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { Language, CallInfo, CallArgOrigin, ImportInfo } from "../../types/analysis.js";
 import type { CallExtractionHooks } from "../../types/language-plugin.js";
-import { dbRootRefused, isApiCall, isDatabaseCall } from "./call-patterns.js";
+import { dbRootRefused, isApiCall, isDatabaseCall, isDatabaseHandleOrigin } from "./call-patterns.js";
 
 /**
  * Generic call extraction & classification. Everything language-specific —
@@ -456,6 +456,12 @@ export function classifyCalls(
   ownBindings?: ReadonlySet<string>,
   /** The declared type of each receiver the caller can see (parameters, locals, fields), as written. */
   receiverTypes?: ReadonlyMap<string, string>,
+  /**
+   * The call each local of the caller is initialized from, when no type is
+   * stated (`request` ← `pool.request`): a value a database client hands out
+   * is a database handle, whatever its own name says.
+   */
+  receiverOrigins?: ReadonlyMap<string, string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -567,6 +573,15 @@ export function classifyCalls(
     // see; applied here they labelled it `database`, and both the symbol
     // linker and the LSP enhancer skip that kind, so it could never resolve.
     if (localSymbols?.has(root)) continue;
+
+    // 2e. A local made by a database client (`const request = pool.request()`):
+    // `request.input(…)` binds a query parameter, not an HTTP request.
+    const origin = call.name.includes(".") ? receiverOrigins?.get(root) : undefined;
+    if (origin && isDatabaseHandleOrigin(origin, language)) {
+      call.kind = "database";
+      call.confidence = "EXTRACTED";
+      continue;
+    }
 
     // 3. Check API call patterns
     if (isApiCall(call.name, language)) {

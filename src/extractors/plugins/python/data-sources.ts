@@ -726,11 +726,41 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
   if (PY_HTTP_VERBS.has(leaf) && obj.type === "identifier") {
     const made = boundValue(recv, call);
     const typed = made ? null : annotatedParam(recv, call);
-    if ((made?.type === "call" && PY_HTTP_CLIENT_CTOR.test(made.childForFieldName("function")?.text ?? "")) || (typed && PY_HTTP_CLIENT_TYPE.test(typed))) {
+    const ctor = made?.type === "call" ? made.childForFieldName("function")?.text ?? "" : "";
+    if ((PY_HTTP_CLIENT_CTOR.test(ctor) && !importedFromNonHttp(ctor, call)) || (typed && PY_HTTP_CLIENT_TYPE.test(typed) && !importedFromNonHttp(typed, call))) {
       return { name: leaf, target: args[0] ? pyStringValue(args[0], call) ?? moduleValueHole(args[0]) : null };
     }
   }
   return null;
+}
+
+/** Modules whose `Session` / `Client` is an HTTP client (a test client included). */
+const PY_HTTP_CLIENT_MODULE_RE = /^(?:requests|httpx|aiohttp|starlette|fastapi|locust|django\.test|rest_framework\.test|flask)(?:\.|$)/;
+
+/** Each file's `from m import Name` bindings, read once per tree. */
+const pyImportedNames = new WeakMap<object, Map<string, string>>();
+
+/**
+ * A client type named bare (`Session`, `Client`) that the file imports from a
+ * module that is no HTTP library: SQLAlchemy's `from sqlalchemy.orm import
+ * Session` makes `db: Session` a database session, so `db.get(Club, id)` is no
+ * request. A name the file does not import keeps the HTTP reading.
+ */
+function importedFromNonHttp(type: string, at: Node): boolean {
+  if (type.includes(".")) return false;
+  let names = pyImportedNames.get(at.tree);
+  if (!names) {
+    names = new Map();
+    for (const m of at.tree.rootNode.text.matchAll(/^\s*from\s+([\w.]+)\s+import\s+\(?([^)\n]+)/gm)) {
+      for (const part of m[2]!.split(",")) {
+        const local = part.trim().split(/\s+as\s+/).pop()?.trim();
+        if (local && /^\w+$/.test(local)) names.set(local, m[1]!);
+      }
+    }
+    pyImportedNames.set(at.tree, names);
+  }
+  const from = names.get(type);
+  return from !== undefined && !PY_HTTP_CLIENT_MODULE_RE.test(from);
 }
 
 /** An HTTP client's type as a parameter annotates it: Starlette / FastAPI `TestClient`, `httpx.Client`. */

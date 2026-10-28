@@ -596,12 +596,23 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       for (const l of fn.localTypes ?? []) if (l.type) out.set(l.name, l.type);
       return out;
     };
+    // Locals initialized from a call that states no type (`request` ← `pool.request()`).
+    const receiverOrigins = (fn: FunctionInfo): Map<string, string> | undefined => {
+      let out: Map<string, string> | undefined;
+      for (const l of fn.localTypes ?? []) {
+        if (l.type || !l.from) continue;
+        // One binding with two initializers says nothing.
+        if (out?.has(l.name)) out.set(l.name, "");
+        else (out ??= new Map()).set(l.name, l.from.replace(/\(\)$/, ""));
+      }
+      return out;
+    };
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn));
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn), receiverOrigins(fn));
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls));
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls), receiverOrigins(method));
       }
     }
     for (const route of analysis.routes) {

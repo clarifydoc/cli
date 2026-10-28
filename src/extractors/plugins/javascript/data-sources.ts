@@ -389,6 +389,8 @@ interface MqEvidence {
   emitters: Set<string>;
   /** The file imports a Redis client (`redis`, `ioredis`). */
   redis: boolean;
+  /** The file imports an MQTT client (`mqtt`, `async-mqtt`). */
+  mqtt: boolean;
 }
 
 /**
@@ -455,6 +457,7 @@ function mqEvidence(src: string): MqEvidence {
     nestEvents: /['"]@nestjs\/event-emitter['"]/.test(src),
     emitters: emitterReceivers(src),
     redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
+    mqtt: /(?:from\s*|require\(\s*)['"](?:mqtt|async-mqtt|precompiled-mqtt)['"]/.test(src),
   };
 }
 
@@ -1516,6 +1519,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const channel = literalString(mqArgs[0] ?? null);
             if (channel) {
               sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `Redis: ${fnName}`, target: channel, line }));
+              return;
+            }
+          }
+          // MQTT: `client.publish("stadium/score", msg)` / `client.subscribe("stadium/+" | [topics])`, in a file that imports a client.
+          if (mqev.mqtt && (fnName === "publish" || fnName === "subscribe")) {
+            const first = mqArgs[0];
+            const topics = first?.type === "array" ? first.namedChildren.map((t) => literalString(t)) : [literalString(first ?? null)];
+            if (topics.length > 0 && topics.every((t) => !!t)) {
+              for (const topic of topics) sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic, line }));
               return;
             }
           }

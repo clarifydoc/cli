@@ -1417,3 +1417,20 @@ describe("JS server registrations are no client calls", () => {
     expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /garages"]);
   });
 });
+
+describe("JS MQTT topics", () => {
+  it("reads publish and subscribe as queue operations on their topics in a file that imports a client", async () => {
+    const src = `
+      const mqtt = require('mqtt');
+      const client = mqtt.connect('mqtt://broker');
+      function sendScore() { client.publish('stadium/score', '1-0'); }
+      function listen() { client.subscribe(['stadium/score', 'stadium/+/cards']); }`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const rows = new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind !== "env");
+    expect(rows.map((d) => `${d.kind} ${d.name} ${d.target}`)).toEqual([
+      "queue-publish MQTT: publish stadium/score",
+      "queue-consume MQTT: subscribe stadium/score",
+      "queue-consume MQTT: subscribe stadium/+/cards",
+    ]);
+  });
+});

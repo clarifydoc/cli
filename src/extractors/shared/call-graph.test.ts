@@ -148,3 +148,21 @@ describe("classifyCalls — a parameter shadows a file-level factory alias", () 
     expect([param!.kind, param!.target, param!.via]).toEqual(["internal", null, undefined]);
   });
 });
+
+describe("classifyCalls — call kinds a receiver's name got wrong", () => {
+  const classify = (names: string[], language: TreeSitterLanguage, origins?: Map<string, string>) =>
+    classifyCalls(names.map((name, i) => ({ name, kind: "internal" as const, target: null, line: i + 1 })), [], language, undefined, undefined, undefined, undefined, origins)
+      .map((c) => `${c.name}:${c.kind}`);
+
+  it("does not read a worker pool's task methods as database calls", () => {
+    expect(classify(["pool.submit", "pool.map", "pool.execute"], "python")).toEqual(["pool.submit:internal", "pool.map:internal", "pool.execute:database"]);
+  });
+
+  it("reads a database client's request() and the handle it hands out as database calls, not requests", () => {
+    const origins = new Map([["request", "pool.request"], ["player", "db.player.findUnique"]]);
+    expect(classify(["pool.request", "request.input", "request.query", "player.describe"], "javascript", origins))
+      .toEqual(["pool.request:database", "request.input:database", "request.query:database", "player.describe:internal"]);
+    // Without the binding, `request` is the HTTP library.
+    expect(classify(["request.get"], "javascript")).toEqual(["request.get:api-call"]);
+  });
+});

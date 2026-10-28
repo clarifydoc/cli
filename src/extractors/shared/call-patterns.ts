@@ -109,6 +109,24 @@ const GENERIC_DB_METHODS = new Set([
  */
 const DATA_HANDLE_RECEIVER = /(?:repo|repos|repository|repositories|dao|db|database|model|models|table|objects|query|queryset|qs|session|em|entitymanager|manager|cursor|conn|connection|knex|prisma|orm|tx|trx|transaction|datasource|store)$/i;
 
+/**
+ * Whether a local initialized by `origin` (`pool.request`, `pool.getConnection`)
+ * holds a handle a database client hands out: a call on a known DB root whose
+ * method returns no rows (`db.club.findUnique` returns a record, whose own
+ * methods are no database calls).
+ */
+export function isDatabaseHandleOrigin(origin: string, language: Language): boolean {
+  const roots = DB_ROOTS.get(language);
+  if (!roots || !origin.includes(".") || !matchesRoot(origin, roots)) return false;
+  const method = origin.slice(origin.lastIndexOf(".") + 1);
+  return !DB_METHODS.has(method) && !EXECUTOR_METHODS.has(method) && !/^(?:find|get|count|exists|delete)By/.test(method);
+}
+
+/** Methods that hand work to a thread or process pool, which shares the name `pool` with a connection pool. */
+const EXECUTOR_METHODS = new Set([
+  "submit", "map", "map_async", "apply", "apply_async", "starmap", "starmap_async", "imap", "imap_unordered", "shutdown",
+]);
+
 /** A receiver named for an in-memory collection, cache or bag of values. */
 const IN_MEMORY_RECEIVER = /(?:cache|caches|map|maps|claims|headers|params|props|properties|attributes|options|settings|dict|lookup|registry|collections|set|list|array)$/i;
 
@@ -122,8 +140,9 @@ export function isApiCall(name: string, language: Language): boolean {
   // Check if the root object is a known API client
   if (matchesRoot(name, roots)) return true;
 
-  // Check if the method is a known API method on a qualified call
-  if (name.includes(".")) {
+  // Check if the method is a known API method on a qualified call — not on a
+  // database client, whose `request()` starts a query (mssql `pool.request()`).
+  if (name.includes(".") && !matchesRoot(name, DB_ROOTS.get(language) ?? [])) {
     const method = name.split(".").pop()!;
     if (API_METHODS.has(method)) return true;
   }
@@ -145,8 +164,9 @@ export function isDatabaseCall(name: string, language: Language, byMethodName = 
   if (!roots) return false;
 
   // Check if the root object is a known DB client/ORM
-  // (must also have a method call — not just "db" by itself)
-  if (name.includes(".") && matchesRoot(name, roots)) return true;
+  // (must also have a method call — not just "db" by itself). A worker
+  // pool's task methods never are: `pool.submit(train, 1)`, `pool.map(f, xs)`.
+  if (name.includes(".") && matchesRoot(name, roots)) return !EXECUTOR_METHODS.has(name.slice(name.lastIndexOf(".") + 1));
 
   // A bare call (`sum(xs)`, `count(…)`) is a function, not a method on a
   // datastore: its name alone is no evidence.

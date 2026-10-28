@@ -579,3 +579,21 @@ describe("Python api-call — a URL a helper of another module builds (real-repo
     expect((calls as Array<{ target: string }>).map((c) => c.target)).toEqual(["/api/clubs/{}", "/api/clubs/rovers?page=2"]);
   });
 });
+
+describe("a database session is no HTTP client", () => {
+  it("reads `db: Session` from SQLAlchemy as no request, and one from requests as a client", async () => {
+    const orm = await apiCallsOf([
+      "from sqlalchemy.orm import Session",
+      "from .models import Club",
+      "def load(db: Session, id: int):",
+      "    return db.get(Club, id)",
+    ].join("\n"));
+    expect(orm).toEqual([]);
+    const http = await apiCallsOf([
+      "from requests import Session",
+      "def load(s: Session):",
+      "    return s.get(f\"{BASE}/api/clubs\")",
+    ].join("\n"));
+    expect(http.map((c) => c.name)).toEqual(["get"]);
+  });
+});
