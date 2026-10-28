@@ -1,6 +1,7 @@
 import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo, UiComponentInfo } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
+import { escapeRegex } from "./path-utils.js";
 import type { ParsedFunctionSpan } from "../../../types/language-plugin.js";
 
 /**
@@ -184,8 +185,10 @@ export interface RegexLangSpec {
   inlineBodyColumn?: (line: string, from: number) => number;
   /** Pull the declared return type from a function-declaration line. Languages
    *  like Go (`func foo() Type`), Rust (`fn foo() -> Type`), or VB
-   *  (`Function Foo() As Type`) need to override the default (null). */
-  parseReturnType?: (line: string) => string | null;
+   *  (`Function Foo() As Type`) need to override the default (null).
+   *  `nameColumn` is where the function's name starts on the line, for a line
+   *  declaring several (`impl Club { fn new() -> Club {…} fn save(&self) {…} }`). */
+  parseReturnType?: (line: string, nameColumn?: number) => string | null;
   /** Attribute-on-its-own-line syntax; see {@link AttributeLineSpec}. */
   attributeLine?: AttributeLineSpec;
   /**
@@ -461,7 +464,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
         const fn: FunctionInfo = {
           name: rename ? rename(m[1], line) : m[1],
           params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
-          returnType: spec.parseReturnType?.(line) ?? null,
+          returnType: spec.parseReturnType?.(line, line.indexOf(m[1], m.index ?? 0)) ?? null,
           isAsync: asyncCheck?.(line, lines, i) ?? false,
           isExported: isExported?.(line, m[1]) ?? true,
           decorators: attributeLinesAbove(lines, i, spec),
@@ -490,12 +493,13 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
     const i = span.line - 1;
     const line = lines[i] ?? "";
     const pattern = spec.functionPatterns.find((p) => p.pattern.test(line));
-    const at = line.indexOf(span.name);
+    const declared = new RegExp(`(?<![\\w$])${escapeRegex(span.name)}\\s*[<(\\[]`).exec(line);
+    const at = declared ? declared.index : line.indexOf(span.name);
     const inline = at >= 0 ? (spec.inlineBodyColumn ?? inlineBodyColumn)(line, at + span.name.length) : -1;
     const fn: FunctionInfo = {
       name: span.name,
       params: extractParamsFromDeclaration(lines, i, span.name, spec.parseParam),
-      returnType: spec.parseReturnType?.(line) ?? null,
+      returnType: spec.parseReturnType?.(line, at) ?? null,
       isAsync: pattern?.isAsync?.(line, lines, i) ?? false,
       isExported: span.isExported ?? pattern?.isExported?.(line, span.name) ?? true,
       decorators: attributeLinesAbove(lines, i, spec),
@@ -644,7 +648,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
               const method: FunctionInfo = {
                 name: rename ? rename(fm[1], bodyLine) : fm[1],
                 params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
-                returnType: spec.parseReturnType?.(bodyLine) ?? null,
+                returnType: spec.parseReturnType?.(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0)) ?? null,
                 isAsync: asyncCheck?.(bodyLine, lines, methodStart) ?? false,
                 isExported: isExported?.(bodyLine, fm[1]) ?? true,
                 decorators: attributeLinesAbove(lines, methodStart, spec),
@@ -1101,7 +1105,7 @@ export function extractCallsFromBody(
  * each function pattern match starts a method whose body runs to the next
  * match (or the line's end), and whose calls are read from that span.
  */
-function headerLineMethods(line: string, row: number, spec: RegexLangSpec): FunctionInfo[] {
+export function headerLineMethods(line: string, row: number, spec: RegexLangSpec): FunctionInfo[] {
   const open = line.indexOf("{");
   if (open < 0) return [];
   const starts: Array<{ at: number; name: string; pat: (typeof spec.functionPatterns)[number] }> = [];

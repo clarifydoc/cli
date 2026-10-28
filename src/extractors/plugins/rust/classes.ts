@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { blockEndLine, extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { blockEndLine, extractClassesWithSpec, headerLineMethods, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
 
 /**
  * Rust types as the linker needs them. Methods live in `impl` blocks apart
@@ -49,11 +49,29 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
       if (impl.trait && !owner.implements.includes(impl.trait)) owner.implements.push(impl.trait);
       if (stubs.get(impl.type) === owner) owner.endLine = Math.max(owner.endLine, endLine);
       // Direct members only: a fn nested in a method body stays where it is.
+      // A one-line impl (`impl Club { pub fn new() … pub fn save(&self) … }`)
+      // declares its methods on its own line, one after another.
       let coveredTo = 0;
-      for (let k = firstAfter(sorted, i + 1); k < sorted.length && sorted[k]!.line <= endLine; k++) {
+      let lastLine = 0;
+      // The line patterns read one function per line: there, the methods of a one-line impl are
+      // split at each declaration (the parser's front end already gives each its own span).
+      if (endLine === i + 1) {
+        const onLine = sorted.filter((f) => f.line === i + 1);
+        const split = headerLineMethods(lines[i]!, i, spec);
+        if (split.length > onLine.length) {
+          for (const f of onLine) attached.add(f);
+          for (const fn of split) {
+            owner.methods.push(fn);
+            resolveGenerics(fn, lines, impl.bounds, impl.type);
+          }
+          continue;
+        }
+      }
+      for (let k = firstAfter(sorted, i); k < sorted.length && sorted[k]!.line <= endLine; k++) {
         const fn = sorted[k]!;
-        if (fn.line <= coveredTo || attached.has(fn)) continue;
+        if ((fn.line < coveredTo || (fn.line === coveredTo && fn.line !== lastLine)) || attached.has(fn)) continue;
         coveredTo = fn.endLine;
+        lastLine = fn.line;
         attached.add(fn);
         owner.methods.push(fn);
         resolveGenerics(fn, lines, impl.bounds, impl.type);

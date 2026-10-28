@@ -13,6 +13,7 @@ import { AfDispatchResolver } from "./event-dispatch.js";
 import { splitLines } from "../../shared/source-lines.js";
 import { blankRustCodeStrings, rustPathHeads } from "./source.js";
 import { extractRustDataSources } from "./data-sources.js";
+import { promoteModuleCalls } from "./module-calls.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -47,6 +48,7 @@ export const rustMeta: LanguagePluginMeta = {
       sourceText,
       language: "rust",
       postExtract(analysis, raw) {
+        promoteModuleCalls(analysis, splitLines(sourceText));
         if (blanked) analysis.dataSources = extractRustDataSources(splitLines(raw));
         const refs = rustPathHeads(sourceText, analysis.imports);
         if (refs.length > 0) analysis.packageReferences = refs;

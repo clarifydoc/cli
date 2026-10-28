@@ -9,12 +9,20 @@ import type { ImportInfo } from "../../../types/analysis.js";
  * of its parent path naming the leaf (or its `as` alias): `{ source:
  * "league_db_schema::source::site", specifiers: ["Site"] }`; a glob
  * (`traits::*`) imports the module itself with no specifier. Imports of one
- * declaration sharing a parent path are grouped.
+ * declaration sharing a parent path are grouped. A `mod x;` declaration is an
+ * import of `x` from `self`.
  */
 export function extractRustImports(lines: string[]): ImportInfo[] {
   const text = lines.join("\n");
-  if (!text.includes("use ")) return [];
   const out: ImportInfo[] = [];
+  // `mod tools;` loads the child module `tools.rs` / `tools/mod.rs` and binds its name:
+  // an import of `tools` from the module itself (`self`).
+  if (text.includes("mod ")) {
+    for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*;/gm)) {
+      out.push({ source: "self", specifiers: [m[1]!], isDefault: false, isNamespace: false, isType: false, line: text.slice(0, m.index).split("\n").length });
+    }
+  }
+  if (!text.includes("use ")) return out;
   const re = /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?use\s+([^;]+);/gm;
   for (const m of text.matchAll(re)) {
     const line = text.slice(0, m.index).split("\n").length;
