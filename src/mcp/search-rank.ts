@@ -56,6 +56,8 @@ export interface Candidate {
   doc?: string;
   /** Where it lives; null when the source has no file. */
   path: string | null;
+  /** Defined in a test file: at equal score, production code answers first (unless the query asks about tests). */
+  test?: boolean;
   /** Line within `path`, when known. A locatable row outranks a bare path at equal score. */
   line: number | null;
   /** The rendered output line. */
@@ -225,9 +227,11 @@ const DOC_STOP = new Set([
 /**
  * Score every candidate and order them.
  *
- * Tie-breaks, in order: field affinity (below); a row that can be opened at a
- * line beats one that can only be opened; then the usefulness prior; then
- * ordinal, so the output is identical on every machine.
+ * Tie-breaks, in order: field affinity (below); the name spelled exactly as
+ * the query is (`Car` the class before `car()` — `namesExactly`); production
+ * code before tests; a row that can be opened at a line beats one that can
+ * only be opened; then the usefulness prior; then ordinal, so the output is
+ * identical on every machine.
  */
 export function rankCandidates(
   candidates: readonly Candidate[],
@@ -240,10 +244,15 @@ export function rankCandidates(
     const match = loose ? scoreLoose(candidate, q) : scoreCandidate(candidate, q);
     if (match.score > 0) scored.push({ ...candidate, score: match.score, via: match.via });
   }
+  const exact = (c: Candidate): number => (namesExactly(c.name, q.raw.trim()) ? 1 : 0);
+  const aboutTests = asksAboutTests(query);
+  const production = (c: Candidate): number => (c.test && !aboutTests ? 0 : 1);
   scored.sort(
     (a, b) =>
       b.score - a.score ||
       affinity(b, q) - affinity(a, q) ||
+      exact(b) - exact(a) ||
+      production(b) - production(a) ||
       locatable(b) - locatable(a) ||
       b.weight - a.weight ||
       byOrdinal(a.text, b.text),
@@ -296,4 +305,31 @@ function affinity(candidate: RankedCandidate, q: QueryShape): number {
 
 function locatable(candidate: Candidate): number {
   return candidate.line && candidate.line > 0 ? 1 : 0;
+}
+
+/** A query that mentions tests is asking for them: test code is not demoted then. */
+export function asksAboutTests(query: string): boolean {
+  return /\b(?:tests?|specs?)\b/i.test(query);
+}
+
+/**
+ * Whether `spelled` is `name` exactly as written: the symbol itself or a
+ * member of that name (`Car`, `Garage.Car`). A case-folded match is weaker
+ * evidence — `Car` names the class before the test helper `car()`.
+ */
+export function namesExactly(spelled: string, name: string): boolean {
+  return spelled === name || spelled.endsWith(`.${name}`);
+}
+
+/**
+ * "The definition named by this name", one rule for search, explain and
+ * extract: of the definitions a name matched case-insensitively, the ones it
+ * spells exactly when any does, then production code over tests when both
+ * remain. What is left may still be several — the caller asks which.
+ */
+export function bestNamed<T>(name: string, items: readonly T[], spelled: (item: T) => string, isTest: (item: T) => boolean): T[] {
+  const exact = items.filter((i) => namesExactly(spelled(i), name));
+  const tier = exact.length ? exact : [...items];
+  const production = tier.filter((i) => !isTest(i));
+  return production.length ? production : tier;
 }

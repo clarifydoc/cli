@@ -4,7 +4,8 @@ import type { McpTool } from "../protocol.js";
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
-import { mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { isTestPath, mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
 
@@ -77,17 +78,23 @@ export function extractTool(ctx: ToolContext): McpTool {
           if (named(l.targetSymbol)) files.add(l.targetFile);
           if (named(l.sourceSymbol)) files.add(l.sourceFile);
         }
+        // A definition nothing links to: a function by its complexity row, a class by its node.
+        for (const c of loaded.summary.complexity ?? []) if (c.functions.some((f) => named(f.functionName))) files.add(c.filePath);
+        for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && named(n.name)) files.add(n.filePath);
       }
       const analyses = new Map<string, FileAnalysis | null>();
       const analysisOf = async (f: string) => {
         if (!analyses.has(f)) analyses.set(f, await ctx.store.fileAnalysis(f));
         return analyses.get(f) ?? null;
       };
-      const seeds: Span[] = [];
+      // A class is a definition the name can mean too (`Car`), though never a callee's span.
+      const matched: Span[] = [];
       for (const f of [...files].sort()) {
         const a = await analysisOf(f);
-        for (const def of definitions(a)) if (named(def.symbol)) seeds.push({ file: f, ...def, depth: 0 });
+        for (const def of [...definitions(a), ...classDefinitions(a)]) if (named(def.symbol)) matched.push({ file: f, ...def, depth: 0 });
       }
+      // The definition the name names: the exact spelling first, production code before tests.
+      const seeds = bestNamed(symbol, matched, (s) => s.symbol, (s) => isTestPath(loaded.summary, s.file));
       const definedIn = new Set(seeds.map((s) => `${s.file}::${s.symbol}`));
       if (seeds.length === 0) {
         return {
@@ -202,6 +209,11 @@ export function extractTool(ctx: ToolContext): McpTool {
       };
     },
   };
+}
+
+/** Every class a file defines, by name — a definition a name can mean, though never a callee's span. */
+function classDefinitions(a: FileAnalysis | null): Array<{ symbol: string; line: number; endLine: number }> {
+  return (a?.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine }));
 }
 
 /** Every function and method a file defines, keyed the way symbol links name them (`Class.method`). */

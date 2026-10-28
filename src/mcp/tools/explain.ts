@@ -1,7 +1,8 @@
 import type { McpTool } from "../protocol.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
-import { fileChangedNote, requireAnalysis, type ToolContext } from "./context.js";
+import { fileChangedNote, isTestPath, requireAnalysis, type ToolContext } from "./context.js";
+import { bestNamed } from "../search-rank.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
 import { roleLine } from "../role.js";
@@ -122,13 +123,15 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         if (god) parts.push({ title: "Seams — groups its call graph forms", get: async () => seamsPart(god.seams!), follow: `clarifydoc_file path="${subject}"` });
         parts.push({ title: "Risk", get: () => blast({ path: subject }), follow: `clarifydoc_blast_radius path="${subject}"` });
       } else {
-        heading = `# ${subject}${fileArg ? ` (${fileArg})` : ""}`;
-        const where = fileArg ? { file: fileArg } : {};
+        // The definition the name names, when one does (`Car` the class, not a test's `car()`): its file scopes every part.
+        const named = fileArg ?? namedHome(summary, subject);
+        heading = `# ${subject}${named ? ` (${named})` : ""}`;
+        const where = named ? { file: named } : {};
         parts.push({ title: "Source", get: (left) => extract({ symbol: subject, ...where, depth: 1, maxTokens: Math.max(300, Math.floor(left * 0.6)) }), follow: `clarifydoc_extract symbol="${subject}"` });
         parts.push({ title: "Callers", get: () => trace({ symbol: subject, ...where, direction: "callers", depth: 2, limit: 15 }), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         // The files declaring it, by the call graph: one, or the one named.
-        const declaring = [...new Set((summary.symbolLinks ?? []).filter((l) => l.targetSymbol === subject && (!fileArg || l.targetFile === fileArg)).map((l) => l.targetFile))];
-        home = fileArg ?? (declaring.length === 1 ? declaring[0] : definedIn(summary, subject));
+        const declaring = [...new Set((summary.symbolLinks ?? []).filter((l) => l.targetSymbol === subject && (!named || l.targetFile === named)).map((l) => l.targetFile))];
+        home = named ?? (declaring.length === 1 ? declaring[0] : definedIn(summary, subject));
         if (declaring.length === 1) parts.push({ title: "Tests", get: async () => testsPart(summary, [{ file: declaring[0]!, symbol: subject }]), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         if (fileArg) parts.push({ title: "Risk", get: () => blast({ path: fileArg }), follow: `clarifydoc_blast_radius path="${fileArg}"` });
       }
@@ -197,6 +200,22 @@ export function relatedRoutes(summary: ProjectAnalysis, r: Row): string | null {
   });
   if (ranked.length > 10) rows.push(`- … ${ranked.length - 10} more: clarifydoc_data_flows resource="${[...mine.keys()][0]}" entryKind="route"`);
   return [head, ...rows].join("\n");
+}
+
+/**
+ * The one file defining what `subject` names, by the rule search and extract
+ * share (`bestNamed`): its functions, methods and classes matched without
+ * case, the exact spelling first, production code before tests. None when
+ * several files remain — the parts then list them.
+ */
+function namedHome(summary: ProjectAnalysis, subject: string): string | undefined {
+  const want = subject.toLowerCase();
+  const matches = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const defs: Array<{ file: string; name: string }> = [];
+  for (const c of summary.complexity ?? []) for (const f of c.functions) if (matches(f.functionName)) defs.push({ file: c.filePath, name: f.functionName });
+  for (const n of summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && matches(n.name)) defs.push({ file: n.filePath, name: n.name });
+  const files = new Set(bestNamed(subject, defs, (d) => d.name, (d) => isTestPath(summary, d.file)).map((d) => d.file));
+  return files.size === 1 ? [...files][0] : undefined;
 }
 
 /** The one file whose functions include `symbol` exactly, when only one does (a function nothing calls has no link to find it by). */

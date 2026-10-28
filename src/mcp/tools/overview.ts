@@ -2,7 +2,7 @@
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import { normalize, rankCandidates, type Candidate, type SearchKind } from "../search-rank.js";
+import { asksAboutTests, normalize, rankCandidates, type Candidate, type RankedCandidate, type SearchKind } from "../search-rank.js";
 import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
 import { glob } from "../../core/glob.js";
 import { DEFAULT_IGNORE } from "../../core/file-discovery.js";
@@ -36,7 +36,7 @@ import {
   page,
   pageFooter,
 } from "../format.js";
-import { projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
+import { isTestPath, projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
 
 const NO_ARGS = { type: "object", properties: {}, additionalProperties: false } as const;
@@ -131,6 +131,12 @@ export function analyzeTool(ctx: ToolContext): McpTool {
 
 const SEARCH_KINDS: readonly SearchKind[] = ["route", "screen", "file", "symbol", "entity", "api-call"];
 
+/** One ranked row: a symbol found by a name it is imported under says which. */
+function hitLine(hit: RankedCandidate, query: string): string {
+  const importedAs = hit.kind === "symbol" && hit.via === "aka" ? hit.aka?.find((a) => normalize(a) === normalize(query)) ?? hit.aka?.[0] : undefined;
+  return `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}${importedAs ? ` · imported as ${importedAs}` : ""}`;
+}
+
 function kindTag(kind: SearchKind): string {
   return `[${kind}]`;
 }
@@ -147,6 +153,7 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
   const { summary, index } = loaded;
   const weightOf = (path: string | null | undefined): number =>
     (path ? index.byFile.get(path)?.blast?.impactScore : 0) ?? 0;
+  const isTest = (path: string | null | undefined): boolean => !!path && isTestPath(summary, path);
   const candidates: Candidate[] = [];
 
   if (kinds.has("route")) {
@@ -198,11 +205,16 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
   }
 
   if (kinds.has("symbol")) {
+    const importedAs = importAliases(summary);
     for (const file of summary.complexity ?? []) {
+      const test = isTest(file.filePath);
       for (const fn of file.functions) {
+        const aka = importedAs.get(`${file.filePath}::${fn.functionName}`);
         candidates.push({
           kind: "symbol",
           name: fn.functionName,
+          ...(aka ? { aka } : {}),
+          ...(test ? { test } : {}),
           doc: fn.line ? docs?.get(file.filePath)?.get(fn.line) : undefined,
           path: file.filePath,
           line: fn.line ?? null,
@@ -216,9 +228,12 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
       // `ClassGraphNode` carries no line, so this row can only be opened at
       // the file. Where the class body is also a complexity entry the loop
       // above already emitted a locatable row for it.
+      const aka = importedAs.get(`${node.filePath}::${node.name}`);
       candidates.push({
         kind: "symbol",
         name: node.name,
+        ...(aka ? { aka } : {}),
+        ...(isTest(node.filePath) ? { test: true } : {}),
         doc: docs?.get(node.filePath)?.get(node.name),
         path: node.filePath,
         line: null,
@@ -282,6 +297,32 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
     }
   }
   return candidates;
+}
+
+/** Most other names one definition is imported under that search lists for it. */
+const MAX_IMPORT_ALIASES = 5;
+const importAliasCache = new WeakMap<ProjectAnalysis, Map<string, string[]>>();
+
+/**
+ * The other names a definition is imported under (`import { Car as FleetCar }`,
+ * `import pump from "./tyre"` for `inflate`), keyed `file::symbol`: what an
+ * import's reference link calls the symbol it reaches. A search for the local
+ * name finds the definition, as a trace already does.
+ */
+function importAliases(summary: ProjectAnalysis): Map<string, string[]> {
+  const cached = importAliasCache.get(summary);
+  if (cached) return cached;
+  const out = new Map<string, string[]>();
+  for (const l of summary.symbolLinks ?? []) {
+    if (l.relation !== "reference" || l.sourceSymbol !== "(reference)" || !l.callName || l.callName.includes(".")) continue;
+    if (l.callName === l.targetSymbol || l.targetSymbol.endsWith(`.${l.callName}`)) continue;
+    const key = `${l.targetFile}::${l.targetSymbol}`;
+    const names = out.get(key);
+    if (!names) out.set(key, [l.callName]);
+    else if (!names.includes(l.callName) && names.length < MAX_IMPORT_ALIASES) names.push(l.callName);
+  }
+  importAliasCache.set(summary, out);
+  return out;
 }
 
 export function searchTool(ctx: ToolContext): McpTool {
@@ -358,7 +399,7 @@ export function searchTool(ctx: ToolContext): McpTool {
         let raw = index.search(query === "*" ? throwsFilter ?? query : query, 200, (doc) => !throwsFilter || thrownTypes(doc).some((t) => t.toLowerCase().includes(throwsFilter.toLowerCase())));
         // A test spells out the behaviour it checks, so it outscores the code doing it: the code
         // comes first, tests after — unless the question is about tests.
-        if (!/\b(?:tests?|specs?)\b/i.test(query)) {
+        if (!asksAboutTests(query)) {
           const isTest = (file: string) => summary.fileLayerMap?.[file] === "test";
           raw = [...raw.filter((h) => !isTest(h.doc.file)), ...raw.filter((h) => isTest(h.doc.file))];
         }
@@ -435,7 +476,7 @@ export function searchTool(ctx: ToolContext): McpTool {
             "",
             header,
             "",
-            bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}`, { offset }),
+            bulletList(ranked, limit, (hit) => hitLine(hit, query), { offset }),
           ]),
         };
       }
@@ -449,7 +490,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           header,
           "",
           ...note,
-          bulletList(ranked, limit, (hit) => `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}`, { offset }),
+          bulletList(ranked, limit, (hit) => hitLine(hit, query), { offset }),
           ...(wantBody
             ? ["", `## In function bodies and docs`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further body or doc matches)"]), "", bodyNote ?? ""]
             : []),
