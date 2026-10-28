@@ -23,7 +23,9 @@ export const cppManifest: LanguagePluginManifest = {
   declarationExtensions: [".h", ".hpp", ".hxx", ".hh", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
   typesSpanFiles: true,
-  // `p->kick()` is read as `kick`: a bare call may be another class's member.
+  // A body that reads as a free function may be a member: `TEST_F(GarageTest, Parks) { OpenBay(3); }` is a
+  // method of a fixture subclass the macro declares, and `(*it)->kick()` still loses its receiver. So a bare
+  // call may be another class's member.
   bareCallsHideReceivers: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
