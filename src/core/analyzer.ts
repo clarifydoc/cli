@@ -1409,6 +1409,15 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     });
     return files.length === 1 ? files[0]! : null;
   };
+  // A template include by path (`{{template "user/auth/signin_inner"}}`): the UI file at that path suffix.
+  const includedFile = (spec: string | null | undefined, from: FileAnalysis): string | null => {
+    if (!spec || !spec.includes("/") || spec.startsWith(".")) return null;
+    const tail = "/" + spec.replace(/^\/+/, "").replace(/\.[\w.]+$/, "");
+    const hits = [...screenFiles].filter((f) => ("/" + f.replace(/\.[\w.]+$/, "")).endsWith(tail) && f !== from.filePath);
+    const same = hits.filter((f) => analysisByPath.get(f)?.projectId === from.projectId);
+    const pick = same.length > 0 ? same : hits;
+    return pick.length === 1 ? pick[0]! : null;
+  };
   const screenNamed = (name: string, from: FileAnalysis): string | null => {
     // A name the file imports comes from where the import says (a package's `<Button>`), never a namesake.
     if (from.imports.some((i) => i.specifiers.includes(name) || Object.keys(i.aliases ?? {}).includes(name))) return null;
@@ -1434,12 +1443,13 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const rendered = new Set<string>();
     // What the markup renders: its sub-components, and the components of its template tree
     // (an Angular component's external template, read into the tree after per-file analysis).
-    const treeNames: Array<{ name: string }> = [];
+    const treeNames: Array<{ name: string; importSource?: string | null }> = [];
     const walkTree = (nodes: TemplateComponentNode[] | undefined) => { for (const n of nodes ?? []) { if (!n.element) treeNames.push({ name: n.name }); walkTree(n.children); } };
     walkTree(a.templateTree);
     for (const sub of [...a.subComponents, ...treeNames]) {
       const pascal = sub.name.replace(/(?:^|-)([a-z])/g, (_, c: string) => c.toUpperCase());
-      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal) ?? taggedFile(sub.name, a) ?? screenNamed(pascal, a);
+      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal) ?? taggedFile(sub.name, a)
+        ?? includedFile(sub.importSource, a) ?? screenNamed(pascal, a) ?? (pascal !== sub.name ? screenNamed(sub.name, a) : null);
       if (target) rendered.add(target);
     }
     usesGraph[a.filePath] = [...new Set([...imported.filter((d) => rendered.has(d) || !screenFiles.has(d)), ...rendered])];
@@ -2521,7 +2531,7 @@ function withoutComments(source: string): string {
  * `${window.App.urlBase}/movie/…`, `${baseUrl}/x`, JSP's `${pageContext.request.contextPath}/x`:
  * the app is served under it, so the path after it is the link.
  */
-const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;
+const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|urlpath|url_path|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;
 
 function extractNavigationTargets(raw: string, fromBase = false): string[] {
   const source = withoutComments(raw).replace(BASE_URL_PREFIX, "");
@@ -2530,6 +2540,9 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   for (const m of source.matchAll(/\b(?:ng-)?href\s*=\s*["']#!?(\/(?:\{\{[^}]*\}\}|[^"'\s])*)|\$location\.(?:path|url)\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);
   // ui-router by state name: `ui-sref="garage"`, `$state.go('garage')`.
   for (const m of source.matchAll(/\bui-sref\s*=\s*["']([\w.-]+)|\$state\.go\(\s*['"]([\w.-]+)['"]/g)) targets.add(`route:${m[1] ?? m[2]}`);
+  // A route by name through a URL helper: `url('albums.show', { id })`, Ziggy's `route('clubs.index')` —
+  // `route:<name>`, which only a route of that name resolves.
+  for (const m of source.matchAll(/\b(?:url|route)\(\s*['"]([A-Za-z][\w.:-]*)['"]/g)) targets.add(`route:${m[1]!}`);
   // SvelteKit's `goto('/albums')`.
   for (const m of source.matchAll(/\bgoto\(\s*['"`](\/(?!\/)[^'"`]*)['"`]/g)) targets.add(m[1]!);
   // A navigation manager's `NavigateTo("/orders")` (Blazor), and — where links are relative to the

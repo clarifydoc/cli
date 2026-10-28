@@ -94,7 +94,8 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   for (const m of source.matchAll(PARTIALS[dialect])) {
     const name = (m[1] ?? m[2] ?? m[3] ?? m[4])!;
     const line = lineAt(source, m.index!);
-    subComponents.push({ name: name.split("/").pop()!.replace(/\.\w+$/, ""), importSource: null, props: [], line });
+    // The include's own path (`user/auth/signin_inner`) is what finds the partial's file.
+    subComponents.push({ name: name.split("/").pop()!.replace(/\.\w+$/, ""), importSource: name.includes("/") ? name : null, props: [], line });
     component(name, "partial", "container", line, []);
   }
 
@@ -165,7 +166,8 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   materializeElementRequests(analysis);
 
   const base = filePath.slice(filePath.lastIndexOf("/") + 1);
-  const notAScreen = base.startsWith("_") || /(?:^|\/)(?:layouts?|shared|partials?|mailers?|e?mails?|email_templates|prompts?)\//i.test(filePath) || elements.length === 0;
+  // A page made of the partials it includes is a page too: what they show and link to is its own.
+  const notAScreen = base.startsWith("_") || /(?:^|\/)(?:layouts?|shared|partials?|mailers?|e?mails?|email_templates|prompts?)\//i.test(filePath) || (elements.length === 0 && subComponents.length === 0);
   if (notAScreen) return;
   const stem = base.replace(/\.[\w.]+$/, "");
   const name = ctlOfView ? `${ctlOfView}#${stem}` : filePath.replace(/\.[\w.]+$/, "");

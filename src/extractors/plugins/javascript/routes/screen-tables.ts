@@ -18,7 +18,8 @@ const SCREEN_KEYS = new Set(["screen", "view", "page"]);
 
 export interface ScreenTableFact {
   key: string;
-  items: Array<{ path: string; value: string; line: number }>;
+  /** `name`: the entry's own name, which links by name (`url('albums.show')`) use. */
+  items: Array<{ path: string; value: string; line: number; name?: string }>;
 }
 
 export interface ScreenSwitchFact {
@@ -50,6 +51,7 @@ export function collectScreenTables(root: Node, sourceText: string, facts: Route
       for (const el of value.namedChildren) {
         if (el.type !== "object") continue;
         let path: string | null = null;
+        let name: string | null = null;
         const screens: Array<[string, string]> = [];
         let component = false;
         for (const pair of el.namedChildren) {
@@ -58,6 +60,7 @@ export function collectScreenTables(root: Node, sourceText: string, facts: Route
           const v = pair.childForFieldName("value");
           if (!key || !v) continue;
           if (key === "path") path = stringValue(v);
+          else if (key === "name") name = stringValue(v);
           else if (key === "component" || key === "element") component = true;
           else if (SCREEN_KEYS.has(key)) {
             const s = stringValue(v);
@@ -65,7 +68,7 @@ export function collectScreenTables(root: Node, sourceText: string, facts: Route
           }
         }
         if (path === null || !path.startsWith("/") || component) continue;
-        for (const [key, s] of screens) (byKey.get(key) ?? byKey.set(key, []).get(key)!).push({ path, value: s, line: el.startPosition.row + 1 });
+        for (const [key, s] of screens) (byKey.get(key) ?? byKey.set(key, []).get(key)!).push({ path, value: s, line: el.startPosition.row + 1, ...(name ? { name } : {}) });
       }
       for (const [key, items] of byKey) {
         if (items.length >= 2) facts.push({ kind: SCREEN_TABLE_FACT, line: d.startPosition.row + 1, data: { key, items } satisfies ScreenTableFact });
@@ -148,6 +151,7 @@ export const screenTableResolver: RouteResolver = {
             kind: "frontend",
             handler: file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, ""),
             componentPath: file,
+            ...(item.name ? { name: item.name } : {}),
             calls: [],
             middleware: [],
             line: item.line,

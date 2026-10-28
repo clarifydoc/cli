@@ -32,7 +32,9 @@ import { byOrdinal } from "./ordinal.js";
  * navigates to or opens counts for every page and dialog that imports it,
  * through the components between them however deep (a sidebar inside the
  * layout the `/` route renders), never through another screen and never
- * through two non-component modules in a row (`screensUsing`). What no screen uses but a
+ * through two non-component modules in a row (`screensUsing`). A component most pages of its
+ * sub-project include (`FRAME_PAGES`, `FRAME_SHARE`: a server template's navbar partial) is their
+ * frame instead: a `shell` node carrying its links once, not every page carrying them all. What no screen uses but a
  * component rendering the router's outlet frames (a sidebar in the layout `App` mounts around
  * `<router-view>`) hangs off that component as a `shell` node, a start of the map. A launcher module's own
  * rows (`sourceSymbol` is the launcher) say what it opens, not who opens it,
@@ -364,10 +366,27 @@ export function buildScreenFlow(input: {
       return id;
     });
   };
+  // Pages per sub-project, for telling a frame most pages include from a part some pages use.
+  const pagesIn = new Map<string, number>();
+  for (const n of nodes.values()) if (n.kind === "page") pagesIn.set(n.projectId ?? "root", (pagesIn.get(n.projectId ?? "root") ?? 0) + 1);
+  /** A component most pages of its sub-project include (a server template's header partial): the frame, a shell node of its own. */
+  const frameNode = (file: string): string => {
+    const s = perFile.get(file)![0]!;
+    const id = idOf(s);
+    if (!nodes.has(id)) {
+      const projectId = projectOf(file);
+      nodes.set(id, { id, name: s.caption || s.name, kind: "shell", ...(projectId ? { projectId } : {}), start: true });
+    }
+    return id;
+  };
   for (const [file, outs] of outOf) {
     const own = fileNode(file);
     let from = own && nodes.has(own) ? [own] : screensUsing(file);
     if (from.length === 0) from = shellsAbove(file);
+    else if (!(own && nodes.has(own)) && perFile.has(file)) {
+      const total = pagesIn.get(projectOf(file) ?? "root") ?? 0;
+      if (from.length >= FRAME_PAGES && from.length >= total * FRAME_SHARE) from = [frameNode(file)];
+    }
     for (const f of from) {
       for (const o of outs) {
         if ("to" in o) addEdge(f, o.to, o.kind, o.via);
@@ -385,6 +404,9 @@ export function buildScreenFlow(input: {
   };
 }
 
+/** A component included by at least this many pages, and this share of its sub-project's, frames them (a shell). */
+const FRAME_PAGES = 8;
+const FRAME_SHARE = 0.25;
 /** A desktop window: what the Screens tab lists as a page. */
 const WINDOWISH = /(^|:)(Q?(Dialog|MainWindow|Wizard)|ApplicationWindow|Window)$/;
 /** A form type that says the screen is a dialog. */

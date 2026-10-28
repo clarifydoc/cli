@@ -179,3 +179,51 @@ export default function Car() {
     expect(edges).toContain("navigate: src/pages/Car.tsx -> src/pages/Cars.tsx");
   }, 180_000);
 });
+
+describe("templates made of partials", () => {
+  it("makes a page of a template that only includes a partial, whose links are the page's", async () => {
+    const { edges } = await flowOf({
+      "requirements.txt": "flask\n",
+      "app.py": `from flask import Flask, render_template
+
+app = Flask(__name__)
+
+
+@app.route("/clubs")
+def clubs():
+    return render_template("clubs/list.html")
+
+
+@app.route("/clubs/new")
+def new_club():
+    return render_template("clubs/new.html")
+`,
+      "templates/clubs/list.html": `{% extends "base.html" %}\n{% block content %}{% include "clubs/list_inner.html" %}{% endblock %}\n`,
+      "templates/clubs/list_inner.html": `<h1>Clubs</h1>\n<a href="/clubs/new">New club</a>\n`,
+      "templates/clubs/new.html": `{% extends "base.html" %}\n{% block content %}<form method="post" action="/clubs"><input name="name"><button type="submit">Save</button></form>{% endblock %}\n`,
+    });
+    expect(edges).toContain("navigate: templates/clubs/list.html -> templates/clubs/new.html");
+  }, 180_000);
+});
+
+describe("links by route name through a URL helper", () => {
+  it("reads `url('cars.index')` as the route of that name", async () => {
+    const { edges } = await flowOf({
+      "package.json": `{ "name": "garage-spa", "dependencies": { "vue": "^3.4.0", "vue-router": "^4.3.0" } }\n`,
+      "src/router.ts": `import { createRouter, createWebHistory } from "vue-router";
+export default createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: "/cars", name: "cars.index", component: () => import("./pages/Cars.vue") },
+    { path: "/cars/:id", name: "cars.show", component: () => import("./pages/Car.vue") },
+  ],
+});
+`,
+      "src/pages/Cars.vue": `<template><a :href="url('cars.show', { id: car.id })">Car</a></template>\n<script setup lang="ts">\nimport { url } from "../utils/url";\nconst car = { id: 1 };\n</script>\n`,
+      "src/pages/Car.vue": `<template><a :href="url('cars.index')">Back</a></template>\n<script setup lang="ts">\nimport { url } from "../utils/url";\n</script>\n`,
+      "src/utils/url.ts": `export const url = (name: string, params: Record<string, unknown> = {}) => \`#/\${name}?\${JSON.stringify(params)}\`;\n`,
+    });
+    expect(edges).toContain("navigate: src/pages/Cars.vue -> src/pages/Car.vue");
+    expect(edges).toContain("navigate: src/pages/Car.vue -> src/pages/Cars.vue");
+  }, 180_000);
+});
