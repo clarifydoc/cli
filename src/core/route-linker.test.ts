@@ -1173,3 +1173,21 @@ describe("linkApiCallsToRoutes — a hole inside a segment", () => {
     expect(["/api/download/match-size", "/api/download/season-size"]).toContain(links[0]!.routePath);
   });
 });
+
+describe("linkApiCallsToRoutes — the verb of a call named with its client in any syntax", () => {
+  const fixtures = [route("routes/api.php", "GET", "/api/fixtures", "FixtureController#index", 3), route("routes/api.php", "POST", "/api/fixtures", "FixtureController#store", 4)];
+
+  it("reads `$client->post`, `Http::post` and a curl session's stated method", () => {
+    const calls = [
+      apiCall("app/Sync.php", "$client->post", "/api/fixtures", 8),
+      apiCall("app/Sync.php", "Http::get", "/api/fixtures", 9),
+      { ...apiCall("app/Sync.php", "curl", "/api/fixtures", 11), httpMethod: "POST" },
+    ];
+    const links = linkApiCallsToRoutes(calls, fixtures);
+    expect(links.map((l) => `${l.sourceLine} ${l.method} ${l.handler} ${l.confidence} ${l.matchedVia}`)).toEqual([
+      "8 POST FixtureController#store EXTRACTED exact",
+      "9 GET FixtureController#index EXTRACTED exact",
+      "11 POST FixtureController#store EXTRACTED exact",
+    ]);
+  });
+});

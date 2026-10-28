@@ -77,3 +77,21 @@ export const appRouter = createTRPCRouter({ health: publicProcedure.query(() => 
     expect(game.routes.map((r) => r.path)).toEqual(["/trpc/game.byId", "/trpc/league.games.byId"]);
   });
 });
+
+describe("tRPC procedures built on an instance or handed by reference", () => {
+  it("names `t.procedure` by its builder and the referenced function as the handler", async () => {
+    const a = await fileOf("src/server/garage.ts", `import { initTRPC } from "@trpc/server";
+const t = initTRPC.create();
+async function getGarage() { return { id: 1 }; }
+export const garageRouter = t.router({
+  garage: t.procedure.query(getGarage),
+  park: t.protectedProcedure.mutation(garages.park),
+  cars: t.procedure.query(() => listCars()),
+});`);
+    expect(a.routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler} [${r.middleware.join(",")}]`)).toEqual([
+      "GET /trpc/garage getGarage []",
+      "POST /trpc/park garages.park [protectedProcedure]",
+      "GET /trpc/cars null []",
+    ]);
+  });
+});

@@ -116,17 +116,24 @@ interface ImportEvidence {
   names: Set<string>;
   /** Capitalized names imported from a `models/` path or declared as a model class: local models. */
   models: Set<string>;
+  /** Names imported from the project's own modules (`./http`, `@/api`), never a package. */
+  projectNames: Set<string>;
 }
 
+/** A module specifier naming the project's own code: relative, or a conventional source alias. */
+const PROJECT_SPECIFIER = /^(?:\.{1,2}\/|[@~#]\/|src\/)/;
+
 function importEvidence(src: string): ImportEvidence {
-  const evidence: ImportEvidence = { orm: false, names: new Set(), models: new Set() };
+  const evidence: ImportEvidence = { orm: false, names: new Set(), models: new Set(), projectNames: new Set() };
   const bind = (list: string, source: string, separator: RegExp): void => {
     if (ORM_PACKAGES.has(packageOf(source))) evidence.orm = true;
     const fromModels = /\bmodels?\b/.test(source);
+    const fromProject = PROJECT_SPECIFIER.test(source);
     for (const part of list.replace(/[{}]|\*\s+as\s+/g, ",").split(",")) {
       const name = part.trim().split(separator).pop()?.trim();
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
       evidence.names.add(name);
+      if (fromProject) evidence.projectNames.add(name);
       if (fromModels && /^[A-Z]/.test(name)) evidence.models.add(name);
     }
   };
@@ -383,6 +390,8 @@ interface MqEvidence {
   emitters: Set<string>;
   /** The file imports a Redis client (`redis`, `ioredis`). */
   redis: boolean;
+  /** The file imports an MQTT client (`mqtt`, `async-mqtt`). */
+  mqtt: boolean;
 }
 
 /**
@@ -449,6 +458,7 @@ function mqEvidence(src: string): MqEvidence {
     nestEvents: /['"]@nestjs\/event-emitter['"]/.test(src),
     emitters: emitterReceivers(src),
     redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
+    mqtt: /(?:from\s*|require\(\s*)['"](?:mqtt|async-mqtt|precompiled-mqtt)['"]/.test(src),
   };
 }
 
@@ -1052,6 +1062,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
+   * A library root's name held by an instance: `export const http = axios.create(…)`
+   * in this file, or `import { http } from './http'`. Its base URL applies to
+   * the calls made through it; `import http from 'http'` stays the library.
+   */
+  private isClientInstance(name: string): boolean {
+    if ((this.imports ??= importEvidence(this.sourceText)).projectNames.has(name)) return true;
+    return new RegExp(String.raw`\b(?:const|let|var)\s+${name}\s*(?::[^=;\n]*)?=\s*(?!require\s*\()[\w$]`).test(this.sourceText);
+  }
+
+  /**
    * A local that merely shares an HTTP library's name: `const got = expectedNodes(…)`
    * in a test, then `got.get("s")`. The library is only the receiver when the
    * file imports it, or builds the local from it (`got.extend(…)`, `ky.create(…)`).
@@ -1219,6 +1239,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const chain = fn.text.replace(/\s+/g, "");
         const parts = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}$/.test(chain) ? chain.split(".") : [];
         const path = parts.slice(1, -1).filter((p, i) => !(i === 0 && p === "client"));
+        // `t.procedure.query(getGarage)`, `t.protectedProcedure.mutation(…)`: the server
+        // defining a procedure (routes/trpc.ts reads it), never a request.
+        if (parts.some((p) => /^(?:procedure|\w+Procedure)$/.test(p))) return;
         if (parts.length && parts[0] !== "this" && path.length) {
           sources.push(this.ds({ kind: "api-call", name: TRPC_CLIENT_VERBS.get(fnName)!, target: `/trpc/${path.join(".")}`, line: node.startPosition.row + 1 }));
           return;
@@ -1254,7 +1277,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
-        if ((isRoot || isVerb) && fn && (!!jqueryVerb || !isServerRouteDef(fn, node, this.serverRouterReceivers())) && node.parent?.type !== "decorator") {
+        if ((isRoot || isVerb) && fn && (!!jqueryVerb || (!isServerRouteDef(fn, node, this.serverRouterReceivers()) && !isPluginInstanceCall(fn, node))) && node.parent?.type !== "decorator") {
           const args = node.childForFieldName("arguments");
           let firstArg = args && args.childCount > 1 ? args.child(1) : null;
           // Bare HTTP verbs (`get`/`post`/...) collide with `Map.get`,
@@ -1360,7 +1383,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               // The client instance (`apiClient.get(...)`): its base URL is
               // prepended by a project pass. Library roots (`axios`, `fetch`)
               // are not instances.
-              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !HTTP_ROOTS.has(recvRoot.toLowerCase()) && !GLOBAL_RECEIVERS.has(recvRoot)
+              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !GLOBAL_RECEIVERS.has(recvRoot) &&
+                  (!HTTP_ROOTS.has(recvRoot.toLowerCase()) || this.isClientInstance(recvRoot))
                 ? { client: recvRoot }
                 : {}),
               // Flag only AMBIGUOUS provenance — a conflicting binding — so a
@@ -1496,6 +1520,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const channel = literalString(mqArgs[0] ?? null);
             if (channel) {
               sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `Redis: ${fnName}`, target: channel, line }));
+              return;
+            }
+          }
+          // MQTT: `client.publish("stadium/score", msg)` / `client.subscribe("stadium/+" | [topics])`, in a file that imports a client.
+          if (mqev.mqtt && (fnName === "publish" || fnName === "subscribe")) {
+            const first = mqArgs[0];
+            const topics = first?.type === "array" ? first.namedChildren.map((t) => literalString(t)) : [literalString(first ?? null)];
+            if (topics.length > 0 && topics.every((t) => !!t)) {
+              for (const topic of topics) sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic, line }));
               return;
             }
           }
@@ -2441,8 +2474,8 @@ function calleeLeaf(fn: Node | null): string | null {
 /** Object names that denote a server router, not an HTTP client. */
 const SERVER_ROUTER_OBJECTS = new Set(["app", "router", "route", "server", "Router"]);
 
-/** `const x = Router()`, `express.Router()`, `new Router()`, `express()`, `new Hono()`, `new Koa()`, `fastify()`, `new Elysia()`. */
-const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:new\s+)?(?:(?:express|koa|Koa)\s*\.\s*)?(?:Router|express|Hono|Koa|fastify|Fastify|Elysia)\s*(?:<[^>\n]*>)?\s*\(/g;
+/** `const x = Router()`, `express.Router()`, `new Router()`, `express()`, `new Hono()`, `new Koa()`, `fastify()`, `new Elysia()`, `require("fastify")()`. */
+const SERVER_ROUTER_INIT_RE = /(?:^|[\s,;({])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:new\s+)?(?:(?:express|koa|Koa)\s*\.\s*)?(?:Router|express|Hono|Koa|fastify|Fastify|Elysia|require\s*\(\s*['"](?:fastify|express|koa)['"]\s*\))\s*(?:<[^>\n]*>)?\s*\(/g;
 
 /**
  * Whether a verb call is a server-side route/middleware registration
@@ -2476,6 +2509,32 @@ function isServerRouteDef(fn: Node, callNode: Node, routers: Set<string>): boole
     }
   }
   return false;
+}
+
+/**
+ * A route registered on the server instance a plugin function is handed:
+ * Fastify's `async function clubRoutes(instance, opts) { instance.get('/clubs', listClubs) }`
+ * (also `fastify: FastifyInstance`, `(app, options, done)`). The receiver is the
+ * enclosing function's first parameter, typed as a Fastify instance — or, followed
+ * by the plugin's options parameter, not named like a client and handed a
+ * handler last (`apiClient.get('/x', options)` stays a request).
+ */
+function isPluginInstanceCall(fn: Node, callNode: Node): boolean {
+  if (fn.type !== "member_expression") return false;
+  const recv = fn.childForFieldName("object");
+  if (recv?.type !== "identifier") return false;
+  let scope: Node | null = callNode.parent;
+  while (scope && !isFunctionNode(scope) && scope.type !== "function_declaration" && scope.type !== "method_definition") scope = scope.parent;
+  const params = scope?.childForFieldName("parameters")?.namedChildren.filter((p) => p.type !== "comment") ?? [];
+  const nameOf = (p: Node | undefined): string => (p?.childForFieldName("pattern") ?? p)?.text ?? "";
+  if (params.length < 1 || nameOf(params[0]) !== recv.text) return false;
+  const type = params[0]!.childForFieldName("type")?.text ?? "";
+  if (/\bFastify(?:Instance|PluginInstance)?\b/.test(type)) return true;
+  // Untyped, the signature alone: an instance not named like a client, handed a handler last.
+  if (!/^_?(?:opts|options)$/.test(nameOf(params[1])) || HTTP_RECEIVER_RE.test(recv.text) || /client$/i.test(recv.text)) return false;
+  const args = callNode.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+  const last = args[args.length - 1];
+  return args.length >= 2 && !!last && (last.type === "identifier" || last.type === "member_expression" || isFunctionNode(last));
 }
 
 function isFunctionNode(n: Node): boolean {

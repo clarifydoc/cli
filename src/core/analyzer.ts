@@ -56,6 +56,7 @@ import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } fr
 import {
   STRIP_SOURCE_EXTENSION_RE,
   EXTERNAL_NAMESPACE_ROOT_RE,
+  isStandardImport,
   ACTIVATION_FILE_LANGUAGES,
   ensureLanguagesLoaded,
   classifyKnownPackage,
@@ -3234,6 +3235,7 @@ export function buildComponentGraph(
       const isExternal =
         EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) ||
         isExternalPackage(imp.source) ||
+        isStandardImport(a.filePath, imp.source, (p) => byPath.has(p)) ||
         classifyKnownPackage(imp.source) !== undefined ||
         classifyKnownPackage(packageRoot) !== undefined;
       if (isExternal) continue;

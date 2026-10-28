@@ -1288,6 +1288,17 @@ export interface LanguagePluginManifest {
    */
   externalModulePrefixes?: readonly string[];
   /**
+   * Whether an import of this language's file names its standard library
+   * rather than a project module (Python `import types` beside a project's
+   * `league/types.py`). Unlike `externalModulePrefixes`, which every language
+   * shares, it is asked only for this language's files, and it may look at the
+   * project's files (`hasFile`, posix paths from the analysis root) to tell a
+   * project module that shadows the library from one that does not. Such an
+   * import never resolves to a project file, and a name it binds is never a
+   * project namesake. Leaf code.
+   */
+  standardImport?(importingFile: string, source: string, hasFile: (path: string) => boolean): boolean;
+  /**
    * Namespace roots (first path segment) that mark an import as external for
    * directory-import resolution (e.g. "System", "java", "com").
    */

@@ -10,7 +10,7 @@ import type {
   ClassGraphEdge,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
-import { buildImportIndex, type ImportIndex } from "./import-index.js";
+import { buildImportIndex, isExternalImportSource, type ImportIndex } from "./import-index.js";
 import { ormOf } from "./entity-graph.js";
 import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
 import { pluginFor } from "../extractors/registry.js";
@@ -367,6 +367,12 @@ export function buildClassGraph(
   // edges, which is exactly the signal a user wants for Vue/React/express.
   // (importIndex is shared from the caller — see the default param above.)
   const edgeMap = new Map<string /* "src→tgt" */, ClassGraphEdge>();
+  const files = new Set(analyses.map((a) => a.filePath));
+  /** The file takes the name from a package or the standard library, by an import that names no project file. */
+  const importedExternally = (file: string, name: string): boolean => {
+    const source = importIndex.sourceFor(file, name);
+    return !!source && !importIndex.localFor(file, name) && isExternalImportSource(file, source, (p) => files.has(p));
+  };
   for (const a of analyses) {
     const synthetic = syntheticByFile.get(a.filePath);
     for (const ref of a.typeReferences ?? []) {
@@ -382,8 +388,12 @@ export function buildClassGraph(
         // Otherwise the file-node space fills up with edges to fetch/Request/etc.
         if (!ref.sourceClass) continue;
         targetId = ensureNode(ref.typeName, "", false, true);
-      } else if (candidates.length === 1) {
+      } else if (candidates.length === 1 && !importedExternally(ref.sourceFile, ref.typeName)) {
         targetId = candidates[0]!;
+      } else if (candidates.length === 1) {
+        // `class Club(BaseModel)` on `from pydantic import BaseModel`: the package's, not a project namesake.
+        if (!ref.sourceClass) continue;
+        targetId = ensureNode(ref.typeName, "", false, true);
       } else {
         const importedFrom = importIndex.localFor(ref.sourceFile, ref.typeName);
         const importedId = importedFrom ? nodeIdFor(ref.typeName, importedFrom) : null;

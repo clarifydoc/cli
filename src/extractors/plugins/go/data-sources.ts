@@ -201,7 +201,10 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     }
     if (helper) {
       const urlArg = helper[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(line.slice(helper.index! + helper[0].length))?.[1];
-      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target: helper[2] ?? (urlArg ? localUrl(lines, i, urlArg) : null), calls: [], line: lineNo });
+      const rest = line.slice(helper.index! + helper[0].length);
+      // `http.Post(base+"/v1/clubs", …)`: the URL built where it is passed.
+      const target = helper[2] ?? (urlArg ? localUrl(lines, i, urlArg) : concatUrl(rest));
+      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target, calls: [], line: lineNo });
       continue;
     }
     if (newReq) {

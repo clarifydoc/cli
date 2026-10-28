@@ -18,6 +18,7 @@ import {
 } from "../types/analysis.js";
 import type { ImportResolveContext, PackageRoot } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
+import { isExternalImportSource } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
@@ -5060,6 +5061,18 @@ function importedFiles(ctx: LinkContext, source: FileAnalysis): string[] {
   return files;
 }
 
+/** An import of a package or of the language's standard library: what it binds is never a project name. */
+function externalImport(ctx: LinkContext, file: string, source: string): boolean {
+  return isExternalImportSource(file, source, (p) => ctx.filePathMap.get(p) === p);
+}
+
+/** `file` takes `name` from a package or the standard library (`from pydantic import BaseModel`). */
+function importedExternally(ctx: LinkContext, file: string, name: string): boolean {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const imp = ctx.analysisByFile.get(file)?.imports.find((i) => i.specifiers.includes(name));
+  return !!imp && externalImport(ctx, file, imp.source);
+}
+
 /** A file that imports or exports anything is a module: its top-level names are its own. */
 const isModuleFile = (a: FileAnalysis): boolean => a.imports.length > 0 || (a.exports?.length ?? 0) > 0;
 
@@ -5077,7 +5090,10 @@ function unboundAcrossModules(ctx: LinkContext, source: FileAnalysis, name: stri
   const target = ctx.analysisByFile.get(targetFile);
   if (!target || !isModuleFile(target) || /\.d\.[cm]?ts$/.test(targetFile)) return false;
   for (const imp of source.imports) {
-    if (imp.specifiers.includes(name) || Object.values(imp.aliases ?? {}).includes(name)) return false;
+    // Bound by its import — to the project only when the import is not a
+    // package's or the standard library's: `from pydantic import BaseModel`
+    // never means a project class named `BaseModel`.
+    if (imp.specifiers.includes(name) || Object.values(imp.aliases ?? {}).includes(name)) return externalImport(ctx, source.filePath, imp.source);
     const wildcard = imp.isNamespace || imp.specifiers.includes("*");
     // The module itself, and each name it gives as a module of its own
     // (`from league.pkgs import i18n` → `i18n.ProviderFactory`).
@@ -5802,7 +5818,7 @@ function methodBesideClass(
 
 /** The one non-interface declaration of `name` in `nearFile`'s type space (an interface's base may be an interface). */
 function onlyConcrete(ctx: LinkContext, name: string, fromInterface: boolean, nearFile: string): string | null {
-  if (fromInterface) return null;
+  if (fromInterface || importedExternally(ctx, nearFile, name)) return null;
   const lang = ctx.languageOf.get(nearFile) ?? "";
   const files = (ctx.classFiles.get(name) ?? []).filter((f) =>
     ctx.classAt.get(memberKey(f, name))?.kind !== "interface" && sameTypeSpace(nearFile, lang, f, ctx.languageOf.get(f) ?? ""));
@@ -5855,6 +5871,8 @@ function receiverSegment(seg: string): string {
  * definition unique in the language family.
  */
 function locateClass(ctx: LinkContext, name: string, nearFile: string, projectId: string): string | null {
+  // A name the file imports from a package is that package's, whatever the project declares.
+  if (importedExternally(ctx, nearFile, name)) return null;
   return typeFileFor(ctx, name, nearFile, projectId);
 }
 

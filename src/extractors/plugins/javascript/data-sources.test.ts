@@ -1393,3 +1393,59 @@ describe("needle and Node https clients", () => {
     ]);
   });
 });
+
+describe("JS client instances named like a library", () => {
+  it("keeps the base of an instance named `http`, not of the `http` library", async () => {
+    const own = await apiCallsOf(`
+      import axios from 'axios';
+      export const http = axios.create({ baseURL: '/v2' });
+      export function saveFixture() { return http.post('/fixtures', {}); }`);
+    expect(own.map((c) => c.client)).toEqual(["http"]);
+    const imported = await apiCallsOf(`
+      import { http } from './http';
+      export function saveFixture() { return http.post('/fixtures', {}); }`);
+    expect(imported.map((c) => c.client)).toEqual(["http"]);
+    const library = await apiCallsOf(`
+      const http = require('http');
+      export function ping() { return http.get('/health'); }`);
+    expect(library.map((c) => c.client)).toEqual([undefined]);
+  });
+});
+
+describe("JS server registrations are no client calls", () => {
+  it("reads nothing from a Fastify plugin's instance, a required Fastify app or a tRPC server procedure", async () => {
+    const calls = await apiCallsOf(`
+      import type { FastifyInstance } from 'fastify';
+      import { initTRPC } from '@trpc/server';
+      const app = require('fastify')({ logger: true });
+      const t = initTRPC.create();
+      async function partsRoutes(instance, opts) { instance.get('/parts', listParts); }
+      export default async function carRoutes(server: FastifyInstance) { server.post('/cars', createCar); }
+      app.get('/health', health);
+      export const garageRouter = t.router({ garage: t.procedure.query(getGarage) });`);
+    expect(calls).toEqual([]);
+  });
+
+  it("still reads a client handed in with its options", async () => {
+    const calls = await apiCallsOf(`
+      export async function loadGarage(apiClient, options) { return apiClient.get('/garages', options); }`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /garages"]);
+  });
+});
+
+describe("JS MQTT topics", () => {
+  it("reads publish and subscribe as queue operations on their topics in a file that imports a client", async () => {
+    const src = `
+      const mqtt = require('mqtt');
+      const client = mqtt.connect('mqtt://broker');
+      function sendScore() { client.publish('stadium/score', '1-0'); }
+      function listen() { client.subscribe(['stadium/score', 'stadium/+/cards']); }`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const rows = new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind !== "env");
+    expect(rows.map((d) => `${d.kind} ${d.name} ${d.target}`)).toEqual([
+      "queue-publish MQTT: publish stadium/score",
+      "queue-consume MQTT: subscribe stadium/score",
+      "queue-consume MQTT: subscribe stadium/+/cards",
+    ]);
+  });
+});
