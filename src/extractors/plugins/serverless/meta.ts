@@ -3,6 +3,7 @@ import { serverlessManifest } from "./manifest.js";
 import { serverlessSpec } from "./index.js";
 import { serverlessHandlerAnchor } from "./route-anchor.js";
 import { functionJsonEntryPoints, functionJsonRoutes, parseFunctionJson } from "./function-json.js";
+import { daprSubscriptions } from "./dapr.js";
 
 /** A `template.yaml` is SAM's only when it declares a serverless resource. */
 const SAM_RE = /^\s*Transform\s*:.*AWS::Serverless|^\s*Type\s*:\s*["']?AWS::Serverless::(?:Function|Api|HttpApi)\b/m;
@@ -18,7 +19,8 @@ export const serverlessMeta: LanguagePluginMeta = {
   ...serverlessManifest,
   regexSpec: serverlessSpec,
   skipSecurityScan: true,
-  routeResolvers: [serverlessHandlerAnchor],
+  // A Dapr `kind: Subscription` (handed over by the owner of `.yaml`): the route it delivers to consumes the topic.
+  routeResolvers: [serverlessHandlerAnchor, daprSubscriptions],
   preprocess(rawSource, filePath) {
     if (/(?:^|\/)function\.json$/.test(filePath ?? "")) {
       // An Azure Functions folder: the function is named after it.

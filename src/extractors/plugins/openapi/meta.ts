@@ -3,6 +3,7 @@ import { splitLines } from "../../shared/source-lines.js";
 import { extractSchemaFragment, openapiSpec } from "./index.js";
 import { openapiManifest } from "./manifest.js";
 import { openapiRequestSchema } from "./request-schema.js";
+import { DAPR_SUBSCRIPTION_RE } from "../serverless/dapr.js";
 
 /** OpenAPI/Swagger sniff: the document root must carry an `openapi: 3.x` /
  *  `swagger: "2.0"` version key. The head of the file answers for nearly every
@@ -68,6 +69,8 @@ export const openapiMeta: LanguagePluginMeta = {
   skipSecurityScan: true,
   preprocess(rawSource, relativePath) {
     if (isOpenApiDocument(rawSource)) return null;
+    // A Dapr `kind: Subscription` resource: read by the serverless plugin, with the other deployment descriptors.
+    if (/\.ya?ml$/i.test(relativePath) && rawSource.includes("dapr.io/") && DAPR_SUBSCRIPTION_RE.test(rawSource)) return { sourceText: rawSource, language: "serverless" };
     if (!isSchemaFragment(rawSource, relativePath)) return { skip: "not an OpenAPI/Swagger document" };
     return {
       sourceText: rawSource,
