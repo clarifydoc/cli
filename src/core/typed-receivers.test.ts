@@ -77,3 +77,26 @@ class Svc {
     expect(callsOf(a, "Svc", "run")).not.toContain("delete");
   });
 });
+
+describe("restoreTypedReceiverCalls — the enclosing class's own noise-named methods", () => {
+  it("Java: a bare `send(…)` and `this.send(…)` call the class's own (or same-file base's) method", async () => {
+    const a = await analyze(`
+abstract class Notifier {
+  protected abstract void send(String c);
+}
+class MailNotifier extends Notifier {
+  void notifyClub(String c) { send(c); this.send(c); log(c); }
+  protected void send(String c) {}
+}`, "java", "MailNotifier.java");
+    expect(callsOf(a, "MailNotifier", "notifyClub")).toEqual(["send", "this.send"]);
+  });
+
+  it("TypeScript: only `this.send` — a bare `send` there is no member", async () => {
+    const a = await analyze(`
+class Notifier {
+  notifyClub(c: string) { send(c); this.send(c); }
+  send(c: string) {}
+}`, "typescript", "notifier.ts");
+    expect(callsOf(a, "Notifier", "notifyClub")).toEqual(["this.send"]);
+  });
+});

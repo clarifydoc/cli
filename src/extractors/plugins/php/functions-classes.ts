@@ -205,6 +205,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       kind,
+      ...(node.children.some((c) => c.type === "abstract_modifier") ? { abstract: true as const } : {}),
     };
   }
 
@@ -227,6 +228,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    if (!body && node.children.some((c) => c.type === "abstract_modifier")) fn.abstract = true;
     this.attachRequestAccess(fn, body);
     if (body && this.fileMayRespond) {
       const responses = extractPhpResponses(body.text);

@@ -57,7 +57,7 @@ class Outer {
     class Inner : Api
 }`, "kotlin")).toEqual([
       { service: "Storage", implementation: "S3Storage", via: "@Component", qualifier: "s3", matchesMemberName: true },
-      { service: "", implementation: "S3Storage", via: "@Component", qualifier: "s3", matchesMemberName: true, allInterfaces: true },
+      { service: "", implementation: "S3Storage", via: "@Component", qualifier: "s3", matchesMemberName: true, allInterfaces: true, abstractBases: true },
       { service: "Api", implementation: "Inner", via: "@Service", qualifier: "inner", matchesMemberName: true },
     ]);
   });
@@ -68,7 +68,7 @@ class Outer {
 @Component class Clock {}
 @Service class Sub extends Base {}
 class Plain implements Api {}`, "java")).toEqual([
-      { service: "", implementation: "Sub", via: "@Service", qualifier: "sub", matchesMemberName: true, allInterfaces: true },
+      { service: "", implementation: "Sub", via: "@Service", qualifier: "sub", matchesMemberName: true, allInterfaces: true, abstractBases: true },
     ]);
   });
 });

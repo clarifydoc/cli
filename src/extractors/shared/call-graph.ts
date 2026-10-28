@@ -277,7 +277,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       if (c.receiver.qualifier) call.receiverQualifier = c.receiver.qualifier;
     } else if (isNoise(c.name)) {
       seen.add(c.name);
-      if (!c.isReference && c.name.includes(".")) held.push({ index: results.length, call });
+      if (!c.isReference) held.push({ index: results.length, call });
       continue;
     }
     seen.add(seenKey);
@@ -295,10 +295,11 @@ interface HeldCall {
 }
 
 /**
- * Member calls held back as noise ONLY because of their leaf name
- * (`repo.find`, `notifier.send`, `$this->parser->parse`), keyed by the result
+ * Calls held back as noise ONLY because of their leaf name
+ * (`repo.find`, `notifier.send`, `$this->parser->parse`, a bare `send(x)`), keyed by the result
  * array they were dropped from. Whether `find` is Array#find or a repository
- * method depends on the receiver's declared type, which the extractor that
+ * method depends on the receiver's declared type — and a bare `send` may be
+ * the enclosing class's own method —, which the extractor that
  * calls `extractCalls` with a bare body cannot see — so the decision is
  * deferred to `restoreHeldCalls`, run by the per-file pipeline once params,
  * properties and locals are known. A path that never restores keeps the old

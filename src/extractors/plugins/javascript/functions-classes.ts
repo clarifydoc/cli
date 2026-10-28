@@ -1840,6 +1840,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             calls: [],
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
+            abstract: true,
           });
         } else if (member.type === "public_field_definition" || member.type === "field_definition") {
           if (member.children.some((c) => c.type === "abstract")) abstractMembers++;
@@ -1915,7 +1916,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       isExported,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
-      ...(isInterface ? { kind: "interface" as const } : {}),
+      ...(isInterface ? { kind: "interface" as const } : node.type === "abstract_class_declaration" ? { abstract: true as const } : {}),
       ...knownFieldValues(fieldValues),
       ...(superArgs && superArgs.length > 0 ? { superArgs } : {}),
     };

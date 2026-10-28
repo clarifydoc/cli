@@ -356,3 +356,27 @@ class MatchRepository:
   });
 });
 
+
+describe("Python abstract methods", () => {
+  it("marks @abstractmethod members, and a non-ABC class declaring one as abstract", async () => {
+    const { classes } = await extract(`
+from abc import ABC, abstractmethod
+
+class Notifier(ABC):
+    def notify_club(self, c):
+        self.send(c)
+
+    @abstractmethod
+    def send(self, c): ...
+
+class BulkNotifier(Notifier):
+    @abstractmethod
+    def flush(self): ...
+`);
+    const notifier = classes.find((c) => c.name === "Notifier")!;
+    expect(notifier.kind).toBe("interface");
+    expect(notifier.methods.find((m) => m.name === "send")!.abstract).toBe(true);
+    expect(notifier.methods.find((m) => m.name === "notify_club")!.abstract).toBeUndefined();
+    expect(classes.find((c) => c.name === "BulkNotifier")!.abstract).toBe(true);
+  });
+});

@@ -649,6 +649,12 @@ export interface DiBinding {
    * project base types — project-defined interfaces only.
    */
   allInterfaces?: boolean;
+  /**
+   * With `allInterfaces`: also exposed under the project's ABSTRACT base classes of `implementation`
+   * (`ClassInfo.abstract`) — a Spring bean answers an injection point of any supertype, an Autofac
+   * `AsImplementedInterfaces()` only interfaces.
+   */
+  abstractBases?: boolean;
   /** How the registration was written — `AddScoped`, `bind`, `@Bean`, `@Service` — for display. */
   via: string;
 }
@@ -1003,6 +1009,13 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /**
+   * A method of a class declared for its subclasses to supply (`abstract void send();`, C#/TS/PHP `abstract`,
+   * Python `@abstractmethod`): what runs is an override below its class, so a call landing here is dispatched
+   * to the one override there is, and the overrides are fanned out to like an interface method's
+   * implementations. Absent otherwise.
+   */
+  abstract?: true;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
@@ -1194,6 +1207,13 @@ export interface ClassInfo {
    * enum instead of an object.
    */
   kind?: "class" | "interface" | "enum";
+  /**
+   * A class declared abstract (Java/Kotlin/C#/TS/PHP `abstract`, Kotlin `sealed`) that keeps `kind: "class"`
+   * because it has behaviour of its own: never instantiated itself, so a value of its type is one of the
+   * concrete classes below it. The linker dispatches a call through it to the one concrete subclass there is,
+   * and a container bean of a subclass answers an injection point typed by it. Absent otherwise.
+   */
+  abstract?: true;
   /**
    * On an interface: satisfied STRUCTURALLY — a type implements it by having
    * its methods, never by naming it (every Go interface, a Python `Protocol`).
