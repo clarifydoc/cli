@@ -105,6 +105,23 @@ describe("JS/TS dynamic imports", () => {
     const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
     expect(imports.map((i) => [i.source, i.dynamic ?? false])).toEqual([["./router", false], ["./SquadPage.vue", true]]);
   });
+
+  it("binds a lazily loaded module's default export to its variable", async () => {
+    const src = `const ClubPage = lazy(() => import("./pages/ClubPage"));
+const Garage = React.lazy(async () => { return import("./pages/Garage"); });
+const Squad = defineAsyncComponent(() => import("./Squad.vue"));
+const loaded = memoize(() => import("./pages/League"));
+routes.push({ component: () => import("./pages/Match") });`;
+    const tree = await parseSource(src, "typescript" as any, "x.tsx");
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imports.map((i) => [i.source, i.specifiers, i.isDefault])).toEqual([
+      ["./pages/ClubPage", ["ClubPage"], true],
+      ["./pages/Garage", ["Garage"], true],
+      ["./Squad.vue", ["Squad"], true],
+      ["./pages/League", [], false],
+      ["./pages/Match", [], false],
+    ]);
+  });
 });
 
 describe("JS/TS nested require()", () => {

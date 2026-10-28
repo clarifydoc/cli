@@ -247,6 +247,8 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
     let lazyChildren: string | null = null;
     /** Vue Router `props`: what the route hands its component from the URL. */
     let propsFromRoute: RouteInfo["propsFromRoute"];
+    /** Vue Router `name: 'clubs'`: what `{ name: 'clubs' }` navigation reaches. */
+    let routeName: string | null = null;
 
     for (const prop of node.children) {
       if (prop.type === "pair" || prop.type === "property_assignment") {
@@ -287,10 +289,11 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
           propsFromRoute = routeProps(value);
         } else if (keyText === "index" && value?.text === "true") {
           index = true;
-        } else if (keyText === "name" && value && handler === null) {
+        } else if (keyText === "name" && value) {
+          if (value.type === "string") routeName = stripQuotes(value.text);
           // Fall back to the route `name` for display only when no component
           // has set the handler yet — `component` is the stronger signal.
-          handler = stripQuotes(value.text);
+          if (handler === null) handler = stripQuotes(value.text);
         }
       }
     }
@@ -316,6 +319,7 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
         componentPath,
         ...(onlyRedirect ? { redirectTo: redirectTo! } : {}),
         ...(propsFromRoute && componentPath !== null ? { propsFromRoute } : {}),
+        ...(routeName ? { routeName } : {}),
         calls: [],
         middleware: [],
         line: node.startPosition.row + 1,

@@ -44,7 +44,7 @@ export async function detectFileBasedRoutes(
     if (folders.length === 0) continue;
 
     const base = key ? `${normalizeSlashes(key).replace(/\/$/, "")}/` : "";
-    for (const folder of folders) {
+    for (const { folder, named } of folders) {
     const prefix = `${base}${folder.replace(/^\.?\/+/, "").replace(/\/+$/, "")}/`;
 
     for (const a of analyses) {
@@ -60,6 +60,7 @@ export async function detectFileBasedRoutes(
         httpMethod: null,
         kind: "frontend",
         handler: handlerName(path),
+        ...(named ? { routeName: fileToRouteName(fp.slice(prefix.length)) } : {}),
         componentPath: null, // the page file itself is the component
         calls: [],
         middleware: [],
@@ -88,7 +89,7 @@ const VITE_CONFIG_NAMES = [
  * default `src/pages` applies when the option is omitted. Empty when no such
  * plugin is configured.
  */
-async function detectRoutesFolders(projectRoot: string, root: string): Promise<string[]> {
+async function detectRoutesFolders(projectRoot: string, root: string): Promise<Array<{ folder: string; named: boolean }>> {
   for (const name of VITE_CONFIG_NAMES) {
     let text: string;
     try {
@@ -96,19 +97,22 @@ async function detectRoutesFolders(projectRoot: string, root: string): Promise<s
     } catch {
       continue; // no such config file
     }
-    const folders: string[] = [];
+    const folders: Array<{ folder: string; named: boolean }> = [];
     const router = /\bVueRouter\s*\(\s*(?:\{([\s\S]*?)\})?\s*\)/.exec(text);
     if (router || /unplugin-vue-router|vue-router\/vite/.test(text)) {
-      folders.push(/routesFolder\s*:\s*['"`]([^'"`]+)['"`]/.exec(router?.[1] ?? "")?.[1] ?? "src/pages");
+      // A `getRouteName` option names routes its own way: none is guessed then.
+      const options = router?.[1] ?? "";
+      folders.push({ folder: /routesFolder\s*:\s*['"`]([^'"`]+)['"`]/.exec(options)?.[1] ?? "src/pages", named: !/\bgetRouteName\b/.test(options) });
     }
     const pages = /\bPages\s*\(\s*(?:\{([\s\S]*?)\})?\s*\)/.exec(text);
     if (pages || /vite-plugin-pages/.test(text)) {
       const body = pages?.[1] ?? "";
       const option = /(?:dirs|pagesDir)\s*:\s*(\[[^\]]*\]|['"`][^'"`]+['"`])/.exec(body)?.[1] ?? "";
       const dirs = [...option.matchAll(/['"`]([^'"`]+)['"`]/g)].map((m) => m[1]!).filter((d) => !d.includes("*"));
-      folders.push(...(dirs.length > 0 ? dirs : ["src/pages"]));
+      folders.push(...(dirs.length > 0 ? dirs : ["src/pages"]).map((folder) => ({ folder, named: false })));
     }
-    return [...new Set(folders)];
+    const seen = new Set<string>();
+    return folders.filter((f) => !seen.has(f.folder) && !!seen.add(f.folder));
   }
   return [];
 }
@@ -127,6 +131,19 @@ export function fileToRoutePath(relative: string): string | null {
   }
   const path = `/${out.join("/")}`;
   return path === "/" ? "/" : path.replace(/\/+$/, "") || "/";
+}
+
+/**
+ * The name unplugin-vue-router gives a page by default: each segment of its
+ * file path adds `/` and the segment as written, an `index` file nothing after
+ * the slash — `index/clubs/index.vue` → `//clubs/`, `clubs/[id].vue` → `/clubs/[id]`.
+ */
+export function fileToRouteName(relative: string): string {
+  return relative
+    .replace(PAGE_FILE_RE, "")
+    .split("/")
+    .map((seg) => "/" + (seg === "index" ? "" : seg))
+    .join("");
 }
 
 /** Convert one path segment's dynamic-parameter tokens to vue-router syntax. */

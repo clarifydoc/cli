@@ -25,6 +25,7 @@ export interface ReportPayload {
   componentUsage: any[];
   symbolLinks: any[];
   componentLaunches: any[];
+  screenFlow?: any;
   subProjects: any[];
   fileProjects: Record<string, string>;
   routeMap: any[];
@@ -347,6 +348,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     })),
     symbolLinks: (s.symbolLinks ?? []).map((l: any) => encodeSymbolLink(l, ref, sym)),
     componentLaunches: s.componentLaunches ?? [],
+    ...(s.screenFlow ? { screenFlow: s.screenFlow } : {}),
     subProjects: s.subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: s.fileProjects ?? {},
     routeMap: summary.routeMap.map((r: any) => {

@@ -114,6 +114,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   componentUsage: "optional",
   symbolLinks: "required",
   componentLaunches: "optional",
+  screenFlow: "optional",
   lspStats: "optional",
   analyzedAt: "required",
   sourceRevision: "optional",

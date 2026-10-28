@@ -1,5 +1,6 @@
 import type { FileAnalysis, RouteInfo, ScreenInfo, SymbolLink } from "../types/analysis.js";
 import { pluginFor } from "../extractors/registry.js";
+import { routeHandlers, type HandlerRef } from "./route-handlers.js";
 
 /**
  * Server-rendered pages: a route handler that renders a template by name
@@ -35,31 +36,7 @@ export function linkRenderedViews(
   const pages = screens.filter((s) => byPath.has(s.filePath));
   if (pages.length === 0) return 0;
 
-  const linksFrom = new Map<string, SymbolLink[]>();
-  for (const l of symbolLinks) {
-    const k = `${l.sourceFile}\0${l.sourceSymbol}`;
-    (linksFrom.get(k) ?? linksFrom.set(k, []).get(k)!).push(l);
-  }
-  const fnSymbol = (a: FileAnalysis, line: number): { symbol: string; line: number; endLine: number } | null => {
-    let best: { symbol: string; line: number; endLine: number } | null = null;
-    const consider = (symbol: string, f: { line: number; endLine: number }) => {
-      if (f.line <= line && line <= f.endLine && (!best || f.line >= best.line)) best = { symbol, line: f.line, endLine: f.endLine };
-    };
-    for (const f of a.functions) consider(f.name, f);
-    for (const c of a.classes) for (const m of c.methods) consider(`${c.name}.${m.name}`, m);
-    return best;
-  };
-  const spanOf = (file: string, symbol: string): { line: number; endLine: number } | null => {
-    const a = byPath.get(file);
-    if (!a) return null;
-    const dot = symbol.lastIndexOf(".");
-    if (dot > 0) {
-      const m = a.classes.find((c) => c.name === symbol.slice(0, dot))?.methods.find((x) => x.name === symbol.slice(dot + 1));
-      if (m) return m;
-    }
-    // A class the route is anchored on (a class-based view stating `template_name`): its body.
-    return a.functions.find((f) => f.name === symbol) ?? a.classes.find((c) => c.name === symbol) ?? null;
-  };
+  const handlers = routeHandlers(analyses, symbolLinks);
 
   const viewsCache = new Map<string, string[]>();
   const viewsIn = (file: string, span: { line: number; endLine: number }): string[] => {
@@ -104,37 +81,25 @@ export function linkRenderedViews(
   for (const route of routes) {
     // A page is what a GET serves: a POST that renders does so to re-show a form or an error.
     if (route.kind !== "api" || (route.httpMethod && route.httpMethod !== "GET")) continue;
-    const a = byPath.get(route.filePath);
-    if (!a) continue;
-    // The handler: what the route's synthetic symbol dispatches to, else the function at its line.
-    let frontier: Array<{ file: string; symbol: string }> = (linksFrom.get(`${route.filePath}\0route:${route.httpMethod ?? "USE"} ${route.path}`) ?? []).map((l) => ({
-      file: l.targetFile,
-      symbol: l.targetSymbol,
-    }));
-    // Two routes at one method and path (Rocket ranks) share the synthetic symbol: the route's own handler picks.
-    const own = route.handler ? frontier.filter((f) => f.symbol.split(".").pop() === route.handler!.split(/[.#:]/).pop()) : [];
-    if (own.length > 0) frontier = own;
-    if (frontier.length === 0) {
-      const at = fnSymbol(a, route.line);
-      if (at) frontier = [{ file: route.filePath, symbol: at.symbol }];
-    }
+    if (!byPath.has(route.filePath)) continue;
+    let frontier = handlers.handlersOf(route);
     const seen = new Set<string>();
     let screen: ScreenInfo | null = null;
     for (let depth = 0; depth < 3 && frontier.length > 0 && !screen; depth++) {
       const found = new Set<ScreenInfo>();
-      const next: Array<{ file: string; symbol: string }> = [];
+      const next: HandlerRef[] = [];
       for (const { file, symbol } of frontier) {
         const k = `${file}\0${symbol}`;
         if (seen.has(k)) continue;
         seen.add(k);
-        const span = spanOf(file, symbol);
+        const span = handlers.spanOf({ file, symbol });
         const from = byPath.get(file);
         if (!span || !from) continue;
         for (const v of viewsIn(file, span)) {
           const s = resolve(v, from);
           if (s) found.add(s);
         }
-        for (const l of linksFrom.get(k) ?? []) next.push({ file: l.targetFile, symbol: l.targetSymbol });
+        next.push(...handlers.calleesOf({ file, symbol }));
       }
       // One page per route: a handler that renders several (an error page beside the normal one) names none.
       if (found.size === 1) screen = [...found][0]!;

@@ -32,6 +32,8 @@ import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
 import { detectGitopsReleases } from "./gitops-releases.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { attachServerRedirects } from "./server-redirects.js";
+import { buildScreenFlow } from "./screen-flow.js";
 import { linkRenderedViews } from "./rendered-views.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
@@ -1187,6 +1189,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // run before graph enrichment so the false edges never reach the graph.
   symbolLinks = dropNameCollisionReferences(symbolLinks, allAnalyses);
 
+  // What each file imports, before call edges join the graph: the screen flow's "uses" —
+  // a child's emit linked to its parent's handler is no use of the parent.
+  const importsOnly: Record<string, string[]> = Object.fromEntries(Object.entries(componentGraph).map(([f, deps]) => [f, [...deps]]));
   // Enrich component graph with edges from symbol links
   // This catches cross-file dependencies that import resolution missed
   // (e.g. Java package imports, Python absolute imports, C# usings)
@@ -1355,13 +1360,44 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const screenedFiles = new Set(webScreens.map((s) => s.filePath));
   const componentScreens = buildScreensFromComponents(allAnalyses, rawSources, screenedFiles, importIndex);
   const allScreens = [...dfmScreens, ...webScreens, ...componentScreens].filter((sc) => !vendoredPaths.has(sc.filePath));
-  canonicalNavigationTargets(allScreens, allRoutes.filter((r) => r.kind === "frontend").map((r) => r.path));
+  canonicalNavigationTargets(allScreens, allRoutes.filter((r) => r.kind === "frontend"), (f) => analysisByPath.get(f)?.projectId);
   // The Delphi project file names the main form outright — mark it, and the
   // other forms the app creates at startup, so the screen graph has a root.
   markStartupScreens(allAnalyses, allScreens, rawSources);
   // Server-rendered pages: the template a route's handler renders by name is the page it serves.
   const renderedViews = linkRenderedViews(allRoutes, allAnalyses, allScreens, symbolLinks, (f) => rawSources.get(f));
   if (renderedViews > 0) progress.detail(`  Routes rendering a template: ${renderedViews}`);
+  // Where a server route sends the browser on to, and the navigation map that follows it.
+  const serverRedirects = attachServerRedirects(allRoutes, allAnalyses, symbolLinks, (f) => rawSources.get(f));
+  if (serverRedirects > 0) progress.detail(`  Routes redirecting: ${serverRedirects}`);
+  // What a screen file uses is what its markup renders (`<MainLayout>`, `<app-sidebar>`), not every
+  // value it imports from a component's file (`import { BreadcrumbsContext } from "./MainLayout"`);
+  // the modules it imports that are no screen stay (a hook, column definitions rendering row actions).
+  const screenFiles = new Set(allScreens.map((sc) => sc.filePath));
+  const usesGraph: Record<string, string[]> = {};
+  for (const a of allAnalyses) {
+    const imported = importsOnly[a.filePath];
+    if (!imported?.length) continue;
+    if (!screenFiles.has(a.filePath)) {
+      usesGraph[a.filePath] = imported;
+      continue;
+    }
+    const rendered = new Set<string>();
+    for (const sub of a.subComponents) {
+      const pascal = sub.name.replace(/(?:^|-)([a-z])/g, (_, c: string) => c.toUpperCase());
+      const target = importIndex.localFor(a.filePath, sub.name) ?? importIndex.localFor(a.filePath, pascal);
+      if (target) rendered.add(target);
+    }
+    usesGraph[a.filePath] = imported.filter((d) => rendered.has(d) || !screenFiles.has(d));
+  }
+  const screenFlow = buildScreenFlow({
+    screens: allScreens,
+    routes: allRoutes,
+    launches: componentLaunches,
+    elements: allInteractiveElements,
+    componentGraph: usesGraph,
+    projectOf: (f) => analysisByPath.get(f)?.projectId,
+  });
 
   // Cross-tier join: match each outbound api-call to the inbound route serving
   // it (by HTTP method + normalized path). Connects the two halves of the
@@ -2190,6 +2226,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,
+    ...(screenFlow ? { screenFlow } : {}),
     lspStats,
     analyzedAt: options.stableOutput ? STABLE_TIMESTAMP : new Date().toISOString(),
     ...(sourceRevision ? { sourceRevision } : {}),
@@ -2409,11 +2446,15 @@ function extractNavigationTargets(source: string): string[] {
   const targets = new Set<string>();
   const patterns = [
     /navigate\(\s*['"`]([^'"`\s]+)['"`]/g,
-    /router\.push\(\s*['"`]([^'"`\s]+)['"`]/g,
+    /router\.(?:push|replace)\(\s*['"`]([^'"`\s]+)['"`]/g,
     // A history object's push (`history.push("/")`, `this.props.history.replace(…)`).
     /\bhistory\.(?:push|replace)\(\s*['"`]([^'"`\s]+)['"`]/g,
     // A link element's `to`, as a string or a template in braces (`to={`/clubs/${id}`}`); its wrappers too (`NavLink`, `LinkContainer`).
     /<(?:Link|NavLink|LinkContainer)\s+[^>]*?\bto\s*=\s*\{?\s*['"`]([^'"`]+)['"`]/g,
+    // Vue's link element: `<RouterLink to="/loans">`, `:to="'/loans'"`, `:to="`/clubs/${id}`"`.
+    /<(?:RouterLink|router-link|NuxtLink|nuxt-link)\b[^>]*?\s:?to\s*=\s*["']\s*['`]?(\/[^"'`]*)/g,
+    // A menu item's target in script (`{ label: "Loans", to: "/loans" }`).
+    /\bto\s*:\s*['"`](\/[^'"`\s]*)['"`]/g,
     // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
     /location(?:\.href)?\s*=\s*['"`]([^'"`]+)['"`]/g,
   ];
@@ -2423,6 +2464,12 @@ function extractNavigationTargets(source: string): string[] {
       const path = m[1];
       if (path && path.startsWith("/")) targets.add(path);
     }
+  }
+  // A route location object: `:to="{ name: 'clubs' }"`, `to: { path: '/clubs' }`, `router.push({ name: 'club', params })`.
+  // A name reads `route:<name>`, which the routes' names resolve (canonicalNavigationTargets).
+  for (const m of source.matchAll(/(?:\bto\s*(?::|=\s*["'])|\brouter\.(?:push|replace)\()\s*\{(?:[^{}]|\{[^{}]*\})*?\b(name|path)\s*:\s*['"`]([^'"`]+)['"`]/g)) {
+    if (m[1] === "name") targets.add(`route:${m[2]!}`);
+    else if (m[2]!.startsWith("/")) targets.add(m[2]!);
   }
   // A path given as segments (`navigate(['/clubs', id, 'view'])`): literal segments kept, the rest `{}`.
   for (const m of source.matchAll(/\bnavigate\(\s*\[\s*(['"`])(\/[^'"`]*)\1([^\]]*)\]/g)) {
@@ -2456,7 +2503,22 @@ function extractNavigationTargets(source: string): string[] {
  * segment with every parameter alike, so the screen graph can follow it.
  * A path no screen is mounted at takes the client route's own spelling.
  */
-function canonicalNavigationTargets(screens: ScreenInfo[], routePaths: string[]): void {
+function canonicalNavigationTargets(
+  screens: ScreenInfo[],
+  routes: ReadonlyArray<{ path: string; routeName?: string; projectId?: string }>,
+  projectOf: (file: string) => string | undefined,
+): void {
+  const routePaths = routes.map((r) => r.path);
+  // A target named rather than spelled (`route:clubs`): the path of the route by that name,
+  // the screen's own sub-project's first; a name two routes answer to stays as written.
+  const named = new Map<string, Array<{ path: string; projectId?: string }>>();
+  for (const r of routes) if (r.routeName) (named.get(r.routeName) ?? named.set(r.routeName, []).get(r.routeName)!).push(r);
+  const pathOfName = (name: string, project: string | undefined): string | null => {
+    const all = named.get(name) ?? [];
+    const own = all.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
+    const paths = new Set((own.length > 0 ? own : all).map((r) => r.path));
+    return paths.size === 1 ? [...paths][0]! : null;
+  };
   const key = (p: string) =>
     ("/" + p.split(/[?#]/)[0]!)
       .replace(/\/{2,}/g, "/")
@@ -2478,7 +2540,8 @@ function canonicalNavigationTargets(screens: ScreenInfo[], routePaths: string[])
   for (const sc of screens) {
     if (sc.navigatesTo.length === 0) continue;
     const out = new Set<string>();
-    for (const t of sc.navigatesTo) {
+    for (const raw of sc.navigatesTo) {
+      const t = raw.startsWith("route:") ? pathOfName(raw.slice(6), projectOf(sc.filePath)) ?? raw : raw;
       const hits = t.startsWith("/") ? byKey.get(key(t)) ?? byRoute.get(key(t)) : undefined;
       const target = hits?.size === 1 ? [...hits][0]! : t;
       if (target !== sc.routePath) out.add(target);
@@ -2614,14 +2677,19 @@ function buildScreensFromRoutes(
     // Qt Designer forms): give it the route instead of synthesizing a second
     // screen for the same file. The mutation flows into the plugin-screens
     // pass, which collects these same ScreenInfo objects.
+    // Every other path the page answers at (`/auth` beside `/`), so a link to it finds the page.
+    const others = [...new Set(routes.map((r) => r.path))].filter((p) => p !== primary.path);
     if (analysis.screens.length > 0) {
       for (const s of analysis.screens) {
         if (!s.routePath) s.routePath = primary.path;
+        if (others.length > 0 && s.routePath === primary.path) s.otherRoutes = others;
       }
       continue;
     }
     const screenName = primary.handler ?? screenNameFromFile(analysis);
-    screens.push(buildScreen(analysis, screenName, primary.path, rawSources));
+    const built = buildScreen(analysis, screenName, primary.path, rawSources);
+    if (others.length > 0) built.otherRoutes = others;
+    screens.push(built);
   }
 
   for (const { analysis, route } of inline) {

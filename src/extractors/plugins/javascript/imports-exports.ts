@@ -243,10 +243,12 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         const args = node.childForFieldName("arguments");
         const firstArg = args?.child(1);
         if (firstArg && firstArg.type === "string") {
+          // `const ClubPage = lazy(() => import("./ClubPage"))`: the name binds the module's default export.
+          const bound = lazyBinding(node);
           imports.push({
             source: stripQuotes(firstArg.text),
-            specifiers: [],
-            isDefault: false,
+            specifiers: bound ? [bound] : [],
+            isDefault: !!bound,
             isNamespace: false,
             isType: false,
             line: node.startPosition.row + 1,
@@ -523,4 +525,25 @@ export function requiredSource(node: Node): string | null {
   if (node.type !== "call_expression" || node.childForFieldName("function")?.text !== "require") return null;
   const args = node.childForFieldName("arguments")?.namedChildren ?? [];
   return args.length === 1 && args[0]!.type === "string" ? stripQuotes(args[0]!.text) : null;
+}
+
+/** A loader that renders a module's default export once it arrives: `lazy`, `React.lazy`, `loadable`, `defineAsyncComponent`, `lazyWithRetry`. */
+const LAZY_LOADER = /(?:^|\.)(?:\w*[Ll]azy\w*|loadable|defineAsyncComponent)$/;
+
+/**
+ * The variable a dynamic import is bound to through a lazy loader —
+ * `const ClubPage = lazy(() => import("./ClubPage"))`, `React.lazy(async () => { return import(…) })` —
+ * or null for any other dynamic import.
+ */
+function lazyBinding(importCall: Node): string | null {
+  let fn = importCall.parent;
+  while (fn && (fn.type === "parenthesized_expression" || fn.type === "await_expression")) fn = fn.parent;
+  if (fn?.type === "return_statement") fn = fn.parent?.type === "statement_block" ? fn.parent.parent : null;
+  if (!fn || (fn.type !== "arrow_function" && fn.type !== "function_expression" && fn.type !== "function")) return null;
+  const args = fn.parent;
+  const call = args?.type === "arguments" ? args.parent : null;
+  if (call?.type !== "call_expression" || !LAZY_LOADER.test(call.childForFieldName("function")?.text ?? "")) return null;
+  const decl = call.parent;
+  const name = decl?.type === "variable_declarator" ? decl.childForFieldName("name") : null;
+  return name?.type === "identifier" ? name.text : null;
 }

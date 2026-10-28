@@ -1376,6 +1376,20 @@ export interface RouteInfo {
    */
   redirectTo?: string;
   /**
+   * Frontend routes only: the name the client router knows the route by — Vue
+   * Router's `name: 'clubs'`, unplugin-vue-router's file-based name
+   * (`index/clubs/index.vue` → `//clubs/`). Navigation by name
+   * (`<RouterLink :to="{ name: 'clubs' }">`, `router.push({ name })`) reaches it.
+   */
+  routeName?: string;
+  /**
+   * API routes only: the app paths the handler sends the browser on to
+   * (`res.redirect("/login")`, `return "redirect:/clubs"`, `RedirectToAction("Index")`
+   * resolved to its route) — set by core's `server-redirects.ts`. The screen
+   * flow follows a form or link that lands here on to the page served there.
+   */
+  redirectsTo?: string[];
+  /**
    * Frontend routes only: declared where the reader navigates FROM (a SwiftUI
    * `NavigationLink`, a `.sheet`) rather than in a route table — the
    * declaring file's screen opens this one.
@@ -2538,6 +2552,8 @@ export interface ScreenInfo {
    * later on (the normal case).
    */
   startup?: "main" | "auto-created";
+  /** The other client routes that render this screen (`/auth` beside its `routePath` `/`). */
+  otherRoutes?: string[];
   /**
    * The type the view binds against, as written without its namespace prefix
    * (XAML `x:DataType="viewmodels:BasketViewModel"` → `BasketViewModel`): where
@@ -2580,6 +2596,41 @@ export interface ComponentLaunch {
   launcher: string;
   /** Line of the call/import in `sourceFile`. */
   line: number;
+}
+
+/**
+ * How one screen leads to another:
+ * - `navigate`: a link or navigation call in the screen's own code (or a component it builds);
+ * - `dialog`: the screen opens the other as a dialog, a lazily loaded component or a form;
+ * - `redirect`: the client router sends a path on to another (Vue `redirect`, `<Navigate to>`);
+ * - `server-redirect`: a form or link reaches a server route whose handler redirects;
+ * - `submit`: a form posts to a server route that renders the other page.
+ */
+export type ScreenFlowKind = "navigate" | "dialog" | "redirect" | "server-redirect" | "submit";
+
+export interface ScreenFlowNode {
+  /** The screen's file, or `path:<path>` for a client route that only redirects. */
+  id: string;
+  name: string;
+  kind: "page" | "dialog" | "path";
+  /** The route the screen is served at. */
+  path?: string;
+  projectId?: string;
+  /** Where the app starts: its main form, or the screen at `/` (a redirect from `/` too). */
+  start?: true;
+}
+
+export interface ScreenFlowEdge {
+  from: string;
+  to: string;
+  kind: ScreenFlowKind;
+  /** What carries it: the target as written, the launcher, the server route (`POST /login`). */
+  via?: string;
+}
+
+export interface ScreenFlow {
+  nodes: ScreenFlowNode[];
+  edges: ScreenFlowEdge[];
 }
 
 export type LinkProximity = 1 | 2 | 3;
@@ -3779,6 +3830,8 @@ export interface ProjectAnalysis {
    *  derived from symbolLinks. Drives the Screens & UI "opens" / "opened by"
    *  cross-links. Omitted when empty. */
   componentLaunches?: ComponentLaunch[];
+  /** Which screen leads to which, and how (core/screen-flow.ts). Omitted when there are no screens. */
+  screenFlow?: ScreenFlow;
   lspStats?: LspStats;
   analyzedAt: string;
   /** The commit the source was at (git work trees, when git history is read). */
