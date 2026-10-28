@@ -25,7 +25,8 @@ import { byOrdinal } from "./ordinal.js";
  * - `redirect`: a client route's `redirectTo`;
  * - `server-redirect`: a link, form or rendered page whose server route
  *   redirects (`RouteInfo.redirectsTo`), on to the page at that path;
- * - `submit`: a form whose request lands on a route another page is served at.
+ * - `submit`: a form whose request lands on a route another page is served at, or an event
+ *   the page's route leads on from (`RouteInfo.leadsTo` — a Web Flow view's transitions).
  *
  * A screen is the sum of the components it uses: what a non-screen component
  * navigates to or opens counts for every page and dialog that imports it,
@@ -80,9 +81,16 @@ export function buildScreenFlow(input: {
 
   // Screens by route key, name and file.
   const byKey = new Map<string, Set<ScreenInfo>>();
+  // Paths as written first: a flow's states (`league.wf.club#details`) are no URLs, and a key would cut their `#`.
+  const byExact = new Map<string, Set<ScreenInfo>>();
   const addKey = (p: string, s: ScreenInfo) => {
-    const k = pathKey(p);
-    (byKey.get(k) ?? byKey.set(k, new Set()).get(k)!).add(s);
+    (byExact.get(p) ?? byExact.set(p, new Set()).get(p)!).add(s);
+    // `/teachers/:uuid?` answers at `/teachers` too.
+    const bare = p.replace(/(?:\/(?::\w+\?|\[\[[^\]]+\]\]))+\/?$/, "") || "/";
+    for (const variant of new Set([p, bare])) {
+      const k = pathKey(variant);
+      (byKey.get(k) ?? byKey.set(k, new Set()).get(k)!).add(s);
+    }
   };
   for (const s of screens) {
     if (s.routePath) addKey(s.routePath, s);
@@ -111,7 +119,7 @@ export function buildScreenFlow(input: {
   };
   const screenAtPath = (p: string, project: string | undefined): ScreenInfo | null => {
     const k = pathKey(p);
-    const hits = byKey.has(k) ? [...byKey.get(k)!] : byParams(k);
+    const hits = byExact.has(p) ? [...byExact.get(p)!] : byKey.has(k) ? [...byKey.get(k)!] : byParams(k);
     const same = hits.filter((s) => projectOf(s.filePath) === project);
     return one(same.length > 0 ? same : hits);
   };
@@ -150,6 +158,18 @@ export function buildScreenFlow(input: {
     return targets > 0 ? id : null;
   };
   for (const k of clientRedirects.keys()) redirectNode(k, undefined);
+
+  // A route's own statement of where its page leads (a Web Flow view's transitions): the page posts the
+  // event and the server shows the next view — a submit.
+  for (const r of routes) {
+    if (r.kind !== "frontend" || !r.leadsTo?.length) continue;
+    const from = screenAtPath(r.path, r.projectId);
+    if (!from) continue;
+    for (const t of r.leadsTo) {
+      const to = screenAtPath(t.path, r.projectId);
+      if (to) addEdge(addScreen(from), addScreen(to), "submit", t.on ? `on ${t.on}` : t.path);
+    }
+  }
 
   /** Follow a request to a server route: the page it renders, and where it redirects. */
   const viaServer = (from: string, method: string, target: string, project: string | undefined, kind: "navigate" | "submit"): boolean => {

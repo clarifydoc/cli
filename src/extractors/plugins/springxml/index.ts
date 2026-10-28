@@ -280,6 +280,10 @@ function extractFlowRoutes(lines: string[], filePath?: string): RouteInfo[] {
   // Web Flow maps flow inputs from the launch request's parameters by name.
   const params: RouteParamInfo[] = flow.inputs.map((i) => ({ name: i.name, type: i.type, binding: "query", inferred: true }));
   const routes: RouteInfo[] = [];
+  // Each view-state's route path: the first one is the flow's own id (what a subflow or `_flowId` opens).
+  const pathOf = new Map<string, string>();
+  for (const s of flow.states) if (s.kind === "view-state" && s.view) pathOf.set(s.id, pathOf.size === 0 ? flowId : `${flowId}#${s.id}`);
+  const byId = new Map(flow.states.map((s) => [s.id, s]));
   for (const s of flow.states) {
     if (s.kind !== "view-state" || !s.view) continue;
     // Handler = the view's basename: meaningful in the Routes tab, and inert
@@ -296,9 +300,45 @@ function extractFlowRoutes(lines: string[], filePath?: string): RouteInfo[] {
       line: s.line,
     };
     applyRouteMeta(route, { inheritedGuards: flow.secured, guards: s.secured, params });
+    const leadsTo = flowTargets(s, byId, pathOf);
+    if (leadsTo.length > 0) route.leadsTo = leadsTo;
     routes.push(route);
   }
   return routes;
+}
+
+/**
+ * Where a view-state's transitions take the reader: the view-states they reach, through the
+ * action and decision states between (four deep), and the start of a subflow they enter; an
+ * end-state returns to whoever launched the flow and leads nowhere this flow states. Each target
+ * carries the event the view fires (`on`).
+ */
+function flowTargets(view: FlowState, byId: Map<string, FlowState>, pathOf: Map<string, string>): Array<{ path: string; on?: string }> {
+  const out = new Map<string, { path: string; on?: string }>();
+  const add = (path: string, on: string | undefined) => {
+    if (path !== pathOf.get(view.id) && !out.has(path)) out.set(path, { path, ...(on ? { on } : {}) });
+  };
+  const follow = (stateId: string, on: string | undefined, depth: number, seen: Set<string>) => {
+    if (seen.has(stateId)) return;
+    seen.add(stateId);
+    const state = byId.get(stateId);
+    if (!state) return;
+    if (state.kind === "view-state") {
+      const path = pathOf.get(state.id);
+      if (path) add(path, on);
+    } else if (state.kind === "subflow-state") {
+      const sub = state.calls.find((c) => c.name.startsWith("subflow:"))?.target;
+      if (sub) add(sub, on);
+    } else if ((state.kind === "action-state" || state.kind === "decision-state") && depth < 4) {
+      for (const c of state.calls) if (c.name.startsWith("on:") && c.target) follow(c.target, on, depth + 1, seen);
+    }
+  };
+  for (const c of view.calls) {
+    if (!c.name.startsWith("on:") || !c.target) continue;
+    const on = c.name.slice(3);
+    follow(c.target, on === "*" ? undefined : on, 0, new Set([view.id]));
+  }
+  return [...out.values()];
 }
 
 /** `<bean id="x" class="com.y.Z">` → named constants (the bean-id → class map). */

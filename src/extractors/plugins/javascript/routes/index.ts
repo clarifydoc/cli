@@ -4,7 +4,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
-import { collectRouteArrays, visitReactRouterRoute } from "./react-router.js";
+import { collectRouteArrays, resolveRouteWrappers, visitReactRouterRoute } from "./react-router.js";
 import { collectNestClassGuards, visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
@@ -58,6 +58,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
       for (const child of node.children) walk(child);
     };
     walk(tree.rootNode);
+    // `element={<PlanRoute />}` where PlanRoute is a small component of this file: what it renders.
+    if (reactRouter.length > 0) resolveRouteWrappers(tree.rootNode, reactRouter);
     // Express guards declared once on the router (`router.use(requireAuth)`)
     // apply to every later route on it — a file-level fact the per-node
     // visitor cannot see, so it is written after the walk.

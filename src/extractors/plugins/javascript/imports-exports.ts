@@ -537,6 +537,8 @@ const LAZY_LOADER = /(?:^|\.)(?:\w*[Ll]azy\w*|loadable|defineAsyncComponent)$/;
  */
 function lazyBinding(importCall: Node): string | null {
   let fn = importCall.parent;
+  // `import("./x").then((m) => ({ default: m.Club }))`: the chained call stands for the import.
+  while (fn?.type === "member_expression" && fn.parent?.type === "call_expression" && fn.childForFieldName("property")?.text === "then") fn = fn.parent.parent;
   while (fn && (fn.type === "parenthesized_expression" || fn.type === "await_expression")) fn = fn.parent;
   if (fn?.type === "return_statement") fn = fn.parent?.type === "statement_block" ? fn.parent.parent : null;
   if (!fn || (fn.type !== "arrow_function" && fn.type !== "function_expression" && fn.type !== "function")) return null;

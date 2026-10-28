@@ -232,12 +232,25 @@ describe("screen flow of a file-routed Vue app", () => {
 const REACT_FILES: Record<string, string> = {
   "package.json": `{ "name": "garage-web", "dependencies": { "react": "^18.3.0", "react-router-dom": "^6.26.0" } }\n`,
   "src/App.tsx": `import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import GarageLayout from "./layout/GarageLayout";
 
 const SignIn = lazy(() => import("./pages/SignIn"));
 const CarList = lazy(() => import("./pages/CarList"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const Workshop = lazy(() => import("./pages/Workshop").then((m) => ({ default: m.Workshop })));
+
+// A route element of this file: the page it renders, keyed by the car.
+const WorkshopRoute = () => {
+  const { carId } = useParams();
+  return <Workshop key={carId} />;
+};
+
+// Old links land on the new page.
+const OldServiceLink = ({ prefix = "/workshop" }: { prefix?: string }) => {
+  const { carId } = useParams();
+  return <Navigate to={carId ? \`\${prefix}/\${carId}\` : prefix} replace />;
+};
 
 export default function App() {
   return (
@@ -249,6 +262,8 @@ export default function App() {
           <Route element={<GarageLayout />}>
             <Route path="/cars" element={<CarList />} />
             <Route path="/garage" element={<Navigate to="/cars" replace />} />
+            <Route path="/workshop/:carId?" element={<WorkshopRoute />} />
+            <Route path="/service/:carId" element={<OldServiceLink />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -287,6 +302,7 @@ export default function CarList() {
   return <div><h1>{crumbs.join(" / ")}</h1><Link to="/sign-in">Sign out</Link></div>;
 }
 `,
+  "src/pages/Workshop.tsx": `export function Workshop() {\n  return <h1>Workshop</h1>;\n}\n`,
   "src/pages/NotFound.tsx": `export default function NotFound() {\n  return <h1>Not found</h1>;\n}\n`,
 };
 
@@ -308,6 +324,15 @@ describe("screen flow of a React Router app", () => {
     const screen = (f: string) => summary.screens.find((s) => s.filePath === f);
     expect(screen("src/pages/SignIn.tsx")).toMatchObject({ routePath: "/", otherRoutes: ["/sign-in"] });
     expect(screen("src/pages/CarList.tsx")?.routePath).toBe("/cars");
+    // Through a wrapper of App.tsx, to a named export loaded lazily.
+    expect(screen("src/pages/Workshop.tsx")?.routePath).toBe("/workshop/:carId?");
+  });
+
+  it("reads a wrapper that only redirects as a redirect, to a page with an optional parameter", () => {
+    const service = summary.routeMap.find((r) => r.path === "/service/:carId");
+    expect(service).toMatchObject({ redirectTo: "/workshop", componentPath: null });
+    const edges = summary.screenFlow!.edges.map((e) => `${e.kind}: ${e.from} -> ${e.to}`);
+    expect(edges).toContain("redirect: path:/service/{} -> src/pages/Workshop.tsx");
   });
 
   it("links to the page at a second path, never to the catch-all, and not through an imported context", () => {

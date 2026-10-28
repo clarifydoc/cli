@@ -1383,6 +1383,13 @@ export interface RouteInfo {
    */
   routeName?: string;
   /**
+   * Frontend routes only: the routes a person goes on to from this route's page,
+   * as its own declaration states them — a Web Flow view-state's transitions,
+   * followed through action and decision states, a subflow to that flow's start
+   * — with the event that fires each (`on`).
+   */
+  leadsTo?: Array<{ path: string; on?: string }>;
+  /**
    * API routes only: the app paths the handler sends the browser on to
    * (`res.redirect("/login")`, `return "redirect:/clubs"`, `RedirectToAction("Index")`
    * resolved to its route) — set by core's `server-redirects.ts`. The screen
@@ -2604,7 +2611,8 @@ export interface ComponentLaunch {
  * - `dialog`: the screen opens the other as a dialog, a lazily loaded component or a form;
  * - `redirect`: the client router sends a path on to another (Vue `redirect`, `<Navigate to>`);
  * - `server-redirect`: a form or link reaches a server route whose handler redirects;
- * - `submit`: a form posts to a server route that renders the other page.
+ * - `submit`: a form posts to a server route that renders the other page, or the page fires
+ *   an event its route declares a way on for (`RouteInfo.leadsTo`, a Web Flow transition).
  */
 export type ScreenFlowKind = "navigate" | "dialog" | "redirect" | "server-redirect" | "submit";
 

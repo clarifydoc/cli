@@ -102,6 +102,31 @@ describe("parseFlow", () => {
 });
 
 describe("springxmlSpec hooks", () => {
+  it("leads a view on through action and decision states to the next view or a subflow's start", () => {
+    const [details] = springxmlSpec.extractRoutes!(FLOW.split("\n"), [], FLOW_PATH);
+    // approve → checkResources (decision) → addMissingResources (subflow); reject and close end the flow.
+    expect(details!.leadsTo).toEqual([{ path: "league.wf.add.missing.resources", on: "approve" }]);
+
+    const twoViews = `<flow xmlns="http://www.springframework.org/schema/webflow" start-state="list">
+   <view-state id="list" view="/garage/car_list">
+      <transition on="grid_event" to="list"/>
+      <transition on="select" to="load"/>
+   </view-state>
+   <action-state id="load">
+      <evaluate expression="car_action.load"/>
+      <transition on="success" to="details"/>
+   </action-state>
+   <view-state id="details" view="/garage/car_details">
+      <transition on="close" to="list"/>
+   </view-state>
+</flow>`;
+    const routes = springxmlSpec.extractRoutes!(twoViews.split("\n"), [], "x/league.wf.car.manage.xml");
+    expect(routes.map((r) => [r.path, r.leadsTo])).toEqual([
+      ["league.wf.car.manage", [{ path: "league.wf.car.manage#details", on: "select" }]],
+      ["league.wf.car.manage#details", [{ path: "league.wf.car.manage", on: "close" }]],
+    ]);
+  });
+
   it("emits view-states as frontend routes anchored on the flow id", () => {
     const routes = springxmlSpec.extractRoutes!(FLOW.split("\n"), [], FLOW_PATH);
     expect(routes).toHaveLength(1);

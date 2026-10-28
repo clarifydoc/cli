@@ -311,6 +311,64 @@ export function redirectTargetOf(value: Node): string | null {
   return to?.type === "string" ? to.text.slice(1, -1) : "";
 }
 
+/**
+ * A route element declared beside the routes as a small component of the same file —
+ * `const PlanRoute = () => <PlanOverview key={id} />`, `const OldLink = () => <Navigate to="/new" />` —
+ * stands for what it renders: the one component it renders is the route's page, and one that
+ * renders nothing but a redirect makes the route a redirect (to the app path it spells, "" when
+ * computed). A wrapper choosing among several pages (by role) is left as it is.
+ */
+export function resolveRouteWrappers(root: Node, routes: RouteInfo[]): void {
+  const wrappers = new Map<string, Node>();
+  for (const stmt of root.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.namedChildren.find((c) => c.type !== "comment") : stmt;
+    if (decl?.type === "function_declaration") {
+      const name = decl.childForFieldName("name")?.text;
+      if (name) wrappers.set(name, decl);
+    } else if (decl?.type === "lexical_declaration" || decl?.type === "variable_declaration") {
+      for (const d of decl.namedChildren) {
+        const value = d.type === "variable_declarator" ? d.childForFieldName("value") : null;
+        const name = d.childForFieldName("name");
+        if (name?.type === "identifier" && (value?.type === "arrow_function" || value?.type === "function_expression" || value?.type === "function")) wrappers.set(name.text, value);
+      }
+    }
+  }
+  if (wrappers.size === 0) return;
+  for (const route of routes) {
+    if (!route.componentPath || route.redirectTo !== undefined) continue;
+    const fn = wrappers.get(route.componentPath);
+    if (!fn) continue;
+    const pages = new Set<string>();
+    let redirects = 0;
+    let target: string | null = null;
+    const visit = (n: Node): void => {
+      if (n.type === "jsx_self_closing_element" || n.type === "jsx_opening_element") {
+        const tag = (n.childForFieldName("name") ?? n.child(1))?.text;
+        if (tag && REDIRECT_TAGS.has(tag)) {
+          redirects++;
+          const to = routeAttrValue(n, "to");
+          if (to?.type === "string") target ??= to.text.slice(1, -1);
+        } else if (tag && /^[A-Z][\w$]*$/.test(tag) && !WRAPPER_TAGS.has(tag)) pages.add(tag);
+      }
+      for (const c of n.namedChildren) visit(c);
+    };
+    visit(fn);
+    if (pages.size === 0 && redirects > 0) {
+      // `to={uuid ? `${prefix}/${uuid}` : prefix}` with `prefix = "/plans"`: the app path the wrapper spells.
+      target ??= /["'`](\/[^"'`$\s]*)["'`]/.exec(fn.text)?.[1] ?? "";
+      route.redirectTo = target;
+      route.componentPath = null;
+    } else if (pages.size === 1 && redirects === 0) {
+      const page = [...pages][0]!;
+      route.componentPath = page;
+      route.handler = page;
+    }
+  }
+}
+
+/** Elements that wrap a page without being one. */
+const WRAPPER_TAGS = new Set(["Fragment", "Suspense", "StrictMode", "ErrorBoundary", "Outlet"]);
+
 /** The raw value text of a named attribute on a JSX opening element. */
 function routeAttrRaw(openingEl: Node, name: string): string | null {
   return routeAttrValue(openingEl, name)?.text ?? null;

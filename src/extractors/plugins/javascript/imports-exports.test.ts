@@ -110,6 +110,7 @@ describe("JS/TS dynamic imports", () => {
     const src = `const ClubPage = lazy(() => import("./pages/ClubPage"));
 const Garage = React.lazy(async () => { return import("./pages/Garage"); });
 const Squad = defineAsyncComponent(() => import("./Squad.vue"));
+const Table = lazy(() => import("./pages/Table").then((m) => ({ default: m.LeagueTable })));
 const loaded = memoize(() => import("./pages/League"));
 routes.push({ component: () => import("./pages/Match") });`;
     const tree = await parseSource(src, "typescript" as any, "x.tsx");
@@ -118,6 +119,7 @@ routes.push({ component: () => import("./pages/Match") });`;
       ["./pages/ClubPage", ["ClubPage"], true],
       ["./pages/Garage", ["Garage"], true],
       ["./Squad.vue", ["Squad"], true],
+      ["./pages/Table", ["Table"], true],
       ["./pages/League", [], false],
       ["./pages/Match", [], false],
     ]);
