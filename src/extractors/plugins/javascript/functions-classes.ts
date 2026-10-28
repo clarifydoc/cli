@@ -1012,6 +1012,31 @@ function piniaStateObject(member: Node): Node | null {
 /** Any JSDoc tag this extractor reads — the per-file gate before looking at comments at all. */
 const JSDOC_TAG_RE = /@(?:param|arg|argument|type|implements|interface)\b/;
 
+/** A constructor function read as a class (see `JavaScriptExtractor.prototypeClasses`). */
+interface PrototypeClass {
+  cls: ClassInfo;
+  /** Lines of the functions assigned to the prototype: the `Owner.member` functions they were read as. */
+  prototypeLines: ReadonlySet<number>;
+  /** Spans of the methods the constructor assigns to `this`, whose calls were the constructor's. */
+  ownSpans: ReadonlyArray<readonly [number, number]>;
+}
+
+/** The file's functions without the prototype members its prototype classes now hold. */
+function withoutPrototypeMembers(functions: FunctionInfo[], classes: readonly PrototypeClass[]): FunctionInfo[] {
+  const byOwner = new Map(classes.map((p) => [p.cls.name, p]));
+  return functions.flatMap((fn) => {
+    const dot = fn.name.indexOf(".");
+    const owner = dot > 0 ? byOwner.get(fn.name.slice(0, dot)) : undefined;
+    if (owner?.prototypeLines.has(fn.line)) return [];
+    const ctor = byOwner.get(fn.name);
+    if (ctor && ctor.cls.line === fn.line && ctor.ownSpans.length > 0) {
+      const inMember = (line: number) => ctor.ownSpans.some(([from, to]) => line >= from && line <= to);
+      return [{ ...fn, calls: fn.calls.filter((c) => !inMember(c.line)) }];
+    }
+    return [fn];
+  });
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -1026,10 +1051,15 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   private pinia = false;
   /** The file registers Alpine.js components (`Alpine.data(…)`): a factory's returned methods are the template's handlers. */
   private alpine = false;
+  /** The file assigns to a prototype (a substring gate, see `prototypeClasses`). */
+  private prototypes = false;
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.beginFile(tree, sourceText);
-    const functions = super.extractFunctions(tree, sourceText);
+    let functions = super.extractFunctions(tree, sourceText);
+    // A constructor function's prototype methods are its class's (see `prototypeClasses`).
+    const protoClasses = this.prototypeClasses(tree);
+    if (protoClasses.length > 0) functions = withoutPrototypeMembers(functions, protoClasses);
     if (sourceText.includes("]:")) this.extractKeyedRegistry(tree.rootNode, functions);
     if (this.ctx.dispatchProps.size > 0) for (const fn of functions) addDispatchPropCalls(fn, this.ctx.dispatchProps);
     return functions;
@@ -1110,6 +1140,100 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (this.ctx.dispatchProps.size > 0) for (const c of classes) for (const m of c.methods) addDispatchPropCalls(m, this.ctx.dispatchProps);
     // Named zod schemas, as the request types a route validates with (zod-schemas.ts).
     classes.push(...extractZodSchemas(tree.rootNode, sourceText));
+    const declared = new Set(classes.map((c) => c.name));
+    for (const p of this.prototypeClasses(tree)) if (!declared.has(p.cls.name)) classes.push(p.cls);
+    return classes;
+  }
+
+  /** The prototype classes of the file `prototypeClasses` read last, by tree. */
+  private protoMemo: { tree: Tree; classes: PrototypeClass[] } | null = null;
+
+  /**
+   * ES5 classes: a constructor function the file declares (`function Club(name)
+   * { … }`, `var Club = function () { … }`) with methods assigned to its
+   * prototype (`Club.prototype.sign = function …`, `Club.prototype = { sign:
+   * function … }`) or to `this` in its body (`this.rename = function …`). Each
+   * is a class named for the constructor, spanning the constructor, whose
+   * methods are those members: `new Club().sign()` and a `this.wash()` in a
+   * prototype method are calls of that class's members. The prototype
+   * assignments were read as functions `Club.sign`, and the `this.` ones not
+   * at all (their calls were the constructor's).
+   */
+  private prototypeClasses(tree: Tree): PrototypeClass[] {
+    if (this.protoMemo?.tree === tree) return this.protoMemo.classes;
+    const classes: PrototypeClass[] = [];
+    this.protoMemo = { tree, classes };
+    if (!this.prototypes) return classes;
+    const root = tree.rootNode;
+    const isFn = (n: Node | null): n is Node => n?.type === "function_expression" || n?.type === "arrow_function";
+    // Constructors: function declarations and `var X = function` in the file.
+    const ctors = new Map<string, Node>();
+    for (const d of root.descendantsOfType(["function_declaration", "variable_declarator"])) {
+      if (!d) continue;
+      const name = d.childForFieldName("name");
+      const fn = d.type === "function_declaration" ? d : d.childForFieldName("value");
+      if (name?.type !== "identifier" || !/^[A-Z]/.test(name.text) || (fn?.type !== "function_declaration" && fn?.type !== "function_expression")) continue;
+      if (!ctors.has(name.text)) ctors.set(name.text, fn);
+    }
+    if (ctors.size === 0) return classes;
+    const members = new Map<string, Array<{ name: string; node: Node; fromPrototype: boolean }>>();
+    const add = (owner: string, name: string, node: Node, fromPrototype: boolean) => {
+      const list = members.get(owner) ?? members.set(owner, []).get(owner)!;
+      if (!list.some((m) => m.name === name)) list.push({ name, node, fromPrototype });
+    };
+    for (const assign of root.descendantsOfType("assignment_expression")) {
+      if (assign?.parent?.type !== "expression_statement") continue;
+      const left = assign.childForFieldName("left");
+      const right = assign.childForFieldName("right");
+      if (left?.type !== "member_expression" || !right) continue;
+      const path = left.text.replace(/\s+/g, "");
+      const single = /^([A-Za-z_$][\w$]*)\.prototype\.([A-Za-z_$][\w$]*)$/.exec(path);
+      if (single && ctors.has(single[1]!) && isFn(right)) add(single[1]!, single[2]!, right, true);
+      const whole = /^([A-Za-z_$][\w$]*)\.prototype$/.exec(path);
+      if (whole && ctors.has(whole[1]!) && right.type === "object") {
+        for (const member of right.namedChildren) {
+          if (member?.type === "pair") {
+            const key = member.childForFieldName("key");
+            const value = member.childForFieldName("value");
+            if (key && (key.type === "property_identifier" || key.type === "identifier") && isFn(value)) add(whole[1]!, key.text, value, true);
+          } else if (member?.type === "method_definition") {
+            const key = member.childForFieldName("name");
+            if (key) add(whole[1]!, key.text, member, true);
+          }
+        }
+      }
+    }
+    for (const [owner, ctor] of ctors) {
+      const body = ctor.childForFieldName("body");
+      for (const stmt of body?.namedChildren ?? []) {
+        const assign = stmt?.type === "expression_statement" ? stmt.namedChild(0) : null;
+        const left = assign?.type === "assignment_expression" ? assign.childForFieldName("left") : null;
+        const right = assign?.childForFieldName("right") ?? null;
+        const m = left?.type === "member_expression" ? /^this\.([A-Za-z_$][\w$]*)$/.exec(left.text.replace(/\s+/g, "")) : null;
+        if (m && isFn(right)) add(owner, m[1]!, right, false);
+      }
+    }
+    for (const [owner, list] of members) {
+      const ctor = ctors.get(owner)!;
+      const exported = ctor.parent?.type === "export_statement" || ctor.parent?.parent?.parent?.type === "export_statement";
+      list.sort((a, b) => a.node.startIndex - b.node.startIndex);
+      const methods = list.map((m) => this.parseJsArrowOrExpr(m.name, m.node, true));
+      classes.push({
+        cls: {
+          name: owner,
+          extends: null,
+          implements: [],
+          decorators: [],
+          methods,
+          properties: [],
+          isExported: exported,
+          line: ctor.startPosition.row + 1,
+          endLine: ctor.endPosition.row + 1,
+        },
+        prototypeLines: new Set(list.filter((m) => m.fromPrototype).map((m) => m.node.startPosition.row + 1)),
+        ownSpans: list.filter((m) => !m.fromPrototype).map((m) => [m.node.startPosition.row + 1, m.node.endPosition.row + 1] as const),
+      });
+    }
     return classes;
   }
 
@@ -1119,6 +1243,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.ctxTree = tree;
     this.pinia = sourceText.includes("defineStore");
     this.alpine = sourceText.includes("Alpine.data(");
+    this.prototypes = sourceText.includes(".prototype");
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
