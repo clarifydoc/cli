@@ -155,9 +155,11 @@ export const javaCallHooks: CallExtractionHooks = {
   // `class_body` met inside a method body is no member class, its methods are
   // no symbol of their own, and the method that builds it is where they run.
   anonymousScopeTypes: ["lambda_expression", "class_body"],
-  callbackArgNodeTypes: ["method_invocation"],
-  // A name the method binds itself is a value when passed as an argument,
-  // not a callback reference (see CallExtractionHooks.bindingSites).
+  // No `callbackArgNodeTypes`: a Java identifier handed to a call is always a
+  // value — a method is passed as `this::save` (a method reference, below) —
+  // so `execute(ruleUuid, slots)` never calls the record accessors `slots()`.
+  // A name the method binds itself is a value when passed as an argument
+  // (see CallExtractionHooks.bindingSites).
   bindingSites: {
     method_declaration: ["parameters"],
     constructor_declaration: ["parameters"],

@@ -1015,6 +1015,14 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /**
+   * Generated, not written: a member the language or a code generator gives
+   * the class from what it declares — a Java record's accessors, Kotlin
+   * `copy()` / `componentN()`, Lombok getters, setters and builders. Its `line`
+   * is what it is generated from (the field, the class); it has no body, so
+   * complexity, health and dead code leave it out. Omitted for written code.
+   */
+  synthetic?: true;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
@@ -1151,6 +1159,8 @@ export interface PropertyInfo {
 
 export interface ClassInfo {
   name: string;
+  /** Generated, not written (a Lombok `@Builder`'s builder class): see `FunctionInfo.synthetic`. Omitted for written code. */
+  synthetic?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
   doc?: string;
   /**

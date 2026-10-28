@@ -80,7 +80,8 @@ export function detectPatterns(
   const patterns: PatternInfo[] = [];
 
   for (const a of analyses) {
-    const allMethods = a.classes.flatMap((c) => c.methods);
+    // Generated members (record accessors, Lombok) are no code the file writes.
+    const allMethods = a.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic));
     const totalFnCount = a.functions.length + allMethods.length;
 
     // ── Good patterns ──
