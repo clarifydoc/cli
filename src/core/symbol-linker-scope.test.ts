@@ -174,3 +174,78 @@ describe("symbol-linker — a C/C++ call through a header reaches the definition
     expect(buildSymbolLinks([main, header, body, twin]).filter((l) => l.sourceSymbol === "main")).toEqual([]);
   });
 });
+
+describe("symbol-linker — nested functions of one name resolve to the nearest in scope", () => {
+  const imp = (source: string, name: string) => ({ source, specifiers: [name], isDefault: false, isNamespace: false, isType: false, line: 1 });
+  const target = (links: SymbolLink[], sourceSymbol: string, callName: string, line?: number) =>
+    links.filter((l) => l.sourceSymbol === sourceSymbol && l.callName === callName && (line === undefined || l.sourceLine === line))
+      .map((l) => `${l.targetFile}:${l.targetLine}`);
+
+  it("links each caller to its own inner function, and an outside caller to the top-level one", () => {
+    const ts = file("src/club.ts", "typescript", {
+      functions: [
+        fn("first", 2, 2, [call("run", 2)]),
+        fn("run", 2, 2),
+        fn("second", 3, 3, [call("run", 3)]),
+        fn("run", 3, 3),
+        fn("helper", 5, 5),
+        fn("kickoff", 6, 9, [call("helper", 8)]),
+        fn("helper", 7, 7),
+        fn("restart", 10, 10, [call("helper", 10)]),
+      ],
+    });
+    const links = buildSymbolLinks([ts]);
+    expect(target(links, "first", "run")).toEqual(["src/club.ts:2"]);
+    expect(target(links, "second", "run")).toEqual(["src/club.ts:3"]);
+    expect(target(links, "kickoff", "helper")).toEqual(["src/club.ts:7"]);
+    expect(target(links, "restart", "helper")).toEqual(["src/club.ts:5"]);
+  });
+
+  it("reaches a sibling declared in an enclosing function, and never another function's inner helper", () => {
+    const ts = file("src/panels.ts", "typescript", {
+      functions: [
+        fn("Left", 1, 6, [call("onSave", 5)]),
+        fn("onSave", 2, 2),
+        fn("onClick", 3, 4, [call("onSave", 4)]),
+        fn("Right", 7, 9),
+        fn("onSave", 8, 8),
+        fn("Middle", 10, 10, [call("onSave", 10)]),
+      ],
+    });
+    const links = buildSymbolLinks([ts]);
+    expect(target(links, "Left", "onSave")).toEqual(["src/panels.ts:2"]);
+    expect(target(links, "onClick", "onSave")).toEqual(["src/panels.ts:2"]);
+    expect(target(links, "Middle", "onSave")).toEqual([]);
+  });
+
+  it("lets an inner function shadow an import of its name", () => {
+    const ts = file("src/match.ts", "typescript", {
+      functions: [
+        fn("replay", 2, 2, [call("scoreGoal", 2, { kind: "cross-file", target: "./goals" })]),
+        fn("scoreGoal", 2, 2),
+        fn("highlight", 3, 3, [call("scoreGoal", 3, { kind: "cross-file", target: "./goals" })]),
+      ],
+      imports: [imp("./goals", "scoreGoal")],
+    });
+    const goals = file("src/goals.ts", "typescript", { functions: [fn("scoreGoal", 1, 1)] });
+    const links = buildSymbolLinks([ts, goals]);
+    expect(target(links, "replay", "scoreGoal")).toEqual(["src/match.ts:2"]);
+    expect(target(links, "highlight", "scoreGoal")).toEqual(["src/goals.ts:1"]);
+  });
+
+  it("follows the one inner helper a caller is handed, as a parameter or from the function declaring it", () => {
+    const py = file("league.py", "python", {
+      functions: [
+        fn("parse", 1, 5, [call("validate", 4, { kind: "internal" }), call("report", 5)]),
+        fn("report", 2, 3),
+        fn("validate", 6, 7, [call("report", 7)], { params: [{ name: "report", type: null } as never] }),
+        fn("use_pages", 8, 10),
+        fn("fetch_page", 9, 9),
+        fn("show", 11, 13, [call("use_pages", 12), call("fetch_page", 13)]),
+      ],
+    });
+    const links = buildSymbolLinks([py]);
+    expect(links.find((l) => l.sourceSymbol === "validate" && l.callName === "report")).toMatchObject({ targetLine: 2, confidence: "INFERRED" });
+    expect(links.find((l) => l.sourceSymbol === "show" && l.callName === "fetch_page")).toMatchObject({ targetLine: 9, confidence: "INFERRED" });
+  });
+});

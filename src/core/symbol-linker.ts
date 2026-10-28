@@ -780,7 +780,11 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   for (const a of analyses) {
     // A second definition is no overload where the language has none (a TS overload signature, a typing stub).
     if (pluginFor(a.language)?.calls?.noOverloads) continue;
-    for (const fn of a.functions) add(a.filePath, fn.name, fn);
+    // A function nested in another is its own scope's, never an overload of a namesake elsewhere in the file.
+    const names = new Set<string>();
+    const twins = a.functions.some((fn) => names.size === names.add(fn.name).size);
+    const nesting = twins ? callableNesting(a) : null;
+    for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn);
     for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m);
   }
   for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
@@ -1490,6 +1494,8 @@ interface LinkContext {
   analysisByFile?: Map<string, FileAnalysis>;
   /** Analyzed files by lowercased stem, built on first use (`declarationExtensions`). */
   filesByStem?: Map<string, string[]>;
+  /** Per file, how its callables nest (null: none nests in another), built on first use. */
+  nestedScopes?: Map<string, NestedScopes | null>;
   /** What a plugin's import resolver asks of the project, built on first use. */
   importResolve?: ImportResolveContext;
   /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
@@ -2137,6 +2143,132 @@ function callerClass(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: str
     if (!best || cls.endLine - cls.line < best.endLine - best.line) best = cls;
   }
   return best?.name ?? "";
+}
+
+/** One callable of a file, placed in the file's nesting of callables. */
+interface ScopeNode {
+  name: string;
+  line: number;
+  endLine: number;
+  /** The callable whose body holds this one; null at the top level. */
+  parent: ScopeNode | null;
+  depth: number;
+  fn: FunctionInfo;
+}
+
+/** How a file's callables nest: each function and method, and the free functions by name. */
+interface NestedScopes {
+  nodes: ScopeNode[];
+  byFunction: Map<FunctionInfo, ScopeNode>;
+  functionsByName: Map<string, ScopeNode[]>;
+}
+
+/**
+ * The nesting of a file's functions and methods, read from their line spans:
+ * sorted by start (outermost first on a tie), each one's parent is the
+ * nearest earlier one whose span holds it. One-line twins are ordered as the
+ * extractor listed them, outer first. Null when nothing nests.
+ */
+function nestedScopesOf(ctx: LinkContext, analysis: FileAnalysis): NestedScopes | null {
+  ctx.nestedScopes ??= new Map();
+  const cached = ctx.nestedScopes.get(analysis.filePath);
+  if (cached !== undefined) return cached;
+  const byFunction = callableNesting(analysis);
+  let out: NestedScopes | null = null;
+  if ([...byFunction.values()].some((n) => n.parent)) {
+    const free = new Set(analysis.functions);
+    const functionsByName = new Map<string, ScopeNode[]>();
+    for (const n of byFunction.values()) {
+      if (!free.has(n.fn)) continue;
+      const list = functionsByName.get(n.name);
+      if (list) list.push(n);
+      else functionsByName.set(n.name, [n]);
+    }
+    out = { nodes: [...byFunction.values()], byFunction, functionsByName };
+  }
+  ctx.nestedScopes.set(analysis.filePath, out);
+  return out;
+}
+
+/** Each function and method of a file, placed in its nesting (see `nestedScopesOf`). */
+function callableNesting(analysis: FileAnalysis): Map<FunctionInfo, ScopeNode> {
+  const nodes: ScopeNode[] = [];
+  const add = (fn: FunctionInfo, name: string) => {
+    if (fn.name !== "<setup>" && fn.endLine >= fn.line) nodes.push({ name, line: fn.line, endLine: fn.endLine, parent: null, depth: 0, fn });
+  };
+  for (const fn of analysis.functions) add(fn, fn.name);
+  for (const cls of analysis.classes) for (const m of cls.methods) add(m, `${cls.name}.${m.name}`);
+  const order = nodes.map((n, i) => ({ n, i })).sort((a, b) => a.n.line - b.n.line || b.n.endLine - a.n.endLine || a.i - b.i);
+  const stack: ScopeNode[] = [];
+  for (const { n } of order) {
+    while (stack.length > 0 && !(stack.at(-1)!.line <= n.line && n.endLine <= stack.at(-1)!.endLine)) stack.pop();
+    const parent = stack.at(-1) ?? null;
+    if (parent) {
+      n.parent = parent;
+      n.depth = parent.depth + 1;
+    }
+    stack.push(n);
+  }
+  return new Map(nodes.map((n) => [n.fn, n]));
+}
+
+/**
+ * The function a bare call names where functions nest in its file: one
+ * declared inside the caller (the shallowest), else the one in the innermost
+ * scope enclosing the caller — its own siblings, then its parents', then the
+ * top level. An inner function shadows an import of its name; another
+ * function's inner helper is out of reach — unless only one exists and the
+ * caller is handed it (INFERRED). Undefined when nesting does not
+ * bear on the name (nothing of that name nests); null when every function of
+ * that name is out of the caller's reach (or, for an imported name, when none
+ * nested is in reach: the import stands).
+ */
+function nestedDefinition(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceSymbol: string,
+  call: CallInfo,
+): { node: ScopeNode; confidence: Confidence } | null | undefined {
+  const scopes = nestedScopesOf(ctx, analysis);
+  const candidates = scopes?.functionsByName.get(call.name);
+  if (!scopes || !candidates?.some((c) => c.parent)) return undefined;
+  // The caller: the callable of that symbol whose span holds the call, innermost first — or, for
+  // a callback that is no symbol of its own (`useEffect(() => …)`), the innermost callable holding it.
+  let caller: ScopeNode | null = null;
+  let around: ScopeNode | null = null;
+  for (const n of scopes.nodes) {
+    if (call.line < n.line || call.line > n.endLine) continue;
+    if (n.name === sourceSymbol && (!caller || n.depth > caller.depth)) caller = n;
+    if (!around || n.depth > around.depth) around = n;
+  }
+  caller ??= around;
+  const ancestors = new Set<ScopeNode>();
+  for (let a = caller?.parent ?? null; a; a = a.parent) ancestors.add(a);
+  const within = (c: ScopeNode, scope: ScopeNode): boolean => {
+    for (let p = c.parent; p; p = p.parent) if (p === scope) return true;
+    return false;
+  };
+  const inside = caller ? candidates.filter((c) => within(c, caller)) : [];
+  if (inside.length > 0) return { node: inside.reduce((a, b) => (b.depth < a.depth ? b : a)), confidence: "EXTRACTED" };
+  const imported = call.kind === "cross-file";
+  const visible = candidates.filter((c) => (c.parent === null ? !imported : ancestors.has(c.parent)));
+  if (visible.length > 0) {
+    // Two of one scope (a redeclaration): the later, as the symbol index keeps it.
+    return { node: visible.reduce((a, b) => (b.depth >= a.depth ? b : a)), confidence: "EXTRACTED" };
+  }
+  if (imported) return undefined;
+  // The ONE inner helper of that name, when the caller can hold it: a parameter of its name is handed
+  // it (`def _identify(doc, issue)` called with the `issue` its caller declares, a `{ toggle }` prop),
+  // or the caller calls the function declaring it, which hands it back (`const { fetchPage } = useClubPages()`).
+  if (candidates.length === 1 && caller) {
+    let factory = candidates[0]!;
+    while (factory.parent) factory = factory.parent;
+    const scopes = [caller, ...ancestors];
+    const handed = (n: ScopeNode): boolean =>
+      n.fn.params.some((p) => p.name === call.name || (p.name.match(/[A-Za-z_$][\w$]*/g) ?? ([] as string[])).includes(call.name));
+    if (scopes.some((n) => handed(n) || n.fn.calls.some((c) => c.name === factory.name))) return { node: candidates[0]!, confidence: "INFERRED" };
+  }
+  return null;
 }
 
 /** The class of `file` that `def` (an entry of its symbol index) is a method of, or null for a free function. */
@@ -2927,6 +3059,12 @@ function resolveCallToDefinition(
   // `function run(open) { open(); }` beside `import { startJournal as open }`: the
   // parameter is what the body calls, never the import it shadows.
   if (!isQualified && !reference && call.kind === "cross-file" && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === call.name)) return null;
+  // A function declared inside the caller, or inside one enclosing it, is what a bare
+  // name calls — before the file's top-level namesake or an import of that name.
+  const nested = !isQualified && !reference && (call.kind === "internal" || call.kind === "cross-file")
+    ? nestedDefinition(ctx, analysis, sourceSymbol, call)
+    : undefined;
+  if (nested) return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
 
   if (call.kind === "cross-file" && call.target) {
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`).
@@ -2986,6 +3124,8 @@ function resolveCallToDefinition(
   if (!def && !isQualified && !bareIsFunction) {
     def = symbolIn(ctx, targetFile, leafName);
   }
+  // Every function of that name is another function's inner helper, out of the caller's reach.
+  if (nested === null && def && memberClassOf(ctx, targetFile, def) === null) def = undefined;
   // A bare name where members need no `this.` is the caller's own class's
   // member, then its bases' — never whichever class of the file declares it
   // first — and never another class's from a free function.
