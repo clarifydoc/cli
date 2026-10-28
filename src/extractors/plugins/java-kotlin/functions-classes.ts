@@ -12,6 +12,8 @@ import { simpleTypeName } from "../../shared/type-parser.js";
 import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotations.js";
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
+import { typeVariableArgs } from "./arg-kinds.js";
+import { synthesizeJavaMembers, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -48,7 +50,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         child.type === "enum_declaration" ||
         child.type === "record_declaration"
       ) {
-        classes.push(this.parseClass(child, lang));
+        this.pushClass(child, classes, lang);
         this.walkNestedClasses(child, classes, lang);
       } else if (child.type === "type_alias") {
         const alias = typeAliasClass(child);
@@ -76,10 +78,30 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         member.type === "enum_declaration" ||
         member.type === "record_declaration"
       ) {
-        classes.push(this.parseClass(member, lang));
+        this.pushClass(member, classes, lang);
         this.walkNestedClasses(member, classes, lang);
       }
     }
+  }
+
+  /** The class, with the members the language or Lombok generates for it, and a Lombok builder class after it. */
+  private pushClass(node: Node, classes: ClassInfo[], lang: JkLang): void {
+    const cls = this.parseClass(node, lang);
+    classes.push(cls);
+    if (lang === "kotlin") {
+      synthesizeKotlinDataMembers(node, cls);
+      return;
+    }
+    const body = node.childForFieldName("body");
+    const nested = new Set<string>();
+    for (const m of body?.namedChildren ?? []) {
+      if (m.type === "class_declaration") {
+        const name = m.childForFieldName("name")?.text;
+        if (name) nested.add(name);
+      }
+    }
+    const builder = synthesizeJavaMembers(node, cls, body, nested);
+    if (builder) classes.push(builder);
   }
 
   private parseClass(node: Node, lang: JkLang): ClassInfo {
@@ -429,6 +451,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // A Javalin `Context` / Spark `Request` handler method: what its body reads off the request.
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
+    const calls = extractCalls(body, language);
+    typeVariableArgs(calls, params, body, language);
     return {
       name,
       params,
@@ -437,7 +461,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       isExported,
       decorators,
       ...(requestAccess.length > 0 ? { requestAccess } : {}),
-      calls: extractCalls(body, language),
+      calls,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes.length > 0 ? { localTypes } : {}),

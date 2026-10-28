@@ -186,3 +186,17 @@ describe("aggregateComplexity", () => {
     expect(agg).not.toHaveProperty("maxNestingDepth");
   });
 });
+
+describe("computeComplexity — generated members", () => {
+  it("measures no synthesized member: it has no body", async () => {
+    const src = "class Car {\n  private Engine engine;\n  void drive() { if (engine != null) engine.start(); }\n}\n";
+    const tree = await parseSource(src, "java", "Car.java");
+    const method = (name: string, line: number, endLine: number, synthetic?: true): FunctionInfo =>
+      ({ name, params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line, endLine, ...(synthetic ? { synthetic } : {}) });
+    const rows = computeComplexity(tree, "java", [], [{
+      name: "Car", kind: "class", extends: null, implements: [], decorators: [], properties: [], isExported: true, line: 1, endLine: 4,
+      methods: [method("drive", 3, 3), method("getEngine", 2, 2, true)],
+    }]);
+    expect(rows.map((r) => r.functionName)).toEqual(["Car.drive"]);
+  });
+});

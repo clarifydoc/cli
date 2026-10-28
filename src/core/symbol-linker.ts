@@ -27,6 +27,8 @@ import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectorie
 import { buildImportDirectoryResolver, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
+import { bestOverload, type TypeHierarchy } from "./overload-args.js";
+import { markOverloadLink } from "./symbol-dedup.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
 
 interface SymbolDef {
@@ -448,13 +450,19 @@ export function buildSymbolLinks(
   const reverseLinks = buildReverseReferenceLinks(analyses, ctx.filePathMap, symbolIndex);
   links.push(...reverseLinks);
 
+  // Each call to an overloaded method points at the overload it means, before
+  // the dedupe below: `score("a", 1)` and `score(new Object(), "t")` from one
+  // method reach two bodies, and stay two links.
+  const overloaded = pickOverloads(links, analyses);
+  for (const l of overloaded) markOverloadLink(l);
+
   // Deduplicate links (same source→target with same call can appear from handler + calls).
   // Keep the highest-confidence entry per key — a directly-extracted match should win
   // over a fallback heuristic that happened to fire first.
   const seen = new Map<string, number>();
   const deduped: SymbolLink[] = [];
   for (const link of links) {
-    const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}`;
+    const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}${overloaded.has(link) ? `@${link.targetLine}` : ""}`;
     const existingIdx = seen.get(key);
     if (existingIdx === undefined) {
       seen.set(key, deduped.length);
@@ -467,7 +475,6 @@ export function buildSymbolLinks(
     }
   }
 
-  pickOverloads(deduped, analyses);
   annotateTypeArguments(deduped, ctx);
   return deduped;
 }
@@ -772,46 +779,59 @@ function buildSymbolIndex(
  * on the last one declared: with `save(Order)` and `save(Order, boolean)`,
  * `svc.save(o)` showed the second body. The call's argument count
  * (`CallInfo.argCount`) picks the one overload whose arity accepts it —
- * required parameters up to all of them, any number past a variadic one;
- * when none or several do, the link is left as it was. Parameter types are
- * not compared: the arguments' types are not known here.
+ * required parameters up to all of them, any number past a variadic one.
+ * Where several do, the arguments' kinds (`CallInfo.argKinds`: a literal,
+ * `new X(…)`, a class literal, a typed variable, a lambda's shape) are scored
+ * against each overload's declared parameter types, folded to the same keys by
+ * the plugin's `calls.overloadTypeKey` — `new NotFound(Club.class, id)` is the
+ * `(Class, Object)` constructor, not `(String, Throwable)`. When neither tells
+ * (no kinds, a tie), the link is left as it was. Returns the links whose
+ * target is overloaded (whose `targetLine` tells which overload they reach).
  */
-function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): void {
-  type Overload = { line: number; min: number; max: number };
+function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): Set<SymbolLink> {
+  const touched = new Set<SymbolLink>();
+  type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string };
   const overloads = new Map<string, Overload[]>();
-  const add = (file: string, name: string, fn: FunctionInfo): void => {
+  const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
-    const variadic = fn.variadic || params.some((p) => p.variadic);
+    const variadic = !!fn.variadic || params.some((p) => p.variadic);
     const min = params.filter((p) => !p.variadic && !p.optional && p.defaultValue == null).length;
     const key = `${file}\u0000${name}`;
     let list = overloads.get(key);
     if (!list) overloads.set(key, (list = []));
-    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length });
+    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey });
   };
   for (const a of analyses) {
+    const calls = pluginFor(a.language)?.calls;
     // A second definition is no overload where the language has none (a TS overload signature, a typing stub).
-    if (pluginFor(a.language)?.calls?.noOverloads) continue;
-    for (const fn of a.functions) add(a.filePath, fn.name, fn);
-    for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m);
+    if (calls?.noOverloads) continue;
+    const typeKey = calls?.overloadTypeKey;
+    for (const fn of a.functions) add(a.filePath, fn.name, fn, typeKey);
+    for (const cls of a.classes) for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
   }
   for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
-  if (overloads.size === 0) return;
+  if (overloads.size === 0) return touched;
 
-  // The argument count of each call site, read only when some link needs it.
-  let argCounts: Map<string, number> | null = null;
-  const argCountAt = (file: string, line: number, callName: string): number | undefined => {
-    if (!argCounts) {
-      argCounts = new Map();
-      const record = (file: string, calls: readonly CallInfo[]): void => {
-        for (const c of calls) if (c.argCount !== undefined) argCounts!.set(`${file}\u0000${c.line}\u0000${c.name}`, c.argCount);
+  // Each call site's argument count and kinds, with the function and class it
+  // is made from (whose parameters, locals and fields type a variable argument),
+  // read only when some link needs it.
+  type Site = { call: CallInfo; fn: FunctionInfo; cls: ClassInfo | null };
+  let sites: Map<string, Site> | null = null;
+  const siteAt = (file: string, line: number, callName: string): Site | undefined => {
+    if (!sites) {
+      sites = new Map();
+      const record = (file: string, fn: FunctionInfo, cls: ClassInfo | null): void => {
+        for (const call of fn.calls) if (call.argCount !== undefined) sites!.set(`${file}\u0000${call.line}\u0000${call.name}`, { call, fn, cls });
       };
       for (const a of analyses) {
-        for (const fn of a.functions) record(a.filePath, fn.calls);
-        for (const cls of a.classes) for (const m of cls.methods) record(a.filePath, m.calls);
+        for (const fn of a.functions) record(a.filePath, fn, null);
+        for (const cls of a.classes) for (const m of cls.methods) record(a.filePath, m, cls);
       }
     }
-    return argCounts.get(`${file}\u0000${line}\u0000${callName}`);
+    return sites.get(`${file}\u0000${line}\u0000${callName}`);
   };
+  let hierarchy: TypeHierarchy | null = null;
+  const typesOf = (): TypeHierarchy => (hierarchy ??= projectTypeHierarchy(analyses));
 
   // The arguments describe the target only when the call IS to it: `svc.save(o)`
   // → `save`, `new Builder(x)` → the `Builder` constructor — not a link a type
@@ -821,11 +841,68 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   for (const link of links) {
     const list = overloads.get(`${link.targetFile}\u0000${link.targetSymbol}`);
     if (!list || leafOf(link.callName) !== leafOf(link.targetSymbol)) continue;
-    const n = argCountAt(link.sourceFile, link.sourceLine, link.callName);
+    touched.add(link);
+    const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
+    const n = site?.call.argCount;
     if (n === undefined) continue;
     const fits = list.filter((o) => n >= o.min && n <= o.max);
     if (fits.length === 1) link.targetLine = fits[0]!.line;
+    else if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
+      const typeKey = fits[0]!.typeKey;
+      const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey) : k));
+      const best = bestOverload(kinds, fits.map((o) => ({
+        types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
+        variadic: o.variadic,
+      })), typesOf());
+      if (best >= 0) link.targetLine = fits[best]!.line;
+    }
   }
+  return touched;
+}
+
+/** A variable argument's type key, from the calling function's parameters and typed locals, then its class's fields; `?` when none declares it. */
+function variableKind(name: string, site: { fn: FunctionInfo; cls: ClassInfo | null }, typeKey: (t: string) => string): string {
+  const declared = site.fn.params.find((p) => p.name === name && !p.isReceiver)?.type
+    ?? site.fn.localTypes?.find((l) => l.name === name && l.type)?.type
+    ?? site.cls?.properties.find((p) => p.name === name)?.type;
+  return declared ? typeKey(declared) : "?";
+}
+
+/** The project's classes by simple name, and each one's supertypes as far as the project declares them. */
+function projectTypeHierarchy(analyses: readonly FileAnalysis[]): TypeHierarchy {
+  const supers = new Map<string, Set<string>>();
+  const simple = (t: string): string => t.replace(/<.*$/s, "").split(/\.|::/).pop()!.trim();
+  for (const a of analyses) {
+    for (const cls of a.classes) {
+      const set = supers.get(cls.name) ?? new Set<string>();
+      for (const t of [cls.extends, ...cls.implements]) if (t) set.add(simple(t));
+      supers.set(cls.name, set);
+    }
+  }
+  const memo = new Map<string, { names: ReadonlySet<string>; closed: boolean } | null>();
+  return {
+    ancestors(type) {
+      const start = simple(type);
+      if (memo.has(start)) return memo.get(start)!;
+      let result: { names: ReadonlySet<string>; closed: boolean } | null = null;
+      if (supers.has(start)) {
+        const names = new Set<string>();
+        let closed = true;
+        const queue = [...supers.get(start)!];
+        while (queue.length > 0) {
+          const t = queue.shift()!;
+          if (names.has(t)) continue;
+          names.add(t);
+          const up = supers.get(t);
+          if (up) queue.push(...up);
+          else closed = false;
+        }
+        result = { names, closed };
+      }
+      memo.set(start, result);
+      return result;
+    },
+  };
 }
 
 /** A name's return type once another definition of it (an overload) is seen: kept only when both agree. */

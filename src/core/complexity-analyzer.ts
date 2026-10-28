@@ -209,6 +209,8 @@ export function computeComplexity(
   // Process class methods
   for (const cls of classes) {
     for (const method of cls.methods) {
+      // A generated member has no body to measure.
+      if (method.synthetic) continue;
       results.push(rowFor(`${cls.name}.${method.name}`, method, root, spec, endRow));
     }
   }

@@ -84,7 +84,7 @@ def wire(app):
 `, "python", "function_definition")).toEqual(["app.subscribe", "on_ready"]);
   });
 
-  it("Java: drops parameters, locals, enhanced-for and catch variables", async () => {
+  it("Java: an identifier argument is a value, never a callback reference (a method is passed as `this::m`)", async () => {
     expect(await callsIn(`
 class A {
   void m(Car car, String... tags) {
@@ -93,7 +93,7 @@ class A {
     try { deliver(car, driver, tags); } catch (IOException e) { alert(e, fallback); }
   }
 }`, "java", "method_declaration")).toEqual([
-      "repo.load", "car.parts", "audit", "deliver", "alert", "fallback",
+      "repo.load", "car.parts", "audit", "deliver", "alert",
     ]);
   });
 });

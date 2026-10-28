@@ -905,6 +905,18 @@ export interface CallInfo {
    * hides the count.
    */
   argCount?: number;
+  /**
+   * What each argument is, as far as its own expression says (`calls.argKindsOf`;
+   * Java, Kotlin, C#), so the linker can choose between overloads of one arity:
+   * a type name — canonical for a literal (`string`, `int`, `long`, `double`,
+   * `boolean`, `char`, `null`), as written for `new Club(…)` / `Club.class`
+   * (`Class`) / a cast; `@name` for a variable, typed by the calling function's
+   * parameters, locals and fields; `->N` for a lambda of N parameters (`->`
+   * when the count is open), `:void` when its body returns no value, `:value`
+   * when it must; `?` when nothing is known. Present only when some argument
+   * is known.
+   */
+  argKinds?: string[];
 }
 
 /** One argument of a call and where its value comes from (`CallInfo.argOrigins`). */
@@ -1036,6 +1048,14 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /**
+   * Generated, not written: a member the language or a code generator gives
+   * the class from what it declares — a Java record's accessors, Kotlin
+   * `copy()` / `componentN()`, Lombok getters, setters and builders. Its `line`
+   * is what it is generated from (the field, the class); it has no body, so
+   * complexity, health and dead code leave it out. Omitted for written code.
+   */
+  synthetic?: true;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
@@ -1172,6 +1192,8 @@ export interface PropertyInfo {
 
 export interface ClassInfo {
   name: string;
+  /** Generated, not written (a Lombok `@Builder`'s builder class): see `FunctionInfo.synthetic`. Omitted for written code. */
+  synthetic?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
   doc?: string;
   /**
