@@ -116,17 +116,24 @@ interface ImportEvidence {
   names: Set<string>;
   /** Capitalized names imported from a `models/` path or declared as a model class: local models. */
   models: Set<string>;
+  /** Names imported from the project's own modules (`./http`, `@/api`), never a package. */
+  projectNames: Set<string>;
 }
 
+/** A module specifier naming the project's own code: relative, or a conventional source alias. */
+const PROJECT_SPECIFIER = /^(?:\.{1,2}\/|[@~#]\/|src\/)/;
+
 function importEvidence(src: string): ImportEvidence {
-  const evidence: ImportEvidence = { orm: false, names: new Set(), models: new Set() };
+  const evidence: ImportEvidence = { orm: false, names: new Set(), models: new Set(), projectNames: new Set() };
   const bind = (list: string, source: string, separator: RegExp): void => {
     if (ORM_PACKAGES.has(packageOf(source))) evidence.orm = true;
     const fromModels = /\bmodels?\b/.test(source);
+    const fromProject = PROJECT_SPECIFIER.test(source);
     for (const part of list.replace(/[{}]|\*\s+as\s+/g, ",").split(",")) {
       const name = part.trim().split(separator).pop()?.trim();
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
       evidence.names.add(name);
+      if (fromProject) evidence.projectNames.add(name);
       if (fromModels && /^[A-Z]/.test(name)) evidence.models.add(name);
     }
   };
@@ -1051,6 +1058,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   /**
+   * A library root's name held by an instance: `export const http = axios.create(…)`
+   * in this file, or `import { http } from './http'`. Its base URL applies to
+   * the calls made through it; `import http from 'http'` stays the library.
+   */
+  private isClientInstance(name: string): boolean {
+    if ((this.imports ??= importEvidence(this.sourceText)).projectNames.has(name)) return true;
+    return new RegExp(String.raw`\b(?:const|let|var)\s+${name}\s*(?::[^=;\n]*)?=\s*(?!require\s*\()[\w$]`).test(this.sourceText);
+  }
+
+  /**
    * A local that merely shares an HTTP library's name: `const got = expectedNodes(…)`
    * in a test, then `got.get("s")`. The library is only the receiver when the
    * file imports it, or builds the local from it (`got.extend(…)`, `ky.create(…)`).
@@ -1359,7 +1376,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               // The client instance (`apiClient.get(...)`): its base URL is
               // prepended by a project pass. Library roots (`axios`, `fetch`)
               // are not instances.
-              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !HTTP_ROOTS.has(recvRoot.toLowerCase()) && !GLOBAL_RECEIVERS.has(recvRoot)
+              ...(recvRoot && /^[A-Za-z_$][\w$]*$/.test(recvRoot) && !GLOBAL_RECEIVERS.has(recvRoot) &&
+                  (!HTTP_ROOTS.has(recvRoot.toLowerCase()) || this.isClientInstance(recvRoot))
                 ? { client: recvRoot }
                 : {}),
               // Flag only AMBIGUOUS provenance — a conflicting binding — so a

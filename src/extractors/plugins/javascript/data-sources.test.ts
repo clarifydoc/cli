@@ -1378,3 +1378,21 @@ describe("needle and Node https clients", () => {
     ]);
   });
 });
+
+describe("JS client instances named like a library", () => {
+  it("keeps the base of an instance named `http`, not of the `http` library", async () => {
+    const own = await apiCallsOf(`
+      import axios from 'axios';
+      export const http = axios.create({ baseURL: '/v2' });
+      export function saveFixture() { return http.post('/fixtures', {}); }`);
+    expect(own.map((c) => c.client)).toEqual(["http"]);
+    const imported = await apiCallsOf(`
+      import { http } from './http';
+      export function saveFixture() { return http.post('/fixtures', {}); }`);
+    expect(imported.map((c) => c.client)).toEqual(["http"]);
+    const library = await apiCallsOf(`
+      const http = require('http');
+      export function ping() { return http.get('/health'); }`);
+    expect(library.map((c) => c.client)).toEqual([undefined]);
+  });
+});
