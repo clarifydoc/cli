@@ -31,6 +31,7 @@ import {
   typeBareConstructions,
 } from "./di.js";
 import { extractRubyResponses } from "./responses.js";
+import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
@@ -880,8 +881,12 @@ export const rubySpec: RegexLangSpec = {
     },
   ],
 
-  extractRoutes: (lines, classes: ClassInfo[]) => {
+  extractRoutes: (lines, classes: ClassInfo[], _filePath, _functions, routeFacts) => {
     const routes: RouteInfo[] = [];
+
+    // Grape's nested block DSL (see grape.ts); a Rails router's `mount X => '/'` places a Grape root.
+    if (isGrapeFile(lines)) routes.push(...extractGrapeRoutes(lines, classes, (start, end) => extractCallsFromBody(lines, start, end, ["#"], rubySpec.callPatterns), routeFacts));
+    extractRackMounts(lines, routeFacts);
 
     // Sinatra's block DSL — gated on the gem being required / subclassed so a
     // `get '/x' do` in a request spec or a Rails router never counts.

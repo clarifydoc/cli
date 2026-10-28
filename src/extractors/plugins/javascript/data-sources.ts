@@ -291,6 +291,16 @@ const MQ_CONSUMER_RECEIVER_RE = /consumer/i;
 const BULL_IMPORT_RE = /(?:from\s*|require\(\s*)['"](?:bullmq|bull|@nestjs\/bullmq|@nestjs\/bull)['"]/;
 const SOCKET_IO_IMPORT_RE = /(?:from\s*|require\(\s*)['"]socket\.io(?:-client)?['"]/;
 const SOCKET_RECEIVER_RE = /socket|^io$|^client$|^server$|^nsp$|namespace/i;
+/**
+ * The `phoenix` client: `socket.channel("match:1")` joins a Phoenix channel,
+ * whose `push("new_goal", …)` sends the event its server module's
+ * `handle_in("new_goal", …)` handles, and whose `on("goal_scored", …)` hears
+ * what the server pushes or broadcasts — channels named by event, as
+ * Socket.IO's are. A receiver is a channel when the file binds it from
+ * `.channel(…)` or it is named like one.
+ */
+const PHOENIX_IMPORT_RE = /(?:from\s*|require\(\s*)['"]phoenix['"]/;
+const PHOENIX_CHANNEL_RECEIVER_RE = /channel$|^chan$/i;
 const SOCKET_IO_RESERVED = new Set([
   "connect", "connection", "connect_error", "disconnect", "disconnecting", "error", "reconnect",
   "reconnect_attempt", "reconnect_error", "reconnect_failed", "reconnecting", "ping", "pong", "newListener", "removeListener",
@@ -364,6 +374,8 @@ interface MqEvidence {
   /** Queue name by the receiver holding it; null when the file does not import Bull/BullMQ. */
   bullQueues: Map<string, string> | null;
   socketIo: boolean;
+  /** Receivers holding a Phoenix channel; null when the file does not import `phoenix`. */
+  phoenixChannels: Set<string> | null;
   /** The file imports NestJS's event emitter (`@nestjs/event-emitter`). */
   nestEvents: boolean;
   /** Receivers the file creates as an in-process emitter (`new EventEmitter()`, `mitt()`), or `this` in a class extending one. */
@@ -430,6 +442,9 @@ function mqEvidence(src: string): MqEvidence {
   return {
     bullQueues,
     socketIo: SOCKET_IO_IMPORT_RE.test(src),
+    phoenixChannels: PHOENIX_IMPORT_RE.test(src)
+      ? new Set([...src.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:this\.)?[\w$.]*\.channel\s*\(/g)].map((m) => m[1]!))
+      : null,
     nestEvents: /['"]@nestjs\/event-emitter['"]/.test(src),
     emitters: emitterReceivers(src),
     redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
@@ -1404,6 +1419,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
                 ...(job ? { entity: job } : {}),
                 line,
               }));
+              return;
+            }
+          }
+          // Phoenix channels: channel.push("event", …) publishes; channel.on("event", handler) consumes.
+          if (fnName === "push" || fnName === "on") {
+            const phx = (this.mq ??= mqEvidence(this.sourceText)).phoenixChannels;
+            const leaf = recv.replace(/^this\./, "");
+            const event = literalString(mqArgs[0] ?? null);
+            if (phx && event && !event.startsWith("phx_") && /^[A-Za-z_$][\w$]*$/.test(leaf) && (phx.has(leaf) || PHOENIX_CHANNEL_RECEIVER_RE.test(leaf))) {
+              sources.push(this.ds({ kind: fnName === "push" ? "queue-publish" : "queue-consume", name: `Phoenix.Channel: ${fnName}`, target: event, line }));
               return;
             }
           }

@@ -4,6 +4,7 @@ import type { ClassInfo, DataSourceInfo, ImportInfo, ScreenInfo } from "../../..
 import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { isChannelModule, phoenixChannelEvents } from "./channels.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -127,7 +128,7 @@ function topLevelComma(text: string): number {
 }
 
 function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
-  const out: DataSourceInfo[] = [...obanJobs(lines), ...pubSubTopics(lines), ...httpCalls(lines), ...sqlStrings(lines), ...ectoPreloads(lines)];
+  const out: DataSourceInfo[] = [...obanJobs(lines), ...pubSubTopics(lines), ...phoenixChannelEvents(lines), ...httpCalls(lines), ...sqlStrings(lines), ...ectoPreloads(lines)];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trimStart();
@@ -566,10 +567,11 @@ export const elixirSpec: RegexLangSpec = {
 
   /** Ecto `schema` fields → properties; action-head pattern keys → `requestAccess`. */
   postProcessClasses: (lines, classes) => {
+    const channel = isChannelModule(lines);
     for (const cls of classes) {
       attachEctoSchema(lines, cls);
       attachPatternKeys(lines, cls.methods);
-      nameEventClauses(lines, cls);
+      nameEventClauses(lines, cls, channel);
     }
     return classes;
   },
@@ -591,13 +593,15 @@ export const elixirSpec: RegexLangSpec = {
  * `def handle_event("save", params, socket)` — one function per event to
  * Phoenix, which dispatches on the literal. Each clause is named
  * `handle_event("save")` so a click on `phx-click="save"` reaches that clause's
- * calls and not every other event's.
+ * calls and not every other event's. A channel's `handle_in("new_goal", …)` /
+ * `handle_out` clauses likewise, so the message a client pushes reaches the
+ * clause that handles it, and what that clause writes is its own.
  */
-function nameEventClauses(lines: string[], cls: ClassInfo): void {
+function nameEventClauses(lines: string[], cls: ClassInfo, channel: boolean): void {
   for (const m of cls.methods) {
-    if (m.name !== "handle_event") continue;
-    const ev = /\bdef\s+handle_event\(\s*"([^"]+)"/.exec(lines[m.line - 1] ?? "")?.[1];
-    if (ev) m.name = `handle_event("${ev}")`;
+    if (m.name !== "handle_event" && !(channel && (m.name === "handle_in" || m.name === "handle_out"))) continue;
+    const ev = new RegExp(`\\bdef\\s+${m.name}\\(\\s*"([^"]+)"`).exec(lines[m.line - 1] ?? "")?.[1];
+    if (ev) m.name = `${m.name}("${ev}")`;
   }
 }
 

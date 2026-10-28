@@ -240,6 +240,26 @@ websocket
   });
 });
 
+describe("JS Phoenix channel extraction", () => {
+  it("reads a joined channel's push as a publish and its on as a consume, by event", async () => {
+    const s = await jsSourcesOf(`import { Socket } from "phoenix";
+const socket = new Socket("/socket", {});
+export function scoreGoal(id, minute) {
+  const room = socket.channel(\`match:\${id}\`, {});
+  room.join();
+  room.push("new_goal", { minute }).receive("ok", () => {});
+  room.on("goal_scored", (p) => show(p));
+  room.on("phx_error", () => {});
+}`);
+    expect(brief(s)).toEqual(["queue-publish Phoenix.Channel: push new_goal @6", "queue-consume Phoenix.Channel: on goal_scored @7"]);
+  });
+
+  it("needs the import: an array's push and a channel named elsewhere stay what they were", async () => {
+    const s = await jsSourcesOf(`const channel = makeChannel(); channel.push("new_goal", 1); const goals = []; goals.push("x");`);
+    expect(s.filter((d) => /^Phoenix\b/.test(d.name))).toEqual([]);
+  });
+});
+
 // ─── Python ──────────────────────────────────────────────────────────────────
 
 async function pySourcesOf(body: string): Promise<DataSourceInfo[]> {

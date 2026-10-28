@@ -183,3 +183,56 @@ end`, "lib/league/maintenance.ex", "elixir");
     ]);
   });
 });
+
+describe("Phoenix channels", () => {
+  it("reads a channel module's handle_in clauses as consumers and its push/broadcast as publishes, each clause its own handler", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `defmodule LeagueWeb.MatchChannel do
+  use LeagueWeb, :channel
+
+  def join("match:" <> _id, _payload, socket), do: {:ok, socket}
+
+  def handle_in("new_goal", payload, socket) do
+    League.Repo.insert!(%League.Goal{minute: payload["minute"]})
+    broadcast!(socket, "goal_scored", payload)
+    {:noreply, socket}
+  end
+
+  def handle_in("ping", _payload, socket) do
+    socket |> push("pong", %{})
+    {:noreply, socket}
+  end
+
+  def handle_out("goal_scored", payload, socket) do
+    push(socket, "goal_scored", payload)
+    {:noreply, socket}
+  end
+end`;
+    const a = extractWithRegex(src, "lib/league_web/channels/match_channel.ex", "elixir");
+    expect(a.dataSources.filter((d) => d.kind !== "database").map((d) => `${d.line} ${d.kind} ${d.name} ${d.target}`)).toEqual([
+      "6 queue-consume Phoenix.Channel: handle_in new_goal",
+      "8 queue-publish Phoenix.Channel: broadcast! goal_scored",
+      "12 queue-consume Phoenix.Channel: handle_in ping",
+      "13 queue-publish Phoenix.Channel: push pong",
+      "17 queue-consume Phoenix.Channel: handle_out goal_scored",
+      "18 queue-publish Phoenix.Channel: push goal_scored",
+    ]);
+    expect(a.classes[0]!.methods.map((m) => m.name)).toEqual(["join", 'handle_in("new_goal")', 'handle_in("ping")', 'handle_out("goal_scored")']);
+  });
+
+  it("reads an endpoint broadcast anywhere, and push outside a channel module is nothing", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `defmodule League.Scores do
+  def record(match, goal) do
+    LeagueWeb.Endpoint.broadcast("match:#{match.id}", "goal_scored", %{minute: goal.minute})
+    LeagueWeb.Endpoint.broadcast_from(self(), "match:lobby", "table_changed", %{})
+    push(match, "not_a_channel")
+  end
+end`;
+    const a = extractWithRegex(src, "lib/league/scores.ex", "elixir");
+    expect(a.dataSources.map((d) => `${d.line} ${d.kind} ${d.name} ${d.target}`)).toEqual([
+      "3 queue-publish Phoenix.Channel: Endpoint.broadcast goal_scored",
+      "4 queue-publish Phoenix.Channel: Endpoint.broadcast_from table_changed",
+    ]);
+  });
+});
