@@ -187,3 +187,58 @@ describe("buildFilePathMap — platform files", () => {
     expect(resolveTarget("./track", "src/App.tsx", map)).toBe("src/track.ts");
   });
 });
+
+describe("resolveTarget — a dotted name resolves by its package", () => {
+  const base = "server/src/main/java/com/example/league";
+  const analyses = [
+    { filePath: `${base}/model/Kit.kt` },
+    { filePath: `${base}/persistent/tables/Kit.java` },
+    { filePath: `${base}/mobile/model/Kit.kt` },
+    { filePath: `${base}/rules/Timing.kt` },
+    { filePath: `${base}/app/KitService.kt` },
+    { filePath: "flat/src/Garage.java" },
+  ] as any[];
+  const map = buildFilePathMap(analyses);
+  const importer = `${base}/app/KitService.kt`;
+
+  it("never takes a same-named class of another package for the imported one", () => {
+    expect(resolveTarget("com.example.league.model.Kit", importer, map)).toBe(`${base}/model/Kit.kt`);
+    expect(resolveTarget("com.example.league.mobile.model.Kit", importer, map)).toBe(`${base}/mobile/model/Kit.kt`);
+  });
+
+  it("names no file for a type its package declares in a file named otherwise", () => {
+    expect(resolveTarget("com.example.league.rules.Kit", importer, map)).toBeNull();
+  });
+
+  it("reads a directory named with dots as several package segments", () => {
+    const m = buildFilePathMap([{ filePath: "src/League.Services/Fixtures.cs" }, { filePath: "src/League.Api/Services/Clubs.cs" }, { filePath: "src/League.Models/Fixtures.cs" }] as any[]);
+    expect(resolveTarget("League.Services.Fixtures", "src/League.Api/Services/Clubs.cs", m)).toBe("src/League.Services/Fixtures.cs");
+  });
+
+  it("takes the file named as written over one differing only in case, though no directory spells the package", () => {
+    const m = buildFilePathMap([
+      { filePath: "server/model/cups/TrophyCabinet.kt" },
+      { filePath: "server/persistent/tables/Trophycabinet.java" },
+      { filePath: "server/handlers/Clubs.kt" },
+    ] as any[]);
+    expect(resolveTarget("com.example.league.handlers.TrophyCabinet", "server/handlers/Clubs.kt", m)).toBe("server/model/cups/TrophyCabinet.kt");
+  });
+
+  it("keeps the leaf-name match where the package spells no directory", () => {
+    expect(resolveTarget("com.example.motors.Garage", "flat/src/Main.java", map)).toBe("flat/src/Garage.java");
+  });
+});
+
+describe("resolveTarget — a dotted module that is a package directory", () => {
+  const analyses = [
+    { filePath: "core/src/league/core/generation/__init__.py" },
+    { filePath: "core/src/league/core/pipeline/phases/generation.py" },
+    { filePath: "server/src/league/server/jobs.py" },
+  ] as any[];
+  const map = buildFilePathMap(analyses);
+
+  it("takes the package's entry file over a module of that name in another package", () => {
+    expect(resolveTarget("league.core.generation", "server/src/league/server/jobs.py", map)).toBe("core/src/league/core/generation/__init__.py");
+    expect(resolveTarget("league.core.pipeline.phases.generation", "server/src/league/server/jobs.py", map)).toBe("core/src/league/core/pipeline/phases/generation.py");
+  });
+});

@@ -79,6 +79,28 @@ class Referee {
     }
 }
 `,
+  // A same-named class in another package (generated table classes) is never the imported one.
+  "kotlin/src/main/kotlin/league/model/Kit.kt": `package league.model
+
+class Kit(val colour: String)
+`,
+  "kotlin/src/main/kotlin/league/persistent/tables/Kit.java": `package league.persistent.tables;
+
+public class Kit {
+    public Kit(String alias) {
+    }
+}
+`,
+  "kotlin/src/main/kotlin/league/app/KitRoom.kt": `package league.app
+
+import league.model.Kit
+
+class KitRoom {
+    fun issue(): Kit {
+        return Kit("red")
+    }
+}
+`,
   // ── Go ──
   "go/go.mod": "module example.com/league\n\ngo 1.21\n",
   "go/garage/wash.go": `package garage
@@ -229,6 +251,10 @@ describe("imports that put a callee in scope by name", () => {
     expect(linkOf(referee, "Referee.finish", "blowFullTime")).toBe("kotlin/src/main/kotlin/league/util/Whistle.kt blowFullTime EXTRACTED");
     expect(linkOf(referee, "Referee.finish", "substitutes")).toBe("kotlin/src/main/kotlin/league/rules/Limits.kt Limits.substitutes EXTRACTED");
     expect(linkOf(referee, "Referee.finish", "Stopwatch.tick")).toBe("kotlin/src/main/kotlin/league/rules/Timing.kt Stopwatch.tick EXTRACTED");
+  });
+
+  it("constructs the imported class, never a namesake of another package", () => {
+    expect(linkOf("kotlin/src/main/kotlin/league/app/KitRoom.kt", "KitRoom.issue", "Kit")).toBe("kotlin/src/main/kotlin/league/model/Kit.kt Kit EXTRACTED");
   });
 
   it("links a Go dot import's function, and keeps the caller's own package first", () => {

@@ -393,10 +393,20 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     const dotMatch = tryMatch(asPath, filePathMap, sourceFile);
     if (dotMatch) return dotMatch;
 
-    // Try last segment only: "com.example.api.service.UserService" → "UserService"
-    const lastSegment = importSource.split(".").pop()!;
-    const segMatch = tryMatch(lastSegment, filePathMap, sourceFile);
-    if (segMatch) return segMatch;
+    // The last segment: "com.example.api.service.UserService" → "UserService" — among the
+    // files of that name, the ones whose path spells most of the package. One in no directory
+    // named like its package while such a directory exists is another package's namesake
+    // (`…/persistent/tables/Kit.java` for `com.example.league.model.Kit`): the type lives in
+    // a file of its own package not named after it.
+    const segs = importSource.split(".");
+    const lastSegment = segs.pop()!;
+    const packaged = packagedCandidate(segs, lastSegment, filePathMap, sourceFile);
+    if (packaged !== undefined) {
+      if (packaged) return packaged;
+    } else {
+      const segMatch = tryMatch(lastSegment, filePathMap, sourceFile);
+      if (segMatch) return segMatch;
+    }
 
     // A module named in CamelCase lives in a snake_case file (Elixir, Ruby):
     // `League.Stats.QueryRunner` → `…/league/stats/query_runner.ex`.
@@ -445,6 +455,67 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
   }
 
   return null;
+}
+
+/**
+ * The file a dotted name's last segment names, judged by its package
+ * (`pkg`, the segments before it): among the same-family files of that
+ * basename and the entry files of directories of that name, those whose directories end with the longest run of the package's
+ * segments, the importer's nearest on a tie; the one file that bears it.
+ * `null` when several do, every one outside a directory named like the
+ * package's last segment, and such a directory exists — namesakes of other
+ * packages; `undefined` when no file bears the name, or nothing says
+ * (decide by the name alone).
+ */
+function packagedCandidate(pkg: string[], name: string, filePathMap: Map<string, string>, sourceFile: string): string | null | undefined {
+  if (pkg.length === 0) return undefined;
+  const family = extensionFamily(sourceFile);
+  const lower = name.toLowerCase();
+  const index = getBasenameCandidates(filePathMap);
+  // A file of that name, or a directory's entry file (`generation/__init__.py`).
+  const entries = [...(index.get("__init__") ?? []), ...(index.get("index") ?? [])]
+    .filter((f) => f.split("/").at(-2)?.toLowerCase() === lower);
+  const kin = [...(index.get(lower) ?? []), ...entries]
+    .filter((c) => !family || extensionFamily(c) === null || extensionFamily(c) === family);
+  // The name as written first: a generated `Leagueclubs.java` is no `LeagueClubs`.
+  const stemOf = (f: string): string => f.slice(f.lastIndexOf("/") + 1).replace(requireRegistered(stripSourceExtensionReSlot), "");
+  const exact = kin.filter((c) => entries.includes(c) || stemOf(c) === name);
+  const candidates = exact.length > 0 ? exact : kin;
+  if (candidates.length === 0) return undefined;
+  const scored = candidates.map((file) => {
+    const dirs = file.split("/").slice(0, entries.includes(file) ? -2 : -1);
+    // A directory may spell several segments (`League.Services/` for `….Services`).
+    let k = 0;
+    for (let d = dirs.length - 1; d >= 0 && k < pkg.length; d--) {
+      const parts = dirs[d]!.split(".");
+      if (parts.length > pkg.length - k || !parts.every((x, j) => x === pkg[pkg.length - k - parts.length + j])) break;
+      k += parts.length;
+    }
+    return { file, k };
+  });
+  const best = Math.max(...scored.map((c) => c.k));
+  if (best === 0) {
+    if (candidates.length === 1) return candidates[0]!;
+    return directoryNames(filePathMap).has(pkg[pkg.length - 1]!) ? null : undefined;
+  }
+  const top = scored.filter((c) => c.k === best).map((c) => c.file);
+  return top.length === 1 ? top[0]! : pickByPathAffinity(top, (c) => c, sourceFile);
+}
+
+const directoryNamesCache = new WeakMap<Map<string, string>, Set<string>>();
+
+/** Every directory name some analyzed file sits in (any depth), built once per map. */
+function directoryNames(filePathMap: Map<string, string>): Set<string> {
+  let names = directoryNamesCache.get(filePathMap);
+  if (!names) {
+    names = new Set();
+    for (const [key, value] of filePathMap) {
+      if (key !== value) continue;
+      for (const d of value.split("/").slice(0, -1)) names.add(d);
+    }
+    directoryNamesCache.set(filePathMap, names);
+  }
+  return names;
 }
 
 /** `QueryRunner` → `query_runner`, `HTTPClient` → `http_client`. */
