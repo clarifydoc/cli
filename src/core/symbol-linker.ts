@@ -454,7 +454,7 @@ export function buildSymbolLinks(
   }
 
   // Phase B: Reverse reference scanning — find which files import each exported symbol
-  const reverseLinks = buildReverseReferenceLinks(analyses, ctx.filePathMap, symbolIndex);
+  const reverseLinks = buildReverseReferenceLinks(analyses, ctx, symbolIndex);
   links.push(...reverseLinks);
 
   // Each call to an overloaded method points at the overload it means, before
@@ -6080,13 +6080,16 @@ function decideBinding(
 
 /**
  * Build reverse reference links: for each exported symbol, find all files
- * that import it and create a reference link.
+ * that import it and create a reference link — to the definition, as a call
+ * through the import reaches it, when the imported module only forwards the
+ * name (a barrel's re-export, a package `__init__`, a module-level alias).
  */
 function buildReverseReferenceLinks(
   analyses: FileAnalysis[],
-  filePathMap: Map<string, string>,
+  ctx: LinkContext,
   symbolIndex: Map<string, Map<string, SymbolDef>>,
 ): SymbolLink[] {
+  const { filePathMap } = ctx;
   const links: SymbolLink[] = [];
   const analysisAt = new Map(analyses.map((a) => [a.filePath, a]));
 
@@ -6106,7 +6109,17 @@ function buildReverseReferenceLinks(
         const own = defaultBinding(imp, spec) && !targetSymbols.has(spec)
           ? analysisAt.get(targetFile)?.exports.find((e) => e.kind === "default")?.sourceName
           : undefined;
-        const def = targetSymbols.get(own ?? imp.aliases?.[spec] ?? spec);
+        const name = own ?? imp.aliases?.[spec] ?? spec;
+        let def = targetSymbols.get(name);
+        let defFile = targetFile;
+        const forwarded = !def || def.reexport
+          ? defaultBinding(imp, spec) && !def ? defaultDefinition(ctx, targetFile, 0, new Set()) : forwardedDefinition(ctx, targetFile, name, 0, new Set())
+          : null;
+        // Not back into the importing file: a module taking its own name through a barrel depends on the barrel.
+        if (forwarded && !forwarded.namespace && forwarded.file !== analysis.filePath) {
+          def = forwarded.def;
+          defFile = forwarded.file;
+        }
         if (def) {
           // Reference reverse-link: an explicit import with matching named specifier.
           links.push({
@@ -6114,7 +6127,7 @@ function buildReverseReferenceLinks(
             sourceSymbol: "(reference)",
             sourceLine: imp.line,
             callName: spec,
-            targetFile,
+            targetFile: defFile,
             targetSymbol: def.name,
             targetLine: def.line,
             confidence: "EXTRACTED",
