@@ -12,4 +12,7 @@ export const cManifest: LanguagePluginManifest = {
   packageEcosystems: ["vcpkg", "conan"],
   parsing: "regex",
   extensions: [".c"],
+  // `#include "helpers.h"` puts what `helpers.h` declares in scope; `helpers.c` holds the bodies.
+  importsShareScope: true,
+  declarationExtensions: [".h"],
 };

@@ -1125,6 +1125,14 @@ export interface LanguagePluginManifest {
    */
   importsShareScope?: boolean;
   /**
+   * Extensions of the files that DECLARE what a same-named file defines (C/C++
+   * headers: `helpers.h` declares `int helper(int)`, `helpers.c` holds its
+   * body). With `importsShareScope`, an include of such a file also brings in
+   * the functions its same-stem files of the family define — never one they
+   * keep to themselves (`isExported: false`, a C `static` function).
+   */
+  declarationExtensions?: readonly string[];
+  /**
    * A class lists several bases that are all classes (Python `class D(B, C)`):
    * its `extends` and `implements` together, in order, are its bases, and a
    * member is looked up along the C3 method resolution order.

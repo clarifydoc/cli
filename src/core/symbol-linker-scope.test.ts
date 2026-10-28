@@ -150,3 +150,27 @@ describe("symbol-linker — a class called by name stays in the caller's languag
     expect(link).toMatchObject({ targetFile: "coach.py", targetSymbol: "Coach.train", strategy: "class-name" });
   });
 });
+
+describe("symbol-linker — a C/C++ call through a header reaches the definition beside it", () => {
+  const include = (source: string) => ({ source, specifiers: [source.replace(/\..*$/, "")], isDefault: false, isNamespace: false, isType: false, line: 1 });
+  const main = file("src/main.cc", "cpp", { functions: [fn("main", 3, 6, [call("helper", 5)])], imports: [include("helpers.h")] });
+  const header = file("src/helpers.h", "cpp", {});
+  const body = file("src/helpers.cc", "cpp", { functions: [fn("helper", 2, 2)], imports: [include("helpers.h")] });
+
+  it("links `helper(4)` to the body in the header's same-stem file", () => {
+    const [link] = buildSymbolLinks([main, header, body]).filter((l) => l.sourceSymbol === "main");
+    expect(link).toMatchObject({ targetFile: "src/helpers.cc", targetSymbol: "helper", strategy: "import-file", confidence: "INFERRED" });
+  });
+
+  it("ignores a `static` namesake in another translation unit", () => {
+    const other = file("tools/helpers.cc", "cpp", { functions: [fn("helper", 1, 1, [], { isExported: false })] });
+    const unrelated = file("src/other.cc", "cpp", { functions: [fn("helper", 1, 1, [], { isExported: false })] });
+    const [link] = buildSymbolLinks([main, header, body, other, unrelated]).filter((l) => l.sourceSymbol === "main");
+    expect(link).toMatchObject({ targetFile: "src/helpers.cc" });
+  });
+
+  it("decides nothing when two translation units define it", () => {
+    const twin = file("tools/helpers.cc", "cpp", { functions: [fn("helper", 1, 1)] });
+    expect(buildSymbolLinks([main, header, body, twin]).filter((l) => l.sourceSymbol === "main")).toEqual([]);
+  });
+});

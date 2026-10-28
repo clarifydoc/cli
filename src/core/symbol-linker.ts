@@ -1488,6 +1488,8 @@ interface LinkContext {
   filesByName?: Map<string, string[]>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
+  /** Analyzed files by lowercased stem, built on first use (`declarationExtensions`). */
+  filesByStem?: Map<string, string[]>;
   /** What a plugin's import resolver asks of the project, built on first use. */
   importResolve?: ImportResolveContext;
   /** Free functions by language + namespace-qualified name (lowercased), built on first use. */
@@ -1608,6 +1610,44 @@ function packageTest(ctx: LinkContext, file: string): boolean {
   const language = (ctx.languageOf.get(file) ?? "") as Language;
   const own = testFilePatternsFor(language);
   return own.length > 0 ? own.some((re) => re.test(file)) : isTestFile(file, language);
+}
+
+/**
+ * The top-level functions named `name` that the files sharing a header's stem
+ * define (`include/helpers.h` → `src/helpers.cc`): files of its family and
+ * sub-project that are no declaration files themselves, never a test. A
+ * function its file keeps to itself (`isExported: false`: a C `static`) is
+ * invisible to the includer.
+ */
+function definitionsBeside(
+  ctx: LinkContext,
+  header: string,
+  declarations: readonly string[],
+  name: string,
+): Array<{ file: string; def: SymbolDef }> {
+  if (!ctx.filesByStem) {
+    ctx.filesByStem = new Map();
+    for (const a of ctx.analyses) {
+      const stem = fileStem(a.filePath);
+      const list = ctx.filesByStem.get(stem);
+      if (list) list.push(a.filePath);
+      else ctx.filesByStem.set(stem, [a.filePath]);
+    }
+  }
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const family = extensionFamily(header);
+  const project = ctx.projectOf.get(header);
+  const out: Array<{ file: string; def: SymbolDef }> = [];
+  for (const file of ctx.filesByStem.get(fileStem(header)) ?? []) {
+    if (file === header || declarations.some((ext) => file.endsWith(ext)) || extensionFamily(file) !== family) continue;
+    if (ctx.projectOf.get(file) !== project || packageTest(ctx, file)) continue;
+    const def = symbolIn(ctx, file, name);
+    if (!def || def.name.includes(".")) continue;
+    const fn = ctx.analysisByFile.get(file)?.functions.find((f) => f.name === def.name && f.line === def.line);
+    if (fn?.isExported === false) continue;
+    out.push({ file, def });
+  }
+  return out;
 }
 
 /** The files of a package an import names: the directory's files of the importer's family, never its tests. */
@@ -3405,6 +3445,7 @@ function resolveCallToDefinition(
   const sharesScope = importsShareScope(analysis.language);
   if (!def && !isQualified && call.kind === "internal" && (sharesScope || analysis.imports.some(isWildcardImport))) {
     const hits = new Map<string, SymbolDef>();
+    const declarations = sharesScope ? pluginFor(analysis.language)?.declarationExtensions : undefined;
     for (const imp of analysis.imports) {
       // A script it RUNS shares no names with it.
       if (imp.executes) continue;
@@ -3412,6 +3453,10 @@ function resolveCallToDefinition(
       if (!sharesScope && !wildcard) continue;
       const impFile = importPath(ctx, imp.source, sourceFile);
       if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
+      // A header declares what its same-stem files define (`helpers.h` → `helpers.cc`).
+      if (declarations?.some((ext) => impFile.endsWith(ext))) {
+        for (const body of definitionsBeside(ctx, impFile, declarations, call.name)) if (body.file !== sourceFile) hits.set(body.file, body.def);
+      }
       const d = symbolIn(ctx, impFile, call.name);
       if (!d || d.name.includes(".")) continue;
       if (wildcard && !sharesScope) {
