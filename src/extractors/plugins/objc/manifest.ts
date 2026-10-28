@@ -16,6 +16,9 @@ export const objcManifest: LanguagePluginManifest = {
   extensions: [".m", ".mm"],
   // One type spans files here: categories and the `@implementation` file add to a class declared elsewhere.
   typesSpanFiles: true,
+  // `#import "Club.h"` puts the C functions `Club.h` declares in scope; `Club.m` holds their bodies.
+  importsShareScope: true,
+  declarationExtensions: [".h"],
   testFilePatterns: [/Tests?\.mm?$/],
   externalModulePrefixes: ["Foundation", "UIKit", "AppKit", "CoreData", "CoreGraphics", "CoreFoundation", "QuartzCore", "AVFoundation", "MapKit", "WebKit", "Security"],
   externalNamespaceRoots: ["NS", "UI", "CG", "CA", "CF"],

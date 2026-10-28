@@ -175,6 +175,17 @@ describe("symbol-linker — a C/C++ call through a header reaches the definition
   });
 });
 
+describe("symbol-linker — an Objective-C call of a C function declared in a header", () => {
+  const include = (source: string) => ({ source, specifiers: [source.replace(/\..*$/, "")], isDefault: false, isNamespace: false, isType: false, line: 1 });
+  it("links `ClubDisplayName(c)` to its body in the header's same-stem `.m`", () => {
+    const board = file("App/Board.m", "objc", { classes: [cls("Board", 2, 7, [fn("show:", 3, 6, [call("ClubDisplayName", 4)])])], imports: [include("Club.h")] });
+    const header = file("App/Club.h", "cpp", {});
+    const club = file("App/Club.m", "objc", { functions: [fn("ClubDisplayName", 4, 6)], imports: [include("Club.h")] });
+    const [link] = buildSymbolLinks([board, header, club]).filter((l) => l.callName === "ClubDisplayName");
+    expect(link).toMatchObject({ targetFile: "App/Club.m", targetSymbol: "ClubDisplayName", strategy: "import-file", confidence: "INFERRED" });
+  });
+});
+
 describe("symbol-linker — nested functions of one name resolve to the nearest in scope", () => {
   const imp = (source: string, name: string) => ({ source, specifiers: [name], isDefault: false, isNamespace: false, isType: false, line: 1 });
   const target = (links: SymbolLink[], sourceSymbol: string, callName: string, line?: number) =>
