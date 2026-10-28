@@ -159,6 +159,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const argsOf = hooks.argsOf;
   const argCountOf = hooks.argCountOf;
   const argOriginsOf = hooks.argOriginsOf;
+  const argKindsOf = hooks.argKindsOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
@@ -176,6 +177,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     args?: string[] | null;
     argCount?: number | null;
     argOrigins?: CallArgOrigin[] | null;
+    argKinds?: string[] | null;
   }> = [];
   const boundHere = new Set<string>();
 
@@ -188,8 +190,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     args?: string[] | null,
     argCount?: number | null,
     argOrigins?: CallArgOrigin[] | null,
+    argKinds?: string[] | null,
   ) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount, argOrigins });
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount, argOrigins, argKinds });
   };
   const addResult = (name: string, node: Node) => {
     if (name) push(name, node, false);
@@ -212,7 +215,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -251,11 +254,13 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
     // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads
     // (not where the language has none: there the first call's count stands for the name).
+    // So are calls of one count whose arguments differ in kind: `write("plate")` and
+    // `write(ByteArray(2))` may be two overloads of one arity.
     // So is a call handing on values whose origin is known (a parameter, a URL value, a prop): each
     // site is its own claim about what feeds the callee (`load(params.id)` and `load(params.id, page)`).
     const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
-      : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}` : c.name;
+      : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}` : c.name;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
     const site = `${c.name}\0@${c.line}:${c.column}`;
     if (seen.has(seenKey) || seen.has(site)) continue;
@@ -264,6 +269,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
+    if (c.argKinds) call.argKinds = c.argKinds;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);

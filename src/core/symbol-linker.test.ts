@@ -642,6 +642,67 @@ describe("symbol-linker — overloads picked by argument count", () => {
   });
 });
 
+describe("symbol-linker — overloads of one arity picked by argument kind", () => {
+  const method = (name: string, line: number, params: Array<{ name: string; type: string | null }>, calls: CallInfo[] = []) =>
+    ({ name, line, endLine: line + 2, params: params.map((p) => ({ defaultValue: null, ...p })), calls } as any);
+  const at = (links: ReturnType<typeof buildSymbolLinks>, line: number) =>
+    links.filter((l) => l.sourceLine === line).map((l) => l.targetLine);
+  const garage = (callerMethods: any[], callerProps: any[] = []) => file("src/Garage.cs", "app", {
+    classes: [
+      { ...cls("Car"), line: 1, endLine: 1 },
+      { ...cls("Van"), extends: "Car", line: 2, endLine: 2 },
+      {
+        ...cls("Garage"),
+        line: 3,
+        endLine: 60,
+        methods: [
+          method("Park", 4, [{ name: "plate", type: "string" }, { name: "bay", type: "int" }]),
+          method("Park", 5, [{ name: "car", type: "Car" }, { name: "note", type: "string" }]),
+          method("Run", 6, [{ name: "a", type: "Action" }]),
+          method("Run", 7, [{ name: "f", type: "Func<T>" }]),
+          method("Wash", 8, [{ name: "o", type: "object" }]),
+          method("Wash", 9, [{ name: "c", type: "Car" }]),
+          ...callerMethods,
+        ],
+        properties: callerProps,
+      },
+    ],
+  });
+
+  it("chooses by literal, construction, lambda shape and a variable's declared type — each call its own link", () => {
+    const links = buildSymbolLinks([garage([
+      method("Service", 20, [{ name: "van", type: "Van" }], [
+        { ...call("Park", 21), argCount: 2, argKinds: ["string", "int"] },
+        { ...call("Park", 22), argCount: 2, argKinds: ["Car", "string"] },
+        { ...call("Run", 23), argCount: 1, argKinds: ["->0:void"] },
+        { ...call("Run", 24), argCount: 1, argKinds: ["->0:value"] },
+        { ...call("Wash", 25), argCount: 1, argKinds: ["@van"] },
+        { ...call("Wash", 27), argCount: 1, argKinds: ["string"] },
+      ]),
+      method("Valet", 30, [], [{ ...call("Wash", 26), argCount: 1, argKinds: ["@spare"] }]),
+    ], [{ name: "spare", type: "Car", visibility: "private", isStatic: false, isReadonly: false }])]);
+    expect(at(links, 21)).toEqual([4]);
+    expect(at(links, 22)).toEqual([5]);
+    expect(at(links, 23)).toEqual([6]);
+    expect(at(links, 24)).toEqual([7]);
+    expect(at(links, 25)).toEqual([9]); // a parameter's type: Van is a Car
+    expect(at(links, 26)).toEqual([9]); // a field's type
+    expect(at(links, 27)).toEqual([8]); // a string is no Car
+  });
+
+  it("leaves the link alone when the kinds cannot tell", () => {
+    const links = buildSymbolLinks([garage([
+      method("Service", 20, [], [
+        { ...call("Run", 21), argCount: 1, argKinds: ["->0"] }, // an expression lambda fits both
+        { ...call("Wash", 22), argCount: 1, argKinds: ["@unknown"] },
+      ]),
+    ])]);
+    const indexed = buildSymbolLinks([garage([method("Service", 20, [], [{ ...call("Run", 21), argCount: 1 }, { ...call("Wash", 22), argCount: 1 }])])]);
+    expect(at(links, 21)).toEqual(at(indexed, 21));
+    expect(at(links, 22)).toEqual(at(indexed, 22));
+  });
+});
+
 describe("symbol-linker — a route declared inside a class", () => {
   it("anchors on that class's method when several classes in the file define one of the same name", () => {
     const route = (path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler: "get_all", calls: [], middleware: [], line });

@@ -12,6 +12,7 @@ import { simpleTypeName } from "../../shared/type-parser.js";
 import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotations.js";
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
+import { typeVariableArgs } from "./arg-kinds.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -429,6 +430,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // A Javalin `Context` / Spark `Request` handler method: what its body reads off the request.
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
+    const calls = extractCalls(body, language);
+    typeVariableArgs(calls, params, body, language);
     return {
       name,
       params,
@@ -437,7 +440,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       isExported,
       decorators,
       ...(requestAccess.length > 0 ? { requestAccess } : {}),
-      calls: extractCalls(body, language),
+      calls,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes.length > 0 ? { localTypes } : {}),

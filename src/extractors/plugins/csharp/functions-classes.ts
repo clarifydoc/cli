@@ -8,6 +8,7 @@ import {
   extractCsharpAttributes,
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { typeCsharpVariableArgs } from "./arg-kinds.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -278,6 +279,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     };
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
+    typeCsharpVariableArgs(fn.calls, params, body);
     return fn;
   }
 

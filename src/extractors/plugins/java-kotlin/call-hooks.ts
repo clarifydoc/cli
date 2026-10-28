@@ -3,6 +3,7 @@ import { jvmArgOriginsOf } from "./arg-origins.js";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { containerLookup, expressionFact } from "./di-expressions.js";
+import { javaArgKinds, javaOverloadTypeKey, kotlinArgKinds, kotlinOverloadTypeKey } from "./arg-kinds.js";
 
 /**
  * Resolve the qualified call name for both JVM grammars.
@@ -177,6 +178,9 @@ export const javaCallHooks: CallExtractionHooks = {
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: javaReceiverType,
   argCountOf: javaArgCount,
+  // What each argument is, so the linker tells overloads of one arity apart.
+  argKindsOf: javaArgKinds,
+  overloadTypeKey: javaOverloadTypeKey,
   argsOf: javaQueryNameArgs,
   // Where each argument comes from: a parameter, a request value, a literal.
   argOriginsOf: jvmArgOriginsOf,
@@ -222,6 +226,8 @@ export const kotlinCallHooks: CallExtractionHooks = {
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: kotlinReceiverType,
   argCountOf: kotlinArgCount,
+  argKindsOf: kotlinArgKinds,
+  overloadTypeKey: kotlinOverloadTypeKey,
   // Where each argument comes from (named arguments by name).
   argOriginsOf: jvmArgOriginsOf,
 };

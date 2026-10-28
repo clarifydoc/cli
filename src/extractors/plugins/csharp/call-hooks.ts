@@ -3,6 +3,7 @@ import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { csharpReceiverTypeOf } from "./local-types.js";
 import { csharpArgOriginsOf } from "./arg-origins.js";
+import { csharpArgKinds, csharpOverloadTypeKey } from "./arg-kinds.js";
 
 /**
  * `Foo x = new();` — a target-typed construction names its class only in the
@@ -45,6 +46,9 @@ export const csharpCallHooks: CallExtractionHooks = {
   // `sp.GetRequiredService<IPricing>().Quote(o)` → receiver typed IPricing.
   receiverTypeOf: csharpReceiverTypeOf,
   argCountOf: csharpArgCount,
+  // What each argument is, so the linker tells overloads of one arity apart.
+  argKindsOf: csharpArgKinds,
+  overloadTypeKey: csharpOverloadTypeKey,
   argsOf: csharpTableArgs,
   // Where each argument comes from: a parameter, a request value, a literal (named arguments by name).
   argOriginsOf: csharpArgOriginsOf,

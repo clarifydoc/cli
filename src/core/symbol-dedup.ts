@@ -112,8 +112,20 @@ function bareTypeName(type: string): string {
 }
 
 /**
+ * Links whose target is one overload among several (the linker picked it by
+ * the call's arguments, `targetLine`): two calls from one caller reaching two
+ * overloads of one name stay two edges.
+ */
+const OVERLOAD_LINKS = new WeakSet<SymbolLink>();
+
+/** Mark a link whose `targetLine` tells which overload of its target it reaches. */
+export function markOverloadLink(link: SymbolLink): void {
+  OVERLOAD_LINKS.add(link);
+}
+
+/**
  * Collapse duplicate symbol links: the same caller, target symbol and
- * (normalized) call name keep one edge. The higher-confidence duplicate wins;
+ * (normalized) call name keep one edge (one per overload reached). The higher-confidence duplicate wins;
  * on a tie the earliest source line does, so the report points at the first
  * occurrence.
  *
@@ -151,6 +163,7 @@ function dedupInto(result: SymbolLink[], seen: Map<string, number>, links: reado
       link.targetFile,
       link.targetSymbol,
       normalize(link.callName),
+      OVERLOAD_LINKS.has(link) ? link.targetLine : "",
     ].join("::");
 
     const existingIdx = seen.get(key);

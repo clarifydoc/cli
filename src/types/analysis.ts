@@ -872,6 +872,18 @@ export interface CallInfo {
    * hides the count.
    */
   argCount?: number;
+  /**
+   * What each argument is, as far as its own expression says (`calls.argKindsOf`;
+   * Java, Kotlin, C#), so the linker can choose between overloads of one arity:
+   * a type name — canonical for a literal (`string`, `int`, `long`, `double`,
+   * `boolean`, `char`, `null`), as written for `new Club(…)` / `Club.class`
+   * (`Class`) / a cast; `@name` for a variable, typed by the calling function's
+   * parameters, locals and fields; `->N` for a lambda of N parameters (`->`
+   * when the count is open), `:void` when its body returns no value, `:value`
+   * when it must; `?` when nothing is known. Present only when some argument
+   * is known.
+   */
+  argKinds?: string[];
 }
 
 /** One argument of a call and where its value comes from (`CallInfo.argOrigins`). */

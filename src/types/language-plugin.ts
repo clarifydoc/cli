@@ -922,6 +922,25 @@ export interface CallExtractionHooks {
    */
   argOriginsOf?(node: Node): import("./analysis.js").CallArgOrigin[] | null;
   /**
+   * What each argument of the call is, as its expression states it — a
+   * literal's canonical type, `new X(…)`, a class literal, a variable by name
+   * (`@name`), a lambda's arity and void-ness (encoding on `CallInfo.argKinds`).
+   * Null when the call passes nothing or nothing is known. Called for every
+   * call node: bail out cheaply. With `overloadTypeKey`, the linker picks the
+   * overload whose parameter types the arguments fit best.
+   */
+  argKindsOf?(node: Node): string[] | null;
+  /**
+   * A declared parameter or variable type as the overload chooser compares it
+   * with an argument kind: primitives and their boxes folded to `int`, `long`,
+   * `short`, `byte`, `float`, `double`, `char`, `boolean`, `string`; the
+   * language's top type to `object`; a functional type to `->N:void` /
+   * `->N:value` (`Runnable`, `Supplier<T>`, `Action<T>`, `() -> Unit`); any
+   * other type to its simple name without type arguments. Idempotent on its
+   * own output.
+   */
+  overloadTypeKey?(type: string): string;
+  /**
    * The language has no overloading — a second definition of a name is an
    * overload signature, a typing stub or a conditional redefinition, not a
    * body to choose (TypeScript, Python, PHP): calls are not split by their
