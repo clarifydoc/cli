@@ -28,7 +28,7 @@ async function flowOf(files: Record<string, string>): Promise<{ summary: Project
 describe("AngularJS route tables and hash links", () => {
   it("routes the templates a wrapped `$routeProvider` names and follows `#/` links and `$location.path`", async () => {
     const { summary, edges } = await flowOf({
-      "www/index.html": `<html><body><div ng-view></div><script src="app/app.routes.js"></script></body></html>\n`,
+      "www/index.html": `<html ng-app="garage"><body><nav><a href="#Garage">Garage</a></nav><div ng-view></div><script src="app/app.routes.js"></script></body></html>\n`,
       "www/app/app.routes.js": `define(['angularAMD'], function (angularAMD) {
   angular.module('app.routes', ['ngRoute']).config(function ($routeProvider) {
     $routeProvider
@@ -49,6 +49,8 @@ describe("AngularJS route tables and hash links", () => {
     const screen = (f: string) => summary.screens.filter((s) => s.filePath === f);
     expect(screen("www/views/garage.html").map((s) => s.routePath)).toEqual(["/Garage"]);
     expect(edges).toContain("navigate: www/views/garage.html -> www/views/carlog.html");
+    // The host page's menu, an empty hash prefix: `#Garage` is the route `/Garage`.
+    expect(edges).toContain("navigate: www/index.html -> www/views/garage.html");
   }, 180_000);
 });
 
@@ -326,5 +328,69 @@ class GarageNavBar extends StatelessWidget {
     expect(shell?.name).toMatch(/GarageNavBar/);
     expect(edges).toContain(`navigate: ${shell!.id} -> lib/screens/garage_screen.dart`);
     expect(edges).toContain(`navigate: ${shell!.id} -> lib/screens/cars_screen.dart`);
+  }, 180_000);
+});
+
+describe("menus, component links and route helper objects", () => {
+  it("reads `navigate(item.path)` over a menu array, a component's `to`, and `href={Route.cars()}`", async () => {
+    const { edges } = await flowOf({
+      "package.json": `{ "name": "garage-web", "dependencies": { "react": "^18.3.0", "react-router-dom": "^6.26.0" } }\n`,
+      "src/App.tsx": `import { BrowserRouter, Route, Routes } from "react-router-dom";
+import GarageLayout from "./layout/GarageLayout";
+import Cars from "./pages/Cars";
+import Service from "./pages/Service";
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/garage" element={<GarageLayout />}>
+          <Route path="/garage/cars" element={<Cars />} />
+          <Route path="/garage/service" element={<Service />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
+`,
+      "src/layout/GarageLayout.tsx": `import { Outlet, useNavigate } from "react-router-dom";
+const items = [
+  { path: "/garage/cars", label: "Cars" },
+  { path: "/garage/service", label: "Service" },
+];
+export default function GarageLayout() {
+  const navigate = useNavigate();
+  return (
+    <div>
+      {items.map((item) => <button key={item.path} onClick={() => navigate(item.path)}>{item.label}</button>)}
+      <Outlet />
+    </div>
+  );
+}
+`,
+      "src/routes.ts": `export const Links = {\n  service: () => "/garage/service",\n};\n`,
+      "src/pages/Cars.tsx": `import { Links } from "../routes";\nexport default function Cars() {\n  return <a href={Links.service()}>Service</a>;\n}\n`,
+      "src/pages/Service.tsx": `export default function Service() {\n  return <h1>Service</h1>;\n}\n`,
+    });
+    expect(edges).toContain("navigate: src/layout/GarageLayout.tsx -> src/pages/Cars.tsx");
+    expect(edges).toContain("navigate: src/layout/GarageLayout.tsx -> src/pages/Service.tsx");
+    expect(edges).toContain("navigate: src/pages/Cars.tsx -> src/pages/Service.tsx");
+  }, 180_000);
+
+  it("reads a component library's `to` (Vuetify `<v-list-item to>`)", async () => {
+    const { edges } = await flowOf({
+      "package.json": `{ "name": "league-spa", "dependencies": { "vue": "^3.4.0", "vue-router": "^4.3.0", "vuetify": "^3.5.0" } }\n`,
+      "src/router.ts": `import { createRouter, createWebHistory } from "vue-router";
+export default createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: "/clubs", component: () => import("./pages/Clubs.vue") },
+    { path: "/table", component: () => import("./pages/Table.vue") },
+  ],
+});
+`,
+      "src/pages/Clubs.vue": `<template>\n  <v-list>\n    <v-list-item to="/table" title="Table" />\n  </v-list>\n</template>\n`,
+      "src/pages/Table.vue": `<template><h1>Table</h1></template>\n`,
+    });
+    expect(edges).toContain("navigate: src/pages/Clubs.vue -> src/pages/Table.vue");
   }, 180_000);
 });

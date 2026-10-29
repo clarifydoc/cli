@@ -2538,6 +2538,11 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   const targets = new Set<string>();
   // Hash routes (AngularJS, hash-mode routers): `href="#/devices"`, `ng-href="#!/log"`, `$location.path('/devices')`.
   for (const m of source.matchAll(/\b(?:ng-)?href\s*=\s*["']#!?(\/(?:\{\{[^}]*\}\}|[^"'\s])*)|\$location\.(?:path|url)\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);
+  // AngularJS markup with an empty hash prefix links `href="#Garage"` to the route `/Garage`
+  // (only there: elsewhere `#garage` is an anchor on the page).
+  if (/\sng-(?:app|view|show|if|click|class|href|repeat|controller)\b/.test(source)) {
+    for (const m of source.matchAll(/\bhref\s*=\s*["']#!?([A-Za-z][\w-]*(?:\/[\w{}:-]+)*)["']/g)) targets.add(`/${m[1]!}`);
+  }
   // ui-router by state name: `ui-sref="garage"`, `$state.go('garage')`.
   for (const m of source.matchAll(/\bui-sref\s*=\s*["']([\w.-]+)|\$state\.go\(\s*['"]([\w.-]+)['"]/g)) targets.add(`route:${m[1] ?? m[2]}`);
   // A route by name through a URL helper: `url('albums.show', { id })`, Ziggy's `route('clubs.index')` —
@@ -2571,6 +2576,8 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
     /<(?:Link|NavLink|LinkContainer)\s+[^>]*?\bto\s*=\s*\{?\s*['"`]([^'"`]+)['"`]/g,
     // Vue's link element: `<RouterLink to="/loans">`, `:to="'/loans'"`, `:to="`/clubs/${id}`"`.
     /<(?:RouterLink|router-link|NuxtLink|nuxt-link)\b[^>]*?\s:?to\s*=\s*["']\s*['`]?(\/[^"'`]*)/g,
+    // Any component taking a router `to` (Vuetify `<v-list-item to="/labels">`, `<v-btn :to="'/x'">`, `<q-item to>`).
+    /<[a-z][\w.:-]*-[\w.:-]*\b[^>]*?\s:?to\s*=\s*["']\s*['`]?(\/(?!\/)[^"'`\s]*)/g,
     // A menu item's target in script (`{ label: "Loans", to: "/loans" }`).
     /\bto\s*:\s*['"`](\/[^'"`\s]*)['"`]/g,
     // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
@@ -2653,7 +2660,7 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   // `{ text: "Roles", ref: "administration/roles" }`, `to={item.url}`, `router.push(item.path)`: the
   // values the file's objects give that property (a bare `administration/roles` is from the app's root).
   const props = new Set<string>();
-  for (const m of source.matchAll(/(?:\s(?::?(?:to|href)|\[routerLink\])\s*=\s*["{]\s*|\brouter\.(?:push|replace)\(\s*|\bwindow\.open\(\s*)[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*["}),]/g)) props.add(m[1]!);
+  for (const m of source.matchAll(/(?:\s(?::?(?:to|href)|\[routerLink\])\s*=\s*["{]\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bgoto\(\s*|\bwindow\.open\(\s*)[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*["}),]/g)) props.add(m[1]!);
   for (const prop of props) {
     for (const m of source.matchAll(new RegExp(String.raw`["']?\b${prop}["']?\s*:\s*['"\`]([^'"\`\s]+)['"\`]`, "g"))) {
       const v = m[1]!;
@@ -2767,7 +2774,9 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
         // object the file imports (`Route.albums()` from `routes.ts`): that file's function of the name.
         else {
           const objectFile = importIndex.localFor(sc.filePath, owner);
-          const inFile = (functions.get(name!) ?? []).filter((f) => f.file === objectFile || f.file.slice(f.file.lastIndexOf("/") + 1).replace(/\..*$/, "") === owner);
+          // An object literal's members are recorded under their qualified name (`Route.albums`).
+          const qualified = (functions.get(`${owner}.${name}`) ?? []).filter((f) => !objectFile || f.file === objectFile);
+          const inFile = qualified.length > 0 ? qualified : (functions.get(name!) ?? []).filter((f) => f.file === objectFile || f.file.slice(f.file.lastIndexOf("/") + 1).replace(/\..*$/, "") === owner);
           if (inFile.length === 1) found = inFile[0]!;
         }
       } else {
