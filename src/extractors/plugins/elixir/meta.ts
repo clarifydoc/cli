@@ -17,9 +17,24 @@ const ELIXIR_BUILTINS: ReadonlySet<string> = new Set<string>([
   "File", "Path", "Regex", "Date", "DateTime", "NaiveDateTime", "Time",
 ]);
 
+/**
+ * A Phoenix controller renders its templates by convention: `render(conn, :show)` (or `"show.html"`)
+ * in `controllers/club_controller.ex` is `controllers/club_html/show.html.heex` (Phoenix 1.7's
+ * `embed_templates`), else `templates/club/show.html.(h)eex` beside `controllers/` (Phoenix 1.6).
+ */
+function phoenixTemplatePaths(name: string, fromFile?: string): string[] {
+  const m = fromFile ? /^(.*\/)controllers\/(?:.*\/)?(\w+)_controller\.ex$/.exec(fromFile) : null;
+  if (!m || !/^[\w-]+(?:\.html)?$/.test(name)) return [];
+  const [, web, controller] = m;
+  const view = name.replace(/\.html$/, "");
+  const dir = fromFile!.slice(0, fromFile!.lastIndexOf("/") + 1);
+  return ["heex", "eex"].flatMap((ext) => [`${dir}${controller}_html/${view}.html.${ext}`, `${web}templates/${controller}/${view}.html.${ext}`]);
+}
+
 export const elixirMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: elixirReachability,
+  templatePaths: phoenixTemplatePaths,
   ...elixirManifest,
   regexSpec: elixirSpec,
   // Functions and calls read by tree-sitter-elixir while the `tree-sitter:elixir` feature is on (tree-sitter.ts).

@@ -227,3 +227,51 @@ export default createRouter({
     expect(edges).toContain("navigate: src/pages/Car.vue -> src/pages/Cars.vue");
   }, 180_000);
 });
+
+describe("Phoenix", () => {
+  it("routes controller templates by convention and LiveViews by scope alias, and reads `~p` links", async () => {
+    const { edges, summary } = await flowOf({
+      "mix.exs": `defmodule League.MixProject do\n  use Mix.Project\n  def project, do: [app: :league, deps: [{:phoenix, "~> 1.7"}, {:phoenix_live_view, "~> 0.20"}]]\nend\n`,
+      "lib/league_web/router.ex": `defmodule LeagueWeb.Router do
+  use LeagueWeb, :router
+
+  scope "/", LeagueWeb do
+    get "/login", AuthController, :login_form
+    post "/login", AuthController, :login
+  end
+
+  scope "/", LeagueWeb.Live do
+    live "/clubs", Clubs, :index
+  end
+end
+`,
+      "lib/league_web/controllers/auth_controller.ex": `defmodule LeagueWeb.AuthController do
+  use LeagueWeb, :controller
+
+  def login_form(conn, _params), do: render(conn, :login_form)
+
+  def login(conn, _params), do: redirect(conn, to: ~p"/clubs")
+end
+`,
+      "lib/league_web/controllers/auth_html/login_form.html.heex": `<.form for={@form} action={~p"/login"}>\n  <.input field={@form[:email]} />\n  <.button>Sign in</.button>\n</.form>\n<.link navigate={~p"/clubs"}>Browse clubs</.link>\n`,
+      "lib/league_web/live/clubs.ex": `defmodule LeagueWeb.Live.Clubs do
+  use LeagueWeb, :live_view
+
+  def render(assigns) do
+    ~H"""
+    <h1>Clubs</h1>
+    <button phx-click="sign_out">Sign out</button>
+    """
+  end
+
+  def handle_event("sign_out", _params, socket), do: {:noreply, push_navigate(socket, to: ~p"/login")}
+end
+`,
+    });
+    const page = (f: string) => summary.screens.find((s) => s.filePath === f);
+    expect(page("lib/league_web/controllers/auth_html/login_form.html.heex")?.routePath).toBe("/login");
+    expect(page("lib/league_web/live/clubs.ex")?.routePath).toBe("/clubs");
+    expect(edges).toContain("navigate: lib/league_web/controllers/auth_html/login_form.html.heex -> lib/league_web/live/clubs.ex");
+    expect(edges).toContain("navigate: lib/league_web/live/clubs.ex -> lib/league_web/controllers/auth_html/login_form.html.heex");
+  }, 180_000);
+});

@@ -52,7 +52,8 @@ export function linkRenderedViews(
 
   const resolveCache = new Map<string, ScreenInfo | null>();
   const resolve = (view: string, from: FileAnalysis): ScreenInfo | null => {
-    const key = `${view}\0${from.projectId ?? ""}\0${from.language}`;
+    // The handler's file is part of the key: a framework spells a view relative to its controller.
+    const key = `${view}\0${from.projectId ?? ""}\0${from.language}\0${from.filePath}`;
     if (resolveCache.has(key)) return resolveCache.get(key)!;
     const suffixRe = (rel: string, exact: boolean): RegExp => {
       const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -61,7 +62,7 @@ export function linkRenderedViews(
     // The framework's own spelling of the name, when the handler's plugin has one: its file is a
     // template whatever its language. Else (or when it names none), a template is another
     // language's file — the handler's own sources are code.
-    const spelled = (pluginFor(from.language)?.templatePaths?.(view) ?? []).map((p) => suffixRe(p, true));
+    const spelled = (pluginFor(from.language)?.templatePaths?.(view, from.filePath) ?? []).map((p) => suffixRe(p, true));
     let hits = pages.filter((s) => spelled.some((re) => re.test(s.filePath)));
     if (hits.length === 0) {
       const re = suffixRe(view.replace(/\\/g, "/").replace(/^\.?\/+/, ""), false);
@@ -122,6 +123,8 @@ const NAME = String.raw`["'\x60]([^"'\x60\s{}$<>]+)["'\x60]`;
 const RENDER_CALL = new RegExp(String.raw`[\w.:$]*(?:render|template|view|html|page)[\w$]*(?:::new)?\s*!?\s*\(\s*(?:[^()"'\x60;]{0,80}?,\s*)?${NAME}`, "gi");
 /** A field, key or keyword argument named for the view: `"page_content": "admin/login"`, `template_name = "x.html"`, `view: 'x'`. */
 const VIEW_FIELD = new RegExp(String.raw`["']?\w*(?:template|view|page)\w*["']?\s*(?::|=>?|=)\s*${NAME}`, "gi");
+/** A render call handed the view as a symbol: Phoenix `render(conn, :show)`, Rails `render :edit`. */
+const RENDER_ATOM = /[\w.:$]*render[\w$]*\s*!?\s*\(?\s*(?:[\w@.]+\s*,\s*)?:(\w+)\b(?!\s*[:=])/g;
 /** A handler returning the view's name (Spring MVC, Struts, Grails). */
 const RETURN_NAME = new RegExp(String.raw`\breturn\s+${NAME}`, "g");
 
@@ -147,7 +150,7 @@ export function viewConstants(body: string, file: string): string[] {
 /** The template names a function body states, by the three shapes above. */
 export function viewLiterals(text: string): string[] {
   const out = new Set<string>();
-  for (const re of [RENDER_CALL, VIEW_FIELD, RETURN_NAME]) {
+  for (const re of [RENDER_CALL, VIEW_FIELD, RETURN_NAME, RENDER_ATOM]) {
     re.lastIndex = 0;
     for (const m of text.matchAll(re)) {
       const v = m[1]!;

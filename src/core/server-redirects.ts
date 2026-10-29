@@ -113,7 +113,7 @@ export function attachServerRedirects(
 const REDIRECT_LINE = /redirect|\bLocation\b/i;
 const LIT = String.raw`["'\x60]([^"'\x60\n]*)["'\x60]`;
 /** The literal a call named for redirecting is handed, after a status code or a keyword (`res.redirect(302, "/x")`, `RedirectResponse(url="/x")`). */
-const REDIRECT_CALL = new RegExp(String.raw`[\w.:$]*redirect[\w$]*\s*!?\s*\(\s*(?:[^()"'\x60;]{0,60}?,\s*)?(?:\w+\s*[=:]\s*)?${LIT}`, "gi");
+const REDIRECT_CALL = new RegExp(String.raw`[\w.:$]*redirect[\w$]*\s*!?\s*\(\s*(?:[^()"'\x60;]{0,60}?,\s*)?(?:\w+\s*[=:]\s*)?(?:~p)?${LIT}`, "gi");
 /** The same without parentheses (Ruby, Groovy): `redirect_to "/garage", notice: "…"`. */
 const REDIRECT_BARE = new RegExp(String.raw`\bredirect(?:_to)?\s+${LIT}`, "g");
 /** A view name that is a redirect (Spring MVC, Struts): `"redirect:/clubs"`. */

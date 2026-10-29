@@ -2543,6 +2543,8 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   // A route by name through a URL helper: `url('albums.show', { id })`, Ziggy's `route('clubs.index')` —
   // `route:<name>`, which only a route of that name resolves.
   for (const m of source.matchAll(/\b(?:url|route)\(\s*['"]([A-Za-z][\w.:-]*)['"]/g)) targets.add(`route:${m[1]!}`);
+  // Phoenix verified routes: `<.link navigate={~p"/clubs/#{club}"}>`, `href={~p"/login"}`, `push_navigate(socket, to: ~p"/clubs")`.
+  for (const m of source.matchAll(/\b(?:href|navigate|patch)\s*=\s*\{\s*~p"(\/[^"]*)"|\b(?:push_navigate|push_patch|redirect)\([^)]*?\bto:\s*~p"(\/[^"]*)"/g)) targets.add((m[1] ?? m[2])!);
   // SvelteKit's `goto('/albums')`.
   for (const m of source.matchAll(/\bgoto\(\s*['"`](\/(?!\/)[^'"`]*)['"`]/g)) targets.add(m[1]!);
   // A navigation manager's `NavigateTo("/orders")` (Blazor), and — where links are relative to the
@@ -2577,7 +2579,7 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
     /\bwindow\.open\(\s*['"`](\/(?!\/)[^'"`\s?#]*)/g,
     // An anchor to an app path — `<a href="/login">`, `:href="`/cases/${id}`"`. One naming no screen
     // (a download, an API URL) resolves to nothing; `//host` and `#` are no app paths.
-    /<(?!link\b|base\b)[A-Za-z][\w.:-]*\b[^>]*?\s:?href\s*=\s*[{"']\s*['`]?(\/(?!\/)[^"'`#\s}]*)/g,
+    /<(?:\.[A-Za-z][\w.:-]*|(?!link\b|base\b)[A-Za-z][\w.:-]*)\b[^>]*?\s:?href\s*=\s*[{"']\s*['`]?(\/(?!\/)(?:\$\{[^}]*\}|[^"'`#\s}])*)/g,
   ];
   for (const re of patterns) {
     let m: RegExpExecArray | null;
@@ -2659,8 +2661,8 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
       else if (/^[A-Za-z][\w-]*(?:\/[\w:.{}$-]+)*$/.test(v) && v.includes("/")) targets.add("/" + v);
     }
   }
-  // `/cases/${id}`, `/cases/{{case.id}}` compare as `/cases/{}`.
-  return [...new Set([...targets].map((t) => t.replace(/\$\{[^}]*\}|\{\{[^}]*\}\}/g, "{}")))];
+  // `/cases/${id}`, `/cases/{{case.id}}`, `/cases/#{case.id}` compare as `/cases/{}`.
+  return [...new Set([...targets].map((t) => t.replace(/\$\{[^}]*\}|\{\{[^}]*\}\}|#\{[^}]*\}/g, "{}")))];
 }
 
 /**
@@ -2699,8 +2701,8 @@ function addViewCodeNavigation(screens: ScreenInfo[], analyses: FileAnalysis[], 
     };
     // An Angular component's external template (`templateUrl: './club.component.html'`) is its markup.
     const template = own.angularTemplateUrl ? byPath.get(posixJoin(own.filePath.slice(0, own.filePath.lastIndexOf("/") + 1), own.angularTemplateUrl)) : undefined;
-    const files = [...classIn(sc.name), ...classIn(sc.viewModel), ...(sc.codeFiles ?? []).map((f) => byPath.get(f)).filter((a): a is FileAnalysis => !!a)];
-    if (files.length === 0 && !template) continue;
+    // The screen's own file too: a plugin authors some screens (a HEEx template, a LiveView module) without reading its links.
+    const files = [own, ...classIn(sc.name), ...classIn(sc.viewModel), ...(sc.codeFiles ?? []).map((f) => byPath.get(f)).filter((a): a is FileAnalysis => !!a)];
     const add = new Set(sc.navigatesTo);
     for (const a of files) for (const t of targetsOf(a)) add.add(t);
     // The template is read with its component: `[routerLink]="item.link"` there, `link: '/clubs'` in the class.
@@ -2866,10 +2868,15 @@ function buildScreensFromRoutes(
     if (viaImport) return viaImport;
     // A view class whose screen is its markup (`CatalogView` → `CatalogView.xaml`, its code-behind a
     // `.xaml.cs`): the one file of the sub-project with a screen of that name.
-    if (/^[A-Za-z_$][\w$]*$/.test(spec)) {
+    // A module the router names (`ClubWeb.Live.Clubs`, or the alias-less `Live.Clubs`) is the screen of that module name.
+    if (/^[A-Za-z_$][\w$.]*$/.test(spec)) {
       const project = byPath.get(configFile)?.projectId;
       const screened = allAnalyses.filter((a) => a.projectId === project && a.screens.some((s) => s.name === spec));
       if (screened.length === 1) return screened[0]!.filePath;
+      if (spec.includes(".") && screened.length === 0) {
+        const tail = allAnalyses.filter((a) => a.projectId === project && a.screens.some((s) => s.name.endsWith("." + spec)));
+        if (tail.length === 1) return tail[0]!.filePath;
+      }
     }
     // A module path the alias pass made project-relative (`@/views/Home.vue` → `frontend/src/views/Home.vue`).
     if (spec.includes("/")) return resolveImportSource(configFile, spec, knownFiles);

@@ -80,6 +80,8 @@ function pipelineNames(arg: string): string[] {
 
 interface ScopeFrame {
   prefix: string;
+  /** The module alias the scope puts its routes' modules under (`scope "/", ClubWeb.Live do`, `scope alias: ClubWeb.Live`). */
+  alias?: string;
   guards: GuardAttr[];
   middleware: string[];
   /** `resources … do` nested member prefix is a scope too. */
@@ -148,6 +150,10 @@ export function extractPhoenixRoutes(source: string[]): RouteInfo[] {
   const top = (): ScopeFrame | undefined => stack[stack.length - 1];
   const prefix = (): string => stack.map((f) => f.prefix).join("");
   const join = (p: string): string => (prefix() + p).replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1") || "/";
+  // `live "/clubs", ClubLive.Index` under `scope "/", ClubWeb do` names `ClubWeb.ClubLive.Index`.
+  const moduleOf = (m: string): string => [...stack.flatMap((f) => (f.alias ? [f.alias] : [])), m].join(".");
+  const aliasOf = (t: string): string | undefined =>
+    /\balias:\s*([A-Z][\w.]*)/.exec(t)?.[1] ?? /^\s*scope\s*\(?\s*(?:"[^"]*"|path:\s*"[^"]*")\s*,\s*([A-Z][\w.]*)/.exec(t)?.[1];
   const inheritedGuards = (): GuardAttr[] => stack.flatMap((f) => f.guards);
   const inheritedMiddleware = (): string[] => stack.flatMap((f) => f.middleware);
   const emit = (route: RouteInfo): void => {
@@ -173,11 +179,11 @@ export function extractPhoenixRoutes(source: string[]): RouteInfo[] {
 
     const scope = line.match(PHX_SCOPE_RE);
     if (scope && /\bdo\s*$/.test(trimmed)) {
-      stack.push({ prefix: (scope[1] ?? scope[2] ?? "").replace(/\/$/, ""), guards: [], middleware: [], kind: "scope" });
+      stack.push({ prefix: (scope[1] ?? scope[2] ?? "").replace(/\/$/, ""), alias: aliasOf(trimmed), guards: [], middleware: [], kind: "scope" });
       continue;
     }
     if (/^scope\b/.test(trimmed) && /\bdo\s*$/.test(trimmed)) {
-      stack.push({ prefix: "", guards: [], middleware: [], kind: "scope" });
+      stack.push({ prefix: "", alias: aliasOf(trimmed), guards: [], middleware: [], kind: "scope" });
       continue;
     }
     const pipe = line.match(PHX_PIPE_THROUGH_RE);
@@ -222,7 +228,8 @@ export function extractPhoenixRoutes(source: string[]): RouteInfo[] {
     }
     const live = line.match(PHX_LIVE_RE);
     if (live) {
-      emit({ path: join(live[1]!), httpMethod: null, kind: "frontend", handler: live[3] ? `${live[2]}.${live[3]}` : live[2]!, calls: [], middleware: [], line: ln });
+      // The LiveView module is the page: its screen is named after it.
+      emit({ path: join(live[1]!), httpMethod: null, kind: "frontend", handler: live[3] ? `${live[2]}.${live[3]}` : live[2]!, componentPath: moduleOf(live[2]!), calls: [], middleware: [], line: ln });
       continue;
     }
     // Any other `do` block (live_session, forward … do) — keep the pops balanced.

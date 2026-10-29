@@ -1127,10 +1127,12 @@ export interface LanguagePluginManifest {
    * A render call's template name as the paths its template file may end with,
    * for a framework that spells names its own way: Laravel `view('clubs.show')`
    * → `views/clubs/show.blade.php`, CodeIgniter `view('clubs/edit')` →
-   * `views/clubs/edit.php`. The file they name is a template even in this
+   * `views/clubs/edit.php`, Phoenix `render(conn, :show)` in `ClubController`
+   * → `controllers/club_html/show.html.heex`. `fromFile` is the file of the
+   * handler that renders. The file they name is a template even in this
    * language. None leaves the name to the generic path-suffix match.
    */
-  templatePaths?(name: string): string[];
+  templatePaths?(name: string, fromFile?: string): string[];
   /**
    * Identifiers are case-insensitive (VB, Pascal/Delphi): `_repo.save()`
    * calls the `Save` that `_Repo`'s class declares. The linker then matches
