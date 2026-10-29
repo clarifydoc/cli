@@ -169,6 +169,26 @@ export function buildScreenFlow(input: {
   };
   for (const k of clientRedirects.keys()) redirectNode(k, undefined);
 
+  // A router's shell around its routes (a go_router `StatefulShellRoute`'s navigation bar): the frame a
+  // node of its own, a start, and its tabs links to the pages they open.
+  for (const r of routes) {
+    if (r.kind !== "frontend" || !r.shell) continue;
+    const project = r.projectId;
+    const named = (byName.get(r.shell.component) ?? []).filter((x) => projectOf(x.filePath) === project);
+    const shellScreen = one(named);
+    const id = shellScreen ? idOf(shellScreen) : `shell:${project ?? "root"}:${r.shell.component}`;
+    const existing = nodes.get(id);
+    if (existing) {
+      existing.kind = "shell";
+      existing.start = true;
+    } else {
+      nodes.set(id, { id, name: shellScreen ? shellScreen.caption || shellScreen.name : r.shell.component, kind: "shell", ...(project ? { projectId: project } : {}), start: true });
+    }
+    if (!r.shell.tab) continue;
+    const page = screenAtPath(r.path, project);
+    if (page) addEdge(id, addScreen(page), "navigate", `tab ${r.path}`);
+  }
+
   // A route's own statement of where its page leads (a Web Flow view's transitions): the page posts the
   // event and the server shows the next view — a submit.
   for (const r of routes) {

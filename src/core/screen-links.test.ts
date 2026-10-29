@@ -275,3 +275,56 @@ end
     expect(edges).toContain("navigate: lib/league_web/live/clubs.ex -> lib/league_web/controllers/auth_html/login_form.html.heex");
   }, 180_000);
 });
+
+describe("go_router shells", () => {
+  it("makes a StatefulShellRoute's navigation bar a shell whose tabs open each branch's first page", async () => {
+    const { summary, edges } = await flowOf({
+      "pubspec.yaml": `name: garage_app\ndependencies:\n  flutter:\n    sdk: flutter\n  go_router: ^14.0.0\n`,
+      "lib/router.dart": `import 'package:go_router/go_router.dart';
+import 'screens/garage_screen.dart';
+import 'screens/cars_screen.dart';
+import 'widgets/garage_nav_bar.dart';
+
+final router = GoRouter(
+  routes: [
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return GarageNavBar(navigationShell: navigationShell);
+      },
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(path: '/garage', builder: (context, state) => const GarageScreen()),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(path: '/cars', builder: (context, state) => const CarsScreen()),
+          ],
+        ),
+      ],
+    ),
+  ],
+);
+`,
+      "lib/screens/garage_screen.dart": `import 'package:flutter/material.dart';\nclass GarageScreen extends StatelessWidget {\n  const GarageScreen({super.key});\n  @override\n  Widget build(BuildContext context) => const Scaffold(body: Text('Garage'));\n}\n`,
+      "lib/screens/cars_screen.dart": `import 'package:flutter/material.dart';\nclass CarsScreen extends StatelessWidget {\n  const CarsScreen({super.key});\n  @override\n  Widget build(BuildContext context) => const Scaffold(body: Text('Cars'));\n}\n`,
+      "lib/widgets/garage_nav_bar.dart": `import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+class GarageNavBar extends StatelessWidget {
+  const GarageNavBar({super.key, required this.navigationShell});
+  final StatefulNavigationShell navigationShell;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: navigationShell,
+        bottomNavigationBar: BottomNavigationBar(onTap: navigationShell.goBranch, items: const []),
+      );
+}
+`,
+    });
+    const shell = summary.screenFlow!.nodes.find((n) => n.kind === "shell");
+    expect(shell?.name).toMatch(/GarageNavBar/);
+    expect(edges).toContain(`navigate: ${shell!.id} -> lib/screens/garage_screen.dart`);
+    expect(edges).toContain(`navigate: ${shell!.id} -> lib/screens/cars_screen.dart`);
+  }, 180_000);
+});

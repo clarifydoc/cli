@@ -1383,6 +1383,13 @@ export interface RouteInfo {
    */
   leadsTo?: Array<{ path: string; on?: string }>;
   /**
+   * Frontend routes only: the component a router builds around this route's page — a
+   * go_router `ShellRoute`/`StatefulShellRoute` builder's widget (`MainNavBar`). `tab`: the
+   * route is a `StatefulShellBranch`'s first, the one the shell's tab opens. The shell is a
+   * node of the navigation map, its tabs links to their pages.
+   */
+  shell?: { component: string; tab?: true };
+  /**
    * API routes only: the app paths the handler sends the browser on to
    * (`res.redirect("/login")`, `return "redirect:/clubs"`, `RedirectToAction("Index")`
    * resolved to its route) — set by core's `server-redirects.ts`. The screen
