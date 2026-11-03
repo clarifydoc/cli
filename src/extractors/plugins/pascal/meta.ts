@@ -13,6 +13,7 @@ import { PascalUiBridgeResolver } from "./ui-bridge.js";
 import { dfmEntityExtractor } from "./dfm-entities.js";
 import { pascalReachability } from "./reachability.js";
 import { pascalDiBindings } from "./di.js";
+import { pascalModuleBindings } from "./module-bindings.js";
 import { pascalDirectivePreprocess } from "./directives.js";
 
 const PASCAL_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -95,7 +96,8 @@ export const pascalMeta: LanguagePluginMeta = {
   dbCallRoots: ["Query", "Connection", "DataSet", "SQLQuery"],
   calls: pascalCallHooks,
   // Spring4D container registrations (see di.ts).
-  ast: { diBindings: pascalDiBindings },
+  // Unit-level typed variables (`var dmLeague: TdmLeague;`), see module-bindings.ts.
+  ast: { diBindings: pascalDiBindings, moduleBindings: (tree) => pascalModuleBindings(tree) },
   dispatchResolvers: [new PascalUiBridgeResolver()],
 };
 

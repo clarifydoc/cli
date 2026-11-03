@@ -37,7 +37,7 @@ export function barePascalTypeName(text: string): string | null {
  * The grammar files the separating `,` under the same field, so anonymous
  * tokens are dropped.
  */
-function fieldChildren(node: Node, field: string): Node[] {
+export function fieldChildren(node: Node, field: string): Node[] {
   const out: Node[] = [];
   const kids = node.children;
   for (let i = 0; i < kids.length; i++) {

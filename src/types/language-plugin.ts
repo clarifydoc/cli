@@ -743,6 +743,8 @@ export interface AstExtractorHooks {
   typeAliases?(tree: Tree, sourceText: string): import("./analysis.js").TypeAliasInfo[];
   /** Module-level names bound to another name (`s = attrs`) → `FileAnalysis.nameAliases` (as written; core follows them). */
   nameAliases?(tree: Tree, sourceText: string): import("./analysis.js").NameAliasInfo[];
+  /** Typed variables declared at module level (`var dmLeague: TdmLeague;`) → `FileAnalysis.moduleBindings` (types as written). */
+  moduleBindings?(tree: Tree, sourceText: string): import("./analysis.js").ModuleBindingInfo[];
   /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
   declaredNamespace?(tree: Tree, sourceText: string): string | null;
   /** The package or namespace the file's declarations belong to → `FileAnalysis.packageName` (C# `namespace League.Clubs;`). */
@@ -855,6 +857,13 @@ export interface CallExtractionHooks {
    * instance itself (`self.run`), which a bound receiver parameter does not turn into a value.
    */
   passedArguments?(call: Node): Array<{ name: string; node: Node; ownMember?: boolean }>;
+  /**
+   * Names the node reads without parentheses where the language runs a routine named so (Pascal: `N := ACar.Shine`,
+   * `if qry.IsEmpty then`, `N + Points`), spelled the way a call of it would be. Asked of every node the call walk
+   * visits; each is recorded as a call with `read: true` (`CallInfo.read`), unless the body also calls the name.
+   * `passed`: the operand takes the routine's address (`@CompareClubs`) — handed on, never run there.
+   */
+  readNames?(node: Node): Array<{ name: string; node: Node; passed?: true }>;
   /**
    * Where this grammar binds a name locally, so the callback-argument scan can
    * tell a function passed by reference (`items.map(formatUser)`) from a
@@ -1017,8 +1026,35 @@ export interface ImportResolveContext {
   namedImportOf?(file: string, name: string): { source: string; name: string } | null;
 }
 
+/**
+ * Where a language's toolchain finds the module a bare import names, as the project's own build files
+ * state it. Pure data and a pure parser: it lives on the static manifest.
+ */
+export interface ModuleSearchPathSpec {
+  /** Build files read at each sub-project root (`*.dproj`), literal names or globs with `glob`. */
+  files: readonly string[];
+  glob?: { deep: number; limit: number };
+  /**
+   * What one build file says, paths as written relative to the file's own directory: `dirs` searched in
+   * order for a module a bare import names (Delphi `DCC_UnitSearchPath`, Lazarus `OtherUnitFiles`), and
+   * `files` that are the module their name says for the whole project (a `.dproj` `DCCReference`).
+   */
+  parse(text: string, path: string): { dirs: string[]; files: string[] };
+  /**
+   * An import that names its module and that module's file (Pascal `uses Garage in 'Win\Garage.pas'`,
+   * read as a path source with the module as its one specifier) fixes the file for the whole sub-project.
+   */
+  pathImportsPin?: boolean;
+}
+
 export interface LanguagePluginManifest {
   language: Language;
+  /**
+   * Where the toolchain looks for a module a bare import names when two files of the project answer to it
+   * (`Win/Garage.pas` and `Posix/Garage.pas`): read from the build files at each sub-project root
+   * (`core/module-search-paths.ts`). Unset: the generic path rules decide.
+   */
+  moduleSearchPaths?: ModuleSearchPathSpec;
   /**
    * The project file an import names, for a language whose imports name
    * modules by a path of its own (`crate::util`, `other_crate::persistence`):

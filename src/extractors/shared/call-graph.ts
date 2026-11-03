@@ -177,6 +177,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     passed?: CallInfo["passed"];
     ownMember?: boolean;
     returnedAs?: string;
+    read?: boolean;
     receiver?: { type: string; qualifier?: string } | null;
     key?: string | null;
     args?: string[] | null;
@@ -248,6 +249,16 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       }
     }
 
+    // Names read without parentheses where the language runs a routine named so (Pascal `N := ACar.Shine`).
+    for (const r of hooks?.readNames?.(node) ?? []) {
+      if (r.passed) {
+        push(r.name, r.node, true, null, null, null, null, null, null, "argument");
+        continue;
+      }
+      push(r.name, r.node, false);
+      candidates[candidates.length - 1]!.read = true;
+    }
+
     // Language extras: JSX component references, Python decorators, etc.
     hooks?.collectExtraCalls?.(node, addResult, resolve);
     for (const name of hooks?.destructuredFromCall?.(node) ?? []) fromFactory.add(name);
@@ -285,7 +296,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     const typed = c.receiver?.type ? `\0<${c.receiver.type}>` : "";
     // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
     // A dispatch map's value is one claim per key it is held under (`{ save: saveClub, store: saveClub }`).
-    const seenKey = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
+    const seenKey = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.read ? `${c.name}\0read` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
@@ -294,6 +305,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     seen.add(site);
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.passed) call.passed = c.passed;
+    if (c.read) call.read = true;
     if (c.returnedAs) call.returnedAs = c.returnedAs;
     if (!c.isReference && localHere.has(c.name)) call.boundLocally = true;
     if (c.args) call.args = c.args;
@@ -312,6 +324,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       if (c.receiver.type) call.receiverType = c.receiver.type;
       if (c.receiver.qualifier) call.receiverQualifier = c.receiver.qualifier;
     } else if (isNoise(c.name)) {
+      // A read is no call worth holding back for a typed receiver.
+      if (c.read) continue;
       seen.add(c.name);
       if (!c.isReference) held.push({ index: results.length, call });
       continue;
@@ -320,10 +334,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     results.push(call);
   }
   if (held.length > 0) HELD_NOISE_CALLS.set(results, held);
-  // A name the body also invokes is a call; handing it on as well adds nothing — except as a
+  // A name the body also invokes is a call; handing it on (or reading it) as well adds nothing — except as a
   // dispatch map's value, which is what a call through the map reaches.
-  const invoked = new Set(results.filter((r) => !r.passed).map((r) => r.name));
-  const redundant = (r: CallInfo) => !!r.passed && r.passed !== "property" && invoked.has(r.name);
+  const invoked = new Set(results.filter((r) => !r.passed && !r.read).map((r) => r.name));
+  const redundant = (r: CallInfo) => ((!!r.passed && r.passed !== "property") || r.read === true) && invoked.has(r.name);
   if (!results.some(redundant)) return results;
   const kept = results.filter((r) => !redundant(r));
   // Held noise calls are re-inserted at their recorded positions; keep those valid.
@@ -641,6 +655,10 @@ export function classifyCalls(
     // see; applied here they labelled it `database`, and both the symbol
     // linker and the LSP enhancer skip that kind, so it could never resolve.
     if (localSymbols?.has(root)) continue;
+
+    // A name read inside an expression is never a database or API call by its name: the
+    // linker keeps it only where it resolves to the project's own routine.
+    if (call.read) continue;
 
     // 2e. A local made by a database client (`const request = pool.request()`):
     // `request.input(…)` binds a query parameter, not an HTTP request.

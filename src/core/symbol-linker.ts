@@ -759,6 +759,14 @@ function buildSymbolIndex(
           });
         }
       }
+      // A property read through its accessor method (`property Points read GetPoints`): the
+      // property's name answers with that method, so a read or call of it lands there.
+      for (const prop of cls.properties ?? []) {
+        if (!prop.readAccessor) continue;
+        const accessor = fileSymbols.get(`${cls.name}.${prop.readAccessor}`);
+        const key = `${cls.name}.${prop.name}`;
+        if (accessor && !fileSymbols.has(key)) fileSymbols.set(key, accessor);
+      }
     }
 
     // Exports (fill in symbols not already captured by functions/methods)
@@ -3004,6 +3012,18 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       const f = resolveTarget(imp.source, consumerFile, pathMap);
       if (f && declAt.has(memberKey(f, typeName))) return f;
     }
+    // Where an import puts a whole unit in scope without naming what it uses (`uses Garage`), the one
+    // imported file declaring the type is the one meant — as `typeFileFor` reads a parameter's type.
+    const consumer = analysisOf.get(consumerFile);
+    if (consumer && pluginFor(consumer.language as Language)?.importsShareScope) {
+      pathMap ??= buildFilePathMap(analyses);
+      const declaring = new Set<string>();
+      for (const imp of consumer.imports) {
+        const f = resolveTarget(imp.source, consumerFile, pathMap);
+        if (f && f !== consumerFile && declAt.has(memberKey(f, typeName))) declaring.add(f);
+      }
+      if (declaring.size === 1) return [...declaring][0]!;
+    }
     return null;
   };
   // Only a declaration in the consumer's own type space: a Java field typed
@@ -3738,6 +3758,47 @@ function dispatchMapCall(
 }
 
 /**
+ * A name read without parentheses (`CallInfo.read`: Pascal `N := ACar.Shine`, `N + Points`) runs what it
+ * names only when that is a routine: linked when it resolves without guessing to a function or method — or a
+ * property's read accessor, which the symbol index answers for the property — as `calls` when it returns a
+ * value and needs no argument, as `passes` otherwise (a method pointer: `OnClick := btnSaveClick`,
+ * `List.Sort(CompareClubs)`), and to a construction (`TCar.Create`). A field, a variable or a class read
+ * draws no edge.
+ */
+function resolveReadName(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  const { read: _read, ...asCall } = call;
+  const link = resolveCallToDefinition(sourceFile, sourceSymbol, asCall, analysis, ctx);
+  if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
+  if (link.relation === "instantiates") return link;
+  if (link.relation !== "calls") return null;
+  const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
+  const routine = target && routineAt(target, link.targetSymbol);
+  if (!routine) return null;
+  // A property's accessor runs on the read, an indexed one (`property FrontRow index 1 read GetRow`) with its index.
+  const leaf = (s: string) => s.slice(s.lastIndexOf(".") + 1).toLowerCase();
+  if (leaf(call.name) !== leaf(link.targetSymbol)) return link;
+  // Read without its arguments a routine cannot run: one that needs some is handed on (`List.Sort(CompareClubs)`).
+  const needsArguments = routine.params.some((p) => p.defaultValue === null && !p.optional && !p.variadic && !p.isReceiver);
+  return routine.returnType && !needsArguments ? link : { ...link, relation: "passes" };
+}
+
+/** The function or method (`Class.method`) `symbol` names in the file; null for a class or anything else. */
+function routineAt(analysis: FileAnalysis, symbol: string): FunctionInfo | null {
+  const fn = analysis.functions.find((f) => f.name === symbol);
+  if (fn) return fn;
+  const dot = symbol.indexOf(".");
+  if (dot <= 0) return null;
+  const cls = analysis.classes.find((c) => c.name === symbol.slice(0, dot));
+  return cls?.methods.find((m) => m.name === symbol.slice(dot + 1)) ?? null;
+}
+
+/**
  * Whether `symbol` names a function, a method (`Class.method`) or a class the file declares — or the
  * module's own default export, which is what a component file is (`mount(ClubCard)` on `ClubCard.vue`).
  */
@@ -3765,6 +3826,7 @@ function resolveCallToDefinition(
   reference = false,
 ): SymbolLink | null {
   if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
+  if (call.read) return resolveReadName(sourceFile, sourceSymbol, call, analysis, ctx);
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
@@ -4074,7 +4136,11 @@ function resolveCallToDefinition(
           const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
             ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
-            const link = mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
+            // A property the base reads through an accessor the caller's class overrides: that override.
+            const own = accessorOverride(ctx, parentDef.name, leafName, cls.name, sourceFile);
+            const link = own
+              ? mkLink(own.file, own.symbol, own.line, "INFERRED", "inheritance")
+              : mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
             // Called on the enclosing class's own instance: say which (see `SymbolLink.viaType`).
             if (sourceSymbol.startsWith(`${cls.name}.`)) Object.assign(link, { viaType: cls.name, viaTypeFile: sourceFile });
             return link;
@@ -5666,7 +5732,39 @@ function scopedName(
   // Where fields need `this.`/`self.`, a bare name is a local or global the
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
-  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name);
+  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name)
+    ?? moduleBindingPoint(ctx, analysis, sourceFile, consumer, name);
+}
+
+/**
+ * A typed variable declared at module level (`FileAnalysis.moduleBindings`, `var dmLeague: TdmLeague;`)
+ * that a bare name reaches when no local, parameter or field takes it: the file's own, else an exported
+ * one of a file the caller's imports put in scope (`importsShareScope`: a unit seen through `uses`).
+ * Its type is read where it is declared. Two such files typing the name differently decide nothing.
+ */
+function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string): InjectionPoint | null {
+  const key = nameKey(analysis.language, name);
+  const point = (holder: FileAnalysis, written: string): InjectionPoint | null => {
+    const typeName = receiverTypeName(written, holder.language);
+    if (!typeName) return null;
+    const ref = typeRefFor(ctx, typeName, holder.filePath, holder.projectId);
+    return { typeName: ref?.typeName ?? typeName, typeFile: ref?.typeFile ?? null, member: name, consumer, container: false };
+  };
+  const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
+  if (own) return point(analysis, own.type);
+  if (!pluginFor(analysis.language)?.importsShareScope) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  let found: InjectionPoint | null = null;
+  for (const imp of analysis.imports) {
+    const file = importPath(ctx, imp.source, sourceFile);
+    const holder = file && file !== sourceFile ? ctx.analysisByFile.get(file) : undefined;
+    const binding = holder?.moduleBindings?.find((b) => b.exported && nameKey(holder.language, b.name) === key);
+    if (!holder || !binding) continue;
+    const p = point(holder, binding.type);
+    if (!p || (found && (found.typeName !== p.typeName || found.typeFile !== p.typeFile))) return null;
+    found = p;
+  }
+  return found;
 }
 
 /**
@@ -6666,7 +6764,12 @@ function findMethodInClass(
     if (seen.has(key)) return null;
     seen.add(key);
     const def = symbolIn(ctx, file, `${name}.${method}`);
-    if (def) return { file, symbol: def.name, line: def.line };
+    if (def) {
+      // A base's property read through its accessor (`Count` → `GetCount`) runs the accessor as the
+      // class the lookup started from overrides it, as a virtual getter dispatches.
+      const accessor = depth > 0 ? accessorOverride(ctx, def.name, method, className, classFile, nearFile) : null;
+      return accessor ?? { file, symbol: def.name, line: def.line };
+    }
     const elsewhere = methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
@@ -6685,6 +6788,23 @@ function findMethodInClass(
     file = baseFile;
   }
   return null;
+}
+
+/**
+ * Where `found` (the symbol a member lookup reached on a base class) is a property's accessor rather than
+ * the member asked for, the accessor as `className` — where the lookup began — declares or inherits it.
+ */
+function accessorOverride(
+  ctx: LinkContext,
+  found: string,
+  asked: string,
+  className: string,
+  classFile: string,
+  nearFile?: string,
+): { file: string; symbol: string; line: number } | null {
+  const accessor = found.slice(found.lastIndexOf(".") + 1);
+  if (accessor.toLowerCase() === asked.toLowerCase()) return null;
+  return findMethodInClass(ctx, className, classFile, accessor, nearFile);
 }
 
 /** A class and the classes it extends, nearest first. */

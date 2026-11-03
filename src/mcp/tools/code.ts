@@ -776,7 +776,9 @@ function unresolvedCalls(ctx: ToolContext, links: SymbolLink[]): UnresolvedCalls
     if (!analysis) return undefined;
     const calls = callsOfSymbol(analysis, symbol);
     if (!calls) return undefined;
-    const sites = new Set(calls.filter((c) => c.kind !== "database").map((c) => `${c.line}:${c.name}`));
+    // A name read without parentheses (`CallInfo.read`) is a call only where it resolved: unresolved, it was a value.
+    const reads = new Set(calls.filter((c) => c.read).map((c) => `${c.line}:${c.name}`));
+    const sites = new Set(calls.filter((c) => c.kind !== "database" && !c.read).map((c) => `${c.line}:${c.name}`));
     if (sites.size === 0) return undefined;
     if (!resolvedSites) {
       resolvedSites = new Map();
@@ -788,7 +790,8 @@ function unresolvedCalls(ctx: ToolContext, links: SymbolLink[]): UnresolvedCalls
         resolvedSites.set(key, set);
       }
     }
-    const resolved = resolvedSites.get(symbolKey(file, symbol))?.size ?? 0;
+    const resolvedHere = resolvedSites.get(symbolKey(file, symbol));
+    const resolved = resolvedHere ? [...resolvedHere].filter((s) => !reads.has(s)).length : 0;
     return { unresolved: Math.max(0, sites.size - resolved), total: sites.size };
   };
 }

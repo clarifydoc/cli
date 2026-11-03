@@ -539,6 +539,13 @@ export interface FileAnalysis {
    */
   nameAliases?: NameAliasInfo[];
   /**
+   * Variables the module declares at its top level with a stated type (`var dmLeague: TdmLeague;` in a Pascal unit),
+   * the type as written. A member call through one (`dmLeague.SaveClub`) is a call on that type, from the module's own
+   * functions and, when `exported`, from every file whose imports put the module's names in scope (the manifest's
+   * `importsShareScope`: a unit's interface section, seen through `uses`). Omitted when the file declares none.
+   */
+  moduleBindings?: ModuleBindingInfo[];
+  /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
    * a function by its qualified name (`use function App\Support\money`,
@@ -792,6 +799,16 @@ export interface ExportInfo {
   instanceOf?: string;
 }
 
+/** A typed variable a module declares at its top level (`FileAnalysis.moduleBindings`). */
+export interface ModuleBindingInfo {
+  name: string;
+  /** The declared type, as written. */
+  type: string;
+  line: number;
+  /** Visible to the files that import the module, not only to its own functions. */
+  exported: boolean;
+}
+
 /** A module-level name bound to another: `name` stands for `target`, as written (`s = attrs`). */
 export interface NameAliasInfo {
   name: string;
@@ -903,6 +920,15 @@ export interface CallInfo {
    * guessing. Absent: the site calls it.
    */
   passed?: "argument" | "attribute" | "return" | "property";
+  /**
+   * The name is read without parentheses inside an expression (Pascal `N := ACar.Shine`, `if qry.IsEmpty then`,
+   * `N + Points`), where the language runs a routine named so and a property's read accessor. The linker keeps it
+   * only when it resolves, without guessing by name, to a function or method — a `calls` edge when that returns a
+   * value and needs no argument, a `passes` edge otherwise (a method pointer: `OnClick := btnSaveClick`,
+   * `List.Sort(CompareClubs)`) — or to a construction; a field or variable read is no edge. Never a database or
+   * API call by its name.
+   */
+  read?: true;
   /**
    * For a `passed: "return"` name: the key the function returns it under — `latest` in
    * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
@@ -1218,6 +1244,12 @@ export interface PropertyInfo {
   isRequired?: boolean;
   /** The DI token/key the field is injected by — see `ParamInfo.qualifier`. */
   qualifier?: string;
+  /**
+   * The method a read of the property runs, when the class declares the getter as one of its methods (Pascal
+   * `property Points: Integer read GetPoints`); absent for a getter that is a field. A call or read of the property
+   * on the class reaches that method.
+   */
+  readAccessor?: string;
   /**
    * A computed member's value as written, when its type is not stated (a
    * Python `@property` returning `self.repos.foods`): the project pass types

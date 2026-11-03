@@ -28,6 +28,12 @@ export interface ProjectConfigValue extends ConfigEntry {
   file: string;
 }
 
+/** Files read at each sub-project root: literal names, or bounded globs. */
+export interface RootFileSpec {
+  files: readonly string[];
+  glob?: { deep: number; limit: number };
+}
+
 const IGNORE = ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "**/obj/**", "**/vendor/**"];
 
 /** Read a file as UTF-8, or null when it cannot be read. */
@@ -43,7 +49,7 @@ async function readIf(abs: string): Promise<string | null> {
  * The config files a spec names under one root: its literal file names, or a
  * bounded, sorted glob when the spec declares one.
  */
-async function filesOf(absRoot: string, spec: ConfigSourceSpec | ProxySourceSpec): Promise<string[]> {
+async function filesOf(absRoot: string, spec: RootFileSpec): Promise<string[]> {
   if (!spec.glob) return [...spec.files];
   const found = await glob([...spec.files], { cwd: absRoot, ignore: IGNORE, deep: spec.glob.deep, absolute: false });
   return found.sort(byOrdinal).slice(0, spec.glob.limit);
@@ -53,7 +59,7 @@ async function filesOf(absRoot: string, spec: ConfigSourceSpec | ProxySourceSpec
  * Every file of `specs` at each sub-project root, parsed: what `read` makes
  * of one file's text, per sub-project id. Sensitive files are never opened.
  */
-async function readAtRoots<S extends ConfigSourceSpec | ProxySourceSpec, T>(
+export async function readAtRoots<S extends RootFileSpec, T>(
   projectRoot: string,
   subProjects: readonly SubProject[],
   specs: readonly S[],
