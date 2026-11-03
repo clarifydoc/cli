@@ -2490,11 +2490,12 @@ function classNameMember(
         return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
       }
     }
-    // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`).
+    // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`),
+    // or from a module it extends (`Club.table` for `extend Standings`).
     if (!methodName.includes(".")) {
       for (const filePath of eligible) {
         if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
-        const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName);
+        const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName, undefined, "class");
         if (!inherited) break;
         const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
         if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
@@ -3828,11 +3829,13 @@ function resolveCallToDefinition(
   // A bare name where members need no `this.` is the caller's own class's
   // member, then its bases' — never whichever class of the file declares it
   // first — and never another class's from a free function.
+  // A bare or `self.` call in a method of the class object runs on the class (Ruby `def self.x`).
+  const callerSide = (): "instance" | "class" => (findEnclosingCallable(analysis, sourceSymbol)?.classLevel ? "class" : "instance");
   const ownerClass = !isQualified && !reference && !bareIsFunction && call.kind === "internal" && targetFile === sourceFile
     ? callerClass(ctx, analysis, sourceSymbol, call.line)
     : undefined;
   if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null)) {
-    const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName) : null;
+    const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) : null;
     if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
       if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
     } else if (hit) {
@@ -3841,7 +3844,7 @@ function resolveCallToDefinition(
       // Another class's member is in reach only from a class it encloses (a Java inner class) —
       // or, where the extractor drops receivers (`p->kick()`), as a guess.
       const other = ctx.classAt.get(memberKey(sourceFile, memberClassOf(ctx, sourceFile, def)!));
-      if (!other || call.line < other.line || call.line > other.endLine) {
+      if (!other || call.line < other.line || call.line > other.endLine || pluginFor(analysis.language)?.nestedClassesShareNothing) {
         if (pluginFor(analysis.language)?.bareCallsHideReceivers) return mkLink(sourceFile, def.name, def.line, "INFERRED", "direct");
         def = undefined;
       }
@@ -3921,7 +3924,7 @@ function resolveCallToDefinition(
       // not whichever class of the file happens to define the name first.
       const dot = sourceSymbol.indexOf(".");
       const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
-      const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName) : null;
+      const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName, undefined, callerSide()) : null;
       if (hit && (hit.file !== sourceFile || !hit.symbol.startsWith(`${consumer}.`))) {
         return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: consumer, viaTypeFile: sourceFile });
       }
@@ -3975,7 +3978,7 @@ function resolveCallToDefinition(
     // `include Helper`, PHP `use Trait`, a default interface method). Where
     // members need `this.`/`self.`, a bare name is never one of them.
     const mixed = isQualified || !pluginFor(analysis.language)?.explicitSelfMembers
-      ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName)
+      ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName, callerSide())
       : null;
     if (mixed) return mkLink(mixed.file, mixed.symbol, mixed.line, "INFERRED", "inheritance");
   }
@@ -4970,6 +4973,7 @@ function mixinMember(
   sourceFile: string,
   sourceSymbol: string,
   method: string,
+  side: "instance" | "class" = "instance",
 ): { file: string; symbol: string; line: number } | null {
   const dot = sourceSymbol.indexOf(".");
   if (dot <= 0 || sourceSymbol.startsWith("route:")) return null;
@@ -4983,7 +4987,16 @@ function mixinMember(
     seen.add(key);
     const cls = ctx.classAt.get(key);
     if (!cls) break;
-    const supertypes = depth === 0 ? declaredSupertypes(cls, analysis) : cls.implements;
+    // A module the class `extend`s adds to the class object, one it includes or prepends to an instance:
+    // the side the call runs on sees only its own.
+    const kinds = new Map<string, Set<string>>();
+    for (const m of cls.mixins ?? []) (kinds.get(m.name) ?? kinds.set(m.name, new Set()).get(m.name)!).add(m.kind);
+    const onSide = (t: string) => {
+      const k = kinds.get(t);
+      if (!k) return side === "instance" || t === cls.extends;
+      return side === "class" ? k.has("extend") : k.has("include") || k.has("prepend");
+    };
+    const supertypes = (depth === 0 ? declaredSupertypes(cls, analysis) : cls.implements).filter(onSide);
     for (const raw of supertypes) {
       const mixin = bareClassName(raw);
       if (!mixin || mixin === bareClassName(cls.extends)) continue;
@@ -6354,6 +6367,8 @@ function findMethodInClass(
   method: string,
   /** The calling file: where a split type's member has several definitions, its own is the one it calls. */
   nearFile?: string,
+  /** "class": a member called on the class object itself (see `methodAlongAncestors`). */
+  side: "instance" | "class" = "instance",
 ): { file: string; symbol: string; line: number } | null {
   // Several class bases (Python): the C3 method resolution order decides.
   if (pluginFor(ctx.languageOf.get(classFile) as Language)?.multipleInheritance && ctx.classAt.get(memberKey(classFile, className))?.implements.length) {
@@ -6366,19 +6381,54 @@ function findMethodInClass(
       return null;
     }
   }
+  return methodAlongAncestors(ctx, className, classFile, method, nearFile, new Set(), side);
+}
+
+/**
+ * `findMethodInClass` past the multiple-inheritance case: the class, then
+ * each base. Where a class records its mixins (Ruby), its ancestors are
+ * looked up as the language does — the modules it prepends (the last
+ * written first), the class itself, the modules it includes (the last
+ * written first), then the superclass — each module with its own mixins.
+ * `extend`ed modules add to the class object, never to an instance.
+ */
+function methodAlongAncestors(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  method: string,
+  nearFile: string | undefined,
+  seen: Set<string>,
+  /** "class": a member called on the class object (`Club.table`) — its `extend`ed modules, not its includes. */
+  side: "instance" | "class" = "instance",
+): { file: string; symbol: string; line: number } | null {
   let name = className;
   let file = classFile;
-  const seen = new Set<string>();
   for (let depth = 0; depth < MAX_BASE_DEPTH; depth++) {
     const key = memberKey(file, name);
     if (seen.has(key)) return null;
     seen.add(key);
+    const mixins = ctx.classAt.get(key)?.mixins;
+    const viaMixins = (kind: "include" | "prepend" | "extend") => {
+      for (const m of [...(mixins ?? [])].reverse()) {
+        if (m.kind !== kind) continue;
+        const mixinFile = locateClass(ctx, m.name, file, ctx.projectOf.get(file) ?? "root");
+        // A module's methods are instance methods of whatever mixes it in — on the class object, for `extend`.
+        const hit = mixinFile ? methodAlongAncestors(ctx, m.name, mixinFile, method, undefined, seen) : null;
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const prepended = mixins && side === "instance" ? viaMixins("prepend") : null;
+    if (prepended) return prepended;
     const def = symbolIn(ctx, file, `${name}.${method}`);
     if (def) return { file, symbol: def.name, line: def.line };
     const elsewhere = methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
+    const mixedIn = mixins ? viaMixins(side === "instance" ? "include" : "extend") : null;
+    if (mixedIn) return mixedIn;
     const written = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
     if (!written) return null;
     // `class Turbo extends Motor` for `import { Engine as Motor }`: the module's `Engine`.

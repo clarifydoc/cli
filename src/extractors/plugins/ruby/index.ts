@@ -238,6 +238,39 @@ function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: Functio
   }
 }
 
+/** Words that stand alone on a line without calling anything. */
+const BARE_STATEMENT_KEYWORDS = new Set([
+  "end", "else", "elsif", "begin", "ensure", "rescue", "retry", "redo", "next", "break", "return", "super",
+  "self", "nil", "true", "false", "yield", "then", "do", "private", "protected", "public", "module_function",
+  "__method__", "__FILE__", "__LINE__", "__dir__", "binding", "raise", "loop", "puts", "p", "pp", "it",
+]);
+
+/**
+ * A line that is one bare name the method does not bind — `tally`,
+ * `authorize!`: Ruby reads an unbound identifier as a call on `self`, and a
+ * statement that only reads a value does nothing, so the name is a method the
+ * class has from itself, a module it mixes in or a base. The own-method pass
+ * covers the class's own methods; this one the rest, which another file
+ * declares.
+ */
+function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
+  const bound = boundLocals(lines, fn);
+  // A reader the class declares (`attr_reader :scope`) or forwards (`delegate :name, to: :club`) is no method of an ancestor.
+  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+    const decl = /^\s*(?:attr_reader|attr_accessor|delegate)\b\s*\(?\s*(:[\w?!]+(?:\s*,\s*:[\w?!]+)*)/.exec(lines[i] ?? "");
+    if (decl) for (const n of decl[1]!.matchAll(/:([\w?!]+)/g)) bound.add(n[1]!);
+  }
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  for (const [i, text] of bodyLines(lines, fn)) {
+    const m = /^\s*([a-z_]\w*[?!]?)\s*(?:#.*)?$/.exec(text);
+    if (!m) continue;
+    const name = m[1]!;
+    if (bound.has(name) || BARE_STATEMENT_KEYWORDS.has(name) || have.has(`${name}@${i + 1}`)) continue;
+    have.add(`${name}@${i + 1}`);
+    fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
+  }
+}
+
 /**
  * `builder.perform` on a local the method constructed (`builder = PlayerBuilder.new(…)`):
  * a paren-less call the call patterns cannot tell from an attribute read, but
@@ -807,6 +840,7 @@ export const rubySpec: RegexLangSpec = {
         addTypedLocalCalls(code, m);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m);
+        addBareStatementCalls(code, cls, m);
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
@@ -819,22 +853,30 @@ export const rubySpec: RegexLangSpec = {
       // Scan the class body for include/extend/prepend statements.
       // Each one names a module that ought to count as a relationship for
       // the data-model graph. Lines outside the class's body range are
-      // ignored, so module mixins from sibling classes don't bleed.
+      // ignored, so module mixins from sibling classes don't bleed — and so
+      // are the lines of a class or module nested inside it, whose mixins are
+      // its own (`include Scoring` in `module League; class Club` is Club's).
       const seen = new Set<string>(cls.implements ?? []);
+      const nested = classes.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
+      const mixins: NonNullable<ClassInfo["mixins"]> = [];
       for (let i = cls.line; i < cls.endLine && i < lines.length; i++) {
+        if (nested.some((c) => i + 1 >= c.line && i + 1 <= c.endLine)) continue;
         const line = lines[i] ?? "";
         // `include Import["repo"]` builds readers — it is no module the class implements.
         if (isAutoInjectInclude(line)) continue;
         // include Foo, Bar    /   extend Foo    /   prepend Foo
         const mixinMatch = line.match(/^\s*(include|extend|prepend)\s+([A-Z][\w:]*(?:\s*,\s*[A-Z][\w:]*)*)/);
         if (!mixinMatch) continue;
+        const kind = mixinMatch[1] as "include" | "extend" | "prepend";
         for (const name of mixinMatch[2]!.split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (!mixins.some((m) => m.name === name && m.kind === kind)) mixins.push({ name, kind });
           if (!seen.has(name)) {
             seen.add(name);
             cls.implements.push(name);
           }
         }
       }
+      if (mixins.length > 0) cls.mixins = mixins;
     }
     // Strong params live in a private `user_params` helper the action calls;
     // copy that access onto the action so the route join sees it there.

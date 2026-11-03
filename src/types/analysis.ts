@@ -1112,6 +1112,13 @@ export interface FunctionInfo {
    * implementations. Absent otherwise.
    */
   abstract?: true;
+  /**
+   * A method of the class object, not of an instance, where its name does
+   * not say so (Ruby `def self.find`, a method in `class << self` or after
+   * `module_function`): a bare call in it runs on the class, so it reaches
+   * the modules the class extends, never those it includes. Absent otherwise.
+   */
+  classLevel?: true;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];
@@ -1334,6 +1341,15 @@ export interface ClassInfo {
    * types, whose methods are promoted.
    */
   embeds?: string[];
+  /**
+   * The modules it mixes in, in the order written, each with how: `include`
+   * puts the module's methods after the class's own and before its base's,
+   * `prepend` before its own, `extend` on the class itself (`Club.table`, never
+   * an instance). Names as written (`League::Scoring`). They are in `implements`
+   * too; this keeps the lookup order a mixin language resolves members by.
+   * Absent where the language has no mixins.
+   */
+  mixins?: Array<{ name: string; kind: "include" | "prepend" | "extend" }>;
   /**
    * This part only adds members and conformances to a type declared elsewhere — a Rust `impl` block for a type
    * the file does not declare (`impl RouterExt for Router`). The type's name means its declaration; members

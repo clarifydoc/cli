@@ -1290,6 +1290,14 @@ export interface LanguagePluginManifest {
    */
   bareCallsHideReceivers?: boolean;
   /**
+   * A class declared inside another class or module does not share its
+   * methods (Ruby: `class Scope` inside `class Policy` reaches none of
+   * Policy's instance methods): a bare call in it never reaches the enclosing
+   * class's member. Unset, an enclosing class's member is in reach, as from a
+   * Java inner class.
+   */
+  nestedClassesShareNothing?: boolean;
+  /**
    * A module's top-level names reach another file only through an import
    * naming them (JS/TS, Python): in a module, a class name the file neither
    * declares nor imports is a global (`Map`, `Response`), never another

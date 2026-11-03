@@ -436,7 +436,12 @@ function singletonTest(lines: readonly string[], cls: ClassInfo): (m: FunctionIn
 export function separateSingletonMethods(lines: readonly string[], cls: ClassInfo): void {
   const isSingleton = singletonTest(lines, cls);
   const instanceNames = new Set(cls.methods.filter((m) => !isSingleton(m)).map((m) => m.name));
+  // A bare `module_function` makes the module's methods below it module methods.
+  const moduleFunctionsFrom = /^\s*module\s/.test(lines[cls.line - 1] ?? "")
+    ? lines.slice(cls.line, cls.endLine).findIndex((l) => /^\s*module_function\s*(?:#.*)?$/.test(l))
+    : -1;
   for (const m of cls.methods) {
+    if (isSingleton(m) || (moduleFunctionsFrom >= 0 && m.line > cls.line + moduleFunctionsFrom)) m.classLevel = true;
     if (instanceNames.has(m.name) && isSingleton(m)) m.name = `self.${m.name}`;
   }
 }
