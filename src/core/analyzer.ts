@@ -1198,7 +1198,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   enrichGraphFromSymbolLinks(componentGraph, symbolLinks);
   // …and from extends/implements that no import names (same namespace/package),
   // so an interface's dependents include its implementations.
-  enrichGraphFromInheritance(componentGraph, allAnalyses);
+  enrichGraphFromInheritance(componentGraph, allAnalyses, classIndex);
 
   // Enrich link graph from component graph edges that buildLinkGraph missed
   // (e.g. Go package imports resolved via directory matching)

@@ -236,6 +236,45 @@ describe("buildComponentGraph — Python modules named in the specifier", () => 
   });
 });
 
+describe("buildComponentGraph — Python absolute imports", () => {
+  const py = (path: string, imports: Partial<ImportInfo>[] = [], exports: string[] = []) =>
+    file(path, { language: "python", imports, exports });
+
+  it("`from clubs.models import Club` depends on clubs/models.py alone, never on the importer's own models.py", () => {
+    const graph = buildComponentGraph([
+      py("clubs/__init__.py"),
+      py("clubs/models.py", [], ["Club"]),
+      py("players/__init__.py"),
+      py("players/models.py", [], ["Player"]),
+      py("players/views.py", [{ source: "clubs.models", specifiers: ["Club"], isNamespace: false }]),
+    ]);
+    expect(graph["players/views.py"]).toEqual(["clubs/models.py"]);
+  });
+
+  it("names the dotted module, never a closer file of the same name or exporting the same function", () => {
+    const graph = buildComponentGraph([
+      py("league/__init__.py"),
+      py("league/sub/__init__.py"),
+      py("league/sub/fixtures.py", [], ["load"]),
+      py("cup/__init__.py"),
+      py("cup/fixtures.py", [], ["load"]),
+      py("cup/draw.py", [{ source: "league.sub.fixtures", specifiers: ["load"], isNamespace: false }]),
+      py("cup/replay.py", [{ source: "league.sub.fixtures", specifiers: ["fx"], isNamespace: true }]),
+    ]);
+    expect(graph["cup/draw.py"]).toEqual(["league/sub/fixtures.py"]);
+    // `import league.sub.fixtures as fx`
+    expect(graph["cup/replay.py"]).toEqual(["league/sub/fixtures.py"]);
+  });
+
+  it("leaves an import no project module answers to the name heuristics", () => {
+    const graph = buildComponentGraph([
+      py("vendor/whistle_kit.py", [], ["Whistle"]),
+      py("cup/referee.py", [{ source: "whistle_kit_shim", specifiers: ["Whistle"], isNamespace: false }]),
+    ]);
+    expect(graph["cup/referee.py"]).toEqual(["vendor/whistle_kit.py"]);
+  });
+});
+
 describe("buildComponentGraph — a barrel's re-exports", () => {
   it("gives `export { x } from './y'` an edge to the module it forwards", () => {
     const barrel = createEmptyAnalysis("src/index.ts", "typescript");

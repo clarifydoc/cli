@@ -43,4 +43,27 @@ describe("enrichGraphFromInheritance", () => {
     ]);
     expect(graph).toEqual({ "a/impl/Service.cs": ["a/IService.cs"] });
   });
+
+  it("takes a qualified base to the class its qualifier names, never the namesake beside the class", () => {
+    const imp = (source: string, specifiers: string[], isNamespace = false) => ({ source, specifiers, isDefault: false, isNamespace, isType: false, line: 1 });
+    const py = { language: "python" } as Partial<FileAnalysis>;
+    const graph: Record<string, string[]> = {};
+    enrichGraphFromInheritance(graph, [
+      file("cup/base.py", [cls("Club")], py),
+      file("league/__init__.py", [], py),
+      file("league/base.py", [cls("Club")], py),
+      file("cup/derby.py", [cls("Derby", "base.Club")], { ...py, imports: [imp("league", ["base"])] } as Partial<FileAnalysis>),
+      file("cup/final.py", [cls("Final", "league.base.Club")], { ...py, imports: [imp("league.base", ["league.base"], true)] } as Partial<FileAnalysis>),
+      file("cup/box.py", [cls("Box", "Generic[T]", ["base.Club"])], { ...py, imports: [imp("typing", ["Generic"]), imp("league", ["base"])] } as Partial<FileAnalysis>),
+      file("other/car.js", [cls("Car")], { language: "javascript" } as Partial<FileAnalysis>),
+      file("models/car.js", [cls("Car")], { language: "javascript" } as Partial<FileAnalysis>),
+      file("other/garage.js", [cls("Van", "models.Car")], { language: "javascript", imports: [imp("../models/car.js", ["models"], true)] } as Partial<FileAnalysis>),
+    ]);
+    expect(graph).toEqual({
+      "cup/derby.py": ["league/base.py"],
+      "cup/final.py": ["league/base.py"],
+      "cup/box.py": ["league/base.py"],
+      "other/garage.js": ["models/car.js"],
+    });
+  });
 });

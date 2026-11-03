@@ -11,6 +11,9 @@ import type {
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 import { buildImportIndex, isExternalImportSource, type ImportIndex } from "./import-index.js";
+import { buildClassIndex } from "./class-index.js";
+import { bareSupertypeName, sameTypeSpace } from "./typed-receivers.js";
+import type { ClassIndex } from "../types/project.js";
 import { ormOf } from "./entity-graph.js";
 import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
 import { pluginFor } from "../extractors/registry.js";
@@ -287,6 +290,8 @@ function dominantCategory(byKind: Partial<Record<TypeUsageKind, number>>): Class
 export function buildClassGraph(
   analyses: FileAnalysis[],
   importIndex: ImportIndex = buildImportIndex(analyses),
+  /** Resolves a supertype as written (`base.Club`, `models.Car`) to its class; built from `analyses` when absent. */
+  classIndex: ClassIndex = buildClassIndex(analyses, importIndex),
 ): ClassGraph {
   // Index every class node we know about. Externally-referenced types
   // (no defining ClassInfo or interface export) become "external" nodes so
@@ -368,6 +373,7 @@ export function buildClassGraph(
   // (importIndex is shared from the caller — see the default param above.)
   const edgeMap = new Map<string /* "src→tgt" */, ClassGraphEdge>();
   const files = new Set(analyses.map((a) => a.filePath));
+  const languageOf = new Map(analyses.map((a) => [a.filePath, a.language as string]));
   /** The file takes the name from a package or the standard library, by an import that names no project file. */
   const importedExternally = (file: string, name: string): boolean => {
     const source = importIndex.sourceFor(file, name);
@@ -383,7 +389,28 @@ export function buildClassGraph(
       // Resolve the target FIRST so we know whether to draw an edge at all.
       const candidates = localByName.get(ref.typeName) ?? [];
       let targetId: string;
-      if (candidates.length === 0) {
+      // A supertype the class index keys by its simple name (a nested `Outer::Inner` keeps the name match below).
+      const inherits = !!ref.sourceClass && (ref.usageKind === "extends" || ref.usageKind === "implements")
+        && bareSupertypeName(ref.rawType || ref.typeName) === ref.typeName;
+      if (inherits && candidates.length > 0) {
+        // No class of that name the file's language could name (a Python `models.Model` beside a Rust `Model`).
+        const inSpace = candidates.some((id) => {
+          const file = nodeIndex.get(id)?.filePath ?? "";
+          return sameTypeSpace(a.filePath, a.language, file, languageOf.get(file) ?? "");
+        });
+        if (!inSpace || importedExternally(ref.sourceFile, ref.typeName)) {
+          // `class Club(BaseModel)` on `from pydantic import BaseModel`: the package's, not a project namesake.
+          targetId = ensureNode(ref.typeName, "", false, true);
+        } else {
+          // A supertype is the class its qualifier and imports name (`base.Club` on
+          // `from league import base`, `import com.league.cup.Club`), as the linker
+          // resolves it — never merely the first class of that name. Unresolved: no edge.
+          const hit = classIndex.resolve(ref.sourceFile, ref.rawType || ref.typeName);
+          const hitId = hit && hit.cls.name === ref.typeName ? nodeIdFor(hit.cls.name, hit.filePath) : null;
+          if (!hitId || !candidates.includes(hitId)) continue;
+          targetId = hitId;
+        }
+      } else if (candidates.length === 0) {
         // Skip external types when the reference is from a file (not a class).
         // Otherwise the file-node space fills up with edges to fetch/Request/etc.
         if (!ref.sourceClass) continue;

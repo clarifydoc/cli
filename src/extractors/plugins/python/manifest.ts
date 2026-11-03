@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
 import { pypiPackageManager } from "./package-manifests.js";
 import { pythonStandardImport } from "./standard-library.js";
+import { resolvePythonImport } from "./module-resolver.js";
 import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
 
 /**
@@ -48,6 +49,8 @@ export const pythonManifest: LanguagePluginManifest = {
   externalModulePrefixes: ["os", "sys", "json", "re", "math", "datetime", "typing", "enum", "collections", "itertools", "functools", "pathlib", "hashlib", "asyncio", "logging", "unittest", "abc", "fastapi", "flask", "django", "pydantic", "sqlalchemy", "requests", "httpx", "aiohttp", "pytest", "numpy", "pandas", "scipy"],
   // `import types` is the standard library's unless a top-level project module shadows it.
   standardImport: pythonStandardImport,
+  // A dotted import names the module file from a source root (`from clubs.models import Club` → `clubs/models.py`).
+  resolveImport: resolvePythonImport,
   frameworkImportHints: { sqlalchemy: "sqlalchemy", "django.db.models": "django-orm", "django.db": "django-orm", tortoise: "tortoise-orm", peewee: "peewee", pony: "pony-orm", "pony.orm": "pony-orm" },
   frameworkRules: pythonFrameworkRules,
   activationFiles: ["requirements.txt", "pyproject.toml"],

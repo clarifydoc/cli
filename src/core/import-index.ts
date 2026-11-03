@@ -1,6 +1,7 @@
 import type { FileAnalysis } from "../types/analysis.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
+import { resolvePythonModule } from "../extractors/plugins/python/module-resolver.js";
 import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, isStandardImport, manifestFor } from "../extractors/registry.js";
 import type { ImportResolveContext } from "../types/language-plugin.js";
 import { isExternalPackage } from "../extractors/shared/link-scoring.js";
@@ -472,7 +473,7 @@ export function resolveImportSource(
   if (!src.startsWith(".") && !src.startsWith("/")) {
     // The language's standard library (`import types`), unless a project module shadows it.
     if (isStandardImport(norm, src, (p) => knownFiles.has(p))) return null;
-    if (norm.endsWith(".py")) return resolvePythonModule(norm, dir, src, knownFiles, specifier);
+    if (norm.endsWith(".py")) return resolvePythonModule(norm, src, (p) => knownFiles.has(p), specifier);
     // A tsconfig alias (`@/foo`, a `baseUrl` path) is rewritten to a
     // project-relative path before this runs; it names a project file only if
     // one is there — a package import (`lodash/fp`) never matches.
@@ -520,49 +521,6 @@ export function resolveImportSource(
     if (partial) candidates.push(`${joined.slice(0, slash + 1)}${partial}${joined.slice(slash + 1)}${ext}`, `${joined}/${partial}index${ext}`);
     for (const candidate of candidates) {
       if (knownFiles.has(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-/**
- * Resolve a dotted Python module (`app.api.routes`) to a file in the project.
- *
- * Two things make this harder than the relative case. The module path is
- * absolute from a source root the analysis never learns (it may be the project
- * root, or `src/`, or a package directory), so every ancestor of the importing
- * file is tried as a candidate root, nearest first. And `from pkg import mod`
- * puts the module the caller means in the *specifier*, not the source — so
- * `pkg/<specifier>.py` is tried before `pkg.py` itself.
- *
- * Bounded work: (depth of the importing file) × 4 set lookups, no scan of the
- * project. A bare third-party import (`from fastapi import APIRouter`) simply
- * misses every candidate and returns null, which is the correct answer.
- */
-function resolvePythonModule(
-  importingFile: string,
-  dir: string,
-  src: string,
-  knownFiles: Set<string>,
-  specifier: string | undefined,
-): string | null {
-  if (!/^[A-Za-z_][\w.]*$/.test(src)) return null;
-  const modulePath = src.replace(/\./g, "/");
-
-  // Ancestors of the importing file, nearest first, then the project root.
-  const roots: string[] = [];
-  for (let d = dir; d !== ""; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
-    roots.push(d);
-  }
-  roots.push("");
-
-  for (const root of roots) {
-    const base = root ? `${root}/${modulePath}` : modulePath;
-    const candidates = specifier
-      ? [`${base}/${specifier}.py`, `${base}/${specifier}/__init__.py`, `${base}.py`, `${base}/__init__.py`]
-      : [`${base}.py`, `${base}/__init__.py`];
-    for (const candidate of candidates) {
-      if (knownFiles.has(candidate) && candidate !== importingFile) return candidate;
     }
   }
   return null;

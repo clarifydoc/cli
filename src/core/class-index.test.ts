@@ -48,6 +48,16 @@ describe("buildClassIndex", () => {
     expect(idx.supertypes(v)[0]!.ref?.filePath).toBe("app/base.py");
   });
 
+  it("follows a dotted module qualifier to the module the import binds, past a namesake beside the class", () => {
+    const base = file("league/base.py", [cls("Club")]);
+    const decoy = file("cup/base.py", [cls("Club")]);
+    const final = file("cup/final.py", [cls("Final", "league.base.Club")], [imp("league.base", ["league.base"])]);
+    const derby = file("cup/derby.py", [cls("Derby", "base.Club")], [imp("league", ["base"])]);
+    const idx = index([base, decoy, final, derby]);
+    expect(idx.resolve("cup/final.py", "league.base.Club")?.filePath).toBe("league/base.py");
+    expect(idx.resolve("cup/derby.py", "base.Club")?.filePath).toBe("league/base.py");
+  });
+
   it("leaves a framework base unresolved and reports where it was imported from", () => {
     const views = file("app/views.py", [cls("TagViewSet", "viewsets.ModelViewSet")], [
       imp("rest_framework", ["viewsets"]),

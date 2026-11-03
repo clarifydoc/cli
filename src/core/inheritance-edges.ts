@@ -1,5 +1,7 @@
 import type { FileAnalysis } from "../types/analysis.js";
-import { createTypeResolver } from "./class-index.js";
+import type { ClassIndex } from "../types/project.js";
+import { buildClassIndex, createTypeResolver } from "./class-index.js";
+import { buildImportIndex } from "./import-index.js";
 import { bareSupertypeName, declaredSupertypes } from "./typed-receivers.js";
 
 /**
@@ -16,13 +18,19 @@ import { bareSupertypeName, declaredSupertypes } from "./typed-receivers.js";
  * or the base is external). Otherwise the base must resolve unambiguously:
  * the one definition of that name in the class's own sub-project (or the
  * closest of several by directory), else a definition unique across the
- * language family. A tie adds nothing. Returns the number of edges added.
+ * language family. A tie adds nothing. A qualified base (`base.Club`,
+ * `models.Car`, `league.base.Club`) is the class its qualifier names, as the
+ * class index resolves it — never a namesake beside the class; unresolved, no
+ * edge. Returns the number of edges added.
  */
 export function enrichGraphFromInheritance(
   graph: Record<string, string[]>,
   analyses: FileAnalysis[],
+  /** The project's class index (built from `analyses` when a qualified base needs it and none is given). */
+  classIndex?: ClassIndex,
 ): number {
   const resolve = createTypeResolver(analyses, { includeExports: true, allowOwnFile: false });
+  let classes = classIndex;
 
   let added = 0;
   for (const a of analyses) {
@@ -33,7 +41,13 @@ export function enrichGraphFromInheritance(
       for (const raw of declaredSupertypes(cls, a)) {
         const name = bareSupertypeName(raw);
         if (!name || name === cls.name || imported.has(name)) continue;
-        const target = resolve(name, a);
+        const qualified = /\\|::|\./.test(raw.replace(/[<[(].*$/s, ""));
+        let target: string | null;
+        if (qualified) {
+          classes ??= buildClassIndex(analyses, buildImportIndex(analyses));
+          const hit = classes.resolve(a.filePath, raw);
+          target = hit && hit.cls.name === name && hit.filePath !== a.filePath ? hit.filePath : null;
+        } else target = resolve(name, a);
         if (!target) continue;
         const edges = (graph[a.filePath] ??= []);
         if (!edges.includes(target)) {
