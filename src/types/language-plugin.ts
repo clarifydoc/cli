@@ -1074,6 +1074,21 @@ export interface LanguagePluginManifest {
     nesting(classes: readonly ClassInfo[], line: number): string[];
   };
   /**
+   * Members a framework base class gives every subclass that return an
+   * instance of the subclass, or a query that yields one (ActiveRecord `find`,
+   * `find_by`, `where`, `first`): the linker types `club = Club.find(id)` and
+   * `Club.where(…).first.name` on the subclass when no class of its chain
+   * declares the member. `bases` are the framework classes as an `extends`
+   * writes them; a project class reaching one through its own bases counts.
+   */
+  selfTypedMembers?: { bases: readonly string[]; members: readonly string[] };
+  /**
+   * A method's name may end in `?` or `!` (Ruby `valid?`, `save!`): a call's
+   * trailing mark is part of the name it calls (`disabled?` is not
+   * `disabled`), never a mark on a nullable receiver.
+   */
+  marksEndNames?: boolean;
+  /**
    * The class a receiver's own name states, in a language whose locals carry
    * no declared type the linker can read (Ruby's `match_report.close!` →
    * `MatchReport`, Scala's `api` → `Api`): evidence for a unique-name method

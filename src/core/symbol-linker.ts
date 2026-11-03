@@ -5114,9 +5114,9 @@ function resolveThroughDeclaredType(
 ): SymbolLink | null {
   const dot = sourceSymbol.indexOf(".");
   const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
-  // `x!.save()` / `x?.save()` mark the receiver; a project method named with its `!`/`?` (Ruby `update!`) keeps it.
-  const exactLeaf = leafName.replace(/\s+/g, "");
-  leafName = exactLeaf !== receiverSegment(leafName) && projectCallableNames(ctx).has(exactLeaf) ? exactLeaf : receiverSegment(leafName);
+  // `x!.save()` / `x?.save()` mark the receiver; where a method's name ends in its mark (Ruby `update!`,
+  // `valid?`), the mark is part of the name it calls.
+  leafName = manifestFor(analysis.language as Language)?.marksEndNames ? leafName.replace(/\s+/g, "") : receiverSegment(leafName);
 
   if (call.receiverType || call.receiverQualifier) {
     let typeName = receiverTypeName(call.receiverType, analysis.language);
@@ -5198,6 +5198,17 @@ function chainPoint(
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth);
     rest = receiver.slice(1);
+    // `League::Club.find(id)` where constants are looked up lexically: the class at that path heads the chain.
+    let names = 1;
+    while (!point && names < receiver.length && !receiver[names]!.call && /^[A-Z]/.test(receiver[names]!.name)) names++;
+    // Only a chain through a call on it: `League::Club.find` itself is a class call, linked by its class name.
+    const path = names > 1 && names < receiver.length && /^[A-Z]/.test(head.name)
+      ? lexicalPathRef(ctx, receiver.slice(0, names).map((r) => r.name).join("::"), sourceFile, analysis.projectId)
+      : undefined;
+    if (path) {
+      point = { ...path, member: "", consumer, container: false };
+      rest = receiver.slice(names);
+    }
     // `Factory::getInstance()->run()` — a call on a project class itself.
     if (!point && rest[0]?.call && /^[A-Z]/.test(head.name)) {
       const imported = importedTypeRef(ctx, head.name, sourceFile, analysis.projectId);
@@ -5378,8 +5389,34 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     const owner = ctx.analysisAt.get(point.typeFile);
     hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
   }
-  if (!hit) return null;
+  if (!hit) return frameworkSelfMember(ctx, point, method);
   return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
+}
+
+/**
+ * A member no class of the point's chain declares that the framework base it
+ * reaches gives every subclass, returning the subclass (`selfTypedMembers`:
+ * ActiveRecord's `Club.find(id)`, `Club.where(…)`): the point's own type.
+ */
+function frameworkSelfMember(ctx: LinkContext, point: InjectionPoint, method: string): InjectionPoint | null {
+  if (!point.typeFile) return null;
+  const spec = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.selfTypedMembers;
+  if (!spec?.members.includes(method)) return null;
+  let name = declaredTypeName(ctx, point.typeFile, point.typeName);
+  let file = point.typeFile;
+  const seen = new Set<string>();
+  for (let depth = 0; depth < MAX_BASE_DEPTH && !seen.has(memberKey(file, name)); depth++) {
+    seen.add(memberKey(file, name));
+    const written = ctx.classAt.get(memberKey(file, name))?.extends?.replace(/^::/, "");
+    if (!written) return null;
+    if (spec.bases.includes(written)) return { typeName: point.typeName, typeFile: point.typeFile, member: "", consumer: point.consumer, container: false };
+    const base = bareClassName(written);
+    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
+    if (!baseFile) return null;
+    name = declaredTypeName(ctx, baseFile, base);
+    file = baseFile;
+  }
+  return null;
 }
 
 /**

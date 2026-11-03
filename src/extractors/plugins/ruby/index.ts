@@ -3,6 +3,7 @@ import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
+import { rubyModelFinders } from "./autoload.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
@@ -287,13 +288,17 @@ function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: Fun
   }
 }
 
+/** A chain off a class through a model finder or query (`Club.find()`, `Club.where().first()`). */
+const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.members.map((m) => m.replace(/[?!]/g, "\\$&")).join("|")})\\(\\)`);
+
 /**
  * `builder.perform` on a local the method constructed (`builder = PlayerBuilder.new(…)`):
  * a paren-less call the call patterns cannot tell from an attribute read, but
  * the local's stated type makes it a member of that class.
  */
 function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
-  const typed = (fn.localTypes ?? []).filter((l) => l.type);
+  // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`).
+  const typed = (fn.localTypes ?? []).filter((l) => l.type || MODEL_FINDER_CHAIN.test(l.from ?? ""));
   if (typed.length === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
@@ -801,6 +806,17 @@ export const rubySpec: RegexLangSpec = {
       // matcher stops at the `?` / `!`, so these were never recorded.
       pattern: /(?<![\w.@$:])(?!defined\?)([a-z_]\w*[?!])\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
+    },
+    {
+      // A chain of calls off a class — `Club.where(active: true).first.full_name`,
+      // `Club.find(id).promote!` — named with every step but the last called
+      // (`Club.where().first().full_name`), so the linker types it step by step
+      // through what each returns. Stdlib and framework constants are no such chain;
+      // a construction's (`Club.new(…).x`) is read with its type above.
+      pattern: new RegExp(
+        String.raw`(?<![\w.@$:])(?:::)?(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\b)([A-Z]\w*(?:::[A-Z]\w*)*)(?!\.new\b)((?:\.[a-z_]\w*[?!]?(?:\s*\([^()]*\))?){1,4})\.([a-z_]\w*[?!]?)(?![\w?!])(?=\s*(?:\(|$|#|[,)\]}]|\b(?:if|unless|do)\b|\{))`,
+      ),
+      buildName: (m) => ({ name: `${m[1]}${m[2]!.replace(/\.([a-z_]\w*[?!]?)(?:\s*\([^()]*\))?/g, ".$1()")}.${m[3]}`, leafName: m[3] }),
     },
     {
       // A whole statement that is just `receiver.method` — `user.save`,

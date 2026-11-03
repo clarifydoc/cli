@@ -159,6 +159,19 @@ interface ValueFact {
   /** "" when only a container key is known. */
   type: string;
   qualifier?: string;
+  /** The call chain off a class the value comes from (`Club.find()`), typed by the linker. */
+  from?: string;
+}
+
+/**
+ * `Club.find(id)` / `Club.where(active: true).first` — a chain of calls off a
+ * class, as the linker reads a local's initializer: every step a call (Ruby
+ * has no field reads), its arguments dropped (`Club.where().first()`).
+ */
+export function rubyCallChain(text: string): string | null {
+  const m = new RegExp(String.raw`^(${CONST})((?:\.[a-z_]\w*[?!]?(?:\s*\([^()]*\))?)+)$`).exec(text.trim());
+  if (!m || /^\.new\b/.test(m[2]!)) return null;
+  return m[1]!.replace(/^::/, "") + m[2]!.replace(/\.([a-z_]\w*[?!]?)(?:\s*\([^()]*\))?/g, ".$1()");
 }
 const UNKNOWN = "unknown" as const;
 const NONE = "none" as const;
@@ -197,11 +210,18 @@ function valueFact(rhs: string, scope: (name: string) => Fact): Fact {
     return type ? { type } : UNKNOWN;
   }
   if (/^[a-z_]\w*$/.test(t)) return scope(t);
+  const from = rubyCallChain(t);
+  if (from) return { type: "", from };
   return UNKNOWN;
 }
 
+/** A fact an instance variable keeps: a stated type or key — a call chain types locals only. */
+function statedFact(fact: Fact): Fact {
+  return typeof fact === "object" && fact.from ? UNKNOWN : fact;
+}
+
 function sameFact(a: ValueFact, b: ValueFact): boolean {
-  return a.type === b.type && (a.qualifier ?? "") === (b.qualifier ?? "");
+  return a.type === b.type && (a.qualifier ?? "") === (b.qualifier ?? "") && (a.from ?? "") === (b.from ?? "");
 }
 
 /** Every assignment must state the same thing; one the source does not type leaves the name untyped. */
@@ -306,6 +326,7 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
     if (!fact) continue;
     const local: LocalType = { name, type: fact.type };
     if (fact.qualifier) local.qualifier = fact.qualifier;
+    if (fact.from) local.from = fact.from;
     out.push(local);
   }
   return out;
@@ -339,7 +360,7 @@ export function collectIvarProperties(lines: readonly string[], cls: ClassInfo, 
     const scope = (name: string): Fact => {
       if (params.has(name)) return paramFact(params.get(name));
       const l = locals.get(name);
-      if (!l) return UNKNOWN;
+      if (!l || (!l.type && !l.qualifier)) return UNKNOWN;
       return l.qualifier ? { type: l.type, qualifier: l.qualifier } : { type: l.type };
     };
     for (let i = m.line; i < Math.min(m.endLine, lines.length); i++) {
@@ -350,12 +371,12 @@ export function collectIvarProperties(lines: readonly string[], cls: ClassInfo, 
       if (multi) {
         const names = multi[1]!.split(",").map((n) => n.trim().slice(1));
         const values = splitTopLevel(rhsOf(raw, code, code.indexOf(multi[1]!) + multi[1]!.length));
-        names.forEach((n, k) => table.assign(n, values.length === names.length ? valueFact(values[k]!, scope) : UNKNOWN));
+        names.forEach((n, k) => table.assign(n, values.length === names.length ? statedFact(valueFact(values[k]!, scope)) : UNKNOWN));
         continue;
       }
       const one = IVAR_ASSIGN_RE.exec(code);
       if (!one) continue;
-      table.assign(one[1]!, valueFact(rhsOf(raw, code, code.indexOf("@" + one[1]!) + one[1]!.length + 1), scope));
+      table.assign(one[1]!, statedFact(valueFact(rhsOf(raw, code, code.indexOf("@" + one[1]!) + one[1]!.length + 1), scope)));
     }
   }
   const out: PropertyInfo[] = [];

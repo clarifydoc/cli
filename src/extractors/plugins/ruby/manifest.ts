@@ -4,7 +4,7 @@ import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
-import { rubyAutoloadedFiles, rubyLexicalConstants, rubyTypeNamedByReceiver } from "./autoload.js";
+import { rubyAutoloadedFiles, rubyLexicalConstants, rubyModelFinders, rubyTypeNamedByReceiver } from "./autoload.js";
 import { resolveRubyRequire } from "./require-paths.js";
 
 /**
@@ -29,6 +29,10 @@ export const rubyManifest: LanguagePluginManifest = {
   // `Helper` inside a compact `class League::Report` is `::Helper`, never `League::Helper`.
   lexicalConstants: rubyLexicalConstants,
   typeNamedByReceiver: rubyTypeNamedByReceiver,
+  // `Club.find(id)` is a Club, `Club.where(…)` a query of Clubs (ActiveRecord).
+  selfTypedMembers: rubyModelFinders,
+  // `valid?` and `save!` are names of their own.
+  marksEndNames: true,
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],
   parsing: "regex",
