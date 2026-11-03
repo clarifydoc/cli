@@ -5,6 +5,7 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
 import { declaredNamespaces, extractCppClasses } from "./classes.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
+import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
@@ -266,6 +267,8 @@ export const cppSpec: RegexLangSpec = {
   },
   postProcessClasses: tagQmlElementClasses,
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
+  // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
+  extractTypeAliases: extractCFamilyTypeAliases,
   extractStringConstants: extractCppStringConstants,
 
   // Qt Widgets `connect(Widget, &QClass::signal, this, &Dlg::slot)` wiring —

@@ -4093,6 +4093,18 @@ function resolveCallToDefinition(
   // `new User` (TS/C#/Java), `New User` (VB) — and VB-style bare `UserEditForm(...)`
   // — where the class lives in another file. Same-namespace languages need no
   // import at the call site, so resolve via the (unique) global class name.
+  if (!def && isQualified && !call.name.includes("(") && pluginFor(analysis.language as Language)?.nestedTypePaths) {
+    // `new Table::Iterator(3)`, read as `Table.Iterator`: the class nested in `Table`, constructed.
+    const path = dealias(ctx, parts.join("::"), sourceFile);
+    const ref = ctx.classFiles.has(path) ? typeRefFor(ctx, path, sourceFile, analysis.projectId) : null;
+    const cls = ref ? ctx.classAt.get(memberKey(ref.typeFile, ref.typeName)) : undefined;
+    if (ref && cls) {
+      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      const own = ctor ? null : findMethodInClass(ctx, ref.typeName, ref.typeFile, path.split("::").pop()!, sourceFile);
+      const target = ctor ? { file: ref.typeFile, symbol: `${ref.typeName}.${ctor.name}`, line: ctor.line } : own ?? { file: ref.typeFile, symbol: ref.typeName, line: cls.line };
+      return mkLink(target.file, target.symbol, target.line, "INFERRED", "constructor");
+    }
+  }
   if (!def) {
     // `new App\Invoice` qualifies with PHP's `\` as `new a.b.C` does with `.`.
     const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)$/);
@@ -5689,10 +5701,21 @@ function nestedTypeRef(
 /** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */
 function dealias(ctx: LinkContext, typeName: string, sourceFile: string): string {
   if (!ctx.typeAliases) return typeName;
-  return followTypeAlias(ctx.typeAliases, typeName, sourceFile, (name, near) => {
+  const isClass = (name: string, near: string): boolean => {
     const lang = ctx.languageOf.get(near) ?? "";
     return (ctx.classFiles.get(name) ?? []).some((f) => sameTypeSpace(near, lang, f, ctx.languageOf.get(f) ?? ""));
-  });
+  };
+  const whole = followTypeAlias(ctx.typeAliases, typeName, sourceFile, isClass);
+  if (whole !== typeName || !typeName.includes("::") || ctx.classFiles.has(typeName)) return whole;
+  // An alias used as a scope (`League::Iterator` for `typedef Table League;`): the class nested in what it names.
+  const segments = typeName.split("::");
+  for (let k = segments.length - 1; k >= 1; k--) {
+    const head = segments.slice(0, k).join("::");
+    const target = followTypeAlias(ctx.typeAliases, head, sourceFile, isClass);
+    const path = `${target}::${segments.slice(k).join("::")}`;
+    if (target !== head && ctx.classFiles.has(path)) return path;
+  }
+  return typeName;
 }
 
 /** The class an import of `typeName` reaches through a barrel's re-exports; null when the import names a declaration directly, or none. */
@@ -5757,6 +5780,9 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Not where one type spans files (partial classes): there the richest
   // declaration below stands for the type.
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
+  // Where a type spans files by its declaration and the bodies defined apart (a C++ class and its `.cpp`), the
+  // file's own declaration is the class its code means: two `.cc` files each declaring a `Pit` are two.
+  if (importsShareScope(languageOf(sourceFile)) && declOf(sourceFile, typeName) && !declOf(sourceFile, typeName)!.extension) return sourceFile;
   // Classes of one name in several namespaces: the one the source can see, else none.
   const namespaced = namespacedTypeRef(ctx, typeName, sourceFile, undefined);
   if (namespaced !== undefined) return namespaced?.typeName === typeName ? namespaced.typeFile : null;

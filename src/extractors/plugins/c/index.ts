@@ -5,6 +5,7 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppStringConstants } from "../cpp/index.js";
 import { C_CODE, definitionAt } from "../shared/c-family-code.js";
 import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
+import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 
 function stripCType(raw: string): string {
   return stripTypeModifiers(raw, "c");
@@ -110,4 +111,6 @@ export const cSpec: RegexLangSpec = {
   extractStringConstants: extractCppStringConstants,
   // `struct club *c = club_new();`: the locals a body declares, read as C++'s are.
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
+  // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
+  extractTypeAliases: extractCFamilyTypeAliases,
 };
