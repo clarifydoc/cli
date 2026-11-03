@@ -8,6 +8,7 @@ import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
+import { untrackedAmong } from "../../core/source-revision.js";
 import {
   booleanArg,
   bulletList,
@@ -836,12 +837,14 @@ export function traceTool(ctx: ToolContext): McpTool {
           if (s === want || s.endsWith(`.${want}`)) defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol, line: l.targetLine });
         }
         if (defs.size > 1) {
-          const rows = [...defs.values()].sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
+          // Files git tracks first; an untracked copy is said to be one.
+          const untracked = (await untrackedAmong(ctx.store.projectRoot, [...new Set([...defs.values()].map((d) => d.file))])) ?? new Set<string>();
+          const rows = [...defs.values()].sort((a, b) => Number(untracked.has(a.file)) - Number(untracked.has(b.file)) || byOrdinal(a.file, b.file) || a.line - b.line);
           return {
             text: joinLines([
               `# \`${symbol}\` names ${plural(rows.length, "definition")} — pick one`,
               ...bulletList(rows, AMBIGUOUS_LISTED, (d) =>
-                `${d.symbol}() ${loc(d.file, d.line)} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}"`),
+                `${d.symbol}() ${loc(d.file, d.line)}${untracked.has(d.file) ? " (untracked)" : ""} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}"`),
             ]),
           };
         }

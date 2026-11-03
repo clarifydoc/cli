@@ -10,6 +10,8 @@ import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
 import { declarationHeadLine } from "../../core/doc-comments.js";
 import { pluginFor } from "../../extractors/registry.js";
+import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
+import { untrackedAmong } from "../../core/source-revision.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -127,10 +129,13 @@ export function extractTool(ctx: ToolContext): McpTool {
         };
       }
       if (definedIn.size > 1 && !file) {
-        const candidates = [...definedIn].slice(0, MAX_CANDIDATES).map((k) => {
+        // Files git tracks first: an untracked copy is rarely the one meant, and is said to be one.
+        const untracked = (await untrackedAmong(ctx.store.projectRoot, [...new Set(seeds.map((x) => x.file))])) ?? new Set<string>();
+        const keys = [...definedIn].sort((a, b) => Number(untracked.has(a.split("::")[0]!)) - Number(untracked.has(b.split("::")[0]!)));
+        const candidates = keys.slice(0, MAX_CANDIDATES).map((k) => {
           const [f, s] = k.split("::") as [string, string];
           const span = seeds.find((x) => x.file === f && x.symbol === s)!;
-          return `- ${s}() ${loc(f, span.line)} → clarifydoc_extract symbol="${s}" file="${f}"`;
+          return `- ${s}() ${loc(f, span.line)}${untracked.has(f) ? " (untracked)" : ""} → clarifydoc_extract symbol="${s}" file="${f}"`;
         });
         return {
           text: joinLines([
@@ -184,15 +189,44 @@ export function extractTool(ctx: ToolContext): McpTool {
         }
         return sources.get(f) ?? null;
       };
+      // Each file's content against the manifest before any of its lines is quoted: a span read from a file
+      // that changed since is looked up again by name in what the file says now.
+      const moved = await ctx.store.changedSinceAnalysis(new Set(spans.map((s) => s.file)));
+      const current = new Map<string, Definition[]>();
+      const currentDefinitions = async (f: string): Promise<Definition[]> => {
+        if (!current.has(f)) {
+          const now = (await analyzeWorkingFiles(ctx.store.projectRoot, [f]).catch(() => new Map())).get(f);
+          const language = analyses.get(f)?.language;
+          current.set(f, now && language ? [...definitions({ ...now, language } as FileAnalysis), ...classDefinitions({ ...now, language } as FileAnalysis)] : []);
+        }
+        return current.get(f)!;
+      };
       const blocks: string[] = [];
       const withheld: Array<{ span: Span; tokens: number }> = [];
       const stale = new Set<string>();
+      const refound = new Set<string>();
+      const removed = new Set<string>();
       let used = 0;
-      for (const span of spans) {
+      for (const original of spans) {
+        let span = original;
+        let unverified = false;
+        if (moved.get(span.file) === "removed") {
+          removed.add(span.file);
+          continue;
+        }
+        if (moved.get(span.file) === "changed") {
+          const again = (await currentDefinitions(span.file)).filter((d) => d.symbol === span.symbol);
+          const nearest = again.sort((a, b) => Math.abs(a.line - span.line) - Math.abs(b.line - span.line))[0];
+          if (nearest) {
+            span = { ...span, line: nearest.line, endLine: nearest.endLine, head: nearest.head };
+            refound.add(span.file);
+          } else unverified = true;
+        }
         const lines = await linesOf(span.file);
         if (!lines) continue;
         const lineCount = analyses.get(span.file)?.lineCount;
-        if (lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
+        // No manifest to judge by: the line count is the only sign left.
+        if (!moved.has(span.file) && lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
         // The decorators, attributes and doc comment above the definition are part of what it says.
         const from = span.head ? declarationHeadLine(lines, span.line, span.head.language ? pluginFor(span.head.language)?.docComments : undefined, span.head) : span.line;
         const body = lines.slice(from - 1, span.endLine).join("\n");
@@ -207,6 +241,7 @@ export function extractTool(ctx: ToolContext): McpTool {
           : "";
         blocks.push(
           `## ${span.symbol}() — ${span.file}:${from}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
+          ...(unverified ? ["⚠ Lines unverified: the file changed since the analysis and no definition of this name is in it now."] : []),
           fenced(span.depth === 0 && tokens > maxTokens ? `${body.slice(0, maxTokens * CHARS_PER_TOKEN)}\n… (cut at the budget)` : body),
           "",
         );
@@ -217,6 +252,8 @@ export function extractTool(ctx: ToolContext): McpTool {
         text: joinLines([
           `# ${symbol} — ${plural(seeds.length, "definition")}${depth ? `, ${plural(callees, "callee")} within ${plural(depth, "hop")}` : ""} · ≈${used} tokens`,
           stale.size ? `(changed since the analysis — lines may be off: ${[...stale].join(", ")})` : "",
+          refound.size ? `(changed since the analysis — definitions found again by name in the current text: ${[...refound].join(", ")})` : "",
+          removed.size ? `(removed since the analysis, not quoted: ${[...removed].join(", ")})` : "",
           "",
           ...blocks,
           withheld.length ? `## Withheld — over the ${maxTokens}-token budget (${withheld.length})` : "",
