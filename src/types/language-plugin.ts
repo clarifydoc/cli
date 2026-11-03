@@ -1243,6 +1243,17 @@ export interface LanguagePluginManifest {
    */
   explicitSelfMembers?: boolean;
   /**
+   * A bare call's name is looked up lexically, in the one namespace that
+   * holds variables, functions and classes alike (Python): a parameter of the
+   * caller (`def build(Club): return Club()`) is what it calls — never the
+   * module's or an import's `Club` — and a class declared inside a function
+   * is that function's, reached only from within it (`def build(): class
+   * Inner: …; return Inner()`), shadowing a module class or an import of its
+   * name. Unset where a method and a parameter of one name never collide (Java)
+   * or a class declared in a function is global (PHP).
+   */
+  lexicalCallScope?: boolean;
+  /**
    * The call extractor reads some member calls without their receiver (C++
    * `coach->drill()` is `drill`), so a bare call the caller's class and its
    * bases do not answer — or any call from a free function — may still be

@@ -2658,6 +2658,40 @@ function nestedDefinition(
   return null;
 }
 
+/**
+ * The class a bare call names where a class may be declared inside a function
+ * (`lexicalCallScope`): the one declared in the innermost function enclosing
+ * the call, else — for a name no import binds — the file's top-level class of
+ * that name. Undefined when no class of that name is declared in a function
+ * (nothing to decide here), or when only an import is in reach (the import
+ * stands); null when every class of that name is another function's.
+ */
+function localClassDefinition(ctx: LinkContext, analysis: FileAnalysis, call: CallInfo): ClassInfo | null | undefined {
+  const named = analysis.classes.filter((c) => c.name === call.name);
+  if (named.length === 0) return undefined;
+  const scopes = [...(nestedScopesOf(ctx, analysis)?.nodes ?? callableNesting(analysis).values())];
+  // The innermost callable holding a class: a function whose body declares it, never its own method.
+  const ownerOf = (c: ClassInfo): ScopeNode | null => {
+    let owner: ScopeNode | null = null;
+    for (const n of scopes) {
+      if (c.methods.includes(n.fn) || n.line > c.line || c.endLine > n.endLine || (n.line === c.line && n.endLine === c.endLine)) continue;
+      if (!owner || n.depth > owner.depth) owner = n;
+    }
+    return owner;
+  };
+  const owned = named.map((c) => ({ c, owner: ownerOf(c) }));
+  if (!owned.some((o) => o.owner)) return undefined;
+  // In reach: declared in a function whose span holds the call — the caller or one enclosing it.
+  const holding = owned.filter((o) => o.owner && o.owner.line <= call.line && call.line <= o.owner.endLine);
+  if (holding.length > 0) return holding.reduce((a, b) => (b.owner!.depth > a.owner!.depth || (b.owner!.depth === a.owner!.depth && b.c.line > a.c.line) ? b : a)).c;
+  if (call.kind === "cross-file") return undefined;
+  const top = owned.filter((o) => !o.owner);
+  if (top.length > 0) return top[top.length - 1]!.c;
+  // No top-level class of that name: a top-level function of it still answers, another function's class never.
+  const def = symbolIn(ctx, analysis.filePath, call.name);
+  return def && !named.some((c) => c.line === def.line) ? undefined : null;
+}
+
 /** The class of `file` that `def` (an entry of its symbol index) is a method of, or null for a free function. */
 function memberClassOf(ctx: LinkContext, file: string, def: SymbolDef): string | null {
   for (const dot of [def.name.lastIndexOf("."), def.name.indexOf(".")]) {
@@ -3581,9 +3615,25 @@ function resolveCallToDefinition(
     && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === call.name || (/^[{[]/.test(p.name) && bindsName(p.name, call.name)))) return null;
   // A function declared inside the caller, or inside one enclosing it, is what a bare
   // name calls — before the file's top-level namesake or an import of that name.
-  const nested = !isQualified && !reference && (call.kind === "internal" || call.kind === "cross-file")
-    ? nestedDefinition(ctx, analysis, sourceSymbol, call)
-    : undefined;
+  const bareName = !isQualified && !reference && (call.kind === "internal" || call.kind === "cross-file");
+  const nested = bareName ? nestedDefinition(ctx, analysis, sourceSymbol, call) : undefined;
+  if (bareName && pluginFor(analysis.language)?.lexicalCallScope) {
+    // Where names are lexical, the caller's own declarations come first — a class or function
+    // its body declares —, then its parameters, then what the scopes around it declare.
+    const caller = findEnclosingCallable(analysis, sourceSymbol);
+    const inCaller = (line: number, endLine: number) => !!caller && caller.line < line && endLine <= caller.endLine;
+    const local = localClassDefinition(ctx, analysis, call);
+    if (local && inCaller(local.line, local.endLine)) return mkLink(sourceFile, local.name, local.line, "EXTRACTED", "direct");
+    if (nested && nested.confidence === "EXTRACTED" && inCaller(nested.node.line, nested.node.endLine)) {
+      return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
+    }
+    // `def build(Club): return Club()` — the parameter, unless it is handed an inner helper of its name.
+    if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name)) {
+      return nested && nested.confidence === "INFERRED" ? mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct") : null;
+    }
+    if (local) return mkLink(sourceFile, local.name, local.line, "EXTRACTED", "direct");
+    if (local === null) return null;
+  }
   if (nested) return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
   // A variable the caller binds itself (`sprint = len`, `for sprint in …`) is called, not a function.
   if (call.boundLocally && !isQualified && !reference) return null;
