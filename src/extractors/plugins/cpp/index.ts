@@ -4,7 +4,7 @@ import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
 import { declaredNamespaces, extractCppClasses } from "./classes.js";
-import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
+import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
@@ -87,12 +87,10 @@ export function unqualifyOwnNamespaces(lines: readonly string[], fns: readonly F
 }
 
 function stripCppType(raw: string): string {
-  // Drop namespace qualifiers: `std::vector<User>` → `vector<User>` → `vector`; and a constant pointer's `const`
-  // (`Env* const` is an `Env*`).
-  // A class scope stays (`Paddock::Iterator`, a nested class), its template arguments dropped.
-  const noNs = raw
-    .replace(/(\w+)\s*(?:<[^<>;()]*>)?\s*::/g, (_m, scope: string) => (/^[A-Z]/.test(scope) ? `${scope}::` : ""))
-    .replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
+  // Drop the standard library's namespace: `std::vector<User>` → `vector<User>` → `vector`; and a constant
+  // pointer's `const` (`Env* const` is an `Env*`). A class scope stays (`Paddock::Iterator`, a nested class), its
+  // template arguments dropped, and so does a namespace in front of a class (`league::Club`).
+  const noNs = keepTypeScopes(raw).replace(/([*&])\s*(?:const|volatile)\b/g, "$1");
   return stripTypeModifiers(noNs, "cpp");
 }
 

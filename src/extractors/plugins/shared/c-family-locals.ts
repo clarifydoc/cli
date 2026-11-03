@@ -186,14 +186,27 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
 }
 
 /**
- * A declared type as the parameters spell theirs: `const std::vector<league::Club>&` → `vector<Club>`; a class
- * scope stays, its template arguments dropped (`Paddock<K, C>::Iterator` → `Paddock::Iterator`, a nested class).
+ * The scopes a C-family type keeps in front of its name: a class scope, its template arguments dropped
+ * (`Paddock<K, C>::Iterator` → `Paddock::Iterator`, a nested class), and the namespaces in front of a class
+ * (`league::away::Club`, which another namespace's `Club` is not) — never the standard library's (`std::string`
+ * → `string`) nor those in front of a lowercase name (`asio::io_context` → `io_context`).
+ */
+export function keepTypeScopes(text: string): string {
+  return text
+    .replace(/(?:^|(?<=[<,\s(]))::/g, "")
+    .replace(/(?<![\w:])((?:[A-Za-z_]\w*\s*(?:<[^<>]*>)?\s*::\s*)+)(~?[A-Za-z_]\w*)/g, (_m, chain: string, leaf: string) => {
+      const scopes = chain.split("::").map((s) => s.replace(/<[\s\S]*$/, "").trim()).filter(Boolean);
+      const namespaces = /^[A-Z]/.test(leaf) && scopes[0] !== "std";
+      return [...scopes.filter((s) => namespaces || /^[A-Z]/.test(s)), leaf].join("::");
+    });
+}
+
+/**
+ * A declared type as the parameters spell theirs: `const std::vector<league::Club>&` → `vector<league::Club>`;
+ * scopes as `keepTypeScopes` keeps them.
  */
 export function cFamilyTypeName(raw: string): string | null {
-  const text = raw
-    .replace(/\b(?:const|volatile|struct|class|enum|union|typename)\b/g, " ")
-    .replace(/(?:^|(?<=[<,\s]))::/g, "")
-    .replace(/([A-Za-z_]\w*)\s*(?:<[^<>]*>)?\s*::\s*/g, (_m, scope: string) => (/^[A-Z]/.test(scope) ? `${scope}::` : ""))
+  const text = keepTypeScopes(raw.replace(/\b(?:const|volatile|struct|class|enum|union|typename)\b/g, " "))
     .replace(/[*&\s]+$/, "")
     .replace(/\s+/g, " ")
     .trim();

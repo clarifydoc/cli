@@ -1255,6 +1255,14 @@ export interface PropertyInfo {
 
 export interface ClassInfo {
   name: string;
+  /**
+   * The namespace the class is declared in, as the language writes it (`league::home` for a C++ class inside
+   * `namespace league { namespace home {`), where a project may declare classes of one name in several namespaces.
+   * A type written through it (`home::Club`), or bare where that namespace is open or `using`-imported, is matched
+   * on (namespace, name). On a part holding out-of-line definitions, the namespace the definitions name. Omitted
+   * outside a named namespace, and by languages that do not record it.
+   */
+  namespace?: string;
   /** Generated, not written (a Lombok `@Builder`'s builder class): see `FunctionInfo.synthetic`. Omitted for written code. */
   synthetic?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
