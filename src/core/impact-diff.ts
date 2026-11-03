@@ -1,7 +1,7 @@
 import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
-import { describeSignatureChange, reverseSymbolReach, type ChangedSymbol, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
+import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedSymbol, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
 import type {
   Language,
   ProjectAnalysis,
@@ -439,7 +439,9 @@ export function computeImpactDiff(
   if (untested?.length) reasons.push(`no test runs ${untested.length === 1 ? (untested[0]!.symbol ?? untested[0]!.file) : `${untested.length} of the changed ${untested[0]!.symbol ? "functions" : "files"}`}`);
   const breaking = symbolImpact?.signatureChanges?.filter((c) => c.breaking) ?? [];
   if (breaking.length > 0) {
-    reasons.push(`breaks the callers of ${breaking.slice(0, 3).map((c) => `${c.symbol} (${describeSignatureChange(c)})`).join(", ")}`);
+    // Callers, or what else a change can strand: files importing it, overrides on the old signature.
+    const whose = breaking.every((c) => c.callers > 0) ? "the callers of" : "what depends on";
+    reasons.push(`breaks ${whose} ${breaking.slice(0, 3).map((c) => `${c.symbol} (${describeSignatureChange(c)})`).join(", ")}`);
   }
   const strongMissing = missingCoChanges.filter((m) => m.score >= 0.6);
   if (strongMissing.length > 0) {
@@ -564,7 +566,8 @@ export function renderImpactText(r: ImpactDiffResult): string {
       lines.push("", "Signature changes:");
       for (const c of si.signatureChanges) {
         const what = describeSignatureChange(c);
-        lines.push(`  ${c.breaking ? "BREAKING " : ""}${c.symbol}  ${what}; ${c.callers} certain caller(s)  (${c.file}:${c.line})`);
+        const tail = signatureChangeTail(c);
+        lines.push(`  ${c.breaking ? "BREAKING " : ""}${c.symbol}  ${what}; ${c.callers} certain caller(s)${tail ? `; ${tail}` : ""}  (${c.file}:${c.line})`);
       }
     }
   }
@@ -622,7 +625,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
       row("Direct callers stand", `${standingCounts(si.direct)}${unverified.length ? ` — check: ${unverified.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ")}` : ""}`);
     }
     const sig = si.signatureChanges ?? [];
-    if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}\`${c.symbol}\` ${describeSignatureChange(c)} (${c.callers} caller${c.callers === 1 ? "" : "s"})`).join(", "));
+    if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}\`${c.symbol}\` ${describeSignatureChange(c)} (${c.callers} caller${c.callers === 1 ? "" : "s"}${signatureChangeTail(c) ? `; ${signatureChangeTail(c)}` : ""})`).join(", "));
   }
   if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
   if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));

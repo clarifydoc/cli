@@ -205,3 +205,58 @@ describe("an edit not made yet", () => {
     }
   });
 });
+
+describe("what a signature change leaves broken besides its callers", () => {
+  const typed = (name: string, line: number, params: Array<[string, string]>, isExported = true) =>
+    ({ name, line, endLine: line + 3, returnType: null, isExported, params: params.map(([n, t]) => ({ name: n, type: t, defaultValue: null })) });
+  const importer = (file: string, target: string) =>
+    ({ sourceFile: file, sourceSymbol: "(reference)", sourceLine: 1, callName: target, targetFile: "garage.ts", targetSymbol: target, targetLine: 1, confidence: "EXTRACTED", strategy: "reference", relation: "reference" }) as never;
+
+  it("breaks on an export removed or hidden while another file imports it, though nothing calls it", async () => {
+    const { signatureChanges, signatureChangeTail } = await import("./changed-symbols.js");
+    const before = new Map([["garage.ts", { functions: [typed("park", 1, []), typed("wash", 10, []), typed("refuel", 20, [])], classes: [] } as never]]);
+    const after = new Map([["garage.ts", { functions: [typed("wash", 10, [], false), typed("refuel", 20, [])], classes: [] } as never]]);
+    const out = signatureChanges(before, after, [importer("pitlane.ts", "park"), importer("paddock.ts", "park"), importer("pitlane.ts", "wash"), importer("garage.ts", "refuel")]);
+    expect(out.map((c) => [c.symbol, c.kind, c.callers, c.importers, c.breaking])).toEqual([
+      ["park", "removed", 0, 2, true],
+      ["wash", "visibility", 0, 1, true],
+    ]);
+    expect(signatureChangeTail(out[0]!)).toBe("imported by 2 files");
+  });
+
+  it("lists the overrides still declaring the old signature, and breaks on them", async () => {
+    const { signatureChanges, signatureChangeTail } = await import("./changed-symbols.js");
+    const car = (params: Array<[string, string]>) => ({ functions: [], classes: [{ name: "Car", methods: [typed("start", 3, params)] }] }) as never;
+    const sports = (params: Array<[string, string]>) => ({ functions: [], classes: [{ name: "SportsCar", methods: [typed("start", 5, params)] }] }) as never;
+    const overrides = new Map([["car.ts::Car.start", [{ file: "sports-car.ts", symbol: "SportsCar.start", line: 5 }, { file: "truck.ts", symbol: "Truck.start", line: 7 }]]]);
+    const before = new Map([["car.ts", car([["gear", "number"]])], ["sports-car.ts", sports([["gear", "number"]])]]);
+    // The change gives Car.start a second parameter and updates SportsCar; Truck (a file it leaves alone) keeps the old one.
+    const after = new Map([["car.ts", car([["gear", "number"], ["driver", "Driver"]])], ["sports-car.ts", sports([["g", "number"], ["d", "Driver"]])]]);
+    const [change] = signatureChanges(before, after, [], { overrides });
+    expect(change).toMatchObject({ symbol: "Car.start", kind: "arity", callers: 0, breaking: true, staleOverrides: [{ symbol: "Truck.start", file: "truck.ts", line: 7 }] });
+    expect(signatureChangeTail(change!)).toBe("overridden by Truck.start (truck.ts:7), still on the old signature");
+    // An override the change left on the old parameters, in a file it did touch, is stale too.
+    const half = new Map([["car.ts", car([["gear", "number"], ["driver", "Driver"]])], ["sports-car.ts", sports([["speed", "number"]])]]);
+    expect(signatureChanges(before, half, [], { overrides })[0]!.staleOverrides?.map((o) => o.symbol)).toEqual(["SportsCar.start", "Truck.start"]);
+  });
+
+  it("skips a deleted file without trying to parse it", async () => {
+    const { mkdtemp, rm } = await import("fs/promises");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const { vi } = await import("vitest");
+    const { analyzeWorkingFiles } = await import("./changed-symbols.js");
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-deleted-"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const after = await analyzeWorkingFiles(root, ["src/garage.ts"]);
+      expect([...after]).toEqual([["src/garage.ts", { functions: [], classes: [] }]]);
+      expect([...errors.mock.calls, ...logs.mock.calls].flat().join("\n")).not.toMatch(/ENOENT|Error analyzing/);
+    } finally {
+      errors.mockRestore();
+      logs.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

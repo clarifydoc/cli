@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
-import type { Confidence, FileAnalysis, SymbolLink } from "../types/analysis.js";
+import type { Confidence, FileAnalysis, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
@@ -181,6 +181,16 @@ export interface SignatureChange {
   /** Callers the analysis is sure of (EXTRACTED links). */
   callers: number;
   /**
+   * Other files importing it by name (`removed`, `moved`, `visibility`): an import of a name the
+   * file no longer exports breaks though nothing in the importer calls it. Absent when none does.
+   */
+  importers?: number;
+  /**
+   * Overrides of the method (below its class) the change leaves declaring the old signature
+   * (`arity`, `param-type`, `return-type`): they no longer override what they meant to.
+   */
+  staleOverrides?: Array<{ file: string; symbol: string; line: number }>;
+  /**
    * The change breaks those callers as they are written. For a move, only the
    * callers in files the change leaves alone: one it edits is taken to follow
    * the function to its new place.
@@ -201,6 +211,21 @@ export function describeSignatureChange(c: Pick<SignatureChange, "kind" | "befor
   if (c.kind === "visibility") return "no longer exported or public";
   if (c.kind === "return-type") return `returns ${c.after}, was ${c.before}`;
   return `${c.before} → ${c.after} required parameters`;
+}
+
+/**
+ * What a signature change leaves broken besides its callers, for a report line: "imported by 2 files",
+ * "overridden by SportsCar.start (src/sports-car.ts:4), still on the old signature". Empty when nothing.
+ */
+export function signatureChangeTail(c: Pick<SignatureChange, "importers" | "staleOverrides">): string {
+  const parts: string[] = [];
+  if (c.importers) parts.push(`imported by ${c.importers} file${c.importers === 1 ? "" : "s"}`);
+  const o = c.staleOverrides ?? [];
+  if (o.length) {
+    const shown = o.slice(0, 3).map((x) => `${x.symbol} (${x.file}:${x.line})`).join(", ");
+    parts.push(`overridden by ${shown}${o.length > 3 ? ` and ${o.length - 3} more` : ""}, still on the old signature`);
+  }
+  return parts.join("; ");
 }
 
 /** Every function and method of a file by the name call links use, with its parameters. */
@@ -254,7 +279,20 @@ export function signatureChanges(
   before: ReadonlyMap<string, Spans>,
   after: ReadonlyMap<string, Spans>,
   links: readonly SymbolLink[],
+  options: {
+    /** The overrides below each method of `before`, keyed `${file}::${Class.method}` (`overridesOfMethods`). */
+    overrides?: ReadonlyMap<string, ReadonlyArray<{ file: string; symbol: string; line: number }>>;
+  } = {},
 ): SignatureChange[] {
+  // Files importing each symbol by name, its own file aside.
+  const importerFiles = new Map<string, Set<string>>();
+  for (const l of links) {
+    if (l.sourceSymbol !== "(reference)" || l.sourceFile === l.targetFile) continue;
+    const key = `${l.targetFile}::${l.targetSymbol}`;
+    (importerFiles.get(key) ?? importerFiles.set(key, new Set()).get(key)!).add(l.sourceFile);
+  }
+  const importersOf = (file: string, symbol: string) => importerFiles.get(`${file}::${symbol}`) ?? new Set<string>();
+  const importerCount = (n: number) => (n ? { importers: n } : {});
   const sureCallers = new Map<string, number>();
   // A function handed on by name (`passes`) still needs to exist and be visible, but that site
   // passes it no arguments: only invoking callers judge an arity change.
@@ -290,27 +328,41 @@ export function signatureChanges(
       const cur = next.get(symbol);
       // The same function — name and parameters — added to exactly one other file: a move, not a removal.
       const moved = cur ? [] : (addedTo.get(symbol) ?? []).filter((m) => m.file !== file && m.sig.params === sig.params);
+      const importers = importersOf(file, symbol);
+      // Overrides the change leaves as they were: in a file it does not touch, or still declaring the old parameters.
+      const stale = () => {
+        const rows = (options.overrides?.get(`${file}::${symbol}`) ?? []).filter((o) => {
+          const now = after.get(o.file);
+          if (!now) return true;
+          const theirs = signatures(now).get(o.symbol);
+          return !!theirs && shape(theirs) === shape(sig);
+        });
+        return rows.length ? { staleOverrides: rows.map((o) => ({ file: o.file, symbol: o.symbol, line: o.line })) } : {};
+      };
       if (moved.length === 1) {
-        const stranded = [...(callerFiles.get(`${file}::${symbol}`) ?? [])].filter((f) => f !== file && !after.has(f));
-        out.push({ file, symbol, line: sig.line, kind: "moved", movedTo: moved[0]!.file, callers, breaking: stranded.length > 0 });
+        const stranded = [...(callerFiles.get(`${file}::${symbol}`) ?? []), ...importers].filter((f) => f !== file && !after.has(f));
+        out.push({ file, symbol, line: sig.line, kind: "moved", movedTo: moved[0]!.file, callers, ...importerCount(importers.size), breaking: stranded.length > 0 });
       } else if (!cur) {
         // Only an unambiguous match: one added function, same class, same parameters (and some to compare).
         const twins = added.filter(([name, s2]) => sameClass(name, symbol) && s2.params === sig.params && (sig.total > 0 || s2.returnKey === sig.returnKey));
-        out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });
+        out.push({ file, symbol, line: sig.line, kind: "removed", callers, ...importerCount(importers.size), breaking: callers > 0 || importers.size > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });
       } else if (cur.required !== sig.required && !cur.variadic) {
         const invokers = sureInvokers.get(`${file}::${symbol}`) ?? 0;
-        out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers: invokers, breaking: invokers > 0 && cur.required > sig.required });
+        const overrides = stale();
+        out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers: invokers, ...overrides, breaking: (invokers > 0 && cur.required > sig.required) || !!overrides.staleOverrides });
       } else if (sig.exported === true && cur.exported === false) {
-        // Callers in its own file keep it; the others lose it.
-        const outside = [...(callerFiles.get(`${file}::${symbol}`) ?? [])].filter((f) => f !== file);
-        out.push({ file, symbol, line: cur.line, kind: "visibility", before: "exported", after: "private", callers, breaking: outside.length > 0 });
+        // Callers in its own file keep it; the others lose it, and so does every file importing it.
+        const outside = [...(callerFiles.get(`${file}::${symbol}`) ?? []), ...importers].filter((f) => f !== file);
+        out.push({ file, symbol, line: cur.line, kind: "visibility", before: "exported", after: "private", callers, ...importerCount(importers.size), breaking: outside.length > 0 });
       } else if (typeChanges(sig, cur)) {
         // Same parameters by position, a declared type changed: a caller passes what the old one took.
         const { before: was, after: now } = typeChanges(sig, cur)!;
-        out.push({ file, symbol, line: cur.line, kind: "param-type", before: was, after: now, callers, breaking: callers > 0 });
+        const overrides = stale();
+        out.push({ file, symbol, line: cur.line, kind: "param-type", before: was, after: now, callers, ...overrides, breaking: callers > 0 || !!overrides.staleOverrides });
       } else if (sig.returnKey && cur.returnKey && sig.returnKey !== cur.returnKey) {
         // A caller that uses the result was written against the old type.
-        out.push({ file, symbol, line: cur.line, kind: "return-type", before: sig.returnType ?? sig.returnKey, after: cur.returnType ?? cur.returnKey, callers, breaking: callers > 0 });
+        const overrides = stale();
+        out.push({ file, symbol, line: cur.line, kind: "return-type", before: sig.returnType ?? sig.returnKey, after: cur.returnType ?? cur.returnKey, callers, ...overrides, breaking: callers > 0 || !!overrides.staleOverrides });
       }
     }
   }
@@ -335,10 +387,38 @@ function typeChanges(was: Signature, now: Signature): { before: string; after: s
   return before.length ? { before: before.join(", "), after: after.join(", ") } : null;
 }
 
+/** What an override shares with the method it overrides: parameter count and types, and the return type — never the names. */
+function shape(sig: Signature): string {
+  return `${sig.total}|${sig.typed.map((t) => t.key ?? "").join(",")}|${sig.returnKey ?? ""}`;
+}
+
 /** A declared type compared as written, whitespace aside. */
 function normType(t: string | null | undefined): string | null {
   const s = (t ?? "").replace(/\s+/g, "").replace(/^:/, "");
   return s ? s : null;
+}
+
+/**
+ * `signatureChanges` with the overrides of each changed method found first — from the class graph
+ * and the per-file analyses in `analysisDir` (those of `before` as they are) — so an override the
+ * change leaves on the old signature is judged with the callers.
+ */
+export async function judgeSignatures(
+  analysisDir: string,
+  before: ReadonlyMap<string, Spans>,
+  after: ReadonlyMap<string, Spans>,
+  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph">,
+): Promise<SignatureChange[]> {
+  const { overridesOfMethods } = await import("./overrides.js");
+  const links = summary.symbolLinks ?? [];
+  const loaded = new Map<string, Spans | null>();
+  const classesOf = async (f: string) => {
+    if (before.has(f)) return before.get(f)!;
+    if (!loaded.has(f)) loaded.set(f, (await loadFileAnalyses(analysisDir, [f])).get(f) ?? null);
+    return loaded.get(f) ?? null;
+  };
+  const overrides = await overridesOfMethods(summary.classGraph, links, before, classesOf);
+  return signatureChanges(before, after, links, { overrides });
 }
 
 /**
@@ -347,11 +427,12 @@ function normType(t: string | null | undefined): string | null {
  * cannot read are skipped.
  */
 export async function analyzeWorkingFiles(projectRoot: string, files: readonly string[], contents?: ReadonlyMap<string, string | null>): Promise<Map<string, Spans>> {
-  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm, mkdir, writeFile }, { tmpdir }] = await Promise.all([
+  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm, mkdir, writeFile }, { tmpdir }, { existsSync }] = await Promise.all([
     import("./file-analyzer.js"),
     import("../parsers/language-map.js"),
     import("fs/promises"),
     import("os"),
+    import("fs"),
   ]);
   const out = new Map<string, Spans>();
   const scratch = await mkdtemp(join(tmpdir(), "clarifydoc-after-"));
@@ -371,6 +452,11 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
         await mkdir(dirname(absolutePath), { recursive: true });
         await writeFile(absolutePath, text);
       }
+      // A file the change deleted: every function it had is gone (and there is nothing to parse).
+      if (!contents?.has(f) && !existsSync(absolutePath)) {
+        out.set(f, { functions: [], classes: [] });
+        continue;
+      }
       const res = await analyzeFile({
         file: { absolutePath, relativePath: f, language },
         frameworkIds: [],
@@ -381,8 +467,6 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
         tsconfigAliases: new Map(),
       }).catch(() => null);
       if (res) out.set(f, { functions: res.analysis.functions, classes: res.analysis.classes });
-      // A file the change deleted: every function it had is gone.
-      else if (!(await import("fs")).existsSync(join(projectRoot, f))) out.set(f, { functions: [], classes: [] });
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });

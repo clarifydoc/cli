@@ -817,9 +817,8 @@ export function traceTool(ctx: ToolContext): McpTool {
     description:
       "Walk the resolved call graph from a symbol or file: who calls it (callers) and what it calls (callees), " +
       "up to `depth` hops, with file:line for every hop. Also reports the data effects the seed symbol reaches " +
-      "(tables written, queues published) when known. Links resolved by heuristics are tagged with their " +
-      "confidence AND the strategy that found them (`[inferred via unique-global]`), so you can judge not just " +
-      "how sure the tool is but what it based the edge on.",
+      "(tables written, queues published) when known. Heuristic links carry their confidence and the strategy " +
+      "that found them (`[inferred via unique-global]`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -830,8 +829,8 @@ export function traceTool(ctx: ToolContext): McpTool {
         file: { type: "string", description: "Restrict the seed to this file (project-relative path)." },
         direction: {
           type: "string",
-          enum: ["callers", "callees", "both"],
-          description: "Which way to walk (default both).",
+          enum: ["callers", "callees", "both", "overrides"],
+          description: "Which way to walk (default both); `overrides`: what a method overrides and what overrides it.",
         },
         depth: { type: "number", description: "Hops to follow, 1-4 (default 2)." },
         limit: { type: "number", description: "Max rows per level (default 20)." },
@@ -857,7 +856,7 @@ export function traceTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const symbol = stringArg(args, "symbol");
       const fileArg = stringArg(args, "file");
-      const direction = enumArg(args, "direction", ["callers", "callees", "both"] as const) ?? "both";
+      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });
       const limit = numberArg(args, "limit", 20, { max: 200 });
       const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
@@ -865,6 +864,10 @@ export function traceTool(ctx: ToolContext): McpTool {
         throw new Error("Pass `symbol`, `file`, or both.");
       }
       const file = fileArg ? mustResolveFile(loaded, fileArg) : undefined;
+      if (direction === "overrides") {
+        if (!symbol) throw new Error("`direction=overrides` needs `symbol`: a method (\"Car.start\") or a class.");
+        return { text: await overridesReport(ctx, loaded, symbol, file, limit) };
+      }
 
       const everything = loaded.summary.symbolLinks ?? [];
       const all = minConfidence === "AMBIGUOUS"
@@ -969,6 +972,68 @@ export function traceTool(ctx: ToolContext): McpTool {
       return { text: joinLines(blocks) };
     },
   };
+}
+
+/**
+ * `clarifydoc_trace direction=overrides`: for a method, the declarations above it it overrides or
+ * implements (up `extends` / `implements`) and the overrides below it; for a class, its bases and its
+ * subclasses. A name several definitions share is listed to pick from, a miss offers near names.
+ */
+async function overridesReport(ctx: ToolContext, loaded: LoadedAnalysis, symbol: string, file: string | undefined, limit: number): Promise<string> {
+  const { summary } = loaded;
+  const want = symbol.toLowerCase();
+  const named = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const defs = new Map<string, { file: string; symbol: string; line: number; isClass: boolean }>();
+  for (const c of summary.complexity ?? []) {
+    if (file && c.filePath !== file) continue;
+    for (const f of c.functions) if (f.functionName.includes(".") && named(f.functionName)) defs.set(`${c.filePath}::${f.functionName}`, { file: c.filePath, symbol: f.functionName, line: f.line, isClass: false });
+  }
+  for (const l of summary.symbolLinks ?? []) {
+    // Interface and abstract methods have no body, so no complexity row: the linker's fan-out names them.
+    if (l.relation === "implements" && (!file || l.sourceFile === file) && named(l.sourceSymbol)) defs.set(`${l.sourceFile}::${l.sourceSymbol}`, { file: l.sourceFile, symbol: l.sourceSymbol, line: l.sourceLine, isClass: false });
+  }
+  for (const n of summary.classGraph?.nodes ?? []) {
+    if (n.isFile || n.isExternal || (file && n.filePath !== file) || n.name.toLowerCase() !== want) continue;
+    defs.set(`${n.filePath}::${n.name}`, { file: n.filePath, symbol: n.name, line: 0, isClass: true });
+  }
+  if (defs.size === 0) {
+    const near = nearSymbols(summary, symbol);
+    return noResults({
+      headline: `No method or class named \`${symbol}\`${file ? ` in ${file}` : ""} in the analysis.`,
+      holds: near?.line ?? "Overrides are read for a method (`Car.start`) or a class (`Car`).",
+      next: [
+        !!near && `clarifydoc_trace symbol="${near.first.name}" file="${near.first.file}" direction="overrides"`,
+        `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
+      ],
+    });
+  }
+  if (defs.size > 1) {
+    const rows = [...defs.values()].sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
+    return joinLines([
+      `# \`${symbol}\` names ${plural(rows.length, "definition")} — pick one`,
+      ...bulletList(rows, AMBIGUOUS_LISTED, (d) => `${d.symbol}${d.isClass ? "" : "()"} ${loc(d.file, d.line || undefined)} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}" direction="overrides"`),
+    ]);
+  }
+  const def = [...defs.values()][0]!;
+  const { inheritanceIndex, overridesBelow, declarationsAbove, relatives } = await import("../../core/overrides.js");
+  const index = inheritanceIndex(summary.classGraph);
+  const links = summary.symbolLinks ?? [];
+  const classesOf = (f: string) => ctx.store.fileAnalysis(f);
+  const [above, below] = def.isClass
+    ? await Promise.all([relatives(index, def.file, def.symbol, "up", classesOf), relatives(index, def.file, def.symbol, "down", classesOf)])
+    : await Promise.all([declarationsAbove(index, links, def.file, def.symbol, classesOf), overridesBelow(index, links, def.file, def.symbol, classesOf)]);
+  const row = (r: { file: string; symbol: string; line: number; depth: number; abstract?: boolean }) =>
+    `${r.symbol}${def.isClass ? "" : "()"} ${loc(r.file, r.line || undefined)}${r.depth > 1 ? ` — ${r.depth} levels away` : ""}${r.abstract ? (def.isClass ? " (interface)" : " (abstract)") : ""}`;
+  const [up, down] = def.isClass ? ["Extends and implements", "Subclasses and implementations"] : ["Overrides or implements", "Overridden below by"];
+  return joinLines([
+    `# Overrides — ${def.symbol}${def.isClass ? "" : "()"} ${loc(def.file, def.line || undefined)}`,
+    "",
+    `## ${up} (${above.length})`,
+    ...(above.length ? bulletList(above, limit, row) : ["- nothing above it in the analysis"]),
+    "",
+    `## ${down} (${below.length})`,
+    ...(below.length ? bulletList(below, limit, row) : ["- nothing below it in the analysis"]),
+  ]);
 }
 
 /**

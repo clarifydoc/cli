@@ -329,14 +329,14 @@ program
       let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("./core/changed-symbols.js").SignatureChange[]; hunks?: import("./core/changed-symbols.js").ChangedHunks } | undefined;
       if (!options.files?.length) {
         try {
-          const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges } = await import("./core/changed-symbols.js");
+          const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures } = await import("./core/changed-symbols.js");
           const hunks = await gitChangedHunks(projectRoot, { base: options.base, staged: options.staged });
           const touched = [...new Set([...hunks.keys(), ...changed])];
           const before = await loadFileAnalyses(analysisDir, touched);
           const found = symbolsInHunks(before, hunks);
           // Every touched file, new ones too: a function that left one file may have moved into another.
           const after = await analyzeWorkingFiles(projectRoot, touched);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, summary.symbolLinks ?? []), hunks };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(analysisDir, before, after, summary), hunks };
         } catch (e) {
           // No line ranges: the file-level impact stands alone.
           if (process.env.CLARIFYDOC_DEBUG) console.error(e);

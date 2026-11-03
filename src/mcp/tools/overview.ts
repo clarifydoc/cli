@@ -1332,7 +1332,7 @@ async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof impor
   const after = await cs.analyzeWorkingFiles(ctx.store.projectRoot, files, contents);
   const impact = computeImpactDiff(summary, files, {
     baseLabel: "proposed edit",
-    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: cs.signatureChanges(before, after, summary.symbolLinks ?? []), hunks },
+    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await cs.judgeSignatures(ctx.store.analysisDir, before, after, summary), hunks },
   });
   // What the edit itself gets wrong: syntax it introduces, calls with an argument count nothing accepts.
   const { checkPatch, renderPatchCheck } = await import("../../core/patch-check.js");
@@ -1426,7 +1426,7 @@ export function impactTool(ctx: ToolContext): McpTool {
       let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("../../core/changed-symbols.js").SignatureChange[]; hunks?: import("../../core/changed-symbols.js").ChangedHunks } | undefined;
       if (!explicit.length) {
         try {
-          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges }] = await Promise.all([
+          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures }] = await Promise.all([
             import("../../core/git-changed-files.js"),
             import("../../core/changed-symbols.js"),
           ]);
@@ -1434,7 +1434,7 @@ export function impactTool(ctx: ToolContext): McpTool {
           const before = await loadFileAnalyses(ctx.store.analysisDir, [...new Set([...hunks.keys(), ...changed])]);
           const found = symbolsInHunks(before, hunks);
           const after = await analyzeWorkingFiles(ctx.store.projectRoot, [...before.keys()]);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, loaded.summary.symbolLinks ?? []), hunks };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(ctx.store.analysisDir, before, after, loaded.summary), hunks };
         } catch {
           // Without line ranges the file-level projection stands alone.
         }
