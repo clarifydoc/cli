@@ -25,6 +25,7 @@ function toRanges(lines: readonly number[]): string {
   return out.join(",");
 }
 import { isTestFile } from "./test-file-detector.js";
+import { testCodeIndex, testFilterPath } from "./test-functions.js";
 
 /**
  * Diff-scoped impact: project a set of CHANGED FILES onto the cross-tier
@@ -353,9 +354,10 @@ export function computeImpactDiff(
   }
 
   // ── The tests that exercise the change, and how to run them ──
+  const testCode = testCodeIndex(summary);
   const testCallers = options?.symbols
     ? reverseSymbolReach(summary.symbolLinks ?? [], options.symbols.changed, 6)
-        .filter((c) => !c.symbol.startsWith("route:") && (summary.fileLayerMap?.[c.file] === "test" || isTestFile(c.file)))
+        .filter((c) => !c.symbol.startsWith("route:") && testCode.isTest(c.file, c.symbol))
         .map((c) => ({ file: c.file, symbol: c.symbol, line: c.line, depth: c.depth }))
         .sort((a, b) => a.depth - b.depth || byOrdinal(a.file, b.file) || a.line - b.line)
     : [];
@@ -647,7 +649,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
  */
 function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[], callers: SymbolCaller[]): void {
   const edited = new Set(changed.map((c) => `${c.file}::${c.symbol}`));
-  const isTest = (f: string) => summary.fileLayerMap?.[f] === "test" || isTestFile(f);
+  const testCode = testCodeIndex(summary);
   const cov = new Map((summary.testCoverage?.files ?? []).map((f) => [f.file, f]));
   const ranByCoverage = (c: SymbolCaller): boolean => {
     const name = c.symbol.split(".").pop()!;
@@ -656,7 +658,7 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
   };
   const links = summary.symbolLinks ?? [];
   for (const c of callers) {
-    if (isTest(c.file)) {
+    if (testCode.isTest(c.file, c.symbol)) {
       c.standing = "test";
       continue;
     }
@@ -665,7 +667,7 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
       continue;
     }
     const test = reverseSymbolReach(links, [{ file: c.file, symbol: c.symbol, line: c.line, endLine: c.line }], 6)
-      .find((t) => !t.symbol.startsWith("route:") && isTest(t.file));
+      .find((t) => !t.symbol.startsWith("route:") && testCode.isTest(t.file, t.symbol));
     if (test) {
       c.standing = "covered";
       c.coveredBy = { file: test.file, symbol: test.symbol };
@@ -700,8 +702,9 @@ export function testsReaching(
   targets: ReadonlyArray<{ file: string; symbol: string }>,
 ): { tests: Array<{ file: string; symbol: string; line: number; depth: number }>; commands: Array<{ language: string; command: string }> } {
   const changed = targets.map((t) => ({ file: t.file, symbol: t.symbol, line: 0, endLine: 0 }));
+  const testCode = testCodeIndex(summary);
   const tests = reverseSymbolReach(summary.symbolLinks ?? [], changed, 6)
-    .filter((c) => !c.symbol.startsWith("route:") && (summary.fileLayerMap?.[c.file] === "test" || isTestFile(c.file)))
+    .filter((c) => !c.symbol.startsWith("route:") && testCode.isTest(c.file, c.symbol))
     .map((c) => ({ file: c.file, symbol: c.symbol, line: c.line, depth: c.depth }))
     .sort((a, b) => a.depth - b.depth || byOrdinal(a.file, b.file) || a.line - b.line);
   const byFile = new Map<string, Set<string>>();
@@ -716,7 +719,14 @@ function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[])
     manifests: new Set((summary.externalPackages ?? []).map((p) => p.declaredIn.slice(p.declaredIn.lastIndexOf("/") + 1))),
   };
   const byLanguage = new Map<string, TestTarget[]>();
-  for (const t of tests) {
+  const testCode = testCodeIndex(summary);
+  for (const target of tests) {
+    // The marked tests among the names, as the title paths a runner filters by.
+    const cases = target.names.flatMap((n) => {
+      const row = testCode.testOf(target.file, n);
+      return row ? [{ path: testFilterPath(row), line: row.line, ...(row.kind === "hook" ? { hook: true as const } : {}) }] : [];
+    });
+    const t: TestTarget = cases.length ? { ...target, cases } : target;
     const language = EXTENSION_TO_LANGUAGE[t.file.slice(t.file.lastIndexOf(".")).toLowerCase()];
     if (!language) continue;
     (byLanguage.get(language) ?? byLanguage.set(language, []).get(language)!).push(t);

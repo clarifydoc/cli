@@ -2,6 +2,7 @@ import { argOriginsOf } from "./arg-origins.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
+import { TEST_REGISTRATION } from "./test-cases.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -377,7 +378,3 @@ function moduleCallback(node: Node): boolean {
   return callee?.type === "identifier" && !TEST_REGISTRATION.has(callee.text) && call!.parent?.type !== "arguments";
 }
 
-/** A test runner's registrations: their callbacks run when the runner says, each its own test. */
-const TEST_REGISTRATION: ReadonlySet<string> = new Set([
-  "describe", "it", "test", "suite", "context", "beforeEach", "afterEach", "beforeAll", "afterAll", "before", "after", "fdescribe", "xdescribe", "fit", "xit",
-]);

@@ -202,7 +202,8 @@ export function computeComplexity(
 
   // Process top-level functions
   for (const fn of functions) {
-    if (fn.name === "<setup>") continue;
+    // A test suite's body is its tests, each measured on its own.
+    if (fn.name === "<setup>" || fn.testCase?.kind === "suite") continue;
     results.push(rowFor(fn.name, fn, root, spec, endRow));
   }
 

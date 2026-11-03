@@ -35,7 +35,8 @@ export function computeRegexComplexity(lines: string[], analysis: FileAnalysis, 
     return n + ternaryCount(code, analysis.language);
   };
   const measure = (fn: FunctionInfo, name: string): void => {
-    if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>") return;
+    // A test suite's body is its tests, each measured on its own.
+    if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>" || fn.testCase?.kind === "suite") return;
     let n = 0;
     for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) n += count(lines[i] ?? "");
     // Same operator vocabulary as the cyclomatic count above, so the two numbers agree on what an operator is.

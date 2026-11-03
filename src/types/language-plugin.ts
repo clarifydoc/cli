@@ -991,6 +991,13 @@ export interface TestTarget {
   file: string;
   /** As the symbol linker spells them: `test_total`, `OrdersTest.createsOrder`, `TestParse`. */
   names: string[];
+  /**
+   * The tests among `names` the extractor marked, one each: the title path a runner's name filter
+   * selects it by (`["league", "builds"]` for `it("builds")` inside `describe("league")`; a hook's
+   * is its suite's, empty for a hook of the whole file), and the line it is declared on (what a
+   * runner filtering by line takes, `rspec spec/club_spec.rb:12`). Absent when none is marked.
+   */
+  cases?: Array<{ path: string[]; line: number; hook?: true }>;
 }
 
 /** What a test command is built from besides the tests: the project's packages and the manifests declaring them. */

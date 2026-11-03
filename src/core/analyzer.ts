@@ -156,6 +156,7 @@ import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
+import { collectTestFunctions } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
   type ArchLayer,
@@ -1965,6 +1966,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // additive — `changeRisk` and `level` are left exactly as they are.
   // Test coverage, from the reports a test run wrote.
   const testCoverage = await readTestCoverage(coverageFiles, allAnalyses, projectRoot);
+  // The test functions the extractors marked, by file: what impact credits as test code and names a runner's filter by.
+  const testFunctions = collectTestFunctions(allAnalyses);
   if (testCoverage) {
     // How much of what each route runs the tests ran (its handler and three calls deep).
     const perRoute = routeTestCoverage(allRoutes, symbolLinks, testCoverage);
@@ -2395,6 +2398,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     unusedFiles: unusedFiles.length > 0 ? unusedFiles : undefined,
     deadCode,
     ...(testCoverage ? { testCoverage } : {}),
+    ...(Object.keys(testFunctions).length ? { testFunctions } : {}),
     ...(docDrift ? { docDrift } : {}),
     ...(historySecrets ? { historySecrets } : {}),
     deployment,

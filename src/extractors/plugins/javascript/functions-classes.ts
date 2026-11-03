@@ -9,6 +9,7 @@ import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/no
 import { escapeRegex } from "../shared/path-utils.js";
 import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
+import { testCaseFunctions } from "./test-cases.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
 import {
@@ -1065,6 +1066,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (protoClasses.length > 0) functions = withoutPrototypeMembers(functions, protoClasses);
     if (sourceText.includes("]:")) this.extractKeyedRegistry(tree.rootNode, functions);
     if (this.ctx.dispatchProps.size > 0) for (const fn of functions) addDispatchPropCalls(fn, this.ctx.dispatchProps);
+    // `describe`/`it`/`beforeEach` callbacks: each test a function of its own, named by its title path.
+    functions.push(...testCaseFunctions(tree.rootNode, sourceText, (name, fn) => this.parseJsArrowOrExpr(name, fn, false)));
     return functions;
   }
 

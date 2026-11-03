@@ -102,6 +102,8 @@ function emitFunctionRefs(
     if (param.type) emitTypeRefs(param.type, "parameter", ctx, refs);
   }
   if (fn.returnType) emitTypeRefs(fn.returnType, "return", ctx, refs);
+  // A test suite describing a type (`RSpec.describe Club do`) exercises it.
+  if (fn.testCase?.subject) emitTypeRefs(fn.testCase.subject, "variable", ctx, refs);
 }
 
 /**
