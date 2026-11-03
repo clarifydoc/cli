@@ -224,6 +224,8 @@ function importedNameCalls(analysis: FileAnalysis): void {
       if (source) {
         c.kind = "cross-file";
         c.target = source;
+        // The import names it — the same evidence as classifyCalls' exact specifier match.
+        c.confidence = "EXTRACTED";
       }
     }
   };

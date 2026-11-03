@@ -59,4 +59,12 @@ describe("Rust functions imported by name", () => {
       "select_club → league-db/src/persistence/club_sql.rs#select_club",
     ]);
   });
+
+  it("carry the import's confidence — EXTRACTED, never left for a consumer to read as INFERRED", () => {
+    const links = summary.symbolLinks
+      .filter((l) => l.sourceSymbol === "fixture")
+      .map((l) => `${l.callName} ${l.confidence}`)
+      .sort();
+    expect(links).toEqual(["check_squad_size EXTRACTED", "is_derby EXTRACTED", "select_club EXTRACTED"]);
+  });
 });
