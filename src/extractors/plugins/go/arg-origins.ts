@@ -1,5 +1,6 @@
 import type { CallArgOrigin, ClassInfo, DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
 import { goFunctions } from "./path-arg-calls.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 type Origin = CallArgOrigin["origin"];
 
@@ -204,7 +205,7 @@ const scopeAt = (scopes: readonly Scope[], line0: number): Scope | undefined => 
 function callArgsAt(lines: readonly string[], line0: number, name: string, end: number): string[] | null {
   const text = lines.slice(line0, Math.min(end + 1, line0 + 30)).map(stripComment).join("\n");
   const leaf = name.replace(/\(\)/g, "").split(".").pop()!;
-  const re = new RegExp(String.raw`\b${leaf.replace(/[$]/g, "\\$")}\s*(?:\[[^\]\n]*\]\s*)?\(`, "g");
+  const re = new RegExp(String.raw`\b${escapeRegex(leaf)}\s*(?:\[[^\]\n]*\]\s*)?\(`, "g");
   const first = text.indexOf("\n");
   for (const m of text.matchAll(re)) {
     if (first >= 0 && m.index! > first) break;

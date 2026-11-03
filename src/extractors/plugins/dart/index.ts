@@ -9,6 +9,7 @@ import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, Rout
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
 import {
@@ -855,7 +856,7 @@ function constructorDefaults(body: string, name: string): { defaults: Map<string
   const defaults = new Map<string, Set<string>>();
   const ranges: Array<[number, number]> = [];
   if (!body.includes("=")) return { defaults, ranges };
-  const ctorRe = new RegExp(`(?<![\\w$.])(?:const\\s+|factory\\s+)?${name.replace(/\$/g, "\\$")}(?:\\.\\w+)?\\s*\\(`, "g");
+  const ctorRe = new RegExp(`(?<![\\w$.])(?:const\\s+|factory\\s+)?${escapeRegex(name)}(?:\\.\\w+)?\\s*\\(`, "g");
   let c: RegExpExecArray | null;
   while ((c = ctorRe.exec(body)) !== null) {
     const open = c.index + c[0].length - 1;

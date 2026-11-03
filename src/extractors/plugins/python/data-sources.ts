@@ -159,7 +159,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         if ((leaf === "s" || leaf === "si" || leaf === "signature") && this.canvas && /^(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*\.(?:s|si|signature)$/.test(fnName)) {
           const task = fnName.split(".").slice(-2, -1)[0]!;
           const local = node.parent?.type === "assignment" && node.parent.childForFieldName("left")?.type === "identifier" ? node.parent.childForFieldName("left")!.text : null;
-          const runHere = local !== null && this.signatures.get(local) === task && new RegExp(`\\b${local}\\.(?:delay|apply_async)\\(`).test(this.sourceText);
+          const runHere = local !== null && this.signatures.get(local) === task && new RegExp(`\\b${escapeRegex(local)}\\.(?:delay|apply_async)\\(`).test(this.sourceText);
           if (task !== "self" && task !== "cls" && !runHere) {
             sources.push(this.ds({ kind: "queue-publish", name: `Celery: ${leaf}`, target: task, line: node.startPosition.row + 1 }));
             return;
@@ -929,7 +929,7 @@ function selfAttributeValue(name: string, at: Node): string | null {
 
 /** The one string the module assigns `<name>` at top level, when no function enclosing `at` binds the name itself. */
 function moduleConstantValue(name: string, at: Node): string | null {
-  const binds = new RegExp(`\\b${name}\\b`);
+  const binds = new RegExp(`\\b${escapeRegex(name)}\\b`);
   let scope: Node | null = at.parent;
   let module: Node | null = null;
   for (; scope; scope = scope.parent) {
@@ -1132,7 +1132,7 @@ function moduleBound(name: string, at: Node): boolean {
   for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
     if (fn.type !== "function_definition" && fn.type !== "lambda") continue;
     const params = fn.childForFieldName("parameters");
-    if (params && new RegExp(`(?:^|[(,*\\s])${head}\\s*(?:[:=,)]|$)`).test(params.text)) return false;
+    if (params && new RegExp(`(?:^|[(,*\\s])${escapeRegex(head)}\\s*(?:[:=,)]|$)`).test(params.text)) return false;
     let rebound = false;
     const visit = (n: Node): void => {
       if (rebound) return;

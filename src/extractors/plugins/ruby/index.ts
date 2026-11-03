@@ -8,6 +8,7 @@ import { rubyModelFinders } from "./autoload.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -290,7 +291,7 @@ function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: Fun
 }
 
 /** A chain off a class through a model finder or query (`Club.find()`, `Club.where().first()`). */
-const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.members.map((m) => m.replace(/[?!]/g, "\\$&")).join("|")})\\(\\)`);
+const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.members.map(escapeRegex).join("|")})\\(\\)`);
 
 /**
  * `builder.perform` on a local the method constructed (`builder = PlayerBuilder.new(…)`):

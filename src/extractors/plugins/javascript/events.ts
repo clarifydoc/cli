@@ -1,4 +1,5 @@
 import type { EventInfo, ParamInfo, Language } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Extract component events from Vue defineEmits declarations and emit() calls.
@@ -137,7 +138,7 @@ function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<st
     const name = m[1] ?? field;
     if (seen.has(name)) continue;
     seen.add(name);
-    const emit = new RegExp(String.raw`\b(?:this\.)?` + field.replace(/\$/g, "\\$") + String.raw`\.emit\s*\(`).exec(source);
+    const emit = new RegExp(String.raw`\b(?:this\.)?` + escapeRegex(field) + String.raw`\.emit\s*\(`).exec(source);
     events.push({ name, params: [], line: lineAt(source, emit ? emit.index : m.index!) });
   }
 }

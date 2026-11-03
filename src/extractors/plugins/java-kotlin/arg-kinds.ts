@@ -41,7 +41,7 @@ function jdkFunctionalKey(name: string): string | null {
 /** The simple name of a type as written: annotations, a package, type arguments and nullability dropped; an array keeps its `[]`. */
 function simpleType(type: string): string {
   const t = type.replace(/@[\w.]+(?:\([^)]*\))?\s*/g, "").replace(/\s+/g, "").replace(/\?$/, "");
-  const array = /(\[\])+$/.exec(t.replace(/<.*>/s, ""))?.[0] ?? "";
+  const array = /(\[\])+$/.exec(t)?.[0] ?? "";
   const base = t.replace(/<.*$/s, "").replace(/(\[\])+$/, "").replace(/\.\.\.$/, "");
   return base.split(".").pop()! + array;
 }

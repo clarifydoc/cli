@@ -32,7 +32,7 @@ import {
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
 import { detectGitopsReleases } from "./gitops-releases.js";
-import { resolveViewBySuffix, pickByPathAffinity, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { resolveViewBySuffix, pickByPathAffinity, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { attachServerRedirects } from "./server-redirects.js";
 import { buildScreenFlow } from "./screen-flow.js";
 import { linkRenderedViews } from "./rendered-views.js";
@@ -2677,7 +2677,7 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
   for (const m of source.matchAll(/\s(?::to|:href|\[routerLink\]|to|href)\s*=\s*(?:"\s*|\{\s*)([A-Za-z_$][\w$]*)\s*["}]/g)) sinks.add(m[1]!);
   for (const name of sinks) {
     if (/^(?:true|false|null|undefined|this)$/.test(name)) continue;
-    for (const assign of source.matchAll(new RegExp(String.raw`(?:^|[^\w$.])${name.replace(/\$/g, "\\$")}\s*(?:=(?!=)|\+=)\s*([^;]{1,300})`, "g"))) {
+    for (const assign of source.matchAll(new RegExp(String.raw`(?:^|[^\w$.])${escapeRegex(name)}\s*(?:=(?!=)|\+=)\s*([^;]{1,300})`, "g"))) {
       // The definition up to its statement's end (`computed(() => ({ name: 'login' }))` may span lines).
       const rhs = assign[1]!.split(/\n\s*\n|\n\s*(?:const|let|var|function|export)\b/)[0]!;
       for (const lit of rhs.matchAll(/['"`](\/(?!\/)[^'"`\s?#]*)['"`]/g)) {

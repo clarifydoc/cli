@@ -20,7 +20,7 @@ import type { ImportResolveContext, LanguagePluginManifest, PackageRoot } from "
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
-import { commonPrefixLength, extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
@@ -2865,7 +2865,7 @@ function memberClassOf(ctx: LinkContext, file: string, def: SymbolDef): string |
 
 /** A destructuring pattern as written (`{ boost }`, `{ tune: boost }`, `[first, ...rest]`) binds `name`. */
 function bindsName(pattern: string, name: string): boolean {
-  return new RegExp(`(?:^|[{\\[,]|:|\\.\\.\\.)\\s*${name.replace(/[$]/g, "\\$")}\\s*(?:$|[}\\],=])`).test(pattern);
+  return new RegExp(`(?:^|[{\\[,]|:|\\.\\.\\.)\\s*${escapeRegex(name)}\\s*(?:$|[}\\],=])`).test(pattern);
 }
 
 function enclosingMethod(analysis: FileAnalysis, line: number, name: string): { symbol: string; line: number } | null {

@@ -29,6 +29,7 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // The quote/bracket-aware splitter and unquoter are shared with the symbolic
 // value resolver (one copy instead of the three that used to exist).
 import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 interface UrlBuilder {
   /** Every distinct template the helper may return, primary first. */
@@ -340,7 +341,7 @@ function keepHelperBases(lookup: HelperLookup, analyses: FileAnalysis[]): void {
       const m = fn.urlTemplateBase ? /^((?:[A-Za-z_$][\w$]*\.)*)([A-Za-z_$][\w$]*)\(([^()]*)\)$/.exec(fn.urlTemplateBase.trim()) : null;
       if (!m || m[2] === fn.name.split(".").pop() || lookupHelper(lookup, { file: a.filePath, line: fn.line }, m[1]!, m[2]!) === null) continue;
       let base = fn.urlTemplateBase!.trim();
-      for (const p of fn.params) base = base.replace(new RegExp(`(?<![\\w$.{])${p.name.replace(/\$/g, "\\$")}(?![\\w$}])`, "g"), `{${p.name}}`);
+      for (const p of fn.params) base = base.replace(new RegExp(`(?<![\\w$.{])${escapeRegex(p.name)}(?![\\w$}])`, "g"), `{${p.name}}`);
       const builder = fn.name.includes(".") ? lookup.local.get(a.filePath)?.get(fn.name) : lookup.global.get(fn.name);
       if (!builder || builder.templates.some((t) => t.startsWith("${"))) continue;
       builder.templates = builder.templates.map((t) => `\${${base}}${t}`);

@@ -27,7 +27,7 @@ const ONE_LINE_ELSE = /\{\$IF(?:N?DEF|OPT)?\b[^}\n]*\}([^{\n]*)(\{\$ELSE\}[^{\n]
  * 'This unit needs Windows.' {$ENDIF}`): the strings are no declaration or
  * statement, so the whole group is blanked.
  */
-const STRINGS_ONLY_GROUP = /\{\$IF(?:N?DEF|OPT)?\b[^}]*\}(?:\s*'(?:[^'\n]|'')*')+\s*\{\$(?:ENDIF|IFEND)\b[^}]*\}/gi;
+const STRINGS_ONLY_GROUP = /\{\$IF(?:N?DEF|OPT)?\b[^}]*\}(?:\s*'(?:[^'\n]|'')*'(?!'))+\s*\{\$(?:ENDIF|IFEND)\b[^}]*\}/gi;
 
 /**
  * A group right after a routine's header wrapping its declaration sections —

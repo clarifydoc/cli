@@ -130,7 +130,11 @@ function clean(raw: readonly string[]): string | null {
   let text = para.join(" ").replace(/\s+/g, " ").trim();
   if (text.length < 3 || LICENCE.test(text) || DIRECTIVE.test(text) || CODE_LINE.test(text)) return null;
   // XML doc tags (`<summary>`) wrap a C# comment's text; inline markup keeps its words.
-  text = text.replace(/<\/?[a-z]+[^>]*>/gi, "").replace(/\s+/g, " ").trim();
+  for (let prev = ""; prev !== text; ) {
+    prev = text;
+    text = text.replace(/<\/?[a-z]+[^>]*>/gi, "");
+  }
+  text = text.replace(/\s+/g, " ").trim();
   if (!/[A-Za-z]{2}/.test(text)) return null;
   const sentence = /^(.{12,}?[.!?])(?=\s|$)/.exec(text)?.[1] ?? text;
   if (sentence.length <= MAX_DOC_LENGTH) return sentence;

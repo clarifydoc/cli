@@ -128,7 +128,7 @@ export function phpValueOrigin(raw: Node, depth = 0): { origin: Origin; transfor
 }
 
 /** Declared types a column can be compared with: scalars, arrays of them, unions of those. */
-const SCALAR_TYPE = /^(?:(?:int|string|float|bool|array|mixed|null|iterable)\s*\|?\s*)+$/i;
+const SCALAR_TYPE = /^(?:int|string|float|bool|array|mixed|null|iterable)(?:\s*\|\s*(?:int|string|float|bool|array|mixed|null|iterable))*\s*$/i;
 
 /** `calls.argOriginsOf` for PHP. */
 export function phpArgOriginsOf(node: Node): CallArgOrigin[] | null {

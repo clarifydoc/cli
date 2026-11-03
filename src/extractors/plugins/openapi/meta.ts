@@ -70,7 +70,7 @@ export const openapiMeta: LanguagePluginMeta = {
   preprocess(rawSource, relativePath) {
     if (isOpenApiDocument(rawSource)) return null;
     // A Dapr `kind: Subscription` resource: read by the serverless plugin, with the other deployment descriptors.
-    if (/\.ya?ml$/i.test(relativePath) && rawSource.includes("dapr.io/") && DAPR_SUBSCRIPTION_RE.test(rawSource)) return { sourceText: rawSource, language: "serverless" };
+    if (/\.ya?ml$/i.test(relativePath) && /\bdapr\.io\//.test(rawSource) && DAPR_SUBSCRIPTION_RE.test(rawSource)) return { sourceText: rawSource, language: "serverless" };
     if (!isSchemaFragment(rawSource, relativePath)) return { skip: "not an OpenAPI/Swagger document" };
     return {
       sourceText: rawSource,

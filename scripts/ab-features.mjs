@@ -132,7 +132,7 @@ function lostKind(project, A, B, edge) {
   if (!call) return "other";
   const leaf = edge.call.split(".").pop();
   const line = sourceLine(project, file, call.line);
-  if (new RegExp(`\\b(?:fn|func|def|function|sub)\\s+${leaf.replace(/[$]/g, "\\$")}\\b`).test(line)) return "a declaration read as a call";
+  if (new RegExp(`\\b(?:fn|func|def|function|sub)\\s+${leaf.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(line)) return "a declaration read as a call";
   const holder = fnsOf(B).find((f) => f.name !== symbol && f.line <= call.line && call.line <= f.endLine && (f.calls ?? []).some((c) => c.name.split(".").pop() === leaf));
   return holder ? "the call is a nested function's" : "other";
 }

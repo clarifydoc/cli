@@ -163,7 +163,7 @@ function declarations(statement: string, needsInit: boolean): Declared[] {
 
 /** One declarator after the type: `*p = new Club()`, `c(3)`, `&r`, `[a, b] = pair` (a structured binding). */
 function declarator(part: string, typeText: string, needsInit: boolean): Declared[] | null {
-  const m = /^\s*((?:[*&]|&&|\bconst\b|\bvolatile\b|\s)*)([A-Za-z_]\w*|\[[^\]]*\])\s*(.*)$/s.exec(part);
+  const m = /^\s*((?:[*&]|\bconst\b|\bvolatile\b|\s)*)([A-Za-z_]\w*|\[[^\]]*\])\s*(.*)$/s.exec(part);
   if (!m) return null;
   const name = m[2]!;
   const init = m[3]!.trim();

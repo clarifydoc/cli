@@ -1,7 +1,7 @@
 import { projectName } from "./markdown.js";
 import type { BundleFile } from "./obsidian.js";
 import type { InteractiveElement, Route, Screen, Summary } from "./types.js";
-import { idFactory, mermaidLabel, plural } from "./text.js";
+import { cell, idFactory, mermaidLabel, plural } from "./text.js";
 
 /**
  * A spec per screen, and the user flows through them, as Markdown files that
@@ -163,6 +163,9 @@ function code(text: string): string {
   const t = text.replace(/\r?\n/g, " ");
   return t.includes("`") ? `\`\` ${t} \`\`` : `\`${t}\``;
 }
+
+/** A code span or link in a table cell: only its pipes take a backslash (see `codeCell`). */
+const pipes = (text: string) => text.split("|").join("\\|");
 
 /** Link text: brackets would end it. */
 const linkText = (text: string) => text.replace(/[[\]]/g, (c) => `\\${c}`);
@@ -850,7 +853,7 @@ function indexDoc(
     const sends = unique([...m.load.routes, ...m.actions.flatMap((a) => a.reach.routes)], (r) => `${r.method} ${r.path}`).length;
     const writes = unique(m.actions.flatMap((a) => a.reach.effects).filter((e) => e.kind === "db-write").map((e) => e.resource));
     const way = m.entry ? "start" : parent.has(m) ? pathTo(m).map((p) => p.screen.title).join(" → ") : "—";
-    lines.push(`| ${screenLink(m, "screens/").replace(/\|/g, "\\|")} | ${m.route ? code(m.route).replace(/\|/g, "\\|") : "—"} | ${m.actions.length} | ${sends} | ${writes.map((w) => code(w)).join(", ").replace(/\|/g, "\\|") || "—"} | ${way.replace(/\|/g, "\\|")} |`);
+    lines.push(`| ${pipes(screenLink(m, "screens/"))} | ${m.route ? pipes(code(m.route)) : "—"} | ${m.actions.length} | ${sends} | ${pipes(writes.map((w) => code(w)).join(", ")) || "—"} | ${cell(way)} |`);
   }
   if (parts.length) {
     lines.push("", "## Components", "", "Parts of pages; each is listed with the pages it appears on.", "");
