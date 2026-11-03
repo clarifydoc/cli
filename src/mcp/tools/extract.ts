@@ -8,6 +8,8 @@ import { isTestPath, mustResolveFile, requireAnalysis, stalenessHint, type ToolC
 import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
+import { declarationHeadLine } from "../../core/doc-comments.js";
+import { pluginFor } from "../../extractors/registry.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -25,6 +27,23 @@ interface Span {
   depth: number;
   /** The call that reached it (absent for the seed). */
   via?: SymbolLink;
+  /** What the definition's head above `line` holds: its decorators and the first words of its doc comment. */
+  head?: Head;
+}
+
+/** The definition's own decorators and doc, which say how far above `line` its head starts. */
+interface Head {
+  decorators?: readonly string[];
+  doc?: string;
+  language?: FileAnalysis["language"];
+}
+
+/** A definition the per-file analysis holds: its span and its head. */
+interface Definition {
+  symbol: string;
+  line: number;
+  endLine: number;
+  head: Head;
 }
 
 /**
@@ -176,7 +195,9 @@ export function extractTool(ctx: ToolContext): McpTool {
         if (!lines) continue;
         const lineCount = analyses.get(span.file)?.lineCount;
         if (lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
-        const body = lines.slice(span.line - 1, span.endLine).join("\n");
+        // The decorators, attributes and doc comment above the definition are part of what it says.
+        const from = span.head ? declarationHeadLine(lines, span.line, span.head.language ? pluginFor(span.head.language)?.docComments : undefined, span.head) : span.line;
+        const body = lines.slice(from - 1, span.endLine).join("\n");
         const tokens = Math.ceil(body.length / CHARS_PER_TOKEN);
         if (span.depth > 0 && used + tokens > maxTokens) {
           withheld.push({ span, tokens });
@@ -187,7 +208,7 @@ export function extractTool(ctx: ToolContext): McpTool {
           ? ` — called as ${span.via.callName} at ${loc(span.via.sourceFile, span.via.sourceLine)}${confidenceNote(span.via.confidence, span.via.resolvedBy, span.via.strategy)}`
           : "";
         blocks.push(
-          `## ${span.symbol}() — ${span.file}:${span.line}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
+          `## ${span.symbol}() — ${span.file}:${from}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
           fenced(span.depth === 0 && tokens > maxTokens ? `${body.slice(0, maxTokens * CHARS_PER_TOKEN)}\n… (cut at the budget)` : body),
           "",
         );
@@ -211,18 +232,24 @@ export function extractTool(ctx: ToolContext): McpTool {
   };
 }
 
+/** The head of a function, method or class: what `declarationHeadLine` reads above it. */
+function headOf(a: FileAnalysis, item: { decorators?: readonly string[]; doc?: string }): Head {
+  return { language: a.language, ...(item.decorators?.length ? { decorators: item.decorators } : {}), ...(item.doc ? { doc: item.doc } : {}) };
+}
+
 /** Every class a file defines, by name — a definition a name can mean, though never a callee's span. */
-function classDefinitions(a: FileAnalysis | null): Array<{ symbol: string; line: number; endLine: number }> {
-  return (a?.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine }));
+function classDefinitions(a: FileAnalysis | null): Definition[] {
+  if (!a) return [];
+  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine, head: headOf(a, c) }));
 }
 
 /** Every function and method a file defines, keyed the way symbol links name them (`Class.method`). */
-function definitions(a: FileAnalysis | null): Array<{ symbol: string; line: number; endLine: number }> {
+function definitions(a: FileAnalysis | null): Definition[] {
   if (!a) return [];
-  const out: Array<{ symbol: string; line: number; endLine: number }> = [];
-  for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine });
+  const out: Definition[] = [];
+  for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
   for (const cls of a.classes ?? []) {
-    for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine });
+    for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
   }
   return out;
 }

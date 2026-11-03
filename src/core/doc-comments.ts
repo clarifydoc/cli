@@ -137,3 +137,109 @@ function clean(raw: readonly string[]): string | null {
   const cut = sentence.slice(0, MAX_DOC_LENGTH - 1);
   return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), MAX_DOC_LENGTH / 2))}…`;
 }
+
+/** Rows a decorator spread over lines (`@ApiResponse({` … `})`) may take, read upward from its last line. */
+const MAX_ATTRIBUTE_ROWS = 15;
+/** The sigil a decorator, annotation or attribute line opens with: `@Get`, `#[cfg`, `[HttpGet`, `<Route`. */
+const ATTRIBUTE_SIGIL = /^\s*(?:@|#!?\[|\[|<)\s*([A-Za-z_$][\w.:$]*)/;
+
+/**
+ * The first line (1-based) of the declaration at `line` with its head: the decorators, attributes and
+ * annotations above it, and the doc comment the analysis read its `doc` from — what a snippet of the
+ * declaration starts at, so `@Get() @UseGuards(CoachGuard)`, `#[cfg(not(…))]` and `@app.get("/clubs")` are
+ * quoted with it. Only lines the declaration accounts for are taken: a line the language's attribute shape
+ * matches, one opening with a decorator the item lists (and the rows of its arguments), and the comment block
+ * whose words begin its `doc`. A blank line ends the head.
+ */
+export function declarationHeadLine(
+  lines: readonly string[],
+  line: number,
+  spec: DocCommentSpec | undefined,
+  item: { decorators?: readonly string[]; doc?: string },
+): number {
+  const names = new Set((item.decorators ?? []).map((d) => /^\s*(?:@|#!?\[|\[|<)?\s*([A-Za-z_$][\w.:$]*)/.exec(d)?.[1]).filter((n): n is string => !!n));
+  const isAttribute = (t: string): boolean => !!spec?.attribute?.test(t) || (names.size > 0 && names.has(ATTRIBUTE_SIGIL.exec(t)?.[1] ?? ""));
+  let start = line;
+  let docTaken = !item.doc;
+  let i = line - 2;
+  while (i >= 0) {
+    const t = lines[i]!;
+    if (!t.trim()) break;
+    if (isAttribute(t)) {
+      start = i + 1;
+      i--;
+      continue;
+    }
+    const opener = attributeOpening(lines, i, isAttribute);
+    if (opener >= 0) {
+      start = opener + 1;
+      i = opener - 1;
+      continue;
+    }
+    if (!docTaken) {
+      const top = commentTop(lines, i, spec);
+      if (top >= 0 && startsWithDoc(lines.slice(top, i + 1), item.doc!)) {
+        start = top + 1;
+        i = top - 1;
+        docTaken = true;
+        continue;
+      }
+    }
+    break;
+  }
+  return start;
+}
+
+/** The decorator line whose argument list, spread over rows, closes on row `end` (0-based); -1 when none. */
+function attributeOpening(lines: readonly string[], end: number, isAttribute: (t: string) => boolean): number {
+  for (let k = end - 1; k >= 0 && end - k <= MAX_ATTRIBUTE_ROWS; k--) {
+    if (!lines[k]!.trim()) return -1;
+    if (!isAttribute(lines[k]!)) continue;
+    let depth = 0;
+    for (let r = k; r <= end; r++) {
+      depth += bracketDelta(lines[r]!);
+      // Open until its last row, closed there.
+      if (r < end ? depth <= 0 : depth !== 0) break;
+      if (r === end) return k;
+    }
+    return -1;
+  }
+  return -1;
+}
+
+/** Opening minus closing brackets on a row, quoted text left out. */
+function bracketDelta(row: string): number {
+  let d = 0;
+  for (const ch of row.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, "")) {
+    if (ch === "(" || ch === "[" || ch === "{") d++;
+    else if (ch === ")" || ch === "]" || ch === "}") d--;
+  }
+  return d;
+}
+
+/** The first row (0-based) of the comment ending on row `end`, in the language's comment shapes; -1 when row `end` ends none. */
+function commentTop(lines: readonly string[], end: number, spec: DocCommentSpec | undefined): number {
+  if (!spec) return -1;
+  const last = lines[end]!.trim();
+  for (const [open, close] of spec.block ?? []) {
+    if (!last.endsWith(close)) continue;
+    for (let j = end; j >= 0 && end - j < 80; j--) {
+      const at = lines[j]!.trim().indexOf(open);
+      if (at >= 0 && (j < end || at + open.length <= last.length - close.length)) return at === 0 ? j : -1;
+    }
+  }
+  const prefix = (spec.line ?? []).find((p) => last.startsWith(p));
+  if (!prefix) return -1;
+  let j = end;
+  while (j > 0 && lines[j - 1]!.trim().startsWith(prefix)) j--;
+  return j;
+}
+
+/** Whether a comment's words begin with the first words of `doc` — the comment the analysis read it from. */
+function startsWithDoc(rows: readonly string[], doc: string): boolean {
+  const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const want = words(doc).slice(0, 4);
+  if (!want.length) return false;
+  const have = words(rows.join(" ")).join(" ");
+  return have.includes(want.join(" "));
+}
