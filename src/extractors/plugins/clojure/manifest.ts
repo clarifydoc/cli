@@ -15,6 +15,7 @@ export const clojureManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".clj", ".cljs", ".cljc"],
   testFilePatterns: [/_test\.cljc?s?$/],
+  testSubjectAffixes: { suffixes: ["_test"] },
   externalModulePrefixes: ["clojure.", "cljs."],
   frameworkImportHints: { "compojure.core": "compojure", "ring.adapter.jetty": "ring", "reitit.ring": "reitit", "reagent.core": "re-frame" },
   frameworkRules: clojureFrameworkRules,

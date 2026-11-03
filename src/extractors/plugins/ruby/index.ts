@@ -1,3 +1,4 @@
+import { rspecFunctions } from "./rspec.js";
 import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
@@ -944,7 +945,9 @@ export const rubySpec: RegexLangSpec = {
   extractEntryPoints: (lines) => extractRubyScheduledJobs(lines),
 
   // Top-level `def`s get the same declared types and call clean-up as methods.
-  postProcessFunctions: (lines, fns) => {
+  postProcessFunctions: (lines, found) => {
+    // RSpec's groups, examples and hooks: the functions a spec file has.
+    const fns = rspecFunctions(lines, found, rubySpec.callPatterns ?? []);
     for (const fn of fns) {
       addParenlessParams(lines, fn);
       applyDeclaredParamTypes(lines, fn);

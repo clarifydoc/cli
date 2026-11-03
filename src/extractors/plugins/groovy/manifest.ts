@@ -19,6 +19,7 @@ export const groovyManifest: LanguagePluginManifest = {
   // A Jenkins pipeline is a Groovy script with no extension.
   namedFiles: ["Jenkinsfile"],
   testFilePatterns: [/Spec\.groovy$/, /Tests?\.groovy$/, /(?:^|\/)src\/(?:test|integration-test)\//],
+  testSubjectAffixes: { suffixes: ["Spec", "Tests", "Test"] },
   externalModulePrefixes: ["groovy.", "java.", "javax.", "jakarta.", "org.springframework.", "grails.", "org.grails.", "spock.", "io.micronaut.", "org.codehaus.groovy."],
   frameworkImportHints: { grails: "grails", "org.grails": "grails", "io.micronaut": "micronaut", "org.springframework.web": "spring-web" },
   frameworkRules: groovyFrameworkRules,

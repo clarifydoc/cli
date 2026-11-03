@@ -1233,6 +1233,34 @@ export interface FunctionInfo {
    * this function as its handler and states no responses of its own.
    */
   responses?: RouteResponseInfo[];
+  /**
+   * A test the runner registers rather than a function the code calls: a `describe`/`it`/`test`
+   * callback (named by its title path, `league › builds`), an RSpec `it` block, a Rust `#[test]`
+   * function, a Zig `test "…"` block. `title` is its own title as written, `path` the titles of the
+   * suites around it, outermost first (a Rust test's: its modules); `kind` says whether it is a
+   * suite, a case, a hook (`beforeEach`) or a helper only tests call (a function in a Rust
+   * `#[cfg(test)]` module); `subject` is the type a suite describes. A test declared beside
+   * production code is test code although its file is not a test file. Absent for every other
+   * function.
+   */
+  testCase?: {
+    title: string;
+    path: string[];
+    kind: "suite" | "case" | "hook" | "helper";
+    /** A suite describing a type rather than a behaviour (`RSpec.describe Club do`): that type, as written. */
+    subject?: string;
+  };
+}
+
+/** One marked test function (`ProjectAnalysis.testFunctions`): `FunctionInfo.testCase` with the symbol it is. */
+export interface TestFunctionRow {
+  /** As the symbol linker spells it (`league › builds`, `finds_leader`, `TableTest.ranks`). */
+  symbol: string;
+  line: number;
+  kind: "suite" | "case" | "hook" | "helper";
+  title: string;
+  /** The titles of the suites around it, outermost first; omitted when none. */
+  path?: string[];
 }
 
 export interface PropertyInfo {
@@ -3967,6 +3995,13 @@ export interface ProjectAnalysis {
   docDrift?: import("../core/doc-drift.js").DocDriftReport;
   /** Test coverage from the reports a test run wrote (core/test-coverage.ts) — per file and per function. */
   testCoverage?: import("../core/test-coverage.js").TestCoverageReport;
+  /**
+   * The test functions the extractors marked (`FunctionInfo.testCase`), by file, in source order:
+   * runner callbacks named by their title path, RSpec examples, Rust `#[test]` functions. A file
+   * whose functions are all tests by its path is listed too, so a runner can be asked for one test
+   * by its title (core/test-functions.ts).
+   */
+  testFunctions?: Record<string, TestFunctionRow[]>;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
   importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 

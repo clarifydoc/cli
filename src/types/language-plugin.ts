@@ -1001,6 +1001,13 @@ export interface TestTarget {
   file: string;
   /** As the symbol linker spells them: `test_total`, `OrdersTest.createsOrder`, `TestParse`. */
   names: string[];
+  /**
+   * The tests among `names` the extractor marked, one each: the title path a runner's name filter
+   * selects it by (`["league", "builds"]` for `it("builds")` inside `describe("league")`; a hook's
+   * is its suite's, empty for a hook of the whole file), and the line it is declared on (what a
+   * runner filtering by line takes, `rspec spec/club_spec.rb:12`). Absent when none is marked.
+   */
+  cases?: Array<{ path: string[]; line: number; hook?: true }>;
 }
 
 /** What a test command is built from besides the tests: the project's packages and the manifests declaring them. */
@@ -1385,6 +1392,13 @@ export interface LanguagePluginManifest {
    * excluded from route extraction (see `extractRoutes` callers).
    */
   testFilePatterns?: readonly RegExp[];
+  /**
+   * How a test file's name says which file it tests: the affixes the language's runners put on the
+   * subject's stem — Go `_test` (`club_test.go` → `club`), Python `test_` / `_test`, JUnit `Test` /
+   * `Tests` / `IT`, RSpec `_spec`. Stripped once each, longest first, from the stem (the name
+   * without its extension); the cross-language `.test` / `.spec` are stripped by core.
+   */
+  testSubjectAffixes?: { prefixes?: readonly string[]; suffixes?: readonly string[] };
   /**
    * Language-idiomatic GENERATED-file conventions: `*.Designer.cs`, `*.g.cs`,
    * `*.pb.go`, `*_pb2.py`, `*.freezed.dart`. Matched against the

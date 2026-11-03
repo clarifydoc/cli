@@ -18,6 +18,7 @@ export const vManifest: LanguagePluginManifest = {
   // A type's methods sit in any file of its module directory (`fn (app App) x()`).
   typesSpanFiles: true,
   testFilePatterns: [/_test\.v$/],
+  testSubjectAffixes: { suffixes: ["_test"] },
   frameworkImportHints: { veb: "veb", vweb: "vweb" },
   activationFiles: ["v.mod"],
 };

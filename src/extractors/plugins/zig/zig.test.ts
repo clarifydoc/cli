@@ -48,6 +48,7 @@ describe("Zig functions, types and imports", () => {
     expect(a.functions.map((f) => [f.name, f.isExported, f.returnType, f.calls.map((c) => c.name)])).toEqual([
       ["main", true, "!void", ["car.close", "db.connect", "std.debug.print"]],
       ["helper", false, "void", []],
+      ["closes", false, null, ["std.testing.expect"]],
     ]);
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.properties.map((p) => `${p.name}:${p.type}`), c.methods.map((m) => m.name)])).toEqual([
       ["Car", "class", ["id:u64", "total:f64"], ["close"]],
@@ -144,5 +145,24 @@ describe("Zig packages", () => {
     ].join("\n");
     const pkgs = zigPackageManager.manifests[0]!.parse(zon, { declaredIn: "build.zig.zon" } as never);
     expect((pkgs as Array<{ name: string; version: string | null }>).map((p) => `${p.name}@${p.version}`)).toEqual(["zap@0.9.1", "zig-clap@null", "pg@null"]);
+  });
+});
+
+describe("Zig test blocks", () => {
+  it("are test functions with their calls, a doctest named apart from the function it tests", async () => {
+    const a = await analyze([
+      'const std = @import("std");',
+      "fn rank(points: u32) u32 { return points; }",
+      'test "ranks clubs" {',
+      "    try std.testing.expect(rank(3) == 3);",
+      "}",
+      "test rank {",
+      "    _ = rank(1);",
+      "}",
+    ].join("\n"), "src/table.zig");
+    const tests = a.functions.filter((f) => f.testCase);
+    expect(tests.map((f) => [f.name, f.testCase!.title, f.testCase!.kind])).toEqual([["ranks clubs", "ranks clubs", "case"], ["test rank", "rank", "case"]]);
+    expect(tests[0]!.calls.map((c) => c.name)).toContain("rank");
+    expect(a.functions.find((f) => f.name === "rank")!.testCase).toBeUndefined();
   });
 });

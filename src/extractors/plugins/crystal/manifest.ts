@@ -21,6 +21,7 @@ export const crystalManifest: LanguagePluginManifest = {
   importsShareScope: true,
   typesSpanFiles: true,
   testFilePatterns: [/_spec\.cr$/, /(?:^|\/)spec\//],
+  testSubjectAffixes: { suffixes: ["_spec"] },
   frameworkImportHints: { kemal: "kemal", amber: "amber", lucky: "lucky", athena: "athena", marten: "marten", granite: "granite", jennifer: "jennifer", avram: "avram" },
   activationFiles: ["shard.yml"],
 };

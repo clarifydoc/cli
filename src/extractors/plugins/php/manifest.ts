@@ -32,6 +32,7 @@ export const phpManifest: LanguagePluginManifest = {
   importsShareScope: true,
   grammar: { variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } } },
   testFilePatterns: [/(Test|TestCase)\.php$/],
+  testSubjectAffixes: { suffixes: ["TestCase", "Test"] },
   externalModulePrefixes: ["Illuminate\\", "Symfony\\", "Doctrine\\", "Laravel\\"],
   frameworkImportHints: { "Doctrine\\ORM": "doctrine", "Illuminate\\Database": "eloquent", "Illuminate\\Database\\Eloquent": "eloquent", Propel: "propel", "Propel\\Runtime": "propel", "Envms\\FluentPDO": "fluentpdo" },
   frameworkRules: phpFrameworkRules,

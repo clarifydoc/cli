@@ -107,7 +107,16 @@ export interface SymbolCaller {
  * an affected route. Navigational links (interface → implementation fan-out)
  * are not calls and are not followed.
  */
-export function reverseSymbolReach(links: readonly SymbolLink[], changed: readonly ChangedSymbol[], maxDepth = 4): SymbolCaller[] {
+export function reverseSymbolReach(
+  links: readonly SymbolLink[],
+  changed: readonly ChangedSymbol[],
+  maxDepth = 4,
+  /**
+   * Whether the walk goes on from a caller it reached (`file::symbol`, never a changed symbol)
+   * to that caller's own caller along `link` — false keeps a hub's many callers out.
+   */
+  follow?: (key: string, link: SymbolLink) => boolean,
+): SymbolCaller[] {
   const callersOf = new Map<string, SymbolLink[]>();
   for (const l of links) {
     // An import's `(reference)` row names a file using a symbol, not a call.
@@ -122,6 +131,7 @@ export function reverseSymbolReach(links: readonly SymbolLink[], changed: readon
     const next: typeof frontier = [];
     for (const { key, confidence } of frontier) {
       for (const l of callersOf.get(key) ?? []) {
+        if (depth > 1 && follow && !follow(key, l)) continue;
         const callerKey = `${l.sourceFile}::${l.sourceSymbol}`;
         const conf = weaker(confidence, l.confidence ?? "INFERRED");
         const prev = best.get(callerKey);

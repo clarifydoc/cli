@@ -1,3 +1,4 @@
+import { markRustTests } from "./inline-tests.js";
 import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { parseRustParam, stripRustTypeModifiers } from "./params.js";
@@ -108,7 +109,8 @@ export const rustSpec: RegexLangSpec = {
   ],
   blockEnds: RUST_CODE.blockEnds,
   callSourceLines: RUST_CODE.callSourceLines,
-  postProcessFunctions: structLiteralReceivers,
+  // `#[test]` functions and the helpers of a `#[cfg(test)]` module are test code (inline-tests.ts).
+  postProcessFunctions: (lines, fns) => markRustTests(lines, structLiteralReceivers(lines, fns), RUST_CODE.blockEnds),
 
   parseParam: parseRustParam,
   parseReturnType: parseRustReturnType,

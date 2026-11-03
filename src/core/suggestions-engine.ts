@@ -6,6 +6,7 @@ import type {
 import { runtimeGraph } from "./import-kinds.js";
 import { cycleChain, findCircularDeps } from "./health-scorer.js";
 import { describeDrivers, describeGates } from "./refactor-pressure.js";
+import { isTestFile, testSubjectStem } from "./test-file-detector.js";
 
 /** Extract filename from path */
 function fileName(p: string): string {
@@ -203,16 +204,24 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   }
 
   // ── Medium: Missing tests ──
-  const testFiles = new Set(
+  // A test file pairs with its subject by the name its language's runners give it (`club_test.go`,
+  // `test_club.py`, `ClubTest.java`, `club_spec.rb`, `club.test.ts` → `club`); a file declaring its
+  // own tests (a Rust `#[cfg(test)]` module) is tested.
+  const testFiles = new Set(input.analyses.filter((a) => isTestFile(a.filePath, a.language)).map((a) => a.filePath));
+  const testedStems = new Set(
     input.analyses
-      .filter((a) => /\.(test|spec)\.[^.]+$/.test(a.filePath) || a.filePath.includes("__tests__"))
-      .map((a) => a.filePath),
+      .map((a) => (testFiles.has(a.filePath) ? testSubjectStem(a.filePath, a.language)?.toLowerCase() : undefined))
+      .filter((stem): stem is string => !!stem),
   );
+  const byPath = new Map(input.analyses.map((a) => [a.filePath, a]));
+  const hasTests = (path: string): boolean => {
+    const a = byPath.get(path);
+    if (testFiles.has(path) || a?.functions.some((f) => f.testCase)) return true;
+    return testedStems.has(fileName(path).replace(/\.[^.]+$/, "").toLowerCase());
+  };
   const untestedServices = input.analyses.filter((a) => {
-    if (testFiles.has(a.filePath)) return false;
-    const baseName = fileName(a.filePath).replace(/\.[^.]+$/, "");
-    const hasTest = [...testFiles].some((t) => t.includes(baseName));
-    return !hasTest && (
+    if (hasTests(a.filePath)) return false;
+    return (
       a.filePath.includes("service") || a.filePath.includes("controller") ||
       a.filePath.includes("handler") || a.routes.length > 0
     );
@@ -234,10 +243,7 @@ export function generateSuggestions(input: SuggestionInput): Suggestion[] {
   if (input.blastRadius.length > 0) {
     const dangerousUntested = input.blastRadius
       .filter((b) => b.changeRisk === "dangerous")
-      .filter((b) => {
-        const baseName = fileName(b.filePath).replace(/\.[^.]+$/, "");
-        return ![...testFiles].some((t) => t.includes(baseName));
-      });
+      .filter((b) => !hasTests(b.filePath));
     for (const bf of dangerousUntested.slice(0, 3)) {
       suggestions.push({
         priority: "high",
