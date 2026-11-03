@@ -4,7 +4,7 @@ import { rubyTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
-import { rubyAutoloadedFiles, rubyTypeNamedByReceiver } from "./autoload.js";
+import { rubyAutoloadedFiles, rubyLexicalConstants, rubyTypeNamedByReceiver } from "./autoload.js";
 import { resolveRubyRequire } from "./require-paths.js";
 
 /**
@@ -26,6 +26,8 @@ export const rubyManifest: LanguagePluginManifest = {
   resolveImport: resolveRubyRequire,
   // Rails loads a constant from the file its name spells: the constants a file names are its imports.
   autoloadedFiles: rubyAutoloadedFiles,
+  // `Helper` inside a compact `class League::Report` is `::Helper`, never `League::Helper`.
+  lexicalConstants: rubyLexicalConstants,
   typeNamedByReceiver: rubyTypeNamedByReceiver,
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],

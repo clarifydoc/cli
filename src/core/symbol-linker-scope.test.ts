@@ -339,6 +339,46 @@ describe("symbol-linker — Python looks a bare name up lexically", () => {
   });
 });
 
+describe("symbol-linker — a Ruby class name is looked up in the namespaces open where it is written", () => {
+  const targets = (links: SymbolLink[], sourceSymbol: string) =>
+    links.filter((l) => l.sourceSymbol === sourceSymbol && l.callName === "Helper.new").map((l) => `${l.targetFile}:${l.targetSymbol}`);
+  const topHelper = file("lib/helper.rb", "ruby", { classes: [cls("Helper", 1, 5, [fn("initialize", 2, 4)])] });
+  const leagueHelper = file("lib/league/helper.rb", "ruby", {
+    classes: [cls("League", 1, 7, [], { kind: "module" }), cls("Helper", 2, 6, [fn("initialize", 3, 5)])],
+  });
+  // `class League::Report` — the compact form opens League::Report alone.
+  const report = file("lib/league/report.rb", "ruby", {
+    classes: [cls("League::Report", 1, 5, [fn("build", 2, 4, [call("Helper.new", 3)])])],
+  });
+  // `module League; class Summary` — the nested form opens League too.
+  const summary = file("lib/league/summary.rb", "ruby", {
+    classes: [cls("League", 1, 7, [], { kind: "module" }), cls("Summary", 2, 6, [fn("build", 3, 5, [call("Helper.new", 4)])])],
+  });
+
+  it("reaches the top-level class from a compact `class League::Report`, never League::Helper", () => {
+    const links = buildSymbolLinks([topHelper, leagueHelper, report, summary]);
+    expect(targets(links, "League::Report.build")).toEqual(["lib/helper.rb:Helper.initialize"]);
+    expect(targets(links, "Summary.build")).toEqual(["lib/league/helper.rb:Helper.initialize"]);
+  });
+
+  it("still reaches a filter its base class declares, named on that class (an inherited `before_action`)", () => {
+    const base = file("app/controllers/league/base.rb", "ruby", {
+      classes: [cls("League", 1, 9, [], { kind: "module" }), cls("Base", 2, 8, [fn("check_referee", 3, 5)])],
+    });
+    const fixtures = file("app/controllers/league/fixtures_controller.rb", "ruby", {
+      classes: [cls("League::FixturesController", 1, 6, [fn("index", 2, 4, [call("Base.check_referee", 2)])], { extends: "League::Base" })],
+    });
+    const links = buildSymbolLinks([base, fixtures]);
+    expect(links.filter((l) => l.sourceSymbol === "League::FixturesController.index").map((l) => l.targetSymbol)).toEqual(["Base.check_referee"]);
+  });
+
+  it("links nothing from the compact form when only League::Helper exists", () => {
+    const links = buildSymbolLinks([leagueHelper, report, summary]);
+    expect(targets(links, "League::Report.build")).toEqual([]);
+    expect(targets(links, "Summary.build")).toEqual(["lib/league/helper.rb:Helper.initialize"]);
+  });
+});
+
 describe("symbol-linker — a static call on a project class reaches it whatever its name says", () => {
   it("links `ClubStore.save(…)`, classified as database by its name, to the class's method", () => {
     const store = file("ClubStore.java", "java", { classes: [cls("ClubStore", 1, 4, [fn("save", 2, 2), fn("find", 3, 3)])] });

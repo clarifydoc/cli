@@ -16,7 +16,7 @@ import {
   type GlobalMemberDef,
   type ImportInfo,
 } from "../types/analysis.js";
-import type { ImportResolveContext, PackageRoot } from "../types/language-plugin.js";
+import type { ImportResolveContext, LanguagePluginManifest, PackageRoot } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -2350,6 +2350,7 @@ function classNameMember(
   sourceFile: string,
   parts: string[],
   mkLink: MkLink,
+  line: number,
 ): SymbolLink | null {
   const { symbolIndex, classNameIndex } = ctx;
   const className = parts[0]!;
@@ -2419,6 +2420,14 @@ function classNameMember(
       candidateFiles = nested;
       declaredClass = inner;
     }
+  }
+  // A bare name where the language looks class names up lexically: the class at the first
+  // path the caller's nesting gives (`League::Report::Helper`, …, `Helper`) — never another
+  // namespace's class of that name, which the language would not find from here.
+  const lexical = manifestFor(analysis.language as Language)?.lexicalConstants;
+  if (lexical && candidateFiles?.length && declaredClass === className && !className.includes("::")) {
+    candidateFiles = lexicallyNamedFiles(ctx, analysis, lexical, className, line, candidateFiles);
+    if (candidateFiles.length === 0) return null;
   }
   // A class called by name is one of the caller's own language family: a Swift
   // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
@@ -2495,6 +2504,75 @@ function classNameMember(
     }
   }
   return null;
+}
+
+/** The last names of the classes `classes` extend, and of theirs in turn, by name (a bounded walk). */
+function inheritanceChainNames(ctx: LinkContext, classes: readonly ClassInfo[]): Set<string> {
+  const names = new Set<string>();
+  let frontier = classes.map((c) => c.extends).filter((e): e is string => !!e);
+  for (let depth = 0; depth < 8 && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const written of frontier) {
+      const name = written.replace(/^::/, "").split("::").pop()!;
+      if (names.has(name)) continue;
+      names.add(name);
+      for (const file of ctx.classNameIndex.get(name) ?? []) {
+        const base = ctx.classAt.get(memberKey(file, name))?.extends;
+        if (base) next.push(base);
+      }
+    }
+    frontier = next;
+  }
+  return names;
+}
+
+/**
+ * Of the files declaring a class `className`, those declaring it at the first
+ * path a lexical lookup from `line` of the caller tries: each namespace open
+ * there, innermost first, then the top level. When none declares it at any of
+ * them, the class may still come through the caller's ancestors (a module
+ * included into a base): then every file but those declaring it in a
+ * namespace the caller names without opening (`League` of a compact
+ * `class League::Report`), which the lookup never sees. Empty when none is left.
+ */
+function lexicallyNamedFiles(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  lexical: NonNullable<LanguagePluginManifest["lexicalConstants"]>,
+  className: string,
+  line: number,
+  candidateFiles: readonly string[],
+): string[] {
+  // A class of the caller's inheritance chain is named by the declaration's `<` (an inherited
+  // `before_action` called on the class defining it), whatever the namespaces open here.
+  const open = analysis.classes.filter((c) => c.line <= line && line <= c.endLine);
+  if (inheritanceChainNames(ctx, open).has(className)) return [...candidateFiles];
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const pathsIn = new Map<string, Set<string>>();
+  for (const file of candidateFiles) {
+    const classes = ctx.analysisByFile.get(file)?.classes ?? [];
+    pathsIn.set(file, new Set(classes.filter((c) => c.name === className).map((c) => lexical.pathOf(c, classes))));
+  }
+  const nesting = lexical.nesting(analysis.classes, line);
+  for (const scope of [...nesting, ""]) {
+    const path = scope ? `${scope}::${className}` : className;
+    const hits = candidateFiles.filter((f) => pathsIn.get(f)?.has(path));
+    if (hits.length > 0) return hits;
+  }
+  const opened = new Set(nesting);
+  const unopened = new Set<string>();
+  for (const scope of nesting) {
+    const parts = scope.split("::");
+    for (let i = 1; i < parts.length; i++) {
+      const prefix = parts.slice(0, i).join("::");
+      if (!opened.has(prefix)) unopened.add(prefix);
+    }
+  }
+  const namespaceOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("::")));
+  return candidateFiles.filter((f) => {
+    const paths = [...(pathsIn.get(f) ?? [])];
+    return paths.length === 0 || paths.some((p) => !unopened.has(namespaceOf(p)));
+  });
 }
 
 /**
@@ -3603,7 +3681,7 @@ function resolveCallToDefinition(
   // So does a call on a class the project declares (`ClubStore.save(…)`, a static method): the
   // class's own or inherited member, whatever its name says.
   if (call.kind === "api-call" || call.kind === "database") {
-    return throughDeclaredType() ?? (parts.length === 2 && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink) : null);
+    return throughDeclaredType() ?? (parts.length === 2 && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line) : null);
   }
 
   let targetFile: string | null;
@@ -3980,7 +4058,7 @@ function resolveCallToDefinition(
   // For calls like "UserService.find_by_id" — searches all files for the class.
   // Without an explicit import this is at best INFERRED.
   if (!def && isQualified) {
-    const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink);
+    const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line);
     if (link) return link;
   }
 

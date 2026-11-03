@@ -1,4 +1,4 @@
-import type { FileAnalysis } from "../../../types/analysis.js";
+import type { ClassInfo, FileAnalysis } from "../../../types/analysis.js";
 
 /**
  * Rails loads a constant from the file its name spells (Zeitwerk): no
@@ -72,3 +72,34 @@ export function rubyTypeNamedByReceiver(receiver: string): string | null {
   if (!m) return null;
   return m[1]!.split("_").map((w) => w[0]!.toUpperCase() + w.slice(1)).join("");
 }
+
+/**
+ * The full path a class or module is declared at: the classes and modules
+ * whose span encloses it in its file, outermost first, then its own name as
+ * written (`class League::Report` inside `module Cup` is `Cup::League::Report`).
+ */
+function constantPath(cls: ClassInfo, classes: readonly ClassInfo[]): string {
+  const own = cls.name.replace(/^::/, "");
+  if (cls.name.startsWith("::")) return own;
+  const enclosing = classes
+    .filter((m) => m !== cls && m.line <= cls.line && cls.endLine <= m.endLine && !(m.line === cls.line && m.endLine === cls.endLine))
+    .sort((a, b) => a.line - b.line || b.endLine - a.endLine);
+  // The innermost enclosing one already spells its own path.
+  const outer = enclosing.at(-1);
+  return outer ? `${constantPath(outer, classes)}::${own}` : own;
+}
+
+/**
+ * Ruby's `Module.nesting` at a line: the class and module bodies open there,
+ * innermost first, each by its full path. A compact `class League::Report`
+ * opens `League::Report` alone — `League`'s constants are not in scope inside it.
+ */
+function constantNesting(classes: readonly ClassInfo[], line: number): string[] {
+  return classes
+    .filter((m) => m.line <= line && line <= m.endLine)
+    .sort((a, b) => b.line - a.line || a.endLine - b.endLine)
+    .map((m) => constantPath(m, classes));
+}
+
+/** How Ruby looks a constant up (`LanguagePluginManifest.lexicalConstants`). */
+export const rubyLexicalConstants = { pathOf: constantPath, nesting: constantNesting };
