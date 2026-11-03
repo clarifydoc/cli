@@ -1760,10 +1760,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push(this.parseTsInterface(node, isExported));
     } else if (node.type === "enum_declaration") {
       classes.push(parseTsEnum(node, isExported));
-    } else if (this.pinia && (node.type === "lexical_declaration" || node.type === "variable_declaration")) {
+    } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
       for (const decl of node.namedChildren) {
-        const store = decl.type === "variable_declarator" ? piniaStoreOf(decl) : null;
-        if (store) classes.push(this.piniaStoreClass(store, decl));
+        if (decl.type !== "variable_declarator") continue;
+        const store = this.pinia ? piniaStoreOf(decl) : null;
+        if (store) {
+          classes.push(this.piniaStoreClass(store, decl));
+          continue;
+        }
+        // `const Coupe = class extends models.Car { drive() {…} }`: a class, named by its binding.
+        const name = decl.childForFieldName("name");
+        let value = decl.childForFieldName("value");
+        while (value?.type === "parenthesized_expression") value = value.namedChildren[0] ?? null;
+        if (name?.type === "identifier" && value?.type === "class") classes.push(this.parseJsClass(value, isExported, name.text));
       }
     }
   }
@@ -1832,8 +1841,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     };
   }
 
-  private parseJsClass(node: Node, isExported: boolean): ClassInfo {
-    const name = node.childForFieldName("name")?.text ?? "anonymous";
+  private parseJsClass(node: Node, isExported: boolean, boundName?: string): ClassInfo {
+    const name = boundName ?? node.childForFieldName("name")?.text ?? "anonymous";
     let extendsName: string | null = null;
     const implementsList: string[] = [];
 

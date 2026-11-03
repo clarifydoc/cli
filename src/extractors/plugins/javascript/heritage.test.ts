@@ -98,3 +98,22 @@ describe("TypeScript interfaces", () => {
     expect(byName(cs, "SqlRepo").implements).toEqual(["IRepo"]);
   });
 });
+
+describe("a class expression bound to a name", () => {
+  it("is a class named by its binding, with its base and methods", async () => {
+    const src = `import * as models from "./models";
+export const Coupe = class extends models.Car {
+  drive() { this.honk(); return this.park(); }
+  park() { return fetch("/api/parking"); }
+};
+const Hatchback = (class Inner { tow() { return 1; } });
+const notAClass = makeCar(class { honk() {} });`;
+    const tree = await parseSource(src, "javascript" as any, "coupe.js");
+    const cs = new JavaScriptExtractor().extractClasses(tree, src);
+    expect(cs.map((c) => c.name)).toEqual(["Coupe", "Hatchback"]);
+    const coupe = byName(cs, "Coupe");
+    expect([coupe.extends, coupe.isExported]).toEqual(["models.Car", true]);
+    expect(coupe.methods.map((m) => `${m.name}:${m.calls.map((c) => c.name).join(",")}`)).toEqual(["drive:this.honk,this.park", "park:fetch"]);
+    expect(byName(cs, "Hatchback").methods.map((m) => m.name)).toEqual(["tow"]);
+  });
+});
