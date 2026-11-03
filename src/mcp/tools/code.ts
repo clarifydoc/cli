@@ -6,6 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { testCodeIndex, testsReachingEach } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import {
@@ -466,6 +467,7 @@ const FILE_SECTIONS = [
   "screens",
   "data",
   "traces",
+  "tests",
   "findings",
   "blast",
   "imports",
@@ -479,9 +481,9 @@ export function fileTool(ctx: ToolContext): McpTool {
     title: "Everything known about one file",
     description:
       "The analysis for a single file: its sub-project and architecture layer, functions with cyclomatic " +
-      "complexity, routes it declares, screens it defines, database/queue access with resolved entities, who " +
-      "calls into it and what it calls out to, findings, blast radius and imports/exports. Use this before " +
-      "editing a file to see what depends on it.",
+      "complexity, routes and screens it declares, database/queue access with entities, who calls into it " +
+      "and what it calls, tests reaching it, findings, blast radius and imports/exports. Use this " +
+      "before editing a file to see what depends on it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -654,6 +656,11 @@ export function fileTool(ctx: ToolContext): McpTool {
         if (lines.length) blocks.push(section("Call traces", lines));
       }
 
+      if (want.has("tests")) {
+        const lines = await testsOfFile(ctx, loaded, path, limit);
+        if (lines.length) blocks.push(section("Tests", lines));
+      }
+
       if (want.has("findings")) {
         const lines: string[] = [];
         lines.push(
@@ -734,6 +741,73 @@ export function fileTool(ctx: ToolContext): McpTool {
       return { text: joinLines(blocks) };
     },
   };
+}
+
+/**
+ * What tests say about a file, each row with what it rests on: the tests it declares (marked by
+ * the extractor), the test files importing it, for each of its functions the nearest test that
+ * reaches it through the call graph and the calls it takes (never on through a hub to its other
+ * callers), and what a coverage report saw run. Capped at `limit` rows per list.
+ */
+async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: string, limit: number): Promise<string[]> {
+  const summary = loaded.summary;
+  const testCode = testCodeIndex(summary);
+  const lines: string[] = [];
+  const declared = summary.testFunctions?.[path] ?? [];
+  if (declared.length) {
+    const kinds = countMap(Object.fromEntries(["case", "suite", "hook", "helper"].map((k) => [`${k}s`, declared.filter((d) => d.kind === k).length])));
+    lines.push(`declares ${declared.length} test function${declared.length === 1 ? "" : "s"}${kinds ? ` (${kinds})` : ""} — marked by the extractor:`);
+    lines.push(...bulletList(declared.filter((d) => d.kind !== "helper"), limit, (d) => `${d.symbol} [${d.kind}] (line ${d.line})`, { indent: "  " }));
+  }
+  if (testCode.isTestFile(path)) {
+    lines.unshift(`a test file${summary.fileLayerMap?.[path] === "test" ? " (its layer)" : " (by its path)"}`);
+    // What its tests exercise: the functions they call outside test code.
+    const out = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === path && !l.navigational && !l.sourceSymbol.startsWith("(") && !testCode.isTest(l.targetFile, l.targetSymbol));
+    const byTarget = groupLinks(out, (l) => `${l.targetSymbol}() ${loc(l.targetFile, l.targetLine)}`);
+    if (byTarget.length) {
+      lines.push(`calls into production code (${byTarget.length} functions):`);
+      lines.push(...bulletList(byTarget, limit, ([label, ls]) => `${label} ← ${[...new Set(ls.map((l) => l.sourceSymbol))].slice(0, 3).join(", ")} (line ${ls[0]!.sourceLine})`, { indent: "  " }));
+    }
+    return lines;
+  }
+  const importers = Object.entries(summary.componentGraph ?? {})
+    .filter(([from, deps]) => from !== path && deps.includes(path) && testCode.isTestFile(from))
+    .map(([from]) => from)
+    .sort(byOrdinal);
+  if (importers.length) {
+    lines.push(`test files depending on it (${importers.length}):`);
+    lines.push(...bulletList(importers, limit, (f) => `${f} — depends on it (component graph)`, { indent: "  " }));
+  }
+  const detail = await ctx.store.fileAnalysis(path);
+  const own = new Set(declared.map((d) => d.symbol));
+  const fns = detail
+    ? [
+        ...detail.functions.filter((fn) => fn.name !== "<setup>" && !fn.synthetic).map((fn) => ({ symbol: fn.name, line: fn.line })),
+        ...detail.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic).map((m) => ({ symbol: `${c.name}.${m.name}`, line: m.line }))),
+      ].filter((fn) => !own.has(fn.symbol))
+    : [];
+  if (fns.length) {
+    const reach = testsReachingEach(summary, fns.map((fn) => ({ file: path, symbol: fn.symbol })));
+    const reached = fns.filter((fn) => reach.has(`${path}::${fn.symbol}`));
+    const untested = fns.filter((fn) => !reach.has(`${path}::${fn.symbol}`)).map((fn) => fn.symbol);
+    lines.push(`tests reaching its functions — ${reached.length} of ${fns.length} reached through the call graph (six calls at most)${untested.length ? `; none reaches ${cap(untested, 6).shown.join(", ")}${untested.length > 6 ? ` … +${untested.length - 6}` : ""}` : ""}:`);
+    lines.push(
+      ...bulletList(reached, limit, (fn) => {
+        const r = reach.get(`${path}::${fn.symbol}`)!;
+        const chain = [r.test.symbol, ...r.via, fn.symbol].join(" → ");
+        return `${fn.symbol}() line ${fn.line} ← ${r.test.symbol} ${loc(r.test.file, r.test.line)} — ${r.depth === 1 ? "calls it" : `${r.depth} calls: ${chain}`}${r.tests > 1 ? ` (+${r.tests - 1} more test${r.tests === 2 ? "" : "s"})` : ""}`;
+      }, { indent: "  " }),
+    );
+  }
+  const cov = summary.testCoverage?.files.find((x) => x.file === path);
+  if (cov && cov.total > 0) {
+    const from = summary.testCoverage!.sources.map((x) => `${x.file}${x.stale ? ", older than the sources" : ""}`).join("; ");
+    lines.push(`coverage: ${Math.round((cov.covered / cov.total) * 100)}% of ${cov.total} lines ran (${from})${cov.uncovered ? `; not run: lines ${cov.uncovered.length > 60 ? `${cov.uncovered.slice(0, 60)}…` : cov.uncovered}` : ""}`);
+    const unrun = (cov.functions ?? []).filter((fn) => fn.total > 0 && fn.covered === 0);
+    if (unrun.length) lines.push(...bulletList(unrun, limit, (fn) => `${fn.name}() line ${fn.line} — none of its ${fn.total} lines ran`, { indent: "  " }));
+  }
+  if (!lines.length) lines.push("no test imports it, no test reaches its functions, and no coverage report names it");
+  return lines;
 }
 
 function groupLinks(links: SymbolLink[], key: (l: SymbolLink) => string): Array<[string, SymbolLink[]]> {

@@ -6,7 +6,6 @@ import type {
   Language,
   ProjectAnalysis,
   RiskVerdict,
-  SymbolLink,
   TraceImpactRoute,
   TraceImpactScreen,
 } from "../types/analysis.js";
@@ -26,7 +25,7 @@ function toRanges(lines: readonly number[]): string {
   return out.join(",");
 }
 import { isTestFile } from "./test-file-detector.js";
-import { testCodeIndex, testFilterPath } from "./test-functions.js";
+import { hubFollow, testCodeIndex, testFilterPath } from "./test-functions.js";
 
 /**
  * Diff-scoped impact: project a set of CHANGED FILES onto the cross-tier
@@ -650,7 +649,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
 /**
  * Consumer standing: for each caller of a changed function, whether the
  * change edits it too (`updated`), a test calls it (nearest test function,
- * up to six calls back, through a hub of more than `HUB_CALLERS` production
+ * up to six calls back, through a hub of more than `HUB_CALLERS` (test-functions.ts) production
  * callers only when it calls the hub itself) or a coverage report saw its lines run (`covered`),
  * it is a test itself (`test`), or nothing vouches for it (`unverified`) —
  * the callers a reviewer has to check by hand. Sets `standing` in place.
@@ -665,16 +664,8 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
     return !!fn && fn.covered > 0;
   };
   const links = summary.symbolLinks ?? [];
-  // A test reaching the caller only through a hub — a function much of the code calls — exercises
-  // the hub for its other callers, not the caller below it: past a hub the walk follows only the
-  // tests that call the hub itself.
-  const productionCallers = new Map<string, Set<string>>();
-  for (const l of links) {
-    if (l.navigational || l.sourceSymbol.startsWith("(") || l.sourceSymbol.startsWith("route:") || testCode.isTest(l.sourceFile, l.sourceSymbol)) continue;
-    const key = `${l.targetFile}::${l.targetSymbol}`;
-    (productionCallers.get(key) ?? productionCallers.set(key, new Set()).get(key)!).add(`${l.sourceFile}::${l.sourceSymbol}`);
-  }
-  const follow = (key: string, l: SymbolLink) => (productionCallers.get(key)?.size ?? 0) <= HUB_CALLERS || testCode.isTest(l.sourceFile, l.sourceSymbol);
+  // Past a hub — a function much of the code calls — only the tests calling the hub itself count.
+  const follow = hubFollow(links, testCode);
   for (const c of callers) {
     if (testCode.isTest(c.file, c.symbol)) {
       c.standing = "test";
@@ -694,9 +685,6 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
     }
   }
 }
-
-/** Past this many production callers a function is a hub: reach through it credits no test with covering what lies below. */
-export const HUB_CALLERS = 20;
 
 /** "3 updated, 1 covered, 2 unverified" — the callers' standings, worst last. */
 function standingCounts(callers: readonly SymbolCaller[]): string {
