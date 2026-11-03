@@ -45,3 +45,14 @@ describe("resolvePythonImport", () => {
     expect(resolvePythonImport("players/views.py", "typing", "Generic", project)).toBeNull();
   });
 });
+
+describe("resolvePythonImport — a module under another source root", () => {
+  it("takes the one file whose path spells the dotted module, never a choice between two", () => {
+    const roots = ctx(["src/league/__init__.py", "src/league/models.py", "web/e2e/seed.py", "src/utils.py"]);
+    expect(resolvePythonImport("web/e2e/seed.py", "league.models", "Club", roots)).toBe("src/league/models.py");
+    // A bare one-segment name names too much to guess.
+    expect(resolvePythonImport("web/e2e/seed.py", "utils", "slug", roots)).toBeNull();
+    const twins = ctx(["api/league/models.py", "worker/league/models.py", "web/e2e/seed.py"]);
+    expect(resolvePythonImport("web/e2e/seed.py", "league.models", "Club", twins)).toBeNull();
+  });
+});

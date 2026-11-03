@@ -58,7 +58,7 @@ export function resolvePythonImport(importingFile: string, source: string, speci
   const hasFile = (p: string) => ctx.files.has(p);
   if (!source.startsWith(".")) {
     if (pythonStandardImport(importingFile, source, hasFile)) return null;
-    return resolvePythonModule(importingFile, source, hasFile, specifier);
+    return resolvePythonModule(importingFile, source, hasFile, specifier) ?? underAnotherRoot(importingFile, source, specifier, ctx.files);
   }
   const dir = importingFile.includes("/") ? importingFile.slice(0, importingFile.lastIndexOf("/")) : "";
   const joined = normalizeJoin(dir, relativeModulePath(source));
@@ -80,4 +80,37 @@ function normalizeJoin(dir: string, rel: string): string {
     else out.push(part);
   }
   return out.join("/");
+}
+
+/** Python files by their file name, per project file set (built on first use). */
+const filesByName = new WeakMap<ReadonlySet<string>, Map<string, string[]>>();
+
+/**
+ * A dotted module no ancestor of the importer roots, found under another source root
+ * (`e2e/seed.py` importing `league.models` from `src/league/models.py`): the ONE file whose
+ * path ends with the path the import spells. Two segments at least — a bare `utils` names
+ * too much —, and never a choice between two.
+ */
+function underAnotherRoot(importingFile: string, source: string, specifier: string | undefined, files: ReadonlySet<string>): string | null {
+  if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(source)) return null;
+  let byName = filesByName.get(files);
+  if (!byName) {
+    byName = new Map();
+    for (const f of files) {
+      if (!f.endsWith(".py")) continue;
+      const name = f.slice(f.lastIndexOf("/") + 1);
+      (byName.get(name) ?? byName.set(name, []).get(name)!).push(f);
+    }
+    filesByName.set(files, byName);
+  }
+  const modulePath = source.replace(/\./g, "/");
+  const spelled = specifier ? [`${modulePath}/${specifier}.py`, `${modulePath}/${specifier}/__init__.py`] : [];
+  spelled.push(`${modulePath}.py`, `${modulePath}/__init__.py`);
+  for (const path of spelled) {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const hits = (byName.get(name) ?? []).filter((f) => f !== importingFile && f.endsWith(`/${path}`));
+    if (hits.length === 1) return hits[0]!;
+    if (hits.length > 1) return null;
+  }
+  return null;
 }

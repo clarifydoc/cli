@@ -1274,6 +1274,13 @@ export interface LanguagePluginManifest {
    */
   lexicalCallScope?: boolean;
   /**
+   * A function the framework runs and hands to a parameter of its name (a pytest fixture):
+   * where a parameter shadows its namesakes (`lexicalCallScope`), a call of that parameter
+   * (`def test_x(start_match): start_match(1)`) still reaches it. `defFile` declares the
+   * function, `callerFile` holds the parameter. Leaf code.
+   */
+  parameterInjector?(fn: { name: string; decorators: string[] }, defFile: string, callerFile: string): boolean;
+  /**
    * The call extractor reads some member calls without their receiver (C++
    * `coach->drill()` is `drill`), so a bare call the caller's class and its
    * bases do not answer — or any call from a free function — may still be

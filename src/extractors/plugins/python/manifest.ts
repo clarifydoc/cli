@@ -31,6 +31,15 @@ export const pythonManifest: LanguagePluginManifest = {
   explicitSelfMembers: true,
   // A parameter, or a class declared in a function, shadows the module's and an import's namesake.
   lexicalCallScope: true,
+  // pytest hands a fixture to every parameter of its name, from the test's own file or a `conftest.py` above it.
+  parameterInjector(fn, defFile, callerFile) {
+    if (!fn.decorators.some((d) => /^(?:pytest\.)?fixture\b/.test(d))) return false;
+    if (defFile === callerFile) return true;
+    const slash = defFile.lastIndexOf("/");
+    if (defFile.slice(slash + 1) !== "conftest.py") return false;
+    const dir = defFile.slice(0, slash + 1);
+    return callerFile.startsWith(dir);
+  },
   // A name a module neither defines nor imports is a builtin, never another module's.
   importsBindNames: {},
   // `class D(B, C)`: bases are classes, searched in C3 order.

@@ -1876,6 +1876,23 @@ function importFiles(ctx: LinkContext, imp: ImportInfo, fromFile: string): strin
   return [...out];
 }
 
+/**
+ * The function the framework hands to a parameter named `name` in `analysis` (`parameterInjector`):
+ * the caller's own file first, else the nearest file declaring it (a `conftest.py` closer to the caller).
+ */
+function injectedFunction(ctx: LinkContext, analysis: FileAnalysis, name: string): { file: string; name: string; line: number } | null {
+  const injects = manifestFor(analysis.language)?.parameterInjector;
+  if (!injects) return null;
+  const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const hits: Array<{ file: string; name: string; line: number }> = [];
+  for (const file of filesDefining(ctx, name)) {
+    const fn = analysisAt.get(file)?.functions.find((f) => f.name === name);
+    if (fn && injects(fn, file, analysis.filePath)) hits.push({ file, name: fn.name, line: fn.line });
+  }
+  if (hits.length === 0) return null;
+  return hits.find((h) => h.file === analysis.filePath) ?? hits.reduce((a, b) => (b.file.length > a.file.length ? b : a));
+}
+
 /** The files whose symbols include `name`, in `symbolIndex` order (an index over every name, built on first use). */
 function filesDefining(ctx: LinkContext, name: string): readonly string[] {
   if (!ctx.filesBySymbol) {
@@ -3705,9 +3722,12 @@ function resolveCallToDefinition(
     if (nested && nested.confidence === "EXTRACTED" && inCaller(nested.node.line, nested.node.endLine)) {
       return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
     }
-    // `def build(Club): return Club()` — the parameter, unless it is handed an inner helper of its name.
+    // `def build(Club): return Club()` — the parameter, unless it is handed an inner helper of its name
+    // or the function the framework injects under that name (a pytest fixture).
     if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name)) {
-      return nested && nested.confidence === "INFERRED" ? mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct") : null;
+      if (nested && nested.confidence === "INFERRED") return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
+      const injected = injectedFunction(ctx, analysis, call.name);
+      return injected ? mkLink(injected.file, injected.name, injected.line, injected.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct") : null;
     }
     if (local) return mkLink(sourceFile, local.name, local.line, "EXTRACTED", "direct");
     if (local === null) return null;

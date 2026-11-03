@@ -398,3 +398,23 @@ describe("symbol-linker — a static call on a project class reaches it whatever
     expect(buildSymbolLinks([model, ctrl]).filter((l) => l.callName === "Club.find")).toEqual([]);
   });
 });
+
+describe("a parameter named like a pytest fixture reaches the fixture", () => {
+  const fixture = (name: string, line: number) => fn(name, line, line + 2, [], { decorators: ["pytest.fixture"] });
+  it("links the same file's fixture and the nearest conftest.py's, never a fixture pytest would not hand it", () => {
+    const conftest = file("tests/conftest.py", "python", { functions: [fixture("club_factory", 1)] });
+    const sibling = file("tests/test_match.py", "python", { functions: [fixture("start_match", 1)] });
+    const roster = file("tests/unit/test_roster.py", "python", {
+      functions: [
+        fixture("kit_bag", 1),
+        fn("test_kit", 5, 7, [call("kit_bag", 6)], { params: [{ name: "kit_bag" }] } as Partial<FunctionInfo>),
+        fn("test_add", 9, 11, [call("club_factory", 10)], { params: [{ name: "club_factory" }] } as Partial<FunctionInfo>),
+        fn("test_plain", 13, 15, [call("start_match", 14)], { params: [{ name: "start_match" }] } as Partial<FunctionInfo>),
+      ],
+    });
+    const links = buildSymbolLinks([conftest, sibling, roster]);
+    expect(from(links, "test_kit", "kit_bag").map((l) => `${l.targetFile}::${l.targetSymbol} ${l.confidence}`)).toEqual(["tests/unit/test_roster.py::kit_bag EXTRACTED"]);
+    expect(from(links, "test_add", "club_factory").map((l) => `${l.targetFile}::${l.targetSymbol} ${l.confidence}`)).toEqual(["tests/conftest.py::club_factory INFERRED"]);
+    expect(from(links, "test_plain", "start_match")).toEqual([]);
+  });
+});
