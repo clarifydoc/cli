@@ -191,6 +191,100 @@ function rawSqlAccess(firstArg: Node | null): { table: string; access?: "read" |
   return { table, ...(access ? { access } : {}), sql: text };
 }
 
+/**
+ * Packages whose `sql` template tag (or a client a factory of theirs builds)
+ * sends the template to the database: postgres.js (`const sql = postgres(url)`),
+ * `@vercel/postgres`, `@neondatabase/serverless` (`const sql = neon(url)`),
+ * slonik, and drizzle-orm / kysely's `sql` (handed to `db.execute` or `.execute(db)`).
+ */
+const SQL_TAG_PACKAGES = new Set(["postgres", "@vercel/postgres", "@neondatabase/serverless", "slonik", "drizzle-orm", "kysely"]);
+
+/** Tag leaves that are SQL whatever imported them: `sql`…``, Prisma's `$queryRaw`…`` / `$executeRaw`…``. */
+const SQL_TAG_LEAVES = new Set(["sql", "SQL", "$queryRaw", "$executeRaw"]);
+
+/** Members of a `sql` tag that are themselves tags: slonik `sql.unsafe`…``, `sql.type(Club)`…``, `sql.typeAlias("id")`…``. */
+const SQL_TAG_MEMBERS = new Set(["unsafe", "type", "typeAlias"]);
+
+/**
+ * The names a file binds to a SQL template tag: everything it imports from a
+ * {@link SQL_TAG_PACKAGES} package, and every local a call of one builds
+ * (`const db = postgres(url)`, `const sql = neon(process.env.URL)`).
+ */
+function sqlTagNames(src: string): Set<string> {
+  const names = new Set<string>();
+  const bind = (list: string, separator: RegExp): void => {
+    for (const part of list.replace(/[{}]|\*\s+as\s+/g, ",").split(",")) {
+      const name = part.trim().split(separator).pop()?.trim();
+      if (name && /^[A-Za-z_$][\w$]*$/.test(name) && name !== "type") names.add(name);
+    }
+  };
+  for (const m of src.matchAll(/\bimport\s+([^'";]*?)\s+from\s+['"]([^'"]+)['"]/g)) if (SQL_TAG_PACKAGES.has(m[2]!)) bind(m[1]!, /\s+as\s+/);
+  for (const m of src.matchAll(/(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"]([^'"]+)['"]/g)) if (SQL_TAG_PACKAGES.has(m[2]!)) bind(m[1]!, /:/);
+  if (names.size === 0) return names;
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/g)) {
+    if (names.has(m[2]!)) names.add(m[1]!);
+  }
+  return names;
+}
+
+/**
+ * The tag of a tagged template, as written without its type arguments and
+ * with a configuring call peeled off (`sql.type(Club)` → `sql.type`), or null
+ * when it is not a name or member chain. tree-sitter-typescript reads a
+ * generic tag (`sql<{ id: string }[]>`…``) as `instantiation_expression`
+ * under a `non_null_expression` with a MISSING `!`, an awaited one with the
+ * `await` inside.
+ */
+function templateTag(fn: Node | null): Node | null {
+  let tag = fn;
+  for (let guard = 0; tag && guard < 6; guard++) {
+    if (tag.type === "non_null_expression" || tag.type === "parenthesized_expression") tag = tag.namedChild(0);
+    else if (tag.type === "instantiation_expression") tag = tag.namedChild(0);
+    else if (tag.type === "await_expression") tag = tag.namedChild(tag.namedChildCount - 1);
+    else if (tag.type === "call_expression") tag = tag.childForFieldName("function");
+    else break;
+  }
+  return tag && (tag.type === "identifier" || tag.type === "member_expression") ? tag : null;
+}
+
+/** Is this tag one that sends its template to the database (see {@link SQL_TAG_PACKAGES})? */
+function isSqlTag(tag: Node, tagNames: () => Set<string>): boolean {
+  const parts = tag.text.replace(/\s+/g, "").split(".");
+  const leaf = parts[parts.length - 1]!;
+  if (SQL_TAG_LEAVES.has(leaf)) return true;
+  const root = parts[0]!;
+  if (parts.length === 1) return tagNames().has(root);
+  // `sql.unsafe`…``, `db.unsafe`…`` (postgres.js), `sql.type(Club)`…`` (slonik).
+  return parts.length === 2 && SQL_TAG_MEMBERS.has(leaf) && (root === "sql" || tagNames().has(root));
+}
+
+/**
+ * The SQL of a tagged template a SQL tag sends to the database — the tag
+ * (`sql`, `prisma.$queryRaw`) and the template — or null. Two shapes:
+ * a call whose arguments ARE the template (`sql`select …``), and
+ * tree-sitter-typescript's misparse of a tag with simple type arguments,
+ * `sql<Club>`select …`` read as `(sql < Club) > `select …``.
+ */
+function taggedSqlTemplate(node: Node, tagNames: () => Set<string>): { tag: Node; template: Node } | null {
+  if (node.type === "call_expression") {
+    const template = node.childForFieldName("arguments");
+    if (template?.type !== "template_string") return null;
+    const tag = templateTag(node.childForFieldName("function"));
+    return tag && isSqlTag(tag, tagNames) ? { tag, template } : null;
+  }
+  if (node.type === "binary_expression") {
+    const template = node.childForFieldName("right");
+    if (template?.type !== "template_string" || node.childForFieldName("operator")?.text !== ">") return null;
+    const left = node.childForFieldName("left");
+    if (left?.type !== "binary_expression" || left.childForFieldName("operator")?.text !== "<") return null;
+    const typeArg = left.childForFieldName("right");
+    if (!typeArg || !/^(?:identifier|member_expression)$/.test(typeArg.type)) return null;
+    const tag = templateTag(left.childForFieldName("left"));
+    return tag && isSqlTag(tag, tagNames) ? { tag, template } : null;
+  }
+  return null;
+}
+
 /** Kysely query-builder clause verbs whose first argument names the table. */
 const KYSELY_TABLE_VERBS = new Set(["selectFrom", "insertInto", "updateTable", "deleteFrom", "replaceInto", "mergeInto"]);
 
@@ -537,6 +631,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private trpcClient: boolean | null = null;
   /** Names the file's Kysely queries give their common table expressions. */
   private kyselyCtes: Set<string> | null = null;
+  /** Names the file binds to a SQL template tag (see `sqlTagNames`), read on first need. */
+  private sqlTags: Set<string> | null = null;
   /** RTK Query: whether the file defines an API slice, and the slice's `fetchBaseQuery` base. */
   private rtk: { slice: boolean; base: string } | null = null;
   /** RTK Query triggers a generated hook hands back (`const [remove] = useDeleteGameMutation()`), with the scope that declares them. */
@@ -648,6 +744,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.mq = null;
     this.trpcClient = null;
     this.kyselyCtes = null;
+    this.sqlTags = null;
     this.rtk = null;
     this.rtkTriggers = null;
     this.collectionReceivers = null;
@@ -681,6 +778,22 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return !imports.names.has(root);
     }
     return false;
+  }
+
+  /** The rows of raw SQL a call sends (see `rawSqlAccess`): its own table, then every further table it reads. */
+  private rawSqlRows(rawSql: NonNullable<ReturnType<typeof rawSqlAccess>>, callee: string, node: Node, sources: DataSourceInfo[]): void {
+    const name = callee.replace(/\s+/g, "");
+    const line = node.startPosition.row + 1;
+    sources.push(this.ds({
+      kind: "database",
+      name,
+      target: rawSql.table,
+      entity: rawSql.table,
+      line,
+      ...(rawSql.access ? { access: rawSql.access } : {}),
+    }));
+    // Every further table the statement reads: `FROM clubs c JOIN standings s`.
+    sources.push(...joinedTableRows(rawSql.sql, rawSql.table, name, line, { lastPart: true }));
   }
 
   override endFile(): void {
@@ -1205,6 +1318,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       }
       return;
     }
+    // A SQL template tag sends its template to the database: postgres.js / Neon / Vercel
+    // `sql`select … from cars``, slonik / drizzle / kysely `sql`…``, Prisma `prisma.$queryRaw`…``.
+    // The statement names the table, as a string handed to `pool.query(…)` does.
+    if (node.type === "call_expression" || node.type === "binary_expression") {
+      const tagged = taggedSqlTemplate(node, () => (this.sqlTags ??= sqlTagNames(this.sourceText)));
+      const rawSql = tagged ? rawSqlAccess(tagged.template) : null;
+      if (rawSql) {
+        this.rawSqlRows(rawSql, tagged!.tag.text, node, sources);
+        return;
+      }
+    }
+
     // A page that opens a stream or loads an API document requests it: `new EventSource(url)`,
     // sse.js `new SSE(url, { payload, method })`, `Redoc.init(url, …)`, `SwaggerUIBundle({ url })`.
     const loader = loaderRequest(node);
@@ -1767,17 +1892,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           }));
         } else if (rawSql) {
           // A chain split over lines (`db\n  .prepare(…)`) reads as one name.
-          const name = (ormChain ?? fnName!).replace(/\s+/g, "");
-          sources.push(this.ds({
-            kind: "database",
-            name,
-            target: rawSql.table,
-            entity: rawSql.table,
-            line: node.startPosition.row + 1,
-            ...(rawSql.access ? { access: rawSql.access } : {}),
-          }));
-          // Every further table the statement reads: `FROM clubs c JOIN standings s`.
-          sources.push(...joinedTableRows(rawSql.sql, rawSql.table, name, node.startPosition.row + 1, { lastPart: true }));
+          this.rawSqlRows(rawSql, ormChain ?? fnName!, node, sources);
         } else if (!emittedApiCall && kysely) {
           const table = kysely[1]!.split(".").pop()!;
           sources.push(this.ds({
