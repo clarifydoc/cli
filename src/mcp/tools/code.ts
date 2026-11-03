@@ -6,7 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import { testCodeIndex, testsReachingEach } from "../../core/test-functions.js";
+import { fileTestVerdict, testCodeIndex } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import { untrackedAmong } from "../../core/source-revision.js";
@@ -700,16 +700,18 @@ export function fileTool(ctx: ToolContext): McpTool {
  */
 async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: string, limit: number): Promise<string[]> {
   const summary = loaded.summary;
-  const testCode = testCodeIndex(summary);
   const lines: string[] = [];
-  const declared = summary.testFunctions?.[path] ?? [];
+  const detail = await ctx.store.fileAnalysis(path);
+  const verdict = fileTestVerdict(summary, path, detail);
+  const declared = verdict.declared;
   if (declared.length) {
     const kinds = countMap(Object.fromEntries(["case", "suite", "hook", "helper"].map((k) => [`${k}s`, declared.filter((d) => d.kind === k).length])));
     lines.push(`declares ${declared.length} test function${declared.length === 1 ? "" : "s"}${kinds ? ` (${kinds})` : ""} — marked by the extractor:`);
     lines.push(...bulletList(declared.filter((d) => d.kind !== "helper"), limit, (d) => `${d.symbol} [${d.kind}] (line ${d.line})`, { indent: "  " }));
   }
-  if (testCode.isTestFile(path)) {
-    lines.unshift(`a test file${summary.fileLayerMap?.[path] === "test" ? " (its layer)" : " (by its path)"}`);
+  if (verdict.state === "test_file") {
+    const testCode = testCodeIndex(summary);
+    lines.unshift(`a test file${verdict.testFileBy === "layer" ? " (its layer)" : " (by its path)"}`);
     // What its tests exercise: the functions they call outside test code.
     const out = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === path && !l.navigational && !l.sourceSymbol.startsWith("(") && !testCode.isTest(l.targetFile, l.targetSymbol));
     const byTarget = groupLinks(out, (l) => `${l.targetSymbol}() ${loc(l.targetFile, l.targetLine)}`);
@@ -719,24 +721,14 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     }
     return lines;
   }
-  const importers = Object.entries(summary.componentGraph ?? {})
-    .filter(([from, deps]) => from !== path && deps.includes(path) && testCode.isTestFile(from))
-    .map(([from]) => from)
-    .sort(byOrdinal);
+  const importers = verdict.importers;
   if (importers.length) {
     lines.push(`test files depending on it (${importers.length}):`);
     lines.push(...bulletList(importers, limit, (f) => `${f} — depends on it (component graph)`, { indent: "  " }));
   }
-  const detail = await ctx.store.fileAnalysis(path);
-  const own = new Set(declared.map((d) => d.symbol));
-  const fns = detail
-    ? [
-        ...detail.functions.filter((fn) => fn.name !== "<setup>" && !fn.synthetic).map((fn) => ({ symbol: fn.name, line: fn.line })),
-        ...detail.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic).map((m) => ({ symbol: `${c.name}.${m.name}`, line: m.line }))),
-      ].filter((fn) => !own.has(fn.symbol))
-    : [];
+  const fns = verdict.functions;
   if (fns.length) {
-    const reach = testsReachingEach(summary, fns.map((fn) => ({ file: path, symbol: fn.symbol })));
+    const reach = verdict.reach;
     const reached = fns.filter((fn) => reach.has(`${path}::${fn.symbol}`));
     const untested = fns.filter((fn) => !reach.has(`${path}::${fn.symbol}`)).map((fn) => fn.symbol);
     lines.push(`tests reaching its functions — ${reached.length} of ${fns.length} reached through the call graph (six calls at most)${untested.length ? `; none reaches ${cap(untested, 6).shown.join(", ")}${untested.length > 6 ? ` … +${untested.length - 6}` : ""}` : ""}:`);
@@ -748,8 +740,8 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
       }, { indent: "  " }),
     );
   }
-  const cov = summary.testCoverage?.files.find((x) => x.file === path);
-  if (cov && cov.total > 0) {
+  const cov = verdict.coverage;
+  if (cov) {
     const from = summary.testCoverage!.sources.map((x) => `${x.file}${x.stale ? ", older than the sources" : ""}`).join("; ");
     lines.push(`coverage: ${Math.round((cov.covered / cov.total) * 100)}% of ${cov.total} lines ran (${from})${cov.uncovered ? `; not run: lines ${cov.uncovered.length > 60 ? `${cov.uncovered.slice(0, 60)}…` : cov.uncovered}` : ""}`);
     const unrun = (cov.functions ?? []).filter((fn) => fn.total > 0 && fn.covered === 0);
