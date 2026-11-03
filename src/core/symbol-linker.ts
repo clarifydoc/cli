@@ -3600,7 +3600,7 @@ function resolveCallToDefinition(
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`,
     // and `importedFile`: a Node built-in is never the project's `assert.js`).
     const ownResolver = pluginFor(analysis.language)?.resolveImport;
-    targetFile = ownResolver ? ownResolver(sourceFile, call.target, leafName, importResolveContext(ctx)) : importPath(ctx, call.target, sourceFile);
+    targetFile = ownResolver ? ownResolver(sourceFile, call.target, call.moduleMember ? call.member : leafName, importResolveContext(ctx)) : importPath(ctx, call.target, sourceFile);
     // A name a dotted import gives may be a module of its own (`from league.api import deps` →
     // `deps.get_club()`, `from league import scoring as sc` → `sc.tally()`): the package's file
     // of that name, when the package's entry lacks the call.
@@ -3662,6 +3662,11 @@ function resolveCallToDefinition(
   const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] ?? call.member : undefined;
   let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, exported ?? call.name);
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
+  // `store::kick()` names the module's own item — never `impl Db { fn kick(&self) }` of that module.
+  if (call.moduleMember) {
+    if (def && memberClassOf(ctx, targetFile, def) !== null) def = undefined;
+    if (!def) return null;
+  }
   // Which strategy found `def`. The default path at the bottom is reached from
   // two places — this plain lookup and Strategy 3's suffix match — and they were
   // previously distinguishable only by `linkConfidence`, which is a different
@@ -6690,6 +6695,10 @@ function importResolveContext(ctx: LinkContext): ImportResolveContext {
       return !!a && (a.functions.some((f) => f.name === name) || a.classes.some((c) => c.name === name));
     },
     globImportsOf: (file) => (byFile.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+    namedImportOf: (file, name) => {
+      const imp = (byFile.get(file)?.imports ?? []).find((i) => !i.isType && i.specifiers.includes(name));
+      return imp ? { source: imp.source, name: imp.aliases?.[name] ?? name } : null;
+    },
   };
   return ctx.importResolve;
 }

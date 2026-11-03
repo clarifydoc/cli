@@ -10,7 +10,8 @@ import { rustSpec } from "./index.js";
  * path, with a head the file brings in by name (`mod tools;`, `use
  * crate::garage::tools;`) spelled out through its import (`self::tools`,
  * `crate::garage::tools`). A path from a crate the analysis lacks (`std::mem`)
- * resolves to no file and links nothing.
+ * resolves to no file and links nothing. The member is the module's own item
+ * (`moduleMember`): `store::sweep()` is never `impl Db { fn sweep(&self) }`.
  */
 export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): void {
   const inline = inlineModuleSpans(lines);
@@ -42,6 +43,7 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
       c.kind = "cross-file";
       c.target = through ? [through, ...segs.slice(1)].join("::") : segs.join("::");
       c.member = member;
+      c.moduleMember = true;
       c.confidence = "EXTRACTED";
     }
   };

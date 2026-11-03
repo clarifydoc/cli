@@ -877,6 +877,12 @@ export interface CallInfo {
    */
   member?: string;
   /**
+   * `member` is an item of the MODULE `target` names, called through its path
+   * (Rust `store::sweep()`): one of the module's free functions or types, or a
+   * name it imports, never a method some type of that module declares.
+   */
+  moduleMember?: true;
+  /**
    * The bare name called is a variable the calling function binds itself — a
    * parameter, an assignment, a loop or `with` target, a `nonlocal` (`sprint =
    * len` … `sprint(xs)`): a value it calls, never the import or file-level

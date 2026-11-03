@@ -361,6 +361,10 @@ export function importResolveContext(analyses: readonly FileAnalysis[], knownFil
       return names.has(name);
     },
     globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+    namedImportOf: (file, name) => {
+      const imp = (byPath.get(file)?.imports ?? []).find((i) => !i.isType && i.specifiers.includes(name));
+      return imp ? { source: imp.source, name: imp.aliases?.[name] ?? name } : null;
+    },
   };
 }
 
