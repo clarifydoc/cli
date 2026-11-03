@@ -16,7 +16,7 @@ import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-g
 import { hasDbRootTypes } from "../extractors/shared/call-patterns.js";
 import { dirname, relative } from "path";
 import { applyAliases, type AliasMap, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
-import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
+import { applyWorkspacePackages, loadWorkspacePackages, type WorkspacePackage } from "../extractors/shared/workspace-packages.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
@@ -236,11 +236,15 @@ function importedNameCalls(analysis: FileAnalysis): void {
 
 /** Serialized alias maps and workspace package tables, by identity: files share the same few maps. */
 const stampParts = new WeakMap<object, string>();
-function stampOf(map: AliasMap | Map<string, { dir: string; entry: string }>, projectRoot: string): string {
+function stampOf(map: AliasMap | Map<string, WorkspacePackage>, projectRoot: string): string {
   let hit = stampParts.get(map);
   if (hit === undefined) {
     const rel = (p: string) => relative(projectRoot, p).split("\\").join("/");
-    hit = JSON.stringify([...map].map(([k, v]) => (typeof v === "string" ? [k, rel(v)] : Array.isArray(v) ? [k, v.map(rel)] : [k, rel(v.dir), rel(v.entry)])));
+    hit = JSON.stringify([...map].map(([k, v]) => (typeof v === "string"
+      ? [k, rel(v)]
+      : Array.isArray(v)
+        ? [k, v.map(rel)]
+        : [k, rel(v.dir), rel(v.entry), ...(v.requireEntry ? [rel(v.requireEntry)] : []), ...(v.exports ? [v.exports] : [])])));
     stampParts.set(map, hit);
   }
   return hit;
@@ -320,7 +324,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (a.language === "typescript" || a.language === "javascript") {
       const packages = loadWorkspacePackages(projectRoot);
       if (packages.size > 0) {
-        for (const imp of a.imports) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot);
+        for (const imp of a.imports) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot, imp.commonJs === true);
       }
     }
     // `import { Rest } from "model/rest"`: a module under the package's `src/` its bundler resolves.

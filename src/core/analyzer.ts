@@ -54,7 +54,7 @@ import { analyzeFileOutcome, importRewriteStamp, type FileTask, type FileResult,
 import { AnalysisWorkerPool, type FailedFile } from "./worker-pool.js";
 import { byOrdinal } from "./ordinal.js";
 import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
-import { clearWorkspacePackageCache } from "../extractors/shared/workspace-packages.js";
+import { clearWorkspacePackageCache, namesWorkspacePackage } from "../extractors/shared/workspace-packages.js";
 import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } from "../extractors/shared/link-scoring.js";
 import {
   STRIP_SOURCE_EXTENSION_RE,
@@ -1138,7 +1138,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const typeOnlyImports: Record<string, string[]> = {};
   // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
   const dynamicImportEdges: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory);
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source));
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -3377,6 +3377,13 @@ export function buildComponentGraph(
   dynamicOut?: Record<string, string[]>,
   /** The package-import resolver the project shares (built from `analyses` alone when absent). */
   importDirectory?: (source: string, fromFile: string) => string | null,
+  /**
+   * A script-family import names a package of this repository by its manifest name
+   * (`@league/kit`, `@league/kit/standings`) and was left as written: a
+   * subpath naming nothing, a name two copies declare, an installed version
+   * pinned instead. No file is guessed from its last segment or its names.
+   */
+  namesRepoPackage?: (source: string) => boolean,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -3647,6 +3654,9 @@ export function buildComponentGraph(
         classifyKnownPackage(imp.source) !== undefined ||
         classifyKnownPackage(packageRoot) !== undefined;
       if (isExternal) continue;
+      // A package of the repository its rewrite (step 1b) did not reach: which
+      // file it means is unknown, and a namesake elsewhere is a decoy.
+      if (extensionFamily(a.filePath) === "script" && namesRepoPackage?.(imp.source)) continue;
 
       // 1c. A language that resolves its own import paths (`resolveImport`: a Rust
       // `crate::garage::tools`, a Ruby `require "league"` on the load path) names

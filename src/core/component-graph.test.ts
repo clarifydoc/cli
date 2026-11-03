@@ -327,3 +327,20 @@ describe("buildComponentGraph — a language's own import resolver", () => {
     expect(graph["lib/runner.rb"]).toEqual(["lib/league.rb"]);
   });
 });
+
+describe("buildComponentGraph — packages of the repository", () => {
+  it("never guesses a file for a package name its rewrite did not reach", () => {
+    const ts = (path: string, o: Parameters<typeof file>[1] = {}) => file(path, { language: "typescript", ...o });
+    const files = [
+      ts("examples/kit/index.ts", { exports: ["kickOff"] }),
+      ts("examples/kit/rules/offside.ts", { exports: ["isOffside"] }),
+      ts("apps/legacy/src/old.ts", { imports: [{ source: "@league/kit", specifiers: ["kickOff"], isNamespace: false }] }),
+      ts("apps/pitwall/src/main.ts", { imports: [{ source: "@league/kit/rules/offside", specifiers: ["isOffside"], isNamespace: false }] }),
+    ];
+    // Without the gate, the export name and the last segment pick the examples/ copy.
+    expect(buildComponentGraph(files)["apps/pitwall/src/main.ts"]).toEqual(["examples/kit/rules/offside.ts"]);
+    const graph = buildComponentGraph(files, undefined, undefined, undefined, (s) => s === "@league/kit" || s.startsWith("@league/kit/"));
+    expect(graph["apps/legacy/src/old.ts"]).toBeUndefined();
+    expect(graph["apps/pitwall/src/main.ts"]).toBeUndefined();
+  });
+});

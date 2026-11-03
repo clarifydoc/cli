@@ -204,7 +204,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       const known = seen.get(source);
       if (known === undefined || (!known && !inFunction)) {
         seen.set(source, !inFunction);
-        imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: node.startPosition.row + 1, ...(inFunction ? { dynamic: true as const } : {}) });
+        imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: node.startPosition.row + 1, commonJs: true, ...(inFunction ? { dynamic: true as const } : {}) });
       }
     }
     const nested = inFunction || FUNCTION_NODE.test(node.type);
@@ -224,7 +224,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         const visit = (arg: Node, depth: number): void => {
           const source = requiredSource(arg);
           if (source !== null) {
-            imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: arg.startPosition.row + 1 });
+            imports.push({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: arg.startPosition.row + 1, commonJs: true });
           } else if (depth < 2 && (arg.type === "object" || arg.type === "array")) {
             for (const child of arg.namedChildren) visit(child.type === "pair" ? child.childForFieldName("value") ?? child : child, depth + 1);
           }
@@ -379,6 +379,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         isNamespace,
         isType: false,
         line: declNode.startPosition.row + 1,
+        commonJs: true,
         ...(aliases ? { aliases } : {}),
       });
     }
@@ -407,6 +408,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         isNamespace: false,
         isType: false,
         line,
+        commonJs: true,
       });
     }
   }

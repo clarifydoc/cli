@@ -694,6 +694,11 @@ export interface ImportInfo {
    */
   executes?: true;
   /**
+   * Loaded by a CommonJS `require()` (JS/TS): a package's `exports` map is
+   * read with the `require` condition first, as Node does for it.
+   */
+  commonJs?: true;
+  /**
    * Loaded on demand (`import("./x")`, usually lazy loading), not when the
    * importer loads: a cycle it closes has no load-order consequence.
    * Absent for a static import.

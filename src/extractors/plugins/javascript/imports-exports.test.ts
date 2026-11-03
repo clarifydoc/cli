@@ -167,6 +167,27 @@ describe("JS/TS nested require()", () => {
   });
 });
 
+describe("require() is a CommonJS load", () => {
+  it("is marked, an import statement and import() are not", async () => {
+    const src = [
+      `import { kickOff } from "@league/kit";`,
+      `const { leagueTable } = require("@league/kit/standings");`,
+      `require("@league/kit/rules");`,
+      `if (live) require("./scoreboard");`,
+      `const lazy = () => import("./replay");`,
+    ].join("\n");
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imports.map((i) => [i.source, i.commonJs ?? false])).toEqual([
+      ["@league/kit", false],
+      ["@league/kit/standings", true],
+      ["@league/kit/rules", true],
+      ["./replay", false],
+      ["./scoreboard", true],
+    ]);
+  });
+});
+
 describe("CommonJS module shapes", () => {
   it("records `module.exports = <named function | name>` as the module's default", async () => {
     expect((await exportsOf(`module.exports = function kickoff(team) { return team; };`, "javascript")).map(brief)).toEqual(["default default kickoff"]);
