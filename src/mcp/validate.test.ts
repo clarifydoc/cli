@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nearest, validateArguments } from "./validate.js";
+import { nearNames, nearest, validateArguments } from "./validate.js";
 
 const schema = {
   type: "object",
@@ -58,5 +58,23 @@ describe("nearest", () => {
   it("suggests only what is close enough to be a typo", () => {
     expect(nearest("methd", ["method", "path"])).toBe("method");
     expect(nearest("zzzzzz", ["method", "path"])).toBeUndefined();
+  });
+});
+
+describe("nearNames", () => {
+  const names = ["createMatch", "createMatchReport", "MatchService.createMatch", "cancelMatch", "createClub", "Garage"];
+
+  it("lists names a prefix starts first, shortest first, then typos", () => {
+    expect(nearNames("createMat", names)).toEqual(["createMatch", "createMatchReport", "MatchService.createMatch"]);
+    expect(nearNames("createMacth", names)).toEqual(["createMatch", "MatchService.createMatch"]);
+  });
+
+  it("says nothing when no name is close", () => {
+    expect(nearNames("refuel", names)).toEqual([]);
+    expect(nearNames("", names)).toEqual([]);
+  });
+
+  it("caps the list", () => {
+    expect(nearNames("c", names, 2)).toHaveLength(2);
   });
 });

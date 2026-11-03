@@ -166,6 +166,8 @@ describe("clarifydoc MCP tools — react fixture", () => {
     ["clarifydoc_services", { project: "zzz-not-a-thing" }],
     ["clarifydoc_screens", { query: "zzz-not-a-thing" }],
     ["clarifydoc_trace", { symbol: "zzzNotAThing" }],
+    ["clarifydoc_extract", { symbol: "zzzNotAThing" }],
+    ["clarifydoc_explain", { subject: "zzzNotAThing" }],
     ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
     ["clarifydoc_health", { category: "security", file: "zzz-not-a-thing" }],
     ["clarifydoc_context_docs", { query: "zzz-not-a-thing" }],
@@ -317,6 +319,25 @@ describe("clarifydoc MCP tools — react fixture", () => {
     const miss = await call(server, "clarifydoc_extract", { symbol: "zzzNoSuchFunction" });
     expect(miss.isError).toBe(false);
     expect(miss.text).toContain("No function or method named");
+  });
+
+  it("a miss on a misspelt name offers the names near it", async () => {
+    // A function the analysis defines, misspelt by one letter in the middle.
+    const name = (loaded.summary.complexity ?? []).flatMap((c) => c.functions.map((f) => f.functionName)).find((n) => /^[A-Za-z]{8,}$/.test(n));
+    expect(name, "fixture defines a function with a plain long name").toBeDefined();
+    const mid = Math.floor(name!.length / 2);
+    const typo = `${name!.slice(0, mid)}${name![mid] === "q" ? "x" : "q"}${name!.slice(mid + 1)}`;
+    for (const [tool, args] of [
+      ["clarifydoc_explain", { subject: typo }],
+      ["clarifydoc_extract", { symbol: typo }],
+      ["clarifydoc_trace", { symbol: typo }],
+    ] as const) {
+      const { text, isError } = await call(server, tool, args);
+      expect(isError).toBe(false);
+      expect(text, tool).toMatch(new RegExp(`^Near names: .*\`${name}\` \\(`, "m"));
+    }
+    const explained = await call(server, "clarifydoc_explain", { subject: typo });
+    expect(explained.text.split("\n")[0]).toBe(`Nothing in the analysis is named \`${typo}\`.`);
   });
 
   it("trace names the definitions of an ambiguous name instead of merging them", async () => {

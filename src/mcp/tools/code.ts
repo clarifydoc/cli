@@ -34,7 +34,7 @@ import {
   page,
   pageFooter,
 } from "../format.js";
-import { fileChangedNote, mustResolveFile, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
+import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
 
@@ -874,16 +874,20 @@ export function traceTool(ctx: ToolContext): McpTool {
         matchesSeed(l, symbol, file, "source") || matchesSeed(l, symbol, file, "target"),
       );
       if (seeds.length === 0) {
+        const near = symbol ? nearSymbols(loaded.summary, symbol) : null;
         return {
           text: noResults({
             headline: missHeadline("call-graph edges", [
               ["symbol", symbol],
               ["file", file],
             ]),
-            holds:
+            holds: [
               `The analysis holds ${plural(all.length, "resolved call")}. Either nothing resolved to this one, ` +
               `or the name differs.`,
+              near?.line,
+            ],
             next: [
+              !!near && `clarifydoc_trace symbol="${near.first.name}" file="${near.first.file}"`,
               symbol && `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
               file && `clarifydoc_file path="${file}" — what the file declares and imports`,
               all.length === 0 && (await stalenessHint(ctx.store)),

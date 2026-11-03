@@ -5,6 +5,7 @@ import { assessFreshness, type FreshnessReport } from "../../core/manifest.js";
 import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
 import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
+import { nearNames } from "../validate.js";
 import { contextIndex } from "./decisions.js";
 import { isTestFile } from "../../core/test-file-detector.js";
 
@@ -356,4 +357,34 @@ export function coverageLine(c: ProjectAnalysis["coverage"]): string | undefined
 /** Whether a file is test code: its architecture layer, else its path. */
 export function isTestPath(summary: ProjectAnalysis, file: string): boolean {
   return summary.fileLayerMap?.[file] === "test" || isTestFile(file);
+}
+
+/** Near names offered on a miss — more and the list is noise. */
+const NEAR_LISTED = 3;
+
+/**
+ * The functions, methods and classes the analysis defines whose names are near `name` (a prefix, or a typo
+ * away), each with where it is defined — production code before tests — rendered for a miss's second line:
+ * `Near names: \`createOrder\` (src/orders.ts:12), …`. Null when none is near.
+ */
+export function nearSymbols(summary: ProjectAnalysis, name: string): { line: string; first: { name: string; file: string } } | null {
+  const where = new Map<string, { file: string; line: number }>();
+  const add = (n: string, file: string, line: number) => {
+    if (!n || n.startsWith("<") || n.startsWith("(") || /\s/.test(n)) return;
+    const had = where.get(n);
+    if (!had || (isTestPath(summary, had.file) && !isTestPath(summary, file))) where.set(n, { file, line });
+  };
+  for (const c of summary.complexity ?? []) for (const f of c.functions) add(f.functionName, c.filePath, f.line);
+  for (const n of summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal) add(n.name, n.filePath, 0);
+  for (const l of summary.symbolLinks ?? []) {
+    add(l.targetSymbol, l.targetFile, l.targetLine);
+    add(l.sourceSymbol, l.sourceFile, l.sourceLine);
+  }
+  const near = nearNames(name, where.keys(), NEAR_LISTED);
+  if (!near.length) return null;
+  const at = (n: string) => where.get(n)!;
+  return {
+    line: `Near names: ${near.map((n) => `\`${n}\` (${at(n).line ? `${at(n).file}:${at(n).line}` : at(n).file})`).join(", ")}`,
+    first: { name: near[0]!, file: at(near[0]!).file },
+  };
 }

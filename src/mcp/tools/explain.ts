@@ -1,7 +1,8 @@
 import type { McpTool } from "../protocol.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
-import { fileChangedNote, isTestPath, requireAnalysis, type ToolContext } from "./context.js";
+import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, type ToolContext } from "./context.js";
+import { noResults } from "../empty.js";
 import { bestNamed } from "../search-rank.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
@@ -159,6 +160,20 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
           out.push(cut(section, room));
           skipped.push(`${p.follow} — the rest of "${p.title}"`);
         }
+      }
+      // Nothing found for a name: say so, with the names near it, rather than a bare heading.
+      if (out.length === 1 && !skipped.length && kind === "symbol") {
+        const near = nearSymbols(summary, subject);
+        return {
+          text: noResults({
+            headline: `Nothing in the analysis is named \`${subject}\`${fileArg ? ` in ${fileArg}` : ""}.`,
+            holds: near?.line ?? "No function, method or class has that name or one near it.",
+            next: [
+              !!near && `clarifydoc_explain subject="${near.first.name}" file="${near.first.file}"`,
+              `clarifydoc_search query="${subject}" — by words of the name`,
+            ],
+          }),
+        };
       }
       if (skipped.length) out.push(`Next (did not fit maxTokens=${budget}):\n${skipped.map((s) => `- ${s}`).join("\n")}`);
       return { text: out.join("\n\n") };

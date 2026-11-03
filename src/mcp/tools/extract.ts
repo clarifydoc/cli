@@ -4,7 +4,7 @@ import type { McpTool } from "../protocol.js";
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
-import { isTestPath, mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { isTestPath, mustResolveFile, nearSymbols, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
@@ -116,11 +116,13 @@ export function extractTool(ctx: ToolContext): McpTool {
       const seeds = bestNamed(symbol, matched, (s) => s.symbol, (s) => isTestPath(loaded.summary, s.file));
       const definedIn = new Set(seeds.map((s) => `${s.file}::${s.symbol}`));
       if (seeds.length === 0) {
+        const near = nearSymbols(loaded.summary, symbol);
         return {
           text: noResults({
             headline: `No function or method named \`${symbol}\`${file ? ` in ${file}` : ""} in the analysis.`,
-            holds: file ? "The file's analysis lists no definition of that name." : "No resolved call reaches or leaves a symbol of that name.",
+            holds: [file ? "The file's analysis lists no definition of that name." : "No resolved call reaches or leaves a symbol of that name.", near?.line],
             next: [
+              !!near && `clarifydoc_extract symbol="${near.first.name}" file="${near.first.file}"`,
               `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
               !file && `clarifydoc_extract symbol="${symbol}" file="<the file that defines it>"`,
               await stalenessHint(ctx.store),
