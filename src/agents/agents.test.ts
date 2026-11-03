@@ -74,6 +74,29 @@ describe("search hooks for Codex and Copilot", () => {
   });
 });
 
+describe("hooks for Claude Code's shell and subagents", () => {
+  it("answers a grep run in Bash, stays silent on other commands, and tells a subagent the shell form of the tools", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hook-subagent-"));
+    const root = join(dir, "garage");
+    try {
+      cpSync(resolve("test-fixtures/sample-backend"), root, { recursive: true });
+      mkdirSync(join(root, ".git"));
+      cpSync(resolve("test-output/sample-backend"), join(root, ".clarifydoc", "garage"), { recursive: true });
+      const shell = JSON.parse((await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "grep -rn searchPlayers services" } }))!);
+      expect(shell.hookSpecificOutput.additionalContext).toContain("searchPlayers");
+      expect(await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "npm test" } })).toBeNull();
+
+      const sub = JSON.parse((await runHook("subagent-start", { cwd: root }, root, "claude", "node /opt/garage/cli.js"))!).hookSpecificOutput;
+      expect(sub.hookEventName).toBe("SubagentStart");
+      expect(sub.additionalContext).toContain("`node /opt/garage/cli.js ask <tool> key=value …`");
+      expect(sub.additionalContext).toContain("`node /opt/garage/cli.js ask --list`");
+      expect(sub.additionalContext).toContain("<repository-data>");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("hooks on new files and edits", () => {
   it("reads what a new file is about from its name, and nothing from a generic one", () => {
     expect(fileStem("src/league/formatMatchDate.ts")).toBe("formatMatchDate");
@@ -136,9 +159,32 @@ describe("install plans", () => {
     try {
       applyPlans([planClaudeHooks(root, self)], false);
       const again = JSON.parse(planClaudeHooks(root, self).content);
-      expect(again.hooks.PreToolUse.map((h: { matcher: string }) => h.matcher)).toEqual(["Grep|Glob", "Write"]);
+      expect(again.hooks.PreToolUse.map((h: { matcher: string }) => h.matcher)).toEqual(["Grep|Glob|Bash", "Write"]);
       expect(again.hooks.PostToolUse[0].hooks[0].command).toBe("clarifydoc hook post-edit");
       expect(again.hooks.SessionStart).toHaveLength(1);
+      // A subagent starts in the shape a session does: no matcher, one command hook.
+      expect(again.hooks.SubagentStart).toEqual([{ hooks: [{ type: "command", command: "clarifydoc hook subagent-start", timeout: 10 }] }]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("widens an earlier install's search matcher to shell searches, keeping the user's own hooks", () => {
+    const root = mkdtempSync(join(tmpdir(), "install-"));
+    try {
+      mkdirSync(join(root, ".claude"), { recursive: true });
+      const earlier = {
+        hooks: {
+          PreToolUse: [
+            { matcher: "Grep|Glob", hooks: [{ type: "command", command: "clarifydoc hook pre-search", timeout: 10 }] },
+            { matcher: "Bash", hooks: [{ type: "command", command: "./check-garage.sh" }] },
+          ],
+        },
+      };
+      writeFileSync(join(root, ".claude", "settings.json"), JSON.stringify(earlier));
+      const plan = JSON.parse(planClaudeHooks(root, self).content);
+      expect(plan.hooks.PreToolUse.map((h: { matcher: string }) => h.matcher)).toEqual(["Grep|Glob|Bash", "Bash", "Write"]);
+      expect(plan.hooks.PreToolUse[1].hooks[0].command).toBe("./check-garage.sh");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

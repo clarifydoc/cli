@@ -4,10 +4,14 @@ import type { McpTool } from "../protocol.js";
 import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
-import { isTestPath, mustResolveFile, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { isTestPath, mustResolveFile, nearSymbols, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
 import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
+import { declarationHeadLine } from "../../core/doc-comments.js";
+import { pluginFor } from "../../extractors/registry.js";
+import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
+import { untrackedAmong } from "../../core/source-revision.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -25,6 +29,23 @@ interface Span {
   depth: number;
   /** The call that reached it (absent for the seed). */
   via?: SymbolLink;
+  /** What the definition's head above `line` holds: its decorators and the first words of its doc comment. */
+  head?: Head;
+}
+
+/** The definition's own decorators and doc, which say how far above `line` its head starts. */
+interface Head {
+  decorators?: readonly string[];
+  doc?: string;
+  language?: FileAnalysis["language"];
+}
+
+/** A definition the per-file analysis holds: its span and its head. */
+interface Definition {
+  symbol: string;
+  line: number;
+  endLine: number;
+  head: Head;
 }
 
 /**
@@ -40,18 +61,14 @@ export function extractTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_extract",
     title: "Source of a function and what it calls",
-    description:
-      "The source code of one function or method plus the functions it calls (breadth-first over the resolved " +
-      "call graph, up to `depth` hops), within a token budget — what you need to read to change it, without " +
-      "reading whole files; callees that do not fit are listed with their size. `package`: an installed " +
-      "package's API at its installed version (`symbol` picks one).",
+    description: "Use for what one function does: its source, decorators and doc included, and its callees' within `maxTokens`. `depth` 0-3; `package`: an installed package's API (`symbol`: one export).",
     inputSchema: {
       type: "object",
       properties: {
-        symbol: { type: "string", description: 'Function or method, e.g. "createOrder" or "OrderService.create".' },
-        file: { type: "string", description: "The file that defines it (project-relative path), when the name is not unique." },
-        depth: { type: "number", description: "Hops of callees to include, 0-3 (default 1; 0 = the function alone)." },
-        maxTokens: { type: "number", description: "Budget for the source returned (default 6000, max 30000)." },
+        symbol: { type: "string", description: "`Class.method` or a name." },
+        file: { type: "string", description: "When the name is not unique." },
+        depth: { type: "number" },
+        maxTokens: { type: "number" },
         package: { type: "string" },
       },
       additionalProperties: false,
@@ -97,11 +114,13 @@ export function extractTool(ctx: ToolContext): McpTool {
       const seeds = bestNamed(symbol, matched, (s) => s.symbol, (s) => isTestPath(loaded.summary, s.file));
       const definedIn = new Set(seeds.map((s) => `${s.file}::${s.symbol}`));
       if (seeds.length === 0) {
+        const near = nearSymbols(loaded.summary, symbol);
         return {
           text: noResults({
             headline: `No function or method named \`${symbol}\`${file ? ` in ${file}` : ""} in the analysis.`,
-            holds: file ? "The file's analysis lists no definition of that name." : "No resolved call reaches or leaves a symbol of that name.",
+            holds: [file ? "The file's analysis lists no definition of that name." : "No resolved call reaches or leaves a symbol of that name.", near?.line],
             next: [
+              !!near && `clarifydoc_extract symbol="${near.first.name}" file="${near.first.file}"`,
               `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
               !file && `clarifydoc_extract symbol="${symbol}" file="<the file that defines it>"`,
               await stalenessHint(ctx.store),
@@ -110,10 +129,13 @@ export function extractTool(ctx: ToolContext): McpTool {
         };
       }
       if (definedIn.size > 1 && !file) {
-        const candidates = [...definedIn].slice(0, MAX_CANDIDATES).map((k) => {
+        // Files git tracks first: an untracked copy is rarely the one meant, and is said to be one.
+        const untracked = (await untrackedAmong(ctx.store.projectRoot, [...new Set(seeds.map((x) => x.file))])) ?? new Set<string>();
+        const keys = [...definedIn].sort((a, b) => Number(untracked.has(a.split("::")[0]!)) - Number(untracked.has(b.split("::")[0]!)));
+        const candidates = keys.slice(0, MAX_CANDIDATES).map((k) => {
           const [f, s] = k.split("::") as [string, string];
           const span = seeds.find((x) => x.file === f && x.symbol === s)!;
-          return `- ${s}() ${loc(f, span.line)} → clarifydoc_extract symbol="${s}" file="${f}"`;
+          return `- ${s}() ${loc(f, span.line)}${untracked.has(f) ? " (untracked)" : ""} → clarifydoc_extract symbol="${s}" file="${f}"`;
         });
         return {
           text: joinLines([
@@ -167,16 +189,47 @@ export function extractTool(ctx: ToolContext): McpTool {
         }
         return sources.get(f) ?? null;
       };
+      // Each file's content against the manifest before any of its lines is quoted: a span read from a file
+      // that changed since is looked up again by name in what the file says now.
+      const moved = await ctx.store.changedSinceAnalysis(new Set(spans.map((s) => s.file)));
+      const current = new Map<string, Definition[]>();
+      const currentDefinitions = async (f: string): Promise<Definition[]> => {
+        if (!current.has(f)) {
+          const now = (await analyzeWorkingFiles(ctx.store.projectRoot, [f]).catch(() => new Map())).get(f);
+          const language = analyses.get(f)?.language;
+          current.set(f, now && language ? [...definitions({ ...now, language } as FileAnalysis), ...classDefinitions({ ...now, language } as FileAnalysis)] : []);
+        }
+        return current.get(f)!;
+      };
       const blocks: string[] = [];
       const withheld: Array<{ span: Span; tokens: number }> = [];
       const stale = new Set<string>();
+      const refound = new Set<string>();
+      const removed = new Set<string>();
       let used = 0;
-      for (const span of spans) {
+      for (const original of spans) {
+        let span = original;
+        let unverified = false;
+        if (moved.get(span.file) === "removed") {
+          removed.add(span.file);
+          continue;
+        }
+        if (moved.get(span.file) === "changed") {
+          const again = (await currentDefinitions(span.file)).filter((d) => d.symbol === span.symbol);
+          const nearest = again.sort((a, b) => Math.abs(a.line - span.line) - Math.abs(b.line - span.line))[0];
+          if (nearest) {
+            span = { ...span, line: nearest.line, endLine: nearest.endLine, head: nearest.head };
+            refound.add(span.file);
+          } else unverified = true;
+        }
         const lines = await linesOf(span.file);
         if (!lines) continue;
         const lineCount = analyses.get(span.file)?.lineCount;
-        if (lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
-        const body = lines.slice(span.line - 1, span.endLine).join("\n");
+        // No manifest to judge by: the line count is the only sign left.
+        if (!moved.has(span.file) && lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
+        // The decorators, attributes and doc comment above the definition are part of what it says.
+        const from = span.head ? declarationHeadLine(lines, span.line, span.head.language ? pluginFor(span.head.language)?.docComments : undefined, span.head) : span.line;
+        const body = lines.slice(from - 1, span.endLine).join("\n");
         const tokens = Math.ceil(body.length / CHARS_PER_TOKEN);
         if (span.depth > 0 && used + tokens > maxTokens) {
           withheld.push({ span, tokens });
@@ -187,7 +240,8 @@ export function extractTool(ctx: ToolContext): McpTool {
           ? ` — called as ${span.via.callName} at ${loc(span.via.sourceFile, span.via.sourceLine)}${confidenceNote(span.via.confidence, span.via.resolvedBy, span.via.strategy)}`
           : "";
         blocks.push(
-          `## ${span.symbol}() — ${span.file}:${span.line}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
+          `## ${span.symbol}() — ${span.file}:${from}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,
+          ...(unverified ? ["⚠ Lines unverified: the file changed since the analysis and no definition of this name is in it now."] : []),
           fenced(span.depth === 0 && tokens > maxTokens ? `${body.slice(0, maxTokens * CHARS_PER_TOKEN)}\n… (cut at the budget)` : body),
           "",
         );
@@ -198,6 +252,8 @@ export function extractTool(ctx: ToolContext): McpTool {
         text: joinLines([
           `# ${symbol} — ${plural(seeds.length, "definition")}${depth ? `, ${plural(callees, "callee")} within ${plural(depth, "hop")}` : ""} · ≈${used} tokens`,
           stale.size ? `(changed since the analysis — lines may be off: ${[...stale].join(", ")})` : "",
+          refound.size ? `(changed since the analysis — definitions found again by name in the current text: ${[...refound].join(", ")})` : "",
+          removed.size ? `(removed since the analysis, not quoted: ${[...removed].join(", ")})` : "",
           "",
           ...blocks,
           withheld.length ? `## Withheld — over the ${maxTokens}-token budget (${withheld.length})` : "",
@@ -211,18 +267,24 @@ export function extractTool(ctx: ToolContext): McpTool {
   };
 }
 
+/** The head of a function, method or class: what `declarationHeadLine` reads above it. */
+function headOf(a: FileAnalysis, item: { decorators?: readonly string[]; doc?: string }): Head {
+  return { language: a.language, ...(item.decorators?.length ? { decorators: item.decorators } : {}), ...(item.doc ? { doc: item.doc } : {}) };
+}
+
 /** Every class a file defines, by name — a definition a name can mean, though never a callee's span. */
-function classDefinitions(a: FileAnalysis | null): Array<{ symbol: string; line: number; endLine: number }> {
-  return (a?.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine }));
+function classDefinitions(a: FileAnalysis | null): Definition[] {
+  if (!a) return [];
+  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine, head: headOf(a, c) }));
 }
 
 /** Every function and method a file defines, keyed the way symbol links name them (`Class.method`). */
-function definitions(a: FileAnalysis | null): Array<{ symbol: string; line: number; endLine: number }> {
+function definitions(a: FileAnalysis | null): Definition[] {
   if (!a) return [];
-  const out: Array<{ symbol: string; line: number; endLine: number }> = [];
-  for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine });
+  const out: Definition[] = [];
+  for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
   for (const cls of a.classes ?? []) {
-    for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine });
+    for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
   }
   return out;
 }

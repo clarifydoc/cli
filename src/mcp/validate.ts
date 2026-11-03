@@ -54,6 +54,35 @@ export function nearest(value: string, options: readonly string[]): string | und
   return best !== undefined && bestDistance <= Math.max(2, Math.floor(value.length / 3)) ? best : undefined;
 }
 
+/**
+ * Up to `max` of `options` a misspelt or half-remembered name may mean, nearest first: those
+ * starting with it (whole or after its last `.`, shortest first), then those within a typo's
+ * edit distance. Empty when nothing is close — a guess would cost more than no suggestion.
+ */
+export function nearNames(value: string, options: Iterable<string>, max = 3): string[] {
+  const v = value.trim().toLowerCase();
+  if (!v) return [];
+  const limit = Math.max(2, Math.floor(v.length / 3));
+  const prefixed: string[] = [];
+  const close: Array<{ name: string; d: number }> = [];
+  for (const option of new Set(options)) {
+    const o = option.toLowerCase();
+    if (o === v) continue;
+    const leaf = o.slice(o.lastIndexOf(".") + 1);
+    if (o.startsWith(v) || leaf.startsWith(v)) {
+      prefixed.push(option);
+      continue;
+    }
+    // Lengths further apart than the limit cannot be within it: skip the distance.
+    if (Math.abs(o.length - v.length) > limit && Math.abs(leaf.length - v.length) > limit) continue;
+    const d = Math.min(distance(v, o), distance(v, leaf));
+    if (d <= limit) close.push({ name: option, d });
+  }
+  prefixed.sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  close.sort((a, b) => a.d - b.d || a.name.length - b.name.length || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return [...prefixed, ...close.map((c) => c.name)].slice(0, max);
+}
+
 const hint = (value: string, options: readonly string[]) => {
   const near = nearest(value, options);
   return near ? ` — did you mean \`${near}\`?` : "";

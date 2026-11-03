@@ -84,10 +84,7 @@ export function contextDocsTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_context_docs",
     title: "Decisions and context documents",
-    description:
-      "Why the code is so: decision records (ADRs, WHY:/DECISION: comments), architecture/glossary " +
-      "docs, schema dumps — each flagged when files it names changed after it. `query` searches, `path` reads, " +
-      "`file` filters.",
+    description: "Use for why code is so: decision records, WHY:/DECISION: comments and context docs, flagged when what they name changed. `query` searches, `path` reads, `file` filters.",
     inputSchema: {
       type: "object",
       properties: {

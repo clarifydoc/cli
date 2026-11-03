@@ -36,20 +36,14 @@ export function architectureTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_architecture",
     title: "Architecture: modules, communities, hubs, cycles",
-    description:
-      "The project's structure from its import graph and history. view=modules: folders (at `depth`) and the " +
-      "dependencies between them, each with afferent/efferent coupling and instability (Ce/(Ca+Ce)). " +
-      "view=communities: the clusters the import graph falls into, with cohesion. view=hubs: the most connected " +
-      "files. view=cycles: import cycles. view=surprises: links between communities, or to a hub from the " +
-      "periphery, worth a second look. view=questions: what the topology suggests asking. view=cochange: files " +
-      "that change together in git history, marked when no import explains it. Omit `view` for the overview.",
+    description: "Use for how the code is organized. `view`: modules (folders at `depth`, coupling, instability), communities, hubs, cycles, surprises, questions, cochange (files changed together); default overview. `file` filters.",
     inputSchema: {
       type: "object",
       properties: {
-        view: { type: "string", enum: [...VIEWS], description: "Which view; default overview." },
-        file: { type: "string", description: "Only rows naming this file or folder (project-relative substring)." },
-        depth: { type: "number", description: "view=modules: folder depth to group by (default 2)." },
-        limit: { type: "number", description: "Max rows (default 25)." },
+        view: { type: "string", enum: [...VIEWS] },
+        file: { type: "string" },
+        depth: { type: "number" },
+        limit: { type: "number" },
       },
       additionalProperties: false,
     },

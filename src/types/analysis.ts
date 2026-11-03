@@ -3494,6 +3494,20 @@ export interface LayerViolation {
   cycle?: string[];
 }
 
+/**
+ * Whether a team rule (`.clarifydoc/config.json` `rules`) said anything this run: `holds` — it covers
+ * files and none breaks it; `violated` — imports break it (`violations` of them); `vacuous` — a side of
+ * it (`unmatched`) names no analyzed file, so it cannot be broken: usually a folder renamed under it.
+ */
+export interface RuleVerdict {
+  name: string;
+  verdict: "holds" | "violated" | "vacuous";
+  violations: number;
+  severity: "error" | "warn";
+  /** The sides of a vacuous rule that match no analyzed file. */
+  unmatched?: Array<"from" | "each" | "to" | "allowOnly">;
+}
+
 export interface BlastSymbolUsage {
   name: string;
   usedByCount: number;
@@ -4011,6 +4025,8 @@ export interface ProjectAnalysis {
   securityIssues?: SecurityIssue[];
   duplicates?: DuplicateGroup[];
   layerViolations?: LayerViolation[];
+  /** Every team rule with its verdict this run, vacuous ones included (core/layer-analyzer.ts `ruleVerdicts`). */
+  ruleVerdicts?: RuleVerdict[];
   blastRadius?: BlastRadiusInfo[];
   healthScore?: HealthScore;
   suggestions?: Suggestion[];

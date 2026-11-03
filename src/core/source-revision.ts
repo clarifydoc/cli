@@ -38,3 +38,13 @@ export async function listGitFiles(projectRoot: string): Promise<string[] | null
   const out = await git(projectRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], 10_000);
   return out === null ? null : out.split("\0").filter(Boolean);
 }
+
+/**
+ * Which of `paths` (project-relative) git does not track — new files, scratch copies — not ignored ones.
+ * Null without git or outside a work tree, so a caller can say nothing rather than call everything untracked.
+ */
+export async function untrackedAmong(projectRoot: string, paths: readonly string[]): Promise<Set<string> | null> {
+  if (paths.length === 0) return new Set();
+  const out = await git(projectRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...paths], 5000);
+  return out === null ? null : new Set(out.split("\0").filter(Boolean));
+}

@@ -45,10 +45,7 @@ export function statusTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_status",
     title: "ClarifyDoc analysis status",
-    description:
-      "Start here. Reports what ClarifyDoc has mapped for this project: root, when it was last analyzed, " +
-      "detected frameworks, sub-projects, and how many routes, screens, frontend→backend links, call traces, " +
-      "entities, data flows and findings exist. Use it to decide which other clarifydoc_* tool to call.",
+    description: "Use first: what is mapped (frameworks, sub-projects, counts of routes, screens, links, traces, entities, findings) and how fresh it is.",
     inputSchema: NO_ARGS,
     handler: async () => {
       if (!(await ctx.store.exists()) && !ctx.store.allowColdStart) {
@@ -69,21 +66,12 @@ export function analyzeTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_analyze",
     title: "Re-analyze the project",
-    description:
-      "Re-run the ClarifyDoc static analysis so the other tools see current code. Incremental (only changed " +
-      "files re-parsed), so cheap after edits. The only clarifydoc tool that writes, and only into the analysis " +
-      "directory (.clarifydoc/ by default) — never your source files.",
+    description: "Use after edits: re-runs the analysis incrementally; writes only the analysis directory. `full` re-parses all, `cancel` stops a run.",
     inputSchema: {
       type: "object",
       properties: {
-        full: {
-          type: "boolean",
-          description: "Re-parse everything instead of reusing cached per-file results.",
-        },
-        cancel: {
-          type: "boolean",
-          description: "Stop the run in progress; the previous analysis stays current.",
-        },
+        full: { type: "boolean" },
+        cancel: { type: "boolean" },
       },
       additionalProperties: false,
     },
@@ -329,28 +317,17 @@ export function searchTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_search",
     title: "Search the code map",
-    description:
-      "Find routes, screens, files, symbols, entities and API calls by name, or with `body` by what a function's " +
-      "code says. Returns path:line references for the other clarifydoc tools.",
+    description: "Use to find a route, screen, file, symbol, entity or API call by name, or with `body` by what its code or doc says; path:line results. `throws`, `signature` filter bodies.",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description:
-            "What to look for, case-insensitive (route path, screen, symbol, table, file). Terms match " +
-            "independently and camelCase splits: `user id` finds `getUserById`.",
-        },
-        kinds: {
-          type: "array",
-          items: { type: "string", enum: [...SEARCH_KINDS] },
-          description: "Only these kinds (default: all).",
-        },
-        limit: { type: "number", description: "Max results, best first (default 12)." },
+        query: { type: "string", description: "Words or a name; camelCase splits." },
+        kinds: { type: "array", items: { type: "string", enum: [...SEARCH_KINDS] } },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
-        body: { type: "boolean", description: "Also match function bodies, comments and docs (BM25)." },
-        throws: { type: "string", description: "Only bodies throwing this type." },
-        signature: { type: "string", description: "Only signatures containing this." },
+        body: { type: "boolean" },
+        throws: { type: "string", description: "Thrown type." },
+        signature: { type: "string", description: "Signature substring." },
       },
       required: ["query"],
       additionalProperties: false,
@@ -653,7 +630,7 @@ function isPerformancePattern(p: PatternInfo): boolean {
 function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number]> {
   return [
     ["security", (summary.securityIssues ?? []).length],
-    ["layers", (summary.layerViolations ?? []).length],
+    ["layers", (summary.layerViolations ?? []).length + (summary.ruleVerdicts ?? []).filter((r) => r.verdict === "vacuous").length],
     ["complexity", (summary.complexity ?? []).reduce((n, c) => n + c.functions.length, 0)],
     ["duplicates", (summary.duplicates ?? []).length],
     ["hotspots", (summary.hotspots ?? []).length],
@@ -701,18 +678,13 @@ export function servicesTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_services",
     title: "Which project calls which",
-    description:
-      "Runtime dependencies between the sub-projects of this analysis: a frontend and its backend, one service " +
-      "and another, a publisher and the worker consuming its messages. Each edge lists the endpoints (or broker " +
-      "destinations) that cross it, and whether a deployment manifest (docker-compose, k8s) states it too. An edge " +
-      "with 0 links is stated by deployment only — no call was found in code. Name a `project` for what it calls " +
-      "and what calls it; then clarifydoc_routes for one endpoint's callers. Also: external services called.",
+    description: "Use for which sub-project calls which (HTTP, message bus) and the external services called; each edge with its endpoints and whether deployment states it. `project`: one service's edges.",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string", description: "Sub-project id or name (substring) — edges with it at either end." },
-        kind: { type: "string", enum: ["http", "bus", "package"], description: "One kind of edge only." },
-        limit: { type: "number", description: "Max edges (default 30)." },
+        project: { type: "string", description: "Sub-project substring." },
+        kind: { type: "string", enum: ["http", "bus", "package"] },
+        limit: { type: "number" },
       },
       additionalProperties: false,
     },
@@ -907,28 +879,14 @@ export function healthTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_health",
     title: "Code health findings",
-    description:
-      "The project's health score and the findings behind it: security issues, architecture layer violations, " +
-      "high-complexity functions, duplicate code, churn×complexity hotspots, dead code (unreached files, unimported " +
-      "exports, unused generated output), patterns, performance (ranked by who pays), " +
-      "files that mix the most concerns (database, http, queue, auth), the refactor pressure ranking (where " +
-      "to refactor first, with drivers and confidence) and actionable suggestions. " +
-      "Call with no category for the summary, then drill in.",
+    description: "Use for the health score and its findings. No `category`: the scoreboard; then drill in (layers lists each team rule's verdict). `severity`, `file` filter.",
     inputSchema: {
       type: "object",
       properties: {
-        category: {
-          type: "string",
-          enum: [...HEALTH_CATEGORIES],
-          description: "Drill into one finding category. Omit for the scoreboard plus counts.",
-        },
-        severity: {
-          type: "string",
-          enum: ["critical", "high", "medium", "low"],
-          description: "Only for category=security or suggestions: minimum severity/priority to include.",
-        },
-        file: { type: "string", description: "Restrict findings to one file (project-relative path substring)." },
-        limit: { type: "number", description: "Max rows (default 25)." },
+        category: { type: "string", enum: [...HEALTH_CATEGORIES] },
+        severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+        file: { type: "string" },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
@@ -1008,13 +966,27 @@ export function healthTool(ctx: ToolContext): McpTool {
           const violations = (summary.layerViolations ?? []).filter(
             (v) => inFile(v.sourceFile) || inFile(v.targetFile),
           );
-          if (violations.length === 0) return { text: noFindings(summary, category, filters) };
+          // Every team rule with its verdict, those that hold and those that match nothing included.
+          const verdicts = summary.ruleVerdicts ?? [];
+          const verdictLines = verdicts.length
+            ? [
+                `## Rules (${verdicts.length})`,
+                ...verdicts.slice(0, 40).map((r) =>
+                  `- ${r.name}${r.severity === "warn" ? " (warn)" : ""}: ${r.verdict}` +
+                  (r.verdict === "violated" ? ` — ${plural(r.violations, "import")}` : "") +
+                  (r.verdict === "vacuous" ? ` — its ${r.unmatched!.map((u) => `\`${u}\``).join(" and ")} match no analyzed file, so it cannot fail${r.violations ? ` (${plural(r.violations, "import")} reported)` : ""}` : "")),
+                ...(verdicts.length > 40 ? [`- … ${verdicts.length - 40} more`] : []),
+                "",
+              ]
+            : [];
+          if (violations.length === 0 && !verdicts.length) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Layer violations (${violations.length})`,
               "A violation is an import that crosses the architecture layers the wrong way, or breaks one of the " +
                 "team's own rules in .clarifydoc/config.json.",
               "",
+              ...verdictLines,
               ...bulletList(
                 violations,
                 limit,
@@ -1334,7 +1306,7 @@ async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof impor
   const after = await cs.analyzeWorkingFiles(ctx.store.projectRoot, files, contents);
   const impact = computeImpactDiff(summary, files, {
     baseLabel: "proposed edit",
-    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: cs.signatureChanges(before, after, summary.symbolLinks ?? []), hunks },
+    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await cs.judgeSignatures(ctx.store.analysisDir, before, after, summary), hunks },
   });
   // What the edit itself gets wrong: syntax it introduces, calls with an argument count nothing accepts.
   const { checkPatch, renderPatchCheck } = await import("../../core/patch-check.js");
@@ -1354,25 +1326,16 @@ export function impactTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_impact",
     title: "Impact of changed files",
-    description:
-      "Project a set of changed files onto the analysis: which screens and API routes are affected, which ORM " +
-      "entities and queues are touched, which files transitively import the changes, which tests to run, and a " +
-      "risk level. Defaults to the working tree vs HEAD (git); pass `files` to skip git entirely. Before an edit, " +
-      "pass `proposed` — each file's full new content — to see what it would break: changed functions, " +
-      "their callers and routes, signatures callers no longer fit, syntax errors, wrong argument counts.",
+    description: "Use for what a change breaks: screens, routes, entities, queues, dependents, tests to run, broken signatures and overrides, risk. Default: working tree vs `base` (HEAD), `staged`; `files` skips git; `proposed`: an edit not made yet.",
     inputSchema: {
       type: "object",
       properties: {
-        files: {
-          type: "array",
-          items: { type: "string" },
-          description: "Explicit changed files, project-relative. Skips git when provided.",
-        },
-        base: { type: "string", description: "Git ref to diff the working tree against (default HEAD)." },
-        staged: { type: "boolean", description: "Use staged changes only (git diff --cached)." },
+        files: { type: "array", items: { type: "string" } },
+        base: { type: "string" },
+        staged: { type: "boolean" },
         proposed: {
           type: "array",
-          description: "An edit not made yet: each file's complete new content (null deletes it). At most 20 files of 1 MB.",
+          description: "Each file's full new content (null deletes); at most 20 files of 1 MB.",
           items: {
             type: "object",
             properties: { file: { type: "string", description: "Project-relative path." }, content: { type: ["string", "null"] } },
@@ -1428,7 +1391,7 @@ export function impactTool(ctx: ToolContext): McpTool {
       let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("../../core/changed-symbols.js").SignatureChange[]; hunks?: import("../../core/changed-symbols.js").ChangedHunks } | undefined;
       if (!explicit.length) {
         try {
-          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges }] = await Promise.all([
+          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures }] = await Promise.all([
             import("../../core/git-changed-files.js"),
             import("../../core/changed-symbols.js"),
           ]);
@@ -1436,7 +1399,7 @@ export function impactTool(ctx: ToolContext): McpTool {
           const before = await loadFileAnalyses(ctx.store.analysisDir, [...new Set([...hunks.keys(), ...changed])]);
           const found = symbolsInHunks(before, hunks);
           const after = await analyzeWorkingFiles(ctx.store.projectRoot, [...before.keys()]);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, loaded.summary.symbolLinks ?? []), hunks };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(ctx.store.analysisDir, before, after, loaded.summary), hunks };
         } catch {
           // Without line ranges the file-level projection stands alone.
         }

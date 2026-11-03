@@ -59,7 +59,7 @@ program
   .option("--junit <file>", "Also write the findings as a JUnit XML report (one test case per rule)")
   .option("--codequality <file>", "Also write the findings as a GitLab Code Quality report")
   .option("--progress <format>", "Report progress as `json`: one event per line on stderr (stage, files done, done) instead of the status line")
-  .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, a rule id…), or both, comma-separated")
+  .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, import-rule, vacuous-rule, a rule id…), or both, comma-separated")
   .option("--baseline <sarif-or-analysis>", "Findings of the base (its SARIF, or its analysis directory): reports mark each finding new or unchanged, and --fail-on counts only new ones")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")
@@ -329,14 +329,14 @@ program
       let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("./core/changed-symbols.js").SignatureChange[]; hunks?: import("./core/changed-symbols.js").ChangedHunks } | undefined;
       if (!options.files?.length) {
         try {
-          const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, signatureChanges } = await import("./core/changed-symbols.js");
+          const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures } = await import("./core/changed-symbols.js");
           const hunks = await gitChangedHunks(projectRoot, { base: options.base, staged: options.staged });
           const touched = [...new Set([...hunks.keys(), ...changed])];
           const before = await loadFileAnalyses(analysisDir, touched);
           const found = symbolsInHunks(before, hunks);
           // Every touched file, new ones too: a function that left one file may have moved into another.
           const after = await analyzeWorkingFiles(projectRoot, touched);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: signatureChanges(before, after, summary.symbolLinks ?? []), hunks };
+          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(analysisDir, before, after, summary), hunks };
         } catch (e) {
           // No line ranges: the file-level impact stands alone.
           if (process.env.CLARIFYDOC_DEBUG) console.error(e);
@@ -792,7 +792,7 @@ program
 program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
-  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start")
+  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start | subagent-start")
   .option("--dialect <name>", "The host's payload and answer format: claude (Claude Code, Codex) | copilot (GitHub Copilot CLI and VS Code)", "claude")
   .action(async (event: string, options) => {
     // A hook must never stand in the agent's way: any failure is silence.
@@ -801,7 +801,11 @@ program
       if (!(HOOK_EVENTS as readonly string[]).includes(event)) return;
       if (!(HOOK_DIALECTS as readonly string[]).includes(options.dialect)) return;
       const timer = setTimeout(() => process.exit(0), 8000);
-      const out = await runHook(event as never, readHookInput(), process.cwd(), options.dialect);
+      // How a subagent's shell starts this CLI: the way this hook was started.
+      const { selfCommand } = await import("./agents/install.js");
+      const self = selfCommand();
+      const ask = [self.command, ...self.args].map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : JSON.stringify(w))).join(" ");
+      const out = await runHook(event as never, readHookInput(), process.cwd(), options.dialect, ask);
       clearTimeout(timer);
       if (out) process.stdout.write(out + "\n");
     } catch {
@@ -814,7 +818,7 @@ program
   .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
   .argument("[path]", "Project root", ".")
   .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot (default claude-code)")
-  .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
+  .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session and subagent start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
   .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout) that refresh the analysis in the background", false)

@@ -1,4 +1,4 @@
-import type { FileAnalysis, ArchLayer, Language, LayerViolation } from "../types/analysis.js";
+import type { FileAnalysis, ArchLayer, Language, LayerViolation, RuleVerdict } from "../types/analysis.js";
 import { isApiContractLanguage } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
 import { matchesAnyGlob, type ArchitectureOverrides } from "./project-config.js";
@@ -351,6 +351,32 @@ export function detectRuleViolations(
     }
   }
   return out;
+}
+
+/**
+ * Each team rule's verdict over the analyzed `files` and the violations kept (after any filtering the
+ * caller does): `vacuous` when its `from` / `each` covers no file or its `to` / `allowOnly` names none
+ * — a rule that cannot be broken is no gate, and a renamed folder must not pass for one that holds —,
+ * else `violated` with the count, else `holds`.
+ */
+export function ruleVerdicts(files: readonly string[], rules: ReadonlyArray<DependencyRule>, violations: readonly LayerViolation[]): RuleVerdict[] {
+  const counts = new Map<string, number>();
+  for (const v of violations) if (v.rule) counts.set(v.rule, (counts.get(v.rule) ?? 0) + 1);
+  return rules.map((rule) => {
+    const unmatched: NonNullable<RuleVerdict["unmatched"]> = [];
+    if (rule.from.length > 0 && !files.some((f) => matchesAnyGlob(f, rule.from))) unmatched.push("from");
+    if (rule.each !== undefined && !files.some((f) => elementOf(f, rule.each!) !== null)) unmatched.push("each");
+    if (rule.to.length > 0 && !files.some((f) => matchesAnyGlob(f, rule.to))) unmatched.push("to");
+    if (rule.allowOnly?.length && !files.some((f) => matchesAnyGlob(f, rule.allowOnly!))) unmatched.push("allowOnly");
+    const n = counts.get(rule.name) ?? 0;
+    return {
+      name: rule.name,
+      verdict: unmatched.length ? "vacuous" : n > 0 ? "violated" : "holds",
+      violations: n,
+      severity: rule.severity,
+      ...(unmatched.length ? { unmatched } : {}),
+    };
+  });
 }
 
 /** A team rule as `resolveArchitectureOverrides` hands it over. */

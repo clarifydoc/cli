@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { attachDocComments } from "./doc-comments.js";
+import { attachDocComments, declarationHeadLine } from "./doc-comments.js";
 import { C_STYLE_DOCS, HASH_DOCS, PASCAL_DOCS, PYTHON_DOCS } from "../extractors/shared/doc-comment-specs.js";
 import { createEmptyAnalysis, type FunctionInfo, type Language } from "../types/analysis.js";
 
@@ -77,5 +77,34 @@ describe("attachDocComments", () => {
     const doc = docs("pascal", src, PASCAL_DOCS, [["Recalculate", 2]]).fns.Recalculate!;
     expect(doc.length).toBeLessThanOrEqual(200);
     expect(doc.endsWith("…")).toBe(true);
+  });
+});
+
+describe("declarationHeadLine", () => {
+  it("takes the attributes and doc comment of a cfg-gated variant, which otherwise reads like its twin", () => {
+    const lines = [
+      "/// Starts the engine of a car.",
+      '#[cfg(not(target_os = "macos"))]',
+      "pub fn start(car: &Car) {}",
+      "",
+      "/// Starts the engine of a car.",
+      '#[cfg(target_os = "macos")]',
+      "pub fn start(car: &Car) {}",
+    ];
+    const item = { decorators: ['cfg(target_os = "macos")'], doc: "Starts the engine of a car." };
+    expect(declarationHeadLine(lines, 3, C_STYLE_DOCS, item)).toBe(1);
+    expect(declarationHeadLine(lines, 7, C_STYLE_DOCS, item)).toBe(5);
+  });
+
+  it("leaves a comment that is not the item's doc, and stops at a blank line", () => {
+    const lines = ["// TODO: rename the garage.", "@Get()", "park() {}", "", "/** Washes it. */", "", "wash() {}"];
+    expect(declarationHeadLine(lines, 3, C_STYLE_DOCS, { decorators: ["Get()"] })).toBe(2);
+    expect(declarationHeadLine(lines, 7, C_STYLE_DOCS, { doc: "Washes it." })).toBe(7);
+  });
+
+  it("reads a decorator the language shape does not know by the name the item lists", () => {
+    const lines = ["#[tokio::main]", "async fn main() {}"];
+    expect(declarationHeadLine(lines, 2, { line: ["//"] }, { decorators: ["tokio::main"] })).toBe(1);
+    expect(declarationHeadLine(lines, 2, { line: ["//"] }, {})).toBe(2);
   });
 });

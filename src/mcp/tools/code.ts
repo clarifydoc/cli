@@ -9,6 +9,7 @@ import { byOrdinal } from "../../core/ordinal.js";
 import { testCodeIndex, testsReachingEach } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
+import { untrackedAmong } from "../../core/source-revision.js";
 import {
   booleanArg,
   bulletList,
@@ -35,7 +36,7 @@ import {
   page,
   pageFooter,
 } from "../format.js";
-import { fileChangedNote, mustResolveFile, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
+import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
 
@@ -43,56 +44,26 @@ export function routesTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_routes",
     title: "API and frontend routes",
-    description:
-      "List the routes ClarifyDoc extracted — backend API endpoints and frontend/router paths — with their " +
-      "handler and declaring file:line. Each API route also shows the frontend files that call it (matched by " +
-      "method + normalized path) and the data effects it reaches, which answers 'who calls this endpoint and " +
-      "what does it touch'.",
+    description: "Use for who calls an endpoint and what it touches: API and frontend routes with handler, file:line, calling files and data effects. Filters: path, method, kind, file, project, policy, role, scheme, anonymous, version, deprecated, bodyType. `detail`: parameters; `schema`: body schema; `gaps`: calls reaching no route, routes nothing calls, bodies that disagree.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Substring of the route path or handler name to filter by." },
-        method: { type: "string", description: "HTTP method filter, e.g. GET or POST." },
-        kind: {
-          type: "string",
-          enum: ["api", "frontend"],
-          description: "Only backend API routes, or only frontend/router routes. Default: both.",
-        },
-        file: { type: "string", description: "Only routes declared in this file (project-relative path)." },
-        project: {
-          type: "string",
-          description:
-            "Only routes of this sub-project (substring of its id or name, e.g. 'Substitutions.API'). " +
-            "The same endpoint hosted by two services is two routes; this picks the service.",
-        },
-        policy: { type: "string", description: "Only routes whose auth names this policy (substring), e.g. 'Permission.ManageSquad'." },
-        role: { type: "string", description: "Only routes requiring this role (substring)." },
-        scheme: { type: "string", description: "Only routes authenticated by this scheme (substring), e.g. 'jwt', 'sanctum'." },
-        anonymous: { type: "boolean", description: "true: only routes that waive authentication; false: only guarded routes." },
-        version: { type: "string", description: "Only routes serving this API version, e.g. '2' (matches '2' and '2.0')." },
-        deprecated: { type: "boolean", description: "true: only routes serving a deprecated version." },
-        bodyType: { type: "string", description: "Only routes whose body parameter type contains this (substring), e.g. 'CreateUserDto'." },
-        detail: {
-          type: "boolean",
-          description:
-            "Print each route's parameters with their bindings (body/query/route/header). Default: only when the " +
-            "result is 10 routes or fewer — a broad listing stays one line per route.",
-        },
-        schema: {
-          type: "boolean",
-          description:
-            "Include each route's request-body JSON schema (flattened from the bound parameter's class, " +
-            "inheritance included) when one was derived. Implies `detail`. Default false; narrow with `path`/`file` first.",
-        },
-        gaps: {
-          type: "boolean",
-          description:
-            "Instead of the routes: the calls in this repository that reach NO route (with why — no route at that " +
-            "path, wrong method, another service), the API routes no in-repo call reaches, and the request bodies " +
-            "that disagree with their route (a required field not sent, an undeclared one sent, a wrong type). Finds a " +
-            "renamed or removed endpoint, and a broken contract, from both sides. `path`/`file` narrow it.",
-        },
-        limit: { type: "number", description: "Max routes (default 40)." },
+        path: { type: "string", description: "Path or handler substring." },
+        method: { type: "string" },
+        kind: { type: "string", enum: ["api", "frontend"] },
+        file: { type: "string" },
+        project: { type: "string", description: "Sub-project substring." },
+        policy: { type: "string" },
+        role: { type: "string" },
+        scheme: { type: "string" },
+        anonymous: { type: "boolean", description: "true: unguarded only; false: guarded only." },
+        version: { description: "e.g. 2 (also 2.0).", type: "string" },
+        deprecated: { type: "boolean" },
+        bodyType: { type: "string" },
+        detail: { description: "Default: when 10 routes or fewer.", type: "boolean" },
+        schema: { type: "boolean" },
+        gaps: { type: "boolean" },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
@@ -340,26 +311,15 @@ export function screensTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_screens",
     title: "UI screens and pages",
-    description:
-      "List the UI screens/pages ClarifyDoc built (routed pages, components, Delphi/VB forms) with their route, " +
-      "file, component count, navigation targets, the API endpoints they call and the dialogs they open. This is " +
-      "the 'which screen does this' end of the screen → API → database chain.",
+    description: "Use for which screen does something: screens and forms with route, file, navigation, API calls and dialogs. `entry`: start-up screens; `detail`: components.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Substring of screen name, caption, route or file." },
-        file: { type: "string", description: "Only the screen(s) defined in this file." },
-        entry: {
-          type: "boolean",
-          description:
-            "Only the screens an application starts on: a desktop program's main form (`Application.CreateForm`, " +
-            "first) and the forms it creates at startup. Main forms are listed first.",
-        },
-        detail: {
-          type: "boolean",
-          description: "Include each screen's component list and navigation detail (default false).",
-        },
-        limit: { type: "number", description: "Max screens (default 30)." },
+        query: { type: "string", description: "Name, caption, route or file substring." },
+        file: { type: "string" },
+        entry: { type: "boolean" },
+        detail: { type: "boolean" },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
@@ -479,24 +439,13 @@ export function fileTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_file",
     title: "Everything known about one file",
-    description:
-      "The analysis for a single file: its sub-project and architecture layer, functions with cyclomatic " +
-      "complexity, routes and screens it declares, database/queue access with entities, who calls into it " +
-      "and what it calls, tests reaching it, findings, blast radius and imports/exports. Use this " +
-      "before editing a file to see what depends on it.",
+    description: "Use before editing a file: its layer, functions, routes, screens, data access, callers, callees, tests reaching it, findings, blast radius, imports and decisions. `sections` limits it.",
     inputSchema: {
       type: "object",
       properties: {
-        path: {
-          type: "string",
-          description: "File to describe — project-relative path, absolute path, or a unique suffix/basename.",
-        },
-        sections: {
-          type: "array",
-          items: { type: "string", enum: [...FILE_SECTIONS] },
-          description: "Limit the report to these sections. Default: all.",
-        },
-        limit: { type: "number", description: "Max rows per section (default 15)." },
+        path: { type: "string", description: "Path, or a unique suffix." },
+        sections: { type: "array", items: { type: "string", enum: [...FILE_SECTIONS] } },
+        limit: { type: "number" },
       },
       required: ["path"],
       additionalProperties: false,
@@ -891,42 +840,18 @@ export function traceTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_trace",
     title: "Call traces (callers / callees)",
-    description:
-      "Walk the resolved call graph from a symbol or file: who calls it (callers) and what it calls (callees), " +
-      "up to `depth` hops, with file:line for every hop. Also reports the data effects the seed symbol reaches " +
-      "(tables written, queues published) when known. Links resolved by heuristics are tagged with their " +
-      "confidence AND the strategy that found them (`[inferred via unique-global]`), so you can judge not just " +
-      "how sure the tool is but what it based the edge on.",
+    description: "Use for who calls a function or what it calls (through DI and interfaces), with file:line per hop, confidence and the data effects reached. `to`: call paths to a symbol; direction=overrides: what a method overrides and what overrides it.",
     inputSchema: {
       type: "object",
       properties: {
-        symbol: {
-          type: "string",
-          description: 'Function or method name, e.g. "createOrder" or "OrderService.create". Optional if `file` is given.',
-        },
-        file: { type: "string", description: "Restrict the seed to this file (project-relative path)." },
-        direction: {
-          type: "string",
-          enum: ["callers", "callees", "both"],
-          description: "Which way to walk (default both).",
-        },
-        depth: { type: "number", description: "Hops to follow, 1-4 (default 2)." },
-        limit: { type: "number", description: "Max rows per level (default 20)." },
-        to: {
-          type: "string",
-          description:
-            "Instead of the walk: the shortest call paths from the seed to this symbol (e.g. \"PaymentGateway.charge\"), " +
-            "each hop with its call site and confidence, rated by its weakest link. Answers 'how does this screen " +
-            "reach that table/service'. `toFile` narrows the target.",
-        },
-        toFile: { type: "string", description: "With `to`: the target's file (project-relative path)." },
-        minConfidence: {
-          type: "string",
-          enum: ["EXTRACTED", "INFERRED", "AMBIGUOUS"],
-          description:
-            "Follow only edges at least this sure: EXTRACTED (stated by the source), INFERRED (typed or resolved " +
-            "receivers too), AMBIGUOUS (default — name guesses too).",
-        },
+        symbol: { type: "string", description: "`Class.method` or a name; optional with `file`." },
+        file: { type: "string" },
+        direction: { type: "string", enum: ["callers", "callees", "both", "overrides"] },
+        depth: { type: "number", description: "1-4 (default 2)." },
+        limit: { type: "number" },
+        to: { description: "Target symbol: the call paths to it.", type: "string" },
+        toFile: { type: "string" },
+        minConfidence: { type: "string", enum: ["EXTRACTED", "INFERRED", "AMBIGUOUS"] },
       },
       additionalProperties: false,
     },
@@ -934,7 +859,7 @@ export function traceTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const symbol = stringArg(args, "symbol");
       const fileArg = stringArg(args, "file");
-      const direction = enumArg(args, "direction", ["callers", "callees", "both"] as const) ?? "both";
+      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });
       const limit = numberArg(args, "limit", 20, { max: 200 });
       const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
@@ -942,6 +867,10 @@ export function traceTool(ctx: ToolContext): McpTool {
         throw new Error("Pass `symbol`, `file`, or both.");
       }
       const file = fileArg ? mustResolveFile(loaded, fileArg) : undefined;
+      if (direction === "overrides") {
+        if (!symbol) throw new Error("`direction=overrides` needs `symbol`: a method (\"Car.start\") or a class.");
+        return { text: await overridesReport(ctx, loaded, symbol, file, limit) };
+      }
 
       const everything = loaded.summary.symbolLinks ?? [];
       const all = minConfidence === "AMBIGUOUS"
@@ -951,16 +880,20 @@ export function traceTool(ctx: ToolContext): McpTool {
         matchesSeed(l, symbol, file, "source") || matchesSeed(l, symbol, file, "target"),
       );
       if (seeds.length === 0) {
+        const near = symbol ? nearSymbols(loaded.summary, symbol) : null;
         return {
           text: noResults({
             headline: missHeadline("call-graph edges", [
               ["symbol", symbol],
               ["file", file],
             ]),
-            holds:
+            holds: [
               `The analysis holds ${plural(all.length, "resolved call")}. Either nothing resolved to this one, ` +
               `or the name differs.`,
+              near?.line,
+            ],
             next: [
+              !!near && `clarifydoc_trace symbol="${near.first.name}" file="${near.first.file}"`,
               symbol && `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
               file && `clarifydoc_file path="${file}" — what the file declares and imports`,
               all.length === 0 && (await stalenessHint(ctx.store)),
@@ -981,12 +914,14 @@ export function traceTool(ctx: ToolContext): McpTool {
           if (s === want || s.endsWith(`.${want}`)) defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol, line: l.targetLine });
         }
         if (defs.size > 1) {
-          const rows = [...defs.values()].sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
+          // Files git tracks first; an untracked copy is said to be one.
+          const untracked = (await untrackedAmong(ctx.store.projectRoot, [...new Set([...defs.values()].map((d) => d.file))])) ?? new Set<string>();
+          const rows = [...defs.values()].sort((a, b) => Number(untracked.has(a.file)) - Number(untracked.has(b.file)) || byOrdinal(a.file, b.file) || a.line - b.line);
           return {
             text: joinLines([
               `# \`${symbol}\` names ${plural(rows.length, "definition")} — pick one`,
               ...bulletList(rows, AMBIGUOUS_LISTED, (d) =>
-                `${d.symbol}() ${loc(d.file, d.line)} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}"`),
+                `${d.symbol}() ${loc(d.file, d.line)}${untracked.has(d.file) ? " (untracked)" : ""} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}"`),
             ]),
           };
         }
@@ -1042,6 +977,68 @@ export function traceTool(ctx: ToolContext): McpTool {
       return { text: joinLines(blocks) };
     },
   };
+}
+
+/**
+ * `clarifydoc_trace direction=overrides`: for a method, the declarations above it it overrides or
+ * implements (up `extends` / `implements`) and the overrides below it; for a class, its bases and its
+ * subclasses. A name several definitions share is listed to pick from, a miss offers near names.
+ */
+async function overridesReport(ctx: ToolContext, loaded: LoadedAnalysis, symbol: string, file: string | undefined, limit: number): Promise<string> {
+  const { summary } = loaded;
+  const want = symbol.toLowerCase();
+  const named = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const defs = new Map<string, { file: string; symbol: string; line: number; isClass: boolean }>();
+  for (const c of summary.complexity ?? []) {
+    if (file && c.filePath !== file) continue;
+    for (const f of c.functions) if (f.functionName.includes(".") && named(f.functionName)) defs.set(`${c.filePath}::${f.functionName}`, { file: c.filePath, symbol: f.functionName, line: f.line, isClass: false });
+  }
+  for (const l of summary.symbolLinks ?? []) {
+    // Interface and abstract methods have no body, so no complexity row: the linker's fan-out names them.
+    if (l.relation === "implements" && (!file || l.sourceFile === file) && named(l.sourceSymbol)) defs.set(`${l.sourceFile}::${l.sourceSymbol}`, { file: l.sourceFile, symbol: l.sourceSymbol, line: l.sourceLine, isClass: false });
+  }
+  for (const n of summary.classGraph?.nodes ?? []) {
+    if (n.isFile || n.isExternal || (file && n.filePath !== file) || n.name.toLowerCase() !== want) continue;
+    defs.set(`${n.filePath}::${n.name}`, { file: n.filePath, symbol: n.name, line: 0, isClass: true });
+  }
+  if (defs.size === 0) {
+    const near = nearSymbols(summary, symbol);
+    return noResults({
+      headline: `No method or class named \`${symbol}\`${file ? ` in ${file}` : ""} in the analysis.`,
+      holds: near?.line ?? "Overrides are read for a method (`Car.start`) or a class (`Car`).",
+      next: [
+        !!near && `clarifydoc_trace symbol="${near.first.name}" file="${near.first.file}" direction="overrides"`,
+        `clarifydoc_search query="${symbol}" kinds=["symbol"] — check the spelling`,
+      ],
+    });
+  }
+  if (defs.size > 1) {
+    const rows = [...defs.values()].sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
+    return joinLines([
+      `# \`${symbol}\` names ${plural(rows.length, "definition")} — pick one`,
+      ...bulletList(rows, AMBIGUOUS_LISTED, (d) => `${d.symbol}${d.isClass ? "" : "()"} ${loc(d.file, d.line || undefined)} → clarifydoc_trace symbol="${d.symbol}" file="${d.file}" direction="overrides"`),
+    ]);
+  }
+  const def = [...defs.values()][0]!;
+  const { inheritanceIndex, overridesBelow, declarationsAbove, relatives } = await import("../../core/overrides.js");
+  const index = inheritanceIndex(summary.classGraph);
+  const links = summary.symbolLinks ?? [];
+  const classesOf = (f: string) => ctx.store.fileAnalysis(f);
+  const [above, below] = def.isClass
+    ? await Promise.all([relatives(index, def.file, def.symbol, "up", classesOf), relatives(index, def.file, def.symbol, "down", classesOf)])
+    : await Promise.all([declarationsAbove(index, links, def.file, def.symbol, classesOf), overridesBelow(index, links, def.file, def.symbol, classesOf)]);
+  const row = (r: { file: string; symbol: string; line: number; depth: number; abstract?: boolean }) =>
+    `${r.symbol}${def.isClass ? "" : "()"} ${loc(r.file, r.line || undefined)}${r.depth > 1 ? ` — ${r.depth} levels away` : ""}${r.abstract ? (def.isClass ? " (interface)" : " (abstract)") : ""}`;
+  const [up, down] = def.isClass ? ["Extends and implements", "Subclasses and implementations"] : ["Overrides or implements", "Overridden below by"];
+  return joinLines([
+    `# Overrides — ${def.symbol}${def.isClass ? "" : "()"} ${loc(def.file, def.line || undefined)}`,
+    "",
+    `## ${up} (${above.length})`,
+    ...(above.length ? bulletList(above, limit, row) : ["- nothing above it in the analysis"]),
+    "",
+    `## ${down} (${below.length})`,
+    ...(below.length ? bulletList(below, limit, row) : ["- nothing below it in the analysis"]),
+  ]);
 }
 
 /**
@@ -1458,16 +1455,12 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_blast_radius",
     title: "Blast radius of a change",
-    description:
-      "What breaks if a file changes: a verdict on what kind of file it is (foundation type, boundary, on a " +
-      "UI-to-data flow, shared internals, localized) with its reasons and the behaviour at risk; direct and " +
-      "transitive dependents; exported symbols in use; the screens, routes, entities and queues it reaches; and " +
-      "how many files and tokens must be read to edit it safely. Omit `path` for the riskiest files.",
+    description: "Use for what breaks if a file changes: verdict and reasons, dependents, exports in use, screens, routes, entities and queues reached, reading cost. No `path`: the riskiest files.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File to assess. Omit to rank the whole project by impact score." },
-        limit: { type: "number", description: "Max rows per list (default 20)." },
+        path: { type: "string" },
+        limit: { type: "number" },
       },
       additionalProperties: false,
     },
@@ -1652,19 +1645,15 @@ export function contractTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_contract",
     title: "Endpoint contract",
-    description:
-      "One API endpoint as a self-contained OpenAPI-shaped operation — its security (schemes, roles, policies, or " +
-      "anonymous), API versions and deprecation, every parameter with where it binds (path, query, header), and the " +
-      "request body schema flattened from the handler's DTO — plus who calls it and the table field each parameter filters. " +
-      "For an agent about to CALL it. Narrow with `method`, `project` or `file` when the path matches several routes.",
+    description: "Use before calling an endpoint: auth, versions, parameter bindings and body schema as an OpenAPI-shaped operation, plus its callers. `method`, `project`, `file`, `version` pick one of several.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Route path or a distinctive substring of it (e.g. '/leagues/myLeagues')." },
-        method: { type: "string", description: "HTTP method, e.g. POST." },
-        project: { type: "string", description: "Sub-project id or name substring, when the path exists in several services." },
-        file: { type: "string", description: "Declaring file substring, when the path exists in several controllers." },
-        version: { type: "string", description: "API version the caller will use, e.g. '5' — picks the twin that serves it." },
+        path: { type: "string", description: "Route path or substring." },
+        method: { type: "string" },
+        project: { type: "string" },
+        file: { type: "string" },
+        version: { type: "string" },
       },
       required: ["path"],
       additionalProperties: false,

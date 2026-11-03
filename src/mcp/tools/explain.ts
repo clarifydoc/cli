@@ -1,7 +1,8 @@
 import type { McpTool } from "../protocol.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
-import { fileChangedNote, isTestPath, requireAnalysis, type ToolContext } from "./context.js";
+import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, type ToolContext } from "./context.js";
+import { noResults } from "../empty.js";
 import { bestNamed } from "../search-rank.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
 import { testsReaching } from "../../core/impact-diff.js";
@@ -39,21 +40,14 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
   return {
     name: "clarifydoc_explain",
     title: "Explain a route, screen, symbol or file",
-    description:
-      "One call for the context of a route (\"POST /api/orders\"), a screen, a function (\"OrderService.create\") or a " +
-      "file, packed into `maxTokens` in priority order: a route's contract and callers, the data it reaches, its " +
-      "handler's source, the routes sharing its tables and its blast radius; a function's role, source, callers and risk. Use it before changing " +
-      "something; follow the named calls for what did not fit.",
+    description: "Use before changing a route, screen, function or file: contract, callers, data, source, tests and blast radius in one answer within `maxTokens`, naming the calls for the rest. `kind` overrides the guess, `file` narrows.",
     inputSchema: {
       type: "object",
       properties: {
-        subject: {
-          type: "string",
-          description: 'A route ("GET /api/users/{id}" or a path), a screen name, a function ("UserService.get") or a project-relative file.',
-        },
-        kind: { type: "string", enum: ["route", "screen", "symbol", "file", "community"], description: "What `subject` is, when the guess would be wrong." },
-        file: { type: "string", description: "Narrow a symbol or route to this file (project-relative)." },
-        maxTokens: { type: "number", description: "Budget for the whole answer (default 4000, max 20000)." },
+        subject: { type: "string", description: "Route (\"GET /api/x\"), screen, function or file." },
+        kind: { type: "string", enum: ["route", "screen", "symbol", "file", "community"] },
+        file: { type: "string" },
+        maxTokens: { type: "number" },
       },
       required: ["subject"],
       additionalProperties: false,
@@ -159,6 +153,20 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
           out.push(cut(section, room));
           skipped.push(`${p.follow} — the rest of "${p.title}"`);
         }
+      }
+      // Nothing found for a name: say so, with the names near it, rather than a bare heading.
+      if (out.length === 1 && !skipped.length && kind === "symbol") {
+        const near = nearSymbols(summary, subject);
+        return {
+          text: noResults({
+            headline: `Nothing in the analysis is named \`${subject}\`${fileArg ? ` in ${fileArg}` : ""}.`,
+            holds: near?.line ?? "No function, method or class has that name or one near it.",
+            next: [
+              !!near && `clarifydoc_explain subject="${near.first.name}" file="${near.first.file}"`,
+              `clarifydoc_search query="${subject}" — by words of the name`,
+            ],
+          }),
+        };
       }
       if (skipped.length) out.push(`Next (did not fit maxTokens=${budget}):\n${skipped.map((s) => `- ${s}`).join("\n")}`);
       return { text: out.join("\n\n") };
