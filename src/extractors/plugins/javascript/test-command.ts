@@ -35,7 +35,7 @@ function titleFilter(tests: readonly TestTarget[]): string | null {
   const paths: string[][] = [];
   for (const list of byFile.values()) {
     const cases = list.flatMap((t) => (t.cases ?? []).map((c) => c.path));
-    const whole = list.some((t) => t.names.length === 0 || t.names.includes("<setup>"));
+    const whole = list.some((t) => !t.names?.length || t.names.includes("<setup>"));
     if (!cases.length || whole || cases.some((c) => c.length === 0)) return null;
     paths.push(...cases);
   }

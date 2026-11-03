@@ -22,7 +22,7 @@ function withLines(file: string, targets: readonly TestTarget[]): string {
   const lines: number[] = [];
   for (const t of targets) {
     const cases = t.cases ?? [];
-    if (!t.names.length || t.names.includes("<setup>") || cases.some((c) => c.hook)) return file;
+    if (!t.names?.length || t.names.includes("<setup>") || cases.some((c) => c.hook)) return file;
     lines.push(...cases.map((c) => c.line));
   }
   return lines.length ? `${file}:${[...new Set(lines)].sort((a, b) => a - b).join(":")}` : file;
