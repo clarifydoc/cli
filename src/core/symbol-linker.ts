@@ -5206,7 +5206,8 @@ const resolvingPackageCalls = new Set<string>();
 /**
  * What an imported function returns, as a receiver: `useUserApi()` in `const
  * api = useUserApi()`, resolved like the call the source writes, then typed by
- * the definition's declared return type.
+ * the definition's declared return type — also a function a C++ `#include` or
+ * PHP `require` brings in (`auto c = makeCar();`, `$c = make_club();`).
  */
 function importedFunctionResult(
   ctx: LinkContext,
@@ -5217,7 +5218,10 @@ function importedFunctionResult(
   name: string,
   awaited: boolean,
 ): InjectionPoint | null {
-  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && c.kind === "cross-file");
+  // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
+  // it is imported when the file does not define it.
+  const shared = importsShareScope(analysis.language) && !analysis.functions.some((f) => f.name === name);
+  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
   if (!written) return null;
   const guard = `${sourceFile}\0${sourceSymbol}\0${name}()`;
   if (resolvingPackageCalls.has(guard)) return null;
