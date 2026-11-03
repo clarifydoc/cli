@@ -1,4 +1,5 @@
 import { extractGoPathArgCalls } from "./path-arg-calls.js";
+import { goFuncVars, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
@@ -34,9 +35,13 @@ const GO_LEXICON: BraceLexicon = {
 /**
  * Block ends counted over code only, and the call scan's lines with raw strings
  * and block comments blanked — and the `func` of a function literal, which
- * `func(t *testing.T) {` would otherwise record as a call.
+ * `func(t *testing.T) {` would otherwise record as a call, and the keyword of a
+ * grouped declaration (`import (`, `var (`, `const (`, `type (`).
  */
-const GO_CODE = braceCodeHooks(GO_LEXICON, (line) => (line.includes("func") ? line.replace(/\bfunc\b/g, "    ") : line));
+const GO_CODE = braceCodeHooks(GO_LEXICON, (line) => {
+  const code = line.includes("func") ? line.replace(/\bfunc\b/g, "    ") : line;
+  return code.replace(/^(\s*)(import|var|const|type)(?=\s*\()/, (_m, indent: string, keyword: string) => indent + " ".repeat(keyword.length));
+});
 
 /** A chain's head: a function, or a package or variable member — never the tail of a longer selector. */
 const GO_CHAIN_HEAD = String.raw`(?<![\w.])((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)`;
@@ -91,7 +96,21 @@ export const goSpec: RegexLangSpec = {
       // Not a commented-out function, nor one in a code template held in a raw string.
       accept: GO_CODE.startsInCode,
     },
+    {
+      // A package-level function variable — `var saveClub = func(…) {…}`, an entry of a `var ( … )` block, or a
+      // literal its initializer hands on (`var handler = http.HandlerFunc(func(w, r) {…})`): a function named for
+      // the var (func-vars.ts).
+      pattern: /^(?:var\s+|\s+)([a-zA-Z_]\w*)\b/,
+      isExported: (_l, name) => /^[A-Z]/.test(name),
+      isAsync: () => false,
+      accept: (lines, i) => goFuncVars(GO_CODE.codeLines(lines)).has(i),
+    },
   ],
+  // A function variable's own calls start in its literal's body, past the initializer around it.
+  inlineBodyColumn: goInlineBodyColumn,
+  // Package-level initializers run at init: their calls are the package's `<setup>` (a function variable's body
+  // is its own function).
+  topLevelCalls: true,
 
   parseParam: parseGoParam,
   // A method called on a call's result, named as the chain — `pb.NewOrderServiceClient(conn).GetOrder(ctx, req)`

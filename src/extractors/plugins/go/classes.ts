@@ -1,5 +1,6 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractParamsFromDeclaration, findEndLine, inlineBodyColumn, type ParamParser } from "../shared/regex-base.js";
+import { extractParamsFromDeclaration, findEndLine, type ParamParser } from "../shared/regex-base.js";
+import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, type GoConstructors } from "./locals.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { bracketDelta, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
@@ -39,11 +40,13 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
 
   for (const fn of fns) {
     const decl = lines[fn.line - 1] ?? "";
-    regroupParams(fn, lines, parseParam);
+    // A package-level function variable takes its literal's parameters (func-vars.ts).
+    if (/^\s*func\b/.test(decl)) regroupParams(fn, lines, parseParam);
+    else fn.params = groupedParams(goFuncVarParams(lines, fn.line - 1, fn.name, (t) => ({ name: t.trim(), type: null, defaultValue: null })).map((p) => p.name), parseParam);
     const recv = RECEIVER_RE.exec(decl);
     const receiver = recv && recv[3] === fn.name ? { name: recv[1], type: recv[2]! } : null;
 
-    const inline = inlineBodyColumn(decl, decl.indexOf(fn.name) + fn.name.length);
+    const inline = goInlineBodyColumn(decl, decl.indexOf(fn.name) + fn.name.length);
     const body = lines.slice(fn.line, fn.endLine);
     if (inline >= 0) body.unshift(decl.slice(inline));
     const declared = new Set<string>();
