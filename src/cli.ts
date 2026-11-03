@@ -792,7 +792,7 @@ program
 program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
-  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start")
+  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start | subagent-start")
   .option("--dialect <name>", "The host's payload and answer format: claude (Claude Code, Codex) | copilot (GitHub Copilot CLI and VS Code)", "claude")
   .action(async (event: string, options) => {
     // A hook must never stand in the agent's way: any failure is silence.
@@ -801,7 +801,11 @@ program
       if (!(HOOK_EVENTS as readonly string[]).includes(event)) return;
       if (!(HOOK_DIALECTS as readonly string[]).includes(options.dialect)) return;
       const timer = setTimeout(() => process.exit(0), 8000);
-      const out = await runHook(event as never, readHookInput(), process.cwd(), options.dialect);
+      // How a subagent's shell starts this CLI: the way this hook was started.
+      const { selfCommand } = await import("./agents/install.js");
+      const self = selfCommand();
+      const ask = [self.command, ...self.args].map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : JSON.stringify(w))).join(" ");
+      const out = await runHook(event as never, readHookInput(), process.cwd(), options.dialect, ask);
       clearTimeout(timer);
       if (out) process.stdout.write(out + "\n");
     } catch {
@@ -814,7 +818,7 @@ program
   .description("Wire ClarifyDoc into agent hosts: the MCP server entry, Claude Code hooks, skills, and the AGENTS.md section")
   .argument("[path]", "Project root", ".")
   .option("--client <names...>", "claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot (default claude-code)")
-  .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
+  .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session and subagent start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
   .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout) that refresh the analysis in the background", false)

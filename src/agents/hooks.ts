@@ -24,13 +24,16 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  *    which routes and screens pass through it, the tests that reach it, and
  *    the decision records that name it.
  *  - `session-start`: what the map covers and how fresh it is.
+ *  - `subagent-start`: the same, and how to ask the map from the shell
+ *    (`clarifydoc ask <tool> key=value`) — a subagent may run without the
+ *    MCP tools its parent has.
  *
  * Every hook is silent when there is nothing worth saying, when the project
  * has no analysis, and on any error — a hook must never stand in the way.
  * Nothing is analyzed here: the hook reads what the last analysis wrote.
  */
-export type HookEvent = "pre-search" | "post-search" | "pre-write" | "post-edit" | "session-start";
-export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-search", "pre-write", "post-edit", "session-start"];
+export type HookEvent = "pre-search" | "post-search" | "pre-write" | "post-edit" | "session-start" | "subagent-start";
+export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-search", "pre-write", "post-edit", "session-start", "subagent-start"];
 
 /** How a host frames the answer: Claude Code's `hookSpecificOutput`, or Copilot's top-level `additionalContext`. */
 export type HookDialect = "claude" | "copilot";
@@ -43,6 +46,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "pre-write": "PreToolUse",
   "post-edit": "PostToolUse",
   "session-start": "SessionStart",
+  "subagent-start": "SubagentStart",
 };
 
 type ToolInput = { pattern?: string; query?: string; file_path?: string; path?: string; command?: string; edits?: unknown };
@@ -77,8 +81,11 @@ export function normalizeHookInput(input: HookInput): HookInput {
   };
 }
 
-/** The hook's output for one event and payload, or null to stay silent. */
-export async function runHook(event: HookEvent, raw: HookInput, fallbackCwd = process.cwd(), dialect: HookDialect = "claude"): Promise<string | null> {
+/**
+ * The hook's output for one event and payload, or null to stay silent. `ask` is how this CLI is started from a
+ * shell (`clarifydoc`, or `node <script>`), for the commands a subagent is given.
+ */
+export async function runHook(event: HookEvent, raw: HookInput, fallbackCwd = process.cwd(), dialect: HookDialect = "claude", ask = "clarifydoc"): Promise<string | null> {
   const input = normalizeHookInput(raw);
   const search = event === "pre-search" || event === "post-search";
   // Before anything is loaded: VS Code's Copilot ignores matchers and calls this after every tool, and most are not searches.
@@ -132,6 +139,15 @@ export async function runHook(event: HookEvent, raw: HookInput, fallbackCwd = pr
       `ClarifyDoc: you changed ${file}. ${rows.length ? "The decisions that name it, then what" : "What"} depends on it (from the last analysis):`,
       rows.length ? `${rows.join("\n")}\n\n${text}` : text,
       "Before finishing, clarifydoc_impact lists the changed functions, their callers and the tests to run.",
+    );
+  } else if (event === "subagent-start") {
+    const text = await call("clarifydoc_status", {});
+    if (!text) return null;
+    context = framed(
+      "This repository has a ClarifyDoc map: screens → API routes → tables, from the source. Use its clarifydoc_* tools " +
+        `when you have them; without them, run the same tool from the shell: \`${ask} ask <tool> key=value …\` ` +
+        `(\`${ask} ask search query=Club\`, \`${ask} ask trace symbol=Club.save direction=callers\`, \`${ask} ask --list\` for every tool).`,
+      text.split("\n").slice(0, 8).join("\n"),
     );
   } else {
     const text = await call("clarifydoc_status", {});

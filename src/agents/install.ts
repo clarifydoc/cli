@@ -287,7 +287,11 @@ export function planMcpConfig(client: Client, root: string, self: Launcher = sel
   }
 }
 
-/** Claude Code hooks in the project's `.claude/settings.json`: before searches and new files, after edits, at session start. */
+/**
+ * Claude Code hooks in the project's `.claude/settings.json`: before searches (Grep, Glob, and a grep or rg run
+ * in Bash) and new files, after edits, at session start, and when a subagent starts — a subagent may have no
+ * MCP tools, so it is told the shell form of each (`clarifydoc ask <tool> …`).
+ */
 export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   const file = join(root, ".claude", "settings.json");
   const read = readJson(file);
@@ -297,15 +301,23 @@ export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   const add = (hostEvent: string, matcher: string | undefined, event: string) => {
     const list = [...((hooks[hostEvent] as Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>) ?? [])];
     const command = cmd(event);
-    // Already wired (by this or an earlier install): keep it as it is.
-    if (list.some((h) => h.hooks?.some((x) => x.command === command || (x.command ?? "").endsWith(` hook ${event}`)))) return;
+    // Already wired (by this or an earlier install): keep its command, widen the matcher to today's.
+    const at = list.findIndex((h) => h.hooks?.some((x) => x.command === command || (x.command ?? "").endsWith(` hook ${event}`)));
+    if (at >= 0) {
+      if (matcher && list[at]!.matcher !== matcher && list[at]!.hooks!.length === 1) {
+        list[at] = { ...list[at]!, matcher };
+        hooks[hostEvent] = list;
+      }
+      return;
+    }
     list.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command, timeout: 10 }] } as never);
     hooks[hostEvent] = list;
   };
-  add("PreToolUse", "Grep|Glob", "pre-search");
+  add("PreToolUse", "Grep|Glob|Bash", "pre-search");
   add("PreToolUse", "Write", "pre-write");
   add("PostToolUse", "Edit|Write|MultiEdit", "post-edit");
   add("SessionStart", undefined, "session-start");
+  add("SubagentStart", undefined, "subagent-start");
   if (read === null) return { file, content: pretty({ hooks }), skip: "it is not plain JSON (comments?), so it was not rewritten — add these hooks by hand" };
   return { file, content: pretty({ ...json, hooks }) };
 }
