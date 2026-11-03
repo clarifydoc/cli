@@ -37,7 +37,7 @@ import { javaKotlinRouteExtractor } from "./routes/index.js";
 import { javaKotlinReachability } from "./reachability.js";
 import { extractJvmDiBindings } from "./di-bindings.js";
 import { extractJavaClientProxies } from "./client-proxies.js";
-import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
+import { joinWrappedConstructors, terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
 import { JVM_SECURITY_RULES, jvmSecurityPostScan } from "./security-rules.js";
 import { jvmGrpcStub, jvmGrpcService } from "../shared/grpc-stubs.js";
 import { inheritedClassGuards } from "../shared/class-guards.js";
@@ -246,9 +246,12 @@ export const kotlinMeta: LanguagePluginMeta = jvmMeta("kotlin", {
   // declarations as annotated expressions (the class, its routes and its
   // `@Binds` vanish); joining the annotations onto the keyword line and a
   // terminating `;` make every measured layout parse (see kotlin-preprocess.ts).
-  // Rows at and after each declaration keyword are unchanged.
+  // Rows at and after each declaration keyword are unchanged. A primary
+  // constructor wrapped onto its own line (`class X\n@Inject\nconstructor(`)
+  // is joined onto the class's line first, or the class loses its body.
   preprocess: (rawSource) => {
-    const fixed = terminateAnnotatedDeclarations(rawSource);
+    const joined = joinWrappedConstructors(rawSource);
+    const fixed = terminateAnnotatedDeclarations(joined ?? rawSource) ?? joined;
     return fixed === null ? null : { sourceText: fixed, language: "kotlin" };
   },
 });

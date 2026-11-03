@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import "../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../parsers/parser-manager.js";
-import { terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
+import { joinWrappedConstructors, terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
+import { kotlinMeta } from "./meta.js";
 import { JavaKotlinExtractor } from "./functions-classes.js";
 
 const HILT_MODULE = `package a
@@ -132,5 +133,74 @@ describe("an annotated declaration with a one-line body", () => {
       ["K", 4, ["x"], ['Suppress("unused")']],
       ["O", 5, ["y"], ["Keep"]],
     ]);
+  });
+});
+
+async function errorCount(src: string): Promise<number> {
+  const tree = await parseSource(src, "kotlin" as any, "X.kt");
+  const count = (n: any): number => (n.type === "ERROR" || n.isMissing ? 1 : 0) + n.children.reduce((k: number, c: any) => k + count(c), 0);
+  return count(tree.rootNode);
+}
+
+describe("Kotlin preprocess — a primary constructor wrapped onto its own line", () => {
+  const body = `(\n    private val kit: Kit,\n) {\n    fun load(): Int = kit.wash()\n}\n`;
+  const shapes: Array<[string, string]> = [
+    ["ktlint's annotated wrap", `package a\n\nclass ClubRepository\n@Inject\nconstructor${body}`],
+    ["internal constructor", `package a\n\nclass ClubRepository\ninternal constructor${body}`],
+    ["private actual constructor", `package a\n\nclass ClubRepository\nprivate actual constructor${body}`],
+    ["bare constructor", `package a\n\nclass ClubRepository\nconstructor${body}`],
+  ];
+
+  it("documents the grammar bug: without the fix the class has no methods", async () => {
+    // If a tree-sitter-kotlin upgrade fixes this, the join can go.
+    expect((await classesOf(shapes[0]![1]))[0]![4]).toEqual([]);
+  });
+
+  for (const [label, src] of shapes) {
+    it(`keeps the class body and every row from the \`(\` on — ${label}`, async () => {
+      const fixed = joinWrappedConstructors(src)!;
+      expect(fixed, label).not.toBeNull();
+      const raw = src.split("\n");
+      const out = fixed.split("\n");
+      expect(out.length).toBe(raw.length);
+      // Rows after the constructor's `(` are byte-identical.
+      expect(out.slice(5)).toEqual(raw.slice(5));
+      const [cls] = await classesOf(fixed);
+      expect([cls![0], cls![1], cls![4]]).toEqual(["ClubRepository", 3, ["constructor", "load"]]);
+      // The rewrite parses with no ERROR node; the original does not.
+      expect(await errorCount(src)).toBeGreaterThan(0);
+      expect(await errorCount(fixed)).toBe(0);
+    });
+  }
+
+  it("joins onto the class line, line breaks moved inside the parameter list", () => {
+    expect(joinWrappedConstructors(shapes[0]![1])).toBe(
+      `package a\n\nclass ClubRepository @Inject constructor(\n\n\n    private val kit: Kit,\n) {\n    fun load(): Int = kit.wash()\n}\n`,
+    );
+  });
+
+  it("composes with the annotated-declaration fix in the plugin's preprocess", async () => {
+    const src = `package a\n\n@Singleton\nclass ClubRepository\n@Inject\nconstructor(\n    private val kit: Kit,\n) {\n    fun load(): Int = kit.wash()\n}\n\nclass Dugout\n`;
+    const pre = kotlinMeta.preprocess!(src, "ClubRepository.kt") as { sourceText: string };
+    expect(pre.sourceText.split("\n").length).toBe(src.split("\n").length);
+    expect((await classesOf(pre.sourceText)).map((c) => [c[0], c[1], c[3], c[4]])).toEqual([
+      ["ClubRepository", 4, ["Singleton"], ["constructor", "load"]],
+      ["Dugout", 12, [], []],
+    ]);
+  });
+
+  it("joins a nested class, comments dropped, type parameters kept", async () => {
+    const src = `class League {\n    class Box<T : Any> // holder\n    @Inject\n    constructor(val t: T) {\n        fun open(): T = t\n    }\n}\n`;
+    const fixed = joinWrappedConstructors(src)!;
+    expect(fixed.split("\n")[1]).toBe("    class Box<T : Any> @Inject constructor(");
+    const names = (await classesOf(fixed)).map((c) => [c[0], c[4]]);
+    expect(names).toContainEqual(["Box", ["constructor", "open"]]);
+  });
+
+  it("leaves alone: the one-line form, secondary constructors, `::class`, strings", () => {
+    expect(joinWrappedConstructors(`class Dugout @Inject constructor(private val kit: Kit) {\n    fun x() = 1\n}\n`)).toBeNull();
+    expect(joinWrappedConstructors(`class Car {\n    constructor(x: Int) : this()\n}\n`)).toBeNull();
+    expect(joinWrappedConstructors(`val k = Car::class\nconstructor(1)\n`)).toBeNull();
+    expect(joinWrappedConstructors(`val s = "class Car"\nconstructor(1)\n`)).toBeNull();
   });
 });

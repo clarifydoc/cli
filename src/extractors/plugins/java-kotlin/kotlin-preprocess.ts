@@ -121,6 +121,120 @@ export function terminateAnnotatedDeclarations(src: string): string | null {
   return out === src ? null : out;
 }
 
+/** Modifiers that may precede a primary `constructor` keyword. */
+const CONSTRUCTOR_MODIFIERS: ReadonlySet<string> = new Set(["public", "private", "internal", "protected", "expect", "actual"]);
+
+/**
+ * Work around a second tree-sitter-kotlin misparse: a primary constructor
+ * WRAPPED onto its own line — the layout ktlint gives an annotated one,
+ *
+ *     class ClubRepository
+ *     @Inject
+ *     constructor(
+ *         private val kit: Kit,
+ *     ) { fun load() = kit.wash() }
+ *
+ * — is read as a body-less `class ClubRepository` followed by an expression
+ * (`constructor(…) { … }` a call with a trailing lambda), so the class loses
+ * its constructor, its members and its methods. Kotlin's own grammar allows
+ * line breaks there (`NL* primaryConstructor`); this grammar ends the
+ * declaration at the first one. So does `internal constructor(`,
+ * `private actual constructor(` and a bare `constructor(` on its own line.
+ *
+ * The edit puts the run between the class name (and its type parameters)
+ * and the constructor's `(` on the class's line — annotations, modifiers
+ * and `constructor` joined by single spaces, comments dropped — and moves
+ * the run's line breaks right after the `(`, inside the parameter list,
+ * where the grammar ignores them. Every row from the `(` on is unchanged;
+ * only the annotations' and the keyword's own rows change (they now sit on
+ * the class's line, as in the one-line form). Offsets after an edit shift —
+ * every extractor reads text through the same patched source.
+ *
+ * At any depth (a nested class wraps the same way). The patched source, or
+ * null when nothing needed patching or the scan cannot follow the file.
+ */
+export function joinWrappedConstructors(src: string): string | null {
+  // Cheap gate: a `constructor(` that starts its line (after annotations / modifiers at most).
+  if (!src.includes("constructor") || !/^[ \t]*(?:[@\w][^\n]*[ \t])?constructor[ \t]*\(/m.test(src)) return null;
+  const edits: Edit[] = [];
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const skipped = skipNonCode(src, i);
+    if (skipped < 0) return null;
+    if (skipped > i) { i = skipped; continue; }
+    if (src[i] === "c" && src.startsWith("class", i) && !/[\w.:$]/.test(src[i - 1] ?? "") && !/\w/.test(src[i + 5] ?? "")) {
+      const edit = wrappedConstructorAt(src, i);
+      if (edit) {
+        edits.push(edit);
+        i = edit.at + edit.del;
+        continue;
+      }
+    }
+    i++;
+  }
+  if (edits.length === 0) return null;
+  let out = "";
+  let from = 0;
+  for (const e of edits) {
+    out += src.slice(from, e.at) + e.text;
+    from = e.at + e.del;
+  }
+  out += src.slice(from);
+  return out === src ? null : out;
+}
+
+/** The edit joining a wrapped primary constructor onto the `class` keyword's line at `keyword`; null when there is none. */
+function wrappedConstructorAt(src: string, keyword: number): Edit | null {
+  let j = skipTrivia(src, keyword + 5);
+  if (j < 0) return null;
+  const name = wordAt(src, j);
+  if (!name) return null;
+  j += name.length;
+  // Type parameters, on the name's line: `class Box<T : Any>`.
+  let k = j;
+  while (src[k] === " " || src[k] === "\t") k++;
+  if (src[k] === "<") {
+    const close = matchClose(src, k, "<", ">");
+    if (close < 0 || src.slice(k, close).includes("\n")) return null;
+    j = close + 1;
+  }
+  const start = j;
+  // The run: comments, annotations and modifiers up to `constructor` `(`.
+  const parts: string[] = [];
+  let breaks = 0;
+  for (;;) {
+    const at = j;
+    j = skipTrivia(src, j);
+    if (j < 0) return null;
+    breaks += countBreaks(src.slice(at, j));
+    if (src[j] === "@") {
+      const end = annotationEnd(src, j);
+      if (end < 0 || end === j + 1) return null;
+      const text = src.slice(j, end);
+      if (text.includes("\n")) return null;
+      parts.push(text);
+      j = end;
+      continue;
+    }
+    const word = wordAt(src, j);
+    if (word === "constructor") {
+      j += word.length;
+      break;
+    }
+    if (!word || !CONSTRUCTOR_MODIFIERS.has(word)) return null;
+    parts.push(word);
+    j += word.length;
+  }
+  // Only a wrapped run needs the edit (`class X @Inject constructor(` parses).
+  if (breaks === 0) return null;
+  let open = j;
+  while (src[open] === " " || src[open] === "\t") open++;
+  if (src[open] !== "(") return null;
+  parts.push("constructor(");
+  return { at: start, del: open + 1 - start, text: ` ${parts.join(" ")}${"\n".repeat(breaks)}` };
+}
+
 /**
  * A top-level declaration starting at `at`: optional annotations, modifiers,
  * then a declaration keyword. `keyword` is the keyword's offset; `annotated`
