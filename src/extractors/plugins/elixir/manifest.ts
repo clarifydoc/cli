@@ -17,6 +17,7 @@ export const elixirManifest: LanguagePluginManifest = {
   grammar: { variants: { elixir: { pkg: "tree-sitter-elixir", wasm: "tree-sitter-elixir.wasm" } } },
   extensions: [".ex", ".exs"],
   testFilePatterns: [/_test\.exs$/],
+  testSubjectAffixes: { suffixes: ["_test"] },
   externalModulePrefixes: ["Enum", "Map", "List", "String", "Kernel", "IO", "File", "Path", "Logger", "GenServer", "Supervisor", "Application", "Process", "Agent", "Task", "Stream", "Ecto", "Phoenix", "Plug", "Jason"],
   frameworkImportHints: { Phoenix: "phoenix", "Phoenix.Controller": "phoenix", "Phoenix.Router": "phoenix", "Phoenix.LiveView": "phoenix_live_view", Ecto: "ecto", "Ecto.Schema": "ecto", Plug: "plug", Absinthe: "absinthe" },
 };

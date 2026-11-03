@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isTestFile } from "./test-file-detector.js";
+import { isTestFile, testSubjectStem } from "./test-file-detector.js";
 
 /**
  * Guards the test-file detector that keeps unit/integration/e2e specs out of
@@ -107,5 +107,20 @@ describe("isTestFile — a .NET test project", () => {
     expect(isTestFile("src/League.Core.Test/Datastore/Migration/238_kitsFixture.cs", "csharp")).toBe(true);
     expect(isTestFile("src/League.Api.IntegrationTests/ClubsFixture.cs", "csharp")).toBe(true);
     expect(isTestFile("src/League.Core/Testing/KitService.cs", "csharp")).toBe(false);
+  });
+});
+
+describe("testSubjectStem", () => {
+  it("reads the subject's stem off each language's test naming", () => {
+    expect(testSubjectStem("pkg/league/club_test.go", "go")).toBe("club");
+    expect(testSubjectStem("tests/test_club.py", "python")).toBe("club");
+    expect(testSubjectStem("tests/club_test.py", "python")).toBe("club");
+    expect(testSubjectStem("src/test/java/com/example/GarageTest.java", "java")).toBe("Garage");
+    expect(testSubjectStem("src/test/java/com/example/GarageIT.java", "java")).toBe("Garage");
+    expect(testSubjectStem("spec/models/club_spec.rb", "ruby")).toBe("club");
+    expect(testSubjectStem("src/club.service.spec.ts", "typescript")).toBe("club.service");
+    expect(testSubjectStem("tests/CarTests.cs", "csharp")).toBe("Car");
+    expect(testSubjectStem("tests/garage.rs", "rust")).toBe("garage");
+    expect(testSubjectStem("src/club.ts", "typescript")).toBeNull();
   });
 });

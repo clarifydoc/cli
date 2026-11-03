@@ -36,6 +36,7 @@ export const rubyManifest: LanguagePluginManifest = {
   // One type spans files here: a class can be reopened in another file of its namespace.
   typesSpanFiles: true,
   testFilePatterns: [/_(spec|test)\.rb$/],
+  testSubjectAffixes: { suffixes: ["_spec", "_test"] },
   externalModulePrefixes: ["rails", "active_record", "active_support", "action_controller", "rspec", "bundler", "rake"],
   frameworkImportHints: { active_record: "active-record", sequel: "sequel" },
   frameworkRules: rubyFrameworkRules,

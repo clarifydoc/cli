@@ -25,6 +25,7 @@ export const scalaManifest: LanguagePluginManifest = {
   // sbt/Maven/Gradle source sets: below `src/<set>/scala/` every directory is a package.
   packageRoots: [/(?:^|\/)src\/[^/]+\/scala\//],
   testFilePatterns: [/Spec\.scala$/, /Test\.scala$/, /\/src\/test\//],
+  testSubjectAffixes: { suffixes: ["Spec", "Test"] },
   // Without these an sbt module is not a sub-project, so every Scala file in a
   // multi-module build lands in the enclosing repo's bucket.
   activationFiles: ["build.sbt", "build.sc"],

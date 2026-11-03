@@ -157,6 +157,7 @@ export const typescriptManifest: LanguagePluginManifest = {
       filePath.endsWith(".tsx") || filePath.endsWith(".jsx") ? "tsx" : "typescript",
   },
   testFilePatterns: JS_TEST_PATTERNS,
+  testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
   // Family plugin: npm-ecosystem framework rules ride on the typescript
@@ -191,6 +192,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: { variants: { javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" } } },
   testFilePatterns: JS_TEST_PATTERNS,
+  testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
 };

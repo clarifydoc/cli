@@ -1326,6 +1326,13 @@ export interface LanguagePluginManifest {
    */
   testFilePatterns?: readonly RegExp[];
   /**
+   * How a test file's name says which file it tests: the affixes the language's runners put on the
+   * subject's stem — Go `_test` (`club_test.go` → `club`), Python `test_` / `_test`, JUnit `Test` /
+   * `Tests` / `IT`, RSpec `_spec`. Stripped once each, longest first, from the stem (the name
+   * without its extension); the cross-language `.test` / `.spec` are stripped by core.
+   */
+  testSubjectAffixes?: { prefixes?: readonly string[]; suffixes?: readonly string[] };
+  /**
    * Language-idiomatic GENERATED-file conventions: `*.Designer.cs`, `*.g.cs`,
    * `*.pb.go`, `*_pb2.py`, `*.freezed.dart`. Matched against the
    * project-relative path.

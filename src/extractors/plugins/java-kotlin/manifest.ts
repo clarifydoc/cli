@@ -103,6 +103,7 @@ export const javaManifest: LanguagePluginManifest = {
   // The name suffix outside Maven/Gradle's `src/main/java/`, which holds production
   // code only (a `@RestController` named `AuthCheckTest` there is served).
   testFilePatterns: [/^(?!(?:.*[\\/])?src[\\/]main[\\/]java[\\/]).*(Test|Tests|IT|ITCase)\.java$/],
+  testSubjectAffixes: { suffixes: ["ITCase", "Tests", "Test", "IT"] },
   externalModulePrefixes: ["java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.", "io.ktor.", "io.netty.", "com.google.", "com.fasterxml.", "com.amazonaws."],
   externalNamespaceRoots: ["java", "javax", "jakarta", "org", "com", "io"],
   frameworkImportHints: { "io.ktor.server.routing": "ktor", "org.springframework.web.bind.annotation": "spring-web", "org.hibernate": "hibernate", "javax.persistence": "hibernate", "jakarta.persistence": "hibernate", "org.eclipse.persistence": "eclipselink", "org.apache.openjpa": "openjpa", "org.springframework.data.jpa": "spring-data-jpa", "org.springframework.data.jdbc": "spring-data-jdbc", "org.springframework.data.relational": "spring-data-jdbc", "org.mybatis": "mybatis", "org.jooq": "jooq", "org.jetbrains.exposed": "exposed" },
@@ -126,6 +127,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   packageRoots: [/(?:^|\/)src\/[^/]+\/kotlin\//],
   grammar: { variants: { kotlin: { pkg: "tree-sitter-kotlin", wasm: "tree-sitter-kotlin.wasm" } } },
   testFilePatterns: [/^(?!(?:.*[\\/])?src[\\/]main[\\/](?:kotlin|java)[\\/]).*(Test|Tests|IT|ITCase)\.kt$/],
+  testSubjectAffixes: { suffixes: ["ITCase", "Tests", "Test", "IT"] },
   externalModulePrefixes: ["java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.", "io.ktor.", "io.netty.", "com.google.", "com.fasterxml.", "com.amazonaws."],
   externalNamespaceRoots: ["java", "javax", "jakarta", "org", "com", "io"],
   frameworkImportHints: { "io.ktor.server.routing": "ktor", "org.springframework.web.bind.annotation": "spring-web", "org.hibernate": "hibernate", "javax.persistence": "hibernate", "jakarta.persistence": "hibernate", "org.eclipse.persistence": "eclipselink", "org.apache.openjpa": "openjpa", "org.springframework.data.jpa": "spring-data-jpa", "org.springframework.data.jdbc": "spring-data-jdbc", "org.springframework.data.relational": "spring-data-jdbc", "org.mybatis": "mybatis", "org.jooq": "jooq", "org.jetbrains.exposed": "exposed" },

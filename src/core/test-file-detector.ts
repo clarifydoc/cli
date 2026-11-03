@@ -1,5 +1,5 @@
 import type { Language } from "../types/analysis.js";
-import { testFilePatternsFor } from "../extractors/registry.js";
+import { testFilePatternsFor, testSubjectAffixesFor } from "../extractors/registry.js";
 
 /**
  * Detects test files — unit, integration, and e2e specs — from their path.
@@ -55,4 +55,26 @@ export function isTestFile(filePath: string, language?: Language): boolean {
     if (re.test(filePath)) return true;
   }
   return false;
+}
+
+/**
+ * The stem of the file a test file tests, as its name says (`club_test.go`, `test_club.py`,
+ * `ClubTest.java`, `club_spec.rb`, `club.test.ts` → `club` / `Club`): the cross-language
+ * `.test` / `.spec`, then the language's own affixes (`testSubjectAffixes`), each stripped once,
+ * longest first. A test file whose name carries no affix (`tests/club.rs`) names its subject by
+ * its own stem. Null for a file that is no test file.
+ */
+export function testSubjectStem(filePath: string, language?: Language): string | null {
+  if (!isTestFile(filePath, language)) return null;
+  const base = filePath.slice(filePath.replace(/\\/g, "/").lastIndexOf("/") + 1);
+  let stem = base.includes(".") ? base.slice(0, base.lastIndexOf(".")) : base;
+  stem = stem.replace(/\.(?:test|spec)$/i, "");
+  if (language) {
+    const { prefixes, suffixes } = testSubjectAffixesFor(language);
+    const prefix = [...prefixes].sort((a, b) => b.length - a.length).find((p) => stem.startsWith(p) && stem.length > p.length);
+    if (prefix) stem = stem.slice(prefix.length);
+    const suffix = [...suffixes].sort((a, b) => b.length - a.length).find((x) => stem.endsWith(x) && stem.length > x.length);
+    if (suffix) stem = stem.slice(0, -suffix.length);
+  }
+  return stem || null;
 }

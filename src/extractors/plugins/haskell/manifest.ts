@@ -17,6 +17,7 @@ export const haskellManifest: LanguagePluginManifest = {
   grammar: { variants: { haskell: { pkg: "tree-sitter-haskell", wasm: "tree-sitter-haskell.wasm" } } },
   extensions: [".hs", ".lhs"],
   testFilePatterns: [/Spec\.hs$/, /Test\.hs$/],
+  testSubjectAffixes: { suffixes: ["Spec", "Test"] },
   externalModulePrefixes: ["Data.", "Control.", "System.", "GHC.", "Text.", "Network.", "Prelude"],
   frameworkImportHints: { Yesod: "yesod", Servant: "servant", "Web.Scotty": "scotty", "Database.Persist": "persistent" },
 };

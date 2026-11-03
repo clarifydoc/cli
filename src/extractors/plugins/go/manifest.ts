@@ -31,6 +31,7 @@ export const goManifest: LanguagePluginManifest = {
   // One type spans files here: a type's methods sit in any file of its package directory.
   typesSpanFiles: true,
   testFilePatterns: [/_test\.go$/],
+  testSubjectAffixes: { suffixes: ["_test"] },
   // protoc and protoc-gen-grpc-gateway output.
   generatedFilePatterns: [/\.pb\.go$/, /\.pb\.gw\.go$/],
   externalModulePrefixes: ["fmt", "net/", "os", "io", "context", "strings", "strconv", "errors", "encoding/", "crypto/", "database/", "log", "sync", "time", "testing"],
