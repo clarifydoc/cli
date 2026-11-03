@@ -84,9 +84,12 @@ export function buildClassIndex(analyses: readonly FileAnalysis[], importIndex: 
     const own = classNamed(fromFile, name);
     if (own) return own;
     // An import binding names the file: `from .base import BaseViewSet`, or a
-    // module alias qualifying the name (`base.BaseViewSet`, `import base`).
-    const head = written.replace(/[<[(].*$/s, "").trim().split(/\\|::|\./)[0] ?? "";
-    for (const binding of new Set([name, head])) {
+    // module alias qualifying the name (`base.BaseViewSet`, `import base`), or
+    // the whole dotted module an import binds (`league.base.Club` on `import league.base`).
+    const segments = written.replace(/[<[(].*$/s, "").trim().split(/\\|::|\./);
+    const head = segments[0] ?? "";
+    const qualifier = segments.length > 2 && !/\\|::/.test(written) ? segments.slice(0, -1).join(".") : "";
+    for (const binding of new Set([name, qualifier, head])) {
       if (!binding) continue;
       const file = importIndex.localFor(fromFile, binding);
       if (file) {
