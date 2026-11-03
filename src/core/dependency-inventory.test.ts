@@ -6,6 +6,7 @@ import {
   collectExternalPackages,
   collectInstalledOwners,
   attachPackageUsage,
+  markLocalPackages,
   deriveFrameworksFromPackages,
   mergeFrameworkDetections,
 } from "./dependency-inventory.js";
@@ -15,6 +16,7 @@ import type {
   FrameworkDetection,
   Language,
   PackageEcosystem,
+  SubProject,
 } from "../types/analysis.js";
 
 // ─── Manifest parsing + categorisation (real disk entry point) ─────────────
@@ -661,5 +663,38 @@ describe("npm tooling is used without being imported", () => {
     });
     expect(pkgs.find((p) => p.name === "@types/react")!.usedBy).toEqual(["types"]);
     expect(pkgs.find((p) => p.name === "typescript")!.usedBy).toEqual(["script"]);
+  });
+});
+
+describe("packages of the repository itself", () => {
+  const projects = [
+    { id: "root", name: "(root)", root: "", kind: "root", markers: [] },
+    { id: "packages-tyres", name: "tyres", root: "packages/tyres", kind: "node", markers: [], packageName: "@league/tyres", packageEcosystem: "npm" },
+    { id: "apps-pitwall", name: "pitwall", root: "apps/pitwall", kind: "node", markers: [], packageName: "pitwall", packageEcosystem: "npm" },
+    { id: "crates-engine", name: "engine", root: "crates/engine", kind: "cargo", markers: [], packageName: "engine", packageEcosystem: "cargo" },
+    { id: "crates-chassis", name: "chassis", root: "crates/chassis", kind: "cargo", markers: [], packageName: "chassis", packageEcosystem: "cargo" },
+    { id: "examples-a", name: "a", root: "examples/a", kind: "node", markers: [], packageName: "@league/kit", packageEcosystem: "npm" },
+    { id: "examples-b", name: "b", root: "examples/b", kind: "node", markers: [], packageName: "@league/kit", packageEcosystem: "npm" },
+  ] as unknown as SubProject[];
+  const projectOf = (path: string) => projects.filter((p) => p.root && (path === p.root || path.startsWith(p.root + "/"))).sort((a, b) => b.root.length - a.root.length)[0]?.id ?? "root";
+  const declaredAt = (eco: PackageEcosystem, name: string, declaredIn: string): ExternalPackage => ({ ...pkg(eco, name), declaredIn });
+
+  it("are local, never unused, and make an edge from the declaring sub-project", () => {
+    const tyres = declaredAt("npm", "@league/tyres", "apps/pitwall/package.json");
+    const engine = declaredAt("cargo", "engine", "crates/chassis/Cargo.toml");
+    const kit = declaredAt("npm", "@league/kit", "apps/pitwall/package.json");
+    const leftPad = declaredAt("npm", "left-pad", "apps/pitwall/package.json");
+    const edges = markLocalPackages([tyres, engine, kit, leftPad], projects, projectOf);
+    expect(tyres.local).toBe("packages-tyres");
+    expect(engine.local).toBe("crates-engine");
+    expect(kit.local).toBe("examples-a"); // in the repository, but which copy is meant is not said
+    expect(leftPad.local).toBeUndefined();
+    expect(edges).toEqual([
+      { from: "apps-pitwall", to: "packages-tyres", package: "@league/tyres", file: "apps/pitwall/package.json" },
+      { from: "crates-chassis", to: "crates-engine", package: "engine", file: "crates/chassis/Cargo.toml" },
+    ]);
+    attachPackageUsage([tyres, leftPad], [fileWith("typescript", ["react"])]);
+    expect(tyres.used).toBeUndefined();
+    expect(leftPad.used).toBe(false);
   });
 });

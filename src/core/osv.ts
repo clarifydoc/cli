@@ -34,6 +34,8 @@ export async function attachOsvAdvisories(packages: ExternalPackage[], opts: Osv
   const base = (opts.endpoint ?? "https://api.osv.dev").replace(/\/$/, "");
   const timeoutMs = opts.timeoutMs ?? 20000;
   const asked = packages.flatMap((p) => {
+    // This repository's own package: no registry holds its advisories.
+    if (p.local !== undefined) return [];
     const ecosystem = OSV_ECOSYSTEM[p.ecosystem];
     const version = p.resolvedVersion ?? (p.version && EXACT.test(p.version.trim()) ? p.version.trim() : null);
     // Maven coordinates must be group:artifact.

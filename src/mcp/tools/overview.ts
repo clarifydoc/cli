@@ -711,7 +711,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
       type: "object",
       properties: {
         project: { type: "string", description: "Sub-project id or name (substring) — edges with it at either end." },
-        kind: { type: "string", enum: ["http", "bus"], description: "Only HTTP calls, or only broker messages." },
+        kind: { type: "string", enum: ["http", "bus", "package"], description: "One kind of edge only." },
         limit: { type: "number", description: "Max edges (default 30)." },
       },
       additionalProperties: false,
@@ -719,7 +719,7 @@ export function servicesTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const { summary } = await requireAnalysis(ctx);
       const projectFilter = stringArg(args, "project");
-      const kind = enumArg(args, "kind", ["http", "bus"] as const);
+      const kind = enumArg(args, "kind", ["http", "bus", "package"] as const);
       const limit = numberArg(args, "limit", 30, { max: 300 });
       const all = summary.projectDependencies ?? [];
       const subProjects = summary.subProjects ?? [];
@@ -811,13 +811,15 @@ export function servicesTool(ctx: ToolContext): McpTool {
           `${name(d.from)} → ${name(d.to)} [${d.kind}] — ` +
           (d.links > 0
             ? `${plural(d.links, "link")}${d.confidence.INFERRED ? ` (${d.confidence.INFERRED} inferred)` : ""}`
-            : "deployment only, no call found in code");
+            : d.manifest
+              ? `declared in ${d.manifest.file}`
+              : "deployment only, no call found in code");
         const dep = d.deployment ? ` · deployment: ${d.deployment.via ? `${d.deployment.via} in ` : ""}${d.deployment.file}` : "";
         const lines = [head + dep];
         if (d.endpoints.length) {
           const shown = d.endpoints.slice(0, endpointCap).map((e) => (e.links > 1 ? `${e.name} (${e.links})` : e.name));
           const hidden = d.endpointCount - shown.length;
-          lines.push(`    ${d.kind === "bus" ? "destinations" : "endpoints"}: ${shown.join(", ")}${hidden > 0 ? ` … +${hidden}` : ""}`);
+          lines.push(`    ${d.kind === "bus" ? "destinations" : d.kind === "package" ? "packages" : "endpoints"}: ${shown.join(", ")}${hidden > 0 ? ` … +${hidden}` : ""}`);
         }
         return lines.join("\n");
       };

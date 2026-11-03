@@ -37,6 +37,16 @@ describe("transitive requirements", () => {
   });
 });
 
+describe("packages of the repository itself", () => {
+  it("are no components", () => {
+    const bom = toCycloneDx({ externalPackages: [
+      { name: "@league/tyres", version: "workspace:*", ecosystem: "npm", scope: "prod", category: "other", declaredIn: "apps/pitwall/package.json", local: "packages-tyres" },
+      { name: "left-pad", version: "1.3.0", ecosystem: "npm", scope: "prod", category: "other", declaredIn: "apps/pitwall/package.json" },
+    ] } as never, "garage") as { components: Array<{ name: string }> };
+    expect(bom.components.map((c) => c.name)).toEqual(["left-pad"]);
+  });
+});
+
 const fixture = resolve("test-output", "sample-react");
 describe.skipIf(!existsSync(fixture))("the SBOM of a fixture", () => {
   it("is CycloneDX 1.5 with one component per declared package, a purl each, dev dependencies excluded", async () => {

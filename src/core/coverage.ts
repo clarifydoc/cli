@@ -136,7 +136,7 @@ export function assessCoverage(input: {
     return i !== undefined && o !== undefined && i !== o && (o === "" || i.startsWith(o + "/"));
   };
   for (const p of input.packages) {
-    if (p.scope === "dev" || p.used === false || (p.category !== "framework" && p.category !== "frontend")) continue;
+    if (p.scope === "dev" || p.used === false || p.local !== undefined || (p.category !== "framework" && p.category !== "frontend")) continue;
     const decls = p.declarations ?? [{ declaredIn: p.declaredIn, scope: p.scope, version: p.version }];
     const declaringProjects = decls.filter((d) => d.scope !== "dev").map((d) => projectOfPath(d.declaredIn, input.subProjects) ?? "");
     for (const d of decls) {

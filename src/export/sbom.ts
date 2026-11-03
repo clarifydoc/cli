@@ -8,7 +8,8 @@ import type { Summary } from "./types.js";
  * one), its licence where the lockfile records it, and its scope — a dev or
  * peer dependency is `excluded` from what ships, an optional one `optional`.
  * What the code declares, not a scan of an installed tree: a transitive
- * dependency appears only when a manifest names it.
+ * dependency appears only when a manifest names it, and a package of the
+ * repository itself (`local`) is no component.
  */
 
 /** purl type per ecosystem (package-url spec); one with none is `generic`. */
@@ -39,7 +40,8 @@ function versionOf(p: ExternalPackage): string | undefined {
 }
 
 export function toCycloneDx(summary: Summary, name: string): Record<string, unknown> {
-  const packages = ((summary as { externalPackages?: ExternalPackage[] }).externalPackages ?? []).filter((p) => p.ecosystem !== "git");
+  // A package of this repository is part of the application, not a component it pulls in.
+  const packages = ((summary as { externalPackages?: ExternalPackage[] }).externalPackages ?? []).filter((p) => p.ecosystem !== "git" && p.local === undefined);
   const components = packages
     .map((p) => {
       const version = versionOf(p);

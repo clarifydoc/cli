@@ -36,3 +36,13 @@ describe("attachOsvAdvisories", () => {
     expect(p.advisories).toBeUndefined();
   });
 });
+
+describe("a package of the repository itself", () => {
+  it("is never sent to OSV", async () => {
+    let asked = 0;
+    const fake = (async () => { asked++; return { ok: true, json: async () => ({ results: [] }) }; }) as unknown as typeof fetch;
+    const tyres = { ...pkg("@league/tyres", "npm", "1.0.0"), local: "packages-tyres" };
+    expect(await attachOsvAdvisories([tyres], { fetch: fake })).toEqual({ asked: 0, vulnerable: 0 });
+    expect(asked).toBe(0);
+  });
+});

@@ -7,11 +7,14 @@ import type {
   PackageEcosystem,
   FrameworkDetection,
   FileAnalysis,
+  SubProject,
 } from "../types/analysis.js";
 import type { DeclaredPackage, PackageManifestSpec } from "../types/language-plugin.js";
 import {
   classifyKnownPackage,
   packageEcosystemsFor,
+  packageKeyOf,
+  packageRegistryOf,
   packageMatchingFor,
   PACKAGE_MANAGERS,
   type KnownPackageEntry,
@@ -224,6 +227,62 @@ export async function collectExternalPackages(
   );
 }
 
+/** One sub-project's manifest declaring the package another sub-project is (`markLocalPackages`). */
+export interface LocalPackageEdge {
+  /** The declaring sub-project. */
+  from: string;
+  /** The sub-project the package is. */
+  to: string;
+  package: string;
+  /** The declaring manifest, project-relative. */
+  file: string;
+}
+
+/**
+ * Mark the declared packages that are this repository's own: a package whose
+ * key (`packageKeyOf`, compared within one registry) is the name a
+ * sub-project's manifest gives itself (`SubProject.packageName`/`packages` —
+ * an npm workspace member, a Cargo path crate, a go.mod module or `replace`
+ * directory) gets `local` = that sub-project, so it is never sent to OSV,
+ * listed as an SBOM component or judged unused. Returns one edge per
+ * declaration in ANOTHER sub-project; a name two sub-projects give themselves
+ * says nothing about which one is meant, so it is local but makes no edge.
+ */
+export function markLocalPackages(
+  packages: ExternalPackage[],
+  subProjects: readonly SubProject[],
+  /** The sub-project owning a project-relative path (a manifest, a package root). */
+  projectOf: (path: string) => string,
+): LocalPackageEdge[] {
+  const keyOf = (ecosystem: PackageEcosystem, name: string) => `${packageRegistryOf(ecosystem)}\0${packageKeyOf(ecosystem, name)}`;
+  const owners = new Map<string, string[]>();
+  const own = (key: string, project: string) => {
+    const list = owners.get(key) ?? owners.set(key, []).get(key)!;
+    if (!list.includes(project)) list.push(project);
+  };
+  for (const sp of subProjects) {
+    if (sp.packageName && sp.packageEcosystem) own(keyOf(sp.packageEcosystem, sp.packageName), sp.id);
+    for (const p of sp.packages ?? []) own(keyOf(p.ecosystem, p.name), p.root === undefined ? sp.id : projectOf(p.root));
+  }
+  if (owners.size === 0) return [];
+  const edges: LocalPackageEdge[] = [];
+  for (const pkg of packages) {
+    if (pkg.ecosystem === "git") continue;
+    const projects = owners.get(keyOf(pkg.ecosystem, pkg.name));
+    if (!projects) continue;
+    pkg.local = projects[0]!;
+    if (projects.length > 1) continue;
+    const seen = new Set<string>();
+    for (const d of pkg.declarations ?? [{ declaredIn: pkg.declaredIn }]) {
+      const from = projectOf(d.declaredIn);
+      if (from === pkg.local || seen.has(from)) continue;
+      seen.add(from);
+      edges.push({ from, to: pkg.local, package: pkg.name, file: d.declaredIn });
+    }
+  }
+  return edges;
+}
+
 /** Per ecosystem: import key → owning package name (see `PackageManagerSpec.installedOwners`). */
 export type InstalledOwners = ReadonlyMap<PackageEcosystem, ReadonlyMap<string, string>>;
 
@@ -346,8 +405,9 @@ export function attachPackageUsage(
       // Run by a script, loaded by a tool's config, or the types of an import.
       pkg.used = true;
       pkg.usageCount = 0;
-    } else if (spec?.assertsUnused && !pkg.transitive) {
-      // A transitive requirement is there for another package, not for an import.
+    } else if (spec?.assertsUnused && !pkg.transitive && pkg.local === undefined) {
+      // A transitive requirement is there for another package, not for an
+      // import; a package of this repository is imported as its files.
       pkg.used = false;
       pkg.usageCount = 0;
     }
@@ -365,6 +425,7 @@ export function attachPackageUsage(
 export function deriveFrameworksFromPackages(packages: readonly ExternalPackage[]): FrameworkDetection[] {
   const byId = new Map<string, FrameworkDetection>();
   for (const pkg of packages) {
+    if (pkg.local !== undefined) continue; // this repository's own package is no framework
     const known = classify(pkg.name);
     if (!known.framework) continue;
     const strong = (pkg.scope === "prod" || pkg.scope === "peer") && pkg.used !== false;

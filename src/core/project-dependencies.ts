@@ -13,7 +13,10 @@
  * service) is attached as `deployment`; one no code link backs is kept with
  * `links: 0`, because "deployment says A calls B and no call was found" is
  * exactly the gap worth seeing. Import coupling is not here — that is the
- * component graph — so an edge means requests or messages cross it.
+ * component graph — so an `http` or `bus` edge means requests or messages
+ * cross it. The one build-time edge is `package`: a manifest of one
+ * sub-project declaring the package another sub-project is (an npm workspace
+ * member, a Cargo path crate), stated by the manifest, with no links.
  *
  * Callers in tests are left out: a spec requesting another project's route is
  * not a dependency of the deployed system. Generated callers (an SDK in the
@@ -23,6 +26,7 @@
  * so this graph and Call Traces never disagree about an edge.
  */
 
+import type { LocalPackageEdge } from "./dependency-inventory.js";
 import type {
   ApiRouteLink,
   Confidence,
@@ -57,6 +61,8 @@ export function buildProjectDependencies(input: {
   /** File → sub-project, for the files at either end of a broker link. */
   projectOf: (file: string) => string | undefined;
   deployment?: DeploymentModel;
+  /** Manifests declaring another sub-project's own package (`markLocalPackages`). */
+  packageEdges?: readonly LocalPackageEdge[];
 }): ProjectDependency[] {
   const edges = new Map<string, Acc>();
   const edge = (from: string, to: string, kind: ProjectDependency["kind"]): Acc => {
@@ -116,6 +122,15 @@ export function buildProjectDependencies(input: {
       // The first stating edge is kept; several env vars naming one pair add nothing.
       acc.dep.deployment ??= e.via ? { via: e.via, file: from.file } : { file: from.file };
     }
+  }
+
+  // Manifest evidence: a declared dependency on another sub-project's own
+  // package. A build-time fact, so no links; the packages are its endpoints.
+  for (const p of input.packageEdges ?? []) {
+    if (p.from === p.to) continue;
+    const acc = edge(p.from, p.to, "package");
+    acc.dep.manifest ??= { file: p.file, package: p.package };
+    acc.byEndpoint.set(p.package, 0);
   }
 
   const out: ProjectDependency[] = [];

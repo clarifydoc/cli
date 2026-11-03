@@ -1879,14 +1879,20 @@ export interface ProjectDependency {
   /** Sub-project ids (see `SubProject.id`). */
   from: string;
   to: string;
-  kind: "http" | "bus";
-  /** Links behind the edge — test callers and AMBIGUOUS links excluded. 0 = only deployment states it. */
+  /**
+   * `http` and `bus`: requests or messages cross the edge. `package`: `from`'s
+   * manifest declares a package `to` itself is (`manifest`) — a build-time
+   * fact, carrying no links.
+   */
+  kind: "http" | "bus" | "package";
+  /** Links behind the edge — test callers and AMBIGUOUS links excluded. 0 = only deployment or a manifest states it. */
   links: number;
   /** Those links by confidence. */
   confidence: Partial<Record<Confidence, number>>;
   /**
-   * What crosses the edge, most-linked first: `GET /api/orders` (http) or a
-   * broker destination (bus). Capped; `endpointCount` is the total.
+   * What crosses the edge, most-linked first: `GET /api/orders` (http), a
+   * broker destination (bus) or the packages declared (package, 0 links
+   * each). Capped; `endpointCount` is the total.
    */
   endpoints: Array<{ name: string; links: number }>;
   endpointCount: number;
@@ -1896,6 +1902,8 @@ export interface ProjectDependency {
    * manifest declaring that service.
    */
   deployment?: { via?: string; file: string };
+  /** A `package` edge: the manifest of `from` declaring it, and the package of `to` it names (the first, when several). */
+  manifest?: { file: string; package: string };
 }
 
 export interface DataSourceInfo {
@@ -4281,6 +4289,15 @@ export interface ExternalPackage {
    * it, so it is never judged unused. Absent when any manifest declares it directly.
    */
   transitive?: boolean;
+  /**
+   * A package of this repository: the id of the sub-project whose own
+   * manifest names it (npm workspace member, Cargo path crate, go.mod module,
+   * the project itself). Not third-party — never sent to OSV, never an SBOM
+   * component, never judged unused; when one sub-project declares another's
+   * package, `projectDependencies` holds a `package` edge between them. Where
+   * several sub-projects name the package, the first by root.
+   */
+  local?: string;
   /**
    * The version the package manager installed, read from the lockfile beside
    * the manifest (package-lock.json, yarn.lock, poetry.lock, uv.lock,

@@ -33,6 +33,23 @@ const mq = (sourceFile: string, targetFile: string, dest: string): SymbolLink =>
 const projectOf = (f: string) => f.split("/")[0];
 
 describe("buildProjectDependencies", () => {
+  it("records a manifest declaring another sub-project's package as a package edge with no links", () => {
+    const deps = buildProjectDependencies({
+      apiRouteLinks: [],
+      symbolLinks: [],
+      projectOf,
+      packageEdges: [
+        { from: "pitwall", to: "tyres", package: "@league/tyres", file: "pitwall/package.json" },
+        { from: "tyres", to: "tyres", package: "@league/tyres", file: "tyres/package.json" },
+      ],
+    });
+    expect(deps).toEqual([{
+      from: "pitwall", to: "tyres", kind: "package", links: 0, confidence: {},
+      endpoints: [{ name: "@league/tyres", links: 0 }], endpointCount: 1,
+      manifest: { file: "pitwall/package.json", package: "@league/tyres" },
+    }]);
+  });
+
   it("folds cross-project call→route links into one edge per pair, endpoints most-linked first", () => {
     const deps = buildProjectDependencies({
       apiRouteLinks: [

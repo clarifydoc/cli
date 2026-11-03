@@ -120,9 +120,13 @@ describe("service-to-service links — hand-labelled fixture", () => {
     expect(deps).toEqual([
       ["billing", "league", "http", 2, null],
       ["billing", "person-person-api", "http", 2, null],
+      // billing/pom.xml depends on com.shop.person:person-api, built in person/person-api.
+      ["billing", "person-person-api", "package", 0, null],
       // docker-compose.yml: cars `Services__Fleet: http://fleet:8080`.
       ["cars", "fleet", "http", 3, "Services__Fleet"],
       ["cars", "legacy", "http", 1, null],
+      // person/person-service/pom.xml depends on the same artifact.
+      ["person-person-service", "person-person-api", "package", 0, null],
       ["web", "cars", "http", 1, null],
       ["web", "fleet", "http", 2, null],
       ["worker", "cars", "http", 1, "CARS_URL"],

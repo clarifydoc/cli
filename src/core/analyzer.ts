@@ -26,6 +26,7 @@ import {
   collectInstalledOwners,
   attachPackageUsage,
   deriveFrameworksFromPackages,
+  markLocalPackages,
   mergeFrameworkDetections,
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
@@ -737,6 +738,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectRoot,
     subProjects.map((sp) => sp.root),
   );
+  // A declared package that is a sub-project of this repository is no
+  // third-party dependency: marked `local`, and an edge between the two.
+  const localPackageEdges = markLocalPackages(externalPackages, subProjects, (path) => assignProjectId(path, subProjects));
   // What the package managers installed (Composer's vendor/ autoload map): makes
   // their import→package mapping reliable; empty when nothing is installed.
   const installedOwners = await collectInstalledOwners(
@@ -1939,6 +1943,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     symbolLinks,
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     deployment,
+    packageEdges: localPackageEdges,
   });
   if (projectDependencies.length > 0) {
     progress.detail(`  Project dependencies (HTTP/bus): ${projectDependencies.length}`);
