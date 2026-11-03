@@ -125,6 +125,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   securityIssues: "optional",
   duplicates: "optional",
   layerViolations: "optional",
+  ruleVerdicts: "optional",
   blastRadius: "optional",
   healthScore: "optional",
   suggestions: "optional",

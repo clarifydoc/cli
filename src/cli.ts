@@ -59,7 +59,7 @@ program
   .option("--junit <file>", "Also write the findings as a JUnit XML report (one test case per rule)")
   .option("--codequality <file>", "Also write the findings as a GitLab Code Quality report")
   .option("--progress <format>", "Report progress as `json`: one event per line on stderr (stage, files done, done) instead of the status line")
-  .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, a rule id…), or both, comma-separated")
+  .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, import-rule, vacuous-rule, a rule id…), or both, comma-separated")
   .option("--baseline <sarif-or-analysis>", "Findings of the base (its SARIF, or its analysis directory): reports mark each finding new or unchanged, and --fail-on counts only new ones")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")

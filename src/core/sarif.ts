@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
-import type { ApiRouteLinkStats, ContractFinding, DeadCodeReport, LayerViolation, PatternInfo, SecurityCategory, SecurityIssue } from "../types/analysis.js";
+import type { ApiRouteLinkStats, ContractFinding, DeadCodeReport, LayerViolation, PatternInfo, RuleVerdict, SecurityCategory, SecurityIssue } from "../types/analysis.js";
 import { ruleIdOf as ruleIdFor } from "./security-rules.js";
+import { PROJECT_CONFIG_RELATIVE_PATH } from "./project-config.js";
 
 /**
  * Security findings as SARIF 2.1.0 — what GitHub code scanning and most CI
@@ -119,11 +120,26 @@ export interface StructuralFinding {
 export function structuralFindings(summary: {
   apiRouteLinkStats?: ApiRouteLinkStats;
   layerViolations?: readonly LayerViolation[];
+  ruleVerdicts?: readonly RuleVerdict[];
   contractFindings?: readonly ContractFinding[];
   deadCode?: DeadCodeReport;
   patterns?: readonly PatternInfo[];
 }): StructuralFinding[] {
   const out: StructuralFinding[] = [];
+  // A team rule that names no analyzed file cannot fail: a gate on its imports would pass for nothing.
+  for (const r of summary.ruleVerdicts ?? []) {
+    if (r.verdict !== "vacuous") continue;
+    out.push({
+      ruleId: "clarifydoc/vacuous-rule",
+      title: "Team rule that matches no file",
+      level: r.severity === "warn" ? "warning" : "error",
+      message: `The rule "${r.name}" cannot be broken: its ${(r.unmatched ?? []).map((u) => `"${u}"`).join(" and ")} match no analyzed file (a folder renamed or moved?).`,
+      file: PROJECT_CONFIG_RELATIVE_PATH,
+      line: 1,
+      fingerprint: `vacuous ${r.name}`,
+      tags: ["architecture", "import-rule"],
+    });
+  }
   for (const c of summary.contractFindings ?? []) {
     const call = `${c.method ?? "?"} ${c.url}`;
     const route = `${c.route.path} (${c.route.file}:${c.route.line})`;
@@ -274,7 +290,7 @@ export const FAIL_ON_CATEGORIES = [
 export const STRUCTURAL_RULE_IDS: readonly string[] = [
   ...Object.keys(CONTRACT_TITLES).map((k) => `clarifydoc/contract-${k}`),
   ...Object.keys(ROUTE_MISS_TITLES).map((k) => `clarifydoc/route-${k}`),
-  "clarifydoc/import-rule", "clarifydoc/layer-order", "clarifydoc/query-in-loop", "clarifydoc/blocking-in-async",
+  "clarifydoc/import-rule", "clarifydoc/vacuous-rule", "clarifydoc/layer-order", "clarifydoc/query-in-loop", "clarifydoc/blocking-in-async",
   "clarifydoc/unreachable-file", "clarifydoc/unused-export",
 ];
 

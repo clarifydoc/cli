@@ -102,7 +102,7 @@ import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
 import { SCHEMA_VERSION } from "./element-registry.js";
 import { detectDuplicates } from "./duplication-detector.js";
-import { classifyFileLayers, detectLayerViolations, detectRuleViolations, layerDisagreements, layerEvidence, type LayerTier } from "./layer-analyzer.js";
+import { classifyFileLayers, detectLayerViolations, detectRuleViolations, layerDisagreements, layerEvidence, ruleVerdicts, type LayerTier } from "./layer-analyzer.js";
 import { analyzeBlastRadius } from "./blast-radius.js";
 import { attachTraceImpact } from "./trace-impact.js";
 import { attachRiskVerdicts } from "./risk-verdict.js";
@@ -580,6 +580,13 @@ class ProgressReporter {
   /** Log a detail line (only shown in verbose mode). */
   detail(message: string): void {
     if (this.verbose) console.log(message);
+  }
+
+  /** A line the user should see however the run is shown: to stderr, unless progress is machine-read. */
+  warn(message: string): void {
+    if (this.quiet) return;
+    this.clear();
+    console.warn(message);
   }
 
   /** Print a final line that stays visible. */
@@ -1708,6 +1715,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   ].filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
+  // Every team rule's verdict: one that names no file cannot fail, which must not read as one that holds.
+  const ruleVerdictList = ruleVerdicts(allAnalyses.map((a) => a.filePath), architecture.rules, layerViolations);
+  for (const v of ruleVerdictList) {
+    if (v.verdict !== "vacuous") continue;
+    const w = `rule "${v.name}" is vacuous: its ${v.unmatched!.map((u) => `"${u}"`).join(" and ")} match${v.unmatched!.length === 1 ? "es" : ""} no analyzed file, so it cannot be broken`;
+    configWarnings.push(w);
+    progress.warn(`  Rules: ${w}`);
+  }
 
   // Which links come from tests or generated code. The link stands — the test
   // does request that route — but "which screen calls this endpoint" is about
@@ -2318,6 +2333,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     securityIssues: allSecurityIssues,
     duplicates,
     layerViolations,
+    ...(ruleVerdictList.length ? { ruleVerdicts: ruleVerdictList } : {}),
     blastRadius,
     healthScore,
     suggestions,

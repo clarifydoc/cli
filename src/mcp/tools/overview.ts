@@ -653,7 +653,7 @@ function isPerformancePattern(p: PatternInfo): boolean {
 function categoryCounts(summary: ProjectAnalysis): Array<[HealthCategory, number]> {
   return [
     ["security", (summary.securityIssues ?? []).length],
-    ["layers", (summary.layerViolations ?? []).length],
+    ["layers", (summary.layerViolations ?? []).length + (summary.ruleVerdicts ?? []).filter((r) => r.verdict === "vacuous").length],
     ["complexity", (summary.complexity ?? []).reduce((n, c) => n + c.functions.length, 0)],
     ["duplicates", (summary.duplicates ?? []).length],
     ["hotspots", (summary.hotspots ?? []).length],
@@ -1006,13 +1006,27 @@ export function healthTool(ctx: ToolContext): McpTool {
           const violations = (summary.layerViolations ?? []).filter(
             (v) => inFile(v.sourceFile) || inFile(v.targetFile),
           );
-          if (violations.length === 0) return { text: noFindings(summary, category, filters) };
+          // Every team rule with its verdict, those that hold and those that match nothing included.
+          const verdicts = summary.ruleVerdicts ?? [];
+          const verdictLines = verdicts.length
+            ? [
+                `## Rules (${verdicts.length})`,
+                ...verdicts.slice(0, 40).map((r) =>
+                  `- ${r.name}${r.severity === "warn" ? " (warn)" : ""}: ${r.verdict}` +
+                  (r.verdict === "violated" ? ` — ${plural(r.violations, "import")}` : "") +
+                  (r.verdict === "vacuous" ? ` — its ${r.unmatched!.map((u) => `\`${u}\``).join(" and ")} match no analyzed file, so it cannot fail${r.violations ? ` (${plural(r.violations, "import")} reported)` : ""}` : "")),
+                ...(verdicts.length > 40 ? [`- … ${verdicts.length - 40} more`] : []),
+                "",
+              ]
+            : [];
+          if (violations.length === 0 && !verdicts.length) return { text: noFindings(summary, category, filters) };
           return {
             text: joinLines([
               `# Layer violations (${violations.length})`,
               "A violation is an import that crosses the architecture layers the wrong way, or breaks one of the " +
                 "team's own rules in .clarifydoc/config.json.",
               "",
+              ...verdictLines,
               ...bulletList(
                 violations,
                 limit,

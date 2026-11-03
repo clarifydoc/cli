@@ -383,3 +383,38 @@ describe("layer disagreements — source containers", () => {
     expect(alternates[a.filePath]?.map((x) => x.layer)).toEqual(["data"]);
   });
 });
+
+describe("ruleVerdicts — whether each team rule said anything", () => {
+  const rule = (r: Record<string, unknown>) => ({ name: "r", from: [], to: [], except: [], severity: "error" as const, ...r });
+  const files = ["src/features/club/page.ts", "src/features/match/api.ts", "src/shared/date.ts"];
+
+  it("holds, is violated, or is vacuous when a side names no analyzed file", async () => {
+    const { ruleVerdicts } = await import("./layer-analyzer.js");
+    const rules = [
+      rule({ name: "shared stays below", from: ["src/shared/**"], to: ["src/features/**"] }),
+      rule({ name: "clubs keep off matches", from: ["src/features/club/**"], to: ["src/features/match/**"] }),
+      // The folder was renamed from `garage` to `features`: the rule matches nothing and can never fail.
+      rule({ name: "garage apart", from: ["src/garage/**"], to: ["src/pitlane/**"], severity: "warn" }),
+      rule({ name: "elements apart", each: "src/modules/*", noCycles: true }),
+      rule({ name: "features use the toolbox", each: "src/features/*", allowOnly: ["src/toolbox/**"] }),
+    ];
+    const violations = [{ sourceFile: files[0]!, targetFile: files[1]!, rule: "clubs keep off matches" }] as never;
+    expect(ruleVerdicts(files, rules, violations)).toEqual([
+      { name: "shared stays below", verdict: "holds", violations: 0, severity: "error" },
+      { name: "clubs keep off matches", verdict: "violated", violations: 1, severity: "error" },
+      { name: "garage apart", verdict: "vacuous", violations: 0, severity: "warn", unmatched: ["from", "to"] },
+      { name: "elements apart", verdict: "vacuous", violations: 0, severity: "error", unmatched: ["each"] },
+      { name: "features use the toolbox", verdict: "vacuous", violations: 0, severity: "error", unmatched: ["allowOnly"] },
+    ]);
+  });
+
+  it("a vacuous rule is a finding --fail-on can gate on, by its id or as an import rule", async () => {
+    const { structuralFindings, buildSarif, failingResults } = await import("./sarif.js");
+    const findings = structuralFindings({ ruleVerdicts: [{ name: "garage apart", verdict: "vacuous", violations: 0, severity: "error", unmatched: ["from"] }] });
+    expect(findings).toMatchObject([{ ruleId: "clarifydoc/vacuous-rule", level: "error", file: ".clarifydoc/config.json" }]);
+    const log = buildSarif([], "0.0.0", findings);
+    expect(failingResults(log, { categories: ["vacuous-rule"] })).toHaveLength(1);
+    expect(failingResults(log, { categories: ["import-rule"] })).toHaveLength(1);
+    expect(failingResults(log, { level: "error" })).toHaveLength(1);
+  });
+});
