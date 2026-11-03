@@ -4,6 +4,7 @@ import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/bas
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { spawnImports } from "../shared/process-spawns.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { wrappedDefaultName } from "./wrapped-functions.js";
 
 /** Initializer node types that make a `const` export a function. */
 const FUNCTION_VALUE_TYPES: ReadonlySet<string> = new Set([
@@ -333,7 +334,28 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       if (decl.type !== "variable_declarator") continue;
 
       const name = decl.childForFieldName("name");
-      const value = decl.childForFieldName("value");
+      let value = decl.childForFieldName("value");
+      // `const relegate = require("./clubs").relegateClub`: the module's `relegateClub`, bound as `relegate`.
+      const member = value?.type === "member_expression" && name?.type === "identifier" ? value.childForFieldName("property")?.text : undefined;
+      if (member) {
+        const required = value!.childForFieldName("object");
+        const source = required ? requiredSource(required) : null;
+        if (source !== null) {
+          // `require("./x").default` is the module's default export.
+          const isDefault = member === "default";
+          imports.push({
+            source,
+            specifiers: [name!.text],
+            isDefault,
+            isNamespace: false,
+            isType: false,
+            line: declNode.startPosition.row + 1,
+            commonJs: true,
+            ...(!isDefault && member !== name!.text ? { aliases: { [name!.text]: member } } : {}),
+          });
+        }
+        continue;
+      }
       if (!value || value.type !== "call_expression") continue;
 
       const callee = value.childForFieldName("function");
@@ -432,7 +454,9 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       if (kids.some((k) => k.type === "default" || k.type === "=")) {
         // The module's own name for it: `export default Club;`, `export default class Club …`.
         const value = child.childForFieldName("value") ?? child.childForFieldName("declaration");
-        const local = value?.type === "identifier" ? value.text : value && /^(?:class|function_declaration|abstract_class_declaration|class_declaration)$/.test(value.type) ? value.childForFieldName("name")?.text : undefined;
+        const local = value?.type === "identifier" ? value.text : value && /^(?:class|function_declaration|abstract_class_declaration|class_declaration)$/.test(value.type) ? value.childForFieldName("name")?.text
+          // `export default memo(function FancyBadge() {…})`, `export default observer(Garage)`: what the wrapper is handed.
+          : value ? wrappedDefaultName(value) ?? undefined : undefined;
         // `export default new Agents()`: the module's default is an instance of its class.
         const instanceOf = value?.type === "new_expression" ? value.childForFieldName("constructor") : null;
         exports.push({ name: "default", kind: "default", line, ...(local ? { sourceName: local } : {}), ...(instanceOf?.type === "identifier" ? { instanceOf: instanceOf.text } : {}) });

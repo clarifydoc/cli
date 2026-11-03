@@ -589,6 +589,22 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (fn.name.includes(".")) localSymbols.add(fn.name.slice(0, fn.name.indexOf(".")));
     }
     for (const cls of analysis.classes) localSymbols.add(cls.name);
+    // A dispatch map the file declares whose every value is a function the file defines or a
+    // name it imports (`const ACTIONS = { save: saveClub, list: loadMatches }`): `ACTIONS.save()`
+    // is a call through it, whatever its key is called. A map of members (`{ get: client.get }`)
+    // may hold a library's, and its calls keep what their names say.
+    const imported = new Set(analysis.imports.flatMap((i) => i.specifiers));
+    const mapHolders = new Map<string, boolean>();
+    for (const fn of [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)]) {
+      for (const c of fn.calls) {
+        const dot = c.passed === "property" ? c.returnedAs?.indexOf(".") ?? -1 : -1;
+        if (dot <= 0) continue;
+        const holder = c.returnedAs!.slice(0, dot);
+        const own = !c.name.includes(".") && (localSymbols.has(c.name) || imported.has(c.name));
+        mapHolders.set(holder, (mapHolders.get(holder) ?? true) && own);
+      }
+    }
+    for (const [holder, own] of mapHolders) if (own) localSymbols.add(holder);
     // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`).
     const paramNames = (fn: FunctionInfo): Set<string> | undefined =>
       fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;

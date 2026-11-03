@@ -174,7 +174,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   // walk's.
   const candidates: Array<{
     name: string; line: number; column: number; isReference: boolean;
-    passed?: "argument" | "attribute" | "return";
+    passed?: CallInfo["passed"];
     ownMember?: boolean;
     returnedAs?: string;
     receiver?: { type: string; qualifier?: string } | null;
@@ -199,11 +199,11 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argCount?: number | null,
     argOrigins?: CallArgOrigin[] | null,
     argKinds?: string[] | null,
-    passed?: "argument" | "attribute" | "return",
+    passed?: CallInfo["passed"],
   ) => {
     candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, passed, receiver, key, args, argCount, argOrigins, argKinds });
   };
-  const addResult = (name: string, node: Node, passed?: "attribute" | "return", returnedAs?: string) => {
+  const addResult = (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string) => {
     if (!name) return;
     if (passed) push(name, node, true, null, null, null, null, null, null, passed);
     else push(name, node, false);
@@ -284,7 +284,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // `let v = new Truck()` shadowing a parameter `v: Car`): `v.drive()` there is another method.
     const typed = c.receiver?.type ? `\0<${c.receiver.type}>` : "";
     // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
-    const seenKey = c.passed ? `${c.name}\0passed` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
+    // A dispatch map's value is one claim per key it is held under (`{ save: saveClub, store: saveClub }`).
+    const seenKey = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
@@ -319,14 +320,16 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     results.push(call);
   }
   if (held.length > 0) HELD_NOISE_CALLS.set(results, held);
-  // A name the body also invokes is a call; handing it on as well adds nothing.
+  // A name the body also invokes is a call; handing it on as well adds nothing — except as a
+  // dispatch map's value, which is what a call through the map reaches.
   const invoked = new Set(results.filter((r) => !r.passed).map((r) => r.name));
-  if (!results.some((r) => r.passed && invoked.has(r.name))) return results;
-  const kept = results.filter((r) => !(r.passed && invoked.has(r.name)));
+  const redundant = (r: CallInfo) => !!r.passed && r.passed !== "property" && invoked.has(r.name);
+  if (!results.some(redundant)) return results;
+  const kept = results.filter((r) => !redundant(r));
   // Held noise calls are re-inserted at their recorded positions; keep those valid.
   if (held.length > 0) {
     HELD_NOISE_CALLS.delete(results);
-    for (const h of held) h.index -= results.slice(0, h.index).filter((r) => r.passed && invoked.has(r.name)).length;
+    for (const h of held) h.index -= results.slice(0, h.index).filter(redundant).length;
     HELD_NOISE_CALLS.set(kept, held);
   }
   return kept;
@@ -439,6 +442,14 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
         }
       }
     }
+
+    // A dispatch map the module declares (`const ACTIONS = { save: saveClub }`): its values are
+    // the module's, handed on under their keys. Other extras belong to the declarations they sit in.
+    hooks!.collectExtraCalls?.(node, (name, at, passed, returnedAs) => {
+      if (passed !== "property" || !name || seen.has(`${name}\0passed\0${returnedAs}`)) return;
+      seen.add(`${name}\0passed\0${returnedAs}`);
+      results.push({ name, kind: "internal", target: null, line: at.startPosition.row + 1, column: at.startPosition.column, passed, ...(returnedAs ? { returnedAs } : {}) });
+    }, (n) => resolveCallName(n, language));
 
     for (const child of node.children) {
       walk(child, inCallback);

@@ -3,6 +3,7 @@ import type { ImportInfo } from "../../../types/analysis.js";
 import type { VariableAliasBinding } from "../../../types/language-plugin.js";
 import { buildImportMaps } from "../../shared/call-graph.js";
 import { containerLookup } from "./di.js";
+import { requiredSource } from "./imports-exports.js";
 
 /**
  * Extract variable-to-call assignments, in any scope.
@@ -42,7 +43,7 @@ export function extractJsVariableAliases(
     });
   }
 
-  function bind(name: string, source: string, factory: string, member?: string) {
+  function bind(name: string, source: string, factory: string | undefined, member?: string) {
     if (conflicted.has(name)) return;
     const prev = aliases.get(name);
     // A binding from an unimported factory (no source) is the weakest fact: it never
@@ -113,6 +114,15 @@ export function extractJsVariableAliases(
           if (call && arms.some(empty) && (call.type === "call_expression" || call.type === "new_expression")) valueNode = call;
         }
         if (!nameNode || !valueNode) continue;
+        // A function's own `require`: `const { promoteClub: promote } = require("./clubs")`,
+        // `const relegate = require("./clubs").relegateClub` bind the module's members by name, as
+        // the same lines at the top of the module do. (The whole module, `const clubs = require(…)`,
+        // stays as it was.)
+        const required = requiredMember(nameNode, valueNode);
+        if (required) {
+          for (const [local, member] of required.bound) bind(local, required.source, undefined, member);
+          continue;
+        }
         // `const prisma = new PrismaClient()` binds the receiver just as
         // `const db = drizzle(...)` does — the constructor identifier is the
         // imported name. Without this the single most common ORM idiom left
@@ -184,4 +194,31 @@ const PROJECT_SPECIFIER = /^(?:\.|[@~#]\/)/;
 function memberKey(pair: Node, local: string): string | undefined {
   const key = pair.childForFieldName("key");
   return key?.type === "property_identifier" ? key.text : local;
+}
+
+/**
+ * The module members a declarator binds out of a `require`: a destructured require
+ * (`{ saveClub, promoteClub: promote }` → saveClub/saveClub, promote/promoteClub) or a member read
+ * off one (`relegate = require("./clubs").relegateClub` → relegate/relegateClub). Null otherwise.
+ */
+function requiredMember(name: Node, value: Node): { source: string; bound: Array<[string, string]> } | null {
+  if (name.type === "identifier" && value.type === "member_expression") {
+    const object = value.childForFieldName("object");
+    const member = value.childForFieldName("property")?.text;
+    const source = object ? requiredSource(object) : null;
+    return source !== null && member && member !== "default" ? { source, bound: [[name.text, member]] } : null;
+  }
+  if (name.type !== "object_pattern") return null;
+  const source = requiredSource(value);
+  if (source === null) return null;
+  const bound: Array<[string, string]> = [];
+  for (const prop of name.namedChildren) {
+    if (prop.type === "shorthand_property_identifier_pattern") bound.push([prop.text, prop.text]);
+    else if (prop.type === "pair_pattern") {
+      const local = prop.childForFieldName("value");
+      const key = prop.childForFieldName("key");
+      if (local?.type === "identifier" && key?.type === "property_identifier") bound.push([local.text, key.text]);
+    }
+  }
+  return { source, bound };
 }

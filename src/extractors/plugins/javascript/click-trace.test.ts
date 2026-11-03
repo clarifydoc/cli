@@ -3,8 +3,9 @@ import "../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../parsers/parser-manager.js";
 import { JavaScriptExtractor } from "./functions-classes.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
-import { classifyCalls } from "../../shared/call-graph.js";
+import { classifyCalls, extractTopLevelCalls } from "../../shared/call-graph.js";
 import { extractInteractiveElements } from "./interactive-elements.js";
+import { JavaScriptImportExportExtractor } from "./imports-exports.js";
 import type { ImportInfo } from "../../../types/analysis.js";
 
 /**
@@ -48,6 +49,78 @@ export const Lazy = useMemo(() => compute(), []);`;
     const selector = fns.find((f) => f.name === "Selector")!;
     const call = classifyCalls(selector.calls, imports, "typescript", aliases, local).find((c) => c.name === "fetchOrganizations")!;
     expect([call.kind, call.target]).toEqual(["internal", null]);
+  });
+});
+
+describe("wrapped components (memo, observer, forwardRef)", () => {
+  it("names the function a component wrapper is handed, keeps its calls out of <setup>, and gives the default export its name", async () => {
+    const src = `import React, { memo, forwardRef } from "react";
+import { observer } from "mobx-react-lite";
+export default memo(function FancyBadge() {
+  axios.get("/api/matches/latest");
+  return <Card />;
+});
+export const Tyre = observer(() => <Card />);
+export const Wheel = React.memo(function Wheel() { return loadWheels(); });
+export const Spoke = React.forwardRef((props, ref) => loadSpokes(ref));
+export const Goal = memo(forwardRef(function Goal(props, ref) { return loadGoals(ref); }));`;
+    const tree = await parse(src, "FancyBadge.tsx");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const calls = (name: string) => fns.find((f) => f.name === name)?.calls.map((c) => c.name);
+    expect(calls("FancyBadge")).toEqual(["axios.get", "Card"]);
+    expect(fns.find((f) => f.name === "FancyBadge")!.isExported).toBe(true);
+    expect(calls("Tyre")).toEqual(["Card"]);
+    expect(calls("Wheel")).toEqual(["loadWheels"]);
+    expect(calls("Spoke")).toEqual(["loadSpokes"]);
+    expect(calls("Goal")).toEqual(["loadGoals"]);
+    // The module's top level only calls the wrappers.
+    const top = extractTopLevelCalls(tree, "typescript").map((c) => c.name);
+    expect(top).not.toContain("axios.get");
+    expect(top).not.toContain("Card");
+
+    const exports = new JavaScriptImportExportExtractor().extractExports(tree, src);
+    expect(exports.find((e) => e.name === "default")?.sourceName).toBe("FancyBadge");
+  });
+
+  it("names a default export by the component a wrapper is handed, and leaves an anonymous one to <setup>", async () => {
+    const named = `import { observer } from "mobx-react-lite";
+function Garage() { return load(); }
+export default observer(Garage);`;
+    const exports = new JavaScriptImportExportExtractor().extractExports(await parse(named, "Garage.tsx"), named);
+    expect(exports.find((e) => e.name === "default")?.sourceName).toBe("Garage");
+
+    const anonymous = `import { observer } from "mobx-react-lite";
+export default observer(() => { axios.get("/api/garages"); return null; });`;
+    const tree = await parse(anonymous, "Garage.tsx");
+    expect(new JavaScriptExtractor().extractFunctions(tree, anonymous).map((f) => f.name)).toEqual([]);
+    expect(extractTopLevelCalls(tree, "typescript").map((c) => c.name)).toContain("axios.get");
+    expect(new JavaScriptImportExportExtractor().extractExports(tree, anonymous).find((e) => e.name === "default")?.sourceName).toBeUndefined();
+  });
+});
+
+describe("a function's own require", () => {
+  it("binds a destructured or member require inside a function to the module's members, not the whole module", async () => {
+    const src = `function endSeason() {
+  const { promoteClub: promote, saveClub } = require("./clubs");
+  const relegate = require("./clubs").relegateClub;
+  const fixtures = require("./fixtures");
+  promote(1);
+  saveClub({});
+  relegate(3);
+  fixtures.reschedule();
+}`;
+    const tree = await parse(src, "season.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    const aliases = extractJsVariableAliases(tree, imports);
+    const calls = classifyCalls(fns[0]!.calls, imports, "javascript", aliases, new Set(["endSeason"]), new Set());
+    expect(calls.filter((c) => c.name !== "require").map((c) => `${c.name}:${c.kind}:${c.target}:${c.member ?? ""}`)).toEqual([
+      "promote:cross-file:./clubs:promoteClub",
+      "saveClub:cross-file:./clubs:saveClub",
+      "relegate:cross-file:./clubs:relegateClub",
+      // The whole module bound by name keeps the binding it had.
+      "fixtures.reschedule:internal:null:",
+    ]);
   });
 });
 

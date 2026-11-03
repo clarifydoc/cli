@@ -20,6 +20,7 @@ import {
   type InjectedType,
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
+import { FUNCTION_EXPRESSIONS, wrappedFunction } from "./wrapped-functions.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -84,50 +85,8 @@ const SEPARATE_SCOPES: ReadonlySet<string> = new Set([
  */
 const FUNCTION_OPTION_KEY = /^["']?\w*Fn["']?$/;
 
-/** Function expressions — anonymous ones run on the enclosing function's behalf. */
-const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
-
 /** A CommonJS export member, `exports.listClubs` / `module.exports.listClubs`: the member's name. */
 const CJS_EXPORT_MEMBER = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/;
-
-/**
- * Wrappers that return (a memoized, debounced or ref-forwarding version of)
- * the function they are given: `useCallback(fn, deps)`, `memo(Component)`,
- * `forwardRef(render)`, lodash `debounce(fn, ms)` / `throttle(fn, ms)`.
- */
-const IDENTITY_WRAPPERS: ReadonlySet<string> = new Set([
-  "useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "memo", "forwardRef", "debounce", "throttle",
-]);
-
-/**
- * Wrappers whose binding runs the function they are given LAST: Redux
- * Toolkit's `createAsyncThunk("posts/fetch", async () => …)` — dispatching
- * the thunk runs its payload creator, so the binding names that body.
- */
-const BODY_LAST_WRAPPERS: ReadonlySet<string> = new Set(["createAsyncThunk"]);
-
-/** The function an identity wrapper call is given as its first argument (or a body-last wrapper its last), if any. */
-/** Expressions that only parenthesize or type what they hold. */
-const TYPE_WRAPPERS = new Set(["parenthesized_expression", "satisfies_expression", "as_expression", "type_assertion", "non_null_expression"]);
-
-function wrappedFunction(value: Node): Node | null {
-  // `(async ({ url }) => { … }) satisfies PageLoad`, `(() => …) as Handler`: a typed function.
-  let inner: Node | null = value;
-  while (inner && TYPE_WRAPPERS.has(inner.type)) inner = inner.namedChildren[0] ?? null;
-  if (inner !== value && inner && FUNCTION_EXPRESSIONS.has(inner.type)) return inner;
-  if (value.type !== "call_expression") return null;
-  const callee = value.childForFieldName("function");
-  const name = callee?.type === "identifier" ? callee.text : callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : undefined;
-  if (!name) return null;
-  const args = value.childForFieldName("arguments")?.namedChildren ?? [];
-  if (BODY_LAST_WRAPPERS.has(name)) {
-    const fn = [...args].reverse().find((a) => FUNCTION_EXPRESSIONS.has(a.type));
-    return fn ?? null;
-  }
-  if (!IDENTITY_WRAPPERS.has(name)) return null;
-  const first = args[0];
-  return first && FUNCTION_EXPRESSIONS.has(first.type) ? first : null;
-}
 
 /**
  * An exported binding made by handing a function to a wrapper of the project or a
@@ -1294,6 +1253,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         else if (moduleLevel && value) {
           const built = returnedObject(value);
           if (built) this.extractObjectMembers(null, built, functions, true, 0);
+          // `export default memo(function FancyBadge() {…})`, `export default observer(function Garage() {…})`:
+          // the module's default is the named function the wrapper is handed.
+          const wrapped = value.type === "call_expression" ? wrappedFunction(value) : null;
+          const name = wrapped?.type === "function_expression" ? wrapped.childForFieldName("name")?.text : undefined;
+          if (wrapped && name) functions.push(this.parseJsArrowOrExpr(name, wrapped, true));
         }
         this.extractJsFunctions(child, functions, true);
         continue;
@@ -1796,10 +1760,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push(this.parseTsInterface(node, isExported));
     } else if (node.type === "enum_declaration") {
       classes.push(parseTsEnum(node, isExported));
-    } else if (this.pinia && (node.type === "lexical_declaration" || node.type === "variable_declaration")) {
+    } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
       for (const decl of node.namedChildren) {
-        const store = decl.type === "variable_declarator" ? piniaStoreOf(decl) : null;
-        if (store) classes.push(this.piniaStoreClass(store, decl));
+        if (decl.type !== "variable_declarator") continue;
+        const store = this.pinia ? piniaStoreOf(decl) : null;
+        if (store) {
+          classes.push(this.piniaStoreClass(store, decl));
+          continue;
+        }
+        // `const Coupe = class extends models.Car { drive() {…} }`: a class, named by its binding.
+        const name = decl.childForFieldName("name");
+        let value = decl.childForFieldName("value");
+        while (value?.type === "parenthesized_expression") value = value.namedChildren[0] ?? null;
+        if (name?.type === "identifier" && value?.type === "class") classes.push(this.parseJsClass(value, isExported, name.text));
       }
     }
   }
@@ -1868,8 +1841,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     };
   }
 
-  private parseJsClass(node: Node, isExported: boolean): ClassInfo {
-    const name = node.childForFieldName("name")?.text ?? "anonymous";
+  private parseJsClass(node: Node, isExported: boolean, boundName?: string): ClassInfo {
+    const name = boundName ?? node.childForFieldName("name")?.text ?? "anonymous";
     let extendsName: string | null = null;
     const implementsList: string[] = [];
 
