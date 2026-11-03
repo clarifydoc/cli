@@ -1615,6 +1615,8 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * A class declared inside another is named by its path (`Paddock::Iterator`),
    * and a type written with one (`Paddock<K>::Iterator*`) means that class:
    * `receiverTypeName` keeps the path's class names instead of the last one.
+   * With `lexicalConstants`, the path is looked up as the language resolves a
+   * constant path (`League::Club` is the `Club` declared in `module League`).
    */
   nestedTypePaths?: boolean;
 

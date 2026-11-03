@@ -5,7 +5,7 @@ import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -238,6 +238,22 @@ function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: Functio
   }
 }
 
+/**
+ * `def look a, b` — parameters written without parentheses, up to a `;` or
+ * comment. The shared reader takes a list only in parentheses.
+ */
+function addParenlessParams(lines: readonly string[], fn: FunctionInfo): void {
+  if (fn.params.length > 0) return;
+  const decl = lines[fn.line - 1] ?? "";
+  const name = fn.name.replace(/^self\./, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`\\bdef\\s+(?:(?:self|[A-Z]\\w*)\\.)?${name}[ \\t]+(?![=(;#])([^;#]+)`).exec(decl);
+  if (!m) return;
+  for (const p of splitTopLevel(m[1]!.trim())) {
+    const param = parseRubyParam(p);
+    if (param?.name && /^[*&]{0,2}[a-z_]\w*:?$|^\.\.\.$/.test(param.name)) fn.params.push(param);
+  }
+}
+
 /** Words that stand alone on a line without calling anything. */
 const BARE_STATEMENT_KEYWORDS = new Set([
   "end", "else", "elsif", "begin", "ensure", "rescue", "retry", "redo", "next", "break", "return", "super",
@@ -401,7 +417,8 @@ const NON_MODEL_CONSTANTS = new Set([
 const PARENLESS_CONST_CALL_RE = new RegExp(
   // The `?`/`!` of a predicate or bang method is part of its name (`is_holiday?`
   // is not `is_holiday`); a `!=` after the name is an operator.
-  `(?<![\\w.@$:])(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
+  // A leading `::` names the top level (`::Contacts::FilterService.new`); the path is the same.
+  `(?<![\\w.@$:])(?:::)?(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
 );
 
 /** A (possibly namespaced) capitalised receiver, not preceded by `.`/word char,
@@ -753,7 +770,8 @@ export const rubySpec: RegexLangSpec = {
     ...RUBY_DI_CALL_PATTERNS,
     ...RAILS_RENDER_CALL_PATTERNS,
     {
-      pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
+      // Never the tail of a constant path: `League::Club.find(` is `League::Club.find` (below), not `Club.find`.
+      pattern: /(?<![\w:])([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
@@ -763,7 +781,7 @@ export const rubySpec: RegexLangSpec = {
       // drops receivers that are themselves a call result
       // (`u.name.downcase.include?`), where the receiver token names nothing
       // the linker could resolve.
-      pattern: /(?<![\w.@$])[@$]?(\w+)\.(\w+[?!])(?!=)/,
+      pattern: /(?<![\w.@$:])[@$]?(\w+)\.(\w+[?!])(?!=)/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
@@ -823,6 +841,7 @@ export const rubySpec: RegexLangSpec = {
       separateSingletonMethods(lines, cls);
       typeBareConstructions(lines, cls);
       for (const m of cls.methods) {
+        addParenlessParams(lines, m);
         applyDeclaredParamTypes(lines, m);
         dropDetachedMemberCalls(lines, m);
       }
@@ -910,6 +929,7 @@ export const rubySpec: RegexLangSpec = {
   // Top-level `def`s get the same declared types and call clean-up as methods.
   postProcessFunctions: (lines, fns) => {
     for (const fn of fns) {
+      addParenlessParams(lines, fn);
       applyDeclaredParamTypes(lines, fn);
       dropDetachedMemberCalls(lines, fn);
     }
