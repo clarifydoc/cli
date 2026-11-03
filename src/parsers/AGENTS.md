@@ -11,6 +11,12 @@ Wraps `web-tree-sitter` WASM runtime. Key functions:
 
 Grammars are lazy-loaded from npm packages via `GRAMMAR_PACKAGES`. Parsers, languages, and compiled queries are all cached.
 
+A grammar whose largest WebAssembly function body is over 150 KB (`BASELINE_ONLY_BODY_BYTES` — the lexer of Swift,
+Julia, Bash) is compiled to stay on V8's baseline tier (`compileBaselineOnly`): V8's optimizing compiler held 3.5 GB
+to tier the Swift lexer up, and did so within the first line of the first file. The load sets
+`--no-wasm-lazy-compilation` and `--wasm-tier-up-filter` for one synchronous `new WebAssembly.Module` and puts them
+back; the runtime and the other grammars tier up as before. `parser-manager-tiering.test.ts` holds the peak under 500 MB.
+
 `TreeSitterLanguage` excludes languages that **don't** have tree-sitter grammars (`dfm`, `swift`, `lua`, `scala`, `go`, `rust`, `ruby`, `php`). Those use the regex path in `src/core/regex-extractor.ts`.
 
 ### Adding a new tree-sitter grammar

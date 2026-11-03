@@ -7,6 +7,7 @@ import {
   type Node as TSNode,
 } from "web-tree-sitter";
 import { readFile } from "fs/promises";
+import v8 from "v8";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -129,11 +130,103 @@ function getParserForKey(key: GrammarKey): Promise<Parser> {
   return parser;
 }
 
+/**
+ * A grammar whose largest function body is bigger than this is compiled to stay on V8's baseline tier
+ * (`compileBaselineOnly`). A grammar's lexer is ONE function — a state machine over every token of the
+ * language — and V8's optimizing compiler needs memory far out of proportion to such a body: on V8 13.6,
+ * 0.7 GB for a 160 KB lexer, 3 GB for a 330 KB one, 3.5 GB for a 360 KB one, for half a second, in every
+ * process. Liftoff charges a loop's whole body to the tier-up budget on each turn, and a lexer turns its
+ * loop once per character, so that compile came within the first line of the first file: analyzing one
+ * four-line file peaked at 3.5 GB, and each worker that met one paid it again. The other grammars'
+ * largest bodies are below 150 KB and tier up as before.
+ */
+const BASELINE_ONLY_BODY_BYTES = 150_000;
+
+/** Grammar keys loaded to stay on the baseline tier. */
+const baselineOnly = new Set<GrammarKey>();
+
+/** Whether a grammar was loaded to stay on V8's baseline tier (`BASELINE_ONLY_BODY_BYTES`). */
+export function isBaselineOnlyGrammar(key: string): boolean {
+  return baselineOnly.has(key);
+}
+
+/** The size in bytes of the largest function body in a WebAssembly binary's code section; 0 when there is none or it cannot be read. */
+export function largestFunctionBody(bytes: Uint8Array): number {
+  let pos = 8; // magic + version
+  const u32 = (): number => {
+    let result = 0;
+    let scale = 1;
+    let byte: number;
+    do {
+      if (pos >= bytes.length) throw new RangeError("truncated WebAssembly binary");
+      byte = bytes[pos++];
+      result += (byte & 0x7f) * scale;
+      scale *= 128;
+    } while (byte & 0x80);
+    return result;
+  };
+  try {
+    while (pos < bytes.length) {
+      const id = bytes[pos++];
+      const end = u32() + pos;
+      if (id === 10) {
+        let largest = 0;
+        for (let n = u32(); n > 0; n--) {
+          const body = u32();
+          largest = Math.max(largest, body);
+          pos += body;
+        }
+        return largest;
+      }
+      pos = end;
+    }
+  } catch {
+    // Unreadable: compiled like any other grammar.
+  }
+  return 0;
+}
+
+/** Whether the process was started with its own WebAssembly tiering flags, which grammar loading then leaves alone. */
+function wasmTieringGivenByUser(): boolean {
+  return [...process.execArgv, process.env.NODE_OPTIONS ?? ""].some((a) => /wasm-tier-up-filter|wasm-lazy-compilation|liftoff/.test(a));
+}
+
+/**
+ * Compile a grammar so that none of its functions is ever tiered up. Liftoff leaves the tier-up checks
+ * out of a function it compiles while `--wasm-tier-up-filter` names another function, and with lazy
+ * compilation off it compiles every function of the module now — so both flags hold for this one
+ * synchronous compile and nothing else (no JavaScript runs in between), and are put back after it. The
+ * runtime and the other grammars keep tiering up; a parse reads the same tree on either tier. The flags
+ * are process-wide: a worker thread compiling a function in the same few milliseconds leaves it on the
+ * baseline tier too — slower, never different.
+ */
+function compileBaselineOnly(bytes: Uint8Array<ArrayBuffer>): WebAssembly.Module {
+  v8.setFlagsFromString("--no-wasm-lazy-compilation");
+  v8.setFlagsFromString("--wasm-tier-up-filter=2147483647");
+  try {
+    return new WebAssembly.Module(bytes);
+  } finally {
+    v8.setFlagsFromString("--wasm-tier-up-filter=-1");
+    v8.setFlagsFromString("--wasm-lazy-compilation");
+  }
+}
+
+/** Load a grammar's WebAssembly; one with an outsized function stays on the baseline tier. */
+async function loadGrammar(key: GrammarKey): Promise<TSLanguage> {
+  const bytes = await readFile(getGrammarPath(key));
+  if (largestFunctionBody(bytes) > BASELINE_ONLY_BODY_BYTES && !wasmTieringGivenByUser()) {
+    const language = TSLanguage.loadSync(compileBaselineOnly(bytes));
+    baselineOnly.add(key);
+    return language;
+  }
+  return TSLanguage.load(bytes);
+}
+
 /** Get or load a language grammar */
 function getLanguageForKey(key: GrammarKey): Promise<TSLanguage> {
   let lang = languageCache.get(key);
   if (!lang) {
-    lang = ensureInit().then(() => TSLanguage.load(getGrammarPath(key)));
+    lang = ensureInit().then(() => loadGrammar(key));
     languageCache.set(key, lang);
     lang.catch(() => languageCache.delete(key));
   }
