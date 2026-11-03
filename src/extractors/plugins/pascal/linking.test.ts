@@ -8,8 +8,10 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
-import type { FileAnalysis } from "../../../types/analysis.js";
+import { applyModuleSearchPaths } from "../../../core/module-search-paths.js";
+import type { FileAnalysis, SubProject } from "../../../types/analysis.js";
 
+/** Analyzes the units (`.pas`/`.dpr`); other files (`.dproj`, `.lpi`) are only written, then read as build files. */
 async function analyzeUnits(units: Record<string, string>): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "pascal-link-"));
   const out = await mkdtemp(join(tmpdir(), "pascal-link-out-"));
@@ -17,6 +19,7 @@ async function analyzeUnits(units: Record<string, string>): Promise<FileAnalysis
   for (const [rel, src] of Object.entries(units)) {
     await mkdir(join(root, dirname(rel)), { recursive: true });
     await writeFile(join(root, rel), src);
+    if (!/\.(?:pas|dpr)$/.test(rel)) continue;
     const result = await analyzeFile({
       file: { absolutePath: join(root, rel), relativePath: rel, language: "pascal" },
       frameworkIds: [],
@@ -28,6 +31,7 @@ async function analyzeUnits(units: Record<string, string>): Promise<FileAnalysis
     } as never);
     analyses.push(result!.analysis);
   }
+  await applyModuleSearchPaths(analyses, root, [{ id: "root", root: "" } as SubProject]);
   return analyses;
 }
 
@@ -282,5 +286,101 @@ describe("Pascal names read without parentheses", () => {
       "ACar.Gloss internal", "ACar.Points internal", "ACar.Shine internal", "ACar.Speed internal",
       "FCar.Shine internal", "Report internal", "Total internal", "qryClubs.IsEmpty internal",
     ]);
+  });
+});
+
+/** The same unit in two platform folders. Left to its name alone, `uses Garage` lands on the Posix one. */
+const PLATFORM_GARAGE = (platform: string) => `unit Garage;
+interface
+type
+  TCar = class
+  public
+    procedure Wash;
+  end;
+implementation
+procedure TCar.Wash; begin { ${platform} } end;
+end.
+`;
+
+const FLEET = `unit Fleet;
+interface
+uses Garage;
+type
+  TFleet = class
+  private
+    FCar: TCar;
+  public
+    procedure Clean(ACar: TCar);
+  end;
+implementation
+procedure TFleet.Clean(ACar: TCar);
+begin
+  ACar.Wash;
+  FCar.Wash;
+end;
+end.
+`;
+
+const dproj = (body: string) => `<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MainSource>League.dpr</MainSource>
+  </PropertyGroup>
+${body}
+</Project>
+`;
+
+const program = (uses: string) => `program League;
+uses
+  Forms,
+  ${uses}
+  Fleet in 'Fleet.pas';
+begin
+  Application.Run;
+end.
+`;
+
+describe("Pascal unit search paths", () => {
+  const units = (extra: Record<string, string>) => ({
+    "Win/Garage.pas": PLATFORM_GARAGE("Win"),
+    "Posix/Garage.pas": PLATFORM_GARAGE("Posix"),
+    "Fleet.pas": FLEET,
+    ...extra,
+  });
+  const targets = (extra: Record<string, string>) => linksFrom(units(extra), "Fleet.pas");
+  // A parameter's and a field's type alike.
+  const washes = (dir: string) => [
+    `TFleet.Clean: ACar.Wash -> ${dir}/Garage.pas::TCar.Wash (injection)`,
+    `TFleet.Clean: FCar.Wash -> ${dir}/Garage.pas::TCar.Wash (injection)`,
+  ];
+
+  it("takes the folder a .dproj's unit search path names", async () => {
+    const project = dproj(`  <PropertyGroup Condition="'$(Base)'!=''">
+    <DCC_UnitSearchPath>Win;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    expect(await targets({ "League.dproj": project, "League.dpr": program("") })).toEqual(washes("Win"));
+  });
+
+  it("takes the file a program's `uses … in` or a .dproj unit reference names, before the search path", async () => {
+    const project = dproj(`  <PropertyGroup>
+    <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    expect(await targets({ "League.dproj": project, "League.dpr": program("Garage in 'Win\\Garage.pas',") })).toEqual(washes("Win"));
+    const referenced = dproj(`  <ItemGroup>
+    <DCCReference Include="win\\garage.pas"/>
+  </ItemGroup>`);
+    expect(await targets({ "League.dproj": referenced, "League.dpr": program("") })).toEqual(washes("Win"));
+  });
+
+  it("takes a Lazarus project's other unit files", async () => {
+    const lpi = `<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <CompilerOptions>
+    <SearchPaths>
+      <OtherUnitFiles Value="win;$(LazarusDir)/lcl"/>
+    </SearchPaths>
+  </CompilerOptions>
+</CONFIG>
+`;
+    expect(await targets({ "League.lpi": lpi })).toEqual(washes("Win"));
   });
 });

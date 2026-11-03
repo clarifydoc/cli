@@ -2974,6 +2974,18 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       const f = resolveTarget(imp.source, consumerFile, pathMap);
       if (f && declAt.has(memberKey(f, typeName))) return f;
     }
+    // Where an import puts a whole unit in scope without naming what it uses (`uses Garage`), the one
+    // imported file declaring the type is the one meant — as `typeFileFor` reads a parameter's type.
+    const consumer = analysisOf.get(consumerFile);
+    if (consumer && pluginFor(consumer.language as Language)?.importsShareScope) {
+      pathMap ??= buildFilePathMap(analyses);
+      const declaring = new Set<string>();
+      for (const imp of consumer.imports) {
+        const f = resolveTarget(imp.source, consumerFile, pathMap);
+        if (f && f !== consumerFile && declAt.has(memberKey(f, typeName))) declaring.add(f);
+      }
+      if (declaring.size === 1) return [...declaring][0]!;
+    }
     return null;
   };
   // Only a declaration in the consumer's own type space: a Java field typed

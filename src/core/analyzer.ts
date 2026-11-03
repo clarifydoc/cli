@@ -142,6 +142,7 @@ import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from
 import { attachWebhookRoutes } from "./webhook-routes.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { applyAutoImports } from "../extractors/imports-exports/auto-imports.js";
+import { applyModuleSearchPaths } from "./module-search-paths.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
@@ -1076,6 +1077,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Names a framework puts in scope without an import line, as the imports they stand for.
   const autoImportCount = applyAutoImports(allAnalyses);
   if (autoImportCount > 0 && verbose) progress.detail(`  auto-imported names: ${autoImportCount}`);
+  // A bare import two files answer to, settled by the project's build files (search paths, named unit files).
+  const searchPathCount = await applyModuleSearchPaths(allAnalyses, projectRoot, subProjects);
+  if (searchPathCount > 0 && verbose) progress.detail(`  imports placed by build search paths: ${searchPathCount}`);
 
   const importIndex = buildImportIndex(allAnalyses);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));

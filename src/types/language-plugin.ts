@@ -1024,8 +1024,35 @@ export interface ImportResolveContext {
   namedImportOf?(file: string, name: string): { source: string; name: string } | null;
 }
 
+/**
+ * Where a language's toolchain finds the module a bare import names, as the project's own build files
+ * state it. Pure data and a pure parser: it lives on the static manifest.
+ */
+export interface ModuleSearchPathSpec {
+  /** Build files read at each sub-project root (`*.dproj`), literal names or globs with `glob`. */
+  files: readonly string[];
+  glob?: { deep: number; limit: number };
+  /**
+   * What one build file says, paths as written relative to the file's own directory: `dirs` searched in
+   * order for a module a bare import names (Delphi `DCC_UnitSearchPath`, Lazarus `OtherUnitFiles`), and
+   * `files` that are the module their name says for the whole project (a `.dproj` `DCCReference`).
+   */
+  parse(text: string, path: string): { dirs: string[]; files: string[] };
+  /**
+   * An import that names its module and that module's file (Pascal `uses Garage in 'Win\Garage.pas'`,
+   * read as a path source with the module as its one specifier) fixes the file for the whole sub-project.
+   */
+  pathImportsPin?: boolean;
+}
+
 export interface LanguagePluginManifest {
   language: Language;
+  /**
+   * Where the toolchain looks for a module a bare import names when two files of the project answer to it
+   * (`Win/Garage.pas` and `Posix/Garage.pas`): read from the build files at each sub-project root
+   * (`core/module-search-paths.ts`). Unset: the generic path rules decide.
+   */
+  moduleSearchPaths?: ModuleSearchPathSpec;
   /**
    * The project file an import names, for a language whose imports name
    * modules by a path of its own (`crate::util`, `other_crate::persistence`):
