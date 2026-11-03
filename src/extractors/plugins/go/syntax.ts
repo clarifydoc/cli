@@ -22,6 +22,43 @@ export function stripGoComment(line: string): string {
   return line;
 }
 
+/** A selector call written out (`r.GET(`): code, never a value a literal holds. */
+const SELECTOR_CALL = /[A-Za-z_]\w*\s*\.\s*[A-Za-z_]\w*\s*\(/;
+
+/**
+ * The lines with each one-line string literal that holds code blanked — one whose text quotes a string of its own
+ * (`` `r.GET("/x", h)` ``, `"r.PUT(\"/x\", h)"`) or writes out a selector call — delimiters and length kept, so a
+ * route scan never reads a registration a template, a test sample or an error message spells. A path, a prefix or a
+ * content type quotes nothing and is kept. Expects comments and multi-line literals blanked already (each literal
+ * left opens and closes on its line).
+ */
+export function blankCodeInStrings(lines: readonly string[]): string[] {
+  return lines.map((line) => {
+    if (!/["`]/.test(line)) return line;
+    let out = "";
+    let at = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]!;
+      if (c === "'") {
+        // A rune: `'"'` holds a quote and opens no string.
+        const m = /^'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{1,3}|.)|[^\\'])'/.exec(line.slice(i));
+        if (m) i += m[0].length - 1;
+        continue;
+      }
+      if (c !== '"' && c !== "`") continue;
+      let k = i + 1;
+      while (k < line.length && line[k] !== c) k += c === '"' && line[k] === "\\" ? 2 : 1;
+      const text = line.slice(i + 1, Math.min(k, line.length));
+      if (/["`]/.test(text) || SELECTOR_CALL.test(text)) {
+        out += line.slice(at, i + 1) + " ".repeat(text.length);
+        at = i + 1 + text.length;
+      }
+      i = k;
+    }
+    return out + line.slice(at);
+  });
+}
+
 /**
  * Index of the bracket closing the one at `open` (`(`, `[` or `{`), skipping
  * strings, raw strings and runes; -1 when it never closes.
