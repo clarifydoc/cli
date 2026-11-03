@@ -256,11 +256,15 @@ export function signatureChanges(
   links: readonly SymbolLink[],
 ): SignatureChange[] {
   const sureCallers = new Map<string, number>();
+  // A function handed on by name (`passes`) still needs to exist and be visible, but that site
+  // passes it no arguments: only invoking callers judge an arity change.
+  const sureInvokers = new Map<string, number>();
   const callerFiles = new Map<string, Set<string>>();
   for (const l of links) {
     if (l.navigational || l.sourceSymbol.startsWith("(") || l.confidence !== "EXTRACTED") continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
     sureCallers.set(key, (sureCallers.get(key) ?? 0) + 1);
+    if (l.relation !== "passes") sureInvokers.set(key, (sureInvokers.get(key) ?? 0) + 1);
     (callerFiles.get(key) ?? callerFiles.set(key, new Set()).get(key)!).add(l.sourceFile);
   }
   const before_ = new Map([...before].map(([file, spans]) => [file, signatures(spans)]));
@@ -294,7 +298,8 @@ export function signatureChanges(
         const twins = added.filter(([name, s2]) => sameClass(name, symbol) && s2.params === sig.params && (sig.total > 0 || s2.returnKey === sig.returnKey));
         out.push({ file, symbol, line: sig.line, kind: "removed", callers, breaking: callers > 0, ...(twins.length === 1 ? { renamedTo: twins[0]![0] } : {}) });
       } else if (cur.required !== sig.required && !cur.variadic) {
-        out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers, breaking: callers > 0 && cur.required > sig.required });
+        const invokers = sureInvokers.get(`${file}::${symbol}`) ?? 0;
+        out.push({ file, symbol, line: cur.line, kind: "arity", before: sig.required, after: cur.required, callers: invokers, breaking: invokers > 0 && cur.required > sig.required });
       } else if (sig.exported === true && cur.exported === false) {
         // Callers in its own file keep it; the others lose it.
         const outside = [...(callerFiles.get(`${file}::${symbol}`) ?? [])].filter((f) => f !== file);

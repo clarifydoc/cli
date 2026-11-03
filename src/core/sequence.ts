@@ -94,7 +94,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   const fanOut = opts.fanOut ?? 12;
   const calls = new Map<string, SymbolLink[]>();
   for (const l of summary.symbolLinks ?? []) {
-    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.navigational) continue;
+    if (l.relation === "reference" || l.relation === "passes" || l.sourceSymbol === "(reference)" || l.navigational) continue;
     const k = `${l.sourceFile}::${l.sourceSymbol}`;
     (calls.get(k) ?? calls.set(k, []).get(k)!).push(l);
   }
@@ -186,7 +186,7 @@ export function sequenceFiles(summary: ProjectAnalysis, seed: { file: string; sy
   const depth = opts.depth ?? 8;
   const calls = new Map<string, SymbolLink[]>();
   for (const l of summary.symbolLinks ?? []) {
-    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.navigational) continue;
+    if (l.relation === "reference" || l.relation === "passes" || l.sourceSymbol === "(reference)" || l.navigational) continue;
     const k = `${l.sourceFile}::${l.sourceSymbol}`;
     (calls.get(k) ?? calls.set(k, []).get(k)!).push(l);
   }

@@ -3460,6 +3460,61 @@ function shadowedLocally(analysis: FileAnalysis, sourceSymbol: string, name: str
   return !!fn && (fn.params.some((p) => p.name === name) || !!fn.localTypes?.some((l) => l.name === name));
 }
 
+/** Resolutions that guess by name alone: a name handed on (`passes`) never takes one. */
+const GUESSING_STRATEGIES: ReadonlySet<SymbolLinkStrategy> = new Set(["unique-global", "unique-global-blind", "type-argument"]);
+
+/**
+ * A name handed on (`register(onSave)`, `onClick={saveClub}`) links as `passes`, and only
+ * when it resolved without guessing to something that can run: a function, a method or a
+ * class (a component). A value — an imported constant array, a module object — is no edge.
+ */
+function resolvePassedName(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+  depth = 0,
+): SymbolLink | null {
+  const { passed: _passed, returnedAs: _returnedAs, ...asCall } = call;
+  const link = resolveCallToDefinition(sourceFile, sourceSymbol, asCall, analysis, ctx);
+  if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
+  const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  if (link.strategy === "factory-via") {
+    // `const m = useUpdateMutation(); save(m)`: the factory's whole result handed on — what it built.
+    if (call.member === undefined) return call.name.includes(".") ? null : { ...link, relation: "passes" };
+    // `const { latest } = useClubActions(); onClick={latest}`: the factory's module declares no
+    // `latest`, so the name stands for what the factory returns under that key
+    // (`return { latest: loadLatest }`). A value it returns (`players`, `token`), or a member read
+    // of one (`data.page`), is no function it hands back, and draws no edge.
+    if (call.name.includes(".") || depth >= 3) return null;
+    const factory = analysisAt.get(link.targetFile);
+    const key = call.member;
+    const returned = factory && findEnclosingCallable(factory, link.targetSymbol)?.calls.find((c) => c.passed === "return" && c.returnedAs === key);
+    if (!factory || !returned) return null;
+    const inner = resolvePassedName(link.targetFile, link.targetSymbol, returned, factory, ctx, depth + 1);
+    return inner && { ...inner, sourceFile, sourceSymbol, sourceLine: call.line, callName: call.name, confidence: "INFERRED", strategy: "factory-via" };
+  }
+  if (link.relation !== "calls" && link.relation !== "instantiates" && link.relation !== "dispatch") return null;
+  const target = analysisAt.get(link.targetFile);
+  if (!target || !isCallableSymbol(target, link.targetSymbol)) return null;
+  return { ...link, relation: "passes" };
+}
+
+/**
+ * Whether `symbol` names a function, a method (`Class.method`) or a class the file declares — or the
+ * module's own default export, which is what a component file is (`mount(ClubCard)` on `ClubCard.vue`).
+ */
+function isCallableSymbol(analysis: FileAnalysis, symbol: string): boolean {
+  if (symbol === "default") return analysis.exports.some((e) => e.name === "default");
+  if (analysis.functions.some((f) => f.name === symbol)) return true;
+  for (const cls of analysis.classes) {
+    if (cls.name === symbol) return true;
+    if (symbol.startsWith(`${cls.name}.`) && cls.methods.some((m) => `${cls.name}.${m.name}` === symbol)) return true;
+  }
+  return false;
+}
+
 /**
  * Try to resolve a single call to its definition site.
  * Returns a SymbolLink if resolution succeeds, null otherwise.
@@ -3473,6 +3528,7 @@ function resolveCallToDefinition(
   /** A name that REFERS to a callable (a route's handler), not a call written in a body. */
   reference = false,
 ): SymbolLink | null {
+  if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"

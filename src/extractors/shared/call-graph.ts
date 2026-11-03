@@ -174,6 +174,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   // walk's.
   const candidates: Array<{
     name: string; line: number; column: number; isReference: boolean;
+    passed?: "argument" | "attribute" | "return";
+    ownMember?: boolean;
+    returnedAs?: string;
     receiver?: { type: string; qualifier?: string } | null;
     key?: string | null;
     args?: string[] | null;
@@ -183,6 +186,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
+  // Names destructured from a call's result: what a factory hands back, answered by its module.
+  const fromFactory = new Set<string>();
 
   const push = (
     name: string,
@@ -194,11 +199,15 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argCount?: number | null,
     argOrigins?: CallArgOrigin[] | null,
     argKinds?: string[] | null,
+    passed?: "argument" | "attribute" | "return",
   ) => {
-    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, receiver, key, args, argCount, argOrigins, argKinds });
+    candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, passed, receiver, key, args, argCount, argOrigins, argKinds });
   };
-  const addResult = (name: string, node: Node) => {
-    if (name) push(name, node, false);
+  const addResult = (name: string, node: Node, passed?: "attribute" | "return", returnedAs?: string) => {
+    if (!name) return;
+    if (passed) push(name, node, true, null, null, null, null, null, null, passed);
+    else push(name, node, false);
+    if (returnedAs) candidates[candidates.length - 1]!.returnedAs = returnedAs;
   };
 
   function walk(node: Node, isRoot: boolean) {
@@ -228,15 +237,20 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
         if (args) {
           for (const arg of args.children) {
             if (arg.type === "identifier" && /^[a-zA-Z_]/.test(arg.text)) {
-              push(arg.text, arg, true);
+              push(arg.text, arg, true, null, null, null, null, null, null, "argument");
             }
           }
         }
+      }
+      for (const p of hooks?.passedArguments?.(node) ?? []) {
+        push(p.name, p.node, true, null, null, null, null, null, null, "argument");
+        if (p.ownMember) candidates[candidates.length - 1]!.ownMember = true;
       }
     }
 
     // Language extras: JSX component references, Python decorators, etc.
     hooks?.collectExtraCalls?.(node, addResult, resolve);
+    for (const name of hooks?.destructuredFromCall?.(node) ?? []) fromFactory.add(name);
 
     for (const child of node.children) {
       walk(child, false);
@@ -254,7 +268,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const seen = new Set<string>();
   const held: HeldCall[] = [];
   for (const c of candidates) {
-    if (c.isReference && boundHere.has(c.name)) continue;
+    // A name handed on that the scope binds (a parameter, a local, `props` in `props.onSave`)
+    // is a value, never the project function of that name.
+    const head = c.name.split(".")[0]!;
+    if (c.isReference && !c.ownMember && boundHere.has(head) && !(c.passed && fromFactory.has(head))) continue;
     // A keyed dispatch is one call per key: `dispatch('a/x')` and `dispatch('b/y')` reach different handlers.
     // So is a call reported with its arguments: `Fill(qryA)` and `Fill(qryB)` pass different datasets.
     // So is a call with another argument count: `save(o)` and `save(o, true)` may be two overloads
@@ -266,7 +283,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // So is a call on a receiver whose type the site states apart from the rest (a block's own
     // `let v = new Truck()` shadowing a parameter `v: Car`): `v.drive()` there is another method.
     const typed = c.receiver?.type ? `\0<${c.receiver.type}>` : "";
-    const seenKey = c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
+    // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
+    const seenKey = c.passed ? `${c.name}\0passed` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
@@ -274,6 +292,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (seen.has(seenKey) || seen.has(site)) continue;
     seen.add(site);
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
+    if (c.passed) call.passed = c.passed;
+    if (c.returnedAs) call.returnedAs = c.returnedAs;
     if (!c.isReference && localHere.has(c.name)) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
@@ -299,7 +319,17 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     results.push(call);
   }
   if (held.length > 0) HELD_NOISE_CALLS.set(results, held);
-  return results;
+  // A name the body also invokes is a call; handing it on as well adds nothing.
+  const invoked = new Set(results.filter((r) => !r.passed).map((r) => r.name));
+  if (!results.some((r) => r.passed && invoked.has(r.name))) return results;
+  const kept = results.filter((r) => !(r.passed && invoked.has(r.name)));
+  // Held noise calls are re-inserted at their recorded positions; keep those valid.
+  if (held.length > 0) {
+    HELD_NOISE_CALLS.delete(results);
+    for (const h of held) h.index -= results.slice(0, h.index).filter((r) => r.passed && invoked.has(r.name)).length;
+    HELD_NOISE_CALLS.set(kept, held);
+  }
+  return kept;
 }
 
 /** A call dropped as noise by its leaf name, and where it would have stood. */

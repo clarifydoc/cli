@@ -34,6 +34,14 @@ export function extractJsVariableAliases(
   const conflicted = new Set<string>();
   const { importMap } = buildImportMaps(imports);
 
+  // `const [rows, refresh] = useMatches()`: an element is named by its position (`[1]`), which no
+  // function of the factory's module bears, so a call or handler resolves to the factory itself.
+  function bindPositions(pattern: Node, source: string, factory: string) {
+    pattern.namedChildren.forEach((el, i) => {
+      if (el.type === "identifier") bind(el.text, source, factory, `[${i}]`);
+    });
+  }
+
   function bind(name: string, source: string, factory: string, member?: string) {
     if (conflicted.has(name)) return;
     const prev = aliases.get(name);
@@ -122,7 +130,7 @@ export function extractJsVariableAliases(
             if (nameNode.type === "identifier") bind(nameNode.text, "", fnName);
             else if (nameNode.type === "object_pattern") {
               for (const prop of nameNode.namedChildren) {
-                if (prop.type === "shorthand_property_identifier_pattern") bind(prop.text, "", fnName);
+                if (prop.type === "shorthand_property_identifier_pattern") bind(prop.text, "", fnName, prop.text);
                 else if (prop.type === "pair_pattern") {
                   const local = prop.childForFieldName("value");
                   if (local?.type === "identifier") bind(local.text, "", fnName, memberKey(prop, local.text));
@@ -146,12 +154,16 @@ export function extractJsVariableAliases(
             // `{ a }` → shorthand_property_identifier_pattern "a";
             // `{ a: b }` → pair_pattern whose value is the local name.
             if (prop.type === "shorthand_property_identifier_pattern") {
-              bind(prop.text, source, fnName);
+              // The key is recorded even unrenamed: a destructured member, not the factory's whole result.
+              bind(prop.text, source, fnName, prop.text);
             } else if (prop.type === "pair_pattern") {
               const local = prop.childForFieldName("value");
               if (local?.type === "identifier") bind(local.text, source, fnName, memberKey(prop, local.text));
             }
           }
+        } else if (nameNode.type === "array_pattern" && PROJECT_SPECIFIER.test(source)) {
+          // Only a project factory: `useState()`'s setter is the library's, and stays as it was.
+          bindPositions(nameNode, source, fnName);
         }
       }
     }
@@ -165,8 +177,11 @@ export function extractJsVariableAliases(
   return aliases;
 }
 
-/** The key a `{ key: local }` pattern destructures, when it renames it. */
+/** A module specifier naming project code: relative, or a conventional source alias (`@/`, `~/`, `#/`). */
+const PROJECT_SPECIFIER = /^(?:\.|[@~#]\/)/;
+
+/** The key a `{ key: local }` pattern destructures. */
 function memberKey(pair: Node, local: string): string | undefined {
   const key = pair.childForFieldName("key");
-  return key?.type === "property_identifier" && key.text !== local ? key.text : undefined;
+  return key?.type === "property_identifier" ? key.text : local;
 }

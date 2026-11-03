@@ -884,6 +884,20 @@ export interface CallInfo {
    */
   boundLocally?: true;
   /**
+   * The name is handed on, not invoked here: an argument (`register(onSave)`), a JSX
+   * attribute value (`onClick={saveClub}`, `renderItem={CarTile}`), a value the function
+   * returns (`return { save, latest: loadLatest }`, `return [state, refresh]`). The linker links it
+   * as `relation: "passes"`, and only to a function, method or class it resolves without
+   * guessing. Absent: the site calls it.
+   */
+  passed?: "argument" | "attribute" | "return";
+  /**
+   * For a `passed: "return"` name: the key the function returns it under — `latest` in
+   * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
+   * that key (`const { latest } = useClubActions()`) is handed this function.
+   */
+  returnedAs?: string;
+  /**
    * The type the call's receiver is, when the call expression itself says
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,
@@ -2764,7 +2778,14 @@ export type SymbolLinkRelation =
   /** Resolved through a framework's indirection rather than a direct call. */
   | "dispatch"
   /** A reverse edge from an import back to the symbol it names, not a call. */
-  | "reference";
+  | "reference"
+  /**
+   * A function, method or class handed on by name, not invoked at that line
+   * (`register(onSave)`, `onClick={saveClub}`). Reach follows it — the handler runs
+   * when the event fires —; call counts, arities, argument origins and sequence
+   * diagrams do not.
+   */
+  | "passes";
 
 export interface SymbolLink {
   sourceFile: string;

@@ -109,7 +109,7 @@ export function computeParamColumns(input: {
   if (statementsOf.size === 0) return [];
   const linksFrom = new Map<string, SymbolLink[]>();
   for (const l of input.symbolLinks) {
-    if (l.relation === "reference" || l.relation === "http" || l.navigational) continue;
+    if (l.relation === "reference" || l.relation === "passes" || l.relation === "http" || l.navigational) continue;
     const k = `${l.sourceFile}::${l.sourceSymbol}`;
     (linksFrom.get(k) ?? linksFrom.set(k, []).get(k)!).push(l);
   }

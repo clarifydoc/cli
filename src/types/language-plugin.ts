@@ -848,6 +848,14 @@ export interface CallExtractionHooks {
   /** Call node types whose arguments are scanned for callback identifiers (also unioned). */
   callbackArgNodeTypes?: readonly string[];
   /**
+   * Arguments of a call node (one of `callNodeTypes`) that hand a function on beyond a bare
+   * identifier: a member (`register(this.onSave)`, `Thread(target=self.run)`), a method
+   * reference (`this::save`, `::save`), a method group (`Register(Save)`). `name` is spelled the
+   * way a call of it would be (`this.save`, `Club.save`). `ownMember` marks a member of the
+   * instance itself (`self.run`), which a bound receiver parameter does not turn into a value.
+   */
+  passedArguments?(call: Node): Array<{ name: string; node: Node; ownMember?: boolean }>;
+  /**
    * Where this grammar binds a name locally, so the callback-argument scan can
    * tell a function passed by reference (`items.map(formatUser)`) from a
    * value passed by name (`save(user)`, `repo.find(user_id)`): an identifier
@@ -883,12 +891,19 @@ export interface CallExtractionHooks {
   /**
    * Extra call collection beyond plain call expressions (JSX component
    * references, Python decorators). `resolve` is this language's resolver.
+   * `passed` marks a name handed on rather than invoked (a JSX attribute value, a returned function).
    */
   collectExtraCalls?(
     node: Node,
-    addResult: (name: string, node: Node) => void,
+    addResult: (name: string, node: Node, passed?: "attribute" | "return", returnedAs?: string) => void,
     resolve: (node: Node) => string | null,
   ): void;
+  /**
+   * The local names a declaration binds from what a call returns (`const { save } = useClubActions()`,
+   * `const [rows, refresh] = useMatches()`): a function the factory hands back, so a name handed on
+   * from there (`onClick={save}`) is kept for the factory's module to answer.
+   */
+  destructuredFromCall?(node: Node): string[] | null;
   /**
    * Classify auto-imported globals before import lookup (e.g. Vue compiler
    * macros). Return the cross-file target, or null to fall through.

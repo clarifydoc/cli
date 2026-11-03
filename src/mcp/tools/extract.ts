@@ -128,7 +128,7 @@ export function extractTool(ctx: ToolContext): McpTool {
       // not "what it calls"). Every overload of a name the call can mean is included.
       const bySource = new Map<string, SymbolLink[]>();
       for (const l of links) {
-        if (l.relation && l.relation !== "calls") continue;
+        if (l.relation && l.relation !== "calls" && l.relation !== "passes") continue;
         const k = symbolKey(l.sourceFile, l.sourceSymbol);
         const list = bySource.get(k);
         if (list) list.push(l);

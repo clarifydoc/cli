@@ -8,6 +8,17 @@ export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
   nestedScopeTypes: ["function_definition", "class_definition", "lambda"],
   callbackArgNodeTypes: ["call"],
+  // `Thread(target=worker)`, `register(self.handle)`, `schedule(cb=self.tick)`: a function handed on.
+  passedArguments(call) {
+    const out: Array<{ name: string; node: Node; ownMember?: boolean }> = [];
+    for (const arg of call.childForFieldName("arguments")?.namedChildren ?? []) {
+      const value = arg.type === "keyword_argument" ? arg.childForFieldName("value") : arg;
+      if (!value) continue;
+      if (value.type === "attribute" && /^(?:self|cls)\.[A-Za-z_]\w*$/.test(value.text)) out.push({ name: value.text, node: value, ownMember: true });
+      else if (arg.type === "keyword_argument" && value.type === "identifier" && /^[A-Za-z_]/.test(value.text)) out.push({ name: value.text, node: value });
+    }
+    return out;
+  },
   // A name the function binds itself is a value when passed as an argument,
   // not a callback reference (see CallExtractionHooks.bindingSites).
   bindingSites: {

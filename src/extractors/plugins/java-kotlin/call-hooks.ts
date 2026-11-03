@@ -213,6 +213,23 @@ function javaMethodReference(node: Node, addResult: (name: string, node: Node) =
   addResult(`${target.text.replace(/\s+/g, "")}.${member.text}`, node);
 }
 
+/**
+ * `register(::save)`, `bus.on(Club::save)`, `make(::Club)`: a function or constructor handed on by a
+ * callable reference (`Club::class` is a class literal, never one).
+ */
+function kotlinCallableReferences(call: Node): Array<{ name: string; node: Node }> {
+  const out: Array<{ name: string; node: Node }> = [];
+  const suffix = call.namedChildren.find((c) => c.type === "call_suffix");
+  const args = suffix?.namedChildren.find((c) => c.type === "value_arguments");
+  for (const arg of args?.namedChildren ?? []) {
+    const ref = arg.namedChildren.find((c) => c.type === "callable_reference");
+    const m = ref ? /^([A-Z][\w.]*)?::([A-Za-z_]\w*)$/.exec(ref.text.replace(/\s+/g, "")) : null;
+    if (!ref || !m || m[2] === "class") continue;
+    out.push({ name: m[1] ? `${m[1]}.${m[2]}` : m[2]!, node: ref });
+  }
+  return out;
+}
+
 export const kotlinCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call_expression"]),
   // No nested scopes: Kotlin lambdas and anonymous functions have no symbol
@@ -224,6 +241,7 @@ export const kotlinCallHooks: CallExtractionHooks = {
   // calls belong to no extracted member.)
   nestedScopeTypes: [],
   callbackArgNodeTypes: ["call_expression"],
+  passedArguments: kotlinCallableReferences,
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: kotlinReceiverType,

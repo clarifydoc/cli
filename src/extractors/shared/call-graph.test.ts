@@ -166,3 +166,105 @@ describe("classifyCalls — call kinds a receiver's name got wrong", () => {
     expect(classify(["request.get"], "javascript")).toEqual(["request.get:api-call"]);
   });
 });
+
+/** Calls of the first function declaration in a TSX source, with how each name is used. */
+async function usesIn(src: string): Promise<string[]> {
+  await ensureLanguagesLoaded(["typescript"]);
+  const tree = await parseSource(src, "typescript", "f.tsx");
+  const find = (n: Node): Node | null => {
+    if (n.type === "function_declaration") return n;
+    for (const c of n.children) {
+      const hit = find(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return extractCalls(find(tree.rootNode)!.childForFieldName("body"), "typescript")
+    .map((c) => (c.passed ? `${c.name}:${c.passed}` : c.name));
+}
+
+// A name handed on — an argument, a JSX attribute value — is marked `passed`, so the
+// linker records it as `passes`, not as a call made at that line.
+describe("extractCalls — names handed on", () => {
+  it("marks a callback argument passed, and a JSX attribute naming a function", async () => {
+    expect(await usesIn(`
+function ClubPage({ onSave }) {
+  register(onMatchLoaded);
+  return <div>
+    <button onClick={saveClub}>Save</button>
+    <Toolbar onRefresh={clubs.loadLatest} renderItem={CarTile} onSave={onSave} label={"x"} />
+  </div>;
+}`)).toEqual(["register", "onMatchLoaded:argument", "saveClub:attribute", "Toolbar", "clubs.loadLatest:attribute", "CarTile:attribute"]);
+  });
+
+  it("keeps one call when the body also invokes the name it hands on", async () => {
+    expect(await usesIn(`
+function boot() {
+  register(kickoff);
+  kickoff();
+}`)).toEqual(["register", "kickoff"]);
+  });
+
+  it("drops a handed-on member of a value the scope binds (`props.onSave`)", async () => {
+    expect(await usesIn(`
+function Garage(props) {
+  return <button onClick={props.onSave}>Park</button>;
+}`)).toEqual([]);
+  });
+});
+
+/** Calls in the first node of `type`, with how each name is used. */
+async function usesInLang(src: string, language: TreeSitterLanguage, type: string, field = "body"): Promise<string[]> {
+  await ensureLanguagesLoaded([language]);
+  const tree = await parseSource(src, language, "f");
+  const find = (n: Node): Node | null => {
+    if (n.type === type) return n;
+    for (const c of n.children) {
+      const hit = find(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const at = find(tree.rootNode)!;
+  return extractCalls(field ? at.childForFieldName(field) : at, language).map((c) => (c.passed ? `${c.name}:${c.passed}` : c.name));
+}
+
+describe("extractCalls — names handed on, per language", () => {
+  it("TypeScript: a hook's returned functions, a handler destructured from a hook, the instance's own method", async () => {
+    expect(await usesIn(`
+function useClubActions() {
+  const save = () => saveClub();
+  const [rows, setRows] = useState([]);
+  return { save, latest: loadLatest, rows };
+}`)).toEqual(["useState", "save:return", "loadLatest:return", "rows:return"]);
+    expect(await usesIn(`
+function HookPage({ label }) {
+  const { save } = useClubActions();
+  const [matches, refresh] = useMatches();
+  window.addEventListener("resize", this.onResize);
+  return <button onClick={save} title={label}>{refresh.length}</button>;
+}`)).toEqual(["useClubActions", "useMatches", "window.addEventListener", "this.onResize:argument", "save:attribute"]);
+  });
+
+  it("Python: a keyword callback and the instance's own method; a parameter stays a value", async () => {
+    expect(await usesInLang(`
+def start(self, timeout):
+    Thread(target=kick_off, name=timeout)
+    register(self.handle, cb=self.tick)
+`, "python", "function_definition")).toEqual(["Thread", "kick_off:argument", "register", "self.handle:argument", "self.tick:argument"]);
+  });
+
+  it("Kotlin: callable references, never a class literal", async () => {
+    expect(await usesInLang(`
+fun wire() {
+  register(::save)
+  bus.on(Club::promote, Club::class)
+}`, "kotlin", "function_body", "")).toEqual(["register", "save:argument", "bus.on", "Club.promote:argument"]);
+  });
+
+  it("C#: method groups, never a camelCase value", async () => {
+    expect(await usesInLang(`
+class Wiring { void Wire(int count) { Register(Save); Bus.On(this.Promote); Run(count, total); } }
+`, "csharp", "method_declaration")).toEqual(["Register", "Save:argument", "Bus.On", "this.Promote:argument", "Run"]);
+  });
+});

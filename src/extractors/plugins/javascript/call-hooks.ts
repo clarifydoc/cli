@@ -10,6 +10,35 @@ const VUE_COMPILER_MACROS = new Set([
 ]);
 
 /** Shared by the typescript and javascript metas. */
+/** A plain or dotted name (`saveClub`, `clubs.loadLatest`, `this.save`), never `undefined`/`null`-like literals. */
+const JSX_PASSED_NAME = /^(?!undefined$|null$|true$|false$)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+
+/**
+ * The names a returned object or array hands back, with the key a caller destructures each by:
+ * `{ save, latest: loadLatest }` → save/`save`, loadLatest/`latest`; `[rows, refresh]` → refresh/`[1]`.
+ */
+function returnedNames(expr: Node | undefined): Array<{ value: Node; key: string }> {
+  while (expr && (expr.type === "parenthesized_expression" || expr.type === "as_expression" || expr.type === "satisfies_expression")) {
+    expr = expr.namedChildren[0];
+  }
+  if (!expr) return [];
+  const named = (n: Node | null | undefined): n is Node =>
+    !!n && (n.type === "identifier" || n.type === "member_expression") && JSX_PASSED_NAME.test(n.text);
+  if (expr.type === "object") {
+    return expr.namedChildren.flatMap((p) => {
+      if (p.type === "shorthand_property_identifier") return [{ value: p, key: p.text }];
+      const key = p.type === "pair" ? p.childForFieldName("key") : null;
+      const value = p.type === "pair" ? p.childForFieldName("value") : null;
+      return key && /^(?:property_identifier|string)$/.test(key.type) && named(value)
+        ? [{ value, key: key.text.replace(/^["']|["']$/g, "") }] : [];
+    });
+  }
+  if (expr.type === "array") {
+    return expr.namedChildren.flatMap((el, i) => (named(el) ? [{ value: el, key: `[${i}]` }] : []));
+  }
+  return [];
+}
+
 export const javascriptCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call_expression", "new_expression"]),
   keyOf: dispatchKeyOf,
@@ -54,15 +83,49 @@ export const javascriptCallHooks: CallExtractionHooks = {
     object_assignment_pattern: ["left"],
   },
 
-  // Generic name resolution covers JS/TS; the extra call shape is JSX:
-  // <ComponentName ... /> counts as using ComponentName.
+  // Generic name resolution covers JS/TS; the extra call shapes are JSX:
+  // <ComponentName ... /> counts as using ComponentName, and an attribute whose
+  // value names a function (`onClick={saveClub}`, `renderItem={CarTile}`,
+  // `onRefresh={clubs.loadLatest}`) hands that function on.
   collectExtraCalls(node, addResult) {
     if (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element") {
       const nameNode = node.childForFieldName("name") ?? node.child(1);
       if (nameNode && /^[A-Z]/.test(nameNode.text)) {
         addResult(nameNode.text, nameNode);
       }
+    } else if (node.type === "jsx_attribute") {
+      const value = node.namedChildren.find((c) => c.type === "jsx_expression")?.namedChildren[0];
+      if (value && (value.type === "identifier" || value.type === "member_expression") && JSX_PASSED_NAME.test(value.text)) {
+        addResult(value.text, value, "attribute");
+      }
+    } else if (node.type === "return_statement") {
+      // What a hook or factory hands back: `return { save, latest: loadLatest }`, `return [rows, refresh]`.
+      for (const { value, key } of returnedNames(node.namedChildren[0])) addResult(value.text, value, "return", key);
     }
+  },
+
+  // `addEventListener("resize", this.onResize)`: the instance's own method, handed on.
+  passedArguments(call) {
+    if (call.type !== "call_expression") return [];
+    const args = call.childForFieldName("arguments");
+    return (args?.namedChildren ?? [])
+      .filter((a) => a.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(a.text))
+      .map((a) => ({ name: a.text, node: a, ownMember: true }));
+  },
+
+  destructuredFromCall(node) {
+    if (node.type !== "variable_declarator") return null;
+    const pattern = node.childForFieldName("name");
+    let value = node.childForFieldName("value");
+    if (value?.type === "await_expression") value = value.namedChildren[0] ?? null;
+    if (!pattern || value?.type !== "call_expression") return null;
+    if (pattern.type === "object_pattern") {
+      return pattern.namedChildren.flatMap((p) =>
+        p.type === "shorthand_property_identifier_pattern" ? [p.text]
+          : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? [p.childForFieldName("value")!.text] : []);
+    }
+    if (pattern.type === "array_pattern") return pattern.namedChildren.filter((p) => p.type === "identifier").map((p) => p.text);
+    return null;
   },
 
   classifyAutoImported(callName) {

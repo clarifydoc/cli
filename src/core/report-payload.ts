@@ -192,7 +192,7 @@ export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
 
 /** Wire alphabet for `SymbolLink.relation`, 1-based like the strategies. Append only. */
 export const SYMBOL_LINK_RELATIONS: readonly string[] = [
-  "calls", "instantiates", "implements", "http", "mq", "dispatch", "reference",
+  "calls", "instantiates", "implements", "http", "mq", "dispatch", "reference", "passes",
 ];
 
 /**

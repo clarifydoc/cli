@@ -994,7 +994,9 @@ function walk(
         const fan = fanOf(key);
         rows.push(
           `${otherSymbol}() ${loc(otherFile, otherLine)} — ${
-            direction === "callers" ? "calls" : "called from"
+            edge.relation === "passes"
+              ? (direction === "callers" ? "passes" : "passed from")
+              : (direction === "callers" ? "calls" : "called from")
           } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
             fan >= HUB_FAN ? ` [hub: ${fan} ${direction}]` : ""
           }`,

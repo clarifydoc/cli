@@ -18,8 +18,25 @@ function implicitCreationName(node: Node): string | null {
   return `new ${type.text}`;
 }
 
+/**
+ * A method group handed on: `Register(Save)`, `Bus.On(this.Save)`. Methods are PascalCase where locals
+ * and parameters are not; a property of that spelling is no callable, and the linker drops it.
+ */
+function csharpMethodGroups(call: Node): Array<{ name: string; node: Node; ownMember?: boolean }> {
+  const args = call.childForFieldName("arguments");
+  const out: Array<{ name: string; node: Node; ownMember?: boolean }> = [];
+  for (const arg of args?.namedChildren ?? []) {
+    if (arg.type !== "argument" || arg.namedChildren.length !== 1) continue;
+    const value = arg.namedChildren[0]!;
+    if (value.type === "identifier" && /^[A-Z]\w*$/.test(value.text)) out.push({ name: value.text, node: value });
+    else if (value.type === "member_access_expression" && /^this\.[A-Z]\w*$/.test(value.text)) out.push({ name: value.text, node: value, ownMember: true });
+  }
+  return out;
+}
+
 export const csharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["invocation_expression", "object_creation_expression", "implicit_object_creation_expression"]),
+  passedArguments: csharpMethodGroups,
   nestedScopeTypes: ["local_function_statement", "anonymous_method_expression", "lambda_expression"],
   // A lambda passed as an argument (a LINQ predicate, a DI factory
   // `sp => new Foo(..)`, a `Task.Run(() => …)`, an event handler) runs on

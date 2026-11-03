@@ -142,7 +142,8 @@ export function Garage() {
 }`;
     const tree = await parse(src);
     const aliases = extractJsVariableAliases(tree, IMPORTS);
-    expect(aliases.get("addToGarage")).toEqual({ source: "../context/AppContext", factory: "useAppContext" });
+    // A destructured member keeps its key, renamed or not: it is part of the result, not the whole of it.
+    expect(aliases.get("addToGarage")).toEqual({ source: "../context/AppContext", factory: "useAppContext", member: "addToGarage" });
     expect(aliases.get("drop")).toEqual({ source: "../context/AppContext", factory: "useAppContext", member: "removeFromGarage" }); // renamed binding
   });
 
@@ -154,7 +155,7 @@ function one() { const query = buildQuery(); return query; }
 function two() { const query = useLaps(); query.refetch(); }`;
     const tree = await parse(src, "x.ts");
     const aliases = extractJsVariableAliases(tree, imports);
-    expect(aliases.get("park")).toEqual({ source: "", factory: "useGarage" });
+    expect(aliases.get("park")).toEqual({ source: "", factory: "useGarage", member: "park" });
     expect(aliases.get("query")).toEqual({ source: "./laps", factory: "useLaps" });
   });
 

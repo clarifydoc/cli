@@ -34,7 +34,7 @@ export interface SequenceChange {
 function callIndex(summary: ProjectAnalysis): Map<string, SymbolLink[]> {
   const calls = new Map<string, SymbolLink[]>();
   for (const l of summary.symbolLinks ?? []) {
-    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.navigational) continue;
+    if (l.relation === "reference" || l.relation === "passes" || l.sourceSymbol === "(reference)" || l.navigational) continue;
     const k = `${l.sourceFile}::${l.sourceSymbol}`;
     (calls.get(k) ?? calls.set(k, []).get(k)!).push(l);
   }
