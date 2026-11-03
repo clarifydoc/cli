@@ -146,3 +146,127 @@ describe("constructor overloads", () => {
     ]);
   });
 });
+
+describe("construction reaches the constructor the class itself declares", () => {
+  /** Each call `from` makes, as `line callName -> file::symbol [strategy/relation]`. */
+  function made(analyses: FileAnalysis[], from: string): string[] {
+    return buildSymbolLinks(analyses)
+      .filter((l) => l.sourceFile === from && l.sourceSymbol !== "(reference)")
+      .map((l) => `${l.sourceLine} ${l.callName} -> ${l.targetFile}::${l.targetSymbol} [${l.strategy}/${l.relation}]`)
+      .sort();
+  }
+
+  it("Python: an imported or same-file class called by name reaches its own __init__, never a base's", async () => {
+    const analyses = await analyzeAll({
+      "league/models.py": [
+        "class Model:",
+        "    def __init__(self, **kw):",
+        "        self.kw = kw",
+        "",
+        "class Player(Model):",
+        "    def __init__(self, name, number):",
+        "        super().__init__(name=name)",
+        "",
+        "class Coach(Model):",
+        "    pass",
+        "",
+      ].join("\n"),
+      "league/squad.py": [
+        "from league.models import Player, Coach",
+        "",
+        "class Kit:",
+        "    def __init__(self, colour):",
+        "        self.colour = colour",
+        "",
+        "def pick_squad():",
+        "    p = Player(\"Nine\", 9)",
+        "    c = Coach(name=\"Boss\")",
+        "    k = Kit(\"red\")",
+        "    return [p, c, k]",
+        "",
+      ].join("\n"),
+    }, "python");
+    expect(made(analyses, "league/squad.py")).toEqual([
+      "10 Kit -> league/squad.py::Kit.__init__ [constructor/instantiates]",
+      "8 Player -> league/models.py::Player.__init__ [constructor/instantiates]",
+      // No constructor of its own: the class, never `Model.__init__`.
+      "9 Coach -> league/models.py::Coach [direct/calls]",
+    ]);
+  });
+
+  it("TypeScript: `new X(…)` imported or beside the class reaches its own constructor; a JSX element stays on the class", async () => {
+    const analyses = await analyzeAll({
+      "src/models.tsx": [
+        "export class Base { constructor(public id: string) {} }",
+        "export class Player extends Base {",
+        "  constructor(public name: string, public shirt: number) { super(name); }",
+        "}",
+        "export class Coach extends Base {}",
+        "export class Board { constructor(props: object) {} render() { return null; } }",
+        "",
+      ].join("\n"),
+      "src/squad.tsx": [
+        "import { Player, Coach, Board } from \"./models\";",
+        "class Kit { constructor(public colour: string) {} }",
+        "export function pickSquad() {",
+        "  const p = new Player(\"Nine\", 9);",
+        "  const c = new Coach(\"Boss\");",
+        "  const k = new Kit(\"red\");",
+        "  return <Board />;",
+        "}",
+        "",
+      ].join("\n"),
+    }, "typescript");
+    expect(made(analyses, "src/squad.tsx")).toEqual([
+      "4 Player -> src/models.tsx::Player.constructor [constructor/instantiates]",
+      "5 Coach -> src/models.tsx::Coach [direct/calls]",
+      "6 Kit -> src/squad.tsx::Kit.constructor [constructor/instantiates]",
+      "7 Board -> src/models.tsx::Board [direct/calls]",
+    ]);
+  });
+
+  it("Rust: a tuple struct built by name never reaches its `new` function", async () => {
+    const analyses = await analyzeAll({
+      "src/score.rs": [
+        "pub struct Score(pub u32);",
+        "impl Score {",
+        "    pub fn new(v: u32) -> Self { Score(v) }",
+        "}",
+        "pub fn opening() -> Score {",
+        "    Score(0)",
+        "}",
+        "",
+      ].join("\n"),
+    }, "rust");
+    expect(made(analyses, "src/score.rs").filter((l) => l.includes(" Score -> "))).toEqual([
+      "3 Score -> src/score.rs::Score [direct/calls]",
+      "6 Score -> src/score.rs::Score [direct/calls]",
+    ]);
+  });
+
+  it("Swift: a call naming the class reaches its own `init`", async () => {
+    const analyses = await analyzeAll({
+      "Sources/League/Models.swift": [
+        "class Person {",
+        "    init(name: String) {}",
+        "}",
+        "class Player: Person {",
+        "    init(name: String, number: Int) { super.init(name: name) }",
+        "}",
+        "class Coach: Person {}",
+        "",
+      ].join("\n"),
+      "Sources/League/Squad.swift": [
+        "func pick() {",
+        "    let p = Player(name: \"Nine\", number: 9)",
+        "    let c = Coach(name: \"Boss\")",
+        "}",
+        "",
+      ].join("\n"),
+    }, "swift");
+    expect(made(analyses, "Sources/League/Squad.swift")).toEqual([
+      "2 Player -> Sources/League/Models.swift::Player.init [constructor/instantiates]",
+      "3 Coach -> Sources/League/Models.swift::Coach [constructor/instantiates]",
+    ]);
+  });
+});

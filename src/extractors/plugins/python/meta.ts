@@ -23,7 +23,7 @@ import { fastapiInheritedGuards } from "./fastapi-guards.js";
 import { PytestFixtureResolver } from "./pytest-fixtures.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
-import { extractPythonDiBindings } from "./di.js";
+import { extractPythonDiBindings, pythonTopLevelLocalTypes } from "./di.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { pythonTaint } from "./taint.js";
 import { pythonGrpcStub, pythonGrpcService } from "../shared/grpc-stubs.js";
@@ -208,6 +208,8 @@ export const pythonMeta: LanguagePluginMeta = {
     diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
     typeAliases: (tree) => extractPythonTypeAliases(tree),
     nameAliases: (tree) => extractPythonNameAliases(tree),
+    // A script's or module's own `repo = ClubRepo()` types the calls its top-level statements make.
+    topLevelLocalTypes: (tree, sourceText) => pythonTopLevelLocalTypes(tree.rootNode, sourceText),
     // Module and class string constants another module's URL or route reads (see module-values.ts).
     moduleValues: (tree) => extractPythonModuleValues(tree),
     entryPoints: (tree, sourceText) => [...extractPythonEntryPoints(tree, sourceText), ...extractPythonScheduledJobs(tree, sourceText)],

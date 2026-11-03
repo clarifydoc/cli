@@ -1196,6 +1196,13 @@ export interface LanguagePluginManifest {
    */
   constructorCalls?: readonly string[];
   /**
+   * Method names that are a class's constructor here beyond the shared ones
+   * (`constructor`, `__init__`, `__construct`, `New`, `new` and the class's own
+   * name): Swift `init`. A call constructing the class reaches the one the
+   * class itself declares.
+   */
+  constructorNames?: readonly string[];
+  /**
    * Generic types an `await` unwraps to their first type argument — what a
    * local initialized by `await repo.FindAsync(id)` holds when `FindAsync`
    * declares `Task<User>` (C# `Task`/`ValueTask`, TS `Promise`, Dart

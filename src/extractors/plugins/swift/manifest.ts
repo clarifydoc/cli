@@ -23,6 +23,8 @@ export const swiftManifest: LanguagePluginManifest = {
   extensions: [".swift"],
   // One type spans files here: `extension`s add to a type from other files.
   typesSpanFiles: true,
+  // `Player(name:)` runs the class's `init`.
+  constructorNames: ["init"],
   frameworkRules: swiftFrameworkRules,
   activationFiles: ["Package.swift"],
 };
