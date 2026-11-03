@@ -24,7 +24,7 @@ describe("C and C++ locals", () => {
       "braced: Kit",
       "ptr: Coach",
       "ref: Coach",
-      "owned: unique_ptr<Coach>",
+      "owned: unique_ptr<league::Coach>",
       "g: garage",
       "b: Box<int>",
     ]);
@@ -96,8 +96,12 @@ describe("C and C++ locals", () => {
 
 describe("C-family type names", () => {
   it("spells a declared type as the parameters do", () => {
-    expect(cFamilyTypeName("const std::vector<league::Club>&")).toBe("vector<Club>");
+    // A namespace in front of a class stays: `away::Club` is not another namespace's `Club`. The standard
+    // library's goes, as does one in front of a lowercase name.
+    expect(cFamilyTypeName("const std::vector<league::Club>&")).toBe("vector<league::Club>");
     expect(cFamilyTypeName("struct garage *")).toBe("garage");
-    expect(cFamilyTypeName("::league::Coach* const")).toBe("Coach");
+    expect(cFamilyTypeName("::league::Coach* const")).toBe("league::Coach");
+    expect(cFamilyTypeName("asio::io_context&")).toBe("io_context");
+    expect(cFamilyTypeName("league::Paddock<K, C>::Iterator")).toBe("league::Paddock::Iterator");
   });
 });

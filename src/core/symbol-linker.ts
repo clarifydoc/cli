@@ -31,6 +31,7 @@ import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 import { bestOverload, type TypeHierarchy } from "./overload-args.js";
 import { markOverloadLink } from "./symbol-dedup.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
+import { placeNamespacedParts } from "./class-namespaces.js";
 
 interface SymbolDef {
   name: string;
@@ -63,6 +64,7 @@ export function buildSymbolLinks(
   const analyses = input.every((a, i) => i === 0 || byOrdinal(input[i - 1]!.filePath, a.filePath) <= 0)
     ? input
     : [...input].sort(byOrdinalKey((a) => a.filePath));
+  placeNamespacedParts(analyses);
   const symbolIndex = buildSymbolIndex(analyses);
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   // Design files (a Delphi `.dfm`) name the class their code unit declares;
@@ -4202,6 +4204,18 @@ function resolveCallToDefinition(
   // `new User` (TS/C#/Java), `New User` (VB) — and VB-style bare `UserEditForm(...)`
   // — where the class lives in another file. Same-namespace languages need no
   // import at the call site, so resolve via the (unique) global class name.
+  if (!def && isQualified && !call.name.includes("(") && pluginFor(analysis.language as Language)?.nestedTypePaths) {
+    // `new Table::Iterator(3)`, read as `Table.Iterator`: the class nested in `Table`, constructed.
+    const path = dealias(ctx, parts.join("::"), sourceFile);
+    const ref = ctx.classFiles.has(path) ? typeRefFor(ctx, path, sourceFile, analysis.projectId) : null;
+    const cls = ref ? ctx.classAt.get(memberKey(ref.typeFile, ref.typeName)) : undefined;
+    if (ref && cls) {
+      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      const own = ctor ? null : findMethodInClass(ctx, ref.typeName, ref.typeFile, path.split("::").pop()!, sourceFile);
+      const target = ctor ? { file: ref.typeFile, symbol: `${ref.typeName}.${ctor.name}`, line: ctor.line } : own ?? { file: ref.typeFile, symbol: ref.typeName, line: cls.line };
+      return mkLink(target.file, target.symbol, target.line, "INFERRED", "constructor");
+    }
+  }
   if (!def) {
     // `new App\Invoice` qualifies with PHP's `\` as `new a.b.C` does with `.`.
     const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)$/);
@@ -5303,7 +5317,8 @@ const resolvingPackageCalls = new Set<string>();
 /**
  * What an imported function returns, as a receiver: `useUserApi()` in `const
  * api = useUserApi()`, resolved like the call the source writes, then typed by
- * the definition's declared return type.
+ * the definition's declared return type — also a function a C++ `#include` or
+ * PHP `require` brings in (`auto c = makeCar();`, `$c = make_club();`).
  */
 function importedFunctionResult(
   ctx: LinkContext,
@@ -5314,7 +5329,10 @@ function importedFunctionResult(
   name: string,
   awaited: boolean,
 ): InjectionPoint | null {
-  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && c.kind === "cross-file");
+  // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
+  // it is imported when the file does not define it.
+  const shared = importsShareScope(analysis.language) && !analysis.functions.some((f) => f.name === name);
+  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
   if (!written) return null;
   const guard = `${sourceFile}\0${sourceSymbol}\0${name}()`;
   if (resolvingPackageCalls.has(guard)) return null;
@@ -5609,7 +5627,10 @@ function scopedName(
   if (declared) {
     const typeName = receiverTypeName(declared.type, analysis.language);
     if (!typeName && !declared.qualifier) return null;
-    const ref = typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile) ?? typeRefFor(ctx, typeName, sourceFile, analysis.projectId) : null;
+    const ref = typeName
+      ? nestedTypeRef(ctx, consumer, typeName, sourceFile) ??
+        typeRefFor(ctx, typeName, sourceFile, analysis.projectId, () => namespaceScope(ctx, analysis, sourceSymbol), declared.type)
+      : null;
     const point: InjectionPoint = {
       typeName: ref?.typeName ?? typeName ?? "",
       typeFile: ref?.typeFile ?? null,
@@ -5679,12 +5700,23 @@ function receiverPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: str
  * project-wide lookup would take an unrelated class that happens to be
  * called `UserApi` — else the file defining it.
  */
-function typeRefFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null {
+function typeRefFor(
+  ctx: LinkContext,
+  typeName: string,
+  sourceFile: string,
+  projectId: string,
+  /** The namespaces the naming code sits in and imports (`namespaceScope`), where classes have namespaces. */
+  scope?: () => NamespaceScope,
+  /** The type as declared, which may spell the namespace `typeName` leaves off (`league::Club&`). */
+  written?: string | null,
+): { typeName: string; typeFile: string } | null {
   const imported = importedTypeRef(ctx, typeName, sourceFile, projectId);
   if (imported !== undefined) return imported?.typeFile ? { typeName: imported.typeName, typeFile: imported.typeFile } : null;
   typeName = dealias(ctx, typeName, sourceFile);
   const reexported = reexportedType(ctx, typeName, sourceFile);
   if (reexported) return reexported;
+  const namespaced = namespacedTypeRef(ctx, writtenTypePath(written, typeName) ?? typeName, sourceFile, scope?.());
+  if (namespaced !== undefined) return namespaced;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   if (typeFile) return { typeName, typeFile };
   // A path no nested class is named by (`Engine::Car` where `Engine` is a namespace): its last name.
@@ -5784,10 +5816,21 @@ function nestedTypeRef(
 /** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */
 function dealias(ctx: LinkContext, typeName: string, sourceFile: string): string {
   if (!ctx.typeAliases) return typeName;
-  return followTypeAlias(ctx.typeAliases, typeName, sourceFile, (name, near) => {
+  const isClass = (name: string, near: string): boolean => {
     const lang = ctx.languageOf.get(near) ?? "";
     return (ctx.classFiles.get(name) ?? []).some((f) => sameTypeSpace(near, lang, f, ctx.languageOf.get(f) ?? ""));
-  });
+  };
+  const whole = followTypeAlias(ctx.typeAliases, typeName, sourceFile, isClass);
+  if (whole !== typeName || !typeName.includes("::") || ctx.classFiles.has(typeName)) return whole;
+  // An alias used as a scope (`League::Iterator` for `typedef Table League;`): the class nested in what it names.
+  const segments = typeName.split("::");
+  for (let k = segments.length - 1; k >= 1; k--) {
+    const head = segments.slice(0, k).join("::");
+    const target = followTypeAlias(ctx.typeAliases, head, sourceFile, isClass);
+    const path = `${target}::${segments.slice(k).join("::")}`;
+    if (target !== head && ctx.classFiles.has(path)) return path;
+  }
+  return typeName;
 }
 
 /** The class an import of `typeName` reaches through a barrel's re-exports; null when the import names a declaration directly, or none. */
@@ -5852,11 +5895,24 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Not where one type spans files (partial classes): there the richest
   // declaration below stands for the type.
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
+  // Where a type spans files by its declaration and the bodies defined apart (a C++ class and its `.cpp`), the
+  // file's own declaration is the class its code means: two `.cc` files each declaring a `Pit` are two.
+  if (importsShareScope(languageOf(sourceFile)) && declOf(sourceFile, typeName) && !declOf(sourceFile, typeName)!.extension) return sourceFile;
+  // Classes of one name in several namespaces: the one the source can see, else none.
+  const namespaced = namespacedTypeRef(ctx, typeName, sourceFile, undefined);
+  if (namespaced !== undefined) return namespaced?.typeName === typeName ? namespaced.typeFile : null;
   // The one file the source imports that declares it, though the import names no type: `#include
   // "league/iterator.h"` means its `Iterator`, not the one another header nests in its own class.
   if (source) {
     const declaring = importedFiles(ctx, source).filter((f) => { const d = declOf(f, typeName); return !!d && !d.extension; });
     if (declaring.length === 1) return declaring[0]!;
+    // Where an include puts a header's declarations in scope, the one declaration it reaches through further
+    // includes (`match.cpp` → `squad.h` → `home/club.h`), when other headers declare the name too.
+    if (importsShareScope(source.language)) {
+      const seen = includeClosure(ctx, sourceFile);
+      const reached = (ctx.classFiles.get(typeName) ?? []).filter((f) => f !== sourceFile && seen.has(f) && !declOf(f, typeName)?.extension);
+      if (reached.length === 1 && (ctx.classFiles.get(typeName) ?? []).some((f) => !reached.includes(f) && !declOf(f, typeName)?.extension)) return reached[0]!;
+    }
   }
   // A module reaches another module's class only through an import (`importsBindNames`).
   const reachable = (f: string): boolean => !source || !unboundAcrossModules(ctx, source, typeName, f);
@@ -5911,6 +5967,131 @@ function importedFiles(ctx: LinkContext, source: FileAnalysis): string[] {
     memo.set(source.filePath, (files = [...found]));
   }
   return files;
+}
+
+/** Longest include chain followed for a file's include set. */
+const MAX_INCLUDE_FILES = 4000;
+
+/**
+ * The project files `file` sees through its imports, transitively, itself included — for languages whose
+ * imports put declarations in scope (a C++ `#include` of a header including others). Once per file and link pass.
+ */
+const includeClosureMemo = new WeakMap<LinkContext, Map<string, Set<string>>>();
+function includeClosure(ctx: LinkContext, file: string): Set<string> {
+  let memo = includeClosureMemo.get(ctx);
+  if (!memo) includeClosureMemo.set(ctx, (memo = new Map()));
+  const known = memo.get(file);
+  if (known) return known;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const seen = new Set<string>([file]);
+  const queue = [file];
+  while (queue.length > 0 && seen.size < MAX_INCLUDE_FILES) {
+    const a = ctx.analysisByFile.get(queue.shift()!);
+    if (!a) continue;
+    for (const f of importedFiles(ctx, a)) {
+      if (seen.has(f)) continue;
+      seen.add(f);
+      queue.push(f);
+    }
+  }
+  memo.set(file, seen);
+  return seen;
+}
+
+/**
+ * Where the naming code stands among namespaces: `chain`, the namespace it is declared in and each one around
+ * it, innermost first (`league::home`, `league`); `usings`, what the file's `using` lines import (a namespace
+ * `using namespace away;`, or one name `using away::Club;`).
+ */
+interface NamespaceScope {
+  chain: string[];
+  usings: string[];
+}
+
+function namespaceScope(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: string): NamespaceScope {
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  const dot = sourceSymbol.indexOf(".");
+  const owner = dot > 0 && !sourceSymbol.startsWith("route:") ? ctx.classAt.get(memberKey(analysis.filePath, sourceSymbol.slice(0, dot))) : undefined;
+  const ns = callable?.namespace ?? owner?.namespace;
+  const chain: string[] = [];
+  if (ns) {
+    const parts = ns.split("::");
+    for (let i = parts.length; i > 0; i--) chain.push(parts.slice(0, i).join("::"));
+  }
+  const usings = analysis.imports.map((i) => i.source.replace(/^::/, "")).filter((s) => /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$/.test(s));
+  return { chain, usings };
+}
+
+/** The qualified path a declared type spells for `typeName` (`league::Club` in `const league::Club&`), when it spells one. */
+function writtenTypePath(written: string | null | undefined, typeName: string): string | null {
+  if (!written || !written.includes("::")) return null;
+  const leaf = typeName.split("::").pop()!;
+  for (const m of written.matchAll(/(?<![\w:])(?:::\s*)?((?:[A-Za-z_]\w*\s*::\s*)+[A-Za-z_]\w*)/g)) {
+    const path = m[1]!.replace(/\s+/g, "");
+    if (path.split("::").pop() === leaf && !path.startsWith("std::")) return path;
+  }
+  return null;
+}
+
+/**
+ * Class `written` (`Club`, `Away::Club`) where the project declares classes of that name in namespaces
+ * (`ClassInfo.namespace`): the declaration in the namespace the name is written through — relative to the
+ * namespaces around the code first —, else for a bare name the one the code's namespaces or `using` lines see,
+ * innermost first. Several left (or no scope to look from): the one the code's include set reaches. Still
+ * several: `null`, refused. `undefined` when no declaration of the name has a namespace, or the written path
+ * is a class's own (a nested `Outer::Inner`): namespaces say nothing then.
+ */
+function namespacedTypeRef(
+  ctx: LinkContext,
+  written: string,
+  sourceFile: string,
+  scope: NamespaceScope | undefined,
+): { typeName: string; typeFile: string } | null | undefined {
+  const path = written.replace(/^::/, "");
+  const segments = path.split("::");
+  if (segments.length > 1 && ctx.classFiles.has(path)) return undefined;
+  const lang = ctx.languageOf.get(sourceFile) ?? "";
+  const declarations = (name: string) =>
+    (ctx.classFiles.get(name) ?? [])
+      .filter((f) => sameTypeSpace(sourceFile, lang, f, ctx.languageOf.get(f) ?? ""))
+      .map((f) => ({ file: f, name, cls: ctx.classAt.get(memberKey(f, name))! }))
+      .filter((d) => d.cls && !d.cls.extension);
+  type Decl = ReturnType<typeof declarations>[number];
+  let pool: Decl[] = [];
+  if (segments.length === 1) {
+    const decls = declarations(path);
+    if (!decls.some((d) => d.cls.namespace)) return undefined;
+    if (scope) {
+      const usedBy = (d: Decl) => scope.usings.some((u) => {
+        const ns = d.cls.namespace ?? "";
+        return u === ns || u === `${ns}::${d.name}` || scope.chain.some((c) => u === ns.slice(c.length + 2) && ns.startsWith(`${c}::`));
+      });
+      for (const level of [...scope.chain, ""]) {
+        const visible = decls.filter((d) => (d.cls.namespace ?? "") === level || (level === "" && d.cls.namespace && usedBy(d)));
+        if (visible.length > 0) { pool = visible; break; }
+      }
+    }
+    // A namespace a header opens, or a `using` it carries, is out of sight here: every declaration stays in the running.
+    if (pool.length === 0) pool = decls;
+  } else {
+    const leaf = segments.at(-1)!;
+    if (!declarations(leaf).some((d) => d.cls.namespace)) return undefined;
+    search: for (let k = segments.length - 1; k >= 1; k--) {
+      const name = segments.slice(k).join("::");
+      const qualifier = segments.slice(0, k).join("::");
+      const decls = declarations(name);
+      for (const ns of [...(scope?.chain ?? []).map((c) => `${c}::${qualifier}`), qualifier]) {
+        const hit = decls.filter((d) => d.cls.namespace === ns);
+        if (hit.length > 0) { pool = hit; break search; }
+      }
+    }
+    if (pool.length === 0) return undefined;
+  }
+  const files = [...new Set(pool.map((d) => d.file))];
+  if (files.length === 1) return { typeName: pool[0]!.name, typeFile: files[0]! };
+  const seen = includeClosure(ctx, sourceFile);
+  const reached = pool.filter((d) => seen.has(d.file));
+  return reached.length === 1 ? { typeName: reached[0]!.name, typeFile: reached[0]!.file } : null;
 }
 
 /** An import of a package or of the language's standard library: what it binds is never a project name. */
@@ -6656,15 +6837,24 @@ function methodBesideClass(
   const dir = classFile.slice(0, classFile.lastIndexOf("/") + 1);
   const projectId = ctx.projectOf.get(classFile);
   const family = extensionFamily(classFile);
-  const hits = files.filter((f) => {
+  // A part naming another namespace's class of this name (`Home::Club` beside `Away::Club`) is that class's.
+  const namespace = ctx.classAt.get(memberKey(classFile, className))?.namespace ?? "";
+  let hits = files.filter((f) => {
     if (f === classFile || extensionFamily(f) !== family) return false;
-    if (f.slice(0, f.lastIndexOf("/") + 1) === dir) return true;
     const part = ctx.classAt.get(memberKey(f, className));
+    if (part?.namespace !== undefined && part.namespace !== namespace) return false;
+    if (f.slice(0, f.lastIndexOf("/") + 1) === dir) return true;
     if (!part) return false;
     // A part implementing an interface for the type may come from any sub-project (Rust `impl Trait for T` in
     // the crate that defines `Trait`).
     return ctx.projectOf.get(f) === projectId || (part.extension === true && part.implements.length > 0);
   });
+  // Where the declaration comes in through an include, the parts that include it (`home/club.cpp` for
+  // `home/club.h`, not `away/club.cpp` defining another `Club`).
+  if (hits.length > 1 && importsShareScope(language)) {
+    const seeing = hits.filter((f) => includeClosure(ctx, f).has(classFile));
+    if (seeing.length > 0) hits = seeing;
+  }
   // Defined in several parts (`spawn_posix.cc` and `spawn_win32.cc`, one per platform): the caller's own part, when
   // it is one of them, is the one its build compiles.
   const hit = hits.length === 1 ? hits[0]! : nearFile && hits.includes(nearFile) ? nearFile : null;

@@ -37,12 +37,12 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
   for (const cls of classes) addPureVirtualMethods(lines, cls, spec);
 
   const namespaces = declaredNamespaces(lines);
-  qualifyNestedClasses(lines, classes, namespaces);
+  const nsAt = namespacesByLine(lines);
+  qualifyNestedClasses(lines, classes, namespaces, nsAt);
   const declared = new Map<string, ClassInfo>();
   for (const cls of classes) if (!declared.has(cls.name)) declared.set(cls.name, cls);
   const stubs = new Map<string, ClassInfo>();
 
-  const nsAt = namespacesByLine(lines);
   for (const fn of fns) {
     const ns = nsAt[fn.line - 1];
     if (ns) fn.namespace = ns;
@@ -52,10 +52,16 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
     if (!path) continue;
     // `league::Paddock::Iterator::Next`: the namespaces in front name no class.
     const segments = path.split("::");
-    while (segments.length > 0 && (namespaces.has(segments[0]!) || (/^[a-z_]/.test(segments[0]!) && !declared.has(segments[0]!))) && segments.length > 1) segments.shift();
+    const scopes: string[] = [];
+    while (segments.length > 0 && (namespaces.has(segments[0]!) || (/^[a-z_]/.test(segments[0]!) && !declared.has(segments[0]!))) && segments.length > 1) scopes.push(segments.shift()!);
     const owner = segments.join("::");
     const last = segments.at(-1)!;
-    const own = declared.get(owner);
+    // The namespace the class is a member of: the one the definition sits in, then the ones its name is written through.
+    const namespace = [nsAt[fn.line - 1], ...scopes].filter(Boolean).join("::") || undefined;
+    const named = declared.get(owner);
+    // The file's own class of that name, unless it is plainly another namespace's (one inside an anonymous
+    // namespace has none to compare).
+    const own = named && (!named.namespace || !namespace || named.namespace === namespace) ? named : undefined;
     const isClass = own !== undefined || fn.name === last || fn.name === `~${last}` ||
       (/^[A-Z]/.test(last) && !namespaces.has(last));
     if (!isClass) {
@@ -65,7 +71,7 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
     }
     // A body inside the class's own braces is already one of its methods.
     if (own && fn.line > own.line && fn.line <= own.endLine) continue;
-    const target = own ?? stubs.get(owner) ?? newStub(owner, fn, stubs);
+    const target = own ?? stubs.get(`${namespace ?? ""}\0${owner}`) ?? newStub(owner, namespace, fn, stubs);
     target.methods.push(fn);
     // A stub spans its definitions — unless a free function sits between them (`static void Release(…)`
     // among `Table::` bodies): a span over it would make it one of the class's methods.
@@ -120,9 +126,10 @@ function scopedType(type: string | null, owner: string, known: ReadonlySet<strin
   return type;
 }
 
-function newStub(name: string, first: FunctionInfo, stubs: Map<string, ClassInfo>): ClassInfo {
+function newStub(name: string, namespace: string | undefined, first: FunctionInfo, stubs: Map<string, ClassInfo>): ClassInfo {
   const stub: ClassInfo = {
     name,
+    ...(namespace ? { namespace } : {}),
     extends: null,
     implements: [],
     decorators: [],
@@ -134,7 +141,7 @@ function newStub(name: string, first: FunctionInfo, stubs: Map<string, ClassInfo
     // The bodies of a class the file does not declare: a part of the class its header declares.
     extension: true,
   };
-  stubs.set(name, stub);
+  stubs.set(`${namespace ?? ""}\0${name}`, stub);
   return stub;
 }
 
@@ -162,13 +169,23 @@ const QUALIFIED_CLASS_HEAD = /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(
  * Season::Helper {`), else from the class whose braces hold it. A namespace in
  * front is no class's name.
  */
-function qualifyNestedClasses(lines: readonly string[], classes: ClassInfo[], namespaces: ReadonlySet<string>): void {
+function qualifyNestedClasses(
+  lines: readonly string[],
+  classes: ClassInfo[],
+  namespaces: ReadonlySet<string>,
+  nsAt: ReadonlyArray<string | undefined>,
+): void {
   const byLine = [...classes].sort((a, b) => a.line - b.line || b.endLine - a.endLine);
   for (const cls of byLine) {
+    // `namespace Home { class Club {…} }` is `Club` of namespace `Home`: another namespace's `Club` is another class.
+    const ns = nsAt[cls.line - 1];
+    if (ns) cls.namespace = ns;
     const head = QUALIFIED_CLASS_HEAD.exec(lines[cls.line - 1] ?? "");
     if (head) {
       const outer = head[1]!.split("::").map((s) => s.replace(/<.*$/s, "").trim()).filter(Boolean);
-      while (outer.length > 0 && (namespaces.has(outer[0]!) || /^[a-z_]/.test(outer[0]!))) outer.shift();
+      const scopes: string[] = [];
+      while (outer.length > 0 && (namespaces.has(outer[0]!) || /^[a-z_]/.test(outer[0]!))) scopes.push(outer.shift()!);
+      if (scopes.length > 0) cls.namespace = [ns, ...scopes].filter(Boolean).join("::");
       cls.name = [...outer, head[2]!].join("::");
       cls.extends = head[3] ? head[3].replace(/.*::/, "") : null;
       continue;

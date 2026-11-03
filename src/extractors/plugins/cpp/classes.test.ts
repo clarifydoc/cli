@@ -150,3 +150,36 @@ describe("C++ signatures wrapped over several lines", () => {
     expect(cls?.implements).toEqual(["league::FixtureService::Service"]);
   });
 });
+
+describe("C++ class namespaces", () => {
+  it("records the namespace a class is declared in, and the one an out-of-line definition names", () => {
+    const classes = classesOf(`
+namespace league {
+namespace home {
+class Club {
+ public:
+  void play();
+};
+}
+void home::Club::play() {
+  sing();
+}
+}
+void Away::Club::play() {
+  boo();
+}
+namespace {
+struct Ticket {
+  void punch();
+};
+}
+`);
+    expect(classes.map((c) => [c.name, c.namespace ?? null, !!c.extension])).toEqual([
+      ["Club", "league::home", false],
+      // An unopened capitalized scope may be a class or a namespace: the file cannot tell, core places it.
+      ["Away::Club", null, true],
+      ["Ticket", null, false],
+    ]);
+    expect(methodNames(classes[0])).toEqual(["play"]);
+  });
+});

@@ -71,6 +71,7 @@ import {
   EXTENSION_TO_LANGUAGE,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { placeNamespacedParts } from "./class-namespaces.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
 import { applyHttpClientBases } from "./http-client-bases.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
@@ -1081,6 +1082,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const autoImportCount = applyAutoImports(allAnalyses);
   if (autoImportCount > 0 && verbose) progress.detail(`  auto-imported names: ${autoImportCount}`);
 
+  // Out-of-line definitions written through a namespace their file never opens join their class.
+  placeNamespacedParts(allAnalyses);
   const importIndex = buildImportIndex(allAnalyses);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
