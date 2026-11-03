@@ -5534,7 +5534,39 @@ function scopedName(
   // Where fields need `this.`/`self.`, a bare name is a local or global the
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
-  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name);
+  return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name)
+    ?? moduleBindingPoint(ctx, analysis, sourceFile, consumer, name);
+}
+
+/**
+ * A typed variable declared at module level (`FileAnalysis.moduleBindings`, `var dmLeague: TdmLeague;`)
+ * that a bare name reaches when no local, parameter or field takes it: the file's own, else an exported
+ * one of a file the caller's imports put in scope (`importsShareScope`: a unit seen through `uses`).
+ * Its type is read where it is declared. Two such files typing the name differently decide nothing.
+ */
+function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string): InjectionPoint | null {
+  const key = nameKey(analysis.language, name);
+  const point = (holder: FileAnalysis, written: string): InjectionPoint | null => {
+    const typeName = receiverTypeName(written, holder.language);
+    if (!typeName) return null;
+    const ref = typeRefFor(ctx, typeName, holder.filePath, holder.projectId);
+    return { typeName: ref?.typeName ?? typeName, typeFile: ref?.typeFile ?? null, member: name, consumer, container: false };
+  };
+  const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
+  if (own) return point(analysis, own.type);
+  if (!pluginFor(analysis.language)?.importsShareScope) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  let found: InjectionPoint | null = null;
+  for (const imp of analysis.imports) {
+    const file = importPath(ctx, imp.source, sourceFile);
+    const holder = file && file !== sourceFile ? ctx.analysisByFile.get(file) : undefined;
+    const binding = holder?.moduleBindings?.find((b) => b.exported && nameKey(holder.language, b.name) === key);
+    if (!holder || !binding) continue;
+    const p = point(holder, binding.type);
+    if (!p || (found && (found.typeName !== p.typeName || found.typeFile !== p.typeFile))) return null;
+    found = p;
+  }
+  return found;
 }
 
 /**

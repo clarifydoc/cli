@@ -743,6 +743,8 @@ export interface AstExtractorHooks {
   typeAliases?(tree: Tree, sourceText: string): import("./analysis.js").TypeAliasInfo[];
   /** Module-level names bound to another name (`s = attrs`) → `FileAnalysis.nameAliases` (as written; core follows them). */
   nameAliases?(tree: Tree, sourceText: string): import("./analysis.js").NameAliasInfo[];
+  /** Typed variables declared at module level (`var dmLeague: TdmLeague;`) → `FileAnalysis.moduleBindings` (types as written). */
+  moduleBindings?(tree: Tree, sourceText: string): import("./analysis.js").ModuleBindingInfo[];
   /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
   declaredNamespace?(tree: Tree, sourceText: string): string | null;
   /** The package or namespace the file's declarations belong to → `FileAnalysis.packageName` (C# `namespace League.Clubs;`). */

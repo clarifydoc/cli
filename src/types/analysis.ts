@@ -539,6 +539,13 @@ export interface FileAnalysis {
    */
   nameAliases?: NameAliasInfo[];
   /**
+   * Variables the module declares at its top level with a stated type (`var dmLeague: TdmLeague;` in a Pascal unit),
+   * the type as written. A member call through one (`dmLeague.SaveClub`) is a call on that type, from the module's own
+   * functions and, when `exported`, from every file whose imports put the module's names in scope (the manifest's
+   * `importsShareScope`: a unit's interface section, seen through `uses`). Omitted when the file declares none.
+   */
+  moduleBindings?: ModuleBindingInfo[];
+  /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
    * a function by its qualified name (`use function App\Support\money`,
@@ -785,6 +792,16 @@ export interface ExportInfo {
    * A call through the binding that imports it (`import AgentAPI from './agents'`, `AgentAPI.get()`) is a call on that class.
    */
   instanceOf?: string;
+}
+
+/** A typed variable a module declares at its top level (`FileAnalysis.moduleBindings`). */
+export interface ModuleBindingInfo {
+  name: string;
+  /** The declared type, as written. */
+  type: string;
+  line: number;
+  /** Visible to the files that import the module, not only to its own functions. */
+  exported: boolean;
 }
 
 /** A module-level name bound to another: `name` stands for `target`, as written (`s = attrs`). */

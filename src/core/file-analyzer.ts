@@ -570,6 +570,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (typeAliases && typeAliases.length > 0) analysis.typeAliases = typeAliases;
     const nameAliases = hooks?.nameAliases?.(tree, sourceText);
     if (nameAliases && nameAliases.length > 0) analysis.nameAliases = nameAliases;
+    const moduleBindings = hooks?.moduleBindings?.(tree, sourceText);
+    if (moduleBindings && moduleBindings.length > 0) analysis.moduleBindings = moduleBindings;
     const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
     if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
     const packageName = hooks?.packageName?.(tree, sourceText);
