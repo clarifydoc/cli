@@ -126,3 +126,32 @@ describe("impact: tests declared beside production code", () => {
     expect(Object.fromEntries(r.symbolImpact!.direct.map((c) => [c.symbol, c.standing]))).toEqual({ leader: "covered", seed_table: "test" });
   });
 });
+
+describe("impact: no test credit through a hub", () => {
+  const link = (sourceFile: string, sourceSymbol: string, targetSymbol: string, targetFile = "src/garage.ts") => ({ sourceFile, sourceSymbol, sourceLine: 1, targetFile, targetSymbol, targetLine: 1, callName: targetSymbol, confidence: "EXTRACTED" });
+  const summary = (hubCallers: number) => ({
+    files: ["src/garage.ts", "test/garage.test.ts"],
+    componentGraph: {},
+    symbolLinks: [
+      link("src/garage.ts", "parkCar", "fuelLevel"),
+      // parkCar is reached from a function most of the code calls…
+      link("src/garage.ts", "logEvent", "parkCar"),
+      ...Array.from({ length: hubCallers }, (_, i) => link(`src/car${i}.ts`, `drive${i}`, "logEvent")),
+      // …and a test reaches it only through that hub.
+      link("test/garage.test.ts", "garage › drives", "drive0", "src/car0.ts"),
+    ],
+    blastRadius: [],
+    routeMap: [],
+    screens: [],
+  }) as unknown as ProjectAnalysis;
+  const standing = (s: ProjectAnalysis) =>
+    computeImpactDiff(s, ["src/garage.ts"], { symbols: { changed: [{ file: "src/garage.ts", symbol: "fuelLevel", line: 1, endLine: 2 }], moduleLevel: [] } }).symbolImpact!.direct[0]!.standing;
+
+  it("credits a test reaching the caller through an ordinary function", () => expect(standing(summary(3))).toBe("covered"));
+  it("credits none reaching it only through a function of more than twenty production callers", () => expect(standing(summary(21))).toBe("unverified"));
+  it("still credits a test calling the hub itself", () => {
+    const s = summary(21);
+    s.symbolLinks.push({ sourceFile: "test/garage.test.ts", sourceSymbol: "logEvent › writes", sourceLine: 9, targetFile: "src/garage.ts", targetSymbol: "logEvent", targetLine: 1, callName: "logEvent", confidence: "EXTRACTED" } as never);
+    expect(standing(s)).toBe("covered");
+  });
+});
