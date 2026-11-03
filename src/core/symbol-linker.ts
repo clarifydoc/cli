@@ -983,6 +983,42 @@ interface ClassCatalogEntry {
 const CTOR_NAMES = new Set(["constructor", "__init__", "__construct", "New", "new"]);
 
 /**
+ * The constructor `cls` itself declares — by a shared name, the class's own
+ * name, or one the language's manifest adds (`constructorNames`: Swift `init`).
+ * Never a base class's: a class without one is constructed as itself (a
+ * framework base's `__init__` would become every model's constructor).
+ * `spelledNew` is false for a call naming the class bare, which never runs a
+ * function named `new` (`Score(3)` builds a tuple struct, not `Score::new`).
+ */
+function ownConstructor(cls: ClassInfo, language: string | undefined, spelledNew = true): FunctionInfo | undefined {
+  const extra = language ? pluginFor(language as Language)?.constructorNames : undefined;
+  const leaf = cls.name.includes("::") ? cls.name.slice(cls.name.lastIndexOf("::") + 2) : cls.name;
+  return cls.methods.find((m) =>
+    ((CTOR_NAMES.has(m.name) && (spelledNew || (m.name !== "new" && m.name !== "New")))
+      || m.name === cls.name || m.name === leaf || !!extra?.includes(m.name)));
+}
+
+/**
+ * A link a call naming a class made to the class itself (`Player("Nine", 9)`
+ * in Python, `new Player(…)` in TypeScript), retargeted to the constructor the
+ * class declares — what runs, and what an edit of it reaches back to. A class
+ * declaring none keeps the link. A JSX element names a component class
+ * without calling it (no arguments are read), so it stays on the class.
+ */
+function constructionLink(link: SymbolLink, call: CallInfo, ctx: LinkContext): SymbolLink {
+  const spelledNew = /^new\s/i.test(call.name);
+  if (call.argCount === undefined && !spelledNew) return link;
+  const cls = ctx.classAt.get(memberKey(link.targetFile, link.targetSymbol));
+  if (!cls) return link;
+  const callLeaf = call.name.replace(/^new\s+/i, "").replace(/<.*$/s, "").split(/\.|::|\\/).pop();
+  const classLeaf = link.targetSymbol.split(/\.|::/).pop();
+  if (!callLeaf || callLeaf !== classLeaf) return link;
+  const ctor = ownConstructor(cls, ctx.languageOf.get(link.targetFile), spelledNew);
+  if (!ctor) return link;
+  return { ...link, targetSymbol: `${cls.name}.${ctor.name}`, targetLine: ctor.line, strategy: "constructor", relation: relationForStrategy("constructor") };
+}
+
+/**
  * Files under test-fixture/sample-data directories define symbols that mimic
  * real APIs by design — heuristic (name-uniqueness) strategies must never link
  * production code into them. Explicit imports still resolve normally.
@@ -1199,7 +1235,7 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
     for (const cls of a.classes) {
       const partKey = typesSpanFiles(a.language) ? `${dir}\0${extensionFamily(a.filePath) ?? a.language}\0${cls.name}` : "";
       if (partKey && partsSeen.has(partKey)) {
-        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        const ctor = ownConstructor(cls, a.language);
         const top = map.get(cls.name);
         for (const e of ctor ? [top, top?.byFamily?.get(extensionFamily(a.filePath) ?? "")] : []) {
           // Only an entry standing for THIS directory's definition, and only
@@ -1212,7 +1248,7 @@ function buildClassCatalog(analyses: FileAnalysis[]): Map<string, ClassCatalogEn
         }
         continue;
       }
-      const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+      const ctor = ownConstructor(cls, a.language);
       const fresh = (): ClassCatalogEntry => ({
         file: a.filePath,
         projectId: a.projectId,
@@ -3675,18 +3711,22 @@ function resolveCallToDefinition(
     targetLine: number,
     confidence: Confidence,
     strategy: SymbolLinkStrategy,
-  ): SymbolLink => ({
-    sourceFile,
-    sourceSymbol,
-    sourceLine: call.line,
-    callName: call.name,
-    targetFile: linkTargetFile,
-    targetSymbol,
-    targetLine,
-    confidence,
-    strategy,
-    relation: relationForStrategy(strategy),
-  });
+  ): SymbolLink => {
+    const link: SymbolLink = {
+      sourceFile,
+      sourceSymbol,
+      sourceLine: call.line,
+      callName: call.name,
+      targetFile: linkTargetFile,
+      targetSymbol,
+      targetLine,
+      confidence,
+      strategy,
+      relation: relationForStrategy(strategy),
+    };
+    // A name a route refers to (a class-based view) is the class, not a construction.
+    return reference ? link : constructionLink(link, call, ctx);
+  };
   const throughDeclaredType = (): SymbolLink | null =>
     isQualified ? resolveThroughDeclaredType(sourceFile, sourceSymbol, call, analysis, ctx, parts, leafName, mkLink) : null;
 
@@ -3771,7 +3811,7 @@ function resolveCallToDefinition(
       const hit = dottedModuleMember(ctx, analysis, sourceFile, sourceSymbol, call, parts, targetFile);
       const cls = hit && ctx.classAt.get(memberKey(hit.file, hit.def.name));
       if (cls) {
-        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        const ctor = ownConstructor(cls, ctx.languageOf.get(hit!.file), /^new\s/i.test(call.name));
         return mkLink(hit!.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
       }
       if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, "EXTRACTED", "direct");
@@ -3852,7 +3892,7 @@ function resolveCallToDefinition(
     const aliased = aliasedDefinition(ctx, targetFile, call.name, 0, new Set());
     const cls = aliased && ctx.classAt.get(memberKey(aliased.file, aliased.def.name));
     if (cls) {
-      const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+      const ctor = ownConstructor(cls, ctx.languageOf.get(aliased.file), /^new\s/i.test(call.name));
       return mkLink(aliased.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
     }
     if (aliased && !aliased.namespace) {
@@ -3891,7 +3931,7 @@ function resolveCallToDefinition(
       // A forwarded CLASS called by name is constructed (Strategy 5's link).
       const cls = member ? undefined : ctx.classAt.get(memberKey(fwd.file, fwd.def.name));
       if (cls) {
-        const ctor = cls.methods.find((m) => CTOR_NAMES.has(m.name) || m.name === cls.name);
+        const ctor = ownConstructor(cls, ctx.languageOf.get(fwd.file), /^new\s/i.test(call.name));
         return mkLink(fwd.file, ctor ? `${cls.name}.${ctor.name}` : cls.name, ctor?.line ?? cls.line, "INFERRED", "constructor");
       }
       targetFile = member?.file ?? fwd.file;
@@ -4102,7 +4142,7 @@ function resolveCallToDefinition(
     // `new Garage(4)` beside `class Garage` (or inside it): the calling file's own class, by name alone.
     const own = ctorMatch && className ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
     if (own) {
-      const ctor = own.methods.find((m) => isConstructor(m, own));
+      const ctor = ownConstructor(own, analysis.language, !!ctorMatch);
       return mkLink(sourceFile, ctor ? `${className}.${ctor.name}` : className!, ctor?.line ?? own.line, "EXTRACTED", "constructor");
     }
     // A class an import renames (`new Footballer()` for `use App\Models\Player as Footballer`,
@@ -4111,7 +4151,7 @@ function resolveCallToDefinition(
     if (imported) {
       const cls = imported.typeFile ? ctx.classAt.get(memberKey(imported.typeFile, imported.typeName)) : undefined;
       if (!cls) return null;
-      const ctor = cls.methods.find((m) => isConstructor(m, cls));
+      const ctor = ownConstructor(cls, ctx.languageOf.get(imported.typeFile!), !!ctorMatch);
       return mkLink(imported.typeFile!, ctor ? `${imported.typeName}.${ctor.name}` : imported.typeName, ctor?.line ?? cls.line, "INFERRED", "constructor");
     }
     if (className) {
@@ -4120,7 +4160,7 @@ function resolveCallToDefinition(
       const nested = dot > 0 && !sourceSymbol.startsWith("route:") ? nestedTypeRef(ctx, sourceSymbol.slice(0, dot), className, sourceFile, false) : null;
       const nestedCls = nested ? ctx.classAt.get(memberKey(nested.typeFile, nested.typeName)) : undefined;
       if (nested && nestedCls) {
-        const ctor = nestedCls.methods.find((m) => isConstructor(m, nestedCls));
+        const ctor = ownConstructor(nestedCls, ctx.languageOf.get(nested.typeFile), !!ctorMatch);
         return mkLink(nested.typeFile, ctor ? `${nested.typeName}.${ctor.name}` : nested.typeName, ctor?.line ?? nestedCls.line, "INFERRED", "constructor");
       }
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
@@ -4129,7 +4169,7 @@ function resolveCallToDefinition(
         const file = typeFileFor(ctx, className, sourceFile, analysis.projectId);
         const cls = file ? ctx.classAt.get(memberKey(file, className)) : undefined;
         if (file && cls) {
-          const ctor = cls.methods.find((m) => isConstructor(m, cls));
+          const ctor = ownConstructor(cls, ctx.languageOf.get(file), !!ctorMatch);
           return mkLink(file, ctor ? `${className}.${ctor.name}` : className, ctor?.line ?? cls.line, "INFERRED", "constructor");
         }
       }
@@ -4436,7 +4476,7 @@ function resolveCallToDefinition(
     relation: relationForStrategy(defStrategy),
   };
   if (linkConfidence) link.confidence = linkConfidence;
-  return link;
+  return reference ? link : constructionLink(link, call, ctx);
 }
 
 type MkLink = (

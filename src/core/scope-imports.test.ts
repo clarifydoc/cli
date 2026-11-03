@@ -272,8 +272,8 @@ describe("imports that put a callee in scope by name", () => {
     expect(linkOf("kotlin/src/main/kotlin/league/app/Scoreboard.kt", "Scoreboard.close", "whistle")).toBe("kotlin/src/main/kotlin/league/util/Whistle.kt blowFullTime EXTRACTED");
   });
 
-  it("constructs the imported class, never a namesake of another package", () => {
-    expect(linkOf("kotlin/src/main/kotlin/league/app/KitRoom.kt", "KitRoom.issue", "Kit")).toBe("kotlin/src/main/kotlin/league/model/Kit.kt Kit EXTRACTED");
+  it("constructs the imported class (its own primary constructor), never a namesake of another package", () => {
+    expect(linkOf("kotlin/src/main/kotlin/league/app/KitRoom.kt", "KitRoom.issue", "Kit")).toBe("kotlin/src/main/kotlin/league/model/Kit.kt Kit.constructor EXTRACTED");
   });
 
   it("links a Go dot import's function, and keeps the caller's own package first", () => {
