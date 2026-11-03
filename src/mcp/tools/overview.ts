@@ -10,7 +10,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import type { ImpactDiffResult } from "../../core/impact-diff.js";
-import { AnalysisCancelledError, describeRun, type LoadedAnalysis } from "../store.js";
+import { AnalysisCancelledError, EngineOlderError, describeRun, type LoadedAnalysis } from "../store.js";
 import type { FileChurnInfo, PatternInfo, ProjectAnalysis, ProjectDependency, RefactorPressureInfo } from "../../types/analysis.js";
 import {
   ago,
@@ -102,7 +102,7 @@ export function analyzeTool(ctx: ToolContext): McpTool {
       try {
         outcome = await ctx.store.refreshWithin({ full }, (st) => extras?.progress?.(describeRun(st), st.done, st.total));
       } catch (err) {
-        if (err instanceof AnalysisCancelledError) return { text: err.message };
+        if (err instanceof AnalysisCancelledError || err instanceof EngineOlderError) return { text: err.message };
         throw err;
       }
       if ("pending" in outcome) {

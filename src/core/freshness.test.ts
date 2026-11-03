@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { assessFreshness, saveManifest, EXTRACTOR_VERSION } from "./manifest.js";
+import { assessFreshness, compareExtractorVersions, newerAnalysisEngine, saveManifest, EXTRACTOR_VERSION } from "./manifest.js";
 
 /**
  * Before this, the only staleness signal was "analyzed 3 hours ago", which says
@@ -74,6 +74,34 @@ describe("assessFreshness", () => {
     expect((await assessFreshness(out, root)).state).toBe("unknown");
   });
 
+  it("never calls an analysis a newer engine wrote stale", async () => {
+    const [major, minor] = EXTRACTOR_VERSION.split(".").map(Number);
+    const newer = `${major}.${minor! + 1}.0`;
+    await seed({ "src/a.ts": "x\n" }, newer);
+    const f = await assessFreshness(out, root);
+    expect(f.state).toBe("engine-older");
+    expect(f.engine).toEqual({ analysis: newer, running: EXTRACTOR_VERSION });
+    expect(await newerAnalysisEngine(out)).toBe(newer);
+    // Features switched away from their defaults ride along; the version still decides.
+    await seed({ "src/a.ts": "x\n" }, `${newer}+-antlr`);
+    expect((await assessFreshness(out, root)).state).toBe("engine-older");
+  });
+
+  it("still calls an analysis an older engine wrote stale, numbers compared as numbers", async () => {
+    const [major, minor] = EXTRACTOR_VERSION.split(".").map(Number);
+    // 1.99.0 sorts after 1.603.0 as a string, before it as a version.
+    const older = `${major}.${Math.floor(minor! / 10)}.9`;
+    await seed({ "src/a.ts": "x\n" }, older);
+    const f = await assessFreshness(out, root);
+    expect(f.state).toBe("extractor-changed");
+    expect(f.engine?.analysis).toBe(older);
+    expect(await newerAnalysisEngine(out)).toBeNull();
+    // The same version with other features is this engine's to rewrite.
+    await seed({ "src/a.ts": "x\n" }, `${EXTRACTOR_VERSION}+-antlr`);
+    expect((await assessFreshness(out, root)).state).toBe("extractor-changed");
+    expect(await newerAnalysisEngine(out)).toBeNull();
+  });
+
   it("caps the work and says the answer is sampled", async () => {
     await seed({ "src/a.ts": "a\n", "src/b.ts": "b\n", "src/c.ts": "c\n" });
     const f = await assessFreshness(out, root, { maxStats: 2 });
@@ -117,5 +145,16 @@ describe("assessFreshness through git", () => {
     const banner = await freshnessBanner({ analysisDir: out, projectRoot: root, allowAnalyze: true } as never)();
     expect(banner).toMatch(/^⚠ Stale: 1 added, HEAD [0-9a-f]{8} → [0-9a-f]{8} since this analysis — clarifydoc_analyze refreshes it\.$/);
     expect((await assessFreshness(out, root, { git: false })).added).toEqual([]);
+  });
+});
+
+describe("compareExtractorVersions", () => {
+  it("orders by number, ignores the feature suffix, and refuses what it cannot read", () => {
+    expect(compareExtractorVersions("1.99.0", "1.603.0")).toBeLessThan(0);
+    expect(compareExtractorVersions("1.604.0+-antlr", "1.603.0")).toBeGreaterThan(0);
+    expect(compareExtractorVersions("1.603.0+-antlr", "1.603.0")).toBe(0);
+    expect(compareExtractorVersions("2.0", "1.603.0")).toBeGreaterThan(0);
+    expect(compareExtractorVersions("0.0.1-old", "1.603.0")).toBeLessThan(0);
+    expect(compareExtractorVersions("garbage", "1.603.0")).toBeNull();
   });
 });
