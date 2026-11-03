@@ -18,16 +18,14 @@ export function controlFlowTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_control_flow",
     title: "A function's control flow, or a backward slice",
-    description:
-      "One function's control flow as a Mermaid flowchart (its branches, loops and exits), or with `slice` the " +
-      "statements that can affect the values used at that line. Name the function, or a line inside it.",
+    description: "Use for one function's branches, loops and exits as a Mermaid flowchart, or with `slice` the statements that can affect a line. Name the `function` or a `line` in it.",
     inputSchema: {
       type: "object",
       properties: {
-        file: { type: "string", description: "Project-relative path." },
-        function: { type: "string", description: "`Class.method` or the bare name." },
-        line: { type: "number", description: "A 1-based line inside the function." },
-        slice: { type: "number", description: "A 1-based line: list what can affect the values used there instead." },
+        file: { description: "Project-relative path.", type: "string" },
+        function: { type: "string" },
+        line: { type: "number" },
+        slice: { type: "number" },
       },
       required: ["file"],
       additionalProperties: false,

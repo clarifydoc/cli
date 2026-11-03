@@ -89,7 +89,7 @@ export function offsetArg(args: Record<string, unknown>): number {
 }
 
 /** The schema of `offset`, shared by every paged tool. */
-export const OFFSET_SCHEMA = { type: "number", description: "Rows to skip — pass a footer's offset as written (`\"50@3fa2c1\"`)." } as const;
+export const OFFSET_SCHEMA = { type: "number", description: "A page footer's value, as written." } as const;
 
 /** One page of a list: the rows from `offset`, and how many are left after them. */
 export function page<T>(items: T[], offset: number, limit: number): { shown: T[]; hidden: number; offset: number; requested: number } {

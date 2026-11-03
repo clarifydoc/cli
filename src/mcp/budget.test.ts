@@ -8,10 +8,35 @@ import { buildMcpServer } from "./server.js";
  * What every session pays before its first question: the tool list and the
  * server instructions. 17,645 + 2,768 bytes when this budget was set out,
  * 22,341 + 3,328 with eighteen tools, 22,477 + 2,498 once the instructions
- * stopped repeating the tool descriptions. A description that grows the total
- * past the budget has to be argued for in the commit that raises it.
+ * stopped repeating the tool descriptions, 22,735 + 2,750 with nineteen —
+ * then 12,884 + 1,112 once each description became one "use when" sentence
+ * and its arguments, the examples moved to the agent guidance. A description
+ * that grows a figure past its budget has to be argued for in the commit that
+ * raises it.
  */
-const BUDGET_BYTES = 25_500;
+const BUDGET_BYTES = 15_000;
+/** `tools/list` alone, `_meta` aside. */
+const TOOLS_LIST_BYTES = 14_000;
+/** The server instructions, in characters. */
+const INSTRUCTIONS_CHARS = 1_300;
+
+async function upFront(): Promise<{ list: number; instructions: string }> {
+  const { server } = buildMcpServer({ projectRoot: tmpdir(), allowAnalyze: false, allowColdStart: false });
+  const list = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })) as { result: unknown };
+  const init = (await server.handleMessage({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } })) as { result: { instructions?: string } };
+  // `_meta` is for the host (Claude Code reads `anthropic/alwaysLoad` to decide what to load), not for the
+  // model's context, so it is not counted.
+  const listed = JSON.stringify(list.result, (k, v) => (k === "_meta" ? undefined : v));
+  return { list: Buffer.byteLength(listed), instructions: init.result.instructions ?? "" };
+}
+
+/** How many arguments each tool takes — what the shorter descriptions must not have dropped. */
+const ARGUMENTS: Record<string, number> = {
+  clarifydoc_status: 0, clarifydoc_search: 7, clarifydoc_routes: 17, clarifydoc_contract: 5, clarifydoc_services: 3,
+  clarifydoc_screens: 6, clarifydoc_file: 3, clarifydoc_trace: 8, clarifydoc_extract: 5, clarifydoc_blast_radius: 2,
+  clarifydoc_data_model: 4, clarifydoc_data_flows: 6, clarifydoc_health: 5, clarifydoc_architecture: 4,
+  clarifydoc_context_docs: 3, clarifydoc_impact: 4, clarifydoc_control_flow: 4, clarifydoc_analyze: 2, clarifydoc_explain: 4,
+};
 
 afterEach(() => {
   delete process.env.CLARIFYDOC_MCP_LOG;
@@ -19,14 +44,21 @@ afterEach(() => {
 
 describe("what a session pays up front", () => {
   it("keeps tools/list and the instructions under the budget", async () => {
-    const { server } = buildMcpServer({ projectRoot: tmpdir(), allowAnalyze: false, allowColdStart: false });
-    const list = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })) as { result: unknown };
-    const init = (await server.handleMessage({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } })) as { result: { instructions?: string } };
-    // `_meta` is for the host (Claude Code reads `anthropic/alwaysLoad` to decide what to load), not for the
-    // model's context, so it is not counted.
-    const listed = JSON.stringify(list.result, (k, v) => (k === "_meta" ? undefined : v));
-    const bytes = Buffer.byteLength(listed) + Buffer.byteLength(init.result.instructions ?? "");
+    const { list, instructions } = await upFront();
+    const bytes = list + Buffer.byteLength(instructions);
     expect(bytes, `tools/list + instructions = ${bytes} bytes`).toBeLessThan(BUDGET_BYTES);
+    expect(list, `tools/list = ${list} bytes`).toBeLessThanOrEqual(TOOLS_LIST_BYTES);
+    expect(instructions.length, `instructions = ${instructions.length} characters`).toBeLessThanOrEqual(INSTRUCTIONS_CHARS);
+  });
+
+  it("says when to use each tool in one sentence, and lists every argument", async () => {
+    const { server } = buildMcpServer({ projectRoot: tmpdir(), allowAnalyze: false, allowColdStart: false });
+    const list = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })) as { result: { tools: Array<{ name: string; description: string; inputSchema: { properties?: Record<string, unknown> } }> } };
+    for (const t of list.result.tools) {
+      expect(t.description, t.name).toMatch(/^Use /);
+      // Every argument a tool takes is still in its schema: the cut is in words, never in capability.
+      expect(Object.keys(t.inputSchema.properties ?? {}).length, t.name).toBe(ARGUMENTS[t.name]);
+    }
   });
 
   it("asks a deferring host to load search and trace up front, and nothing else", async () => {

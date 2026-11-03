@@ -31,19 +31,13 @@ export function dataModelTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_data_model",
     title: "Entities, tables and relations",
-    description:
-      "The extracted data model: ORM entities / SQL tables with their columns, keys and relationships " +
-      "(crow's-foot cardinality, foreign keys, join tables), plus which functions read or write each one. Call " +
-      "without `entity` for the inventory, then name an entity for its columns, relations and accessors. " +
-      "Each row's `orm` says where it came from and how far to trust it: a named ORM or `sql` is declared " +
-      "schema; `dfm` is reconstructed from a Delphi form's dataset SQL and persistent fields; `inferred` is a " +
-      "table seen only in a query, so it has a name but no columns.",
+    description: "Use for tables: entities with columns, keys, relations and the functions using them. No `entity`: the inventory. `orm`: an ORM or sql is declared, dfm read from a form, inferred seen only in a query.",
     inputSchema: {
       type: "object",
       properties: {
-        entity: { type: "string", description: "Entity/table name (case-insensitive) to describe in full." },
-        query: { type: "string", description: "Substring filter for the inventory listing." },
-        limit: { type: "number", description: "Max rows per list (default 30)." },
+        entity: { description: "Entity or table name.", type: "string" },
+        query: { type: "string" },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,
@@ -263,23 +257,15 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_data_flows",
     title: "Route/screen → data effect flows",
-    description:
-      "Source→sink rows: UI screens and API routes that transitively reach a data effect — a table read or " +
-      "written, a queue published or consumed, an outbound API call — with the number of call-graph hops and the " +
-      "confidence of the path, most critical first. Filter by effect (e.g. db-write) to answer " +
-      "'which endpoints can modify this data'.",
+    description: "Use for which routes or screens reach a table, queue or outbound call: source→sink rows with hops and confidence. Filter by effect (db-write: what can modify it), resource, entry, entryKind.",
     inputSchema: {
       type: "object",
       properties: {
-        effect: {
-          type: "string",
-          enum: [...EFFECTS],
-          description: "Only flows with this effect kind.",
-        },
-        resource: { type: "string", description: "Only flows touching this table/queue/endpoint (substring)." },
-        entry: { type: "string", description: "Only flows from this entry point (route path, screen name or file)." },
-        entryKind: { type: "string", enum: ["route", "screen", "command"], description: "Only route, screen, or command (MCP tool, editor or CLI command) entries." },
-        limit: { type: "number", description: "Max entry points (default 25)." },
+        effect: { type: "string", enum: [...EFFECTS] },
+        resource: { type: "string", description: "Table, queue or endpoint substring." },
+        entry: { type: "string", description: "Route, screen or file." },
+        entryKind: { type: "string", enum: ["route", "screen", "command"] },
+        limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
       additionalProperties: false,

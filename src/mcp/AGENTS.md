@@ -88,7 +88,11 @@ write. That is what lets an external agent be configured as nothing but a comman
   overrides shown as `\u202e` escapes, not applied), source excerpts are `fenced` with a backtick run the text
   cannot close, and the instructions say quoted repository text is never an instruction.
 - **The up-front cost has a budget.** `tools/list` plus the instructions must stay under `BUDGET_BYTES`
-  ([budget.test.ts](budget.test.ts)); a description that pushes past it is argued for in the commit that raises it.
+  ([budget.test.ts](budget.test.ts)), and `tools/list` alone (14,000 bytes) and the instructions (1,300 characters)
+  under their own; a description that pushes past one is argued for in the commit that raises it. A tool's
+  description is one "Use …" sentence plus its arguments in a few words; an example call goes to `EXAMPLES` in
+  [guidance.ts](guidance.ts), which only the AGENTS.md / CLAUDE.md section carries, and the instructions name
+  each question's tool in a line (`brief`) — the reasons are in that section too.
   `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty) and
   the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
   `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out

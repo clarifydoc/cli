@@ -59,18 +59,14 @@ export function extractTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_extract",
     title: "Source of a function and what it calls",
-    description:
-      "The source code of one function or method plus the functions it calls (breadth-first over the resolved " +
-      "call graph, up to `depth` hops), within a token budget — what you need to read to change it, without " +
-      "reading whole files; callees that do not fit are listed with their size. `package`: an installed " +
-      "package's API at its installed version (`symbol` picks one).",
+    description: "Use for what one function does: its source, decorators and doc included, and its callees' within `maxTokens`. `depth` 0-3; `package`: an installed package's API (`symbol`: one export).",
     inputSchema: {
       type: "object",
       properties: {
-        symbol: { type: "string", description: 'Function or method, e.g. "createOrder" or "OrderService.create".' },
-        file: { type: "string", description: "The file that defines it (project-relative path), when the name is not unique." },
-        depth: { type: "number", description: "Hops of callees to include, 0-3 (default 1; 0 = the function alone)." },
-        maxTokens: { type: "number", description: "Budget for the source returned (default 6000, max 30000)." },
+        symbol: { type: "string", description: "`Class.method` or a name." },
+        file: { type: "string", description: "When the name is not unique." },
+        depth: { type: "number" },
+        maxTokens: { type: "number" },
         package: { type: "string" },
       },
       additionalProperties: false,
