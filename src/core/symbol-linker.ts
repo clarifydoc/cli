@@ -4472,7 +4472,35 @@ function resolveCallToDefinition(
     relation: relationForStrategy(defStrategy),
   };
   if (linkConfidence) link.confidence = linkConfidence;
+  // A bare name where members need no `self.`, called in a class with an ancestor or mixin the project does not
+  // declare: that ancestor may define it, so a definition found outside the class is a guess.
+  if (link.confidence === "EXTRACTED" && !isQualified && !reference && !pluginFor(analysis.language)?.explicitSelfMembers) {
+    const owner = callerClass(ctx, analysis, sourceSymbol, call.line);
+    // The class's own member, and a class constructed by its name, are what they are whatever the ancestors hold.
+    const own = targetFile === sourceFile && (def.name.startsWith(`${owner}.`) || memberClassOf(ctx, targetFile, def) === owner);
+    if (owner && !own && !ctx.classAt.has(memberKey(targetFile, def.name)) && unseenAncestor(ctx, owner, sourceFile)) {
+      link.confidence = "INFERRED";
+    }
+  }
   return link;
+}
+
+/** Whether a class, its bases or the modules they mix in name one the project does not declare (`class X < UnseenBase`). */
+function unseenAncestor(ctx: LinkContext, className: string, classFile: string, seen = new Set<string>()): boolean {
+  const key = memberKey(classFile, className);
+  if (seen.has(key) || seen.size > MAX_BASE_DEPTH * 4) return false;
+  seen.add(key);
+  const cls = ctx.classAt.get(key);
+  if (!cls) return false;
+  const project = ctx.projectOf.get(classFile) ?? "root";
+  const supertypes = [cls.extends, ...(cls.mixins ?? []).filter((m) => m.kind !== "extend").map((m) => m.name)];
+  for (const written of supertypes) {
+    const name = bareClassName(written);
+    if (!name) continue;
+    const file = locateClass(ctx, name, classFile, project);
+    if (!file || unseenAncestor(ctx, declaredTypeName(ctx, file, name), file, seen)) return true;
+  }
+  return false;
 }
 
 type MkLink = (
