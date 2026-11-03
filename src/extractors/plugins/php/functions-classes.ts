@@ -735,6 +735,15 @@ function extractLocalTypes(
 }
 
 /**
+ * Typed locals of a page's top-level statements (`$repo = new ClubRepo();`
+ * above the markup that loops over `$repo->all()`), for the file's `<setup>`.
+ * Functions and methods are their own scopes and never see them.
+ */
+export function phpTopLevelLocalTypes(tree: Tree, sourceText: string): LocalType[] {
+  return extractLocalTypes(tree.rootNode, / as /.test(sourceText) ? useAliases(tree) : new Map());
+}
+
+/**
  * The blocks of a top-level `if` that declares conditionally — the helper
  * idiom `if (!function_exists('money')) { function money() { … } }` and
  * `if (!class_exists('Club')) { class Club { … } }`: the then-block, each

@@ -520,6 +520,15 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
   return out;
 }
 
+/**
+ * Typed locals of the module's own statements (`repo = ClubRepo()` above
+ * `for club in repo.all():`), for the file's `<setup>`. Function and class
+ * bodies are their own scopes and are left out.
+ */
+export function pythonTopLevelLocalTypes(root: Node, sourceText: string): LocalType[] {
+  return collectLocalTypes(root, [], /#\s*type:/.test(sourceText));
+}
+
 /** Builtins whose result the project never declares — no point carrying them as initializers. */
 export const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
   "len", "str", "int", "float", "bool", "bytes", "list", "dict", "set", "tuple", "frozenset",

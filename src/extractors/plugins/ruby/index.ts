@@ -688,9 +688,10 @@ export const rubySpec: RegexLangSpec = {
   blockEnds: rubyBlockEndsOf,
   // Calls are read from code only: heredoc SQL / JS / prompts and `%w[]` words name no method.
   callSourceLines: rubyCodeLinesOf,
-  // A Rake file's tasks and a Jbuilder view's statements are the file's own:
-  // their calls are its `<setup>`.
-  topLevelCalls: /\.(?:rake|jbuilder)$/,
+  // A Rake file's tasks, a Jbuilder view's statements and a script's body
+  // (`script/`, `db/seeds.rb`, `db/seeds/`) are the file's own: their calls
+  // are its `<setup>`.
+  topLevelCalls: /\.(?:rake|jbuilder)$|(?:^|\/)script\/.+\.rb$|(?:^|\/)db\/seeds(?:\.rb$|\/.+\.rb$)/,
   lineCommentPrefixes: ["#"],
 
   inlineBodyColumn: rubyInlineBodyColumn,

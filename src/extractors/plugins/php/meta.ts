@@ -9,7 +9,7 @@ import { phpCallHooks } from "./call-hooks.js";
 import { composerPackages } from "./packages.js";
 import { bladeImports, extractBladeScreens, extractBladeInteractiveElements } from "./blade.js";
 import { phpManifest } from "./manifest.js";
-import { PhpExtractor } from "./functions-classes.js";
+import { PhpExtractor, phpTopLevelLocalTypes } from "./functions-classes.js";
 import { PhpImportExportExtractor } from "./imports-exports.js";
 import { PhpDataSourceExtractor } from "./data-sources.js";
 import { PhpMutationExtractor } from "./data-mutations.js";
@@ -124,6 +124,8 @@ export const phpMeta: LanguagePluginMeta = {
     pathArgCalls: extractPhpPathArgCalls,
     // Laravel / Symfony / PHP-DI container registrations (see di.ts).
     diBindings: (tree, sourceText) => phpDiBindings(tree, sourceText),
+    // A page's top-level `$repo = new ClubRepo();` types the calls its own statements and markup make.
+    topLevelLocalTypes: (tree, sourceText) => phpTopLevelLocalTypes(tree, sourceText),
     // `namespace App\Support;` — where `money()` and `use function …\money` look.
     declaredNamespace: (tree) => {
       const ns = tree.rootNode.namedChildren.find((c) => c.type === "namespace_definition");
