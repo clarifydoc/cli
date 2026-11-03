@@ -57,6 +57,7 @@ export function toCycloneDx(summary: Summary, name: string): Record<string, unkn
           { name: "clarifydoc:declaredIn", value: p.declaredIn },
           ...(p.version && p.version !== version ? [{ name: "clarifydoc:declaredVersion", value: p.version }] : []),
           ...(p.used === false ? [{ name: "clarifydoc:used", value: "false" }] : []),
+          ...(p.transitive ? [{ name: "clarifydoc:transitive", value: "true" }] : []),
         ],
       };
     })

@@ -160,7 +160,8 @@ describe("collectExternalPackages — manifest parsing", () => {
 
     // go: block + single + indirect (still listed)
     expect(find("go", "github.com/gin-gonic/gin")?.version).toBe("v1.9.1");
-    expect(find("go", "gorm.io/gorm")).toBeTruthy();
+    expect(find("go", "gorm.io/gorm")?.transitive).toBe(true); // `// indirect`
+    expect(find("go", "github.com/gin-gonic/gin")?.transitive).toBeUndefined();
     expect(find("go", "github.com/lib/pq")).toBeTruthy();
 
     // cargo: object-version, string-version, table form, dev scope
@@ -390,6 +391,15 @@ describe("attachPackageUsage", () => {
     expect(pkgs[0]).toMatchObject({ used: true, usageCount: 2 }); // react + react/jsx-runtime
     expect(pkgs[1]).toMatchObject({ used: true, usageCount: 1 }); // scoped subpath
     expect(pkgs[2]).toMatchObject({ used: false, usageCount: 0 }); // declared but never imported
+  });
+
+  it("never calls a transitive go.mod requirement unused", () => {
+    const direct = pkg("go", "github.com/example/pitlane");
+    const indirect = { ...pkg("go", "github.com/example/tyrewear"), transitive: true };
+    const pkgs = [direct, indirect];
+    attachPackageUsage(pkgs, [fileWith("go", ["fmt"])]);
+    expect(direct).toMatchObject({ used: false, usageCount: 0 });
+    expect(indirect.used).toBeUndefined();
   });
 
   it("matches go modules by import-path prefix", () => {

@@ -25,6 +25,18 @@ describe("lockfile licences", () => {
   });
 });
 
+describe("transitive requirements", () => {
+  it("are marked on their component", () => {
+    const bom = toCycloneDx({ externalPackages: [
+      { name: "github.com/example/pitlane", version: "v1.2.0", ecosystem: "go", scope: "prod", category: "other", declaredIn: "go.mod" },
+      { name: "github.com/example/tyrewear", version: "v0.4.1", ecosystem: "go", scope: "prod", category: "other", declaredIn: "go.mod", transitive: true },
+    ] } as never, "garage") as { components: Array<{ name: string; properties: Array<{ name: string; value: string }> }> };
+    const props = (n: string) => bom.components.find((c) => c.name === n)!.properties.map((p) => `${p.name}=${p.value}`);
+    expect(props("github.com/example/tyrewear")).toContain("clarifydoc:transitive=true");
+    expect(props("github.com/example/pitlane")).not.toContain("clarifydoc:transitive=true");
+  });
+});
+
 const fixture = resolve("test-output", "sample-react");
 describe.skipIf(!existsSync(fixture))("the SBOM of a fixture", () => {
   it("is CycloneDX 1.5 with one component per declared package, a purl each, dev dependencies excluded", async () => {

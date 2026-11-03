@@ -1,7 +1,7 @@
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 
-/** Go modules: `go.mod` `require` lines and blocks. */
+/** Go modules: `go.mod` `require` lines and blocks; a `// indirect` one is `transitive`. */
 function parseGoMod(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
   // require ( <path> <version> [// indirect] ) blocks and single-line requires.
@@ -20,7 +20,10 @@ function parseGoMod(text: string, declaredIn: string): DeclaredPackage[] {
     if (!body || body.startsWith("//")) continue;
     const parts = body.replace(/\/\/.*$/, "").trim().split(/\s+/);
     if (parts.length < 2) continue;
-    out.push(declared(parts[0]!, parts[1]!, "go", "prod", declaredIn));
+    const pkg = declared(parts[0]!, parts[1]!, "go", "prod", declaredIn);
+    // Required for a dependency's sake, not imported by this module.
+    if (/\/\/\s*indirect\b/.test(body)) pkg.transitive = true;
+    out.push(pkg);
   }
   return out;
 }

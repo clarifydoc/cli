@@ -4276,6 +4276,12 @@ export interface ExternalPackage {
   /** Manifest the dependency was declared in, relative to the project root. */
   declaredIn: string;
   /**
+   * The manifest lists it only because another dependency needs it (a go.mod
+   * `// indirect` require): the project's own code is not expected to import
+   * it, so it is never judged unused. Absent when any manifest declares it directly.
+   */
+  transitive?: boolean;
+  /**
    * The version the package manager installed, read from the lockfile beside
    * the manifest (package-lock.json, yarn.lock, poetry.lock, uv.lock,
    * Pipfile.lock, Cargo.lock, composer.lock, Gemfile.lock) — exact, where

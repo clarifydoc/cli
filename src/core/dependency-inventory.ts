@@ -195,6 +195,8 @@ export async function collectExternalPackages(
       if (existing) {
         // Prefer the strongest scope (prod beats dev/peer/optional).
         if (raw.scope === "prod") existing.scope = "prod";
+        // Declared directly anywhere: a direct dependency.
+        if (!raw.transitive) delete existing.transitive;
         if (!existing.version && raw.version) existing.version = raw.version;
         if (!existing.resolvedVersion && raw.resolvedVersion) existing.resolvedVersion = raw.resolvedVersion;
         if (!existing.license && raw.license) existing.license = raw.license;
@@ -344,7 +346,8 @@ export function attachPackageUsage(
       // Run by a script, loaded by a tool's config, or the types of an import.
       pkg.used = true;
       pkg.usageCount = 0;
-    } else if (spec?.assertsUnused) {
+    } else if (spec?.assertsUnused && !pkg.transitive) {
+      // A transitive requirement is there for another package, not for an import.
       pkg.used = false;
       pkg.usageCount = 0;
     }
