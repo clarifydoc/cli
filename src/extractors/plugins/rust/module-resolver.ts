@@ -10,11 +10,13 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  *   - `other_crate::m` — a workspace crate whose directory is named so
  *     (`-` for `_`): `other-crate/src/m.rs`;
  *   - a module that does not declare the name but glob-re-exports a child
- *     (`pub use chat_sql::*` in `persistence/mod.rs`) answers with that child.
+ *     (`pub use chat_sql::*` in `persistence/mod.rs`) answers with that child,
+ *     and one that re-exports the item by name (`pub use inner::sweep;`) with
+ *     the module that declares it.
  * A name the module path itself ends with (`use crate::util::is_hidden` written as
  * one path) is tried as the item of its parent module too. Leaf code.
  */
-export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext): string | null {
+export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext, depth = 0): string | null {
   // A path may come joined with `.` (`crate::garage.tools`: a module path and the name an import binds).
   const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
   if (segs.length === 0) return null;
@@ -47,7 +49,13 @@ export function resolveRustImport(importingFile: string, source: string, specifi
   if (!specifier || ctx.declares(module, specifier)) return module;
   // `pub use chat_sql::*` — the module re-exports a child's items.
   for (const glob of ctx.globImportsOf(module)) {
-    const child = resolveRustImport(module, glob.replace(/::\*$/, ""), undefined, ctx);
+    const child = resolveRustImport(module, glob.replace(/::\*$/, ""), undefined, ctx, depth + 1);
+    if (child && child !== module && ctx.declares(child, specifier)) return child;
+  }
+  // `pub use inner::sweep;` — the module re-exports one item of another under its own name.
+  const named = depth < MAX_REEXPORT_HOPS ? ctx.namedImportOf?.(module, specifier) : null;
+  if (named && named.name === specifier) {
+    const child = resolveRustImport(module, named.source, specifier, ctx, depth + 1);
     if (child && child !== module && ctx.declares(child, specifier)) return child;
   }
   return module;
@@ -129,5 +137,8 @@ function exactModuleFile(dir: string, path: string[], ctx: ImportResolveContext)
   for (const f of [`${rel}.rs`, `${rel}/mod.rs`]) if (ctx.files.has(join(dir, f))) return join(dir, f);
   return null;
 }
+
+/** Re-exports followed from one module to the next (`pub use a::x` → `pub use b::x` …). */
+const MAX_REEXPORT_HOPS = 4;
 
 const join = (dir: string, f: string): string => (dir ? `${dir}/${f}` : f);

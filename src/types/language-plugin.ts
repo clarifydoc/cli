@@ -1009,6 +1009,11 @@ export interface ImportResolveContext {
   declares(file: string, name: string): boolean;
   /** The sources of the file's own wildcard imports (`pub use chat_sql::*`, `from x import *`). */
   globImportsOf(file: string): readonly string[];
+  /**
+   * The import of `file` that binds `name` (`pub use inner::sweep` → `{ source: "inner", name: "sweep" }`,
+   * `name` being what the imported module calls it); null when none does.
+   */
+  namedImportOf?(file: string, name: string): { source: string; name: string } | null;
 }
 
 export interface LanguagePluginManifest {

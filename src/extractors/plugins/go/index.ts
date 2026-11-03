@@ -13,7 +13,7 @@ import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
-import { goResultTextAt, goResultTypes } from "./syntax.js";
+import { blankCodeInStrings, goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
 import { spawnImports } from "../shared/process-spawns.js";
@@ -129,9 +129,10 @@ export const goSpec: RegexLangSpec = {
   // Its imports, and scripts it starts as processes (`exec.Command("./scripts/run.sh")`): run, not loaded.
   extractImports: (lines) => [...extractGoImports(lines), ...spawnImports(lines.join("\n"), "go")],
 
-  // Read with comments blanked: a commented-out registration serves nothing.
+  // Read with comments blanked, and strings that hold code: a commented-out registration, or one a template or a
+  // test sample spells (`` const sample = `r.GET("/x", h)` ``), serves nothing.
   extractRoutes: (lines, _classes, _file, _fns, facts) => {
-    const code = GO_CODE.commentFreeLines(lines) as string[];
+    const code = blankCodeInStrings(GO_CODE.commentFreeLines(lines));
     // A closure handling one of several routes a function registers carries its own body's calls.
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);

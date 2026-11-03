@@ -64,10 +64,10 @@ describe("C and C++ locals", () => {
   try { kick(); } catch (const Foul& f) { f.note(); }
   if (Coach* head = find()) head->drill();
   if (goals < limit && shots > misses) score();
-`)).toEqual(["a: Car", "b: Car", "c: Car", "p: Player", "f: Foul", "head: Coach"]);
+`)).toEqual(["a: Car", "b: Car", "c: Car", "p: Player", "f: Foul", "head: Coach", "q: "]);
   });
 
-  it("leaves out primitives, statements that declare nothing, and names bound twice", () => {
+  it("leaves out primitives and statements that declare nothing; a name bound twice or untyped is untold", () => {
     expect(locals(`
   int n = 0;
   unsigned long long laps = 0;
@@ -81,14 +81,16 @@ describe("C and C++ locals", () => {
   Physio twice;
   auto [home, away] = score();
   // Crate commented;
-`)).toEqual([]);
+`)).toEqual(["twice: "]);
   });
 
-  it("keeps a parameter's own type and drops a local shadowing one of another type", () => {
-    expect(locals("  Coach coach;\n  Kit kit;", [
-      { name: "coach", type: "Coach", defaultValue: null },
+  it("keeps a parameter's own type; a local shadowing one of another type is untold, so the parameter never answers it", () => {
+    expect(locals("  Coach coach;\n  Kit kit;\n  auto pick = choose();\n  auto& brake = *slot;", [
+      { name: "coach", type: "const Coach&", defaultValue: null },
       { name: "kit", type: "Crate", defaultValue: null },
-    ])).toEqual(["coach: Coach"]);
+      { name: "pick", type: "Engine", defaultValue: null },
+      { name: "brake", type: "Engine", defaultValue: null },
+    ])).toEqual(["coach: Coach", "brake: ", "pick: ", "kit: "]);
   });
 });
 
