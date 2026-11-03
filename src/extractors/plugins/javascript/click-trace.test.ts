@@ -98,6 +98,32 @@ export default observer(() => { axios.get("/api/garages"); return null; });`;
   });
 });
 
+describe("a function's own require", () => {
+  it("binds a destructured or member require inside a function to the module's members, not the whole module", async () => {
+    const src = `function endSeason() {
+  const { promoteClub: promote, saveClub } = require("./clubs");
+  const relegate = require("./clubs").relegateClub;
+  const fixtures = require("./fixtures");
+  promote(1);
+  saveClub({});
+  relegate(3);
+  fixtures.reschedule();
+}`;
+    const tree = await parse(src, "season.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    const aliases = extractJsVariableAliases(tree, imports);
+    const calls = classifyCalls(fns[0]!.calls, imports, "javascript", aliases, new Set(["endSeason"]), new Set());
+    expect(calls.filter((c) => c.name !== "require").map((c) => `${c.name}:${c.kind}:${c.target}:${c.member ?? ""}`)).toEqual([
+      "promote:cross-file:./clubs:promoteClub",
+      "saveClub:cross-file:./clubs:saveClub",
+      "relegate:cross-file:./clubs:relegateClub",
+      // The whole module bound by name keeps the binding it had.
+      "fixtures.reschedule:internal:null:",
+    ]);
+  });
+});
+
 describe("Redux Toolkit thunks", () => {
   it("names a createAsyncThunk binding after its payload creator, so dispatching it reaches its calls", async () => {
     const src = `import { createAsyncThunk } from "@reduxjs/toolkit";

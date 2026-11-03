@@ -334,7 +334,27 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       if (decl.type !== "variable_declarator") continue;
 
       const name = decl.childForFieldName("name");
-      const value = decl.childForFieldName("value");
+      let value = decl.childForFieldName("value");
+      // `const relegate = require("./clubs").relegateClub`: the module's `relegateClub`, bound as `relegate`.
+      const member = value?.type === "member_expression" && name?.type === "identifier" ? value.childForFieldName("property")?.text : undefined;
+      if (member) {
+        const required = value!.childForFieldName("object");
+        const source = required ? requiredSource(required) : null;
+        if (source !== null) {
+          // `require("./x").default` is the module's default export.
+          const isDefault = member === "default";
+          imports.push({
+            source,
+            specifiers: [name!.text],
+            isDefault,
+            isNamespace: false,
+            isType: false,
+            line: declNode.startPosition.row + 1,
+            ...(!isDefault && member !== name!.text ? { aliases: { [name!.text]: member } } : {}),
+          });
+        }
+        continue;
+      }
       if (!value || value.type !== "call_expression") continue;
 
       const callee = value.childForFieldName("function");

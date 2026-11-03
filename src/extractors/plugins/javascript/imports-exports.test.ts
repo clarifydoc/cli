@@ -167,6 +167,23 @@ describe("JS/TS nested require()", () => {
   });
 });
 
+describe("JS/TS require of a member", () => {
+  it("binds a member read off a require like a named import, renamed or not", async () => {
+    const src = [
+      `const relegate = require("./clubs").relegateClub;`,
+      `const promoteClub = require("./clubs").promoteClub;`,
+      `const Garage = require("./garage").default;`,
+    ].join("\n");
+    const tree = await parseSource(src, "javascript" as any, "season.js");
+    const imports = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(imports.map((i) => ({ source: i.source, specifiers: i.specifiers, isDefault: i.isDefault, aliases: i.aliases }))).toEqual([
+      { source: "./clubs", specifiers: ["relegate"], isDefault: false, aliases: { relegate: "relegateClub" } },
+      { source: "./clubs", specifiers: ["promoteClub"], isDefault: false, aliases: undefined },
+      { source: "./garage", specifiers: ["Garage"], isDefault: true, aliases: undefined },
+    ]);
+  });
+});
+
 describe("CommonJS module shapes", () => {
   it("records `module.exports = <named function | name>` as the module's default", async () => {
     expect((await exportsOf(`module.exports = function kickoff(team) { return team; };`, "javascript")).map(brief)).toEqual(["default default kickoff"]);
