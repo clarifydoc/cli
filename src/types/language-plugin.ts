@@ -1059,6 +1059,21 @@ export interface LanguagePluginManifest {
    */
   autoloadedFiles?(analysis: FileAnalysis, filesEndingWith: (suffix: string) => readonly string[]): readonly string[];
   /**
+   * How a class name written in code is looked up, for a language whose
+   * lookup follows the namespaces lexically open where it is written (Ruby:
+   * inside `module League; class Report` a bare `Helper` is
+   * `League::Report::Helper`, then `League::Helper`, then `::Helper`; inside
+   * the compact `class League::Report` it skips `League`). `pathOf` is the
+   * full path a class or module of a file is declared at; `nesting` the paths
+   * open at a line, innermost first, the top level left out. The symbol
+   * linker takes a class called by its bare name only at the first path that
+   * names one, never another namespace's class of that name. Leaf code.
+   */
+  lexicalConstants?: {
+    pathOf(cls: ClassInfo, classes: readonly ClassInfo[]): string;
+    nesting(classes: readonly ClassInfo[], line: number): string[];
+  };
+  /**
    * The class a receiver's own name states, in a language whose locals carry
    * no declared type the linker can read (Ruby's `match_report.close!` →
    * `MatchReport`, Scala's `api` → `Api`): evidence for a unique-name method
@@ -1247,6 +1262,17 @@ export interface LanguagePluginManifest {
    * leave it unset, so a bare name may still be a field.
    */
   explicitSelfMembers?: boolean;
+  /**
+   * A bare call's name is looked up lexically, in the one namespace that
+   * holds variables, functions and classes alike (Python): a parameter of the
+   * caller (`def build(Club): return Club()`) is what it calls — never the
+   * module's or an import's `Club` — and a class declared inside a function
+   * is that function's, reached only from within it (`def build(): class
+   * Inner: …; return Inner()`), shadowing a module class or an import of its
+   * name. Unset where a method and a parameter of one name never collide (Java)
+   * or a class declared in a function is global (PHP).
+   */
+  lexicalCallScope?: boolean;
   /**
    * The call extractor reads some member calls without their receiver (C++
    * `coach->drill()` is `drill`), so a bare call the caller's class and its

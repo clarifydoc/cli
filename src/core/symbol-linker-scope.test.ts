@@ -278,6 +278,107 @@ describe("symbol-linker — nested functions of one name resolve to the nearest 
   });
 });
 
+describe("symbol-linker — Python looks a bare name up lexically", () => {
+  const imp = (source: string, name: string) => ({ source, specifiers: [name], isDefault: false, isNamespace: false, isType: false, line: 1 });
+  const targets = (links: SymbolLink[], sourceSymbol: string, callName: string) =>
+    links.filter((l) => l.sourceSymbol === sourceSymbol && l.callName === callName).map((l) => `${l.targetFile}:${l.targetLine}`);
+  const models = file("league/models.py", "python", {
+    classes: [cls("Club", 1, 3, [fn("__init__", 2, 3)]), cls("Inner", 6, 8, [fn("kick", 7, 8)])],
+  });
+
+  it("calls the parameter, never the imported class it shadows (`def shadow_param(Club): return Club()`)", () => {
+    const service = file("league/service.py", "python", {
+      imports: [imp("league.models", "Club")],
+      functions: [
+        fn("shadow_param", 4, 5, [call("Club", 5)], { params: [{ name: "Club", type: null } as never] }),
+        fn("real_club", 7, 8, [call("Club", 8, { kind: "cross-file", target: "league.models" })]),
+      ],
+    });
+    const links = buildSymbolLinks([service, models]);
+    expect(targets(links, "shadow_param", "Club")).toEqual([]);
+    expect(targets(links, "real_club", "Club")).toEqual(["league/models.py:1"]);
+  });
+
+  it("calls the parameter, never the module's own class of its name", () => {
+    const local = file("league/local.py", "python", {
+      classes: [cls("Inner", 1, 3, [fn("kick", 2, 3)])],
+      functions: [fn("shadow_local_param", 6, 7, [call("Inner", 7)], { params: [{ name: "Inner", type: null } as never] })],
+    });
+    expect(targets(buildSymbolLinks([local]), "shadow_local_param", "Inner")).toEqual([]);
+  });
+
+  it("lets a class declared in a function shadow an import of its name, there only", () => {
+    const service = file("league/service.py", "python", {
+      imports: [imp("league.models", "Inner")],
+      functions: [
+        fn("build_local", 8, 13, [call("Inner", 13, { kind: "cross-file", target: "league.models" })]),
+        fn("imported", 15, 16, [call("Inner", 16, { kind: "cross-file", target: "league.models" })]),
+      ],
+      classes: [cls("Inner", 9, 11, [fn("kick", 10, 11)])],
+    });
+    const links = buildSymbolLinks([service, models]);
+    expect(targets(links, "build_local", "Inner")).toEqual(["league/service.py:9"]);
+    expect(targets(links, "imported", "Inner")).toEqual(["league/models.py:6"]);
+  });
+
+  it("keeps a function's own class to that function, and the module's class to the rest", () => {
+    const local = file("league/local.py", "python", {
+      classes: [cls("Inner", 1, 3, [fn("kick", 2, 3)]), cls("Inner", 11, 13, [fn("kick", 12, 13)]), cls("Bench", 21, 22, [fn("sit", 22, 22)])],
+      functions: [
+        fn("nested_local", 10, 15, [call("Inner", 15)]),
+        fn("module_inner", 18, 19, [call("Inner", 19)]),
+        fn("make_bench", 20, 23),
+        fn("other_bench", 25, 26, [call("Bench", 26)]),
+      ],
+    });
+    const links = buildSymbolLinks([local]);
+    expect(targets(links, "nested_local", "Inner")).toEqual(["league/local.py:11"]);
+    expect(targets(links, "module_inner", "Inner")).toEqual(["league/local.py:1"]);
+    // Another function's class is out of reach.
+    expect(targets(links, "other_bench", "Bench")).toEqual([]);
+  });
+});
+
+describe("symbol-linker — a Ruby class name is looked up in the namespaces open where it is written", () => {
+  const targets = (links: SymbolLink[], sourceSymbol: string) =>
+    links.filter((l) => l.sourceSymbol === sourceSymbol && l.callName === "Helper.new").map((l) => `${l.targetFile}:${l.targetSymbol}`);
+  const topHelper = file("lib/helper.rb", "ruby", { classes: [cls("Helper", 1, 5, [fn("initialize", 2, 4)])] });
+  const leagueHelper = file("lib/league/helper.rb", "ruby", {
+    classes: [cls("League", 1, 7, [], { kind: "module" }), cls("Helper", 2, 6, [fn("initialize", 3, 5)])],
+  });
+  // `class League::Report` — the compact form opens League::Report alone.
+  const report = file("lib/league/report.rb", "ruby", {
+    classes: [cls("League::Report", 1, 5, [fn("build", 2, 4, [call("Helper.new", 3)])])],
+  });
+  // `module League; class Summary` — the nested form opens League too.
+  const summary = file("lib/league/summary.rb", "ruby", {
+    classes: [cls("League", 1, 7, [], { kind: "module" }), cls("Summary", 2, 6, [fn("build", 3, 5, [call("Helper.new", 4)])])],
+  });
+
+  it("reaches the top-level class from a compact `class League::Report`, never League::Helper", () => {
+    const links = buildSymbolLinks([topHelper, leagueHelper, report, summary]);
+    expect(targets(links, "League::Report.build")).toEqual(["lib/helper.rb:Helper.initialize"]);
+    expect(targets(links, "Summary.build")).toEqual(["lib/league/helper.rb:Helper.initialize"]);
+  });
+
+  it("still reaches a filter its base class declares, named on that class (an inherited `before_action`)", () => {
+    const base = file("app/controllers/league/base.rb", "ruby", {
+      classes: [cls("League", 1, 9, [], { kind: "module" }), cls("Base", 2, 8, [fn("check_referee", 3, 5)])],
+    });
+    const fixtures = file("app/controllers/league/fixtures_controller.rb", "ruby", {
+      classes: [cls("League::FixturesController", 1, 6, [fn("index", 2, 4, [call("Base.check_referee", 2)])], { extends: "League::Base" })],
+    });
+    const links = buildSymbolLinks([base, fixtures]);
+    expect(links.filter((l) => l.sourceSymbol === "League::FixturesController.index").map((l) => l.targetSymbol)).toEqual(["Base.check_referee"]);
+  });
+
+  it("links nothing from the compact form when only League::Helper exists", () => {
+    const links = buildSymbolLinks([leagueHelper, report, summary]);
+    expect(targets(links, "League::Report.build")).toEqual([]);
+    expect(targets(links, "Summary.build")).toEqual(["lib/league/helper.rb:Helper.initialize"]);
+  });
+});
+
 describe("symbol-linker — a static call on a project class reaches it whatever its name says", () => {
   it("links `ClubStore.save(…)`, classified as database by its name, to the class's method", () => {
     const store = file("ClubStore.java", "java", { classes: [cls("ClubStore", 1, 4, [fn("save", 2, 2), fn("find", 3, 3)])] });

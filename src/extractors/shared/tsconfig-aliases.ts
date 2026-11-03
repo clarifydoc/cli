@@ -1,6 +1,7 @@
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
 import { clearDirectoryListings } from "./dir-listings.js";
-import { dirname, join, resolve, sep, posix } from "path";
+import { dirname, isAbsolute, join, resolve, sep, posix } from "path";
+import { workspacePackageDir } from "./workspace-packages.js";
 import { stripJsonc } from "../plugins/shared/jsonc.js";
 import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
 
@@ -9,16 +10,23 @@ import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
  * (extract.py:51-141).
  *
  *   - Hand-rolled JSONC strip (block + line comments, trailing commas)
- *   - Follows `extends` chains for relative/absolute paths only — npm-package
- *     extends (e.g. "@tsconfig/svelte/tsconfig.json") are skipped in v1
+ *   - Follows `extends` chains: relative/absolute paths, and a package's config
+ *     (`@garage/tsconfig/app.json`) through `node_modules` or the workspace
+ *     package of that name; `${configDir}` is the directory of the config
+ *     being loaded, not of the base that writes it
  *   - Per-tsconfig cache keyed by absolute path; circular extends are detected
  *
- * Output: a map of alias prefix → absolute filesystem directory. Callers feed
- * this into `applyAliases()` to rewrite import sources like `@/foo` → an
- * actual path on disk before the downstream resolver runs.
+ * Output: an `AliasMap`. A tsconfig `paths` entry is kept as TypeScript reads
+ * it — the pattern as written (`@/*`, `~ui/*.js`, an exact `@league/sdk`) →
+ * its absolute target patterns, tried in order; a bundler alias is a prefix →
+ * one absolute path. Callers feed this into `applyAliases()` to rewrite import
+ * sources like `@/foo` → an actual path on disk before the downstream resolver runs.
  */
 
-const tsconfigCache = new Map<string, Map<string, string>>();
+/** Import aliases: a tsconfig `paths` pattern → its target patterns (absolute), or a bundler prefix → one path. */
+export type AliasMap = Map<string, string | string[]>;
+
+const tsconfigCache = new Map<string, AliasMap>();
 
 // JSONC lives in the plugins' shared leaf so static manifests can use it too.
 export { stripJsonc };
@@ -37,15 +45,20 @@ interface RawTsconfig {
  * `readTsconfigUnsafe`, never throwing: a config of a shape it does not expect
  * contributes no aliases rather than failing the analysis of every file under it.
  */
-function readTsconfig(tsconfigPath: string, seen: Set<string>): Map<string, string> {
+function readTsconfig(tsconfigPath: string, seen: Set<string>, configDir?: string): AliasMap {
   try {
-    return readTsconfigUnsafe(tsconfigPath, seen);
+    return readTsconfigUnsafe(tsconfigPath, seen, configDir ?? dirname(tsconfigPath));
   } catch {
     return new Map();
   }
 }
 
-function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>): Map<string, string> {
+/** `${configDir}` (TypeScript 5.5) → the directory of the config being loaded. */
+function withConfigDir(path: string, configDir: string): string {
+  return path.split("${configDir}").join(configDir);
+}
+
+function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>, configDir: string): AliasMap {
   if (seen.has(tsconfigPath)) return new Map(); // circular extends — bail
   seen.add(tsconfigPath);
 
@@ -62,31 +75,32 @@ function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>): Map<string
   }
 
   const baseDir = dirname(tsconfigPath);
-  const aliases = new Map<string, string>();
+  const aliases: AliasMap = new Map();
 
-  // Follow `extends` for relative/absolute paths only — skip npm-package extends.
+  // A base config is read for the config being loaded: its `${configDir}` is this one's.
   const bases = Array.isArray(parsed.extends) ? parsed.extends : parsed.extends ? [parsed.extends] : [];
   for (const base of bases) {
-    if (typeof base !== "string" || !(base.startsWith(".") || base.startsWith("/"))) continue;
-    let extendsPath = resolve(baseDir, base);
-    if (!/\.[a-z]+$/i.test(extendsPath)) extendsPath += ".json";
-    if (existsSync(extendsPath)) {
-      for (const [k, v] of readTsconfig(extendsPath, seen)) aliases.set(k, v);
+    if (typeof base !== "string") continue;
+    const extendsPath = extendsTarget(base, baseDir);
+    if (extendsPath) {
+      for (const [k, v] of readTsconfig(extendsPath, seen, configDir)) aliases.set(k, v);
     }
   }
 
   const compilerBase = parsed.compilerOptions?.baseUrl
-    ? resolve(baseDir, parsed.compilerOptions.baseUrl)
+    ? resolve(baseDir, withConfigDir(parsed.compilerOptions.baseUrl, configDir))
     : baseDir;
   // `baseUrl` alone makes every directory under it importable by bare path
   // (`import { environment } from 'src/environments/environment'`).
   if (parsed.compilerOptions?.baseUrl) aliases.set(BASE_URL_KEY, compilerBase);
   const paths = parsed.compilerOptions?.paths ?? {};
   for (const [alias, targets] of Object.entries(paths)) {
-    if (!Array.isArray(targets) || typeof targets[0] !== "string") continue;
-    const aliasPrefix = alias.replace(/\/?\*+$/, "");
-    const targetBase = targets[0]!.replace(/\/?\*+$/, "");
-    aliases.set(aliasPrefix, resolve(compilerBase, targetBase));
+    if (!Array.isArray(targets)) continue;
+    // TypeScript refuses a pattern or target with more than one `*`.
+    if (starCount(alias) > 1) continue;
+    const written = targets.filter((t): t is string => typeof t === "string" && starCount(t) <= 1);
+    if (written.length === 0) continue;
+    aliases.set(alias, written.map((t) => resolve(compilerBase, withConfigDir(t, configDir))));
   }
   // A solution-style tsconfig (`"files": []` + `references`, every
   // create-vite/create-vue scaffold) keeps the app's `paths` in the configs
@@ -102,11 +116,59 @@ function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>): Map<string
   return aliases;
 }
 
+function starCount(s: string): number {
+  return s.split("*").length - 1;
+}
+
+/**
+ * The file an `extends` names: a path relative to the config, or a package's
+ * config (`@garage/tsconfig/app.json`, `@garage/tsconfig` = its `tsconfig.json`)
+ * read from the nearest `node_modules` holding it, else from the workspace
+ * package of that name. Undefined when none is there.
+ */
+function extendsTarget(base: string, baseDir: string): string | undefined {
+  const withJson = (p: string) => (/\.[a-z]+$/i.test(p) ? p : p + ".json");
+  if (base.startsWith(".") || isAbsolute(base)) {
+    const p = withJson(resolve(baseDir, base));
+    return existsSync(p) ? p : undefined;
+  }
+  const m = /^((?:@[^/]+\/)?[^/@][^/]*)(?:\/(.+))?$/.exec(base);
+  if (!m) return undefined;
+  const [, name, sub] = m;
+  const inPackage = (dir: string): string | undefined => {
+    const candidates = sub ? [withJson(join(dir, sub)), join(dir, sub, "tsconfig.json")] : [join(dir, "tsconfig.json")];
+    return candidates.find((c) => existsSync(c));
+  };
+  let workspaceRoot: string | undefined;
+  for (let dir = baseDir; ; dir = dirname(dir)) {
+    const installed = join(dir, "node_modules", name!);
+    if (existsSync(installed)) {
+      const hit = inPackage(installed);
+      if (hit) return hit;
+    }
+    if (!workspaceRoot && isWorkspaceRoot(dir)) workspaceRoot = dir;
+    if (dirname(dir) === dir) break;
+  }
+  if (!workspaceRoot) return undefined;
+  const pkgDir = workspacePackageDir(workspaceRoot, name!);
+  return pkgDir ? inPackage(pkgDir) : undefined;
+}
+
+/** A directory that declares a package workspace: pnpm's, npm/yarn `workspaces`, lerna, nx, turbo. */
+function isWorkspaceRoot(dir: string): boolean {
+  if (["pnpm-workspace.yaml", "lerna.json", "nx.json", "turbo.json"].some((f) => existsSync(join(dir, f)))) return true;
+  try {
+    return "workspaces" in (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as object);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Walk up from `startDir` looking for tsconfig.json. Returns the merged alias
  * map (with extends chain folded in). Caches by absolute tsconfig path.
  */
-export function loadTsconfigAliases(startDir: string): Map<string, string> {
+export function loadTsconfigAliases(startDir: string): AliasMap {
   let current = resolve(startDir);
   while (true) {
     const tsconfigPath = resolve(current, "tsconfig.json");
@@ -124,7 +186,7 @@ export function loadTsconfigAliases(startDir: string): Map<string, string> {
 }
 
 /** Per-directory memo — sibling files share a dir, nested dirs share ancestors. */
-const dirAliasCache = new Map<string, Map<string, string>>();
+const dirAliasCache = new Map<string, AliasMap>();
 
 /**
  * Aliases of the tsconfig NEAREST to a file's directory. A monorepo defines
@@ -138,10 +200,10 @@ const dirAliasCache = new Map<string, Map<string, string>>();
  * same nearest tsconfig), so across a whole repo the stat cost is amortized to
  * one visit per unique directory instead of one walk per file.
  */
-export function loadTsconfigAliasesForDir(startDir: string): Map<string, string> {
+export function loadTsconfigAliasesForDir(startDir: string): AliasMap {
   const visited: string[] = [];
   let current = resolve(startDir);
-  let result: Map<string, string>;
+  let result: AliasMap;
   for (;;) {
     const hit = dirAliasCache.get(current);
     if (hit) { result = hit; break; }
@@ -154,7 +216,7 @@ export function loadTsconfigAliasesForDir(startDir: string): Map<string, string>
     // compiles under the nearest one above it.
     const tsconfigPath = configIn(current) ?? (bundlers.length > 0 ? configAbove(current) : undefined);
     if (tsconfigPath || bundlers.length > 0) {
-      let fromTs = new Map<string, string>();
+      let fromTs: AliasMap = new Map();
       if (tsconfigPath) {
         const cached = tsconfigCache.get(tsconfigPath);
         fromTs = cached ?? readTsconfig(tsconfigPath, new Set());
@@ -163,7 +225,8 @@ export function loadTsconfigAliasesForDir(startDir: string): Map<string, string>
       result = fromTs;
       if (bundlers.length > 0) {
         result = new Map(fromTs);
-        for (const [k, v] of safeBundlerAliases(current)) if (!result.has(k)) result.set(k, v);
+        // A key the tsconfig declares (`@` against its `@/*`) stays the tsconfig's.
+        for (const [k, v] of safeBundlerAliases(current)) if (!result.has(k) && !result.has(`${k}/*`)) result.set(k, v);
       }
       break;
     }
@@ -199,40 +262,100 @@ function configAbove(dir: string): string | undefined {
 }
 
 /**
- * If `importSource` matches a known alias prefix, return the rewritten path
- * (POSIX, relative to `projectRoot`). Otherwise return the input unchanged.
+ * If `importSource` matches a known alias, return the rewritten path (POSIX,
+ * relative to `projectRoot`). Otherwise return the input unchanged.
  *
- *   loadTsconfigAliases → { "@" → "/proj/src" }
+ *   loadTsconfigAliases → { "@/*" → ["/proj/src/*"] }
  *   applyAliases("@/foo/bar", aliases, "/proj") → "src/foo/bar"
+ *
+ * A tsconfig `paths` pattern is chosen as TypeScript chooses it: the pattern
+ * equal to the import first, else the one with the longest prefix before its
+ * `*` (whose suffix also matches); its targets are tried in order and the first
+ * with a module there wins. Bundler aliases then apply in declaration order.
  */
 export function applyAliases(
   importSource: string,
-  aliases: Map<string, string>,
+  aliases: AliasMap,
   projectRoot: string,
 ): string {
   if (aliases.size === 0) return importSource;
+  const root = toPosix(resolve(projectRoot));
+  const inProject = (abs: string): string | null => {
+    const rel = posix.relative(root, toPosix(abs));
+    // Don't escape the project root.
+    return rel.startsWith("..") ? null : rel;
+  };
+  // `paths` never applies to a relative import.
+  if (!/^\.{0,2}\//.test(importSource)) {
+    const hit = bestPathPattern(importSource, aliases);
+    if (hit) {
+      const [pattern, targets, captured] = hit;
+      const candidates = targets.map((t) => sourceOfBuilt(t.split("*").join(captured)));
+      const found = candidates.find(isModuleAt);
+      // No target holds a module: the first, as written, unless the pattern catches every
+      // import (`"*"`), where a package import is far likelier than a missing project file.
+      const chosen = found ?? (pattern === "*" ? undefined : candidates[0]);
+      // An installed package (`"*": ["node_modules/*"]`) stays the package it names.
+      if (chosen !== undefined) return /[\\/]node_modules[\\/]/.test(chosen) ? importSource : inProject(chosen) ?? importSource;
+    }
+  }
   for (const [prefix, base] of aliases) {
-    if (prefix === BASE_URL_KEY) continue;
+    if (prefix === BASE_URL_KEY || typeof base !== "string") continue;
     if (importSource === prefix || importSource.startsWith(prefix + "/")) {
       const rest = importSource.slice(prefix.length).replace(/^\/+/, "");
-      const abs = sourceOfBuilt(resolve(base, rest));
-      const rel = posix.relative(toPosix(resolve(projectRoot)), toPosix(abs));
-      // Don't escape the project root — if rel starts with .., leave the original.
-      if (rel.startsWith("..")) return importSource;
-      return rel;
+      return inProject(sourceOfBuilt(resolve(base, rest))) ?? importSource;
     }
   }
   // A bare path under `baseUrl` — only when a file is there, so a package
   // import (`rxjs/operators`) is never mistaken for one.
   const baseUrl = aliases.get(BASE_URL_KEY);
-  if (baseUrl && importSource.includes("/") && !/^[./@]/.test(importSource)) {
+  if (typeof baseUrl === "string" && importSource.includes("/") && !/^[./@]/.test(importSource)) {
     const abs = resolve(baseUrl, importSource);
     if (BASE_URL_EXTENSIONS.some((ext) => existsSync(abs + ext))) {
-      const rel = posix.relative(toPosix(resolve(projectRoot)), toPosix(abs));
-      if (!rel.startsWith("..")) return rel;
+      const rel = inProject(abs);
+      if (rel !== null) return rel;
     }
   }
   return importSource;
+}
+
+/** The tsconfig `paths` pattern TypeScript picks for an import: [pattern, targets, what its `*` captured]. */
+function bestPathPattern(importSource: string, aliases: AliasMap): [string, string[], string] | undefined {
+  const exact = aliases.get(importSource);
+  if (Array.isArray(exact) && !importSource.includes("*")) return [importSource, exact, ""];
+  let best: [string, string[], string] | undefined;
+  let bestPrefix = -1;
+  for (const [pattern, targets] of aliases) {
+    if (!Array.isArray(targets)) continue;
+    const star = pattern.indexOf("*");
+    if (star < 0) continue;
+    const prefix = pattern.slice(0, star);
+    const suffix = pattern.slice(star + 1);
+    if (prefix.length <= bestPrefix) continue;
+    if (importSource.length < prefix.length + suffix.length || !importSource.startsWith(prefix) || !importSource.endsWith(suffix)) continue;
+    bestPrefix = prefix.length;
+    best = [pattern, targets, importSource.slice(prefix.length, importSource.length - suffix.length)];
+  }
+  return best;
+}
+
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".d.ts", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json"];
+
+/** Whether a module resolves at `abs`: the file itself, with an extension, a `.js` written for its `.ts`, or a directory's index. */
+function isModuleAt(abs: string): boolean {
+  if (isFile(abs)) return true;
+  if (MODULE_EXTENSIONS.some((ext) => isFile(abs + ext))) return true;
+  const js = /\.([mc]?)jsx?$/.exec(abs);
+  if (js && [`.${js[1]}ts`, ".tsx"].some((ext) => isFile(abs.slice(0, -js[0].length) + ext))) return true;
+  return MODULE_EXTENSIONS.some((ext) => isFile(join(abs, "index" + ext)));
+}
+
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**

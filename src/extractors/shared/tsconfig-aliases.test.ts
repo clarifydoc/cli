@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { applyAliases, clearTsconfigAliasCache, loadTsconfigAliasesForDir } from "./tsconfig-aliases.js";
+import { clearWorkspacePackageCache } from "./workspace-packages.js";
 
 describe("tsconfig aliases", () => {
   let root: string;
@@ -156,5 +157,85 @@ describe("tsconfig aliases into a workspace package's build output", () => {
   it("names the module the build starts from when the tree holds no dist/ (real-repo FP)", () => {
     const aliases = loadTsconfigAliasesForDir(join(root, "ui"));
     expect(applyAliases("@league/club-client", aliases, root)).toBe("ui/packages/club-client/entry/index");
+  });
+});
+
+describe("tsconfig `paths` read as TypeScript reads them", () => {
+  let root: string;
+  const file = async (path: string, text: string) => {
+    await mkdir(join(root, path, ".."), { recursive: true });
+    await writeFile(join(root, path), text);
+  };
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "revdoc-tsconfig-paths-"));
+    // The longest prefix wins, wherever it is declared; a decoy sits under the shorter one.
+    await file("longest/tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@/*": ["src/*"], "@/widgets/*": ["widgets/*"], "@league/sdk": ["sdk/index.ts"] } } }));
+    await file("longest/widgets/Gauge.ts", "export function drawGauge() {}");
+    await file("longest/src/widgets/Gauge.ts", "export function drawGauge() {}");
+    await file("longest/sdk/index.ts", "export const sdk = 1;");
+    // Several targets: the first holding a module.
+    await file("targets/tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@/*": ["src/*", "generated/*"], "*": ["types/*", "node_modules/*"] } } }));
+    await file("targets/generated/clubApi.ts", "export function fetchClub() {}");
+    await file("targets/src/fixtures.ts", "export const fixtures = [];");
+    await file("targets/generated/fixtures.ts", "export const fixtures = [];");
+    await file("targets/node_modules/axios/index.js", "module.exports = {};");
+    // A pattern with a suffix after its `*`.
+    await file("suffix/tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "~ui/*.js": ["src/components/*.ts"] } } }));
+    await file("suffix/src/components/Button.ts", "export function renderButton() {}");
+    // `${configDir}` is the directory of the config being loaded, not of the base declaring it.
+    await file("configdir/shared/tsconfig.base.json", JSON.stringify({ compilerOptions: { paths: { "@/*": ["${configDir}/src/*"] } } }));
+    await file("configdir/shared/src/engine.ts", "export function tuneEngine() {}");
+    await file("configdir/app/tsconfig.json", JSON.stringify({ extends: "../shared/tsconfig.base.json" }));
+    await file("configdir/app/src/engine.ts", "export function tuneEngine() {}");
+    // A base config from a package: a workspace package, or one installed in node_modules.
+    await file("workspace/package.json", JSON.stringify({ private: true, workspaces: ["packages/*", "apps/*"] }));
+    await file("workspace/packages/tsconfig/package.json", JSON.stringify({ name: "@garage/tsconfig" }));
+    await file("workspace/packages/tsconfig/app.json", JSON.stringify({ compilerOptions: { paths: { "~/*": ["${configDir}/lib/*"] } } }));
+    await file("workspace/apps/garage/tsconfig.json", JSON.stringify({ extends: "@garage/tsconfig/app.json" }));
+    await file("workspace/apps/garage/lib/wash.ts", "export function washCar() {}");
+    await file("installed/node_modules/@garage/tsconfig/base.json", JSON.stringify({ compilerOptions: { paths: { "#/*": ["${configDir}/src/*"] } } }));
+    await file("installed/tsconfig.json", JSON.stringify({ extends: "@garage/tsconfig/base" }));
+    await file("installed/src/pit.ts", "export function pitStop() {}");
+    clearTsconfigAliasCache();
+    clearWorkspacePackageCache();
+  });
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("takes the pattern with the longest prefix, not the first declared", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "longest/src"));
+    expect(applyAliases("@/widgets/Gauge", aliases, root)).toBe("longest/widgets/Gauge");
+    expect(applyAliases("@/other/Dial", aliases, root)).toBe("longest/src/other/Dial");
+    // A pattern without `*` matches only itself.
+    expect(applyAliases("@league/sdk", aliases, root)).toBe("longest/sdk/index.ts");
+    expect(applyAliases("@league/sdk/extra", aliases, root)).toBe("@league/sdk/extra");
+  });
+
+  it("tries each target in order and keeps the first holding a module", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "targets/src"));
+    expect(applyAliases("@/clubApi", aliases, root)).toBe("targets/generated/clubApi");
+    expect(applyAliases("@/fixtures", aliases, root)).toBe("targets/src/fixtures");
+    // A catch-all pattern leaves an import alone when no target holds it, and an installed package stays a package.
+    expect(applyAliases("react", aliases, root)).toBe("react");
+    expect(applyAliases("axios", aliases, root)).toBe("axios");
+  });
+
+  it("matches a pattern's suffix after the `*`", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "suffix/src"));
+    expect(applyAliases("~ui/Button.js", aliases, root)).toBe("suffix/src/components/Button.ts");
+    expect(applyAliases("~ui/Button", aliases, root)).toBe("~ui/Button");
+  });
+
+  it("reads `${configDir}` as the directory of the config extending the base", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "configdir/app/src"));
+    expect(applyAliases("@/engine", aliases, root)).toBe("configdir/app/src/engine");
+  });
+
+  it("follows an `extends` naming a package's config", () => {
+    const fromWorkspace = loadTsconfigAliasesForDir(join(root, "workspace/apps/garage"));
+    expect(applyAliases("~/wash", fromWorkspace, root)).toBe("workspace/apps/garage/lib/wash");
+    const installed = loadTsconfigAliasesForDir(join(root, "installed/src"));
+    expect(applyAliases("#/pit", installed, root)).toBe("installed/src/pit");
   });
 });
