@@ -6,7 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import type { ApiCallMiss, ApiRouteLinkStats, ContractFinding, SymbolLink } from "../../types/analysis.js";
+import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import {
   booleanArg,
@@ -757,6 +757,59 @@ function sampleSymbols(links: SymbolLink[]): string {
   return `${cap(names, 4).shown.join(", ")}${names.length > 4 ? ` … +${names.length - 4}` : ""}`;
 }
 
+/**
+ * A function's call sites (from its file's per-file JSON; database calls left
+ * out, as the linker never links them) against the distinct call sites its
+ * links resolved, over every link whatever `minConfidence` keeps. Library calls
+ * count as not resolved: the note says the callee list is not the whole body.
+ */
+function unresolvedCalls(ctx: ToolContext, links: SymbolLink[]): UnresolvedCalls {
+  const files = new Map<string, Promise<FileAnalysis | null>>();
+  let resolvedSites: Map<string, Set<string>> | undefined;
+  return async (file, symbol) => {
+    let pending = files.get(file);
+    if (!pending) {
+      pending = ctx.store.fileAnalysis(file);
+      files.set(file, pending);
+    }
+    const analysis = await pending;
+    if (!analysis) return undefined;
+    const calls = callsOfSymbol(analysis, symbol);
+    if (!calls) return undefined;
+    const sites = new Set(calls.filter((c) => c.kind !== "database").map((c) => `${c.line}:${c.name}`));
+    if (sites.size === 0) return undefined;
+    if (!resolvedSites) {
+      resolvedSites = new Map();
+      for (const l of links) {
+        if (l.relation === "reference" || l.sourceSymbol === "(reference)") continue;
+        const key = symbolKey(l.sourceFile, l.sourceSymbol);
+        const set = resolvedSites.get(key) ?? new Set<string>();
+        set.add(`${l.sourceLine}:${l.callName}`);
+        resolvedSites.set(key, set);
+      }
+    }
+    const resolved = resolvedSites.get(symbolKey(file, symbol))?.size ?? 0;
+    return { unresolved: Math.max(0, sites.size - resolved), total: sites.size };
+  };
+}
+
+/** The calls of the function, method (`Class.method`) or route (`route:GET /x`) a link names as its source. */
+function callsOfSymbol(analysis: FileAnalysis, symbol: string): CallInfo[] | undefined {
+  if (symbol.startsWith("route:")) {
+    const route = analysis.routes?.find((r) => `route:${r.httpMethod ?? "USE"} ${r.path}` === symbol);
+    return route?.calls;
+  }
+  const dot = symbol.lastIndexOf(".");
+  if (dot > 0) {
+    const owner = symbol.slice(0, dot);
+    const name = symbol.slice(dot + 1);
+    const cls = analysis.classes?.find((c) => c.name === owner);
+    const method = cls?.methods.find((m) => m.name === name);
+    if (method) return method.calls;
+  }
+  return analysis.functions?.find((f) => f.name === symbol)?.calls;
+}
+
 export function traceTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_trace",
@@ -872,10 +925,10 @@ export function traceTool(ctx: ToolContext): McpTool {
       ];
 
       if (direction === "callers" || direction === "both") {
-        blocks.push(section(`Callers (up to ${depth} hop${depth === 1 ? "" : "s"})`, walk(all, symbol, file, "callers", depth, limit)));
+        blocks.push(section(`Callers (up to ${depth} hop${depth === 1 ? "" : "s"})`, await walk(all, symbol, file, "callers", depth, limit)));
       }
       if (direction === "callees" || direction === "both") {
-        blocks.push(section(`Callees (up to ${depth} hop${depth === 1 ? "" : "s"})`, walk(all, symbol, file, "callees", depth, limit)));
+        blocks.push(section(`Callees (up to ${depth} hop${depth === 1 ? "" : "s"})`, await walk(all, symbol, file, "callees", depth, limit, unresolvedCalls(ctx, everything))));
       }
 
       // Data effects the seed reaches, from the transitive reach pass.
@@ -914,7 +967,13 @@ export function traceTool(ctx: ToolContext): McpTool {
   };
 }
 
-function matchesSeed(
+/**
+ * Whether one end of a link is the traced symbol. Only the TARGET end also
+ * matches by the call's name — a call written `X(…)` lands on X's definition
+ * (under an alias, or a qualified name) —; at the source end the call's name is
+ * the callee's, so matching it there made every caller of X a seed of X.
+ */
+export function matchesSeed(
   link: SymbolLink,
   symbol: string | undefined,
   file: string | undefined,
@@ -926,63 +985,199 @@ function matchesSeed(
   if (symbol) {
     const s = symbol.toLowerCase();
     const ls = linkSymbol.toLowerCase();
-    if (ls !== s && !ls.endsWith(`.${s}`) && link.callName?.toLowerCase() !== s) return false;
+    if (ls !== s && !ls.endsWith(`.${s}`) && !(end === "target" && link.callName?.toLowerCase() === s)) return false;
   }
   return true;
+}
+
+/** An import's reverse edge (`(reference)` → the symbol it names): who imports it, not a call. */
+function isReference(link: SymbolLink): boolean {
+  return link.relation === "reference" || link.sourceSymbol === "(reference)";
+}
+
+/** What the edge does, read from the caller's side (`calls x`) and from the callee's (`called from x`). */
+const RELATION_VERBS: Record<string, { callers: string; callees: string }> = {
+  calls: { callers: "calls", callees: "called from" },
+  passes: { callers: "passes", callees: "passed from" },
+  instantiates: { callers: "instantiates", callees: "instantiated from" },
+  http: { callers: "http →", callees: "reached over http from" },
+  mq: { callers: "mq →", callees: "reached over mq from" },
+  dispatch: { callers: "dispatches", callees: "dispatched from" },
+  implements: { callers: "fans out to", callees: "implementation of" },
+};
+
+function relationVerb(link: SymbolLink, direction: "callers" | "callees"): string {
+  return (RELATION_VERBS[link.relation ?? "calls"] ?? RELATION_VERBS.calls!)[direction];
+}
+
+/** A function's call sites against the ones the analysis resolved — for `N of M calls not resolved`. */
+export type UnresolvedCalls = (file: string, symbol: string) => Promise<{ unresolved: number; total: number } | undefined>;
+
+/**
+ * The nodes that can reach themselves over calls: members of a strongly
+ * connected component of two or more, or with an edge to themselves. Import
+ * references, interface fan-out (navigation, not a call) and functions handed
+ * on are left out. Iterative Tarjan, once per link list.
+ */
+const recursionCache = new WeakMap<SymbolLink[], Map<string, number>>();
+function recursiveNodes(links: SymbolLink[]): Map<string, number> {
+  const hit = recursionCache.get(links);
+  if (hit) return hit;
+  const out = new Map<string, string[]>();
+  const self = new Set<string>();
+  for (const l of links) {
+    if (isReference(l) || l.navigational || l.relation === "implements" || l.relation === "passes") continue;
+    const a = symbolKey(l.sourceFile, l.sourceSymbol);
+    const b = symbolKey(l.targetFile, l.targetSymbol);
+    if (a === b) self.add(a);
+    push(out, a, b);
+  }
+  // node → size of its cycle (1 = calls itself).
+  const result = new Map<string, number>();
+  for (const n of self) result.set(n, 1);
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  let counter = 0;
+  for (const root of out.keys()) {
+    if (index.has(root)) continue;
+    const work: Array<{ node: string; i: number }> = [{ node: root, i: 0 }];
+    index.set(root, counter); low.set(root, counter); counter++;
+    stack.push(root); onStack.add(root);
+    while (work.length) {
+      const frame = work[work.length - 1]!;
+      const next = out.get(frame.node) ?? [];
+      if (frame.i < next.length) {
+        const w = next[frame.i++]!;
+        if (!index.has(w)) {
+          index.set(w, counter); low.set(w, counter); counter++;
+          stack.push(w); onStack.add(w);
+          work.push({ node: w, i: 0 });
+        } else if (onStack.has(w)) {
+          low.set(frame.node, Math.min(low.get(frame.node)!, index.get(w)!));
+        }
+        continue;
+      }
+      work.pop();
+      if (work.length) {
+        const parent = work[work.length - 1]!.node;
+        low.set(parent, Math.min(low.get(parent)!, low.get(frame.node)!));
+      }
+      if (low.get(frame.node) === index.get(frame.node)) {
+        const members: string[] = [];
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          members.push(w);
+        } while (w !== frame.node);
+        if (members.length > 1) for (const m of members) result.set(m, members.length);
+      }
+    }
+  }
+  recursionCache.set(links, result);
+  return result;
+}
+
+function recursionNote(cycles: Map<string, number>, key: string): string {
+  const size = cycles.get(key);
+  if (size === undefined) return "";
+  return size === 1 ? " [recursive: calls itself]" : ` [recursive: in a cycle of ${size} functions]`;
 }
 
 /**
  * Breadth-first walk over symbolLinks. Nodes are `file::symbol`; each level is
  * rendered indented so the shape of the chain is readable, and every level is
- * capped independently (a hub symbol would otherwise flood the result).
+ * capped independently (a hub symbol would otherwise flood the result). An
+ * import's `(reference)` rows are no callers: they fold into one
+ * `imported by <file>:<line>` line per importing file. Walking callees, each
+ * node says how many of its call sites resolved to nothing (`unresolved`).
  */
-function walk(
+export async function walk(
   links: SymbolLink[],
   symbol: string | undefined,
   file: string | undefined,
   direction: "callers" | "callees",
   depth: number,
   limit: number,
-): string[] {
+  unresolved?: UnresolvedCalls,
+): Promise<string[]> {
   const bySource = new Map<string, SymbolLink[]>();
   const byTarget = new Map<string, SymbolLink[]>();
   for (const link of links) {
     push(bySource, symbolKey(link.sourceFile, link.sourceSymbol), link);
     push(byTarget, symbolKey(link.targetFile, link.targetSymbol), link);
   }
+  const cycles = recursiveNodes(links);
 
-  // Seed nodes: the end of the edge that matches the query.
+  // Seed nodes: the symbol where it is called (the target end) and, walking
+  // callees, also where it calls (the source end) — a function nothing calls
+  // still has callees. Never a caller of it: see `matchesSeed`.
   const frontier = new Set<string>();
   const labels = new Map<string, string>();
+  // The file and symbol as written (a key is lower-cased).
+  const names = new Map<string, [string, string]>();
   for (const link of links) {
-    const end = direction === "callers" ? "target" : "source";
-    if (matchesSeed(link, symbol, file, end)) {
+    for (const end of ["target", "source"] as const) {
+      if (end === "source" && (direction === "callers" || isReference(link))) continue;
+      if (!matchesSeed(link, symbol, file, end)) continue;
       const f = end === "target" ? link.targetFile : link.sourceFile;
       const s = end === "target" ? link.targetSymbol : link.sourceSymbol;
       const key = symbolKey(f, s);
       frontier.add(key);
       labels.set(key, `${s}() (${f})`);
+      names.set(key, [f, s]);
     }
   }
   if (frontier.size === 0) return [];
 
+  const edgesOf = (key: string): SymbolLink[] =>
+    (direction === "callers" ? byTarget.get(key) : bySource.get(key))?.filter((e) => !isReference(e)) ?? [];
+  // "· 3 of 7 calls not resolved" — the callee list is not the whole story.
+  const unresolvedNote = async (key: string): Promise<string> => {
+    if (direction !== "callees" || !unresolved) return "";
+    const named = names.get(key);
+    if (!named) return "";
+    const r = await unresolved(named[0], named[1]).catch(() => undefined);
+    return r && r.unresolved > 0 ? ` · ${r.unresolved} of ${plural(r.total, "call")} not resolved` : "";
+  };
+
   const lines: string[] = [];
   const visited = new Set(frontier);
   const seedList = [...frontier];
-  lines.push(...bulletList(seedList, limit, (k) => `seed: ${labels.get(k) ?? k}`));
+  const seedNotes = new Map<string, string>();
+  for (const k of seedList.slice(0, limit)) seedNotes.set(k, `${recursionNote(cycles, k)}${await unresolvedNote(k)}`);
+  lines.push(...bulletList(seedList, limit, (k) => `seed: ${labels.get(k) ?? k}${seedNotes.get(k) ?? ""}`));
+
+  // Who imports a seed, one line per importing file (callers only).
+  if (direction === "callers") {
+    const importers = new Map<string, number[]>();
+    for (const k of seedList) {
+      for (const e of byTarget.get(k) ?? []) {
+        if (!isReference(e)) continue;
+        const list = importers.get(e.sourceFile) ?? [];
+        if (!list.includes(e.sourceLine)) list.push(e.sourceLine);
+        importers.set(e.sourceFile, list);
+      }
+    }
+    if (importers.size) {
+      const rows = [...importers].sort((a, b) => byOrdinal(a[0], b[0]))
+        .map(([f, ls]) => `imported by ${loc(f, Math.min(...ls))}${ls.length > 1 ? ` (+${ls.length - 1} more)` : ""}`);
+      lines.push(...bulletList(rows, limit, (r) => r));
+    }
+  }
 
   // How many edges lead on from a node, the way this walk goes — a hub's
   // count is shown so a caller knows not to expand it.
-  const fanOf = (key: string): number =>
-    (direction === "callers" ? byTarget.get(key) : bySource.get(key))?.length ?? 0;
+  const fanOf = (key: string): number => edgesOf(key).length;
   const notes: string[] = [];
   let current = seedList;
   for (let level = 1; level <= depth; level++) {
     const next: string[] = [];
-    const rows: string[] = [];
+    const rows: Array<{ key: string; text: string }> = [];
     for (const node of current) {
-      const edges = direction === "callers" ? (byTarget.get(node) ?? []) : (bySource.get(node) ?? []);
-      for (const edge of edges) {
+      for (const edge of edgesOf(node)) {
         const otherFile = direction === "callers" ? edge.sourceFile : edge.targetFile;
         const otherSymbol = direction === "callers" ? edge.sourceSymbol : edge.targetSymbol;
         const otherLine = direction === "callers" ? edge.sourceLine : edge.targetLine;
@@ -991,22 +1186,22 @@ function walk(
         visited.add(key);
         next.push(key);
         labels.set(key, `${otherSymbol}() (${otherFile})`);
+        names.set(key, [otherFile, otherSymbol]);
         const fan = fanOf(key);
-        rows.push(
-          `${otherSymbol}() ${loc(otherFile, otherLine)} — ${
-            edge.relation === "passes"
-              ? (direction === "callers" ? "passes" : "passed from")
-              : (direction === "callers" ? "calls" : "called from")
-          } ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
+        rows.push({
+          key,
+          text: `${otherSymbol}() ${loc(otherFile, otherLine)} — ${relationVerb(edge, direction)} ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
             fan >= HUB_FAN ? ` [hub: ${fan} ${direction}]` : ""
-          }`,
-        );
+          }${recursionNote(cycles, key)}`,
+        });
       }
     }
     if (rows.length === 0) break;
+    // Only the rows printed pay for a per-file read.
+    for (const r of rows.slice(0, limit)) r.text += await unresolvedNote(r.key);
     const indent = "  ".repeat(level);
     lines.push(`${indent}hop ${level} (${rows.length}):`);
-    lines.push(...bulletList(rows, limit, (r) => r, { indent }));
+    lines.push(...bulletList(rows, limit, (r) => r.text, { indent }));
     // Only so many nodes of a hop are walked on; say so rather than letting
     // the next hop look complete.
     const expand = limit * 2;
@@ -1015,7 +1210,7 @@ function walk(
     }
     current = next.slice(0, expand);
     if (level === depth) {
-      const onward = current.filter((k) => (direction === "callers" ? byTarget.get(k) : bySource.get(k))?.some((e) =>
+      const onward = current.filter((k) => edgesOf(k).some((e) =>
         !visited.has(direction === "callers" ? symbolKey(e.sourceFile, e.sourceSymbol) : symbolKey(e.targetFile, e.targetSymbol))));
       if (onward.length > 0) {
         notes.push(`depth ${depth} reached: ${plural(onward.length, "node")} at the last hop ${onward.length === 1 ? "has" : "have"} further ${direction} — raise \`depth\` (max 4) or re-call from one`);

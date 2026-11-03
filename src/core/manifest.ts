@@ -25,6 +25,38 @@ export function extractorStamp(): string {
 }
 
 /**
+ * Order two extractor stamps by their version alone (`1.603.0+-antlr` reads as
+ * 1.603.0): negative when `a` is older, positive when newer, 0 when the same
+ * version. Null when either does not start with a dotted number.
+ */
+export function compareExtractorVersions(a: string, b: string): number | null {
+  const parts = (stamp: string): number[] | null => {
+    const m = /^(\d+(?:\.\d+)*)/.exec(stamp.split("+")[0]!.trim());
+    return m ? m[1]!.split(".").map(Number) : null;
+  };
+  const pa = parts(a);
+  const pb = parts(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * The stamp of the engine that wrote the analysis in `outputDir` when it is a
+ * NEWER engine than this one, else null. A running server older than the
+ * analysis it serves must not rewrite it: what it would write is the older
+ * reading.
+ */
+export async function newerAnalysisEngine(outputDir: string): Promise<string | null> {
+  const manifest = await loadManifestRaw(outputDir);
+  if (!manifest || typeof manifest.extractorVersion !== "string") return null;
+  return (compareExtractorVersions(manifest.extractorVersion, extractorStamp()) ?? 0) > 0 ? manifest.extractorVersion : null;
+}
+
+/**
  * What the manifest remembers about one analyzed file, enough to tell
  * whether its cached JSON can be reused.
  */
@@ -148,10 +180,15 @@ export interface FreshnessReport {
    * `changed` — at least one recorded file was edited or removed.
    * `extractor-changed` — the manifest predates the current extractor, so the
    *   analysis would differ even for untouched source.
+   * `engine-older` — the manifest was written by a NEWER extractor than the
+   *   one running: the analysis is not stale, this engine is. Re-analyzing
+   *   with it would replace the newer reading with an older one.
    * `unknown` — no manifest (a non-incremental run writes none), so nothing
    *   can be compared. Deliberately not reported as `fresh`.
    */
-  state: "fresh" | "changed" | "extractor-changed" | "unknown";
+  state: "fresh" | "changed" | "extractor-changed" | "engine-older" | "unknown";
+  /** With `extractor-changed` and `engine-older`: the stamp that wrote the analysis, and the running one. */
+  engine?: { analysis: string; running: string };
   changed: string[];
   removed: string[];
   /**
@@ -191,8 +228,15 @@ export async function assessFreshness(
 ): Promise<FreshnessReport> {
   const manifest = await loadManifestRaw(outputDir);
   if (!manifest) return { state: "unknown", changed: [], removed: [], added: [], checked: 0, sampled: false };
-  if (manifest.extractorVersion !== extractorStamp()) {
-    return { state: "extractor-changed", changed: [], removed: [], added: [], checked: 0, sampled: false };
+  const running = extractorStamp();
+  if (manifest.extractorVersion !== running) {
+    // Compared as versions, not strings: a manifest a newer engine wrote is not stale.
+    const order = compareExtractorVersions(String(manifest.extractorVersion), running);
+    return {
+      state: order !== null && order > 0 ? "engine-older" : "extractor-changed",
+      engine: { analysis: String(manifest.extractorVersion), running },
+      changed: [], removed: [], added: [], checked: 0, sampled: false,
+    };
   }
 
   const cap = opts.maxStats ?? FRESHNESS_STAT_CAP;

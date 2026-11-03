@@ -59,6 +59,8 @@ async function sourceFreshness(store: AnalysisStore): Promise<string | undefined
     }
     case "extractor-changed":
       return "the extractor changed since this analysis — call clarifydoc_analyze with full=true";
+    case "engine-older":
+      return engineOlderNote(f);
     default:
       return undefined; // no manifest: nothing to compare against
   }
@@ -84,10 +86,22 @@ export async function stalenessHint(store: AnalysisStore): Promise<string> {
   if (report.state === "extractor-changed") {
     return "clarifydoc_analyze full=true — the extractor changed since this analysis";
   }
+  if (report.state === "engine-older") return `restart or reconnect the MCP server — ${engineOlderNote(report)}`;
   if (report.state === "changed") {
     return `clarifydoc_analyze — ${changeSummary(report)} since the analysis${report.sampled ? " (sampled)" : ""}`;
   }
   return STATUS_HINT;
+}
+
+/**
+ * The analysis was written by a newer engine than this server runs: the server
+ * is what is out of date, and re-analyzing from it would write the older
+ * reading over the newer one (`clarifydoc_analyze` refuses to).
+ */
+export function engineOlderNote(f: Pick<FreshnessReport, "engine">): string {
+  const running = f.engine?.running ?? "an older engine";
+  const analysis = f.engine?.analysis ?? "a newer one";
+  return `this server runs engine ${running}, older than the ${analysis} that wrote the analysis — restart or reconnect the MCP server to load the newer engine; the analysis itself is not stale`;
 }
 
 /** "3 changed, 1 added, 2 removed" — the parts that are non-zero, HEAD's move last. */
@@ -138,6 +152,7 @@ export function freshnessBanner(store: AnalysisStore, ttlMs = 10_000): () => Pro
     at = Date.now();
     last = assessFreshness(store.analysisDir, store.projectRoot, { maxStats: 2000 })
       .then((f) => {
+        if (f.state === "engine-older") return `⚠ Server older than the analysis: ${engineOlderNote(f)}.`;
         if (f.state === "extractor-changed") return `⚠ Stale: the extractor changed since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze full=true" : "re-run `clarifydoc analyze`"} refreshes it.`;
         if (f.state !== "changed") return null;
         return `⚠ Stale: ${changeSummary(f)} since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze" : "re-run `clarifydoc analyze --incremental`"} refreshes it.`;

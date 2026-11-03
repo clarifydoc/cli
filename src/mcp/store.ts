@@ -45,7 +45,7 @@ import type {
 import { analyze, type AnalyzeResult } from "../core/analyzer.js";
 import { discoverFiles } from "../core/file-discovery.js";
 import { loadReportSummary } from "../core/report-payload.js";
-import { classifyFile, loadManifestRaw, type Manifest } from "../core/manifest.js";
+import { classifyFile, extractorStamp, loadManifestRaw, newerAnalysisEngine, type Manifest } from "../core/manifest.js";
 
 /** Routes/api-calls carry the owning file once aggregated project-wide. */
 export type RouteWithFile = RouteInfo & { filePath: string; projectId?: string; requestSchema?: JsonSchemaNode };
@@ -226,6 +226,14 @@ export class AnalysisCancelledError extends Error {
   constructor() {
     super("The analysis was cancelled; the tools read the previous analysis.");
     this.name = "AnalysisCancelledError";
+  }
+}
+
+/** The analysis on disk was written by a newer engine than this server runs; re-analyzing is refused. */
+export class EngineOlderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineOlderError";
   }
 }
 
@@ -434,6 +442,15 @@ export class AnalysisStore {
     if (!this.allowAnalyze) {
       throw new MissingAnalysisError(
         "This server was started read-only (--no-auto-analyze); run the analysis from the CLI or VS Code instead.",
+      );
+    }
+    // A newer engine wrote this analysis: re-running this one would replace it with the older reading.
+    const newer = await newerAnalysisEngine(this.options.analysisDir);
+    if (newer) {
+      throw new EngineOlderError(
+        `Not re-analyzing: this server runs engine ${extractorStamp()}, older than the ${newer} that wrote the analysis ` +
+          `in ${this.options.analysisDir}. Restart or reconnect the MCP server so it loads the newer engine; ` +
+          `the analysis itself is current for that engine, and the other tools read it as it is.`,
       );
     }
     return this.runAnalysis(opts);
