@@ -1111,6 +1111,21 @@ export interface LanguagePluginManifest {
     nesting(classes: readonly ClassInfo[], line: number): string[];
   };
   /**
+   * Members a framework base class gives every subclass that return an
+   * instance of the subclass, or a query that yields one (ActiveRecord `find`,
+   * `find_by`, `where`, `first`): the linker types `club = Club.find(id)` and
+   * `Club.where(…).first.name` on the subclass when no class of its chain
+   * declares the member. `bases` are the framework classes as an `extends`
+   * writes them; a project class reaching one through its own bases counts.
+   */
+  selfTypedMembers?: { bases: readonly string[]; members: readonly string[] };
+  /**
+   * A method's name may end in `?` or `!` (Ruby `valid?`, `save!`): a call's
+   * trailing mark is part of the name it calls (`disabled?` is not
+   * `disabled`), never a mark on a nullable receiver.
+   */
+  marksEndNames?: boolean;
+  /**
    * The class a receiver's own name states, in a language whose locals carry
    * no declared type the linker can read (Ruby's `match_report.close!` →
    * `MatchReport`, Scala's `api` → `Api`): evidence for a unique-name method
@@ -1333,6 +1348,14 @@ export interface LanguagePluginManifest {
    * Java is the caller's own, or an enclosing class's.
    */
   bareCallsHideReceivers?: boolean;
+  /**
+   * A class declared inside another class or module does not share its
+   * methods (Ruby: `class Scope` inside `class Policy` reaches none of
+   * Policy's instance methods): a bare call in it never reaches the enclosing
+   * class's member. Unset, an enclosing class's member is in reach, as from a
+   * Java inner class.
+   */
+  nestedClassesShareNothing?: boolean;
   /**
    * A module's top-level names reach another file only through an import
    * naming them (JS/TS, Python): in a module, a class name the file neither
@@ -1651,6 +1674,8 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * A class declared inside another is named by its path (`Paddock::Iterator`),
    * and a type written with one (`Paddock<K>::Iterator*`) means that class:
    * `receiverTypeName` keeps the path's class names instead of the last one.
+   * With `lexicalConstants`, the path is looked up as the language resolves a
+   * constant path (`League::Club` is the `Club` declared in `module League`).
    */
   nestedTypePaths?: boolean;
 

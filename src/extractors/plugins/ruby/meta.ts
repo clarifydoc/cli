@@ -27,6 +27,10 @@ export const rubyMeta: LanguagePluginMeta = {
   // An action renders its Jbuilder view by convention (see rails-views.ts).
   dispatchResolvers: [new RailsViewResolver()],
   builtinTypes: new Set(COMMON_PRIMITIVES),
+  // `class Scope` inside `class Policy` reaches none of Policy's instance methods.
+  nestedClassesShareNothing: true,
+  // A type written `League::Club` means the Club declared in `module League`, not a top-level Club.
+  nestedTypePaths: true,
   complexity: {
     branchNodes: new Set([
       "if", "unless", "while", "until", "for", "case",

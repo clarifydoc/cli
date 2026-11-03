@@ -74,7 +74,9 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   const imported = new Set<string>();
   for (const imp of analysis.imports) for (const n of [...imp.specifiers, ...Object.keys(imp.aliases ?? {})]) imported.add(fold(n));
   const namesClass = (head: string): boolean => {
-    if (!TYPE_SHAPED.test(head) || receiverTypeName(head, language) === null) return false;
+    // A constant path (`League::Helper`, `V2::Reports::Builder`) names a class when its last name could.
+    const names = head.split("::");
+    if (!TYPE_SHAPED.test(names.pop()!) || !names.every((n) => /^[A-Z]\w*$/.test(n)) || receiverTypeName(head, language) === null) return false;
     return classByName.has(head) || imported.has(fold(head)) || !bindsNames;
   };
 

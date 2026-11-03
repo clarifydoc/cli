@@ -1699,6 +1699,12 @@ interface LinkContext {
   filesBySymbol?: Map<string, string[]>;
   /** Analyzed files by file name, built on first use (`autoloadedFiles`). */
   filesByName?: Map<string, string[]>;
+  /**
+   * Where a language looks constants up lexically (`lexicalConstants`): each class by the full
+   * path it is declared at (`League::Club` for `class Club` in `module League`) → its files and
+   * the name each declares it under. Built on first use.
+   */
+  typePaths?: Map<string, Array<{ file: string; name: string }>>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
   /** File → the files whose scope it is part of (`ImportInfo.inScope.shared`), built on first use. */
@@ -2222,13 +2228,8 @@ function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string
 }
 
 /** Whether `head` is the name an import binds to a package no project directory holds (the standard library, a download). */
-/**
- * A call chain (`c.Response()`, `httptest.NewRecorder()`) passing through a call no project
- * function, method or function-typed field bears. Right after an imported package the name
- * may also be a project type (`actions_model.RunList(runs)` converts); on a value it is a
- * method, which a type of that name is not.
- */
-function callsOutside(segments: readonly string[], analysis: FileAnalysis, ctx: LinkContext): boolean {
+/** Names some project function or method bears (`LinkContext.callableNames`). */
+function projectCallableNames(ctx: LinkContext): Set<string> {
   if (!ctx.callableNames) {
     ctx.callableNames = new Set();
     for (const a of ctx.analyses) {
@@ -2239,12 +2240,23 @@ function callsOutside(segments: readonly string[], analysis: FileAnalysis, ctx: 
       }
     }
   }
+  return ctx.callableNames;
+}
+
+/**
+ * A call chain (`c.Response()`, `httptest.NewRecorder()`) passing through a call no project
+ * function, method or function-typed field bears. Right after an imported package the name
+ * may also be a project type (`actions_model.RunList(runs)` converts); on a value it is a
+ * method, which a type of that name is not.
+ */
+function callsOutside(segments: readonly string[], analysis: FileAnalysis, ctx: LinkContext): boolean {
+  const callable = projectCallableNames(ctx);
   const packageHead = segments.length > 1 && analysis.imports.some((i) => i.specifiers.includes(segments[0]!.trim()));
   return segments.some((segment, i) => {
     const open = segment.indexOf("(");
     if (i === 0 || open <= 0) return false;
     const name = segment.slice(0, open).trim();
-    return !ctx.callableNames!.has(name) && !(i === 1 && packageHead && ctx.classCatalog.has(name));
+    return !callable.has(name) && !(i === 1 && packageHead && ctx.classCatalog.has(name));
   });
 }
 
@@ -2427,6 +2439,13 @@ function classNameMember(
   // cross-project dependents that way).
   let candidateFiles = classNameIndex.get(className);
   let declaredClass = className;
+  // `League::Club.find` where constants are looked up lexically: the class declared at that path
+  // (`class Club` in `module League`), whatever other class bears its last name.
+  const path = lexicalPathRef(ctx, className, sourceFile, analysis.projectId);
+  if (path) {
+    candidateFiles = [path.typeFile];
+    declaredClass = path.typeName;
+  }
   // A class an import renames (`use App\Models\Player as Footballer;` … `Footballer::find(1)`):
   // the module's class, never another one that happens to be called `Footballer`.
   const imported = importedTypeRef(ctx, className, sourceFile, analysis.projectId);
@@ -2536,11 +2555,12 @@ function classNameMember(
         return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
       }
     }
-    // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`).
+    // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`),
+    // or from a module it extends (`Club.table` for `extend Standings`).
     if (!methodName.includes(".")) {
       for (const filePath of eligible) {
         if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
-        const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName);
+        const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName, undefined, "class");
         if (!inherited) break;
         const link = mkLink(inherited.file, inherited.symbol, inherited.line, "INFERRED", "inheritance");
         if (!inherited.symbol.startsWith(`${declaredClass}.`)) Object.assign(link, { viaType: declaredClass, viaTypeFile: filePath });
@@ -3053,6 +3073,14 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
     const declared = fs.filter((f) => !declAt.get(memberKey(f, typeName))?.extension);
     return declared.length > 0 ? declared : fs;
   };
+  let pathEnv: LexicalPathEnv | null = null;
+  const lexicalEnv = (): LexicalPathEnv => (pathEnv ??= {
+    typePaths: buildTypePaths(analyses),
+    analysisOf: (f) => analysisOf.get(f),
+    languageOf: (f) => languageOfFile.get(f),
+    projectOf: (f) => analysisOf.get(f)?.projectId,
+    declOf: (f, n) => declAt.get(memberKey(f, n)),
+  });
   const fileOf = (typeName: string, consumerFile: string): string | null =>
     importedDecl(typeName, consumerFile) ??
     pickDefinition(typeName, declaredFirst(typeName, inSpace(classToFiles.get(typeName) ?? [], consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f));
@@ -3088,9 +3116,11 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
         // registration decides everything.
         if (!typeName && !qualifier) return;
+        // `League::Club` where constants are looked up lexically: the class at that path (as declared), or none.
+        const path = typeName?.includes("::") ? lexicalPathIn(lexicalEnv(), typeName, declaredIn, a.projectId) : undefined;
         const point: InjectionPoint = {
-          typeName: typeName ?? "",
-          typeFile: typeName ? fileOf(typeName, a.filePath) : null,
+          typeName: path ? path.typeName : typeName ?? "",
+          typeFile: path !== undefined ? path?.typeFile ?? null : typeName ? fileOf(typeName, a.filePath) : null,
           member: rawName,
           consumer: cls.name,
         };
@@ -4003,11 +4033,13 @@ function resolveCallToDefinition(
   // A bare name where members need no `this.` is the caller's own class's
   // member, then its bases' — never whichever class of the file declares it
   // first — and never another class's from a free function.
+  // A bare or `self.` call in a method of the class object runs on the class (Ruby `def self.x`).
+  const callerSide = (): "instance" | "class" => (findEnclosingCallable(analysis, sourceSymbol)?.classLevel ? "class" : "instance");
   const ownerClass = !isQualified && !reference && !bareIsFunction && call.kind === "internal" && targetFile === sourceFile
     ? callerClass(ctx, analysis, sourceSymbol, call.line)
     : undefined;
   if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null)) {
-    const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName) : null;
+    const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) : null;
     if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
       if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
     } else if (hit) {
@@ -4016,7 +4048,7 @@ function resolveCallToDefinition(
       // Another class's member is in reach only from a class it encloses (a Java inner class) —
       // or, where the extractor drops receivers (`p->kick()`), as a guess.
       const other = ctx.classAt.get(memberKey(sourceFile, memberClassOf(ctx, sourceFile, def)!));
-      if (!other || call.line < other.line || call.line > other.endLine) {
+      if (!other || call.line < other.line || call.line > other.endLine || pluginFor(analysis.language)?.nestedClassesShareNothing) {
         if (pluginFor(analysis.language)?.bareCallsHideReceivers) return mkLink(sourceFile, def.name, def.line, "INFERRED", "direct");
         def = undefined;
       }
@@ -4096,7 +4128,7 @@ function resolveCallToDefinition(
       // not whichever class of the file happens to define the name first.
       const dot = sourceSymbol.indexOf(".");
       const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
-      const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName) : null;
+      const hit = consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? findMethodInClass(ctx, consumer, sourceFile, leafName, undefined, callerSide()) : null;
       if (hit && (hit.file !== sourceFile || !hit.symbol.startsWith(`${consumer}.`))) {
         return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: consumer, viaTypeFile: sourceFile });
       }
@@ -4154,7 +4186,7 @@ function resolveCallToDefinition(
     // `include Helper`, PHP `use Trait`, a default interface method). Where
     // members need `this.`/`self.`, a bare name is never one of them.
     const mixed = isQualified || !pluginFor(analysis.language)?.explicitSelfMembers
-      ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName)
+      ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName, callerSide())
       : null;
     if (mixed) return mkLink(mixed.file, mixed.symbol, mixed.line, "INFERRED", "inheritance");
   }
@@ -4508,7 +4540,11 @@ function resolveCallToDefinition(
         // An extension method is called on a type that does not declare it
         // (`footer.AddStaticRowElement()` → a static `this BandBase band`
         // method): the receiver's type cannot contradict it.
-        const contradicted =
+        // A call on a class the project declares (`ClubMailer.with(…)`) is that class's: another class's
+        // method of the name is coincidence (a member the class has would have linked by class name).
+        const headEntry = /^[A-Z]/.test(head) ? classEntryFor(classCatalog.get(head), sourceFile) : undefined;
+        const classHead = !!headEntry && extensionFamily(headEntry.file) === extensionFamily(sourceFile) && !shadowedLocally(analysis, sourceSymbol, head);
+        const contradicted = (classHead && head !== tgtClass && !ctx.extensionMethods.has(`${entry.file}\0${entry.def.name}`)) ||
           declared !== null && declared !== tgtClass &&
           !(declEntry && declEntry.count === 1 && declEntry.file === entry.file) &&
           !ctx.extensionMethods.has(`${entry.file}\0${entry.def.name}`);
@@ -4627,7 +4663,35 @@ function resolveCallToDefinition(
     relation: relationForStrategy(defStrategy),
   };
   if (linkConfidence) link.confidence = linkConfidence;
+  // A bare name where members need no `self.`, called in a class with an ancestor or mixin the project does not
+  // declare: that ancestor may define it, so a definition found outside the class is a guess.
+  if (link.confidence === "EXTRACTED" && !isQualified && !reference && !pluginFor(analysis.language)?.explicitSelfMembers) {
+    const owner = callerClass(ctx, analysis, sourceSymbol, call.line);
+    // The class's own member, and a class constructed by its name, are what they are whatever the ancestors hold.
+    const own = targetFile === sourceFile && (def.name.startsWith(`${owner}.`) || memberClassOf(ctx, targetFile, def) === owner);
+    if (owner && !own && !ctx.classAt.has(memberKey(targetFile, def.name)) && unseenAncestor(ctx, owner, sourceFile)) {
+      link.confidence = "INFERRED";
+    }
+  }
   return reference ? link : constructionLink(link, call, ctx);
+}
+
+/** Whether a class, its bases or the modules they mix in name one the project does not declare (`class X < UnseenBase`). */
+function unseenAncestor(ctx: LinkContext, className: string, classFile: string, seen = new Set<string>()): boolean {
+  const key = memberKey(classFile, className);
+  if (seen.has(key) || seen.size > MAX_BASE_DEPTH * 4) return false;
+  seen.add(key);
+  const cls = ctx.classAt.get(key);
+  if (!cls) return false;
+  const project = ctx.projectOf.get(classFile) ?? "root";
+  const supertypes = [cls.extends, ...(cls.mixins ?? []).filter((m) => m.kind !== "extend").map((m) => m.name)];
+  for (const written of supertypes) {
+    const name = bareClassName(written);
+    if (!name) continue;
+    const file = locateClass(ctx, name, classFile, project);
+    if (!file || unseenAncestor(ctx, declaredTypeName(ctx, file, name), file, seen)) return true;
+  }
+  return false;
 }
 
 type MkLink = (
@@ -5161,6 +5225,7 @@ function mixinMember(
   sourceFile: string,
   sourceSymbol: string,
   method: string,
+  side: "instance" | "class" = "instance",
 ): { file: string; symbol: string; line: number } | null {
   const dot = sourceSymbol.indexOf(".");
   if (dot <= 0 || sourceSymbol.startsWith("route:")) return null;
@@ -5174,7 +5239,16 @@ function mixinMember(
     seen.add(key);
     const cls = ctx.classAt.get(key);
     if (!cls) break;
-    const supertypes = depth === 0 ? declaredSupertypes(cls, analysis) : cls.implements;
+    // A module the class `extend`s adds to the class object, one it includes or prepends to an instance:
+    // the side the call runs on sees only its own.
+    const kinds = new Map<string, Set<string>>();
+    for (const m of cls.mixins ?? []) (kinds.get(m.name) ?? kinds.set(m.name, new Set()).get(m.name)!).add(m.kind);
+    const onSide = (t: string) => {
+      const k = kinds.get(t);
+      if (!k) return side === "instance" || t === cls.extends;
+      return side === "class" ? k.has("extend") : k.has("include") || k.has("prepend");
+    };
+    const supertypes = (depth === 0 ? declaredSupertypes(cls, analysis) : cls.implements).filter(onSide);
     for (const raw of supertypes) {
       const mixin = bareClassName(raw);
       if (!mixin || mixin === bareClassName(cls.extends)) continue;
@@ -5259,7 +5333,9 @@ function resolveThroughDeclaredType(
 ): SymbolLink | null {
   const dot = sourceSymbol.indexOf(".");
   const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
-  leafName = receiverSegment(leafName);
+  // `x!.save()` / `x?.save()` mark the receiver; where a method's name ends in its mark (Ruby `update!`,
+  // `valid?`), the mark is part of the name it calls.
+  leafName = manifestFor(analysis.language as Language)?.marksEndNames ? leafName.replace(/\s+/g, "") : receiverSegment(leafName);
 
   if (call.receiverType || call.receiverQualifier) {
     let typeName = receiverTypeName(call.receiverType, analysis.language);
@@ -5277,6 +5353,7 @@ function resolveThroughDeclaredType(
       const qualified = typeFileFor(ctx, written, sourceFile, analysis.projectId);
       if (qualified) { typeName = written; typeFile = qualified; }
     }
+    if (typeName && typeFile) typeName = declaredTypeName(ctx, typeFile, typeName);
     const point: InjectionPoint = {
       typeName: typeName ?? "",
       typeFile,
@@ -5340,6 +5417,17 @@ function chainPoint(
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth);
     rest = receiver.slice(1);
+    // `League::Club.find(id)` where constants are looked up lexically: the class at that path heads the chain.
+    let names = 1;
+    while (!point && names < receiver.length && !receiver[names]!.call && /^[A-Z]/.test(receiver[names]!.name)) names++;
+    // Only a chain through a call on it: `League::Club.find` itself is a class call, linked by its class name.
+    const path = names > 1 && names < receiver.length && /^[A-Z]/.test(head.name)
+      ? lexicalPathRef(ctx, receiver.slice(0, names).map((r) => r.name).join("::"), sourceFile, analysis.projectId)
+      : undefined;
+    if (path) {
+      point = { ...path, member: "", consumer, container: false };
+      rest = receiver.slice(names);
+    }
     // `Factory::getInstance()->run()` — a call on a project class itself.
     if (!point && rest[0]?.call && /^[A-Z]/.test(head.name)) {
       const imported = importedTypeRef(ctx, head.name, sourceFile, analysis.projectId);
@@ -5524,8 +5612,34 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     const owner = ctx.analysisAt.get(point.typeFile);
     hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
   }
-  if (!hit) return null;
+  if (!hit) return frameworkSelfMember(ctx, point, method);
   return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
+}
+
+/**
+ * A member no class of the point's chain declares that the framework base it
+ * reaches gives every subclass, returning the subclass (`selfTypedMembers`:
+ * ActiveRecord's `Club.find(id)`, `Club.where(…)`): the point's own type.
+ */
+function frameworkSelfMember(ctx: LinkContext, point: InjectionPoint, method: string): InjectionPoint | null {
+  if (!point.typeFile) return null;
+  const spec = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.selfTypedMembers;
+  if (!spec?.members.includes(method)) return null;
+  let name = declaredTypeName(ctx, point.typeFile, point.typeName);
+  let file = point.typeFile;
+  const seen = new Set<string>();
+  for (let depth = 0; depth < MAX_BASE_DEPTH && !seen.has(memberKey(file, name)); depth++) {
+    seen.add(memberKey(file, name));
+    const written = ctx.classAt.get(memberKey(file, name))?.extends?.replace(/^::/, "");
+    if (!written) return null;
+    if (spec.bases.includes(written)) return { typeName: point.typeName, typeFile: point.typeFile, member: "", consumer: point.consumer, container: false };
+    const base = bareClassName(written);
+    const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
+    if (!baseFile) return null;
+    name = declaredTypeName(ctx, baseFile, base);
+    file = baseFile;
+  }
+  return null;
 }
 
 /**
@@ -5808,6 +5922,9 @@ function typeRefFor(
   /** The type as declared, which may spell the namespace `typeName` leaves off (`league::Club&`). */
   written?: string | null,
 ): { typeName: string; typeFile: string } | null {
+  // A constant path where the language looks it up lexically names one class — never its last name's namesake.
+  const path = lexicalPathRef(ctx, typeName, sourceFile, projectId);
+  if (path !== undefined) return path;
   const imported = importedTypeRef(ctx, typeName, sourceFile, projectId);
   if (imported !== undefined) return imported?.typeFile ? { typeName: imported.typeName, typeFile: imported.typeFile } : null;
   typeName = dealias(ctx, typeName, sourceFile);
@@ -5911,6 +6028,90 @@ function nestedTypeRef(
   return null;
 }
 
+/**
+ * A constant path (`League::Club`, `::League::Club`) as a language that looks
+ * constants up lexically (`lexicalConstants`) resolves it from `sourceFile`:
+ * under each namespace the file opens, innermost first, then at the top level
+ * — the first path some class is declared at decides. The class as declared
+ * (`Club` in `module League`, or the compact `League::Club`) and its file;
+ * null when no class is declared there, or its declarations do not settle on
+ * one file; undefined when the name is no path or the language looks types
+ * up otherwise.
+ */
+function lexicalPathRef(ctx: LinkContext, written: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null | undefined {
+  if (!written.includes("::") || !manifestFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.lexicalConstants) return undefined;
+  ctx.typePaths ??= buildTypePaths(ctx.analyses);
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const analysisByFile = ctx.analysisByFile;
+  return lexicalPathIn({
+    typePaths: ctx.typePaths,
+    analysisOf: (f) => analysisByFile.get(f),
+    languageOf: (f) => ctx.languageOf.get(f),
+    projectOf: (f) => ctx.projectOf.get(f),
+    declOf: (f, n) => ctx.classAt.get(memberKey(f, n)),
+  }, written, sourceFile, projectId);
+}
+
+/** What `lexicalPathIn` reads: the path index and per-file facts. */
+interface LexicalPathEnv {
+  typePaths: Map<string, Array<{ file: string; name: string }>>;
+  analysisOf: (file: string) => FileAnalysis | undefined;
+  languageOf: (file: string) => string | undefined;
+  projectOf: (file: string) => string | undefined;
+  declOf: (file: string, name: string) => ClassInfo | undefined;
+}
+
+/** `lexicalPathRef` over the facts it needs, so the member-type index (built before the link context) shares it. */
+function lexicalPathIn(env: LexicalPathEnv, written: string, sourceFile: string, projectId: string): { typeName: string; typeFile: string } | null | undefined {
+  const language = env.languageOf(sourceFile) ?? "";
+  const lexical = written.includes("::") ? manifestFor(language as Language)?.lexicalConstants : undefined;
+  if (!lexical) return undefined;
+  const path = written.replace(/^::/, "");
+  const source = env.analysisOf(sourceFile);
+  const scopes = written.startsWith("::") || !source
+    ? []
+    : [...new Set(source.classes.map((c) => lexical.pathOf(c, source.classes)))].sort((a, b) => b.split("::").length - a.split("::").length);
+  for (const scope of [...scopes, ""]) {
+    const decls = (env.typePaths.get(scope ? `${scope}::${path}` : path) ?? [])
+      .filter((d) => sameTypeSpace(sourceFile, language, d.file, env.languageOf(d.file) ?? ""));
+    if (decls.length === 0) continue;
+    const own = decls.filter((d) => env.projectOf(d.file) === projectId);
+    const pool = own.length > 0 ? own : decls;
+    const names = new Set(pool.map((d) => d.name));
+    if (names.size !== 1) return null;
+    const name = [...names][0]!;
+    const typeFile = pickDefinition(name, [...new Set(pool.map((d) => d.file))], sourceFile, env.declOf, env.languageOf);
+    return typeFile ? { typeName: name, typeFile } : null;
+  }
+  return null;
+}
+
+/** Every class of a `lexicalConstants` language by the full path it is declared at. */
+function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ file: string; name: string }>> {
+  const out = new Map<string, Array<{ file: string; name: string }>>();
+  for (const a of analyses) {
+    const lexical = manifestFor(a.language as Language)?.lexicalConstants;
+    if (!lexical) continue;
+    for (const cls of a.classes) {
+      const path = lexical.pathOf(cls, a.classes);
+      (out.get(path) ?? out.set(path, []).get(path)!).push({ file: a.filePath, name: cls.name });
+    }
+  }
+  return out;
+}
+
+/** The name `file` declares the class at path `written` under (`Club` for `League::Club` in `module League`), else `written`. */
+function declaredTypeName(ctx: LinkContext, file: string, written: string): string {
+  if (!written.includes("::") || ctx.classAt.has(memberKey(file, written)) || !ctx.typePaths) return written;
+  const path = written.replace(/^::/, "");
+  const names = new Set<string>();
+  for (const [p, decls] of ctx.typePaths) {
+    if (p !== path && !p.endsWith(`::${path}`)) continue;
+    for (const d of decls) if (d.file === file) names.add(d.name);
+  }
+  return names.size === 1 ? [...names][0]! : written;
+}
+
 /** What `typeName` stands for where it is an alias (`followTypeAlias`), else itself. */
 function dealias(ctx: LinkContext, typeName: string, sourceFile: string): string {
   if (!ctx.typeAliases) return typeName;
@@ -5971,6 +6172,9 @@ function forwardedClass(ctx: LinkContext, file: string, name: string, depth: num
  * type is not a project class or is ambiguous.
  */
 function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
+  // `League::Club` where constants are looked up lexically: the class at that path, or none.
+  const path = lexicalPathRef(ctx, typeName, sourceFile, projectId);
+  if (path !== undefined) return path?.typeFile ?? null;
   const declOf = (f: string, n: string) => ctx.classAt.get(memberKey(f, n));
   // The file the source imports the type from, when that file declares it: two
   // same-named classes in other namespaces (`Auth\AuthenticationService`,
@@ -6744,6 +6948,8 @@ function findMethodInClass(
   method: string,
   /** The calling file: where a split type's member has several definitions, its own is the one it calls. */
   nearFile?: string,
+  /** "class": a member called on the class object itself (see `methodAlongAncestors`). */
+  side: "instance" | "class" = "instance",
 ): { file: string; symbol: string; line: number } | null {
   // Several class bases (Python): the C3 method resolution order decides.
   if (pluginFor(ctx.languageOf.get(classFile) as Language)?.multipleInheritance && ctx.classAt.get(memberKey(classFile, className))?.implements.length) {
@@ -6756,13 +6962,48 @@ function findMethodInClass(
       return null;
     }
   }
+  return methodAlongAncestors(ctx, className, classFile, method, nearFile, new Set(), side);
+}
+
+/**
+ * `findMethodInClass` past the multiple-inheritance case: the class, then
+ * each base. Where a class records its mixins (Ruby), its ancestors are
+ * looked up as the language does — the modules it prepends (the last
+ * written first), the class itself, the modules it includes (the last
+ * written first), then the superclass — each module with its own mixins.
+ * `extend`ed modules add to the class object, never to an instance.
+ */
+function methodAlongAncestors(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  method: string,
+  nearFile: string | undefined,
+  seen: Set<string>,
+  /** "class": a member called on the class object (`Club.table`) — its `extend`ed modules, not its includes. */
+  side: "instance" | "class" = "instance",
+): { file: string; symbol: string; line: number } | null {
   let name = className;
   let file = classFile;
-  const seen = new Set<string>();
   for (let depth = 0; depth < MAX_BASE_DEPTH; depth++) {
+    // A constant path (`League::Club`) means the class as its file declares it (`Club`).
+    name = declaredTypeName(ctx, file, name);
     const key = memberKey(file, name);
     if (seen.has(key)) return null;
     seen.add(key);
+    const mixins = ctx.classAt.get(key)?.mixins;
+    const viaMixins = (kind: "include" | "prepend" | "extend") => {
+      for (const m of [...(mixins ?? [])].reverse()) {
+        if (m.kind !== kind) continue;
+        const mixinFile = locateClass(ctx, m.name, file, ctx.projectOf.get(file) ?? "root");
+        // A module's methods are instance methods of whatever mixes it in — on the class object, for `extend`.
+        const hit = mixinFile ? methodAlongAncestors(ctx, m.name, mixinFile, method, undefined, seen) : null;
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const prepended = mixins && side === "instance" ? viaMixins("prepend") : null;
+    if (prepended) return prepended;
     const def = symbolIn(ctx, file, `${name}.${method}`);
     if (def) {
       // A base's property read through its accessor (`Count` → `GetCount`) runs the accessor as the
@@ -6774,6 +7015,8 @@ function findMethodInClass(
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
+    const mixedIn = mixins ? viaMixins(side === "instance" ? "include" : "extend") : null;
+    if (mixedIn) return mixedIn;
     const written = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
     if (!written) return null;
     // `class Turbo extends Motor` for `import { Engine as Motor }`: the module's `Engine`.

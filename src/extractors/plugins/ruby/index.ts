@@ -3,9 +3,10 @@ import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
+import { rubyModelFinders } from "./autoload.js";
 import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractCallsFromBody, extractClassesWithSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -239,12 +240,65 @@ function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: Functio
 }
 
 /**
+ * `def look a, b` — parameters written without parentheses, up to a `;` or
+ * comment. The shared reader takes a list only in parentheses.
+ */
+function addParenlessParams(lines: readonly string[], fn: FunctionInfo): void {
+  if (fn.params.length > 0) return;
+  const decl = lines[fn.line - 1] ?? "";
+  const name = fn.name.replace(/^self\./, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`\\bdef\\s+(?:(?:self|[A-Z]\\w*)\\.)?${name}[ \\t]+(?![=(;#])([^;#]+)`).exec(decl);
+  if (!m) return;
+  for (const p of splitTopLevel(m[1]!.trim())) {
+    const param = parseRubyParam(p);
+    if (param?.name && /^[*&]{0,2}[a-z_]\w*:?$|^\.\.\.$/.test(param.name)) fn.params.push(param);
+  }
+}
+
+/** Words that stand alone on a line without calling anything. */
+const BARE_STATEMENT_KEYWORDS = new Set([
+  "end", "else", "elsif", "begin", "ensure", "rescue", "retry", "redo", "next", "break", "return", "super",
+  "self", "nil", "true", "false", "yield", "then", "do", "private", "protected", "public", "module_function",
+  "__method__", "__FILE__", "__LINE__", "__dir__", "binding", "raise", "loop", "puts", "p", "pp", "it",
+]);
+
+/**
+ * A line that is one bare name the method does not bind — `tally`,
+ * `authorize!`: Ruby reads an unbound identifier as a call on `self`, and a
+ * statement that only reads a value does nothing, so the name is a method the
+ * class has from itself, a module it mixes in or a base. The own-method pass
+ * covers the class's own methods; this one the rest, which another file
+ * declares.
+ */
+function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
+  const bound = boundLocals(lines, fn);
+  // A reader the class declares (`attr_reader :scope`) or forwards (`delegate :name, to: :club`) is no method of an ancestor.
+  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+    const decl = /^\s*(?:attr_reader|attr_accessor|delegate)\b\s*\(?\s*(:[\w?!]+(?:\s*,\s*:[\w?!]+)*)/.exec(lines[i] ?? "");
+    if (decl) for (const n of decl[1]!.matchAll(/:([\w?!]+)/g)) bound.add(n[1]!);
+  }
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  for (const [i, text] of bodyLines(lines, fn)) {
+    const m = /^\s*([a-z_]\w*[?!]?)\s*(?:#.*)?$/.exec(text);
+    if (!m) continue;
+    const name = m[1]!;
+    if (bound.has(name) || BARE_STATEMENT_KEYWORDS.has(name) || have.has(`${name}@${i + 1}`)) continue;
+    have.add(`${name}@${i + 1}`);
+    fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
+  }
+}
+
+/** A chain off a class through a model finder or query (`Club.find()`, `Club.where().first()`). */
+const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.members.map((m) => m.replace(/[?!]/g, "\\$&")).join("|")})\\(\\)`);
+
+/**
  * `builder.perform` on a local the method constructed (`builder = PlayerBuilder.new(…)`):
  * a paren-less call the call patterns cannot tell from an attribute read, but
  * the local's stated type makes it a member of that class.
  */
 function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
-  const typed = (fn.localTypes ?? []).filter((l) => l.type);
+  // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`).
+  const typed = (fn.localTypes ?? []).filter((l) => l.type || MODEL_FINDER_CHAIN.test(l.from ?? ""));
   if (typed.length === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
@@ -368,7 +422,8 @@ const NON_MODEL_CONSTANTS = new Set([
 const PARENLESS_CONST_CALL_RE = new RegExp(
   // The `?`/`!` of a predicate or bang method is part of its name (`is_holiday?`
   // is not `is_holiday`); a `!=` after the name is an operator.
-  `(?<![\\w.@$:])(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
+  // A leading `::` names the top level (`::Contacts::FilterService.new`); the path is the same.
+  `(?<![\\w.@$:])(?:::)?(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
 );
 
 /** A (possibly namespaced) capitalised receiver, not preceded by `.`/word char,
@@ -721,7 +776,8 @@ export const rubySpec: RegexLangSpec = {
     ...RUBY_DI_CALL_PATTERNS,
     ...RAILS_RENDER_CALL_PATTERNS,
     {
-      pattern: /\b([A-Z]\w+)\.(\w+)\s*\(/,
+      // Never the tail of a constant path: `League::Club.find(` is `League::Club.find` (below), not `Club.find`.
+      pattern: /(?<![\w:])([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
@@ -731,7 +787,7 @@ export const rubySpec: RegexLangSpec = {
       // drops receivers that are themselves a call result
       // (`u.name.downcase.include?`), where the receiver token names nothing
       // the linker could resolve.
-      pattern: /(?<![\w.@$])[@$]?(\w+)\.(\w+[?!])(?!=)/,
+      pattern: /(?<![\w.@$:])[@$]?(\w+)\.(\w+[?!])(?!=)/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
@@ -751,6 +807,17 @@ export const rubySpec: RegexLangSpec = {
       // matcher stops at the `?` / `!`, so these were never recorded.
       pattern: /(?<![\w.@$:])(?!defined\?)([a-z_]\w*[?!])\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
+    },
+    {
+      // A chain of calls off a class — `Club.where(active: true).first.full_name`,
+      // `Club.find(id).promote!` — named with every step but the last called
+      // (`Club.where().first().full_name`), so the linker types it step by step
+      // through what each returns. Stdlib and framework constants are no such chain;
+      // a construction's (`Club.new(…).x`) is read with its type above.
+      pattern: new RegExp(
+        String.raw`(?<![\w.@$:])(?:::)?(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\b)([A-Z]\w*(?:::[A-Z]\w*)*)(?!\.new\b)((?:\.[a-z_]\w*[?!]?(?:\s*\([^()]*\))?){1,4})\.([a-z_]\w*[?!]?)(?![\w?!])(?=\s*(?:\(|$|#|[,)\]}]|\b(?:if|unless|do)\b|\{))`,
+      ),
+      buildName: (m) => ({ name: `${m[1]}${m[2]!.replace(/\.([a-z_]\w*[?!]?)(?:\s*\([^()]*\))?/g, ".$1()")}.${m[3]}`, leafName: m[3] }),
     },
     {
       // A whole statement that is just `receiver.method` — `user.save`,
@@ -791,6 +858,7 @@ export const rubySpec: RegexLangSpec = {
       separateSingletonMethods(lines, cls);
       typeBareConstructions(lines, cls);
       for (const m of cls.methods) {
+        addParenlessParams(lines, m);
         applyDeclaredParamTypes(lines, m);
         dropDetachedMemberCalls(lines, m);
       }
@@ -808,6 +876,7 @@ export const rubySpec: RegexLangSpec = {
         addTypedLocalCalls(code, m);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m);
+        addBareStatementCalls(code, cls, m);
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
@@ -820,22 +889,30 @@ export const rubySpec: RegexLangSpec = {
       // Scan the class body for include/extend/prepend statements.
       // Each one names a module that ought to count as a relationship for
       // the data-model graph. Lines outside the class's body range are
-      // ignored, so module mixins from sibling classes don't bleed.
+      // ignored, so module mixins from sibling classes don't bleed — and so
+      // are the lines of a class or module nested inside it, whose mixins are
+      // its own (`include Scoring` in `module League; class Club` is Club's).
       const seen = new Set<string>(cls.implements ?? []);
+      const nested = classes.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
+      const mixins: NonNullable<ClassInfo["mixins"]> = [];
       for (let i = cls.line; i < cls.endLine && i < lines.length; i++) {
+        if (nested.some((c) => i + 1 >= c.line && i + 1 <= c.endLine)) continue;
         const line = lines[i] ?? "";
         // `include Import["repo"]` builds readers — it is no module the class implements.
         if (isAutoInjectInclude(line)) continue;
         // include Foo, Bar    /   extend Foo    /   prepend Foo
         const mixinMatch = line.match(/^\s*(include|extend|prepend)\s+([A-Z][\w:]*(?:\s*,\s*[A-Z][\w:]*)*)/);
         if (!mixinMatch) continue;
+        const kind = mixinMatch[1] as "include" | "extend" | "prepend";
         for (const name of mixinMatch[2]!.split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (!mixins.some((m) => m.name === name && m.kind === kind)) mixins.push({ name, kind });
           if (!seen.has(name)) {
             seen.add(name);
             cls.implements.push(name);
           }
         }
       }
+      if (mixins.length > 0) cls.mixins = mixins;
     }
     // Strong params live in a private `user_params` helper the action calls;
     // copy that access onto the action so the route join sees it there.
@@ -869,6 +946,7 @@ export const rubySpec: RegexLangSpec = {
   // Top-level `def`s get the same declared types and call clean-up as methods.
   postProcessFunctions: (lines, fns) => {
     for (const fn of fns) {
+      addParenlessParams(lines, fn);
       applyDeclaredParamTypes(lines, fn);
       dropDetachedMemberCalls(lines, fn);
     }
