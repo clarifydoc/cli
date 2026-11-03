@@ -58,7 +58,7 @@ describe("Go through ANTLR", () => {
 
   it("names calls as the regex scan does, and records none in a raw string or an interface method", () => {
     const serve = readGo(LEAGUE).functions.find((f) => f.name === "ServeHTTP")!;
-    expect(serve.calls.map((c) => c.name)).toEqual([
+    expect(serve.calls.filter((c) => !c.passed).map((c) => c.name)).toEqual([
       "json.NewDecoder().Decode",
       "json.NewDecoder",
       "http.Error",
@@ -131,8 +131,9 @@ describe("Go: ANTLR and the patterns agree on the fixtures", () => {
       const parsed = readGo(src);
       expect(parsed.syntaxErrors).toBe(0);
       const shape = (a: ReturnType<typeof extractWithRegex>) => [
-        ...a.functions.map((f) => ({ name: f.name, line: f.line, endLine: f.endLine, calls: f.calls.map((c) => c.name) })),
-        ...a.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine, calls: m.calls.map((x) => x.name) }))),
+        // What each function invokes: the patterns read no value handed on.
+        ...a.functions.map((f) => ({ name: f.name, line: f.line, endLine: f.endLine, calls: f.calls.filter((c) => !c.passed).map((c) => c.name) })),
+        ...a.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine, calls: m.calls.filter((x) => !x.passed).map((x) => x.name) }))),
       ];
       const regex = shape(extractWithRegex(src, rel, "go"));
       const antlr = shape(extractWithRegex(src, rel, "go", undefined, parsed));

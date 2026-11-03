@@ -4,7 +4,7 @@ import { extractGoModuleValues } from "./module-values.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
 import { addGoWhereFields, withGoArgOrigins, withGoArgOriginsInClasses } from "./arg-origins.js";
-import type { ParamInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, ParamInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractGoRoutes, type ClosureCalls } from "./routes.js";
@@ -45,6 +45,20 @@ const GO_CODE = braceCodeHooks(GO_LEXICON, (line) => {
 
 /** A chain's head: a function, or a package or variable member — never the tail of a longer selector. */
 const GO_CHAIN_HEAD = String.raw`(?<![\w.])((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)`;
+
+/**
+ * A method value a route registration names (`r.HandleFunc("/clubs", h.List)`, `Wrap(s.handler.Health)` around it)
+ * is that route's handler, which the route links: the registering function does not also hand it on.
+ */
+function dropRouteHandlerValues(routes: readonly RouteInfo[], fns: readonly FunctionInfo[]): void {
+  if (routes.length === 0) return;
+  for (const fn of fns) {
+    if (!fn.calls.some((c) => c.passed)) continue;
+    const handlers = routes.filter((r) => r.handler && r.line >= fn.line && r.line <= fn.endLine).map((r) => r.handler!);
+    if (handlers.length === 0) continue;
+    fn.calls = fn.calls.filter((c) => !c.passed || !handlers.some((h) => h === c.name || h.endsWith(`.${c.name}`)));
+  }
+}
 
 /** Bare the Go type identifier — `*[]map[string]User` → `User`. */
 function stripGoTypeModifiers(raw: string): string {
@@ -150,12 +164,14 @@ export const goSpec: RegexLangSpec = {
 
   // Read with comments blanked, and strings that hold code: a commented-out registration, or one a template or a
   // test sample spells (`` const sample = `r.GET("/x", h)` ``), serves nothing.
-  extractRoutes: (lines, _classes, _file, _fns, facts) => {
+  extractRoutes: (lines, classes, _file, fns, facts) => {
     const code = blankCodeInStrings(GO_CODE.commentFreeLines(lines));
     // A closure handling one of several routes a function registers carries its own body's calls.
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
-    return [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
+    const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
+    dropRouteHandlerValues(routes, [...(fns ?? []), ...classes.flatMap((c) => c.methods)]);
+    return routes;
   },
   extractDataSources: (lines) => {
     const rows = extractGoDataSources(lines);
