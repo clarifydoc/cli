@@ -15,7 +15,7 @@ import { extractEntities, mergeEntities } from "../extractors/entities/index.js"
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { hasDbRootTypes } from "../extractors/shared/call-patterns.js";
 import { dirname, relative } from "path";
-import { applyAliases, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
+import { applyAliases, type AliasMap, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages } from "../extractors/shared/workspace-packages.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, regexSpecFor } from "../extractors/registry.js";
@@ -90,7 +90,7 @@ export interface FileTask {
   verbose: boolean;
   projectRoot: string;
   /** tsconfig.json paths-style aliases for the project (may be empty). */
-  tsconfigAliases: Map<string, string>;
+  tsconfigAliases: AliasMap;
   /**
    * Where file-based routing reads from: the file's path relative to its own
    * sub-project's root, and that sub-project's frameworks. An Expo app in
@@ -234,11 +234,11 @@ function importedNameCalls(analysis: FileAnalysis): void {
 
 /** Serialized alias maps and workspace package tables, by identity: files share the same few maps. */
 const stampParts = new WeakMap<object, string>();
-function stampOf(map: Map<string, string> | Map<string, { dir: string; entry: string }>, projectRoot: string): string {
+function stampOf(map: AliasMap | Map<string, { dir: string; entry: string }>, projectRoot: string): string {
   let hit = stampParts.get(map);
   if (hit === undefined) {
     const rel = (p: string) => relative(projectRoot, p).split("\\").join("/");
-    hit = JSON.stringify([...map].map(([k, v]) => (typeof v === "string" ? [k, rel(v)] : [k, rel(v.dir), rel(v.entry)])));
+    hit = JSON.stringify([...map].map(([k, v]) => (typeof v === "string" ? [k, rel(v)] : Array.isArray(v) ? [k, v.map(rel)] : [k, rel(v.dir), rel(v.entry)])));
     stampParts.set(map, hit);
   }
   return hit;
@@ -253,7 +253,7 @@ function stampOf(map: Map<string, string> | Map<string, { dir: string; entry: st
  * incremental run reuses a file only while this is unchanged: an edited alias
  * map moves the imports of files whose own bytes did not change.
  */
-export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "relativePath" | "language">, projectRoot: string, tsconfigAliases: Map<string, string>): string | undefined {
+export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "relativePath" | "language">, projectRoot: string, tsconfigAliases: AliasMap): string | undefined {
   // Every input is per directory and per kind of file: sibling files share one stamp.
   const isJs = file.language === "typescript" || file.language === "javascript";
   const isScript = extensionFamily(file.relativePath) === "script";
@@ -267,9 +267,9 @@ export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "
 }
 
 /** `importRewriteStamp` by directory, per root alias map (one per run: the analyzer clears the config caches first). */
-const stampMemo = new WeakMap<Map<string, string>, Map<string, string | undefined>>();
+const stampMemo = new WeakMap<AliasMap, Map<string, string | undefined>>();
 
-function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, isJs: boolean, isScript: boolean, projectRoot: string, tsconfigAliases: Map<string, string>): string | undefined {
+function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, isJs: boolean, isScript: boolean, projectRoot: string, tsconfigAliases: AliasMap): string | undefined {
   const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
   const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
   const parts: string[] = [];

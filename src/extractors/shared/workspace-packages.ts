@@ -20,6 +20,8 @@ import { clearDirectoryListings, rememberListing } from "./dir-listings.js";
 const SKIP_DIRS = new Set(["node_modules", ".git", "build", "dist", "out", "coverage", ".next", ".nuxt", ".svelte-kit", "vendor", "target"]);
 const MAX_DEPTH = 5;
 const cache = new Map<string, Map<string, WorkspacePackage>>();
+/** Every named package's directory by root, with or without a source entry (a shared-config package holds only JSON). */
+const dirCache = new Map<string, Map<string, string>>();
 
 export interface WorkspacePackage {
   /** Package directory, absolute. */
@@ -33,6 +35,7 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
   const hit = cache.get(root);
   if (hit) return hit;
   const found = new Map<string, WorkspacePackage | null>();
+  const dirs = new Map<string, string | null>();
   const walk = (dir: string, depth: number): void => {
     let entries: import("fs").Dirent[];
     try {
@@ -43,6 +46,7 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
     rememberListing(dir, entries.map((e) => e.name));
     if (dir !== root && entries.some((e) => e.isFile() && e.name === "package.json")) {
       const pkg = readPackage(join(dir, "package.json"));
+      if (pkg?.name) dirs.set(pkg.name, dirs.has(pkg.name) ? null : dir);
       const entry = pkg?.name ? sourceEntry(dir, pkg) : null;
       if (pkg?.name && entry) found.set(pkg.name, found.has(pkg.name) ? null : { dir, entry });
     }
@@ -55,7 +59,24 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
   const out = new Map<string, WorkspacePackage>();
   for (const [name, p] of found) if (p) out.set(name, p);
   cache.set(root, out);
+  const named = new Map<string, string>();
+  for (const [name, d] of dirs) if (d) named.set(name, d);
+  dirCache.set(root, named);
   return out;
+}
+
+/**
+ * The directory of the workspace package named `name` under `projectRoot` (absolute), whether or
+ * not it has a source entry — a shared tsconfig package holds only JSON. Undefined when no package,
+ * or more than one, declares that name.
+ */
+export function workspacePackageDir(projectRoot: string, name: string): string | undefined {
+  const root = resolve(projectRoot);
+  if (!dirCache.has(root)) {
+    cache.delete(root);
+    loadWorkspacePackages(root);
+  }
+  return dirCache.get(root)?.get(name);
 }
 
 interface PackageJson {
@@ -146,5 +167,6 @@ export function applyWorkspacePackages(
 /** Tests reset the per-root cache. */
 export function clearWorkspacePackageCache(): void {
   cache.clear();
+  dirCache.clear();
   clearDirectoryListings();
 }
