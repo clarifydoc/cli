@@ -25,6 +25,36 @@ export interface PatternCallName {
   receiverType?: string;
   /** The registration a container lookup names (`Container.shared.repo()` → `repo`), as a call pattern states it. */
   receiverQualifier?: string;
+  /** A bare name the function binds itself — a parameter or a local it calls (`CallInfo.boundLocally`). */
+  boundLocally?: true;
+}
+
+/**
+ * A name a function binds where the parse shows it — a parameter, a local (`auto kick = [](int x) { … };`, a
+ * `std::function` or a function pointer) — from its declaration (`line`/`column` of the name) to the end of the
+ * scope declaring it (`endLine`/`endColumn`, the closing token of the block, statement, lambda or function).
+ */
+export interface LocalBinding {
+  name: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+/**
+ * Marks each bare call (`kick(3)`) a binding in `bindings` answers at the call's position `boundLocally`: the
+ * function calls its own value, never the file-level function or the import of that name.
+ */
+export function markLocalCalls(calls: PatternCallName[], bindings: readonly LocalBinding[]): void {
+  if (bindings.length === 0) return;
+  const before = (l1: number, c1: number, l2: number, c2: number): boolean => l1 < l2 || (l1 === l2 && c1 < c2);
+  for (const call of calls) {
+    if (call.name !== call.leafName || call.receiverType || call.receiverQualifier) continue;
+    const bound = bindings.some((b) => b.name === call.name
+      && before(b.line, b.column, call.line, call.column) && !before(b.endLine, b.endColumn, call.line, call.column));
+    if (bound) call.boundLocally = true;
+  }
 }
 
 /**
@@ -80,7 +110,17 @@ export function recordPatternCalls(
   found.sort((a, b) => a.line - b.line || rank(a) - rank(b) || a.column - b.column);
   const calls: CallInfo[] = [];
   const add = callRecorder(calls);
+  // A name called once as a local's and once as the file's function (`{ auto kick = …; kick(1); } kick(2);`) is two
+  // calls: each recorded once, the local's marked.
+  const bound: CallInfo[] = [];
+  const addBound = callRecorder(bound);
   for (const c of found) {
+    if (c.boundLocally) {
+      const at = bound.length;
+      addBound(c.name, c.leafName, c.line, c.column);
+      for (const b of bound.slice(at)) calls.push({ ...b, boundLocally: true });
+      continue;
+    }
     const receiver = c.receiverType || c.receiverQualifier
       ? { ...(c.receiverType ? { receiverType: c.receiverType } : {}), ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}) }
       : undefined;

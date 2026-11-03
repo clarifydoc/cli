@@ -2,10 +2,20 @@ import { Token, TerminalNode, type ParserRuleContext, type ParseTree } from "ant
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { CPP14Lexer } from "../../../parsers/antlr/cpp/CPP14Lexer.js";
 import {
+  CompoundStatementContext,
+  ConditionContext,
   CPP14Parser,
   DeclaratorContext,
+  DeclSpecifierContext,
+  DeclSpecifierSeqContext,
+  ExceptionDeclarationContext,
+  ForRangeDeclarationContext,
   FunctionDefinitionContext,
+  HandlerContext,
   IdExpressionContext,
+  InitDeclaratorContext,
+  IterationStatementContext,
+  LambdaExpressionContext,
   MacroArgumentsContext,
   MacroBlockStatementContext,
   MacroFunctionDefinitionContext,
@@ -13,14 +23,17 @@ import {
   MemInitializerContext,
   NewExpression_Context,
   NoPointerDeclaratorContext,
+  ParameterDeclarationContext,
   PostfixExpressionContext,
   PrimaryExpressionContext,
+  SelectionStatementContext,
+  SimpleDeclarationContext,
   TemplateArgumentContext,
   UnqualifiedIdContext,
 } from "../../../parsers/antlr/cpp/CPP14Parser.js";
 import { SPECIFIER_KEYWORDS, TYPE_KEYWORDS } from "../../../parsers/antlr/cpp/CppTypes.js";
 import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
-import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
+import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { defineCalls, leftOutCalls, tokenCalls, type CallOwner, type TokenKinds } from "../shared/token-calls.js";
@@ -121,15 +134,17 @@ function read(text: string, also?: string): ParsedStructure {
     { firstError: true },
   );
   if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors };
-  const found = walk(tree, stream, text, isType);
+  const bindings = new Map<PatternCallName[], LocalBinding[]>();
+  const found = walk(tree, stream, text, isType, bindings);
   defineCalls(stream, CPP_TOKENS, found);
   if (also) leftOutCalls(also, CPP_TOKENS, found);
+  for (const f of found) markLocalCalls(f.calls, bindings.get(f.calls) ?? []);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls, (c) => c.receiverType !== undefined) }));
   functions.sort((a, b) => a.line - b.line);
   return { functions, topLevelCalls: [], syntaxErrors: errors };
 }
 
-function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean): Found[] {
+function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean, bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const found: Found[] = [];
   const own = (name: { text: string; line: number }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
@@ -174,6 +189,10 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
         tokenCalls(stream.slice(first.tokenIndex, ctx.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL), CPP_TOKENS, calls);
         continue;
       }
+    } else if (calls && (ctx instanceof DeclaratorContext || ctx instanceof ParameterDeclarationContext || ctx instanceof SimpleDeclarationContext)) {
+      // A parameter or a local the body may call (`auto kick = [](int x) { … };`, `std::function<int(int)> kick`).
+      const bound = localBinding(ctx);
+      if (bound) (bindings.get(calls) ?? bindings.set(calls, []).get(calls)!).push(bound);
     } else if (calls && ctx instanceof NewExpression_Context) {
       newCall(ctx, calls, text);
     } else if (calls && ctx instanceof MemInitializerContext) {
@@ -204,6 +223,93 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
 function macroArgumentCalls(args: MacroArgumentsContext, stream: readonly Token[], calls: PatternCallName[]): void {
   if (!args.start || !args.stop) return;
   tokenCalls(stream.slice(args.start.tokenIndex, args.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL), CPP_TOKENS, calls);
+}
+
+/**
+ * What a declaration in a body binds, and where: a local (a block's, a `for`'s, a condition's, a `catch`'s) to the end
+ * of the scope declaring it, a parameter of the function or lambda being defined to the end of its body. Null for a
+ * function it declares (`int kick(int);` is the file's `kick`), a typedef, a parameter of a declared function type,
+ * and a qualified name. Without the headers `Engine kick` may read as two specifiers and no declarator: the name is
+ * then the last specifier, after a type.
+ */
+function localBinding(ctx: DeclaratorContext | ParameterDeclarationContext | SimpleDeclarationContext): LocalBinding | null {
+  let name: Token | null = null;
+  let scope: ParserRuleContext | null = null;
+  const parameter = (decl: ParameterDeclarationContext): ParserRuleContext | null => {
+    for (let up = decl.parent; up; up = up.parent) {
+      if (up instanceof FunctionDefinitionContext || up instanceof LambdaExpressionContext) return up;
+      if (up instanceof ParameterDeclarationContext || up instanceof SimpleDeclarationContext) return null;
+    }
+    return null;
+  };
+  if (ctx instanceof ParameterDeclarationContext) {
+    if (ctx.declarator() || ctx.abstractDeclarator()) return null;
+    name = specifierName(ctx.declSpecifierSeq());
+    scope = name && parameter(ctx);
+  } else if (ctx instanceof SimpleDeclarationContext) {
+    const tail = ctx.declarationTail();
+    if (tail.initDeclaratorList() || tail.structuredBinding() || typedefs(ctx)) return null;
+    name = specifierName(ctx.declSpecifierSeq());
+    scope = name && blockScope(ctx);
+  } else {
+    const parent = ctx.parent;
+    if (parent instanceof InitDeclaratorContext || parent instanceof ConditionContext || parent instanceof ForRangeDeclarationContext || parent instanceof ExceptionDeclarationContext) {
+      if (declaresFunction(ctx)) return null;
+      for (let up = parent.parent; up; up = up.parent) {
+        if (up instanceof SimpleDeclarationContext && typedefs(up)) return null;
+        if (up instanceof SimpleDeclarationContext || up instanceof CompoundStatementContext) break;
+      }
+      scope = blockScope(parent);
+    } else if (parent instanceof ParameterDeclarationContext) {
+      scope = parameter(parent);
+    }
+    name = scope && declaredIdentifier(ctx);
+  }
+  if (!name || !scope?.stop) return null;
+  return { name: name.text ?? "", line: name.line, column: name.column, endLine: scope.stop.line, endColumn: scope.stop.column };
+}
+
+/** The block, statement, lambda or function a local declaration's name lasts to the end of. */
+function blockScope(from: ParserRuleContext): ParserRuleContext | null {
+  for (let up = from.parent; up; up = up.parent) {
+    if (up instanceof CompoundStatementContext || up instanceof IterationStatementContext || up instanceof SelectionStatementContext
+      || up instanceof HandlerContext || up instanceof LambdaExpressionContext || up instanceof FunctionDefinitionContext) return up;
+  }
+  return null;
+}
+
+/** Whether a declaration is a `typedef`: it names a type, never a value to call. */
+function typedefs(decl: SimpleDeclarationContext): boolean {
+  return decl.declSpecifierSeq()?.declSpecifier().some((d) => d.Typedef() !== null) === true;
+}
+
+/** `Engine kick` read as specifiers only: the last one when it is a plain name after a type, else null. */
+function specifierName(seq: DeclSpecifierSeqContext | null): Token | null {
+  const specifiers = seq?.declSpecifier() ?? [];
+  if (specifiers.length < 2) return null;
+  const typeOf = (d: DeclSpecifierContext) => d.typeSpecifier()?.trailingTypeSpecifier()?.simpleTypeSpecifier() ?? null;
+  const last = typeOf(specifiers.at(-1)!);
+  if (!last?.theTypeName() || last.nestedNameSpecifier() || !/^[A-Za-z_]\w*$/.test(last.getText())) return null;
+  if (!specifiers.slice(0, -1).some((d) => typeOf(d) !== null)) return null;
+  return last.start;
+}
+
+/** Whether a declarator declares a function (`kick(int)`, `auto kick() -> int`), not a value — a function pointer is a value. */
+function declaresFunction(declarator: DeclaratorContext): boolean {
+  if (declarator.trailingReturnType()) return true;
+  const top = declarator.pointerDeclarator()?.noPointerDeclarator();
+  return !!top?.parametersAndQualifiers() && !!top.noPointerDeclarator()?.declaratorId();
+}
+
+/** The unqualified name a declarator declares, through parentheses (`(*kick)(int)`); null for a qualified one. */
+function declaredIdentifier(declarator: DeclaratorContext): Token | null {
+  let direct: NoPointerDeclaratorContext | null = declarator.pointerDeclarator()?.noPointerDeclarator() ?? declarator.noPointerDeclarator() ?? null;
+  while (direct) {
+    const id = direct.declaratorId()?.idExpression();
+    if (id) return id.qualifiedId() ? null : id.unqualifiedId()?.Identifier()?.symbol ?? null;
+    direct = direct.noPointerDeclarator() ?? direct.pointerDeclarator()?.noPointerDeclarator() ?? null;
+  }
+  return null;
 }
 
 /** The name a declarator declares, as the patterns name a definition: its last name, `~Club`, `operator==`. */

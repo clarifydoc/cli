@@ -2,10 +2,16 @@ import { Token, TerminalNode, type ParserRuleContext, type ParseTree } from "ant
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { CLexer } from "../../../parsers/antlr/c/CLexer.js";
 import {
+  CompoundStatementContext,
   CParser,
+  DeclarationContext,
   DeclaratorContext,
   DirectDeclaratorContext,
   FunctionDefinitionContext,
+  InitDeclaratorContext,
+  IterationStatementContext,
+  ParameterDeclarationContext,
+  SelectionStatementContext,
   MacroAttributeContext,
   MacroBlockStatementContext,
   MacroStatementContext,
@@ -15,7 +21,7 @@ import {
   PrimaryExpressionContext,
 } from "../../../parsers/antlr/c/CParser.js";
 import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
-import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
+import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
 import { SPECIFIER_KEYWORDS } from "../../../parsers/antlr/c/CKeywords.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
@@ -80,15 +86,17 @@ function read(text: string, also?: string): ParsedStructure {
     { firstError: true },
   );
   if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors };
-  const found = walk(tree, stream);
+  const bindings = new Map<PatternCallName[], LocalBinding[]>();
+  const found = walk(tree, stream, bindings);
   defineCalls(stream, C_TOKENS, found);
   if (also) leftOutCalls(also, C_TOKENS, found);
+  for (const f of found) markLocalCalls(f.calls, bindings.get(f.calls) ?? []);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
   functions.sort((a, b) => a.line - b.line);
   return { functions, topLevelCalls: [], syntaxErrors: errors };
 }
 
-function walk(root: ParseTree, stream: readonly Token[]): Found[] {
+function walk(root: ParseTree, stream: readonly Token[], bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const pending: Found[] = [];
   while (stack.length > 0) {
@@ -115,6 +123,10 @@ function walk(root: ParseTree, stream: readonly Token[]): Found[] {
       calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       postfixCalls(ctx, calls);
+    } else if (calls && ctx instanceof DeclaratorContext) {
+      // A parameter or a local the body may call (`int (*kick)(int) = pick;`).
+      const bound = localBinding(ctx);
+      if (bound) (bindings.get(calls) ?? bindings.set(calls, []).get(calls)!).push(bound);
     } else if (calls && (ctx instanceof MacroBlockStatementContext || ctx instanceof MacroStatementContext || ctx instanceof MacroAttributeContext)) {
       // `foreach(list, i) { … }`, `VERBOSE(char buf[N]);`, `IGNORE_DEPRECATION(…) x = f();` in a body: the macro is
       // called by its name.
@@ -129,6 +141,43 @@ function walk(root: ParseTree, stream: readonly Token[]): Found[] {
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push({ node: ctx.children[i]!, owner: into });
   }
   return pending;
+}
+
+/**
+ * What a declarator in a body binds, and where: a local to the end of the block or `for` declaring it, a parameter of
+ * the function being defined to the end of its body. Null for a function it declares (`int kick(int);` is the file's
+ * `kick`), a typedef and a parameter of a declared function type.
+ */
+function localBinding(declarator: DeclaratorContext): LocalBinding | null {
+  const parent = declarator.parent;
+  let scope: ParserRuleContext | null = null;
+  if (parent instanceof InitDeclaratorContext) {
+    const direct = declarator.directDeclarator();
+    if (direct?.Identifier() && direct.LeftParen().length > 0) return null;
+    for (let up = parent.parent; up && !scope; up = up.parent) {
+      if (up instanceof DeclarationContext && up.declarationSpecifiers()?.declarationSpecifier().some((d) => d.storageClassSpecifier()?.Typedef())) return null;
+      if (up instanceof CompoundStatementContext || up instanceof IterationStatementContext || up instanceof SelectionStatementContext || up instanceof FunctionDefinitionContext) scope = up;
+    }
+  } else if (parent instanceof ParameterDeclarationContext) {
+    for (let up = parent.parent; up && !scope; up = up.parent) {
+      if (up instanceof FunctionDefinitionContext) scope = up;
+      else if (up instanceof ParameterDeclarationContext || up instanceof DeclarationContext) return null;
+    }
+  }
+  const name = scope?.stop ? declaredToken(declarator) : null;
+  if (!name || !scope?.stop) return null;
+  return { name: name.text ?? "", line: name.line, column: name.column, endLine: scope.stop.line, endColumn: scope.stop.column };
+}
+
+/** The identifier a declarator declares, through parentheses (`(*kick)(int)`). */
+function declaredToken(declarator: DeclaratorContext): Token | null {
+  let direct: DirectDeclaratorContext | null = declarator.directDeclarator();
+  while (direct) {
+    const id = direct.Identifier();
+    if (id) return id.symbol;
+    direct = direct.declarator()?.directDeclarator() ?? null;
+  }
+  return null;
 }
 
 /** The name a declarator declares: its direct declarator's identifier, through parentheses (`(*signal(int))(int)`). */
