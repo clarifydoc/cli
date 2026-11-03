@@ -170,7 +170,8 @@ function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangS
   if (!on || (on instanceof RegExp && !on.test(filePath))) return null;
   // The lines as the call scan reads them (block comments, heredocs blanked), as a function body's are.
   const outside = [...(spec.callSourceLines?.(lines) ?? lines)];
-  for (const span of [...analysis.functions, ...analysis.classes]) {
+  // A method declared outside its type's body (Go's `func (s *Svc) Run()`) is a span of its own.
+  for (const span of [...analysis.functions, ...analysis.classes, ...analysis.classes.flatMap((c) => c.methods)]) {
     for (let i = span.line - 1; i < Math.min(span.endLine, outside.length); i++) outside[i] = "";
   }
   // A deferred block's opening line is the statement that registers it
