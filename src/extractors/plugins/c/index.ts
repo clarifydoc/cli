@@ -1,3 +1,4 @@
+import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -44,6 +45,7 @@ export const cSpec: RegexLangSpec = {
   extensions: [".c"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
+  conditionalBlocks: (lines) => conditionalBlocks(lines, false),
 
   functionPatterns: [
     {
