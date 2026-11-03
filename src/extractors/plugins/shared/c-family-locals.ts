@@ -41,8 +41,9 @@ const HEADS = /\b(for|if|while|switch|catch)\s*\(/g;
  *
  * Types are written as the parameters' are (namespaces, `const`, `*` and `&` dropped, template arguments kept).
  * Primitives are left out. A name declared again with another or an unknown type (`auto x = …` the reading cannot
- * type, a structured binding, a range-for over `auto`), or shadowing a parameter of another type, is left out:
- * which binding a call sees cannot be told.
+ * type, a structured binding, a range-for over `auto`), or shadowing a parameter of another type (`{ Brake T; … }`
+ * in `Shadow(Engine T)`), is written untyped (`type: ""`): which binding a call sees cannot be told, and neither the
+ * parameter nor a field of that name may answer it.
  */
 export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: readonly ParamInfo[]): LocalTypes {
   const seen = new Map<string, Set<string>>();
@@ -79,18 +80,30 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
   }
 
   const out: LocalTypes = [];
+  // Names the body declares whose binding at a call cannot be told.
+  const untold = new Set(unknown);
   for (const [name, calls] of fromCalls) {
-    if (seen.has(name) || unknown.has(name) || params.some((p) => p.name === name)) continue;
+    if (seen.has(name) || unknown.has(name) || params.some((p) => p.name === name)) {
+      untold.add(name);
+      continue;
+    }
     for (const from of calls) out.push({ name, type: "", from });
   }
   for (const [name, types] of seen) {
-    if (unknown.has(name) || types.size !== 1 || fromCalls.has(name)) continue;
+    if (unknown.has(name) || types.size !== 1 || fromCalls.has(name)) {
+      untold.add(name);
+      continue;
+    }
     const type = [...types][0]!;
     const param = params.find((p) => p.name === name);
-    if (param && param.type !== type) continue;
+    if (param && cFamilyTypeName(param.type ?? "") !== type) {
+      untold.add(name);
+      continue;
+    }
     if (PRIMITIVES.has(type.split(/[ <]/)[0]!)) continue;
     out.push({ name, type });
   }
+  for (const name of untold) out.push({ name, type: "" });
   return out;
 }
 
