@@ -3,71 +3,188 @@ import type { DeclaredPackage, PackageManagerSpec } from "../../../types/languag
 import { declared, tomlSectionValue } from "../shared/declared-package.js";
 import { parsePipfileLock, parseTomlPackageLock, withLocked } from "../shared/lockfiles.js";
 
-/** requirements.txt-style lines (also each entry of a pyproject dependency array). */
+/**
+ * One PEP 508 requirement: `name`, optional `[extras]`, then a version spec —
+ * bare (`>=2,<3`) or parenthesized (`(>=2,<3)`) — or `@ url`, then an
+ * optional `; marker`. The marker is dropped (it says where the package is
+ * installed, not which one); a URL reference has no version. Null when the
+ * text is no requirement.
+ */
+export function parseRequirement(text: string): { name: string; version: string | null } | null {
+  const m = /^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[[^\]]*\])?\s*(.*)$/s.exec(text);
+  if (!m) return null;
+  let rest = m[2]!.trim();
+  if (rest.startsWith("@")) {
+    // `name @ url ; marker` — the URL is the reference; PEP 508 wants a space before its marker.
+    return /^@\s*\S/.test(rest) ? { name: m[1]!, version: null } : null;
+  }
+  const semi = rest.indexOf(";");
+  if (semi >= 0) rest = rest.slice(0, semi).trim();
+  if (rest.startsWith("(")) {
+    const close = rest.indexOf(")");
+    if (close < 0) return null;
+    rest = rest.slice(1, close).trim();
+  }
+  if (rest && !/^(?:[<>=!~]=?|===)/.test(rest)) return null;
+  return { name: m[1]!, version: rest || null };
+}
+
+/** requirements.txt lines: one requirement each, `\` continuations joined, pip options and comments dropped. */
 function parseRequirements(text: string, declaredIn: string, isDev: boolean): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/#.*$/, "").trim();
-    if (!line || line.startsWith("-")) continue; // skip -r/-e/-i flags
-    if (/^(https?|git\+|file):/.test(line)) continue;
-    const m = line.match(/^([A-Za-z0-9_.-]+)\s*(\[[^\]]*\])?\s*([<>=!~]=?.*)?$/);
-    if (!m) continue;
-    const version = m[3]?.trim() || null;
-    out.push(declared(m[1]!, version, "pypi", isDev ? "dev" : "prod", declaredIn));
+  for (const raw of text.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    // A comment starts at a `#` after whitespace; `#egg=` inside a URL is part of it.
+    const line = raw.replace(/(?:^|\s)#.*$/, "").trim();
+    if (!line || line.startsWith("-")) continue; // -r/-e/-i/-c lines
+    if (/^(?:https?|git\+[a-z]+|file):/.test(line)) continue; // a bare URL names no package
+    // Per-requirement options (`--hash=…`, `--config-settings …`) follow the requirement.
+    const req = parseRequirement(line.replace(/\s--?[a-z].*$/i, ""));
+    if (req) out.push(declared(req.name, req.version, "pypi", isDev ? "dev" : "prod", declaredIn));
   }
   return out;
 }
 
 /**
- * `pyproject.toml`: [project] dependencies = [...], optional-dependencies (dev),
- * [tool.poetry.dependencies] / [tool.poetry.group.*.dependencies] (dev when
- * group != main). A minimal section scan, not a TOML parser.
+ * The string elements of the TOML array opening at `text[start]` (`[`), and
+ * where it ends: quote-aware, so a `]` or `#` inside `"celery[redis]"` or a
+ * marker's `'3.11'` neither closes it nor starts a comment; strings inside an
+ * inline table (`{include-group = "lint"}`) are not elements.
+ */
+function tomlStringArray(text: string, start: number): { items: string[]; end: number } {
+  const items: string[] = [];
+  let depth = 0;
+  let braces = 0;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "#") {
+      const nl = text.indexOf("\n", i);
+      if (nl < 0) return { items, end: text.length };
+      i = nl;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const triple = text.startsWith(c.repeat(3), i);
+      const quote = triple ? c.repeat(3) : c;
+      let j = i + quote.length;
+      let value = "";
+      while (j < text.length && !text.startsWith(quote, j)) {
+        if (c === '"' && text[j] === "\\" && j + 1 < text.length) {
+          value += text[j + 1];
+          j += 2;
+          continue;
+        }
+        value += text[j];
+        j++;
+      }
+      if (braces === 0 && depth === 1) items.push(value);
+      i = j + quote.length - 1;
+      continue;
+    }
+    if (c === "{") braces++;
+    else if (c === "}") braces = Math.max(0, braces - 1);
+    else if (c === "[") depth++;
+    else if (c === "]" && --depth === 0) return { items, end: i + 1 };
+  }
+  return { items, end: text.length };
+}
+
+/** A TOML key as written (`fastapi`, `"zope.interface"`), unquoted. */
+const TOML_KEY = String.raw`(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))`;
+
+/**
+ * `pyproject.toml`, table by table — a minimal scan, not a TOML parser:
+ * `[project] dependencies` (prod), `[project.optional-dependencies]`
+ * (optional), `[dependency-groups]` and `[tool.uv] dev-dependencies` (dev),
+ * `[tool.poetry.dependencies]` (prod, `python` excepted; a `.<name>` subtable
+ * is that one package), `[tool.poetry.dev-dependencies]` and
+ * `[tool.poetry.group.<g>.dependencies]` (dev unless the group is `main`),
+ * `[tool.pdm.dev-dependencies]` and a Hatch environment's `dependencies`
+ * (dev: tooling, never what the package installs). Array entries are PEP 508.
  */
 function parsePyproject(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
-  const lines = text.split(/\r?\n/);
-  let mode: "none" | "pep621" | "pep621-optional" | "poetry-main" | "poetry-dev" = "none";
-  const quotedEntries = (line: string, isDev: boolean) => {
-    // each quoted entry "pkg>=1.0", "celery[redis]~=5.5"
-    for (const q of line.matchAll(/["']([A-Za-z0-9_.-]+[^"']*)["']/g)) {
-      out.push(...parseRequirements(q[1]!, declaredIn, isDev));
+  /** How the current table's keys declare packages. */
+  type Mode =
+    | { kind: "none" }
+    | { kind: "arrays"; keys: ReadonlySet<string> | null; scope: PackageScope } // `key = ["pep508", …]`
+    | { kind: "poetry"; scope: PackageScope } // `name = "spec"` / `name = { version = … }`
+    | { kind: "poetry-one"; name: string; scope: PackageScope; version: string | null; optional: boolean };
+  let mode: Mode = { kind: "none" };
+  const flush = () => {
+    if (mode.kind === "poetry-one") out.push(declared(mode.name, mode.version, "pypi", mode.optional ? "optional" : mode.scope, declaredIn));
+  };
+  const keyRe = new RegExp(`^${TOML_KEY}\\s*=\\s*`);
+  const poetryTable = (table: string): Mode => {
+    const t = /^tool\.poetry\.(?:(dependencies|dev-dependencies)|group\.(?:"([^"]+)"|([^.]+))\.dependencies)(?:\.(?:"([^"]+)"|(.+)))?$/.exec(table);
+    if (!t) return { kind: "none" };
+    const group = t[2] ?? t[3];
+    const scope: PackageScope = t[1] === "dependencies" || group === "main" ? "prod" : "dev";
+    const one = t[4] ?? t[5];
+    if (one === undefined) return { kind: "poetry", scope };
+    return one.toLowerCase() === "python" ? { kind: "none" } : { kind: "poetry-one", name: one, scope, version: null, optional: false };
+  };
+  const tableMode = (table: string): Mode => {
+    if (table === "project") return { kind: "arrays", keys: new Set(["dependencies"]), scope: "prod" };
+    if (table === "project.optional-dependencies") return { kind: "arrays", keys: null, scope: "optional" };
+    if (table === "dependency-groups" || table === "tool.pdm.dev-dependencies") return { kind: "arrays", keys: null, scope: "dev" };
+    if (table === "tool.uv") return { kind: "arrays", keys: new Set(["dev-dependencies"]), scope: "dev" };
+    if (/^tool\.hatch\.envs\.[^.]+$/.test(table)) return { kind: "arrays", keys: new Set(["dependencies", "extra-dependencies"]), scope: "dev" };
+    return poetryTable(table);
+  };
+  const pushRequirements = (items: readonly string[], scope: PackageScope) => {
+    for (const item of items) {
+      const req = parseRequirement(item);
+      if (req) out.push(declared(req.name, req.version, "pypi", scope, declaredIn));
     }
   };
-  for (const raw of lines) {
-    const line = raw.trim();
-    const section = line.match(/^\[([^\]]+)\]$/);
-    if (section) {
-      const s = section[1]!;
-      // PEP 621 extras: `group = ["pkg>=1", …]` — arrays of requirements, not Poetry `name = "version"`.
-      if (/optional-dependencies/.test(s)) mode = "pep621-optional";
-      else if (/tool\.poetry\.dependencies/.test(s)) mode = "poetry-main";
-      else if (/tool\.poetry\.(group\..*\.)?dependencies/.test(s)) mode = "poetry-dev";
-      else mode = "none";
+
+  let pos = 0;
+  while (pos < text.length) {
+    const nl = text.indexOf("\n", pos);
+    const lineEnd = nl < 0 ? text.length : nl;
+    const line = text.slice(pos, lineEnd).trim();
+    const next = lineEnd + 1;
+    const header = /^\[\s*([^\[\]]+?)\s*\](?:\s*#.*)?$/.exec(line);
+    if (header || /^\[\[/.test(line)) {
+      flush();
+      // An array of tables (`[[tool.poetry.source]]`) declares no dependency.
+      mode = header ? tableMode(header[1]!.replace(/\s*\.\s*/g, ".").replace(/^"([^"]+)"$/, "$1")) : { kind: "none" };
+      pos = next;
       continue;
     }
-    if (mode === "pep621-optional") {
-      quotedEntries(line, true);
+    const kv = keyRe.exec(line);
+    if (!kv || mode.kind === "none") {
+      pos = next;
       continue;
     }
-    if (mode === "none") {
-      const arr = line.match(/^dependencies\s*=\s*\[/);
-      if (arr) mode = "pep621";
-    }
-    if (mode === "pep621") {
-      quotedEntries(line, false);
-      // The array closes on a `]` OUTSIDE quotes — `"celery[redis]~=5.5"` has
-      // one inside, and ending there dropped every dependency after it.
-      if (line.replace(/(["'])(?:(?!\1).)*\1/g, "").includes("]")) mode = "none";
-      continue;
-    }
-    if (mode === "poetry-main" || mode === "poetry-dev") {
-      const dep = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
-      if (dep && dep[1]!.toLowerCase() !== "python") {
-        const v = dep[2]!.match(/"([^"]+)"/)?.[1] ?? null;
-        out.push(declared(dep[1]!, v, "pypi", mode === "poetry-dev" ? "dev" : "prod", declaredIn));
+    const key = kv[1] ?? kv[2] ?? kv[3]!;
+    const valueAt = pos + text.slice(pos, lineEnd).indexOf(line) + kv[0].length;
+    if (text[valueAt] === "[") {
+      // An array, possibly over several lines: read it whole so its lines are never read as keys.
+      const { items, end } = tomlStringArray(text, valueAt);
+      if (mode.kind === "arrays" && (mode.keys === null || mode.keys.has(key))) pushRequirements(items, mode.scope);
+      else if (mode.kind === "poetry" && key.toLowerCase() !== "python") {
+        // Several constraints (`x = [{ version = "^1", python = "<3.9" }, …]`): one package.
+        const version = /version\s*=\s*"([^"]*)"/.exec(text.slice(valueAt, end))?.[1] ?? null;
+        out.push(declared(key, version, "pypi", mode.scope, declaredIn));
       }
+      const after = text.indexOf("\n", end);
+      pos = after < 0 ? text.length : after + 1;
+      continue;
     }
+    const value = text.slice(valueAt, lineEnd);
+    if (mode.kind === "poetry" && key.toLowerCase() !== "python") {
+      const inline = value.trimStart().startsWith("{");
+      const version = inline ? (/\bversion\s*=\s*"([^"]*)"/.exec(value)?.[1] ?? null) : (/^\s*"([^"]*)"/.exec(value)?.[1] ?? null);
+      const optional = inline && /\boptional\s*=\s*true\b/.test(value);
+      out.push(declared(key, version || null, "pypi", optional ? "optional" : mode.scope, declaredIn));
+    } else if (mode.kind === "poetry-one") {
+      if (key === "version") mode.version = /^\s*"([^"]*)"/.exec(value)?.[1] || null;
+      else if (key === "optional") mode.optional = /^\s*true\b/.test(value);
+    }
+    pos = next;
   }
+  flush();
   return out;
 }
 
