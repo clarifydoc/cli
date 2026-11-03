@@ -339,6 +339,85 @@ begin
 end.
 `;
 
+describe("Pascal routines handed on by name", () => {
+  it("passes a routine that needs arguments or whose address is taken, and calls one that needs none", async () => {
+    const table = `unit Table;
+interface
+uses Classes;
+procedure Rank(L: TList);
+implementation
+function CompareClubs(A, B: Pointer): Integer; begin Result := 0; end;
+function LeagueSize: Integer; begin Result := 20; end;
+function Promoted(Club: Pointer): Boolean; begin Result := False; end;
+procedure Rank(L: TList);
+var N: Integer;
+begin
+  L.Sort(CompareClubs);
+  ForEachClub(@Promoted);
+  N := LeagueSize;
+end;
+end.
+`;
+    const links = buildSymbolLinks(await analyzeUnits({ "Table.pas": table }))
+      .filter((l) => l.sourceSymbol === "Rank")
+      .map((l) => `${l.callName} -> ${l.targetSymbol} ${l.relation}`)
+      .sort();
+    expect(links).toEqual(["CompareClubs -> CompareClubs passes", "LeagueSize -> LeagueSize calls", "Promoted -> Promoted passes"]);
+  });
+});
+
+describe("Pascal property accessors along a class hierarchy", () => {
+  it("reads an inherited property through the accessor the reading class overrides", async () => {
+    const squads = `unit Squads;
+interface
+type
+  TSquad = class
+  protected
+    function GetCount: Integer; virtual;
+  public
+    property Count: Integer read GetCount;
+  end;
+  TBench = class(TSquad)
+  protected
+    function GetCount: Integer; override;
+  public
+    procedure Trim;
+  end;
+  TStand = class(TSquad)
+  private
+    function GetRow(Index: Integer): Integer;
+  public
+    property FrontRow: Integer index 1 read GetRow;
+    procedure Fill(ABench: TBench);
+  end;
+implementation
+function TSquad.GetCount: Integer; begin Result := 0; end;
+function TBench.GetCount: Integer; begin Result := 1; end;
+procedure TBench.Trim;
+var I: Integer;
+begin
+  for I := 0 to Count - 1 do ;
+end;
+function TStand.GetRow(Index: Integer): Integer; begin Result := Index; end;
+procedure TStand.Fill(ABench: TBench);
+var I: Integer;
+begin
+  I := Count + ABench.Count + FrontRow;
+end;
+end.
+`;
+    expect(await linksFrom({ "Squads.pas": squads }, "Squads.pas")).toEqual([
+      "TBench.Trim: Count -> Squads.pas::TBench.GetCount (direct)",
+      "TStand.Fill: ABench.Count -> Squads.pas::TBench.GetCount (injection)",
+      "TStand.Fill: Count -> Squads.pas::TSquad.GetCount (inheritance)",
+      // An indexed property's accessor takes the index the property states: still a call.
+      "TStand.Fill: FrontRow -> Squads.pas::TStand.GetRow (direct)",
+    ].sort());
+    const frontRow = buildSymbolLinks(await analyzeUnits({ "Squads.pas": squads })).find((l) => l.callName === "FrontRow");
+    expect(frontRow?.relation).toBe("calls");
+  });
+});
+
 describe("Pascal unit search paths", () => {
   const units = (extra: Record<string, string>) => ({
     "Win/Garage.pas": PLATFORM_GARAGE("Win"),

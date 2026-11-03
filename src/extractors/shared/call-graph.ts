@@ -251,6 +251,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
 
     // Names read without parentheses where the language runs a routine named so (Pascal `N := ACar.Shine`).
     for (const r of hooks?.readNames?.(node) ?? []) {
+      if (r.passed) {
+        push(r.name, r.node, true, null, null, null, null, null, null, "argument");
+        continue;
+      }
       push(r.name, r.node, false);
       candidates[candidates.length - 1]!.read = true;
     }

@@ -918,8 +918,9 @@ export interface CallInfo {
    * The name is read without parentheses inside an expression (Pascal `N := ACar.Shine`, `if qry.IsEmpty then`,
    * `N + Points`), where the language runs a routine named so and a property's read accessor. The linker keeps it
    * only when it resolves, without guessing by name, to a function or method — a `calls` edge when that returns a
-   * value, a `passes` edge when it is a procedure (a method pointer assigned, `OnClick := btnSaveClick`) — or to a
-   * construction; a field or variable read is no edge. Never a database or API call by its name.
+   * value and needs no argument, a `passes` edge otherwise (a method pointer: `OnClick := btnSaveClick`,
+   * `List.Sort(CompareClubs)`) — or to a construction; a field or variable read is no edge. Never a database or
+   * API call by its name.
    */
   read?: true;
   /**

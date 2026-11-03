@@ -114,7 +114,8 @@ function readOperands(node: Node): Array<Node | null> {
       return op === "kIs" || op === "kAs" ? [node.childForFieldName("lhs")] : [node.childForFieldName("lhs"), rhs];
     }
     case "exprUnary":
-      return [node.childForFieldName("operand")];
+      // `@CompareClubs` takes an address: see `readNames`.
+      return node.childForFieldName("operator")?.type === "kAt" ? [] : [node.childForFieldName("operand")];
     case "if":
     case "ifElse":
     case "while":
@@ -191,6 +192,11 @@ export const pascalCallHooks: CallExtractionHooks = {
   // Paren-less reads in expressions (`N := ACar.Shine`, `if qry.IsEmpty then`, `N + Points`):
   // recorded as reads, which the linker keeps only where they name a routine.
   readNames(node) {
+    if (node.type === "exprUnary" && node.childForFieldName("operator")?.type === "kAt") {
+      // `@CompareClubs`, `@TCar.Wash`: the routine is handed on, not run.
+      const r = readOf(node.childForFieldName("operand"));
+      return r && !r.name.startsWith("super") ? [{ ...r, passed: true as const }] : [];
+    }
     const ops = readOperands(node);
     if (ops.length === 0) return [];
     const out: Array<{ name: string; node: Node }> = [];

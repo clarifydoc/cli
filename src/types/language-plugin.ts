@@ -861,8 +861,9 @@ export interface CallExtractionHooks {
    * Names the node reads without parentheses where the language runs a routine named so (Pascal: `N := ACar.Shine`,
    * `if qry.IsEmpty then`, `N + Points`), spelled the way a call of it would be. Asked of every node the call walk
    * visits; each is recorded as a call with `read: true` (`CallInfo.read`), unless the body also calls the name.
+   * `passed`: the operand takes the routine's address (`@CompareClubs`) — handed on, never run there.
    */
-  readNames?(node: Node): Array<{ name: string; node: Node }>;
+  readNames?(node: Node): Array<{ name: string; node: Node; passed?: true }>;
   /**
    * Where this grammar binds a name locally, so the callback-argument scan can
    * tell a function passed by reference (`items.map(formatUser)`) from a

@@ -3654,8 +3654,9 @@ function resolvePassedName(
  * A name read without parentheses (`CallInfo.read`: Pascal `N := ACar.Shine`, `N + Points`) runs what it
  * names only when that is a routine: linked when it resolves without guessing to a function or method — or a
  * property's read accessor, which the symbol index answers for the property — as `calls` when it returns a
- * value, as `passes` when it returns none (a method pointer, `OnClick := btnSaveClick`), and to a
- * construction (`TCar.Create`). A field, a variable or a class read draws no edge.
+ * value and needs no argument, as `passes` otherwise (a method pointer: `OnClick := btnSaveClick`,
+ * `List.Sort(CompareClubs)`), and to a construction (`TCar.Create`). A field, a variable or a class read
+ * draws no edge.
  */
 function resolveReadName(
   sourceFile: string,
@@ -3672,7 +3673,12 @@ function resolveReadName(
   const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
   const routine = target && routineAt(target, link.targetSymbol);
   if (!routine) return null;
-  return routine.returnType ? link : { ...link, relation: "passes" };
+  // A property's accessor runs on the read, an indexed one (`property FrontRow index 1 read GetRow`) with its index.
+  const leaf = (s: string) => s.slice(s.lastIndexOf(".") + 1).toLowerCase();
+  if (leaf(call.name) !== leaf(link.targetSymbol)) return link;
+  // Read without its arguments a routine cannot run: one that needs some is handed on (`List.Sort(CompareClubs)`).
+  const needsArguments = routine.params.some((p) => p.defaultValue === null && !p.optional && !p.variadic && !p.isReceiver);
+  return routine.returnType && !needsArguments ? link : { ...link, relation: "passes" };
 }
 
 /** The function or method (`Class.method`) `symbol` names in the file; null for a class or anything else. */
@@ -4017,7 +4023,11 @@ function resolveCallToDefinition(
           const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
             ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
-            const link = mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
+            // A property the base reads through an accessor the caller's class overrides: that override.
+            const own = accessorOverride(ctx, parentDef.name, leafName, cls.name, sourceFile);
+            const link = own
+              ? mkLink(own.file, own.symbol, own.line, "INFERRED", "inheritance")
+              : mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
             // Called on the enclosing class's own instance: say which (see `SymbolLink.viaType`).
             if (sourceSymbol.startsWith(`${cls.name}.`)) Object.assign(link, { viaType: cls.name, viaTypeFile: sourceFile });
             return link;
@@ -6462,7 +6472,12 @@ function findMethodInClass(
     if (seen.has(key)) return null;
     seen.add(key);
     const def = symbolIn(ctx, file, `${name}.${method}`);
-    if (def) return { file, symbol: def.name, line: def.line };
+    if (def) {
+      // A base's property read through its accessor (`Count` → `GetCount`) runs the accessor as the
+      // class the lookup started from overrides it, as a virtual getter dispatches.
+      const accessor = depth > 0 ? accessorOverride(ctx, def.name, method, className, classFile, nearFile) : null;
+      return accessor ?? { file, symbol: def.name, line: def.line };
+    }
     const elsewhere = methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
@@ -6481,6 +6496,23 @@ function findMethodInClass(
     file = baseFile;
   }
   return null;
+}
+
+/**
+ * Where `found` (the symbol a member lookup reached on a base class) is a property's accessor rather than
+ * the member asked for, the accessor as `className` — where the lookup began — declares or inherits it.
+ */
+function accessorOverride(
+  ctx: LinkContext,
+  found: string,
+  asked: string,
+  className: string,
+  classFile: string,
+  nearFile?: string,
+): { file: string; symbol: string; line: number } | null {
+  const accessor = found.slice(found.lastIndexOf(".") + 1);
+  if (accessor.toLowerCase() === asked.toLowerCase()) return null;
+  return findMethodInClass(ctx, className, classFile, accessor, nearFile);
 }
 
 /** A class and the classes it extends, nearest first. */
