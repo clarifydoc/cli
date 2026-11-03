@@ -9,7 +9,13 @@ import { commentLine, cypherStr } from "./text.js";
  * the script can open with one index that makes all the edge `MATCH`es cheap;
  * without it, loading a 20k-edge graph degrades into 20k full scans. Statements
  * are `MERGE`, not `CREATE`, so re-running the script against a database that
- * already holds the graph updates it instead of duplicating it.
+ * already holds the graph updates it instead of duplicating it. A node merges on
+ * the shared label and its id ONLY, its own label set afterwards: a pattern
+ * naming the type would make a second node when another graph kind, or a later
+ * run, gives the same id another type. A relationship merges on its endpoints
+ * and type; when one graph holds several of one type between the same pair,
+ * each carries its ordinal `key`, so a reload neither duplicates nor collapses
+ * them.
  */
 
 const SHARED_LABEL = "ClarifyDoc";
@@ -63,9 +69,15 @@ export function toCypher(graph: ExportGraph, projectName: string, analyzedAt: st
   for (const node of graph.nodes) {
     known.add(node.id);
     const body = props({ label: node.label, ...node.attrs });
-    const set = body ? ` SET n += {${body}}` : "";
-    out.push(`MERGE (n:${token(SHARED_LABEL)}:${token(node.type)} {id: ${cypherStr(node.id)}})${set};\n`);
+    const set = body ? `, n += {${body}}` : "";
+    out.push(`MERGE (n:${token(SHARED_LABEL)} {id: ${cypherStr(node.id)}}) SET n:${token(node.type)}${set};\n`);
   }
+
+  const tripleOf = (edge: { source: string; target: string; relation: string }): string =>
+    `${edge.source}\u0000${edge.relation}\u0000${edge.target}`;
+  const parallel = new Map<string, number>();
+  for (const edge of graph.edges) parallel.set(tripleOf(edge), (parallel.get(tripleOf(edge)) ?? 0) + 1);
+  const ordinal = new Map<string, number>();
 
   if (graph.edges.length > 0) out.push("\n");
   for (const edge of graph.edges) {
@@ -74,10 +86,17 @@ export function toCypher(graph: ExportGraph, projectName: string, analyzedAt: st
     if (!known.has(edge.source) || !known.has(edge.target)) continue;
     const body = props(edge.attrs);
     const set = body ? `\nSET r += {${body}}` : "";
+    const triple = tripleOf(edge);
+    let key = "";
+    if ((parallel.get(triple) ?? 0) > 1) {
+      const index = ordinal.get(triple) ?? 0;
+      ordinal.set(triple, index + 1);
+      key = ` {key: ${index}}`;
+    }
     out.push(
       `MATCH (a:${token(SHARED_LABEL)} {id: ${cypherStr(edge.source)}}), ` +
         `(b:${token(SHARED_LABEL)} {id: ${cypherStr(edge.target)}})\n` +
-        `MERGE (a)-[r:${token(edge.relation)}]->(b)${set};\n`,
+        `MERGE (a)-[r:${token(edge.relation)}${key}]->(b)${set};\n`,
     );
   }
   return out.join("");
