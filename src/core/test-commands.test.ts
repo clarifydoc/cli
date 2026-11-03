@@ -101,3 +101,28 @@ describe("test commands narrowed to the marked tests", () => {
     expect(r.symbolImpact!.direct).toMatchObject([{ symbol: "topClub", standing: "covered", coveredBy: { symbol: "league › leader › finds the top club" } }]);
   });
 });
+
+describe("impact: tests declared beside production code", () => {
+  it("credits a Rust #[cfg(test)] module's cases and helpers as tests, and runs the cases by module path", () => {
+    const link = (from: string, line: number, to: string) => ({ sourceFile: "src/table.rs", sourceSymbol: from, sourceLine: line, targetFile: "src/table.rs", targetSymbol: to, targetLine: 1, callName: to, confidence: "EXTRACTED" });
+    const summary = {
+      files: ["src/table.rs"],
+      componentGraph: {},
+      symbolLinks: [link("leader", 11, "sort_clubs"), link("seed_table", 28, "sort_clubs"), link("finds_leader", 33, "leader"), link("finds_leader", 32, "seed_table")],
+      testFunctions: {
+        "src/table.rs": [
+          { symbol: "seed_table", line: 26, kind: "helper", title: "seed_table", path: ["tests"] },
+          { symbol: "finds_leader", line: 31, kind: "case", title: "finds_leader", path: ["tests"] },
+        ],
+      },
+      blastRadius: [],
+      routeMap: [],
+      screens: [],
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(summary, ["src/table.rs"], { symbols: { changed: [{ file: "src/table.rs", symbol: "sort_clubs", line: 6, endLine: 8 }], moduleLevel: [] } });
+    expect(r.tests).toEqual(["src/table.rs"]);
+    expect(r.testCallers!.map((t) => t.symbol)).toEqual(["seed_table", "finds_leader"]);
+    expect(r.testCommands).toEqual([{ language: "rust", command: "cargo test -- tests::finds_leader" }]);
+    expect(Object.fromEntries(r.symbolImpact!.direct.map((c) => [c.symbol, c.standing]))).toEqual({ leader: "covered", seed_table: "test" });
+  });
+});

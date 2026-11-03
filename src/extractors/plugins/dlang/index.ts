@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, findEndLine, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, findEndLine, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractDRoutes } from "./routes.js";
 import { extractDDataSources } from "./data-sources.js";
 
@@ -323,8 +323,34 @@ export const dSpec: RegexLangSpec = {
     // A top-level `this(…)` is a module constructor (`static this()`): no function of its own.
     const kept = dropNested(lines, fns.filter((f) => f.name !== "this"));
     refine(lines, kept, []);
-    return kept;
+    return [...kept, ...unittestBlocks(lines)];
   },
   extractRoutes: (lines, classes) => extractDRoutes(lines, classes, [PAREN_CALL]),
   extractDataSources: (lines) => extractDDataSources(lines),
 };
+
+/**
+ * `unittest { … }` blocks (module level or inside a type) as functions, named by their line: D's
+ * tests sit in the source file beside the code they test, so they say they are tests themselves.
+ */
+function unittestBlocks(lines: string[]): FunctionInfo[] {
+  const out: FunctionInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*(?:@\w+\s+|static\s+|private\s+|public\s+)*unittest\s*(?:\{|$)/.test(lines[i]!)) continue;
+    const endLine = findEndLine(lines, i, "brace");
+    const title = `unittest at line ${i + 1}`;
+    out.push({
+      name: title,
+      params: [],
+      returnType: null,
+      isAsync: false,
+      isExported: false,
+      decorators: [],
+      calls: extractCallsFromBody(lines, i, endLine, ["//"], [PAREN_CALL]),
+      line: i + 1,
+      endLine,
+      testCase: { title, path: [], kind: "case" },
+    });
+  }
+  return out;
+}

@@ -302,3 +302,24 @@ describe("D line endings", () => {
     });
   }
 });
+
+describe("D unittest blocks", () => {
+  it("are test functions with their calls, in a module or inside a type", () => {
+    const a = analyze([
+      "module league.table;",
+      "int rank(int points) { return points; }",
+      "unittest",
+      "{",
+      "    assert(rank(3) == 3);",
+      "}",
+      "struct Club {",
+      "    int points;",
+      "    unittest { assert(rank(1) == 1); }",
+      "}",
+    ].join("\n"), "source/league/table.d");
+    const tests = a.functions.filter((f) => f.testCase);
+    expect(tests.map((f) => [f.name, f.line, f.testCase!.kind])).toEqual([["unittest at line 3", 3, "case"], ["unittest at line 9", 9, "case"]]);
+    expect(tests.every((f) => f.calls.some((c) => c.name === "rank"))).toBe(true);
+    expect(a.functions.find((f) => f.name === "rank")!.testCase).toBeUndefined();
+  });
+});

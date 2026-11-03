@@ -16,8 +16,12 @@ export class ZigExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["zig"];
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
-    if (fileIsStruct(node)) return;
-    for (const child of node.namedChildren) if (child.type === "function_declaration") functions.push(fn(child));
+    const struct = fileIsStruct(node);
+    for (const child of node.namedChildren) {
+      if (child.type === "function_declaration" && !struct) functions.push(fn(child));
+      // `test "ranks clubs" { … }` and `test rank { … }`: tests the source file declares itself.
+      else if (child.type === "test_declaration") functions.push(testBlock(child));
+    }
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
@@ -85,5 +89,27 @@ function fn(node: Node): FunctionInfo {
     calls: extractCalls(node.childForFieldName("body"), "zig"),
     line: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
+  };
+}
+
+/**
+ * A `test` block as a function: a named test by its string (`test "ranks clubs"` → `ranks clubs`),
+ * a doctest by the declaration it tests (`test rank` → `test rank`, never the function's own name),
+ * an anonymous one by its line. It is test code although the file is a source file.
+ */
+function testBlock(node: Node): FunctionInfo {
+  const label = node.namedChildren.find((c) => c.type === "string" || c.type === "identifier");
+  const title = label?.type === "string" ? label.text.slice(1, -1) : label ? `test ${label.text}` : `test at line ${node.startPosition.row + 1}`;
+  return {
+    name: title,
+    params: [],
+    returnType: null,
+    isAsync: false,
+    isExported: false,
+    decorators: [],
+    calls: extractCalls(node.namedChildren.find((c) => c.type === "block") ?? null, "zig"),
+    line: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+    testCase: { title: label?.type === "string" ? title : label?.text ?? title, path: [], kind: "case" },
   };
 }

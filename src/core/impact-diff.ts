@@ -361,6 +361,12 @@ export function computeImpactDiff(
         .map((c) => ({ file: c.file, symbol: c.symbol, line: c.line, depth: c.depth }))
         .sort((a, b) => a.depth - b.depth || byOrdinal(a.file, b.file) || a.line - b.line)
     : [];
+  // A test declared beside production code (a Rust `#[cfg(test)]` module) is in no test file: its file runs it.
+  const inline = testCallers.map((t) => t.file).filter((f) => !tests.includes(f));
+  if (inline.length) {
+    tests.push(...new Set(inline));
+    tests.sort();
+  }
   const targets = new Map<string, Set<string>>();
   for (const t of testCallers.length ? testCallers : tests.map((file) => ({ file, symbol: "" }))) {
     const names = targets.get(t.file) ?? targets.set(t.file, new Set()).get(t.file)!;
@@ -724,7 +730,8 @@ function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[])
     // The marked tests among the names, as the title paths a runner filters by.
     const cases = target.names.flatMap((n) => {
       const row = testCode.testOf(target.file, n);
-      return row ? [{ path: testFilterPath(row), line: row.line, ...(row.kind === "hook" ? { hook: true as const } : {}) }] : [];
+      // A helper only tests call is reached in turn by the cases calling it.
+      return row && row.kind !== "helper" ? [{ path: testFilterPath(row), line: row.line, ...(row.kind === "hook" ? { hook: true as const } : {}) }] : [];
     });
     const t: TestTarget = cases.length ? { ...target, cases } : target;
     const language = EXTENSION_TO_LANGUAGE[t.file.slice(t.file.lastIndexOf(".")).toLowerCase()];
