@@ -3,6 +3,8 @@ import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
 import { boundThroughWrapper } from "./wrapped-functions.js";
+import { dispatchMapCallee, dispatchMapEntries } from "./dispatch-maps.js";
+import { genericResolveCallName } from "../../shared/call-graph.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -102,8 +104,15 @@ export const javascriptCallHooks: CallExtractionHooks = {
     } else if (node.type === "return_statement") {
       // What a hook or factory hands back: `return { save, latest: loadLatest }`, `return [rows, refresh]`.
       for (const { value, key } of returnedNames(node.namedChildren[0])) addResult(value.text, value, "return", key);
+    } else if (node.type === "variable_declarator") {
+      // A dispatch map: `const ACTIONS = { save: saveClub }` holds `saveClub` under `ACTIONS.save`.
+      const map = dispatchMapEntries(node);
+      for (const { value, key } of map?.entries ?? []) addResult(value.text, value, "property", `${map!.holder}.${key}`);
     }
   },
+
+  // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
+  resolveCallName: (node) => genericResolveCallName(node, { extraCallee: dispatchMapCallee }),
 
   // `addEventListener("resize", this.onResize)`: the instance's own method, handed on.
   passedArguments(call) {

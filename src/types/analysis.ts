@@ -892,15 +892,18 @@ export interface CallInfo {
   /**
    * The name is handed on, not invoked here: an argument (`register(onSave)`), a JSX
    * attribute value (`onClick={saveClub}`, `renderItem={CarTile}`), a value the function
-   * returns (`return { save, latest: loadLatest }`, `return [state, refresh]`). The linker links it
+   * returns (`return { save, latest: loadLatest }`, `return [state, refresh]`), a value of a
+   * dispatch map the scope declares (`const ACTIONS = { save: saveClub }`). The linker links it
    * as `relation: "passes"`, and only to a function, method or class it resolves without
    * guessing. Absent: the site calls it.
    */
-  passed?: "argument" | "attribute" | "return";
+  passed?: "argument" | "attribute" | "return" | "property";
   /**
    * For a `passed: "return"` name: the key the function returns it under — `latest` in
    * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
    * that key (`const { latest } = useClubActions()`) is handed this function.
+   * For a `passed: "property"` name: the map and the key it is held under, `ACTIONS.save` — a call
+   * `ACTIONS.save()` in that scope calls this function, and `ACTIONS[kind]()` any of the map's.
    */
   returnedAs?: string;
   /**

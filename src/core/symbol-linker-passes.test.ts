@@ -62,3 +62,51 @@ describe("symbol links for names handed on", () => {
     expect(linksFrom([pitstop, race("argument")], "league/race.py")).toEqual([]);
   });
 });
+
+describe("symbol links through a dispatch map", () => {
+  // `const ACTIONS = { save: saveClub, list: loadMatches, limit: LIMIT }` at the top of the module.
+  const held = (name: string, key: string, line: number, o: Partial<CallInfo> = {}): CallInfo =>
+    ({ name, kind: "internal", target: null, line, passed: "property", returnedAs: `ACTIONS.${key}`, ...o });
+  const matches = file("src/lib/matches.ts", { functions: [fn("loadMatches", 1)], exports: [{ name: "loadMatches", kind: "named", line: 1 }] });
+  const decoy = file("src/lib/decoy.ts", { functions: [fn("save", 1), fn("list", 4)] });
+  const actions = (calls: CallInfo[], params: string[] = []) => file("src/lib/actions.ts", {
+    imports: [imp("./matches", ["loadMatches"])],
+    functions: [
+      fn("<setup>", 1, [
+        held("saveClub", "save", 6),
+        held("loadMatches", "list", 6, { kind: "cross-file", target: "./matches" }),
+        held("LIMIT", "limit", 6),
+      ]),
+      fn("saveClub", 2),
+      { ...fn("run", 10, calls), params: params.map((name) => ({ name, type: null })) },
+    ],
+  });
+
+  it("links a call of one key to that key's function, and a computed key to every function the map holds", () => {
+    const out = linksFrom([matches, decoy, actions([
+      { name: "ACTIONS.save", kind: "internal", target: null, line: 11 },
+      { name: "ACTIONS[]", kind: "internal", target: null, line: 12 },
+    ])], "src/lib/actions.ts");
+    expect(out).toEqual([
+      "ACTIONS.save -> src/lib/actions.ts::saveClub dispatch",
+      "ACTIONS[] -> src/lib/actions.ts::saveClub dispatch",
+      "ACTIONS[] -> src/lib/matches.ts::loadMatches dispatch",
+      "loadMatches -> src/lib/matches.ts::loadMatches passes",
+      "saveClub -> src/lib/actions.ts::saveClub passes",
+    ]);
+    const conf = buildSymbolLinks([matches, decoy, actions([
+      { name: "ACTIONS.save", kind: "internal", target: null, line: 11 },
+      { name: "ACTIONS[]", kind: "internal", target: null, line: 12 },
+    ])]).filter((l) => l.strategy === "dispatch:object-map").map((l) => `${l.callName} ${l.targetSymbol} ${l.confidence}`).sort();
+    expect(conf).toEqual(["ACTIONS.save saveClub EXTRACTED", "ACTIONS[] loadMatches INFERRED", "ACTIONS[] saveClub INFERRED"]);
+  });
+
+  it("draws no edge for a key the map does not hold, a value, or a parameter of the map's name", () => {
+    expect(linksFrom([matches, decoy, actions([{ name: "ACTIONS.limit", kind: "internal", target: null, line: 11 }])], "src/lib/actions.ts")
+      .filter((l) => l.startsWith("ACTIONS"))).toEqual([]);
+    expect(linksFrom([matches, decoy, actions([{ name: "ACTIONS.remove", kind: "internal", target: null, line: 11 }])], "src/lib/actions.ts")
+      .filter((l) => l.startsWith("ACTIONS"))).toEqual([]);
+    expect(linksFrom([matches, decoy, actions([{ name: "ACTIONS.save", kind: "internal", target: null, line: 11 }], ["ACTIONS"])], "src/lib/actions.ts")
+      .filter((l) => l.startsWith("ACTIONS"))).toEqual([]);
+  });
+});

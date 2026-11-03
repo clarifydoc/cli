@@ -3630,6 +3630,75 @@ function resolvePassedName(
   return { ...link, relation: "passes" };
 }
 
+/** A call through a dispatch map: `ACTIONS.save` (one key) or `ACTIONS[]` (a key known only at run time). */
+const MAP_CALL = /^([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*)|\[\])$/;
+
+/** The names each file binds to dispatch maps, in any of its scopes (read once per file). */
+const MAP_HOLDERS = new WeakMap<FileAnalysis, ReadonlySet<string>>();
+function mapHoldersOf(analysis: FileAnalysis): ReadonlySet<string> {
+  let holders = MAP_HOLDERS.get(analysis);
+  if (holders) return holders;
+  const found = new Set<string>();
+  const scan = (calls: readonly CallInfo[]) => {
+    for (const c of calls) {
+      const dot = c.passed === "property" ? c.returnedAs?.indexOf(".") ?? -1 : -1;
+      if (dot > 0) found.add(c.returnedAs!.slice(0, dot));
+    }
+  };
+  for (const fn of analysis.functions) scan(fn.calls);
+  for (const cls of analysis.classes) for (const m of cls.methods) scan(m.calls);
+  MAP_HOLDERS.set(analysis, (holders = found));
+  return holders;
+}
+
+/**
+ * A call through a dispatch map the caller's scope declares (`CallInfo.passed: "property"`):
+ * `ACTIONS.save()` calls the function the map holds under `save`, as stated (EXTRACTED when that
+ * value resolves so); `ACTIONS[kind]()` may call any of the map's functions, one INFERRED link
+ * each (all but the first through `ctx.extraLinks`). The map is the caller's own, else its
+ * module's top level — unless the caller binds the name itself. Values that are no function draw
+ * no edge. Undefined when the call is not one through a map.
+ */
+function dispatchMapCall(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null | undefined {
+  const m = MAP_CALL.exec(call.name);
+  if (!m || !mapHoldersOf(analysis).has(m[1]!)) return undefined;
+  const [, holder, key] = m;
+  const held = (calls: readonly CallInfo[] | undefined) => (calls ?? []).filter((c) => c.passed === "property" && c.returnedAs?.startsWith(`${holder}.`));
+  const caller = findEnclosingCallable(analysis, sourceSymbol);
+  let scope = sourceSymbol;
+  let entries = held(caller?.calls);
+  if (entries.length === 0) {
+    if (caller?.params.some((p) => p.name === holder || (/^[{[]/.test(p.name) && bindsName(p.name, holder!))) || caller?.localTypes?.some((l) => l.name === holder)) return undefined;
+    scope = "<setup>";
+    entries = held(analysis.functions.find((f) => f.name === "<setup>")?.calls);
+  }
+  if (key !== undefined) entries = entries.filter((e) => e.returnedAs === `${holder}.${key}`);
+  if (entries.length === 0) return undefined;
+  const out: SymbolLink[] = [];
+  for (const entry of entries) {
+    const link = resolvePassedName(sourceFile, scope, entry, analysis, ctx);
+    if (!link || out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
+    out.push({
+      ...link,
+      sourceSymbol,
+      sourceLine: call.line,
+      callName: call.name,
+      confidence: key !== undefined ? link.confidence : "INFERRED",
+      strategy: "dispatch:object-map",
+      relation: "dispatch",
+    });
+  }
+  if (out.length === 0) return null;
+  ctx.extraLinks.push(...out.slice(1));
+  return out[0]!;
+}
+
 /**
  * Whether `symbol` names a function, a method (`Class.method`) or a class the file declares — or the
  * module's own default export, which is what a component file is (`mount(ClubCard)` on `ClubCard.vue`).
@@ -3658,6 +3727,8 @@ function resolveCallToDefinition(
   reference = false,
 ): SymbolLink | null {
   if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
+  const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
+  if (mapped !== undefined) return mapped;
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"

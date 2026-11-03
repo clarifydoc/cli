@@ -15,6 +15,7 @@ import type { SymbolLink } from "../types/analysis.js";
  *   PropPage  <Toolbar onRefresh={loadLatest}/>  prop               → GET /api/matches/latest
  *   HookPage  const { save, latest } = useClubActions()  hook's returned functions (`latest: loadLatest`)
  *   ListPage  const [rows, refresh] = useMatches()       hook's returned array, by position
+ *   MapPage   const ACTIONS = { save: saveClub, list: loadMatches }; ACTIONS[kind]()   dispatch map
  *
  * `src/decoy/save.ts` declares `save` and `refresh` too: no page may reach it.
  */
@@ -54,6 +55,8 @@ describe("React handlers handed on by name (sample-react-handlers)", () => {
     ["src/pages/PropPage.tsx", "PropPage", ["route:GET /api/matches/latest"]],
     ["src/pages/HookPage.tsx", "HookPage", ["route:GET /api/matches/latest", "route:POST /api/clubs"]],
     ["src/pages/ListPage.tsx", "ListPage", ["route:GET /api/matches"]],
+    // A computed key may be any of the map's: both, INFERRED.
+    ["src/pages/MapPage.tsx", "MapPage", ["route:GET /api/matches", "route:POST /api/clubs"]],
   ])("%s reaches its route", (file, symbol, expected) => {
     expect(routesFrom(file, symbol)).toEqual(expected);
   });
@@ -62,12 +65,20 @@ describe("React handlers handed on by name (sample-react-handlers)", () => {
     expect(links.filter((l) => l.targetFile === "src/decoy/save.ts")).toEqual([]);
     const passes = links.filter((l) => l.relation === "passes" && l.sourceFile.startsWith("src/pages/"));
     expect(passes.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`).sort()).toEqual([
+      // The map's values, handed on by the module that declares it.
+      "<setup> -> loadMatches",
+      "<setup> -> saveClub",
       "BarePage -> saveClub",
       "HookPage -> loadLatest",
       "HookPage -> save",
       "ListPage -> refresh",
       "NsPage -> loadLatest",
       "PropPage -> loadLatest",
+    ]);
+    const mapped = links.filter((l) => l.strategy === "dispatch:object-map");
+    expect(mapped.map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol} ${l.confidence}`).sort()).toEqual([
+      "MapPage -ACTIONS[]-> loadMatches INFERRED",
+      "MapPage -ACTIONS[]-> saveClub INFERRED",
     ]);
   });
 });
