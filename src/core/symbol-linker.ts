@@ -757,6 +757,14 @@ function buildSymbolIndex(
           });
         }
       }
+      // A property read through its accessor method (`property Points read GetPoints`): the
+      // property's name answers with that method, so a read or call of it lands there.
+      for (const prop of cls.properties ?? []) {
+        if (!prop.readAccessor) continue;
+        const accessor = fileSymbols.get(`${cls.name}.${prop.readAccessor}`);
+        const key = `${cls.name}.${prop.name}`;
+        if (accessor && !fileSymbols.has(key)) fileSymbols.set(key, accessor);
+      }
     }
 
     // Exports (fill in symbols not already captured by functions/methods)
@@ -3631,6 +3639,41 @@ function resolvePassedName(
 }
 
 /**
+ * A name read without parentheses (`CallInfo.read`: Pascal `N := ACar.Shine`, `N + Points`) runs what it
+ * names only when that is a routine: linked when it resolves without guessing to a function or method — or a
+ * property's read accessor, which the symbol index answers for the property — as `calls` when it returns a
+ * value, as `passes` when it returns none (a method pointer, `OnClick := btnSaveClick`), and to a
+ * construction (`TCar.Create`). A field, a variable or a class read draws no edge.
+ */
+function resolveReadName(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  const { read: _read, ...asCall } = call;
+  const link = resolveCallToDefinition(sourceFile, sourceSymbol, asCall, analysis, ctx);
+  if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
+  if (link.relation === "instantiates") return link;
+  if (link.relation !== "calls") return null;
+  const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
+  const routine = target && routineAt(target, link.targetSymbol);
+  if (!routine) return null;
+  return routine.returnType ? link : { ...link, relation: "passes" };
+}
+
+/** The function or method (`Class.method`) `symbol` names in the file; null for a class or anything else. */
+function routineAt(analysis: FileAnalysis, symbol: string): FunctionInfo | null {
+  const fn = analysis.functions.find((f) => f.name === symbol);
+  if (fn) return fn;
+  const dot = symbol.indexOf(".");
+  if (dot <= 0) return null;
+  const cls = analysis.classes.find((c) => c.name === symbol.slice(0, dot));
+  return cls?.methods.find((m) => m.name === symbol.slice(dot + 1)) ?? null;
+}
+
+/**
  * Whether `symbol` names a function, a method (`Class.method`) or a class the file declares — or the
  * module's own default export, which is what a component file is (`mount(ClubCard)` on `ClubCard.vue`).
  */
@@ -3658,6 +3701,7 @@ function resolveCallToDefinition(
   reference = false,
 ): SymbolLink | null {
   if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
+  if (call.read) return resolveReadName(sourceFile, sourceSymbol, call, analysis, ctx);
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"

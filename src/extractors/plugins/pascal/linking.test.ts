@@ -175,3 +175,112 @@ end.
     ]);
   });
 });
+
+/** A car whose members are read without parentheses, and a van with the same method names. */
+const CARS = `unit Cars;
+interface
+type
+  TCar = class
+  private
+    FSpeed: Integer;
+    function GetPoints: Integer;
+  public
+    Gloss: Integer;
+    procedure Wash;
+    function Shine: Integer;
+    property Points: Integer read GetPoints;
+    property Speed: Integer read FSpeed;
+  end;
+  TVan = class
+  public
+    function Shine: Integer;
+    function IsEmpty: Boolean;
+    function GetPoints: Integer;
+  end;
+implementation
+function TCar.GetPoints: Integer; begin Result := 3; end;
+procedure TCar.Wash; begin end;
+function TCar.Shine: Integer; begin Result := 1; end;
+function TVan.Shine: Integer; begin Result := 2; end;
+function TVan.IsEmpty: Boolean; begin Result := True; end;
+function TVan.GetPoints: Integer; begin Result := 4; end;
+end.
+`;
+
+const COACH = `unit Coach;
+interface
+uses Cars, ADODB;
+type
+  TCoach = class
+  private
+    FCar: TCar;
+    FTotal: Integer;
+    function GetTotal: Integer;
+  public
+    procedure Drill(ACar: TCar);
+    procedure Rest; virtual;
+    procedure Report;
+    property Total: Integer read GetTotal;
+  end;
+  THeadCoach = class(TCoach)
+  public
+    constructor Create(AOwner: TObject);
+    procedure Rest; override;
+    procedure Drill2;
+  end;
+implementation
+function TCoach.GetTotal: Integer; begin Result := FTotal; end;
+procedure TCoach.Rest; begin end;
+procedure TCoach.Report; begin end;
+procedure TCoach.Drill(ACar: TCar);
+var
+  N: Integer;
+  qryClubs: TADOQuery;
+begin
+  N := ACar.Shine;
+  N := N + FCar.Shine;
+  if ACar.Points > 2 then N := 0;
+  N := N + ACar.Speed + ACar.Gloss;
+  N := N + Total;
+  while not qryClubs.IsEmpty do N := N - 1;
+  OnDone := Report;
+end;
+constructor THeadCoach.Create(AOwner: TObject);
+begin
+  inherited Create(AOwner);
+end;
+procedure THeadCoach.Rest;
+begin
+  inherited;
+end;
+procedure THeadCoach.Drill2;
+begin
+  inherited Rest;
+end;
+end.
+`;
+
+describe("Pascal names read without parentheses", () => {
+  it("reaches a method or a property's accessor through the receiver's type, never a field", async () => {
+    expect(await linksFrom({ "Cars.pas": CARS, "Coach.pas": COACH }, "Coach.pas")).toEqual([
+      "TCoach.Drill: ACar.Points -> Cars.pas::TCar.GetPoints (injection)",
+      "TCoach.Drill: ACar.Shine -> Cars.pas::TCar.Shine (injection)",
+      "TCoach.Drill: FCar.Shine -> Cars.pas::TCar.Shine (injection)",
+      "TCoach.Drill: Report -> Coach.pas::TCoach.Report (direct)",
+      "TCoach.Drill: Total -> Coach.pas::TCoach.GetTotal (direct)",
+      "THeadCoach.Drill2: super.Rest -> Coach.pas::TCoach.Rest (inheritance)",
+      "THeadCoach.Rest: super -> Coach.pas::TCoach.Rest (inheritance)",
+    ]);
+  });
+
+  it("hands a procedure on rather than calling it, and never reads a name as a database call", async () => {
+    const analyses = await analyzeUnits({ "Cars.pas": CARS, "Coach.pas": COACH });
+    const relation = buildSymbolLinks(analyses).find((l) => l.callName === "Report")?.relation;
+    expect(relation).toBe("passes");
+    const drill = analyses.find((a) => a.filePath === "Coach.pas")!.classes.find((c) => c.name === "TCoach")!.methods.find((m) => m.name === "Drill")!;
+    expect(drill.calls.filter((c) => c.read).map((c) => `${c.name} ${c.kind}`).sort()).toEqual([
+      "ACar.Gloss internal", "ACar.Points internal", "ACar.Shine internal", "ACar.Speed internal",
+      "FCar.Shine internal", "Report internal", "Total internal", "qryClubs.IsEmpty internal",
+    ]);
+  });
+});

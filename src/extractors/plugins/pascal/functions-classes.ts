@@ -5,6 +5,22 @@ import type { CallInfo } from "../../../types/analysis.js";
 import { extractCalls, holdNoiseCall, restoreHeldCalls } from "../../shared/call-graph.js";
 import { pascalLocalTypes } from "./di.js";
 
+/** A property's `read` name until its class's methods are known. */
+const PENDING_GETTERS = new WeakMap<PropertyInfo, string>();
+
+/**
+ * A property whose `read` names a method of its class reads through that method
+ * (`readAccessor`, spelled as the method is declared); one read straight from a field runs no code.
+ */
+function linkReadAccessors(properties: PropertyInfo[], methods: FunctionInfo[]): void {
+  for (const prop of properties) {
+    const getter = PENDING_GETTERS.get(prop)?.toLowerCase();
+    if (!getter) continue;
+    const method = methods.find((m) => m.name.toLowerCase() === getter);
+    if (method) prop.readAccessor = method.name;
+  }
+}
+
 /** Containers whose children are routines / type sections at unit level. */
 const UNIT_CONTAINERS = new Set(["unit", "program", "library", "implementation", "root"]);
 
@@ -439,6 +455,7 @@ export class PascalExtractor extends FunctionClassExtractor {
       }
     }
 
+    linkReadAccessors(properties, methods);
     return {
       name,
       extends: extendsName,
@@ -471,6 +488,7 @@ export class PascalExtractor extends FunctionClassExtractor {
       }
     }
 
+    linkReadAccessors(properties, methods);
     return {
       name,
       kind: "interface",
@@ -564,13 +582,19 @@ export class PascalExtractor extends FunctionClassExtractor {
       if (child.type === "type") type = child.text;
       if (child.type === "kWrite") hasWrite = true;
     }
+    // `read GetPoints` — kept until the class's methods are known (`linkReadAccessors`).
+    const kids = node.children;
+    const getter = kids.findIndex((c) => c.type === "kRead");
+    const read = getter >= 0 && kids[getter + 1]?.type === "identifier" ? kids[getter + 1]!.text : null;
 
-    return {
+    const prop: PropertyInfo = {
       name,
       type,
       visibility,
       isStatic: false,
       isReadonly: !hasWrite,
     };
+    if (read) PENDING_GETTERS.set(prop, read);
+    return prop;
   }
 }
