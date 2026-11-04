@@ -299,3 +299,74 @@ describe("computeImpactDiff — docs to update", () => {
     expect(computeImpactDiff(summary, ["srv/util.ts"]).docs).toBeUndefined();
   });
 });
+
+describe("measured tests — per-test coverage contexts", () => {
+  const link = (sf: string, ss: string, tf: string, ts: string, line = 1) =>
+    ({ sourceFile: sf, sourceSymbol: ss, sourceLine: line, callName: ts, targetFile: tf, targetSymbol: ts, targetLine: 1, confidence: "EXTRACTED" });
+  const league = {
+    files: ["app/club.py", "tests/test_club.py"],
+    componentGraph: { "tests/test_club.py": ["app/club.py"] },
+    symbolLinks: [link("tests/test_club.py", "TestClub.test_release", "app/club.py", "Club.sign", 11)],
+    testFunctions: {
+      "tests/test_club.py": [
+        { symbol: "TestClub.test_sign", line: 5, kind: "case", title: "test_sign", path: ["TestClub"] },
+        { symbol: "TestClub.test_release", line: 9, kind: "case", title: "test_release", path: ["TestClub"] },
+      ],
+    },
+    testCoverage: {
+      sources: [{ file: "coverage.json", format: "coveragepy-json", files: 1, matched: 1, stale: false, tests: 3 }],
+      total: 10, covered: 8, unmatched: [],
+      files: [{ file: "app/club.py", total: 10, covered: 8, uncovered: "14,15", functions: [
+        { name: "sign", line: 6, endLine: 8, total: 2, covered: 2, tests: [0, 1], testCount: 3 },
+        { name: "release", line: 10, endLine: 15, total: 5, covered: 3, tests: [0], testCount: 1 },
+      ] }],
+      tests: [
+        { id: "tests/test_club.py::TestClub::test_sign", file: "tests/test_club.py", symbol: "TestClub.test_sign", line: 5 },
+        { id: "e2e/test_cup.py::test_final" },
+      ],
+    },
+  } as unknown as ProjectAnalysis;
+  const changedSign = { symbols: { changed: [{ file: "app/club.py", symbol: "Club.sign", line: 6, endLine: 8 }], moduleLevel: [] } };
+
+  it("lists the tests the coverage run saw execute a changed function first, labelled measured, and runs them", () => {
+    const r = computeImpactDiff(league, ["app/club.py"], changedSign);
+    expect(r.measuredTests).toEqual({
+      tests: [
+        { id: "tests/test_club.py::TestClub::test_sign", file: "tests/test_club.py", symbol: "TestClub.test_sign", line: 5, ran: ["Club.sign"] },
+        { id: "e2e/test_cup.py::test_final", ran: ["Club.sign"] },
+      ],
+      more: 1,
+      from: ["coverage.json"],
+    });
+    // The call graph's test stays, after the measured ones.
+    expect(r.testCallers?.map((t) => t.symbol)).toEqual(["TestClub.test_release"]);
+    expect(r.testCommands).toEqual([{ language: "python", command: "pytest e2e/test_cup.py::test_final tests/test_club.py::TestClub::test_sign tests/test_club.py::TestClub::test_release" }]);
+    const text = renderImpactText(r);
+    expect(text).toContain("Tests the coverage run saw execute the changed functions — measured, per-test contexts from coverage.json (2 of 3):");
+    expect(text).toContain("  TestClub.test_sign (tests/test_club.py:5) — ran Club.sign");
+    expect(text).toContain("  e2e/test_cup.py::test_final — ran Club.sign");
+    expect(text.indexOf("measured")).toBeLessThan(text.indexOf("Tests that call the changed functions"));
+    expect(renderImpactMarkdown(r)).toContain("| Measured — tests that ran the change (coverage.json) | `TestClub.test_sign`, `e2e/test_cup.py::test_final` … +1 more |");
+  });
+
+  it("without the diff's lines, takes the tests that ran any function of a changed file", () => {
+    const r = computeImpactDiff(league, ["app/club.py"]);
+    expect(r.measuredTests?.tests.map((t) => [t.id, t.ran])).toEqual([
+      ["tests/test_club.py::TestClub::test_sign", ["sign", "release"]],
+      ["e2e/test_cup.py::test_final", ["sign"]],
+    ]);
+  });
+
+  it("says per-test evidence is unavailable when every report is aggregate-only", () => {
+    const aggregate = {
+      ...league,
+      testCoverage: { ...league.testCoverage!, tests: undefined, sources: [{ file: "coverage.xml", format: "cobertura", files: 1, matched: 1, stale: false, tests: 0 }],
+        files: [{ file: "app/club.py", total: 10, covered: 8, uncovered: "", functions: [{ name: "sign", line: 6, endLine: 8, total: 2, covered: 2 }] }] },
+    } as unknown as ProjectAnalysis;
+    const r = computeImpactDiff(aggregate, ["app/club.py"], changedSign);
+    expect(r.measuredTests).toBeUndefined();
+    expect(r.coverageNote).toBe("coverage.xml records no test contexts (aggregate-only): it says a line ran, never which test ran it");
+    expect(renderImpactText(r)).toContain("Per-test evidence unavailable: coverage.xml records no test contexts");
+    expect(renderImpactMarkdown(r)).toContain("| Per-test evidence | unavailable — coverage.xml records no test contexts");
+  });
+});

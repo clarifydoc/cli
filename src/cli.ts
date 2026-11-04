@@ -64,7 +64,7 @@ program
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")
   .option("--history-secrets", "Also read every commit's added lines for credentials (cloud keys, tokens, private keys): a key deleted from the tree is still in every clone")
-  .option("--coverage <files...>", "Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile); without it the usual report paths are tried")
+  .option("--coverage <files...>", "Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile, coverage.py JSON or .coverage); without it the usual report paths are tried")
   .option("--osv", "Check the installed package versions against OSV (api.osv.dev) — a network call", false)
   .option("--incremental", "Reuse cached per-file analysis for unchanged files (mtime + SHA-256)", false)
   .option("--no-git-history", "Skip git churn/hotspot collection")

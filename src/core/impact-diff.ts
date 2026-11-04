@@ -10,7 +10,7 @@ import type {
   TraceImpactScreen,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
-import { rangeLines } from "./test-coverage.js";
+import { aggregateOnlyNote, perTestSources, rangeLines, testsOfCoverageFunction, type CoverageTest, type TestCoverageReport } from "./test-coverage.js";
 
 /** [3,4,5,9] → "3-5,9". */
 function toRanges(lines: readonly number[]): string {
@@ -77,6 +77,16 @@ export interface ImpactDiffResult {
    * not just the ones that import its file.
    */
   testCallers?: Array<{ file: string; symbol: string; line: number; depth: number }>;
+  /**
+   * The tests a per-test coverage report saw execute a changed function (or,
+   * without the diff's lines, any function of a changed file) — measured
+   * evidence, ahead of the call graph's `testCallers`. `ran`: the changed
+   * functions each ran; `more`: tests beyond those the report kept per
+   * function (a lower bound); `from`: the reports that name tests.
+   */
+  measuredTests?: { tests: Array<CoverageTest & { ran: string[] }>; more: number; from: string[] };
+  /** Why there is no measured evidence: the coverage reports are aggregate-only. */
+  coverageNote?: string;
   /** Commands that run the tests, per language, by its plugin's runner (`pytest a.py::test_x`, `go test ./pkg -run …`). */
   testCommands?: Array<{ language: string; command: string }>;
   /** Sample reverse-import chains: changed file → … → screen/route file. */
@@ -353,6 +363,14 @@ export function computeImpactDiff(
     };
   }
 
+  // ── The tests the coverage run saw execute the change ──
+  const measured = summary.testCoverage ? measuredTestsOf(summary.testCoverage, changedFiles, options?.symbols?.changed) : undefined;
+  const coverageNote = summary.testCoverage && !measured ? aggregateOnlyNote(summary.testCoverage) : undefined;
+  for (const t of measured?.tests ?? []) {
+    if (t.file && changedSet.has(t.file) === false && canonical.has(t.file) && !tests.includes(t.file)) tests.push(t.file);
+  }
+  tests.sort();
+
   // ── The tests that exercise the change, and how to run them ──
   const testCode = testCodeIndex(summary);
   const testCallers = options?.symbols
@@ -368,7 +386,12 @@ export function computeImpactDiff(
     tests.sort();
   }
   const targets = new Map<string, Set<string>>();
-  for (const t of testCallers.length ? testCallers : tests.map((file) => ({ file, symbol: "" }))) {
+  // Measured first: a runner takes them as the report names them.
+  for (const t of measured?.tests ?? []) {
+    const target = testTargetOf(t);
+    if (target) (targets.get(target.file) ?? targets.set(target.file, new Set()).get(target.file)!).add(target.name);
+  }
+  for (const t of testCallers.length || measured ? testCallers : tests.map((file) => ({ file, symbol: "" }))) {
     const names = targets.get(t.file) ?? targets.set(t.file, new Set()).get(t.file)!;
     if (t.symbol) names.add(t.symbol);
   }
@@ -381,7 +404,7 @@ export function computeImpactDiff(
     untested = [];
     if (options?.symbols?.changed.length) {
       for (const s of options.symbols.changed) {
-        const fn = cov.get(s.file)?.functions?.find((f) => f.line === s.line || (s.line >= f.line && s.endLine <= f.endLine && f.name.endsWith(s.symbol.split(".").pop()!)));
+        const fn = coverageFunctionOf(cov.get(s.file), s);
         if (fn && fn.total > 0 && fn.covered === 0) untested.push({ file: s.file, symbol: s.symbol, line: s.line, lines: fn.total });
       }
     } else {
@@ -490,6 +513,8 @@ export function computeImpactDiff(
     ...(reviewers.length > 0 ? { reviewers } : {}),
     ...(untested?.length ? { untested } : {}),
     ...(patchCoverage ? { patchCoverage } : {}),
+    ...(measured ? { measuredTests: measured } : {}),
+    ...(coverageNote ? { coverageNote } : {}),
     ...(testCallers.length ? { testCallers: testCallers.slice(0, 50) } : {}),
     ...(testCommands.length ? { testCommands } : {}),
     risk: { level, reasons },
@@ -525,9 +550,15 @@ export function renderImpactText(r: ImpactDiffResult): string {
   }
   if (r.entityCount > 0) lines.push("", `Data touched (${geq(r)}${r.entityCount}): ${r.entities.join(", ")}`);
   if (r.queueCount > 0) lines.push(`Queues (${geq(r)}${r.queueCount}): ${r.queues.join(", ")}`);
-  if (r.testCount > 0) {
-    lines.push("", `Tests to run (${r.testCount}):`);
+  if (r.testCount > 0 || r.measuredTests) {
+    if (r.testCount > 0) lines.push("", `Tests to run (${r.testCount}):`);
     for (const t of r.tests) lines.push(`  ${t}`);
+    if (r.measuredTests) {
+      const m = r.measuredTests;
+      lines.push("", `Tests the coverage run saw execute the changed functions — measured, per-test contexts from ${m.from.join(", ")} (${m.tests.length} of ${m.tests.length + m.more}):`);
+      for (const t of m.tests.slice(0, 20)) lines.push(`  ${measuredLabel(t, true)} — ran ${t.ran.slice(0, 4).join(", ")}${t.ran.length > 4 ? ` … +${t.ran.length - 4}` : ""}`);
+      if (m.tests.length > 20) lines.push(`  … +${m.tests.length - 20}`);
+    }
     if (r.testCallers?.length) {
       lines.push("", `Tests that call the changed functions (${r.testCallers.length}):`);
       for (const t of r.testCallers.slice(0, 20)) lines.push(`  ${t.symbol} (${t.file}:${t.line})${t.depth > 1 ? ` — ${t.depth} calls away` : ""}`);
@@ -542,6 +573,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
       for (const u of r.untested) lines.push(`  ${u.symbol ? `${u.symbol} (${u.file}:${u.line})` : u.file}`);
     }
   }
+  if (r.coverageNote) lines.push("", `Per-test evidence unavailable: ${r.coverageNote}`);
   if (r.missingCoChanges?.length) {
     lines.push("", "Usually changed with, not in this change:");
     for (const m of r.missingCoChanges) lines.push(`  ${m.file}  — with ${m.with} in ${m.count} commits (${Math.round(m.score * 100)}%)${m.hidden ? ", no import joins them" : ""}`);
@@ -615,7 +647,12 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   );
   row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => `\`${e}\``).join(", ") || "—");
   if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
+  if (r.measuredTests) {
+    const m = r.measuredTests;
+    row(`Measured — tests that ran the change (${m.from.join(", ")})`, `${m.tests.slice(0, 10).map((t) => `\`${measuredLabel(t, false)}\``).join(", ")}${m.tests.length - Math.min(10, m.tests.length) + m.more ? ` … +${m.tests.length - Math.min(10, m.tests.length) + m.more} more` : ""}`);
+  }
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
+  if (r.coverageNote) row("Per-test evidence", `unavailable — ${r.coverageNote}`);
   if (r.testCommands?.length) row("Run", r.testCommands.map((c) => `\`${c.command}\``).join("<br>"));
   if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => `\`${u.symbol ?? u.file}\``).join(", "));
   if (r.patchCoverage) row(`Changed lines no test runs (${r.patchCoverage.uncoveredLines})`, r.patchCoverage.files.map((f) => `\`${f.file}:${f.uncovered}\``).join(", "));
@@ -661,10 +698,9 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
   const edited = new Set(changed.map((c) => `${c.file}::${c.symbol}`));
   const testCode = testCodeIndex(summary);
   const cov = new Map((summary.testCoverage?.files ?? []).map((f) => [f.file, f]));
-  const ranByCoverage = (c: SymbolCaller): boolean => {
+  const coverageOf = (c: SymbolCaller) => {
     const name = c.symbol.split(".").pop()!;
-    const fn = cov.get(c.file)?.functions?.find((f) => c.line >= f.line && c.line <= f.endLine && f.name.endsWith(name));
-    return !!fn && fn.covered > 0;
+    return cov.get(c.file)?.functions?.find((f) => c.line >= f.line && c.line <= f.endLine && f.name.endsWith(name));
   };
   const links = summary.symbolLinks ?? [];
   // Past a hub — a function much of the code calls — only the tests calling the hub itself count.
@@ -684,7 +720,11 @@ function standCallers(summary: ProjectAnalysis, changed: readonly ChangedSymbol[
       c.standing = "covered";
       c.coveredBy = { file: test.file, symbol: test.symbol };
     } else {
-      c.standing = ranByCoverage(c) ? "covered" : "unverified";
+      const fn = coverageOf(c);
+      // A test the coverage run saw execute it vouches for it by name.
+      const ran = fn && summary.testCoverage ? testsOfCoverageFunction(summary.testCoverage, fn).tests.find((t) => t.file && t.symbol) : undefined;
+      c.standing = fn && (fn.covered > 0 || ran) ? "covered" : "unverified";
+      if (ran) c.coveredBy = { file: ran.file!, symbol: ran.symbol! };
     }
   }
 }
@@ -702,6 +742,67 @@ const STANDING_NOTE: Record<NonNullable<SymbolCaller["standing"]>, string> = {
   test: "a test",
   unverified: "unverified: not updated, no test",
 };
+
+/**
+ * The tests a per-test coverage report saw run a changed function: per
+ * changed symbol its coverage row, else every function of a changed file.
+ * Tests that ran more of the changed functions first. Undefined when the
+ * report names no tests for them.
+ */
+function measuredTestsOf(
+  coverage: TestCoverageReport,
+  changedFiles: readonly string[],
+  symbols: readonly ChangedSymbol[] | undefined,
+): ImpactDiffResult["measuredTests"] {
+  if (!coverage.tests?.length) return undefined;
+  const cov = new Map(coverage.files.map((f) => [f.file, f]));
+  const rows: Array<{ label: string; fn: NonNullable<TestCoverageReport["files"][number]["functions"]>[number] }> = [];
+  if (symbols?.length) {
+    for (const s of symbols) {
+      const fn = coverageFunctionOf(cov.get(s.file), s);
+      if (fn) rows.push({ label: s.symbol, fn });
+    }
+  } else {
+    for (const f of changedFiles) for (const fn of cov.get(f)?.functions ?? []) rows.push({ label: fn.name, fn });
+  }
+  const byId = new Map<string, CoverageTest & { ran: string[] }>();
+  let more = 0;
+  for (const { label, fn } of rows) {
+    const { tests, count } = testsOfCoverageFunction(coverage, fn);
+    more = Math.max(more, count - tests.length);
+    for (const t of tests) {
+      const entry = byId.get(t.id) ?? byId.set(t.id, { ...t, ran: [] }).get(t.id)!;
+      if (!entry.ran.includes(label)) entry.ran.push(label);
+    }
+  }
+  if (!byId.size) return undefined;
+  const tests = [...byId.values()].map((t, i) => [t, i] as const).sort((a, b) => b[0].ran.length - a[0].ran.length || a[1] - b[1]).map(([t]) => t);
+  return { tests: tests.slice(0, 50), more: more + Math.max(0, tests.length - 50), from: perTestSources(coverage) };
+}
+
+/** The coverage row of a changed function: the one declared on its line, else the one spanning it with its name. */
+function coverageFunctionOf(file: TestCoverageReport["files"][number] | undefined, s: { symbol: string; line: number; endLine: number }) {
+  const leaf = s.symbol.split(".").pop()!;
+  return file?.functions?.find((f) => f.line === s.line || (s.line >= f.line && s.endLine <= f.endLine && f.name.endsWith(leaf)));
+}
+
+/** A measured test as a reader names it: the marked test function with its place, else the report's id. */
+function measuredLabel(t: CoverageTest, withPlace: boolean): string {
+  if (t.symbol && t.line !== undefined) return withPlace ? `${t.symbol} (${t.file}:${t.line})` : t.symbol;
+  return t.id;
+}
+
+/**
+ * A measured test as a runner's target: its analyzed file and symbol, else
+ * the file and names its `path::names` id spells (a test file outside the
+ * analysis still has a runner). Undefined when the id names no file.
+ */
+function testTargetOf(t: CoverageTest): { file: string; name: string } | undefined {
+  if (t.file && t.symbol) return { file: t.file, name: t.symbol };
+  const [path, ...names] = t.id.split("::");
+  if (!names.length || !/\.[A-Za-z0-9]+$/.test(path!)) return undefined;
+  return { file: path!.replace(/\\/g, "/").replace(/^\.\//, ""), name: names.map((n) => n.replace(/\[.*\]$/, "")).join(".") };
+}
 
 /** Each language's command for these tests, from its plugin (`LanguagePluginManifest.testCommand`). */
 /**
