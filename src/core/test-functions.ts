@@ -7,6 +7,7 @@
 
 import type { FileAnalysis, ProjectAnalysis, SymbolLink, TestFunctionRow } from "../types/analysis.js";
 import type { FileTestCoverage } from "./test-coverage.js";
+import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
 
@@ -76,6 +77,37 @@ export function hubFollow(links: readonly SymbolLink[], testCode: TestCodeIndex)
   return (key, l) => (production.get(key)?.size ?? 0) <= HUB_CALLERS || testCode.isTest(l.sourceFile, l.sourceSymbol);
 }
 
+/** What the reach walk reads: the call graph, what is test code, and each file's sub-project. */
+export type ReachSummary = Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions"> & Partial<Pick<ProjectAnalysis, "fileProjects" | "routeMap">>;
+
+/** A test's title saying its caller is turned away: an anonymous or rejected caller, a bad credential. */
+const REFUSED_CALLER =
+  /\b(?:un-?authenticated|unauthori[sz]ed|not (?:logged|signed) in|(?:signed|logged) out|without (?:an? )?(?:token|login|session|credentials?|auth\w*)|invalid (?:token|signature|credentials?|api key)|forbidden)\b/i;
+
+/**
+ * Whether a link into a route is a request that runs the route's handler in the test run: a test
+ * requesting the route itself (a framework test client, a request spec, an in-process recorder),
+ * written in the route's own language family and sub-project — the server under test. A request from
+ * production code (a frontend client, whose tests mock the network) or from another language's
+ * tests (a browser suite, a client's unit test) runs nothing of the server here; nor does a test
+ * whose title says its caller is turned away (`when unauthenticated › returns unauthorized`) on a
+ * guarded route — the guard answers before the action runs.
+ */
+function inProcessRequest(summary: ReachSummary, testCode: TestCodeIndex): (link: SymbolLink) => boolean {
+  const projects = summary.fileProjects ?? {};
+  const guarded = new Set<string>();
+  for (const r of summary.routeMap ?? []) {
+    if (r.filePath && (r.auth ? !r.auth.anonymous : r.middleware?.length > 0)) guarded.add(`${r.filePath}::route:${r.httpMethod ?? "USE"} ${r.path}`);
+  }
+  return (l) => {
+    if (!testCode.isTest(l.sourceFile, l.sourceSymbol)) return false;
+    const family = extensionFamily(l.targetFile);
+    if (!family || extensionFamily(l.sourceFile) !== family) return false;
+    if ((projects[l.sourceFile] ?? "") !== (projects[l.targetFile] ?? "")) return false;
+    return !(REFUSED_CALLER.test(l.sourceSymbol) && guarded.has(`${l.targetFile}::${l.targetSymbol}`));
+  };
+}
+
 /** A test reaching a function: the nearest, how many calls away, and the chain of calls it takes. */
 export interface TestReach {
   test: { file: string; symbol: string; line: number };
@@ -89,10 +121,11 @@ export interface TestReach {
 /**
  * For each target function, the tests that reach it through the call graph (up to `maxDepth`
  * calls, never on through a hub to its other callers), nearest first — one walk per target over
- * one index of the links. Navigational links and import references are not calls.
+ * one index of the links. Navigational links and import references are not calls. A route is
+ * crossed to its handler only from a test's own in-process request (`inProcessRequest`).
  */
 export function testsReachingEach(
-  summary: Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions">,
+  summary: ReachSummary,
   targets: ReadonlyArray<{ file: string; symbol: string }>,
   maxDepth = 6,
 ): Map<string, TestReach> {
@@ -104,16 +137,19 @@ export function testsReachingEach(
  * targets, so a reader judging many files does not index the links per file.
  */
 export function testReachWalker(
-  summary: Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions">,
+  summary: ReachSummary,
   maxDepth = 6,
   testCode: TestCodeIndex = testCodeIndex(summary),
 ): (targets: ReadonlyArray<{ file: string; symbol: string }>) => Map<string, TestReach> {
   const links = summary.symbolLinks ?? [];
   const follow = hubFollow(links, testCode);
+  const requests = inProcessRequest(summary, testCode);
   const callersOf = new Map<string, SymbolLink[]>();
   for (const l of links) {
-    if (l.navigational || l.sourceSymbol.startsWith("(") || l.sourceSymbol.startsWith("route:")) continue;
+    if (l.navigational || l.sourceSymbol.startsWith("(")) continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
+    // A route's callers are requests: only a test's own in-process request runs the handler.
+    if (l.targetSymbol.startsWith("route:") && !requests(l)) continue;
     (callersOf.get(key) ?? callersOf.set(key, []).get(key)!).push(l);
   }
   return (targets) => {
@@ -167,8 +203,8 @@ export type TestVerdictBasis = "importer" | "reached-function" | "coverage";
  *   language generates and the tests it declares do not count), or no per-file analysis to read
  *   them from; the bases below are still reported;
  * - `tested` — a test file depends on it (component graph), a test reaches one of its functions
- *   through the call graph (`testsReachingEach`, six calls at most), or a coverage report ran
- *   some of its lines;
+ *   through the call graph (`testsReachingEach`, six calls at most — a route counting as one, crossed
+ *   only from a test's own in-process request), or a coverage report ran some of its lines;
  * - `untested` — none of those.
  */
 export interface FileTestVerdict {
@@ -195,7 +231,7 @@ export interface TestVerdictContext {
   reach(targets: ReadonlyArray<{ file: string; symbol: string }>): Map<string, TestReach>;
 }
 
-type VerdictSummary = Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions" | "componentGraph" | "testCoverage">;
+type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage">;
 
 export function testVerdictContext(summary: VerdictSummary): TestVerdictContext {
   const testCode = testCodeIndex(summary);
