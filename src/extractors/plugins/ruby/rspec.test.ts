@@ -58,6 +58,8 @@ end
     const a = analyze(src);
     const spec = a.functions.find((f) => f.name === "Club › leader › a club over fifty is a leader")!;
     expect(spec.localTypes).toContainEqual({ name: "described_class", type: "Club" });
+    // A call through it is a call on the constant, at the column it is written.
+    expect(spec.calls.find((c) => c.name === "Club.leader_threshold")).toMatchObject({ line: 18, column: "      expect(".length });
     expect(extractTypeReferences(a, "ruby").filter((r) => r.sourceSymbol === "Club")).toMatchObject([{ typeName: "Club", sourceLine: 3 }]);
   });
 

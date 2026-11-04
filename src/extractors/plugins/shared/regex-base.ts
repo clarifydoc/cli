@@ -1020,8 +1020,10 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
     // A pattern returns no name for a match that calls nothing (a CSS built-in).
     // A keyword names no call (`if (x)`); after a dot it is a member name (`cond.And(`, `p.then(`).
     if (!name || (!/[.:>]/.test(name) && isControlFlowKeyword(shortName))) return;
-    // Calls of one name with different keys stay separate (two templates rendered).
-    const seenKey = receiver?.key ? `${name}\0${receiver.key}` : name;
+    // Calls of one name with different keys stay separate (two templates rendered), and so do calls
+    // of one name on types the name does not spell (`new.perform` on two classes a block constructs).
+    const unspelled = receiver?.receiverType && !name.includes(receiver.receiverType) ? receiver.receiverType : undefined;
+    const seenKey = receiver?.key ? `${name}\0${receiver.key}` : unspelled ? `${name}\0${unspelled}` : name;
     if (seen.has(seenKey)) return;
     seen.add(seenKey);
     if (receiver?.key) {
