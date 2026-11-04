@@ -14,6 +14,20 @@ recorded in the git history only.
 
 ### Added
 
+- **A test reaches what it starts by name or by request.** Django's `call_command("close_season")` links to that
+  command's `Command.handle` (one `management/commands/<name>.py` answering, the caller's sub-project first); an
+  RSpec `described_class` is the class the `describe` names, and `let`/`subject` bound to `described_class.new(…)`
+  are typed by it; a request spec's `get "/api/v1/clubs"` is an API call joined to its route, and a test that
+  requests a route reaches its handler — unless the route is guarded and the test says its caller is turned away.
+  Whether a file is tested (`clarifydoc_file`) rests on these as on any other call.
+- **Classes a JVM framework loads by name stay alive.** Camel `RouteBuilder` subclasses, JAX-WS `@WebService`
+  classes, Anvil `@Contributes*` classes and the classes a ProGuard/R8 `-keep` rule names are never reported as
+  unreachable.
+- **A shallow clone's history is read.** Churn, co-change and authorship come from the commits past the cut; the cut
+  commit itself, whose diff is the whole tree, counts for nothing.
+- **The report payload carries entry points** (kind, name, file, sub-project), so the viewer can tell a CLI, a
+  worker or an extension from a library.
+
 - **`clarifydoc_context_docs file=` says why without a decision record.** After the decision records and markers,
   two lanes read locally with no model: comments that state a reason ("because", "so that", "to avoid", "since"
   as a clause — never "since v2.3"), each the whole comment block anchored to the function it sits above or in;
@@ -239,6 +253,17 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **C/C++ complexity counts the largest `#if` arm.** Only one arm of `#if … #else` is compiled, so a block counts
+  as the arm with the most decisions (was every arm), and `#if 0` none.
+- **Cypher export merges on id alone.** A node is `MERGE (n:ClarifyDoc {id})` with its type set after, and parallel
+  relationships of one type carry an ordinal key, so loading the export twice gives the same graph.
+- **Fixed: `clarifydoc_extract` with a file, and `clarifydoc_explain`'s source.** On a server that had read no
+  source yet, quoting a definition with its head threw "plugin is not loaded"; explain lost its Source section
+  and called a function nothing calls unknown.
+- **Fixed: a TypeScript call whose type argument is `import("./club")`** (`load<typeof import("./club")>()`) was
+  misread by the grammar and its call lost; it is read again.
+- **Fixed: two `new(…).perform` calls on different classes in one Ruby function** kept only the first.
 
 - **A call through a barrel lands on the definition.** A named re-export (`export { fmt } from "./dates"`,
   Python `from .impl import Service` in a package `__init__`, with or without `as`) is followed to the
