@@ -160,6 +160,15 @@ export interface RegexLangSpec {
    */
   complexity?: { branches: RegExp; logicalOps?: RegExp; closers?: RegExp };
   /**
+   * Compile-time conditionals (the C preprocessor's `#if`/`#elif`/`#else`): of
+   * their arms only one is ever compiled, so the complexity count takes the arm
+   * with the most decisions instead of their sum, and reads no directive line.
+   * Every block of the file, nested ones as their own entries; 0-based line
+   * indexes, an arm's span excluding its directive lines. An arm no compiler
+   * takes (`#if 0`) is left out of `arms`.
+   */
+  conditionalBlocks?: (lines: readonly string[]) => readonly ConditionalBlock[];
+  /**
    * The file's own statements run (a script): calls on lines outside every
    * function and class become the `<setup>` pseudo-function, as module-level
    * calls do on the tree-sitter path. `true` for every file of the language,
@@ -1149,4 +1158,11 @@ export function headerLineMethods(line: string, row: number, spec: RegexLangSpec
       endLine: row + 1,
     };
   });
+}
+
+/** A compile-time conditional: its directive lines `start`…`end` and the live arms between them (0-based, inclusive). */
+export interface ConditionalBlock {
+  start: number;
+  end: number;
+  arms: ReadonlyArray<readonly [number, number]>;
 }

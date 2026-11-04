@@ -1,6 +1,7 @@
 import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
@@ -294,7 +295,9 @@ export const typescriptMeta: LanguagePluginMeta = {
   autoImports: nuxtAutoImports,
   // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
-  preprocess: (raw, path) => vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"),
+  // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
+  preprocess: (raw, path) =>
+    withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

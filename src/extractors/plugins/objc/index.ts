@@ -1,3 +1,4 @@
+import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import type { ClassInfo } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
@@ -13,6 +14,7 @@ export const objcSpec: RegexLangSpec = {
   language: "objc",
   extensions: [".m", ".mm"],
   lineCommentPrefixes: ["//"],
+  conditionalBlocks: (lines) => conditionalBlocks(lines),
 
   functionPatterns: [
     {

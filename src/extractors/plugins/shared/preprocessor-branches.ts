@@ -5,6 +5,7 @@
  * columns are kept: a blanked line is spaces.
  */
 import type { ParsedStructure } from "../../../types/language-plugin.js";
+import type { ConditionalBlock } from "./regex-base.js";
 
 /** The directive a line holds, its continuation lines (`\` at the end) joined. */
 const DIRECTIVE = /^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$/;
@@ -80,6 +81,41 @@ function firstBranches(text: string, cplusplus: boolean): string {
 function secondBranches(text: string, cplusplus: boolean): string {
   if (!text.includes("#")) return text;
   return blankBranches(text, cplusplus, (f) => f.branch === (f.dead ? 1 : Math.min(1, f.count - 1)));
+}
+
+/**
+ * Every conditional of the file as a block: its `#if` and `#endif` lines and the live arms between its directives
+ * (0-based, inclusive; an arm may be empty). An arm no compiler takes is left out — `#if 0`, and with `cplusplus`
+ * set, the `__cplusplus` arm the language never sees; `cplusplus` undefined (Objective-C, which is either) judges
+ * only `#if 0`. A block an unbalanced file leaves open is dropped.
+ */
+export function conditionalBlocks(lines: readonly string[], cplusplus?: boolean): ConditionalBlock[] {
+  const out: ConditionalBlock[] = [];
+  const open: Array<{ start: number; armStart: number; branch: number; dead: boolean; arms: Array<readonly [number, number]> }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]!.includes("#")) continue;
+    const m = DIRECTIVE.exec(lines[i]!);
+    if (!m) continue;
+    const kind = m[1]!;
+    const at = i;
+    while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
+    if (kind === "if" || kind === "ifdef" || kind === "ifndef") {
+      const dead = cplusplus === undefined ? deadCondition(kind, m[2]!, false) && !m[2]!.includes("__cplusplus") : deadCondition(kind, m[2]!, cplusplus);
+      open.push({ start: at, armStart: i + 1, branch: 0, dead, arms: [] });
+      continue;
+    }
+    const frame = open.at(-1);
+    if (!frame) continue;
+    // The arm this directive closes; only the first can be one no compiler takes (an `#elif` after `#if 0` is live).
+    if (!(frame.dead && frame.branch === 0)) frame.arms.push([frame.armStart, at - 1]);
+    frame.branch++;
+    frame.armStart = i + 1;
+    if (kind === "endif") {
+      open.pop();
+      out.push({ start: frame.start, end: at, arms: frame.arms });
+    }
+  }
+  return out.sort((x, y) => x.start - y.start);
 }
 
 /** The lines of `compiled` that `read` blanked, the rest blank: the branches a reading of `read` leaves out. */

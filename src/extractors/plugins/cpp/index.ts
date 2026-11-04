@@ -1,3 +1,4 @@
+import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -135,6 +136,7 @@ export const cppSpec: RegexLangSpec = {
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
+  conditionalBlocks: (lines) => conditionalBlocks(lines, true),
 
   // CUDA kernel launch `vecAdd<<<grid, block>>>(a, b, n)` (or
   // `scale<float><<<…>>>(…)`): the call the baseline `name(` never sees.

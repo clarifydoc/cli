@@ -55,4 +55,40 @@ end`.split("\n");
     // modifier if: 1; inside the block (nesting 1): if 1+1, && 1, elsif 1 → 5; deepest: block + if = 2
     expect(row).toMatchObject({ functionName: "sync", cognitive: 5, nestingDepth: 2, approximate: true });
   });
+
+  it("counts one arm of a preprocessor conditional — the one with the most decisions — when the language says where arms are", async () => {
+    const { cSpec } = await import("../extractors/plugins/c/index.js");
+    const { cppSpec } = await import("../extractors/plugins/cpp/index.js");
+    const src = `int kick(int x) {
+#if defined(LEAGUE_FAST)
+  if (x > 1) return 1;
+  if (x > 2) return 2;
+#else
+  if (x > 3) return 3;
+  if (x > 4) return 4;
+#endif
+  return 0;
+}
+int pass(int x) {
+#ifdef LEAGUE_FAST
+  if (x) return 1;
+#elif LEAGUE_SLOW
+  if (x > 1 && x < 9) {
+#if 0
+    if (x == 2) return 2;
+    if (x == 3) return 3;
+#endif
+    return 4;
+  }
+#endif
+  if (x < 0) return -1;
+  return 0;
+}`.split("\n");
+    for (const spec of [cSpec, cppSpec]) {
+      const a = { ...analysis([fn("kick", 1, 10), fn("pass", 11, 26)]), language: spec.language } as FileAnalysis;
+      const rows = computeRegexComplexity(src, a, spec, false);
+      // kick: one arm of two ifs → 1 + 2. pass: the #elif arm (if, &&; its `#if 0` never compiled) + the last if → 1 + 3.
+      expect(rows.map((r) => [r.functionName, r.complexity]), spec.language).toEqual([["kick", 3], ["pass", 4]]);
+    }
+  });
 });

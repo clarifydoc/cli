@@ -1,5 +1,5 @@
 import type { ComplexityInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
-import type { RegexLangSpec } from "../extractors/plugins/shared/regex-base.js";
+import type { ConditionalBlock, RegexLangSpec } from "../extractors/plugins/shared/regex-base.js";
 import { blankStringLiterals } from "../extractors/plugins/shared/regex-base.js";
 import { REGEX_COMPLEXITY_DEFAULT } from "../extractors/shared/complexity-defaults.js";
 import { regexStructureMetrics, ternaryCount } from "./control-flow-regex.js";
@@ -11,7 +11,9 @@ import { regexStructureMetrics, ternaryCount } from "./control-flow-regex.js";
  * backtick strings). The vocabulary is `REGEX_COMPLEXITY_DEFAULT` unless the
  * spec overrides it. A `match`/`case`/`select` counts once — its arms are not
  * read — so the number is a floor, marked `approximate` like the regex-path
- * control-flow graph. Cognitive complexity and nesting depth come from the
+ * control-flow graph. A compile-time conditional the spec reports
+ * (`conditionalBlocks`) counts as its arm with the most decisions — one arm is
+ * compiled — and its directive lines count nothing. Cognitive complexity and nesting depth come from the
  * structure the regex control-flow scanner synthesizes, for every language that
  * declares a `regexControlFlow` spec; a language without one leaves them absent,
  * as the type allows.
@@ -34,11 +36,33 @@ export function computeRegexComplexity(lines: string[], analysis: FileAnalysis, 
     while (logical.exec(code)) n++;
     return n + ternaryCount(code, analysis.language);
   };
+  // Compile-time conditionals: one arm is compiled, so a block counts as its arm with the most decisions.
+  const blocks = spec.conditionalBlocks?.(lines) ?? [];
+  /** Decisions on lines `from`…`to` (0-based, inclusive), each of `inside` (blocks within the span, sorted) by its largest arm. */
+  const countRange = (from: number, to: number, inside: readonly ConditionalBlock[]): number => {
+    let n = 0;
+    let i = from;
+    let k = 0;
+    while (i <= to) {
+      while (k < inside.length && inside[k]!.start < i) k++;
+      const block = k < inside.length && inside[k]!.start === i ? inside[k]! : undefined;
+      if (!block || block.end > to) {
+        n += count(lines[i] ?? "");
+        i++;
+        continue;
+      }
+      const nested = inside.filter((b) => b.start > block.start && b.end < block.end);
+      let best = 0;
+      for (const [a, b] of block.arms) best = Math.max(best, countRange(a, b, nested.filter((x) => x.start >= a && x.end <= b)));
+      n += best;
+      i = block.end + 1;
+    }
+    return n;
+  };
   const measure = (fn: FunctionInfo, name: string): void => {
     // A test suite's body is its tests, each measured on its own.
     if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>" || fn.testCase?.kind === "suite") return;
-    let n = 0;
-    for (let i = fn.line; i < Math.min(fn.endLine, lines.length); i++) n += count(lines[i] ?? "");
+    const n = countRange(fn.line, Math.min(fn.endLine, lines.length) - 1, blocks.filter((b) => b.start >= fn.line && b.end < fn.endLine));
     // Same operator vocabulary as the cyclomatic count above, so the two numbers agree on what an operator is.
     const structure = regexStructureMetrics(lines, analysis.language, { name, line: fn.line, endLine: fn.endLine }, logical);
     out.push({
