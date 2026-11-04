@@ -1,4 +1,6 @@
 import { execFile } from "child_process";
+import { readFile } from "fs/promises";
+import { resolve } from "path";
 import { byOrdinal } from "./ordinal.js";
 import type { CoChangePair, FileChurnInfo, FileComplexityInfo, HotspotInfo } from "../types/analysis.js";
 import { gitArgs } from "./git-safe.js";
@@ -12,9 +14,12 @@ import { isProsePath } from "./run-fingerprint.js";
  * complexity hotspots derived from it.
  *
  * Design constraints:
- *  - Graceful everywhere: not a repo, git missing, shallow clone (the
- *    application server clones `--depth 1` by default), or a timeout all
- *    yield a `skipped` result — never an analysis failure.
+ *  - Graceful everywhere: not a repo, git missing, a shallow clone with no
+ *    commit past its cut (`--depth 1`), or a timeout all yield a `skipped`
+ *    result — never an analysis failure.
+ *  - A deeper shallow clone is read for the history it has. Its cut commits
+ *    (`.git/shallow`) have no parent, so their diff is the whole tree: they
+ *    count as no commit of any file, no co-change and no author's.
  *  - Renames are followed: walking newest-first, a commit that renames
  *    `old` to `new` makes every older mention of `old` count for `new`.
  *  - The window ends at HEAD's commit date, not today: an old checkout
@@ -40,7 +45,7 @@ export interface GitHistoryOptions {
 
 /**
  * Per-file churn over the history window, or the reason history was skipped
- * (not a repository, shallow clone, git failure). A skip is never an error:
+ * (not a repository, a shallow clone with nothing past its cut, git failure). A skip is never an error:
  * the analysis simply goes without churn and hotspots.
  */
 export type GitHistoryResult =
@@ -101,9 +106,19 @@ export async function collectGitHistory(
 
   const inside = await g(["rev-parse", "--is-inside-work-tree"]);
   if (!inside.ok || inside.out.trim() !== "true") return { skipped: "not a git repository" };
+  // A shallow clone's cut commits (`.git/shallow`) show the whole tree as their diff: they are read past, never counted.
+  const cut = new Set<string>();
   const shallow = await g(["rev-parse", "--is-shallow-repository"]);
   if (shallow.ok && shallow.out.trim() === "true") {
-    return { skipped: "shallow clone (no history; clone without --depth to enable)" };
+    const shallowFile = await g(["rev-parse", "--git-path", "shallow"]);
+    let text: string | null = null;
+    try {
+      text = shallowFile.ok && shallowFile.out.trim() ? await readFile(resolve(projectRoot, shallowFile.out.trim()), "utf-8") : null;
+    } catch {
+      text = null;
+    }
+    for (const hash of (text ?? "").split(/\s+/)) if (/^[0-9a-f]{40,64}$/i.test(hash)) cut.add(hash.toLowerCase());
+    if (cut.size === 0) return { skipped: "shallow clone (its cut commits could not be read)" };
   }
   const prefixRes = await g(["rev-parse", "--show-prefix"]);
   const prefix = prefixRes.ok ? prefixRes.out.trim().replace(/\\/g, "/") : "";
@@ -117,6 +132,9 @@ export async function collectGitHistory(
     "--pretty=format:%x01%H%x01%aN%x01%aI%x01%aE%x01%s", "--", ".",
   ]);
   if (!log.ok) return { skipped: `git log failed: ${log.err}` };
+  if (cut.size > 0 && !log.out.split("\n").some((l) => l.startsWith("\x01") && !cut.has((l.split("\x01")[1] ?? "").toLowerCase()))) {
+    return { skipped: "shallow clone (no history past its cut commit; clone deeper or without --depth to enable)" };
+  }
 
   // Canonical path index over the current tree (exact, then case-insensitive).
   const canonical = new Map<string, string>();
@@ -185,10 +203,13 @@ export async function collectGitHistory(
   let fix = false;
   // Dedup guard: numstat lists each path once per commit, but a merge commit
   // shown with default settings lists none — nothing to guard there.
+  let atCut = false;
   for (const line of log.out.split("\n")) {
     if (line.startsWith("\x01")) {
       flushCommit();
       const parts = line.split("\x01");
+      atCut = cut.has((parts[1] ?? "").toLowerCase());
+      if (atCut) continue;
       // The mailmap-resolved name is the identity; the email only stands in
       // for a commit with no name.
       const name = parts[2] ?? "";
@@ -202,6 +223,7 @@ export async function collectGitHistory(
       commitCount++;
       continue;
     }
+    if (atCut) continue;
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
     if (!m) continue;
     let path = m[3]!;

@@ -285,3 +285,47 @@ describe("isFixCommit", () => {
     }
   });
 });
+
+describe("collectGitHistory on a shallow clone", () => {
+  it("reads the history the clone has, the cut commit counting for nothing", async () => {
+    const full = join(root, "deep");
+    mkdirSync(full, { recursive: true });
+    const run = (args: string[], author?: string) =>
+      git(full, args, author ? { GIT_AUTHOR_NAME: author, GIT_COMMITTER_NAME: author } : {});
+    run(["init", "-q"]);
+    run(["config", "user.name", "t"]);
+    run(["config", "user.email", "t@t"]);
+    let n = 0;
+    const touch = (author: string, files: string[]) => {
+      n++;
+      for (const f of files) writeFileSync(join(full, f), `${f} ${n}\n`);
+      run(["add", "-A"]);
+      run(["commit", "-q", "-m", `change ${n}`, "--author", `${author} <${author}@t>`], author);
+    };
+    touch("carol", ["club.ts", "match.ts", "player.ts", "coach.ts", "stadium.ts"]);
+    touch("carol", ["club.ts", "match.ts"]);
+    touch("dave", ["stadium.ts"]); // the cut commit of a --depth 4 clone
+    touch("alice", ["club.ts", "match.ts", "player.ts", "coach.ts"]);
+    touch("bob", ["club.ts", "match.ts", "player.ts", "coach.ts"]);
+    touch("alice", ["club.ts", "match.ts"]);
+
+    const clone = join(root, "deep-clone");
+    git(root, ["clone", "-q", "--depth", "4", `file://${full.replace(/\\/g, "/")}`, clone]);
+    const res = await collectGitHistory(clone, ["club.ts", "match.ts", "player.ts", "coach.ts", "stadium.ts"]);
+    expect("churn" in res).toBe(true);
+    const { churn, commitCount, coChange } = res as { churn: FileChurnInfo[]; commitCount: number; coChange: Array<{ a: string; b: string; count: number }> };
+    // The cut commit's diff is the whole tree: it is no commit of any file.
+    expect(commitCount).toBe(3);
+    const club = churn.find((c) => c.file === "club.ts")!;
+    expect(club.commits).toBe(3);
+    expect(club.additions).toBe(3);
+    expect(club.authorShares).toEqual([{ name: "alice", commits: 2 }, { name: "bob", commits: 1 }]);
+    expect(churn.find((c) => c.file === "player.ts")!.commits).toBe(2);
+    // Only the cut commit touched it inside the clone: no churn, no author credited.
+    expect(churn.some((c) => c.file === "stadium.ts")).toBe(false);
+    expect(churn.some((c) => c.authors.includes("dave"))).toBe(false);
+    // club + match changed together three times; player + coach twice — the cut commit would have made it three.
+    expect(coChange.map((p) => [p.a, p.b, p.count])).toContainEqual(["club.ts", "match.ts", 3]);
+    expect(coChange.some((p) => p.a === "coach.ts" && p.b === "player.ts")).toBe(false);
+  });
+});
