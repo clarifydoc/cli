@@ -74,7 +74,7 @@ const REACH_FOR: ReachRule[] = [
   {
     question: "Why is this code the way it is, and which decisions must a change respect?",
     tools: "clarifydoc_context_docs",
-    why: "it lists the decision records, architecture documents and WHY:/DECISION: comments that name a file, each flagged when the code it names changed after it",
+    why: "it lists the decision records, architecture documents and WHY:/DECISION: comments that name a file, each flagged when the code it names changed after it; for one file or `function`, also the reasons its comments and commit bodies state, labelled as such",
     fileOnly: true,
   },
   {

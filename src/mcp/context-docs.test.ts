@@ -2,11 +2,12 @@
  * clarifydoc_context_docs: decision records, framing documents and declared
  * ones listed, searched and read only from that list; the files a document
  * names, and which of them were committed after it; decision markers in the
- * code; and the same per file in clarifydoc_file.
+ * code; and the same per file in clarifydoc_file. Per file, also the reasons
+ * plain comments and commit bodies state, labelled as such.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "child_process";
-import { appendFile, cp, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { buildMcpServer } from "./server.js";
@@ -35,11 +36,17 @@ beforeAll(async () => {
   await put("notes/match-rules.md", "# Match rules\n\nA match has two clubs.\n");
   await put(".clarifydoc/config.json", JSON.stringify({ context: [{ path: "notes/match-rules.md", description: "before changing scoring" }, { path: "../outside.md" }] }));
   await appendFile(join(proj(), "services", "authService.ts"), "\n// WHY: tokens expire after a match day so a stolen one dies quickly\n");
+  // Blank lines 8 and 15 become comments, so the analyzed spans still hold.
+  const players = join(proj(), "services", "playerService.ts");
+  const rows = (await readFile(players, "utf8")).split("\n");
+  rows[7] = "// Newest first so that the transfer list shows fresh signings on top.";
+  rows[14] = "// Looked up by id because the email of a player can change mid-season.";
+  await writeFile(players, rows.join("\n"));
   git(["init", "-q"], "2026-01-01T10:00:00Z");
   git(["add", "-A"], "2026-01-01T10:00:00Z");
   git(["commit", "-q", "-m", "club backend"], "2026-01-01T10:00:00Z");
   await appendFile(join(proj(), "services", "playerService.ts"), "\nexport const transfers = 1;\n");
-  git(["commit", "-q", "-am", "transfers"], "2026-03-01T10:00:00Z");
+  git(["commit", "-q", "-am", "Count transfers (#42)", "-m", "Transfers are counted on the player row because the league table reads them every match day."], "2026-03-01T10:00:00Z");
 });
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -90,5 +97,24 @@ describe("clarifydoc_context_docs", () => {
     expect(file).toMatch(/## Decisions\n- \[decision\] Players live in Postgres — docs\/adr\/0001-player-store\.md · Accepted · names 1 analyzed file; 1 committed after it/);
     const status = (await call("clarifydoc_status")).text;
     expect(status).toMatch(/context docs: decision records: 2, context documents: 2 \(1 may be stale\) — clarifydoc_context_docs/);
+  });
+
+  it("adds the reasons comments and commit bodies state about a file, labelled as such, narrowed to a function", async () => {
+    const about = (await call("clarifydoc_context_docs", { file: "services/playerService.ts" })).text;
+    expect(about).toContain("## Reasons stated in comments (2) — not decisions");
+    expect(about).toContain('- services/playerService.ts:8 above getAllPlayers() — "Newest first so that the transfer list shows fresh signings on top."');
+    expect(about).toContain('- services/playerService.ts:15 above getPlayerById() — "Looked up by id because the email of a player can change mid-season."');
+    expect(about).toMatch(/## Reasons stated in commits \(1 of 2 read\) — not decisions\n- [0-9a-f]{7,} 2026-03-01 Count transfers \(#42\) — "Transfers are counted on the player row because the league table reads them every match day\."/);
+
+    const ranked = (await call("clarifydoc_context_docs", { file: "services/playerService.ts", query: "email" })).text;
+    expect(ranked.indexOf("Looked up by id")).toBeLessThan(ranked.indexOf("Newest first"));
+
+    const one = (await call("clarifydoc_context_docs", { file: "services/playerService.ts", function: "getAllPlayers" })).text;
+    expect(one).toContain("Newest first so that");
+    expect(one).not.toContain("Looked up by id");
+    expect(one).toContain("lines 9-14");
+
+    expect((await call("clarifydoc_context_docs", { file: "services/playerService.ts", function: "noSuchFn" })).isError).toBe(true);
+    expect((await call("clarifydoc_context_docs", { function: "getAllPlayers" })).isError).toBe(true);
   });
 });
