@@ -26,6 +26,8 @@ export interface ReportPayload {
   symbolLinks: any[];
   componentLaunches: any[];
   screenFlow?: any;
+  /** The ways into each sub-project that are not routes (what types a container: a CLI, a worker, an extension). */
+  entryPoints?: Array<{ kind: string; name: string; filePath: string; projectId?: string }>;
   subProjects: any[];
   fileProjects: Record<string, string>;
   routeMap: any[];
@@ -349,6 +351,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
     symbolLinks: (s.symbolLinks ?? []).map((l: any) => encodeSymbolLink(l, ref, sym)),
     componentLaunches: s.componentLaunches ?? [],
     ...(s.screenFlow ? { screenFlow: s.screenFlow } : {}),
+    ...(s.entryPoints ? { entryPoints: s.entryPoints.map((e: any) => ({ kind: e.kind, name: e.name, filePath: e.filePath, ...(e.projectId ? { projectId: e.projectId } : {}) })) } : {}),
     subProjects: s.subProjects ?? [{ id: "root", name: "(root)", root: "", kind: "root", markers: [] }],
     fileProjects: s.fileProjects ?? {},
     routeMap: summary.routeMap.map((r: any) => {

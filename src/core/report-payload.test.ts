@@ -103,6 +103,21 @@ describe("buildReportPayload wire encoding", () => {
     expect(withMeta.symbolLinks[0][7]).toBe(2 * 100 + 2 * 10 + 1);
   });
 
+  it("carries the entry points that type a container, without their registration detail", () => {
+    const withEntries = buildReportPayload({
+      ...(summary as object),
+      entryPoints: [
+        { kind: "cli-command", name: "season close", handler: "closeSeason", line: 4, framework: "commander", filePath: "src/cli.ts", projectId: "garage" },
+        { kind: "scheduled-job", name: "nightly", line: 9, schedule: "0 2 * * *", filePath: "src/jobs.ts" },
+      ],
+    } as unknown as ProjectAnalysis);
+    expect(withEntries.entryPoints).toEqual([
+      { kind: "cli-command", name: "season close", filePath: "src/cli.ts", projectId: "garage" },
+      { kind: "scheduled-job", name: "nightly", filePath: "src/jobs.ts" },
+    ]);
+    expect(buildReportPayload(summary).entryPoints).toBeUndefined();
+  });
+
   it("packs strategy and relation into higher decades, leaving the old ones alone", () => {
     const withMeta = buildReportPayload({
       ...(summary as object),
