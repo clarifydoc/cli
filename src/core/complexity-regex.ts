@@ -59,10 +59,23 @@ export function computeRegexComplexity(lines: string[], analysis: FileAnalysis, 
     }
     return n;
   };
+  /** The blocks inside a function's span: `blocks` are sorted by start, so search for the first and walk on. */
+  const blocksIn = (from: number, to: number): ConditionalBlock[] => {
+    let lo = 0;
+    let hi = blocks.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (blocks[mid]!.start < from) lo = mid + 1;
+      else hi = mid;
+    }
+    const out: ConditionalBlock[] = [];
+    for (let k = lo; k < blocks.length && blocks[k]!.start < to; k++) if (blocks[k]!.end < to) out.push(blocks[k]!);
+    return out;
+  };
   const measure = (fn: FunctionInfo, name: string): void => {
     // A test suite's body is its tests, each measured on its own.
     if (!fn.endLine || fn.endLine < fn.line || fn.name === "<setup>" || fn.testCase?.kind === "suite") return;
-    const n = countRange(fn.line, Math.min(fn.endLine, lines.length) - 1, blocks.filter((b) => b.start >= fn.line && b.end < fn.endLine));
+    const n = countRange(fn.line, Math.min(fn.endLine, lines.length) - 1, blocksIn(fn.line, fn.endLine));
     // Same operator vocabulary as the cyclomatic count above, so the two numbers agree on what an operator is.
     const structure = regexStructureMetrics(lines, analysis.language, { name, line: fn.line, endLine: fn.endLine }, logical);
     out.push({

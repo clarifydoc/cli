@@ -132,9 +132,6 @@ export async function collectGitHistory(
     "--pretty=format:%x01%H%x01%aN%x01%aI%x01%aE%x01%s", "--", ".",
   ]);
   if (!log.ok) return { skipped: `git log failed: ${log.err}` };
-  if (cut.size > 0 && !log.out.split("\n").some((l) => l.startsWith("\x01") && !cut.has((l.split("\x01")[1] ?? "").toLowerCase()))) {
-    return { skipped: "shallow clone (no history past its cut commit; clone deeper or without --depth to enable)" };
-  }
 
   // Canonical path index over the current tree (exact, then case-insensitive).
   const canonical = new Map<string, string>();
@@ -261,6 +258,8 @@ export async function collectGitHistory(
   }
 
   flushCommit();
+  // The cut commits count for nothing: with nothing past them there is no history to read.
+  if (cut.size > 0 && commitCount === 0) return { skipped: "shallow clone (no history past its cut commit; clone deeper or without --depth to enable)" };
   const churn: FileChurnInfo[] = [...byFile.entries()]
     .map(([file, acc]) => {
       const ranked = [...acc.authors.entries()]

@@ -934,10 +934,11 @@ export interface CallExtractionHooks {
   receiverTypeOf?(node: Node): { type: string; qualifier?: string } | null;
   /**
    * The name a dispatching call routes on (`dispatch('contacts/get')` →
-   * "contacts/get"), or null. Called for every call node: bail out cheaply.
-   * Sets `CallInfo.key`.
+   * "contacts/get"), or null. Called for every call node: bail out cheaply —
+   * `name` is the call's name as read, so most calls can be ruled out before
+   * touching the tree. Sets `CallInfo.key`.
    */
-  keyOf?(node: Node): string | null;
+  keyOf?(node: Node, name?: string): string | null;
   /**
    * The argument expressions a call passes, as written, or null. Called for every
    * call node: bail out cheaply, and report only the calls a project pass needs

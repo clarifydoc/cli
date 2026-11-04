@@ -230,7 +230,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
+      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -433,7 +433,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
-      const key = name ? keyOf?.(node) : null;
+      const key = name ? keyOf?.(node, name) : null;
       if (name && key && !seen.has(`${name}\0${key}`)) {
         seen.add(`${name}\0${key}`);
         results.push({ name, kind: "internal", target: null, line: node.startPosition.row + 1, column: node.startPosition.column, key });

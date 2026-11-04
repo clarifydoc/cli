@@ -26,7 +26,7 @@ const HOOKS = new Set(["before", "after", "around", "prepend_before", "append_af
 const BLOCK = /^(\s*)(?:RSpec\s*\.\s*)?([a-z_]+)\b\s*(\(?)\s*(.*?)\s*\)?\s*(?:do(?:\s*\|[^|]*\|)?|\{(?:\s*\|[^|]*\|)?.*)\s*$/;
 
 /** Cheap gate: a spec file names a group the RSpec way. */
-const GATE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature|shared_examples)\b/m;
+const GATE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature|shared_examples)\b/;
 
 /** A title as written: a quoted string unquoted, a constant (`Club`, `League::Table`) as its text. */
 function titleOf(args: string): { title: string; subject?: string } | null {
@@ -146,7 +146,7 @@ function addTypedMemberCalls(code: readonly string[], from: number, to: number, 
  * appended to `fns`. A file with no RSpec group is returned as it was.
  */
 export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPatterns: CallPattern[]): FunctionInfo[] {
-  if (!GATE.test(lines.join("\n"))) return fns;
+  if (!lines.some((l) => GATE.test(l))) return fns;
   const code = rubyCodeLinesOf(lines);
   const ends = rubyBlockEndsOf(lines);
   interface Block { start: number; end: number; kind: "suite" | "case" | "hook"; title: string; subject?: string; parent: Block | null; }

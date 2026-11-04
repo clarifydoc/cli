@@ -1,3 +1,5 @@
+import { execFile } from "child_process";
+
 /**
  * Arguments every git the analyzer spawns carries, so that a repository's own
  * `.git/config` can never make git run a program of its choosing. A folder
@@ -17,4 +19,13 @@ export const GIT_SAFE_DIFF: readonly string[] = ["--no-ext-diff", "--no-textconv
 /** `git -C root …args` with the safe config in front. */
 export function gitArgs(root: string, args: readonly string[]): string[] {
   return [...GIT_SAFE_CONFIG, "-C", root, ...args];
+}
+
+/** A git command's stdout, run safely under a timeout; null when git is missing, fails or times out. */
+export function gitText(root: string, args: readonly string[], timeoutMs = 3000): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("git", gitArgs(root, args), { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout) =>
+      resolve(err ? null : stdout.toString()),
+    );
+  });
 }

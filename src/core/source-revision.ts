@@ -1,5 +1,4 @@
-import { execFile } from "child_process";
-import { gitArgs } from "./git-safe.js";
+import { gitText as git } from "./git-safe.js";
 
 /** The commit an analysis was made at. */
 export interface SourceRevision {
@@ -8,14 +7,6 @@ export interface SourceRevision {
   branch: string | null;
   /** Tracked files with uncommitted changes when the analysis ran. */
   dirty: number;
-}
-
-function git(cwd: string, args: string[], timeoutMs = 3000): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("git", gitArgs(cwd, args), { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout) =>
-      resolve(err ? null : stdout.toString()),
-    );
-  });
 }
 
 /** The commit, branch and dirty count of a git work tree; null outside one or without git. */

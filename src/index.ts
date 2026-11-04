@@ -51,9 +51,7 @@ export { isTestFile } from "./core/test-file-detector.js";
 export {
   fileTestVerdict,
   testVerdictContext,
-  testsReachingEach,
   type FileTestVerdict,
-  type TestVerdictBasis,
   type TestVerdictContext,
   type TestReach,
 } from "./core/test-functions.js";

@@ -23,7 +23,9 @@ const COMMAND_FILE = /(?:^|\/)management\/commands\/([A-Za-z_]\w*)\.py$/;
 const RUN_METHODS = ["add_arguments", "handle"] as const;
 
 /** `call_command("name", …)` / `management.call_command("name", …)` → `django-command:name`. */
-export function djangoCommandKey(node: Node): string | null {
+export function djangoCommandKey(node: Node, callName?: string): string | null {
+  // The call's name is known already: rule out nearly every call before reading the tree.
+  if (callName !== undefined && callName !== "call_command" && !callName.endsWith(".call_command")) return null;
   if (node.type !== "call") return null;
   const fn = node.childForFieldName("function");
   if (!fn) return null;
@@ -36,7 +38,6 @@ export function djangoCommandKey(node: Node): string | null {
 }
 
 interface CommandDef {
-  file: string;
   projectId: string | undefined;
   cls: ClassInfo;
 }
@@ -48,16 +49,22 @@ export class DjangoCommandResolver implements DispatchResolver {
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const commands = new Map<string, CommandDef[]>();
-    const classesByName = new Map<string, ClassInfo[]>();
     for (const a of analyses) {
-      for (const c of a.classes) (classesByName.get(c.name) ?? classesByName.set(c.name, []).get(c.name)!).push(c);
       const m = COMMAND_FILE.exec(a.filePath);
       if (!m || m[1] === "__init__") continue;
       const cls = a.classes.find((c) => c.name === "Command");
       if (!cls) continue;
-      (commands.get(m[1]!) ?? commands.set(m[1]!, []).get(m[1]!)!).push({ file: a.filePath, projectId: a.projectId, cls });
+      (commands.get(m[1]!) ?? commands.set(m[1]!, []).get(m[1]!)!).push({ projectId: a.projectId, cls });
     }
     if (commands.size === 0) return [];
+    const classesByName = new Map<string, ClassInfo[]>();
+    const fileOf = new Map<ClassInfo, string>();
+    for (const a of analyses) {
+      for (const c of a.classes) {
+        (classesByName.get(c.name) ?? classesByName.set(c.name, []).get(c.name)!).push(c);
+        fileOf.set(c, a.filePath);
+      }
+    }
 
     /** The method `call_command` runs: the command's own, else the one base declaring it (bases named once in the analysis). */
     const methodOf = (cls: ClassInfo, name: string): { cls: ClassInfo; line: number } | null => {
@@ -70,9 +77,6 @@ export class DjangoCommandResolver implements DispatchResolver {
       }
       return null;
     };
-    const fileOf = new Map<ClassInfo, string>();
-    for (const a of analyses) for (const c of a.classes) fileOf.set(c, a.filePath);
-
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     const scan = (a: FileAnalysis, symbol: string, calls: FileAnalysis["functions"][number]["calls"]): void => {
@@ -86,7 +90,7 @@ export class DjangoCommandResolver implements DispatchResolver {
         for (const name of RUN_METHODS) {
           const m = methodOf(def.cls, name);
           if (!m) continue;
-          const targetFile = fileOf.get(m.cls) ?? def.file;
+          const targetFile = fileOf.get(m.cls)!;
           const targetSymbol = `${m.cls.name}.${name}`;
           const id = `${a.filePath}\0${symbol}\0${targetFile}\0${targetSymbol}`;
           if (seen.has(id)) continue;

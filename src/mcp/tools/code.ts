@@ -6,7 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import { fileTestVerdict, testCodeIndex } from "../../core/test-functions.js";
+import { fileTestVerdict, testVerdictContext, type TestVerdictContext } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import { untrackedAmong } from "../../core/source-revision.js";
@@ -698,11 +698,16 @@ export function fileTool(ctx: ToolContext): McpTool {
  * reaches it through the call graph and the calls it takes (never on through a hub to its other
  * callers), and what a coverage report saw run. Capped at `limit` rows per list.
  */
+/** The verdict context of a loaded summary: its link index is built once, not per call. */
+const verdictContexts = new WeakMap<object, TestVerdictContext>();
+
 async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: string, limit: number): Promise<string[]> {
   const summary = loaded.summary;
   const lines: string[] = [];
   const detail = await ctx.store.fileAnalysis(path);
-  const verdict = fileTestVerdict(summary, path, detail);
+  let vctx = verdictContexts.get(summary);
+  if (!vctx) verdictContexts.set(summary, (vctx = testVerdictContext(summary)));
+  const verdict = fileTestVerdict(summary, path, detail, vctx);
   const declared = verdict.declared;
   if (declared.length) {
     const kinds = countMap(Object.fromEntries(["case", "suite", "hook", "helper"].map((k) => [`${k}s`, declared.filter((d) => d.kind === k).length])));
@@ -710,7 +715,7 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     lines.push(...bulletList(declared.filter((d) => d.kind !== "helper"), limit, (d) => `${d.symbol} [${d.kind}] (line ${d.line})`, { indent: "  " }));
   }
   if (verdict.state === "test_file") {
-    const testCode = testCodeIndex(summary);
+    const testCode = vctx.testCode;
     lines.unshift(`a test file${verdict.testFileBy === "layer" ? " (its layer)" : " (by its path)"}`);
     // What its tests exercise: the functions they call outside test code.
     const out = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === path && !l.navigational && !l.sourceSymbol.startsWith("(") && !testCode.isTest(l.targetFile, l.targetSymbol));
@@ -741,7 +746,8 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     );
   }
   const report = summary.testCoverage;
-  const cov = report?.files.find((x) => x.file === path);
+  // The row itself, not `verdict.coverage`: a per-test report alone names a file with no line total.
+  const cov = vctx.coverageRow(path);
   if (cov && cov.total > 0) {
     const from = report!.sources.filter((x) => !x.unread).map((x) => `${x.file}${x.stale ? ", older than the sources" : ""}`).join("; ");
     lines.push(`coverage: ${Math.round((cov.covered / cov.total) * 100)}% of ${cov.total} lines ran (${from})${cov.uncovered ? `; not run: lines ${cov.uncovered.length > 60 ? `${cov.uncovered.slice(0, 60)}…` : cov.uncovered}` : ""}`);

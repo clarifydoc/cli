@@ -16,12 +16,13 @@
  * core knows none of its own.
  */
 
-import { execFile } from "child_process";
 import type { DocCommentSpec } from "../types/language-plugin.js";
-import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
+import { GIT_SAFE_DIFF, gitText } from "./git-safe.js";
+import { LICENCE } from "./doc-comments.js";
+import { isGeneratedSource } from "./generated-file-detector.js";
 
 /** Longest quoted comment or commit paragraph, in characters. */
-export const MAX_REASON_LENGTH = 300;
+const MAX_REASON_LENGTH = 300;
 
 /**
  * A verb that makes the words after `since` a clause, not a point in time. The past tense is left out:
@@ -77,7 +78,6 @@ function excerpt(text: string): string {
   return `${start > 0 ? "…" : ""}${end}${start + end.length < text.length ? "…" : ""}`;
 }
 
-const LICENCE = /\b(?:copyright|licen[cs]ed?|spdx-license|all rights reserved)\b/i;
 const GENERATED = /\b(?:code generated|@generated|auto-?generated|do not edit)\b/i;
 /** A comment row that reads as code: ends in `;`, `{`, `}`, `(` or `,`, opens with a keyword and a symbol, or assigns or calls. */
 const CODE_ROW = /[;{}(,]\s*$|^(?:import|from|export|const|let|var|return|def|fn|func|function|class|public|private|await|raise|throw)\b[^.]*[=({:]|^(?:if|for|while|elif|else)\b[^.]*[({:]\s*$|^[\w.$[\]]+\s*(?:[-+*/]?=[^=]|\([^)]*\)\s*;?$)|=>|^[)\]}]/;
@@ -159,9 +159,8 @@ function commentBlocks(lines: readonly string[], spec: DocCommentSpec): Block[] 
  * analyzed spans. Nothing in a generated file.
  */
 export function findReasonComments(source: string, file: string, spec: DocCommentSpec | undefined, functions: readonly FunctionSpan[]): ReasonComment[] {
-  if (!spec || !REASONS.some((re) => re.test(source))) return [];
+  if (!spec || !REASONS.some((re) => re.test(source)) || isGeneratedSource(source)) return [];
   const lines = source.split(/\r?\n/);
-  if (GENERATED.test(lines.slice(0, 5).join("\n"))) return [];
   const out: ReasonComment[] = [];
   for (const b of commentBlocks(lines, spec)) {
     const rows = b.rows.map((r) => r.replace(/^[*#!/\s]+/, "").replace(/\s*\*+\/?\s*$/, "").trim()).filter(Boolean);
@@ -231,12 +230,6 @@ export function reasonParagraph(body: string): string | null {
 const BOT = /\[bot\]|dependabot|renovate/i;
 const DEPENDENCY_BUMP = /^(?:bump|update dependency|chore\(deps)/i;
 
-function runGit(root: string, args: readonly string[], timeoutMs: number): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("git", gitArgs(root, args), { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout.toString()));
-  });
-}
-
 const FORMAT = "--format=%x1e%h%x1f%ad%x1f%an%x1f%s%x1f%b%x1f";
 
 /**
@@ -251,16 +244,18 @@ export async function commitReasons(
   file: string,
   { lines, maxCommits = 30, rangeCommits = 10, timeoutMs = 5000 }: { lines?: readonly [number, number]; maxCommits?: number; rangeCommits?: number; timeoutMs?: number } = {},
 ): Promise<CommitReasons> {
-  const shallow = await runGit(root, ["rev-parse", "--is-shallow-repository"], timeoutMs);
-  if (shallow === null) return { status: "no-git", scope: lines ? "lines" : "file", scanned: 0, reasons: [] };
-  const flags = shallow.trim() === "true" ? { shallow: true } : {};
+  // Independent of the log, so asked alongside it.
+  const shallowAsked = gitText(root, ["rev-parse", "--is-shallow-repository"], timeoutMs);
   let scope: CommitReasons["scope"] = "file";
   let out: string | null = null;
   if (lines && lines[0] >= 1 && lines[1] >= lines[0]) {
-    out = await runGit(root, ["log", `-L${lines[0]},${lines[1]}:${file}`, "-s", ...GIT_SAFE_DIFF, `-n${rangeCommits}`, "--date=short", FORMAT], timeoutMs);
+    out = await gitText(root, ["log", `-L${lines[0]},${lines[1]}:${file}`, "-s", ...GIT_SAFE_DIFF, `-n${rangeCommits}`, "--date=short", FORMAT], timeoutMs);
     if (out !== null) scope = "lines";
   }
-  out ??= await runGit(root, ["log", "--follow", `-n${maxCommits}`, "--date=short", FORMAT, "--", file], timeoutMs);
+  out ??= await gitText(root, ["log", "--follow", `-n${maxCommits}`, "--date=short", FORMAT, "--", file], timeoutMs);
+  const shallow = await shallowAsked;
+  if (shallow === null) return { status: "no-git", scope: lines ? "lines" : "file", scanned: 0, reasons: [] };
+  const flags = shallow.trim() === "true" ? { shallow: true } : {};
   if (out === null) return { status: "failed", ...flags, scope, scanned: 0, reasons: [] };
   const reasons: CommitReason[] = [];
   let scanned = 0;

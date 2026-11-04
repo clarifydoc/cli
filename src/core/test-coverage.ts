@@ -41,7 +41,7 @@ function addRun(tests: TestRuns, file: string, test: string, line: number): void
  * (`|run`, `|setup`, `|teardown`) dropped, so a test's fixtures count as the
  * test. The empty context — code run outside any test, imports — is no test.
  */
-export function testContextId(context: string): string {
+function testContextId(context: string): string {
   return context.replace(/\|(?:run|setup|teardown)$/, "").trim();
 }
 
@@ -66,25 +66,17 @@ export function detectFormat(text: string): CoverageFormat | null {
 }
 
 export function parseLcov(text: string): LineHits {
-  const hits: LineHits = new Map();
-  let file = "";
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line.startsWith("SF:")) file = line.slice(3);
-    else if (line.startsWith("DA:") && file) {
-      const [n, c] = line.slice(3).split(",");
-      add(hits, file, Number(n), Number(c));
-    } else if (line === "end_of_record") file = "";
-  }
-  return hits;
+  return readLcov(text).hits;
 }
 
 /**
- * The tests a per-test lcov names (`TN:<name>`, standing until the next one),
- * with the lines each ran. Undefined unless two distinct names appear: a
- * merged report has one name for every record, or a blank one.
+ * One pass over an lcov report: the hits per line, and the tests a per-test
+ * report names (`TN:<name>`, standing until the next one) with the lines each
+ * ran — only when two distinct names appear: a merged report has one name for
+ * every record, or a blank one.
  */
-export function lcovTestRuns(text: string): TestRuns | undefined {
+function readLcov(text: string): { hits: LineHits; tests?: TestRuns } {
+  const hits: LineHits = new Map();
   const tests: TestRuns = new Map();
   const names = new Set<string>();
   let test = "";
@@ -95,19 +87,20 @@ export function lcovTestRuns(text: string): TestRuns | undefined {
       test = line.slice(3).trim();
       if (test) names.add(test);
     } else if (line.startsWith("SF:")) file = line.slice(3);
-    else if (line.startsWith("DA:") && file && test) {
+    else if (line.startsWith("DA:") && file) {
       const [n, c] = line.slice(3).split(",");
-      if (Number(c) > 0) addRun(tests, file, test, Number(n));
+      add(hits, file, Number(n), Number(c));
+      if (test && Number(c) > 0) addRun(tests, file, test, Number(n));
     } else if (line === "end_of_record") file = "";
   }
-  return names.size >= 2 ? tests : undefined;
+  return names.size >= 2 ? { hits, tests } : { hits };
 }
 
 /**
  * coverage.py's JSON report: per file, `executed_lines` and `missing_lines`,
  * and with `--show-contexts` `contexts: { "<line>": ["<context>", …] }`.
  */
-export function parseCoveragePyJson(text: string): { hits: LineHits; tests?: TestRuns } {
+function parseCoveragePyJson(text: string): { hits: LineHits; tests?: TestRuns } {
   const hits: LineHits = new Map();
   const tests: TestRuns = new Map();
   let doc: { files?: Record<string, { executed_lines?: number[]; missing_lines?: number[]; contexts?: Record<string, string[]> }> };
@@ -184,10 +177,7 @@ export function parseCoverage(text: string): { format: CoverageFormat; hits: Lin
   const format = detectFormat(text);
   if (!format || format === "coveragepy-db") return null;
   if (format === "coveragepy-json") return { format, ...parseCoveragePyJson(text) };
-  if (format === "lcov") {
-    const tests = lcovTestRuns(text);
-    return { format, hits: parseLcov(text), ...(tests ? { tests } : {}) };
-  }
+  if (format === "lcov") return { format, ...readLcov(text) };
   const parse = { cobertura: parseCobertura, jacoco: parseJacoco, clover: parseClover, go: parseGoCover }[format];
   return { format, hits: parse(text) };
 }
@@ -198,7 +188,7 @@ export function isSqliteFile(head: Uint8Array): boolean {
 }
 
 /** coverage.py's numbits: line n is bit n%8 of byte n//8. */
-export function numbitsLines(bytes: Uint8Array): number[] {
+function numbitsLines(bytes: Uint8Array): number[] {
   const out: number[] = [];
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i]!;
@@ -364,7 +354,7 @@ export interface TestCoverageReport {
 }
 
 /** Tests kept per function; `testCount` says how many ran it. */
-export const MAX_TESTS_PER_FUNCTION = 12;
+const MAX_TESTS_PER_FUNCTION = 12;
 
 /** A report as `buildTestCoverage` takes it. */
 export interface CoverageReportInput {
@@ -462,24 +452,35 @@ export function buildTestCoverage(
     const a = byPath.get(file);
     const spans = a ? [...a.functions, ...a.classes.flatMap((c) => (c.methods ?? []).map((m) => ({ ...m, owner: c.name })))].filter((f) => f.line && f.endLine >= f.line && !f.name.startsWith("<")) : [];
     const seen = new Set<string>();
-    const functions: NonNullable<FileTestCoverage["functions"]> = [];
-    for (const f of spans) {
+    const fns = spans.filter((f) => {
       const key = `${f.line}:${f.name}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const inside = counted.filter(([n]) => n >= f.line && n <= f.endLine);
-      // The tests that ran a line of it, by how many of its lines each ran.
-      const ranBy: Array<[string, number]> = [];
-      for (const [test, lines] of ran ?? []) {
-        let n = 0;
-        for (const l of lines) if (l >= f.line && l <= f.endLine) n++;
-        if (n) ranBy.push([test, n]);
+      return !seen.has(key) && !!seen.add(key);
+    });
+    // Line → the spans holding it (nested ones too), so each line and each test's lines are read once.
+    const at: number[][] = [];
+    fns.forEach((f, i) => {
+      for (let l = f.line; l <= f.endLine; l++) (at[l] ??= []).push(i);
+    });
+    const counts = fns.map(() => ({ total: 0, covered: 0 }));
+    for (const [n, c] of counted) {
+      for (const i of at[n] ?? []) {
+        counts[i]!.total++;
+        if (c > 0) counts[i]!.covered++;
       }
-      if (inside.length === 0 && ranBy.length === 0) continue;
-      const row: NonNullable<FileTestCoverage["functions"]>[number] = { name: f.name, line: f.line, endLine: f.endLine, total: inside.length, covered: inside.filter(([, c]) => c > 0).length };
+    }
+    // The tests that ran a line of each span, by how many of its lines each ran.
+    const ranBy = fns.map(() => new Map<string, number>());
+    for (const [test, lines] of ran ?? []) {
+      for (const l of lines) for (const i of at[l] ?? []) ranBy[i]!.set(test, (ranBy[i]!.get(test) ?? 0) + 1);
+    }
+    const functions: NonNullable<FileTestCoverage["functions"]> = [];
+    fns.forEach((f, i) => {
+      const { total: inside, covered: insideRun } = counts[i]!;
+      if (inside === 0 && ranBy[i]!.size === 0) return;
+      const row: NonNullable<FileTestCoverage["functions"]>[number] = { name: f.name, line: f.line, endLine: f.endLine, total: inside, covered: insideRun };
       // A test function running its own lines is no evidence about it.
       const self = "owner" in f ? `${f.owner}.${f.name}` : f.name;
-      const others = ranBy.filter(([test]) => {
+      const others = [...ranBy[i]!].filter(([test]) => {
         const t = resolve(test);
         return !(t.file === file && t.symbol === self);
       });
@@ -489,7 +490,7 @@ export function buildTestCoverage(
         row.testCount = others.length;
       }
       functions.push(row);
-    }
+    });
     files.push({
       file,
       total: counted.length,

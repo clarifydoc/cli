@@ -133,12 +133,15 @@ export function contextDocsTool(ctx: ToolContext): McpTool {
       if (fileArg) {
         const file = mustResolveFile(loaded, fileArg);
         const docs = index.docs.filter((d) => index.staleness.get(d.path)?.governs.includes(file));
-        const markers = await markersIn(root, file);
+        const source = await readFile(join(root, file), "utf8").catch(() => "");
+        const markers = findDecisionMarkers(source, file);
         const analysis = await ctx.store.fileAnalysis(file);
         const fn = functionArg ? mustResolveFunction(analysis, file, functionArg) : undefined;
         const terms = query?.split(/\s+/).filter(Boolean) ?? [];
-        const { comments, unread } = await reasonComments(root, file, analysis, fn);
-        const commits = await commitReasons(root, file, fn ? { lines: [fn.line, fn.endLine] } : {});
+        const [{ comments, unread }, commits] = await Promise.all([
+          reasonComments(source, file, analysis, fn),
+          commitReasons(root, file, fn ? { lines: [fn.line, fn.endLine] } : {}),
+        ]);
         const shownComments = rank(comments, terms, (c) => `${c.text} ${c.anchor?.name ?? ""}`);
         const shownCommits = rank(commits.reasons, terms, (c) => `${c.subject} ${c.excerpt}`);
         const of = fn ? `${fn.name}() in ${file}` : file;
@@ -249,13 +252,12 @@ function mustResolveFunction(analysis: FileAnalysis | null, file: string, name: 
 }
 
 /** The reason-stating comments of a file, narrowed to those in or directly above `fn`; `unread` says why none could be read. */
-async function reasonComments(root: string, file: string, analysis: FileAnalysis | null, fn: FunctionSpan | undefined): Promise<{ comments: ReasonComment[]; unread?: string }> {
+async function reasonComments(source: string, file: string, analysis: FileAnalysis | null, fn: FunctionSpan | undefined): Promise<{ comments: ReasonComment[]; unread?: string }> {
   if (!analysis) return { comments: [], unread: "no per-file analysis" };
   if (analysis.generated || analysis.vendoredLibrary) return { comments: [], unread: "generated or vendored file" };
   // Plugins load lazily; the comment syntax is on the language's meta.
   const spec = await ensureLanguagesLoaded([analysis.language]).then(() => pluginFor(analysis.language)?.docComments, () => undefined);
   if (!spec) return { comments: [], unread: `no comment syntax declared for ${analysis.language}` };
-  const source = await readFile(join(root, file), "utf8").catch(() => "");
   const all = findReasonComments(source, file, spec, spansOf(analysis));
   return { comments: fn ? all.filter((c) => (c.anchor?.name === fn.name && c.anchor.line === fn.line) || (c.line >= fn.line && c.endLine <= fn.endLine)) : all };
 }
@@ -267,7 +269,7 @@ function rank<T>(rows: readonly T[], terms: readonly string[], text: (row: T) =>
     const t = text(row).toLowerCase();
     return terms.filter((term) => t.includes(term)).length;
   };
-  return rows.map((row, i) => ({ row, i, s: score(row) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.row);
+  return rows.map((row) => ({ row, s: score(row) })).sort((a, b) => b.s - a.s).map((x) => x.row);
 }
 
 function topRows<T>(rows: readonly T[], limit: number, render: (row: T) => string): string[] {

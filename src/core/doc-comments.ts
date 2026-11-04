@@ -17,7 +17,7 @@ import type { DocCommentSpec } from "../types/language-plugin.js";
 /** Longest doc kept, in characters. */
 export const MAX_DOC_LENGTH = 200;
 
-const LICENCE = /\b(?:copyright|licen[cs]ed?|spdx-license|all rights reserved)\b/i;
+export const LICENCE = /\b(?:copyright|licen[cs]ed?|spdx-license|all rights reserved)\b/i;
 const DIRECTIVE = /^(?:frozen_string_literal|typed:|(?:en)?coding[:=]|@generated|auto-?generated|do not edit|go:\w|\+build|eslint|prettier|istanbul|tslint|@ts-|ts-|noqa|type:\s*ignore|pylint|rubocop|region\b|endregion\b|#region|nolint|nosec|todo\b|fixme\b|hack\b|xxx\b|-\*-|<reference\b)/i;
 const TAG = /^(?:@\w|:(?:param|returns?|raises?|type|rtype)\b|\\(?:param|return)\b|<(?:param|typeparam|returns?|remarks|exception|example)\b|(?:Args|Arguments|Returns|Raises|Parameters|Example|Examples):$)/i;
 /** C#'s summary wrapper and Doxygen's brief marker: around the text, not the end of it. */

@@ -14,13 +14,13 @@ import type { DataSourceInfo } from "../../../types/analysis.js";
  */
 
 /** An RSpec group at the top level, or a Rails test class that requests by path. */
-const TEST_FILE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature)\b|<\s*(?:ActionDispatch::IntegrationTest|ActionController::TestCase)\b/m;
+const TEST_FILE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature)\b|<\s*(?:ActionDispatch::IntegrationTest|ActionController::TestCase)\b/;
 
 /** `get "/path"` at a statement's start, or first in a block or parentheses (`expect { post "/x" }`). */
 const REQUEST = /(?:^|[{(;]|\bdo)\s*(get|post|put|patch|delete|head)\s*\(?\s*(["'])(\/(?:[^"'\\]|\\.)*)\2/g;
 
 export function extractRubyTestRequests(lines: readonly string[]): DataSourceInfo[] {
-  if (!TEST_FILE.test(lines.join("\n"))) return [];
+  if (!lines.some((l) => TEST_FILE.test(l))) return [];
   const out: DataSourceInfo[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";

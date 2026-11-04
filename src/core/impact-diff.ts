@@ -369,7 +369,6 @@ export function computeImpactDiff(
   for (const t of measured?.tests ?? []) {
     if (t.file && changedSet.has(t.file) === false && canonical.has(t.file) && !tests.includes(t.file)) tests.push(t.file);
   }
-  tests.sort();
 
   // ── The tests that exercise the change, and how to run them ──
   const testCode = testCodeIndex(summary);
@@ -381,10 +380,8 @@ export function computeImpactDiff(
     : [];
   // A test declared beside production code (a Rust `#[cfg(test)]` module) is in no test file: its file runs it.
   const inline = testCallers.map((t) => t.file).filter((f) => !tests.includes(f));
-  if (inline.length) {
-    tests.push(...new Set(inline));
-    tests.sort();
-  }
+  tests.push(...new Set(inline));
+  tests.sort();
   const targets = new Map<string, Set<string>>();
   // Measured first: a runner takes them as the report names them.
   for (const t of measured?.tests ?? []) {
@@ -649,7 +646,8 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
   if (r.measuredTests) {
     const m = r.measuredTests;
-    row(`Measured — tests that ran the change (${m.from.join(", ")})`, `${m.tests.slice(0, 10).map((t) => `\`${measuredLabel(t, false)}\``).join(", ")}${m.tests.length - Math.min(10, m.tests.length) + m.more ? ` … +${m.tests.length - Math.min(10, m.tests.length) + m.more} more` : ""}`);
+    const rest = m.tests.length - Math.min(10, m.tests.length) + m.more;
+    row(`Measured — tests that ran the change (${m.from.join(", ")})`, `${m.tests.slice(0, 10).map((t) => `\`${measuredLabel(t, false)}\``).join(", ")}${rest ? ` … +${rest} more` : ""}`);
   }
   row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
   if (r.coverageNote) row("Per-test evidence", `unavailable — ${r.coverageNote}`);
@@ -776,7 +774,8 @@ function measuredTestsOf(
     }
   }
   if (!byId.size) return undefined;
-  const tests = [...byId.values()].map((t, i) => [t, i] as const).sort((a, b) => b[0].ran.length - a[0].ran.length || a[1] - b[1]).map(([t]) => t);
+  // Stable: equally broad tests keep the report's order.
+  const tests = [...byId.values()].sort((a, b) => b.ran.length - a.ran.length);
   return { tests: tests.slice(0, 50), more: more + Math.max(0, tests.length - 50), from: perTestSources(coverage) };
 }
 

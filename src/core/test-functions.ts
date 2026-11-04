@@ -229,6 +229,8 @@ export interface TestVerdictContext {
   testCode: TestCodeIndex;
   testImportersOf(path: string): string[];
   reach(targets: ReadonlyArray<{ file: string; symbol: string }>): Map<string, TestReach>;
+  /** The file's row in the coverage report, if it names the file. */
+  coverageRow(path: string): FileTestCoverage | undefined;
 }
 
 type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage">;
@@ -237,6 +239,7 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
   const testCode = testCodeIndex(summary);
   let importers: Map<string, string[]> | undefined;
   let walker: ReturnType<typeof testReachWalker> | undefined;
+  let coverage: Map<string, FileTestCoverage> | undefined;
   return {
     testCode,
     testImportersOf(path) {
@@ -254,6 +257,10 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
       walker ??= testReachWalker(summary, 6, testCode);
       return walker(targets);
     },
+    coverageRow(path) {
+      coverage ??= new Map((summary.testCoverage?.files ?? []).map((f) => [f.file, f]));
+      return coverage.get(path);
+    },
   };
 }
 
@@ -264,9 +271,8 @@ export function fileTestVerdict(
   ctx: TestVerdictContext = testVerdictContext(summary),
 ): FileTestVerdict {
   const declared = summary.testFunctions?.[path] ?? [];
-  const reach = new Map<string, TestReach>();
   if (ctx.testCode.isTestFile(path)) {
-    return { state: "test_file", basis: [], testFileBy: summary.fileLayerMap?.[path] === "test" ? "layer" : "path", declared, importers: [], functions: [], reach };
+    return { state: "test_file", basis: [], testFileBy: summary.fileLayerMap?.[path] === "test" ? "layer" : "path", declared, importers: [], functions: [], reach: new Map() };
   }
   const basis: TestVerdictBasis[] = [];
   const importers = ctx.testImportersOf(path);
@@ -278,11 +284,9 @@ export function fileTestVerdict(
         ...file.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic).map((m) => ({ symbol: `${c.name}.${m.name}`, line: m.line }))),
       ].filter((fn) => !own.has(fn.symbol))
     : [];
-  if (functions.length) {
-    for (const [k, v] of ctx.reach(functions.map((fn) => ({ file: path, symbol: fn.symbol })))) reach.set(k, v);
-    if (reach.size) basis.push("reached-function");
-  }
-  const row = summary.testCoverage?.files.find((x) => x.file === path);
+  const reach = functions.length ? ctx.reach(functions.map((fn) => ({ file: path, symbol: fn.symbol }))) : new Map<string, TestReach>();
+  if (reach.size) basis.push("reached-function");
+  const row = ctx.coverageRow(path);
   const coverage = row && row.total > 0 ? row : undefined;
   if (coverage && coverage.covered > 0) basis.push("coverage");
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
