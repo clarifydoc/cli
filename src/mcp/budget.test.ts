@@ -35,7 +35,7 @@ const ARGUMENTS: Record<string, number> = {
   clarifydoc_status: 0, clarifydoc_search: 7, clarifydoc_routes: 17, clarifydoc_contract: 5, clarifydoc_services: 3,
   clarifydoc_screens: 6, clarifydoc_file: 3, clarifydoc_trace: 8, clarifydoc_extract: 5, clarifydoc_blast_radius: 2,
   clarifydoc_data_model: 4, clarifydoc_data_flows: 6, clarifydoc_health: 5, clarifydoc_architecture: 4,
-  clarifydoc_context_docs: 3, clarifydoc_impact: 4, clarifydoc_control_flow: 4, clarifydoc_analyze: 2, clarifydoc_explain: 4,
+  clarifydoc_context_docs: 4, clarifydoc_impact: 4, clarifydoc_control_flow: 4, clarifydoc_analyze: 2, clarifydoc_explain: 4,
 };
 
 afterEach(() => {

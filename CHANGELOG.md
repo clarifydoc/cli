@@ -14,6 +14,14 @@ recorded in the git history only.
 
 ### Added
 
+- **`clarifydoc_context_docs file=` says why without a decision record.** After the decision records and markers,
+  two lanes read locally with no model: comments that state a reason ("because", "so that", "to avoid", "since"
+  as a clause — never "since v2.3"), each the whole comment block anchored to the function it sits above or in;
+  and the paragraph of a commit body that states one (the file's last 30 commits, renames followed; subject, date,
+  pull request number). Both are labelled as stated reasons, not decisions. `function=` narrows them to one
+  function — the commits through `git log -L` over its lines. Licence headers, commented-out code, generated
+  files and dependency-bump commits are not read; a shallow clone or a folder without git says so.
+
 - **C and C++: fewer files left to the patterns, again.** Of six C repositories 0–11% of `.c` files keep the
   patterns' reading (was 1–11%; one 8% → 5%, one 2% → 0%) and 0–8% of headers (was 3–16%); of seven C++ repositories
   0–10% of files (was 0–16%).
