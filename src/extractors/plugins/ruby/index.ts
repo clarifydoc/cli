@@ -34,6 +34,7 @@ import {
   typeBareConstructions,
 } from "./di.js";
 import { extractRubyResponses } from "./responses.js";
+import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
@@ -959,7 +960,7 @@ export const rubySpec: RegexLangSpec = {
   },
 
   extractDataSources: (lines, classes) => {
-    const rows = [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractJobQueueSources(lines, classes), ...extractModelSelfQueries(lines, classes)];
+    const rows = [...extractRubyDataSources(lines, classes), ...extractRubyHttpCalls(lines), ...extractRubyTestRequests(lines), ...extractJobQueueSources(lines, classes), ...extractModelSelfQueries(lines, classes)];
     // The columns an ActiveRecord statement filters on with a request value or a parameter.
     addRubyWhereFields(lines, rows, classes);
     return rows;

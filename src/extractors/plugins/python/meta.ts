@@ -1,5 +1,6 @@
 import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
+import { DjangoCommandResolver } from "./django/commands.js";
 import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-aliases.js";
 import { extractPythonModuleValues } from "./module-values.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
@@ -153,7 +154,7 @@ export const pythonMeta: LanguagePluginMeta = {
   routes: pythonRouteExtractor,
   routeResolvers: [djangoUrlconfResolver, fastapiInheritedGuards],
   // A test's parameter is the fixture of that name (module, then conftest.py).
-  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver()],
+  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver(), new DjangoCommandResolver()],
   functionsClasses: new PythonExtractor(),
   importsExports: new PythonImportExportExtractor(),
   dataSources: new PythonDataSourceExtractor(),

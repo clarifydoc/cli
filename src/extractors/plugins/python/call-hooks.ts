@@ -3,6 +3,7 @@ import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { pythonReceiverTypeOf } from "./di.js";
 import { pythonArgOriginsOf } from "./arg-origins.js";
+import { djangoCommandKey } from "./django/commands.js";
 
 export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
@@ -92,6 +93,8 @@ export const pythonCallHooks: CallExtractionHooks = {
     return n;
   },
   noOverloads: true,
+  // `call_command("close_season")` runs a Django management command by name: `DjangoCommandResolver` joins the key.
+  keyOf: djangoCommandKey,
   argsOf: pythonClassArgs,
   // Where each argument comes from: a parameter, a request value, a literal (keyword arguments by name).
   argOriginsOf: pythonArgOriginsOf,

@@ -376,6 +376,11 @@ export function holdNoiseCall(results: CallInfo[], call: CallInfo): void {
   held.push({ index: results.length, call });
 }
 
+/** The calls held back from `calls`, not yet restored (to adjust them in place; restoring stays `restoreHeldCalls`'s). */
+export function heldCallsOf(calls: CallInfo[]): readonly CallInfo[] {
+  return HELD_NOISE_CALLS.get(calls)?.map((h) => h.call) ?? [];
+}
+
 /**
  * Put back the held calls of `calls` that `keep` accepts, at the position the
  * walk found them. Returns how many were restored. Consumes the held set.

@@ -46,6 +46,17 @@ export {
 // Which files are tests, by the per-language rules the analysis itself uses —
 // for a consumer that tells test callers from production ones.
 export { isTestFile } from "./core/test-file-detector.js";
+// Whether a file is tested — the rule clarifydoc_file's tests section states — for a consumer
+// judging files of a stored analysis by the same rule.
+export {
+  fileTestVerdict,
+  testVerdictContext,
+  testsReachingEach,
+  type FileTestVerdict,
+  type TestVerdictBasis,
+  type TestVerdictContext,
+  type TestReach,
+} from "./core/test-functions.js";
 export { getLanguageForFile } from "./parsers/language-map.js";
 // The per-file index the MCP server answers from, so another consumer of a
 // stored analysis groups the same facts by file the same way.

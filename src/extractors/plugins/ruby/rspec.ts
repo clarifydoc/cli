@@ -1,4 +1,5 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
+import { heldCallsOf } from "../../shared/call-graph.js";
 import { extractCallsFromBody, type CallPattern } from "../shared/regex-base.js";
 import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 
@@ -11,7 +12,10 @@ import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
  * (`Club › .rank › orders by points`), with the calls its own lines make —
  * a group's `let` and `subject` blocks are its own, its nested blocks are not.
  * A group describing a constant (`RSpec.describe Club do`) says so in
- * `testCase.subject`, and every block under it types `described_class` as it.
+ * `testCase.subject`, and every block under it types `described_class` as it —
+ * and each name a `let` / `subject` binds to `described_class.new(…)` or
+ * `Club.new(…)`, so `service.perform` (in Ruby a call, parentheses or not) is a
+ * call of the class's method.
  */
 
 const GROUPS = new Set(["describe", "context", "feature", "example_group", "xdescribe", "xcontext", "fdescribe", "fcontext"]);
@@ -34,14 +38,108 @@ function titleOf(args: string): { title: string; subject?: string } | null {
   return constant ? { title, subject: constant } : { title };
 }
 
-/** The calls of `fromLine..toLine` (0-based, inclusive) less those on lines a nested block owns. */
-function callsOver(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, prefixes: string[], patterns: CallPattern[]): CallInfo[] {
-  const body = code.map((l, i) => (i < from || i > to || owned.has(i) ? "" : l));
+/** `described_class` as written — never a member (`x.described_class`) or a longer name. */
+const DESCRIBED = /(?<![\w.@$:])described_class\b/g;
+const DESCRIBED_LENGTH = "described_class".length;
+
+/**
+ * The calls of `fromLine..toLine` (0-based, inclusive) less those on lines a nested block owns.
+ * `described_class` is the described constant itself, so a call through it is read as a call on
+ * that constant (`described_class.new(…)` → `League::Club.new`) at the column it is written.
+ */
+function callsOver(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, prefixes: string[], patterns: CallPattern[], subject: string | undefined): CallInfo[] {
+  const shifts = new Map<number, number[]>();
+  const body = code.map((l, i) => {
+    if (i < from || i > to || owned.has(i)) return "";
+    if (!subject || !l.includes("described_class")) return l;
+    const at: number[] = [];
+    const text = l.replace(DESCRIBED, (_m, offset: number) => {
+      at.push(offset + at.length * (subject.length - DESCRIBED_LENGTH));
+      return subject;
+    });
+    shifts.set(i + 1, at);
+    return text;
+  });
   // The registration itself (`it`, `describe`) is the enclosing block's statement, not a call of this one.
-  return extractCallsFromBody(body, from, to + 1, prefixes, patterns).filter((c) => !REGISTRATIONS.has(c.name.replace(/^RSpec\./, "")));
+  // Removed in place: the member calls held back as noise (`League::Club.new`) are kept against
+  // this array, and come back once the file's classes are known (`restoreTypedReceiverCalls`).
+  const calls = extractCallsFromBody(body, from, to + 1, prefixes, patterns);
+  for (let i = calls.length - 1; i >= 0; i--) if (REGISTRATIONS.has(calls[i]!.name.replace(/^RSpec\./, ""))) calls.splice(i, 1);
+  if (shifts.size) {
+    // Back to the columns as written; held calls are the same objects, so they come back right too.
+    const fix = (c: CallInfo) => {
+      const at = shifts.get(c.line);
+      if (at && c.column !== undefined) c.column -= at.filter((x) => x < c.column!).length * (subject!.length - DESCRIBED_LENGTH);
+    };
+    calls.forEach(fix);
+    heldCallsOf(calls).forEach(fix);
+  }
+  return calls;
 }
 
 const REGISTRATIONS: ReadonlySet<string> = new Set([...GROUPS, ...EXAMPLES, ...HOOKS]);
+
+/** `let(:service) { … }`, `let!(:club) do`, `subject(:job) { … }`, `subject { … }`: the name and what follows the opening. */
+const LET = /^\s*(let!?|subject!?)\s*(?:\(\s*:(\w+[?!]?)\s*\))?\s*(?:\{(.*)|do\s*(?:\|[^|]*\|)?\s*$)/;
+const CONST = String.raw`[A-Z]\w*(?:::[A-Z]\w*)*`;
+/**
+ * What a `let` builds, read from its first statement: `described_class.new(…)`, `Club.new(…)` — a
+ * whole statement (its arguments may run on to the next lines), never one opening a block (`Struct.new(:id) do … end.new`), and never an
+ * anonymous class or record (`Class.new(Base)`, `Struct.new`), whose methods are its block's.
+ */
+const BUILDS = new RegExp(String.raw`^\s*(?:(described_class)|(?!(?:Class|Module|Struct|Data)\.)(${CONST}))\.new\b(?:\s*\((?:[^()]|\([^()]*\))*\)|\s*\(\s*)?\s*\}?\s*$`);
+
+/**
+ * The names a group binds on its own lines, each with the type its block builds (`described_class.new`
+ * → the described class, `Club.new` → `Club`) or null when the block says nothing of one.
+ */
+function ownLets(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, subject: string | undefined): Array<[string, string | null]> {
+  const out: Array<[string, string | null]> = [];
+  for (let i = from; i <= to; i++) {
+    if (owned.has(i)) continue;
+    const m = code[i]!.match(LET);
+    if (!m) continue;
+    const name = m[2] ?? (m[1]!.startsWith("subject") ? "subject" : null);
+    if (!name) continue;
+    let body = m[3];
+    for (let j = i + 1; body === undefined && j <= to; j++) if (code[j]!.trim()) body = code[j]!;
+    const built = BUILDS.exec(body ?? "");
+    out.push([name, built ? (built[1] ? subject ?? null : built[2]!) : null]);
+  }
+  return out;
+}
+
+/** The enqueues of a job class (`described_class.perform_later(…)`): they run its `perform`. */
+const ENQUEUES = new Set(["perform_later", "perform_now", "perform_async", "perform_in", "perform_at"]);
+
+/**
+ * Member calls on a name the block types, written without parentheses (`service.perform`,
+ * `expect(service.ready?)`): in Ruby `x.name` always calls a method. The parenthesised spelling is
+ * already read. An enqueue on the described job class also calls its `perform`.
+ */
+function addTypedMemberCalls(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, typed: ReadonlyMap<string, string>, calls: CallInfo[]): void {
+  if (typed.size === 0) return;
+  const have = new Set(calls.map((c) => c.name));
+  const re = /(?<![\w.@$:])([a-z_]\w*)\.([a-z_]\w*[?!]?)(?![\w?!])(?!\s*=(?![=~>]))/g;
+  for (let i = from; i <= to; i++) {
+    if (owned.has(i)) continue;
+    for (const m of code[i]!.matchAll(re)) {
+      const type = typed.get(m[1]!);
+      if (!type) continue;
+      const name = `${m[1] === "described_class" ? type : m[1]}.${m[2]}`;
+      // `x.name(…)` is the call scan's (held back as noise until its receiver is typed, then restored).
+      const parenthesised = /^\s*\(/.test(code[i]!.slice(m.index + m[0].length));
+      if (!parenthesised && !have.has(name)) {
+        have.add(name);
+        calls.push({ name, kind: "internal", target: null, line: i + 1, column: m.index });
+      }
+      if (m[1] === "described_class" && ENQUEUES.has(m[2]!) && !have.has(`${type}.perform`)) {
+        have.add(`${type}.perform`);
+        calls.push({ name: `${type}.perform`, kind: "internal", target: null, line: i + 1, receiverType: type });
+      }
+    }
+  }
+}
 
 /**
  * The spec file's groups, examples and hooks as functions, in source order,
@@ -85,14 +183,38 @@ export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPattern
   if (!blocks.length) return fns;
   const pathOf = (b: Block): string[] => (b.parent ? [...pathOf(b.parent), b.parent.title] : []);
   const subjectOf = (b: Block | null): string | undefined => (b ? b.subject ?? subjectOf(b.parent) : undefined);
-  const out = [...fns];
+  // The lines each block owns: its own, less the opening line (the enclosing block's statement) and
+  // its nested blocks. A block opened and closed on one line (`it { expect(club).to be_valid }`) keeps that line.
+  const ownedOf = new Map<Block, Set<number>>();
   for (const b of blocks) {
-    // Its own lines: the opening line is the enclosing block's statement, nested blocks are their own.
-    // A block opened and closed on one line (`it { expect(club).to be_valid }`) keeps that line.
     const owned = new Set<number>(b.end > b.start ? [b.start] : []);
     for (const c of blocks) if (c !== b && c.start > b.start && c.end <= b.end) for (let i = c.start; i <= c.end; i++) owned.add(i);
+    ownedOf.set(b, owned);
+  }
+  // The names a group's `let` / `subject` bind, typed where the block builds the described class or a
+  // constant; a nested group sees its ancestors' and may rebind one (to a type nobody can tell: null).
+  const letsOf = new Map<Block, Map<string, string | null>>();
+  const scopeOf = (b: Block | null): Map<string, string | null> => {
+    if (!b) return new Map();
+    const known = letsOf.get(b);
+    if (known) return known;
+    const scope = new Map(scopeOf(b.parent));
+    if (b.kind === "suite") for (const [name, type] of ownLets(code, b.start, b.end, ownedOf.get(b)!, subjectOf(b))) scope.set(name, type);
+    letsOf.set(b, scope);
+    return scope;
+  };
+  const out = [...fns];
+  for (const b of blocks) {
+    const owned = ownedOf.get(b)!;
     const path = pathOf(b);
     const subject = subjectOf(b);
+    const typed = new Map<string, string>(subject ? [["described_class", subject]] : []);
+    for (const [name, type] of scopeOf(b)) {
+      if (type) typed.set(name, type);
+      else typed.delete(name);
+    }
+    const calls = callsOver(code, b.start, b.end, owned, ["#"], callPatterns, subject);
+    addTypedMemberCalls(code, b.start, b.end, owned, typed, calls);
     const fn: FunctionInfo = {
       // `::` would read as the `file::symbol` separator; the title itself stays as written.
       name: [...path, b.title].join(" › ").replace(/::/g, ":"),
@@ -101,11 +223,11 @@ export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPattern
       isAsync: false,
       isExported: false,
       decorators: [],
-      calls: callsOver(code, b.start, b.end, owned, ["#"], callPatterns),
+      calls,
       line: b.start + 1,
       endLine: b.end + 1,
       testCase: { title: b.title, path, kind: b.kind, ...(b.kind === "suite" && b.subject ? { subject: b.subject } : {}) },
-      ...(subject ? { localTypes: [{ name: "described_class", type: subject }] } : {}),
+      ...(typed.size ? { localTypes: [...typed].map(([name, type]) => ({ name, type })) } : {}),
     };
     out.push(fn);
   }
