@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { open, readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { execFileSync } from "child_process";
@@ -92,7 +92,7 @@ import { openLoopShapeCache } from "./loop-shape-cache.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
-import { buildTestCoverage, COVERAGE_CANDIDATES, parseCoverage, routeTestCoverage } from "./test-coverage.js";
+import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
@@ -231,8 +231,8 @@ export interface AnalyzeOptions {
    */
   specs?: string[];
   /**
-   * Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile)
-   * to join to the map. Without any, the usual report paths at the root and
+   * Test coverage reports (lcov, Cobertura, JaCoCo, Clover, Go coverprofile,
+   * coverage.py JSON and its `.coverage` data file) to join to the map. Without any, the usual report paths at the root and
    * each sub-project root are tried (`coverage/lcov.info`, `coverage.xml`, …).
    */
   coverage?: string[];
@@ -2005,7 +2005,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const untestedRoutes = [...perRoute.values()].filter((c) => c.covered === 0).length;
     if (untestedRoutes) progress.detail(`  Routes no test runs: ${untestedRoutes}`);
     const pct = testCoverage.total ? Math.round((testCoverage.covered / testCoverage.total) * 100) : 0;
-    progress.detail(`  Test coverage: ${pct}% of ${testCoverage.total} lines in ${testCoverage.files.length} file(s) from ${testCoverage.sources.map((s) => `${s.file} (${s.format}${s.stale ? ", older than the sources" : ""})`).join(", ")}`);
+    const perTest = testCoverage.sources.reduce((n, s) => n + (s.tests ?? 0), 0);
+    progress.detail(`  Test coverage: ${testCoverage.total ? `${pct}% of ${testCoverage.total} lines` : "no counted lines"} in ${testCoverage.files.length} file(s) from ${testCoverage.sources.map((s) => `${s.file} (${s.format}${s.stale ? ", older than the sources" : ""}${s.tests ? `, ${s.tests} tests by name` : ""}${s.unread ? `, not read: ${s.unread}` : ""})`).join(", ")}${perTest ? "" : " — aggregate-only, no per-test contexts"}`);
   }
   const verdictCount = attachRiskVerdicts(blastRadius, {
     analyses: allAnalyses,
@@ -4106,30 +4107,44 @@ function findCoverageReports(projectRoot: string, projectRoots: readonly string[
 
 /** Parse each report and join it to the analyzed files; a report older than a source it covers is stale. */
 async function readTestCoverage(files: readonly string[], analyses: readonly FileAnalysis[], projectRoot: string): Promise<ProjectAnalysis["testCoverage"]> {
-  const reports: Parameters<typeof buildTestCoverage>[0][number][] = [];
+  const reports: CoverageReportInput[] = [];
   for (const file of files) {
-    let text: string;
+    let head: Uint8Array;
     let written: number;
     try {
-      text = await readFile(file, "utf-8");
+      const handle = await open(file, "r");
+      try {
+        ({ buffer: head } = await handle.read(new Uint8Array(16), 0, 16, 0));
+      } finally {
+        await handle.close();
+      }
       written = statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    const name = relative(projectRoot, file).split(sep).join("/") || basename(file);
+    const stale = (matched: string[]) => matched.some((f) => {
+      try {
+        return statSync(join(projectRoot, f)).mtimeMs > written;
+      } catch {
+        return false;
+      }
+    });
+    // coverage.py's data file is SQLite: per-test reach, read through node:sqlite when this Node has it.
+    if (isSqliteFile(head)) {
+      const db = await readCoverageDb(file);
+      reports.push("unread" in db ? { file: name, format: "coveragepy-db", hits: new Map(), unread: db.unread, stale } : { file: name, ...db, stale });
+      continue;
+    }
+    let text: string;
+    try {
+      text = await readFile(file, "utf-8");
     } catch {
       continue;
     }
     const parsed = parseCoverage(text);
     if (!parsed) continue;
-    reports.push({
-      file: relative(projectRoot, file).split(sep).join("/") || basename(file),
-      format: parsed.format,
-      hits: parsed.hits,
-      stale: (matched) => matched.some((f) => {
-        try {
-          return statSync(join(projectRoot, f)).mtimeMs > written;
-        } catch {
-          return false;
-        }
-      }),
-    });
+    reports.push({ file: name, ...parsed, stale });
   }
   return reports.length ? buildTestCoverage(reports, analyses, projectRoot) : undefined;
 }

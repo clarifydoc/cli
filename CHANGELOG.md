@@ -14,6 +14,16 @@ recorded in the git history only.
 
 ### Added
 
+- **Which test ran a function, measured.** A coverage report that keeps the test dimension — per-test lcov (two or
+  more `TN:` names), coverage.py's JSON written with `--show-contexts`, or its `.coverage` data file recorded with
+  `--cov-context=test` — now records per function the tests that ran its lines (`testCoverage.files[].functions[].tests`,
+  indices into `testCoverage.tests`, at most 12 with `testCount`). A context is joined to the test function it names
+  (`tests/test_club.py::TestClub::test_sign`, `tests.test_club.TestClub.test_sign`) and kept as written otherwise.
+  `impact` lists these tests first, labelled measured, and puts them in the run command; `clarifydoc_file`'s tests
+  section names them with their report. A report without contexts says once that it is aggregate-only.
+  `coverage.json` and `.coverage` are among the paths tried. The `.coverage` file is read through `node:sqlite`
+  (Node 22.13 or later; earlier, the report is listed as not read, with the reason) and gives reach only, no
+  percentage.
 - **C and C++: fewer files left to the patterns, again.** Of six C repositories 0–11% of `.c` files keep the
   patterns' reading (was 1–11%; one 8% → 5%, one 2% → 0%) and 0–8% of headers (was 3–16%); of seven C++ repositories
   0–10% of files (was 0–16%).

@@ -1,7 +1,7 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
-import type { TestCoverageReport } from "../../core/test-coverage.js";
+import { aggregateOnlyNote, perTestSources, testsOfCoverageFunction, type TestCoverageReport } from "../../core/test-coverage.js";
 import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
@@ -748,12 +748,28 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
       }, { indent: "  " }),
     );
   }
-  const cov = summary.testCoverage?.files.find((x) => x.file === path);
+  const report = summary.testCoverage;
+  const cov = report?.files.find((x) => x.file === path);
   if (cov && cov.total > 0) {
-    const from = summary.testCoverage!.sources.map((x) => `${x.file}${x.stale ? ", older than the sources" : ""}`).join("; ");
+    const from = report!.sources.filter((x) => !x.unread).map((x) => `${x.file}${x.stale ? ", older than the sources" : ""}`).join("; ");
     lines.push(`coverage: ${Math.round((cov.covered / cov.total) * 100)}% of ${cov.total} lines ran (${from})${cov.uncovered ? `; not run: lines ${cov.uncovered.length > 60 ? `${cov.uncovered.slice(0, 60)}…` : cov.uncovered}` : ""}`);
     const unrun = (cov.functions ?? []).filter((fn) => fn.total > 0 && fn.covered === 0);
     if (unrun.length) lines.push(...bulletList(unrun, limit, (fn) => `${fn.name}() line ${fn.line} — none of its ${fn.total} lines ran`, { indent: "  " }));
+  }
+  // Measured: the tests a per-test report saw run each function's lines.
+  const ranBy = report ? (cov?.functions ?? []).map((fn) => ({ fn, ...testsOfCoverageFunction(report, fn) })).filter((x) => x.tests.length) : [];
+  if (ranBy.length) {
+    const symbolAt = new Map(fns.map((fn) => [fn.line, fn.symbol]));
+    lines.push(`tests the coverage run saw execute its functions — measured, per-test contexts from ${perTestSources(report!).join(", ")}:`);
+    lines.push(
+      ...bulletList(ranBy, limit, ({ fn, tests, count }) => {
+        const named = tests.slice(0, 3).map((t) => (t.symbol && t.line !== undefined ? `${t.symbol} ${loc(t.file!, t.line)}` : t.id));
+        return `${symbolAt.get(fn.line) ?? fn.name}() line ${fn.line} ← ${named.join(", ")}${count > named.length ? ` (+${count - named.length} more)` : ""}`;
+      }, { indent: "  " }),
+    );
+  } else if (report) {
+    const note = aggregateOnlyNote(report);
+    if (note) lines.push(`per-test evidence unavailable: ${note}`);
   }
   if (!lines.length) lines.push("no test imports it, no test reaches its functions, and no coverage report names it");
   return lines;
