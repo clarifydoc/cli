@@ -35,3 +35,22 @@ describe("a stored routine called by name reaches the routine a script declares"
     expect(links([procs, other, reportsCaller])).toContain("reports/run.py::run -> reports/procs.sql::reports.usp_NotifyAgent INFERRED");
   });
 });
+
+describe("a package's subprograms are reached as package.routine", () => {
+  const pkgClass = (name: string, methods: FunctionInfo[]): ClassInfo =>
+    ({ name, methods, properties: [], decorators: ["package-body"], implements: [], extends: null, isExported: true, line: 1, endLine: 30 }) as unknown as ClassInfo;
+  const feePkg = file("db/fee_pkg.pkb", "sql", [], [], [pkgClass("fee_pkg", [fn("bill_club", 3, 9)])]);
+  const decoy = file("db/other_pkg.pkb", "sql", [], [], [pkgClass("other_pkg", [fn("bill_club", 3, 9)])]);
+
+  it("links an EXEC or a client's routine call whatever the case, never by the bare routine name", () => {
+    const caller = file("Api/Billing.cs", "csharp", [], [routine("FEE_PKG.BILL_CLUB", 5), routine("bill_club", 9)], [
+      { name: "Billing", methods: [fn("Run", 4, 7), fn("Bare", 8, 10)], properties: [], decorators: [], implements: [], extends: null, isExported: true, line: 1, endLine: 12 } as unknown as ClassInfo,
+    ]);
+    expect(links([feePkg, decoy, caller])).toEqual(["Api/Billing.cs::Billing.Run -> db/fee_pkg.pkb::fee_pkg.bill_club EXTRACTED"]);
+  });
+
+  it("links a call inside a SQL routine written in another case than the package", () => {
+    const close = file("db/season.sql", "sql", [{ ...fn("close_season", 1, 6), calls: [{ name: "FEE_PKG.Bill_Club", line: 3, kind: "internal" }] } as FunctionInfo]);
+    expect(links([feePkg, decoy, close])).toEqual(["db/season.sql::close_season -> db/fee_pkg.pkb::fee_pkg.bill_club EXTRACTED"]);
+  });
+});

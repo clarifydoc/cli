@@ -30,15 +30,27 @@ export class StoredRoutineResolver implements DispatchResolver {
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     const byName = new Map<string, Routine[]>();
     const byBare = new Map<string, Routine[]>();
+    const packageMembers = new Set<Routine>();
     for (const a of analyses) {
       if (a.language !== "sql") continue;
       for (const fn of a.functions) {
         if (fn.name === "<setup>") continue;
-        const r: Routine = { file: a.filePath, projectId: a.projectId ?? "root", fn };
+        const r: Routine = { file: a.filePath, projectId: a.projectId ?? "root", fn, symbol: fn.name };
         const name = fn.name.toLowerCase();
         (byName.get(name) ?? byName.set(name, []).get(name)!).push(r);
         const bare = bareOf(name);
         (byBare.get(bare) ?? byBare.set(bare, []).get(bare)!).push(r);
+      }
+      // A package body's subprograms are reached as `package.routine`, never by the bare routine name.
+      for (const cls of a.classes) {
+        if (!cls.decorators.includes("package-body")) continue;
+        for (const fn of cls.methods) {
+          const symbol = `${cls.name}.${fn.name}`;
+          const r: Routine = { file: a.filePath, projectId: a.projectId ?? "root", fn, symbol };
+          const name = symbol.toLowerCase();
+          (byName.get(name) ?? byName.set(name, []).get(name)!).push(r);
+          packageMembers.add(r);
+        }
       }
     }
     if (byName.size === 0) return [];
@@ -50,13 +62,13 @@ export class StoredRoutineResolver implements DispatchResolver {
         if (!ds.routine || !ds.target) continue;
         const written = ds.target.replace(/[[\]"`]/g, "").replace(/\s*\(.*$/, "").toLowerCase();
         const project = a.projectId ?? "root";
-        const exact = pick(byName.get(written), project);
+        const exact = pick(byName.get(written), project) ?? pick(byName.get(lastTwo(written)), project);
         const target = exact ?? pick(byBare.get(bareOf(written)), project);
         if (!target) continue;
         const caller = enclosing(a, ds.line);
         if (!caller) continue;
-        if (caller.symbol === target.fn.name && a.filePath === target.file) continue;
-        const key = `${a.filePath}\0${caller.symbol}\0${target.file}\0${target.fn.name}`;
+        if (caller.symbol === target.symbol && a.filePath === target.file) continue;
+        const key = `${a.filePath}\0${caller.symbol}\0${target.file}\0${target.symbol}`;
         if (seen.has(key)) continue;
         seen.add(key);
         links.push({
@@ -65,12 +77,46 @@ export class StoredRoutineResolver implements DispatchResolver {
           sourceLine: ds.line,
           callName: ds.target,
           targetFile: target.file,
-          targetSymbol: target.fn.name,
+          targetSymbol: target.symbol,
           targetLine: target.fn.line,
           resolvedBy: "text",
           confidence: exact ? "EXTRACTED" : "INFERRED",
           relation: "dispatch",
         });
+      }
+    }
+    // A call in a SQL routine of `FEE_PKG.Bill_Club(…)`: the package's subprogram whatever the case it is spelled in
+    // (identifiers fold), when the call names exactly one.
+    if (packageMembers.size > 0) {
+      for (const a of analyses) {
+        if (a.language !== "sql") continue;
+        const project = a.projectId ?? "root";
+        const callers: Array<{ symbol: string; fn: FunctionInfo }> = [
+          ...a.functions.filter((f) => f.name !== "<setup>").map((f) => ({ symbol: f.name, fn: f })),
+          ...a.classes.flatMap((c) => c.methods.map((m) => ({ symbol: `${c.name}.${m.name}`, fn: m }))),
+        ];
+        for (const { symbol, fn } of callers) {
+          for (const call of fn.calls) {
+            if (!call.name.includes(".")) continue;
+            const target = pick(byName.get(lastTwo(call.name.replace(/[[\]"`]/g, "").toLowerCase())), project);
+            if (!target || !packageMembers.has(target) || (symbol === target.symbol && a.filePath === target.file)) continue;
+            const key = `${a.filePath}\0${symbol}\0${target.file}\0${target.symbol}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            links.push({
+              sourceFile: a.filePath,
+              sourceSymbol: symbol,
+              sourceLine: call.line,
+              callName: call.name,
+              targetFile: target.file,
+              targetSymbol: target.symbol,
+              targetLine: target.fn.line,
+              resolvedBy: "text",
+              confidence: "EXTRACTED",
+              relation: "dispatch",
+            });
+          }
+        }
       }
     }
     return links;
@@ -81,7 +127,12 @@ interface Routine {
   file: string;
   projectId: string;
   fn: FunctionInfo;
+  /** The name the symbol linker knows it by: the routine's, or `package.routine`. */
+  symbol: string;
 }
+
+/** `app.fee_pkg.bill_club` → `fee_pkg.bill_club`. */
+const lastTwo = (name: string): string => name.split(".").slice(-2).join(".");
 
 const bareOf = (name: string): string => name.split(".").pop()!;
 

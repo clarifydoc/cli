@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sqlSpec } from "./index.js";
+import { extractSqlClasses, sqlSpec } from "./index.js";
+import { sqlManifest } from "./manifest.js";
 
 const rows = (sql: string) => sqlSpec.extractDataSources!(sql.split("\n"), []);
 
@@ -214,5 +215,49 @@ WHERE id = :player_id
       ["DELETE", "players", 15, ["id=player_id#0"]],
       ["SELECT", "clubs", 18, ["slug=club_slug#1"]],
     ]);
+  });
+});
+
+describe("PL/SQL packages", () => {
+  const body = `CREATE OR REPLACE PACKAGE BODY fee_pkg AS
+  FUNCTION calc_fee(p_club_id IN NUMBER) RETURN NUMBER;
+  FUNCTION calc_fee(p_club_id IN NUMBER) RETURN NUMBER IS
+    v_total NUMBER;
+  BEGIN
+    SELECT SUM(amount) INTO v_total FROM transfers WHERE club_id = p_club_id;
+    RETURN v_total;
+  END calc_fee;
+
+  PROCEDURE bill_club(
+    p_club_id IN NUMBER,
+    p_note    IN VARCHAR2 DEFAULT NULL) IS
+    v_fee NUMBER;
+  BEGIN
+    v_fee := calc_fee(p_club_id);
+    INSERT INTO invoices (club_id, amount) VALUES (p_club_id, v_fee);
+    audit_pkg.log_bill(p_club_id);
+  END bill_club;
+END fee_pkg;
+/
+`.split("\n");
+
+  it("reads a package body as a class whose subprograms are its methods", () => {
+    const [pkg] = extractSqlClasses(body, []);
+    expect(pkg).toMatchObject({ name: "fee_pkg", decorators: ["package-body"], line: 1, endLine: 19 });
+    expect(pkg!.methods.map((m) => [m.name, m.line, m.endLine, m.params.map((p) => p.name), m.returnType])).toEqual([
+      ["calc_fee", 3, 8, ["p_club_id"], "NUMBER"],
+      ["bill_club", 10, 18, ["p_club_id", "p_note"], null],
+    ]);
+    expect(pkg!.methods[1]!.calls.map((c) => c.name)).toEqual(["calc_fee", "audit_pkg.log_bill"]);
+  });
+
+  it("reads a package specification as an empty package and its DML as rows", () => {
+    const [spec] = extractSqlClasses(["CREATE OR REPLACE PACKAGE fee_pkg AS", "  FUNCTION calc_fee(p IN NUMBER) RETURN NUMBER;", "END fee_pkg;", "/"], []);
+    expect(spec).toMatchObject({ name: "fee_pkg", decorators: ["package"], methods: [] });
+    expect(rows(body.join("\n")).map((r) => [r.name, r.entity])).toEqual([["SELECT", "transfers"], ["INSERT INTO", "invoices"]]);
+  });
+
+  it("discovers .pkb and .pks files", () => {
+    expect(sqlManifest.extensions).toEqual(expect.arrayContaining([".pkb", ".pks"]));
   });
 });

@@ -1,4 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { readSupabaseTables } from "./supabase-types.js";
 import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
@@ -76,8 +77,46 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     } catch {
       /* keep what we have */
     }
+    try {
+      if (/\bTables\s*:\s*\{/.test(ctx.sourceText)) this.extractSupabase(ctx, entities, relations);
+    } catch {
+      /* keep what we have */
+    }
 
     return { entities, relations };
+  }
+
+  // ─── Supabase generated types ────────────────────────────────────────────
+
+  /** `Database['public']['Tables']['clubs']['Row']`: a table is an entity, `Relationships` its foreign keys. */
+  private extractSupabase(ctx: EntityExtractContext, entities: ClassInfo[], relations: EntityRelation[]): void {
+    const tables = readSupabaseTables(ctx.sourceText);
+    const names = new Set(tables.map((t) => t.name));
+    for (const t of tables) {
+      const targets = new Set<string>();
+      for (const fk of t.foreignKeys) {
+        if (!names.has(fk.table) || fk.table === t.name) continue;
+        relations.push({
+          fromEntity: t.name,
+          fromField: fk.column,
+          toEntity: fk.table,
+          cardinality: "many-to-one",
+          foreignKey: fk.column,
+          orm: "supabase",
+          confidence: "EXTRACTED",
+        });
+        targets.add(fk.table);
+      }
+      entities.push(
+        this.entity({
+          name: t.name,
+          orm: "supabase",
+          properties: t.columns.map((c) => this.column(c.name, c.type)),
+          implementsList: [...targets],
+          line: t.line,
+        }),
+      );
+    }
   }
 
   // ─── TypeORM / MikroORM ──────────────────────────────────────────────────
@@ -202,7 +241,14 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
         // Prefer the DB-level column type declared in the decorator
         // (e.g. @Column({ type: 'varchar', length: 100 })), else the TS type.
         const dbType = this.columnDbType(decorators);
-        properties.push(this.column(decl.name, dbType ?? this.coreType(decl.type) ?? decl.type));
+        const prop = this.column(decl.name, dbType ?? this.coreType(decl.type) ?? decl.type);
+        // `@Column({ name: 'short_name' })` / `@Column('varchar', { name: 'short_name' })`: the database column.
+        const physical = decorators
+          .filter((d) => COLUMN_DECORATORS.test(d.trim()))
+          .map((d) => this.optionName(this.decoratorArgs(d)))
+          .find(Boolean);
+        if (physical && physical !== decl.name) prop.column = physical;
+        properties.push(prop);
       }
     }
   }
@@ -825,7 +871,11 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
       for (const field of splitTopLevel(block.slice(1, -1))) {
         const f = /^\s*["']?([A-Za-z_$][\w$]*)["']?\s*:\s*([A-Za-z_$][\w$]*)\s*\(/.exec(field);
         if (!f) continue;
-        properties.push(this.column(f[1]!, f[2]!));
+        const prop = this.column(f[1]!, f[2]!);
+        // `text('short_name')`: the builder's first string argument is the database column.
+        const physical = /^\s*["']?[A-Za-z_$][\w$]*["']?\s*:\s*[A-Za-z_$][\w$]*\s*\(\s*["'`]([^"'`]+)["'`]/.exec(field)?.[1];
+        if (physical && physical !== f[1]) prop.column = physical;
+        properties.push(prop);
         const ref = /\.references\s*\(\s*\(\s*\)\s*(?::\s*[\w.<>]+\s*)?=>\s*([A-Za-z_$][\w$]*)\s*\./.exec(field);
         if (ref && ref[1] !== name) {
           relations.push({

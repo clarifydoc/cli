@@ -954,6 +954,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method)) {
       const row = this.efRow(node);
       if (row) {
+        // `FromSqlRaw("SELECT * FROM clubs …")`, `Database.ExecuteSqlRaw("UPDATE players SET …")`: the statement's own
+        // tables, beside the context row (which names no entity for raw SQL). Read wherever the call sits in a chain.
+        const raw = /^(?:FromSql|ExecuteSql)/.test(method) ? extractFirstStringArg(node) : null;
+        const rawHit = raw !== null && !routineCalled(raw) ? tableFrom(raw) : null;
+        if (raw !== null && rawHit && /^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)/.test(rawHit.verb)) {
+          const name = `EF SQL: ${rawHit.verb.split(" ")[0]}`;
+          const line = node.startPosition.row + 1;
+          if (!this.efCallFollows(node)) sources.push(row);
+          sources.push(this.ds({
+            kind: "database",
+            name,
+            target: rawHit.table,
+            entity: rawHit.table,
+            access: rawHit.verb === "SELECT" ? "read" : "write",
+            line,
+          }));
+          sources.push(...joinedTableRows(raw, rawHit.table, name, line));
+          return;
+        }
         // One row per query: `_db.Owners.Where(..).Include(..).ToListAsync()` is
         // one access, recorded on the outermost EF operator of the chain.
         if (!this.efCallFollows(node)) {
