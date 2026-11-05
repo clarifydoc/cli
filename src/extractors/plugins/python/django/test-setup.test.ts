@@ -64,7 +64,7 @@ describe("files the Django test run executes while it sets up", () => {
     for (const d of dirs) await rm(d, { recursive: true, force: true });
   });
 
-  const verdicts = async (files: Record<string, string>) => {
+  const verdicts = async (files: Record<string, string>, paths = ["league/apps.py", "league/migrations/0002_backfill_names.py", "league/standings.py"]) => {
     const dir = await mkdtemp(join(tmpdir(), "cd-django-test-setup-"));
     dirs.push(dir);
     for (const [rel, text] of Object.entries({ ...BASE, ...files })) {
@@ -74,7 +74,7 @@ describe("files the Django test run executes while it sets up", () => {
     await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
     const summary = await loadReportSummary(join(dir, "out"));
     const out: Record<string, string> = {};
-    for (const path of ["league/apps.py", "league/migrations/0002_backfill_names.py", "league/standings.py"]) {
+    for (const path of paths) {
       const file = JSON.parse(await readFile(join(dir, "out", `${path}.json`), "utf-8")) as FileAnalysis;
       const v = fileTestVerdict(summary, path, file);
       out[path] = `${v.state}${v.basis.length ? ` (${v.basis.join(", ")})` : ""}`;
@@ -112,4 +112,41 @@ describe("files the Django test run executes while it sets up", () => {
       "league/standings.py": "untested",
     });
   }, 60_000);
+
+  it("only an app the settings install is set up", async () => {
+    // A second app (a namesake of nothing the settings list) with its own migration and ready().
+    const ghosts: Record<string, string> = {
+      "ghosts/__init__.py": "",
+      "ghosts/models.py": "from django.db import models\n",
+      "ghosts/apps.py": BASE["league/apps.py"]!.replace("LeagueConfig", "GhostsConfig").replace('"league"', '"ghosts"'),
+      "ghosts/migrations/__init__.py": "",
+      "ghosts/migrations/0002_backfill_names.py": BASE["league/migrations/0002_backfill_names.py"]!,
+    };
+    const paths = ["league/apps.py", "league/migrations/0002_backfill_names.py", "ghosts/apps.py", "ghosts/migrations/0002_backfill_names.py"];
+    const base = { "pyproject.toml": PYTEST, ...ghosts };
+    // Every app that has the files, when the settings state no list.
+    expect(await verdicts(base, paths)).toEqual({
+      "league/apps.py": "tested (test-setup)",
+      "league/migrations/0002_backfill_names.py": "tested (test-setup)",
+      "ghosts/apps.py": "tested (test-setup)",
+      "ghosts/migrations/0002_backfill_names.py": "tested (test-setup)",
+    });
+    // An app listed by its package or by its AppConfig; the one the list leaves out runs nothing.
+    for (const apps of ['["django.contrib.auth", "league"]', '["league.apps.LeagueConfig"]']) {
+      expect(await verdicts({ ...base, "config/settings.py": `INSTALLED_APPS = ${apps}\n` }, paths)).toEqual({
+        "league/apps.py": "tested (test-setup)",
+        "league/migrations/0002_backfill_names.py": "tested (test-setup)",
+        "ghosts/apps.py": "untested",
+        "ghosts/migrations/0002_backfill_names.py": "untested",
+      });
+    }
+    // A list the settings build (names, a spread, another list added) is not known: nothing is left out.
+    for (const apps of ['BASE_APPS + ["league"]', '["league", *EXTRA_APPS]']) {
+      expect((await verdicts({ ...base, "config/settings.py": `INSTALLED_APPS = ${apps}\n` }, paths))["ghosts/apps.py"]).toBe("tested (test-setup)");
+    }
+    // `+=` in another settings module adds an app.
+    expect(await verdicts({ ...base, "config/settings.py": `INSTALLED_APPS = ["league"]\n`, "config/dev.py": `INSTALLED_APPS += ["ghosts"]\n` }, paths)).toMatchObject({
+      "ghosts/apps.py": "tested (test-setup)",
+    });
+  }, 120_000);
 });

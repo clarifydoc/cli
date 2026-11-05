@@ -1,6 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteFact } from "../../../../types/analysis.js";
-import { DJ_MIGRATION_MODULES } from "./test-setup.js";
+import { DJ_INSTALLED_APPS, DJ_MIGRATION_MODULES, installedAppsOf } from "./test-setup.js";
 /** A Python string literal's content: `r"^api/"`, `'x'`, `"""doc"""` → what is between the quotes. */
 function pyString(text: string): string {
   const m = /^[a-zA-Z]*("""|'''|"|')([\s\S]*)\1$/.exec(text);
@@ -130,6 +130,7 @@ const MIGRATION_MODULES = /^[ \t]*MIGRATION_MODULES\s*=/m;
 export function collectDjangoTextFacts(sourceText: string, facts: RouteFact[]): void {
   const m = MIGRATION_MODULES.exec(sourceText);
   if (m) facts.push({ kind: DJ_MIGRATION_MODULES, line: sourceText.slice(0, m.index).split("\n").length, data: {} });
+  for (const { line, data } of installedAppsOf(sourceText)) facts.push({ kind: DJ_INSTALLED_APPS, line, data });
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */
