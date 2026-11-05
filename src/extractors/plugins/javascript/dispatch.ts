@@ -114,11 +114,13 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const callName = `emit:${markup?.name ?? sites[0]!.name}`;
         // Anchor the child side at each function that emits it; a template-inline or
         // setup-level emit has no span — a synthetic `<template>` symbol keeps the edge
-        // (the report joins by callName).
+        // (the report joins by callName), also beside the functions emitting it elsewhere.
         const anchors = new Map<string, number>();
         for (const site of sites) {
-          const fn = innermostAt(spans(child), site.line);
-          if (fn && !anchors.has(fn.symbol)) anchors.set(fn.symbol, site.line);
+          for (const line of site.sites ?? [site.line]) {
+            const symbol = innermostAt(spans(child), line)?.symbol ?? (site.sites ? "<template>" : null);
+            if (symbol && !anchors.has(symbol)) anchors.set(symbol, line);
+          }
         }
         if (anchors.size === 0) anchors.set("<template>", sites[0]?.line ?? markup!.line);
         for (const [symbol, line] of anchors) {
@@ -159,8 +161,8 @@ export class JsComponentEmitResolver implements DispatchResolver {
           emitter = file ? byPath.get(file) : undefined;
         }
         if (!emitter) continue;
-        for (const site of (emitter.events ?? []).filter((e) => e.name === sub.event)) {
-          const fn = innermostAt(spans(emitter), site.line);
+        for (const line of (emitter.events ?? []).filter((e) => e.name === sub.event).flatMap((e) => e.sites ?? [e.line])) {
+          const fn = innermostAt(spans(emitter), line);
           const symbol = fn?.symbol ?? "<template>";
           const k = `${emitter.filePath}\u0000${symbol}\u0000emit:${sub.event}\u0000${parent.filePath}\u0000${target.symbol}`;
           if (seenLink.has(k)) continue;
@@ -168,7 +170,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
           links.push({
             sourceFile: emitter.filePath,
             sourceSymbol: symbol,
-            sourceLine: site.line,
+            sourceLine: line,
             callName: `emit:${sub.event}`,
             targetFile: parent.filePath,
             targetSymbol: target.symbol,

@@ -24,12 +24,25 @@ export function extractEvents(
   extractEmitCalls(sourceText, events, seen);
 
   // Strategy D: an Angular component's outputs.
-  extractAngularOutputs(sourceText, events, seen);
+  const angularFields = extractAngularOutputs(sourceText, events, seen);
 
-  // A declared event sits where it is first emitted: the function around that line is what a parent's handler follows.
-  const emittedAt = new Map<string, number>();
-  for (const m of sourceText.matchAll(EMIT_CALL_RE)) if (!emittedAt.has(m[1]!)) emittedAt.set(m[1]!, lineAt(sourceText, m.index!));
-  for (const e of events) e.line = emittedAt.get(e.name) ?? e.line;
+  // A declared event sits where it is first emitted: the function around that line is what a parent's handler follows,
+  // and every other function emitting it runs that handler too.
+  const lines = lineIndex(sourceText);
+  const emittedAt = new Map<string, number[]>();
+  const record = (name: string, offset: number) => {
+    const at = emittedAt.get(name) ?? emittedAt.set(name, []).get(name)!;
+    const line = lineOf(lines, offset);
+    if (at[at.length - 1] !== line) at.push(line);
+  };
+  for (const m of sourceText.matchAll(EMIT_CALL_RE)) record(m[1]!, m.index!);
+  for (const [name, field] of angularFields) for (const m of sourceText.matchAll(outputEmitRe(field))) record(name, m.index!);
+  for (const e of events) {
+    const at = emittedAt.get(e.name);
+    if (!at) continue;
+    e.line = at[0]!;
+    if (at.length > 1) e.sites = at;
+  }
 
   return events;
 }
@@ -130,17 +143,24 @@ function extractEmitCalls(
  * (the alias is the event a parent binds) — each placed where the class first
  * emits it (`this.read.emit(…)`), else at its declaration.
  */
-function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<string>): void {
-  if (!/from\s+['"]@angular\/core['"]/.test(source)) return;
+function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<string>): Map<string, string> {
+  const fields = new Map<string, string>();
+  if (!/from\s+['"]@angular\/core['"]/.test(source)) return fields;
   const re = /(?:@Output\(\s*(?:['"]([\w-]+)['"])?\s*\)\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*(?:[!?]?\s*:[^=;\n]+)?=?|(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*=\s*(?:output|outputFromObservable)\s*(?:<[^>\n]*>)?\s*\()/g;
   for (const m of source.matchAll(re)) {
     const field = m[2] ?? m[3]!;
     const name = m[1] ?? field;
     if (seen.has(name)) continue;
     seen.add(name);
-    const emit = new RegExp(String.raw`\b(?:this\.)?` + escapeRegex(field) + String.raw`\.emit\s*\(`).exec(source);
-    events.push({ name, params: [], line: lineAt(source, emit ? emit.index : m.index!) });
+    fields.set(name, field);
+    events.push({ name, params: [], line: lineAt(source, m.index!) });
   }
+  return fields;
+}
+
+/** `this.read.emit(` — where an Angular output held in `field` is emitted. */
+function outputEmitRe(field: string): RegExp {
+  return new RegExp(String.raw`\b(?:this\.)?` + escapeRegex(field) + String.raw`\.emit\s*\(`, "g");
 }
 
 /**
@@ -169,6 +189,25 @@ function parseCallSignatureParams(raw: string): ParamInfo[] {
   }
 
   return params;
+}
+
+/** The offset each line starts at. */
+function lineIndex(source: string): number[] {
+  const starts = [0];
+  for (let i = source.indexOf("\n"); i >= 0; i = source.indexOf("\n", i + 1)) starts.push(i + 1);
+  return starts;
+}
+
+/** The 1-based line of an offset, by binary search over `lineIndex`. */
+function lineOf(starts: number[], offset: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid]! <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
 }
 
 /** Get 1-based line number for a character offset */

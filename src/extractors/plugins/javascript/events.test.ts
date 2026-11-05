@@ -59,3 +59,45 @@ export class MatchCardComponent {
     expect(extractEvents("const read = output();", "typescript")).toEqual([]);
   });
 });
+
+describe("an event emitted from several functions", () => {
+  it("keeps every line it is emitted at, so each emitting function reaches the parent's handler (real-repo FP)", () => {
+    const src = `<script setup>
+const emit = defineEmits(['createTransfer', 'discard']);
+
+async function handleSendMessage() {
+  const ok = await emit('createTransfer', { club });
+}
+
+async function handleSendWireMessage() {
+  await emit('createTransfer', { club, wire: true });
+}
+
+function close() {
+  emit('discard');
+}
+</script>`;
+    expect(extractEvents(src, "javascript").map((e) => [e.name, e.line, e.sites])).toEqual([
+      ["createTransfer", 5, [5, 9]],
+      ["discard", 13, undefined],
+    ]);
+  });
+
+  it("keeps every line an Angular output is emitted at", () => {
+    const src = `import { Component, output } from '@angular/core';
+
+@Component({ selector: 'app-squad-list', template: '' })
+export class SquadListComponent {
+  readonly selected = output<number>();
+
+  pick(id: number) {
+    this.selected.emit(id);
+  }
+
+  pickFirst() {
+    this.selected.emit(this.ids[0]);
+  }
+}`;
+    expect(extractEvents(src, "typescript").map((e) => [e.name, e.line, e.sites])).toEqual([["selected", 8, [8, 12]]]);
+  });
+});

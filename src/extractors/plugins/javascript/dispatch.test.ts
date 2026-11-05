@@ -361,3 +361,37 @@ describe("component outputs subscribed in code", () => {
     ]);
   });
 });
+
+describe("an event several functions of the child emit", () => {
+  it("links each emitting function to the parent's handler (real-repo FP)", () => {
+    const page = fa("src/pages/Transfers.vue", {
+      functions: [fn("createTransfer", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@create-transfer", handler: "createTransfer", line: 4, component: "TransferForm" }],
+      subComponents: [{ name: "TransferForm", importSource: "../components/TransferForm.vue", props: [], line: 4 }],
+    });
+    const form = fa("src/components/TransferForm.vue", {
+      functions: [fn("handleSendMessage", 4, 6), fn("handleSendWireMessage", 8, 10)],
+      events: [{ name: "createTransfer", params: [], line: 5, sites: [5, 9] }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, form]);
+    expect(links.map((l) => `${l.sourceSymbol}:${l.sourceLine} ${l.callName} -> ${l.targetSymbol}`)).toEqual([
+      "handleSendMessage:5 emit:createTransfer -> createTransfer",
+      "handleSendWireMessage:9 emit:createTransfer -> createTransfer",
+    ]);
+  });
+
+  it("keeps the setup-level site beside the functions emitting it (real-repo FP)", () => {
+    const page = fa("src/pages/Fixtures.vue", {
+      functions: [fn("onFocus", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@update:focused", handler: "onFocus", line: 4, component: "FixtureGrid" }],
+      subComponents: [{ name: "FixtureGrid", importSource: "../components/FixtureGrid.vue", props: [], line: 4 }],
+    });
+    // `onClickOutside(grid, () => emit('update:focused', null))` at line 12, outside any function.
+    const grid = fa("src/components/FixtureGrid.vue", {
+      functions: [fn("setFocus", 20, 24)],
+      events: [{ name: "update:focused", params: [], line: 12, sites: [12, 22] }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, grid]);
+    expect(links.map((l) => `${l.sourceSymbol}:${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["<template>:12 -> onFocus", "setFocus:22 -> onFocus"]);
+  });
+});

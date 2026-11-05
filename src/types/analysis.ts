@@ -2666,6 +2666,11 @@ export interface EventInfo {
   name: string;
   params: ParamInfo[];
   line: number;
+  /**
+   * Every line the component emits it at, when more than one (`line` is the first):
+   * each function emitting it runs the parent's handler.
+   */
+  sites?: number[];
 }
 
 // ─── Screen / Form types ─────────────────────────────────────────────────
