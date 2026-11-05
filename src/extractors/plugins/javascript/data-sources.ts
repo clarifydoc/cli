@@ -1554,8 +1554,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const verb = optionsMethod(positional[1]);
             if (verb) callName = verb;
             // The Fetch standard's default: `fetch(url)`, or an init literal that names no method
-            // (and spreads nothing that could), is a GET.
-            else if (/^fetch$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
+            // (and spreads nothing that could), is a GET — as are Nuxt's `$fetch` / `useFetch` and ofetch.
+            else if (/^(?:fetch|\$fetch|ofetch|useFetch|useLazyFetch)$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
             // A generated oazapfts SDK states every other verb (`oazapfts.json({ ...opts, method: "PUT" })`):
             // its `fetchJson(url, { ...opts })` / `fetchBlob` / `fetchText` with none is a GET.
             else if (recv === "oazapfts" && /^fetch(?:Json|Blob|Text)$/.test(fnName)) callName = "get";

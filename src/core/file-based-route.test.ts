@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inferExpoRouterRoutes, inferFileBasedRoute, inferNextRoutes } from "../extractors/plugins/javascript/routes/file-routes.js";
+import { inferExpoRouterRoutes, inferFileBasedRoute, inferNextRoutes, inferNuxtServerRoutes } from "../extractors/plugins/javascript/routes/file-routes.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const path = (rel: string, frameworks: string[]) => inferFileBasedRoute(rel, frameworks)?.path ?? null;
@@ -210,3 +210,34 @@ describe("Next.js App Router private folders and interception", () => {
   });
 });
 
+
+describe("Nuxt Nitro server routes", () => {
+  const call = (name: string, line: number) => ({ name, line, kind: "internal" });
+  const file = (calls: Array<{ name: string; line: number; kind: string }>) =>
+    ({ exports: [{ name: "default", kind: "default", line: 3 }], functions: [{ name: "<setup>", calls }] }) as unknown as FileAnalysis;
+  const rows = (rel: string, src = "export default defineEventHandler(() => [])", a = file([])) =>
+    inferNuxtServerRoutes(rel, a, ["nuxt"], src).map((r) => `${r.httpMethod} ${r.path}`);
+
+  it("serves server/api under /api and server/routes at the root, the method from the file suffix", () => {
+    expect(rows("server/api/clubs/index.get.ts")).toEqual(["GET /api/clubs"]);
+    expect(rows("server/api/clubs/[id].put.ts")).toEqual(["PUT /api/clubs/:id"]);
+    expect(rows("server/api/players.ts")).toEqual(["null /api/players"]);
+    expect(rows("server/api/files/[...path].delete.ts")).toEqual(["DELETE /api/files/*"]);
+    expect(rows("server/routes/health.ts")).toEqual(["null /health"]);
+    expect(rows("server/routes/sitemap.xml.ts")).toEqual(["null /sitemap.xml"]);
+  });
+
+  it("leaves helpers, middleware, files with no default export and other frameworks out", () => {
+    expect(rows("server/utils/helper.ts")).toEqual([]);
+    expect(rows("server/middleware/log.ts")).toEqual([]);
+    expect(rows("server/api/_lib.ts", "export function lib() {}")).toEqual([]);
+    expect(inferNuxtServerRoutes("server/api/clubs.ts", file([]), ["vue"], "export default defineEventHandler(() => 1)")).toEqual([]);
+  });
+
+  it("carries the calls from the default export on, not its wrapper or what precedes it", () => {
+    const a = file([call("Club.find", 1), call("defineEventHandler", 3), call("getQuery", 4), call("loadAll", 5)]);
+    const [r] = inferNuxtServerRoutes("server/api/cars/index.get.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)");
+    expect(r!.calls.map((c) => c.name)).toEqual(["getQuery", "loadAll"]);
+    expect(r!.line).toBe(3);
+  });
+});

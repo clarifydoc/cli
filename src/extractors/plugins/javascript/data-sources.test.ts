@@ -1487,3 +1487,14 @@ describe("JS MQTT topics", () => {
     ]);
   });
 });
+
+describe("Nuxt $fetch and useFetch", () => {
+  it("request with GET unless the options state another method", async () => {
+    const calls = await apiCallsOf(`
+      const { data } = await useFetch('/api/clubs');
+      const rows = await $fetch('/api/players');
+      await $fetch('/api/clubs', { method: 'POST', body: {} });
+      await useLazyFetch('/api/cars', { query: { page: 1 } });`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /api/clubs", "get /api/players", "post /api/clubs", "get /api/cars"]);
+  });
+});

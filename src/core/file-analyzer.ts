@@ -34,6 +34,7 @@ import {
   inferExpoRouterRoutes,
   inferFlatRoutes,
   inferNextRoutes,
+  inferNuxtServerRoutes,
   inferReactRouterConfig,
   inferSvelteKitRoutes,
   inferTrpcEndpointFacts,
@@ -761,6 +762,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
       analysis.routes.push(
         ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
+        ...inferNuxtServerRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,

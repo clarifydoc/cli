@@ -215,6 +215,27 @@ export function inferTrpcEndpointFacts(relativePath: string, sourceText: string,
 }
 
 /**
+ * Nuxt's Nitro server under `server/`: a file in `server/api/` serves `/api/<path>`,
+ * one in `server/routes/` serves `/<path>`, each only with a default export (the
+ * event handler). A method suffix — `[id].put.ts`, `index.get.ts` — fixes the
+ * method; a file without one answers every method. The handler is usually an
+ * anonymous `defineEventHandler(…)`, so the route carries the calls the file
+ * makes from that export on (its wrapper aside).
+ */
+export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[], sourceText = ""): RouteInfo[] {
+  if (!frameworkIds.includes("nuxt") || !sourceText) return [];
+  const m = relativePath.replace(/\\/g, "/").match(/^(?:src\/)?server\/(api|routes)\/(.+)\.(?:[cm]?[tj]s)$/);
+  if (!m || !hasDefaultExport(sourceText)) return [];
+  const suffix = /^(.*)\.(get|post|put|patch|delete|head|options)$/i.exec(m[2]!);
+  const file = suffix ? suffix[1]! : m[2]!;
+  const path = routeFromSegments(m[1] === "api" ? `api/${file}` : file);
+  const line = analysis.exports.find((e) => e.name === "default" || e.kind === "default")?.line ?? 1;
+  const wrappers = /^(?:define(?:Cached|Lazy)?EventHandler|eventHandler|defineWebSocketHandler|defineCachedEventHandler)$/;
+  const calls = (analysis.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.line >= line && !wrappers.test(c.name));
+  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : null, handler: null, calls, line })];
+}
+
+/**
  * SvelteKit under `src/routes/`: `+page.svelte` is a page; `+server.ts` is an
  * endpoint with one `api` route per exported HTTP-method handler.
  */
