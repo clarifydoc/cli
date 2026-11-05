@@ -14,6 +14,24 @@ recorded in the git history only.
 
 ### Added
 
+- **Vuex: store factories, the caller's own store, local and computed actions.** A module a project factory builds
+  (`createStore({ name, API: ClubAPI })` whose actions come from helpers like `updateRecord(types, API)`) has the
+  factory's actions, each reaching the method it calls on the class passed in (`FileAnalysis.storeShapes`); a
+  dispatch resolves in the root store of the app whose mount reaches the caller, before refusing two; an action's
+  bare `dispatch('x')` resolves in its own module first (`{ root: true }` aside); a computed name — template, `+`,
+  ternary, literal fallback or default, a map of literals — yields each candidate (INFERRED).
+- **A request descriptor's URL.** A helper returning `{ url: … }` read as `helper(id).url` (directly or through a
+  local), and a helper indexing a literal table (`endPoints('profileUpdate').url`), give that URL
+  (`FunctionInfo.requestDescriptor`, `returnsEntryOf`); a URL built in the caller and handed to a request wrapper
+  is passed on.
+- **Every function emitting an event reaches the parent's handler** (`EventInfo.sites`), not only the first.
+- **Vue `provide`/`inject` of a function** (`FileAnalysis.contextValues`): the injected function's call reaches the
+  provided one — the one provider in the sub-project, or the nearest that renders the injecting component.
+- **Angular modal and dialog results.** `ref.closed`/`dismissed`/`result`/`afterClosed()` on what `.open(X)`
+  returned: X's methods closing it reach the opener.
+- **A local typed by a ternary of two API types** links a call both reach through one inherited method once per
+  type, each with its own URL.
+
 - **Browser test suites reach the pages they open.** `page.goto("/projects/1")`, `cy.visit(…)` and `browser.url(…)`
   in a test file are navigations (`FileAnalysis.browserNavigations`), joined to the screens the client router serves
   at that path (`ProjectAnalysis.testNavigations`); a test opening a page reaches the screen, the components and
