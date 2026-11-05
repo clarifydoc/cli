@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 // plugin-aggregated data (extension strip regex, external prefixes) is pushed
 // in by the registry.
 import "../../registry.js";
-import { JsComponentEmitResolver } from "./dispatch.js";
+import { JsComponentEmitResolver, JsProvideInjectResolver } from "./dispatch.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
 /**
@@ -393,5 +393,88 @@ describe("an event several functions of the child emit", () => {
     });
     const links = new JsComponentEmitResolver().resolve([page, grid]);
     expect(links.map((l) => `${l.sourceSymbol}:${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["<template>:12 -> onFocus", "setFocus:22 -> onFocus"]);
+  });
+});
+
+describe("JsProvideInjectResolver", () => {
+  const withSetup = (over: Partial<FileAnalysis>) => over;
+  const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line, column: 2 });
+  const fnCalling = (name: string, line: number, endLine: number, calls: ReturnType<typeof call>[]) => ({ ...fn(name, line, endLine), calls });
+
+  const item = (path: string) =>
+    fa(path, withSetup({
+      functions: [fnCalling("onTransfer", 40, 44, [call("transferPlayer", 42)])],
+      contextValues: [{ kind: "inject", key: "transferPlayer", name: "transferPlayer", line: 5 }],
+    }));
+
+  it("joins a call of an injected function to the function an ancestor provides under that key (real-repo FP)", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+      subComponents: [{ name: "PlayerItem", importSource: "./PlayerItem.vue", props: [], line: 3 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([list, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => [l.sourceFile, l.sourceSymbol, l.sourceLine, l.callName, l.targetFile, l.targetSymbol, l.confidence])).toEqual([
+      ["src/components/PlayerItem.vue", "onTransfer", 42, "transferPlayer", "src/components/SquadList.vue", "onTransferPlayer", "INFERRED"],
+    ]);
+  });
+
+  it("takes the nearest ancestor among several providers, and refuses when none renders the injecting component", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+      subComponents: [{ name: "PlayerRow", importSource: "./PlayerRow.vue", props: [], line: 3 }],
+    });
+    const row = fa("src/components/PlayerRow.vue", {
+      subComponents: [{ name: "PlayerItem", importSource: "./PlayerItem.vue", props: [], line: 3 }],
+    });
+    const page = fa("src/pages/Club.vue", {
+      functions: [fn("transfer", 10, 20)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "transfer", line: 30 }],
+      subComponents: [{ name: "SquadList", importSource: "../components/SquadList.vue", props: [], line: 3 }],
+    });
+    const other = fa("src/pages/Youth.vue", {
+      functions: [fn("promote", 10, 20)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "promote", line: 30 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([page, list, row, other, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["src/components/SquadList.vue::onTransferPlayer"]);
+
+    // Two providers, neither above the injecting component: no guess.
+    const loose = fa("src/components/Bench.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+    });
+    expect(new JsProvideInjectResolver().resolve([loose, other, item("src/components/PlayerItem.vue")])).toEqual([]);
+  });
+
+  it("follows a provided function destructured from a factory to the function the factory returns under that key", () => {
+    const actions = fa("src/composables/useSquadActions.js", {
+      functions: [
+        { ...fn("useSquadActions", 5, 60), calls: [{ name: "doTransfer", kind: "internal", target: null, line: 58, column: 4, passed: "return", returnedAs: "transfer" }] },
+        fn("doTransfer", 10, 20),
+      ] as never,
+    });
+    const list = fa("src/components/SquadList.vue", {
+      imports: [{ source: "../composables/useSquadActions", specifiers: ["useSquadActions"], line: 2 }] as never,
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "transferPlayer", line: 90, from: "useSquadActions", member: "transfer" }],
+    });
+    const links = new JsProvideInjectResolver().resolve([actions, list, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "onTransfer transferPlayer -> src/composables/useSquadActions.js::doTransfer",
+    ]);
+  });
+
+  it("links from the markup when only the template calls the injected function", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+    });
+    const chip = fa("src/components/PlayerChip.vue", {
+      interactiveElements: [{ element: "button", event: "@click", handler: "transferPlayer(player)", line: 4 }],
+      contextValues: [{ kind: "inject", key: "transferPlayer", name: "transferPlayer", line: 12 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([list, chip]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["<template> transferPlayer -> onTransferPlayer"]);
   });
 });

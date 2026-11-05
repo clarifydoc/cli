@@ -333,6 +333,126 @@ export class JsPropCallbackResolver implements DispatchResolver {
   }
 }
 
+/**
+ * Vue's provide/inject of a function: `provide('transferPlayer', onTransferPlayer)` in
+ * an ancestor, `const transferPlayer = inject('transferPlayer')` … `transferPlayer(p)` in a
+ * component below it. Vue finds the key up the component tree at runtime; the join is
+ * by the literal key (`FileAnalysis.contextValues`). One component providing the key in
+ * the sub-project is the one; several, and only the nearest that renders the injecting
+ * component (its tag in their markup, through up to six levels) is — none rendering it,
+ * no link. One link per function calling the injected local (callName as written), or
+ * from `<template>` when only the markup calls it.
+ */
+export class JsProvideInjectResolver implements DispatchResolver {
+  readonly id = "provide-inject";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 33;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const injecting = analyses.filter((a) => a.contextValues?.some((v) => v.kind === "inject"));
+    if (injecting.length === 0) return [];
+    const filePathMap = buildFilePathMap(analyses);
+    const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    // key → the providing files, and the function each hands on, per sub-project.
+    const providers = new Map<string, Array<{ file: FileAnalysis; target: FileAnalysis; span: SymbolSpan }>>();
+    for (const a of analyses) {
+      for (const v of a.contextValues ?? []) {
+        if (v.kind !== "provide") continue;
+        const own = spansOf(a).find((sp) => sp.symbol === v.name || sp.symbol.endsWith(`.${v.name}`));
+        const handed = own ? { target: a, span: own } : v.from && v.member ? factoryReturned(a, v.from, v.member, byPath, filePathMap) : null;
+        if (!handed) continue;
+        const k = `${a.projectId ?? ""}\u0000${v.key}`;
+        (providers.get(k) ?? providers.set(k, []).get(k)!).push({ file: a, ...handed });
+      }
+    }
+    if (providers.size === 0) return [];
+
+    // child file → the files whose markup renders it.
+    const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
+    const parentsOf = new Map<string, Set<string>>();
+    for (const parent of analyses) {
+      if (!parent.subComponents?.length) continue;
+      const auto = autoImported.get(parent.projectId ?? "");
+      for (const sub of parent.subComponents) {
+        const key = tagKey(sub.name);
+        const src = sub.importSource && !sub.global ? sub.importSource : undefined;
+        const child = src ? resolveTarget(src, parent.filePath, filePathMap) : globals.get(key) ?? auto?.get(key) ?? null;
+        if (!child || child === parent.filePath) continue;
+        (parentsOf.get(child) ?? parentsOf.set(child, new Set()).get(child)!).add(parent.filePath);
+      }
+    }
+
+    /** The providers of `key` nearest above `file` in the render tree. */
+    const nearestAbove = (file: string, candidates: Array<{ file: FileAnalysis; target: FileAnalysis; span: SymbolSpan }>) => {
+      const seen = new Set([file]);
+      let frontier = [file];
+      for (let depth = 0; depth < 6 && frontier.length; depth++) {
+        const next: string[] = [];
+        for (const f of frontier) for (const p of parentsOf.get(f) ?? []) if (!seen.has(p)) (seen.add(p), next.push(p));
+        const found = candidates.filter((c) => next.includes(c.file.filePath));
+        if (found.length) return found;
+        frontier = next;
+      }
+      return [];
+    };
+
+    const links: SymbolLink[] = [];
+    for (const a of injecting) {
+      for (const v of a.contextValues!) {
+        if (v.kind !== "inject") continue;
+        const candidates = (providers.get(`${a.projectId ?? ""}\u0000${v.key}`) ?? []).filter((c) => c.file !== a);
+        const targets = candidates.length === 1 ? candidates : nearestAbove(a.filePath, candidates).slice(0, 4);
+        if (targets.length === 0) continue;
+        const callers: Array<{ symbol: string; line: number }> = [];
+        for (const fn of [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
+          const call = fn.calls.find((c) => c.name === v.name && !c.boundLocally);
+          if (call) callers.push({ symbol: fn.name, line: call.line });
+        }
+        const inMarkup = (a.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === v.name);
+        if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line });
+        for (const c of callers) {
+          for (const t of targets) {
+            links.push({
+              sourceFile: a.filePath,
+              sourceSymbol: c.symbol,
+              sourceLine: c.line,
+              callName: v.name,
+              targetFile: t.target.filePath,
+              targetSymbol: t.span.symbol,
+              targetLine: t.span.line,
+              confidence: "INFERRED",
+            });
+          }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/**
+ * The function a factory hands back under `member` (`return { transfer: doTransfer }` in
+ * `useSquadActions`), the factory being declared in `file` or imported into it by that name.
+ */
+function factoryReturned(
+  file: FileAnalysis,
+  factory: string,
+  member: string,
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): { target: FileAnalysis; span: SymbolSpan } | null {
+  const source = file.functions.some((f) => f.name === factory) ? file.filePath : file.imports.find((i) => i.specifiers.includes(factory))?.source;
+  const at = source === file.filePath ? file : source ? byPath.get(resolveTarget(source, file.filePath, filePathMap) ?? "") : undefined;
+  const fn = at?.functions.find((f) => f.name === factory);
+  const returned = fn?.calls.find((c) => c.passed === "return" && c.returnedAs === member && !c.name.includes("."));
+  if (!at || !fn || !returned) return null;
+  // The innermost function of that name the factory's body declares, else the module's.
+  const named = spansOf(at).filter((sp) => sp.symbol === returned.name);
+  const span = named.find((sp) => sp.line > fn.line && sp.endLine <= fn.endLine) ?? named[0];
+  return span ? { target: at, span } : null;
+}
+
 /** React's callback-prop convention: `onPress`, `onModalClose`. */
 const PROP_CALLBACK = /^on[A-Z]\w*$/;
 /** A Vue prop bound to a function in markup (`:add="(club) => …"`, see `markupFunctions`). */
