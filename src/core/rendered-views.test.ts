@@ -19,6 +19,20 @@ func Settings(ctx *context.Context) {
 }`;
     expect(viewConstants("ctx.HTML(http.StatusOK, tplClubSettings)", file)).toEqual(["club/settings"]);
   });
+
+  it("reads a template name a handler returns through a file constant (real-repo FP)", () => {
+    const file = `class ClubController {
+	private static final String VIEWS_CLUB_FORM = "clubs/createOrUpdateClubForm";
+
+	@GetMapping("/clubs/new")
+	public String initCreationForm() {
+		return VIEWS_CLUB_FORM;
+	}
+}`;
+    expect(viewConstants("\t\treturn VIEWS_CLUB_FORM;\n", file)).toEqual(["clubs/createOrUpdateClubForm"]);
+    // A returned constant that is no string names no view.
+    expect(viewConstants("return MAX_PLAYERS;", "static final int MAX_PLAYERS = 11;")).toEqual([]);
+  });
 });
 
 describe("viewLiterals", () => {

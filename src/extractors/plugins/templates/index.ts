@@ -1,7 +1,7 @@
 import type { FileAnalysis, InteractiveElementInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
 import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { extractHtmlInteractiveElements } from "../html/index.js";
+import { extractHtmlInteractiveElements, thymeleafUrl } from "../html/index.js";
 import { literalPath, handlerOf, materializeElementRequests } from "../shared/element-requests.js";
 
 /**
@@ -26,8 +26,8 @@ import { literalPath, handlerOf, materializeElementRequests } from "../shared/el
 
 /** The dialects that are languages of their own (own extension, own plugin). */
 export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "freemarker" | "ejs";
-/** Django's templates are `.html`, which the HTML plugin owns and hands here. */
-export type TemplateDialect = TemplateLanguage | "django";
+/** Django's and Thymeleaf's templates are `.html`, which the HTML plugin owns and hands here. */
+export type TemplateDialect = TemplateLanguage | "django" | "thymeleaf";
 
 const TAGS: Record<TemplateDialect, RegExp> = {
   handlebars: /\{\{\{?[\s\S]*?\}?\}\}/g,
@@ -38,6 +38,8 @@ const TAGS: Record<TemplateDialect, RegExp> = {
   django: /\{#[\s\S]*?#\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g,
   ejs: /<%[\s\S]*?%>/g,
   freemarker: /<#--[\s\S]*?-->|<\/?[#@][^>]*>|\$\{[^}]*\}/g,
+  // Inlined expressions (`[[\${club.name}]]`, `[(\${html})]`); the rest lives in `th:` attributes.
+  thymeleaf: /\[\[[\s\S]*?\]\]|\[\([\s\S]*?\)\]/g,
 };
 
 const PARTIALS: Record<TemplateDialect, RegExp> = {
@@ -50,6 +52,8 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
   // `<%- include('partials/x', { … }) %>`, and the older `<% include partials/x %>`.
   ejs: /<%[-=_]?\s*include\(\s*["']([\w/.-]+)["']|<%\s*include\s+([\w/.-]+)\s*%>/g,
   freemarker: /<#(?:include|import)\s+["']([\w/.-]+)["']/g,
+  // `th:replace="~{fragments/layout :: layout(~{::body})}"`, `th:insert="fragments/inputField :: input"`.
+  thymeleaf: /\bth:(?:replace|insert|include)\s*=\s*["']\s*(?:~\{\s*)?([\w/.-]+)\s*(?:::|\}|["'])/g,
 };
 
 /**
@@ -127,7 +131,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
       if (page !== undefined) target = `page:${page || "."}${attr(attrs, "asp-page-handler") ? `#${attr(attrs, "asp-page-handler")}` : ""}`;
       else if (action) target = `${attr(attrs, "asp-controller") ?? ctlOfView ?? "Home"}#${action}`;
     }
-    target ??= literalPath(attr(attrs, isForm ? "action" : "href"));
+    target ??= literalPath(attr(attrs, isForm ? "action" : "href") ?? (dialect === "thymeleaf" ? thymeleafUrl(attr(attrs, isForm ? "th:action" : "th:href")) : undefined));
     if (target) target = namedTarget(target);
     if (!target || tag === "button") continue;
     const handler = handlerOf(method, target.replace(/^route:/, "/").replace(/:/g, "/"));
@@ -177,14 +181,14 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
 
   const base = filePath.slice(filePath.lastIndexOf("/") + 1);
   // A page made of the partials it includes is a page too: what they show and link to is its own.
-  const notAScreen = base.startsWith("_") || /(?:^|\/)(?:layouts?|shared|partials?|mailers?|e?mails?|email_templates|prompts?)\//i.test(filePath) || (elements.length === 0 && subComponents.length === 0);
+  const notAScreen = base.startsWith("_") || /(?:^|\/)(?:layouts?|shared|partials?|fragments?|mailers?|e?mails?|email_templates|prompts?)\//i.test(filePath) || (elements.length === 0 && subComponents.length === 0);
   if (notAScreen) return;
   const stem = base.replace(/\.[\w.]+$/, "");
   const name = ctlOfView ? `${ctlOfView}#${stem}` : filePath.replace(/\.[\w.]+$/, "");
   const caption = /<title>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup);
   const screen: ScreenInfo = {
     name,
-    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", freemarker: "FreeMarkerTemplate", ejs: "EjsTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
+    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", thymeleaf: "ThymeleafTemplate", freemarker: "FreeMarkerTemplate", ejs: "EjsTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
     caption: (caption?.[1] ?? caption?.[2])?.trim() || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),

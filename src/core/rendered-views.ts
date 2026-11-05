@@ -131,15 +131,19 @@ const RETURN_NAME = new RegExp(String.raw`\breturn\s+${NAME}`, "g");
 /** A render call handed a name (`ctx.HTML(http.StatusOK, tplClubSettings)`), not a literal. */
 const RENDER_CALL_NAME = /[\w.:$]*(?:render|template|view|html|page)[\w$]*\s*!?\s*\(\s*(?:[^()"'\x60;,]{0,80},\s*)?([A-Za-z_][\w$]*)\s*[,)]/gi;
 
+/** A handler returning the view's name through a constant: `return VIEWS_CLUB_FORM;` (Spring MVC). */
+const RETURN_CONSTANT = /\breturn\s+([A-Z][A-Z0-9_]*)\s*(?:;|$)/gm;
+
 /**
- * The template names a function body hands a render call through a constant
- * of its file: `tplClubSettings templates.TplName = "club/settings"` (Go),
- * `const VIEW = 'club/settings'`.
+ * The template names a function body hands a render call, or returns, through a
+ * constant of its file: `tplClubSettings templates.TplName = "club/settings"` (Go),
+ * `const VIEW = 'club/settings'`, `static final String VIEWS_CLUB_FORM = "clubs/form"; … return VIEWS_CLUB_FORM;`.
  */
 export function viewConstants(body: string, file: string): string[] {
   const out = new Set<string>();
   RENDER_CALL_NAME.lastIndex = 0;
-  for (const m of body.matchAll(RENDER_CALL_NAME)) {
+  RETURN_CONSTANT.lastIndex = 0;
+  for (const m of [...body.matchAll(RENDER_CALL_NAME), ...body.matchAll(RETURN_CONSTANT)]) {
     const name = m[1]!;
     const decl = new RegExp(String.raw`(?:^|[\s(,])${name}\b[^=\n;(]*=\s*["'\x60]([^"'\x60\s{}$<>]+)["'\x60]`, "m").exec(file);
     if (decl) out.add(decl[1]!);

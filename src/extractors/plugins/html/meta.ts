@@ -5,6 +5,9 @@ import { materializeElementRequests } from "../shared/element-requests.js";
 import { readTemplate } from "../templates/index.js";
 import { htmlProjectRootPages } from "./project-root-pages.js";
 
+/** Thymeleaf: its namespace or a `th:` attribute makes a page a server template (Spring MVC views). */
+const THYMELEAF_TEMPLATE_RE = /\bxmlns:th\s*=|\sth:[a-z][\w-]*\s*=/;
+
 /** Django / Jinja template tags: a page with these is a server template, not a static page. */
 const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token|endblock|trans|blocktrans|for|endfor|if|endif|set|macro)\b/;
 
@@ -40,6 +43,12 @@ export const htmlMeta: LanguagePluginMeta = {
           analysis.routes = [];
           readTemplate(analysis, raw, "django");
         }
-        : (analysis) => materializeElementRequests(analysis),
+        // A Thymeleaf view likewise: the controller returning its name serves it (core/rendered-views.ts).
+        : THYMELEAF_TEMPLATE_RE.test(rawSource)
+          ? (analysis, raw) => {
+            analysis.routes = [];
+            readTemplate(analysis, raw, "thymeleaf");
+          }
+          : (analysis) => materializeElementRequests(analysis),
     },
 };

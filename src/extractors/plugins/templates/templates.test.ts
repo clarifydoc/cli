@@ -41,6 +41,31 @@ describe("server templates", () => {
     expect(a.screens[0]).toMatchObject({ formType: "FreeMarkerTemplate" });
   });
 
+  it("reads a Thymeleaf view: th:href / th:action paths, th:replace fragments; a fragment is no screen (real-repo FP)", () => {
+    const a = analysis("src/main/resources/templates/clubs/clubDetails.html", "html");
+    readTemplate(a, `<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'clubs')}">
+<body>
+  <h1>Club Information</h1>
+  <td th:text="\${club.name}">[[\${club.city}]]</td>
+  <a th:href="@{/clubs/{clubId}/edit(clubId=\${club.id})}" class="btn">Edit Club</a>
+  <form th:object="\${player}" th:action="@{/clubs/{clubId}/players/new(clubId=\${club.id})}" method="post">
+    <input th:replace="~{fragments/inputField :: input ('Name', 'name', 'text')}" />
+    <button type="submit">Add Player</button>
+  </form>
+</body>
+</html>`, "thymeleaf");
+    expect(a.subComponents.map((s) => s.importSource)).toEqual(["fragments/layout", "fragments/inputField"]);
+    expect(a.interactiveElements.filter((e) => e.request).map((e) => `${e.request!.method} ${e.request!.target}`)).toEqual([
+      "GET /clubs/{clubId}/edit",
+      "POST /clubs/{clubId}/players/new",
+    ]);
+    expect(a.screens[0]).toMatchObject({ formType: "ThymeleafTemplate", caption: "Club Information", routePath: null });
+
+    const fragment = analysis("src/main/resources/templates/fragments/layout.html", "html");
+    readTemplate(fragment, `<html th:fragment="layout (template, menu)"><body><a th:href="@{/clubs/find}">Find clubs</a></body></html>`, "thymeleaf");
+    expect(fragment.screens).toEqual([]);
+  });
+
   it("reads a Django template: {% url %} targets on forms, links and htmx, {% include %} partials", () => {
     const a = analysis("clubs/templates/clubs/detail.html", "html");
     readTemplate(a, `{% extends "base.html" %}

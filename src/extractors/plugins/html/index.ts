@@ -294,7 +294,7 @@ function exactAttr(attrs: string, name: string): string | undefined {
 }
 
 /** A Thymeleaf link expression's path: `@{/signup}`, `@{/fixtures/{id}(id=${f.id})}` → `/fixtures/{id}`. */
-function thymeleafUrl(value: string | undefined): string | undefined {
+export function thymeleafUrl(value: string | undefined): string | undefined {
   const inner = value ? /^\s*@\{([\s\S]*)\}\s*$/.exec(value)?.[1] : undefined;
   const path = inner?.split("(")[0]!.trim();
   return path?.startsWith("/") && !/\s/.test(path) ? path : undefined;
