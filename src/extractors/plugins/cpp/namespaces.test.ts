@@ -193,3 +193,62 @@ void travel(Club& c) {
     ]);
   });
 });
+
+/** Two classes `Club` in different namespaces declared in ONE header, with a static `create` each. */
+const oneHeader = {
+  "src/clubs.h": `#pragma once
+namespace Home {
+class Club {
+public:
+  static Club *create() { return nullptr; }
+  void kickoff() {}
+};
+}
+namespace Away {
+class Club {
+public:
+  static Club *create() { return nullptr; }
+  void travel() {}
+};
+}
+`,
+  "src/season.cpp": `#include "clubs.h"
+void replay() {
+  Home::Club::create();
+}
+void other() {
+  Away::Club::create();
+}
+void both() {
+  Home::Club::create();
+  Away::Club::create();
+}
+`,
+};
+
+describe.each(Object.entries(readers))("C++ classes of one name in two namespaces of one file (%s)", (_reader, read) => {
+  it("names each by its path and joins a static call through that path to its own class", () => {
+    expect(linksOf(read, oneHeader).filter((l) => l.includes("create"))).toEqual([
+      "src/season.cpp:both Away::Club.create -> src/clubs.h:Away::Club.create",
+      "src/season.cpp:both Home::Club.create -> src/clubs.h:Home::Club.create",
+      "src/season.cpp:other Away::Club.create -> src/clubs.h:Away::Club.create",
+      "src/season.cpp:replay Home::Club.create -> src/clubs.h:Home::Club.create",
+    ]);
+  });
+});
+
+describe.each(Object.entries(readers))("C++ using-directive in a header (%s)", (_reader, read) => {
+  const files = {
+    "src/league.h": "#pragma once\nnamespace League {\nint rank(int club);\n}\n",
+    "src/league.cpp": "#include \"league.h\"\nnamespace League {\nint rank(int club) { return club; }\n}\n",
+    "src/decoy.cpp": "namespace Other {\nint rank(int club) { return 0; }\n}\n",
+    "src/prelude.h": "#pragma once\n#include \"league.h\"\nusing namespace League;\n",
+    "src/scorer.cpp": "#include \"prelude.h\"\nint score(int c) { return rank(c); }\n",
+    "src/bare.cpp": "#include \"league.h\"\nint bare(int c) { return rank(c); }\n",
+  };
+  it("applies to the files including that header, never to another namespace's namesake", () => {
+    const links = linksOf(read, files).filter((l) => l.includes(" rank ->"));
+    expect(links).toContain("src/scorer.cpp:score rank -> src/league.cpp:rank");
+    expect(links.some((l) => l.includes("decoy.cpp"))).toBe(false);
+  });
+});

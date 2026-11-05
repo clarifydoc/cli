@@ -191,7 +191,7 @@ async function loadConventionModel(ctx: ReachabilityLoadContext, spec: Conventio
       }
       if (spec.mainFunctions) {
         const methods = analysis.classes.flatMap((c) => c.methods);
-        const main = [...analysis.functions, ...methods].find((f) => spec.mainFunctions!.test(leaf(f.name)));
+        const main = [...analysis.functions, ...methods].find((f) => f.name !== "<setup>" && spec.mainFunctions!.test(leaf(f.name)));
         if (main) return `program entry (${leaf(main.name)})`;
       }
       if (spec.entrySource && readSource) {

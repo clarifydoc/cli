@@ -306,3 +306,23 @@ describe("C++: ANTLR and the patterns agree on the fixtures", () => {
     });
   }
 });
+
+describe("C++: Qt connect hands slots on", () => {
+  it("references the slot of a pointer-to-member connect, skipping the signal, and leaves the SLOT() macro form to its call", () => {
+    const source = `void ClubWindow::build() {
+  connect(saveButton, &QPushButton::clicked, this, &ClubWindow::saveClub);
+  connect(cancelButton, SIGNAL(clicked()), this, SLOT(cancelClub(int)));
+  QObject::connect(this, &ClubWindow::closed, &helper_slot);
+  connect(a, &Other::done, this, [this] { refresh(); });
+}
+`;
+    const parsed = readCpp(source);
+    const analysis = extractWithRegex(source, "clubwindow.cpp", "cpp", undefined, parsed);
+    const build = [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].find((f) => f.name === "build" || f.name === "ClubWindow::build")!;
+    expect(build.calls.filter((c) => c.passed).map((c) => [c.name, c.receiverType, c.passed])).toEqual([
+      ["ClubWindow.saveClub", "ClubWindow", "argument"],
+      ["helper_slot", undefined, "argument"],
+    ]);
+    expect(build.calls.map((c) => c.name)).toContain("cancelClub");
+  });
+});

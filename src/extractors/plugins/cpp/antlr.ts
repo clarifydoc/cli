@@ -172,7 +172,10 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       continue;
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       // A chain is one nested context per step: read it once, from its outermost.
-      if (!(ctx.parent instanceof PostfixExpressionContext && ctx.parent.children[0] === ctx)) postfixCalls(ctx, calls, text);
+      if (!(ctx.parent instanceof PostfixExpressionContext && ctx.parent.children[0] === ctx)) {
+        postfixCalls(ctx, calls, text);
+        connectReferences(ctx, calls);
+      }
     } else if (calls && ctx instanceof PrimaryExpressionContext && ctx.MacroName()) {
       // `SIGNAL(moved(Club *))`: the macro is called, its arguments read off the tokens.
       const head = ctx.MacroName()!.symbol;
@@ -403,6 +406,28 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
     } else {
       steps.push({ kind: "other", bare: false });
     }
+  }
+}
+
+/**
+ * Qt's pointer-to-member `connect(button, &QPushButton::clicked, this, &ClubWindow::saveClub)`: the slot (any argument
+ * after the signal) is handed on, so the connecting function references it — named as a static call of it would be
+ * (`ClubWindow.saveClub`, on the class `ClubWindow`). A bare `&saveClub` names a function; whether it is one is the
+ * linker's to say.
+ */
+function connectReferences(ctx: PostfixExpressionContext, calls: PatternCallName[]): void {
+  if (!ctx.LeftParen()) return;
+  const callee = ctx.children[0]?.getText() ?? "";
+  if (callee !== "connect" && !callee.endsWith("::connect")) return;
+  const args = ctx.expressionList()?.initializerList().initializerClause() ?? [];
+  for (const arg of args.slice(2)) {
+    const m = /^&((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)$/.exec(arg.getText());
+    if (!m || !arg.start) continue;
+    const owner = m[1] ? m[1].split("::").filter(Boolean).at(-1)! : undefined;
+    const named = owner && /^[A-Z]/.test(owner)
+      ? { name: `${owner}.${m[2]}`, leafName: m[2]!, receiverType: owner }
+      : owner ? null : { name: m[2]!, leafName: m[2]! };
+    if (named) calls.push({ ...named, line: arg.start.line, column: arg.start.column, passed: "argument" });
   }
 }
 

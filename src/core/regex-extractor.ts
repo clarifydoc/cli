@@ -76,6 +76,9 @@ export function extractWithRegex(
   if (spec.postProcessClasses) {
     analysis.classes = spec.postProcessClasses(lines, analysis.classes, filePath);
   }
+  if (!parsed && spec.markLocalCalls) {
+    spec.markLocalCalls(spec.callSourceLines?.(lines) ?? lines, [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)]);
+  }
   const setup = topLevelSetup(lines, analysis, spec, filePath, parsed);
   if (setup) analysis.functions.unshift(setup);
   const pathRefs = spec.extractPathReferences?.(lines);
@@ -168,6 +171,7 @@ function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): vo
 function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string, parsed?: ParsedStructure): FunctionInfo | null {
   const on = spec.topLevelCalls;
   if (!on || (on instanceof RegExp && !on.test(filePath))) return null;
+  if (on === "parsed" && !parsed?.topLevelCalls.length) return null;
   // The lines as the call scan reads them (block comments, heredocs blanked), as a function body's are.
   const outside = [...(spec.callSourceLines?.(lines) ?? lines)];
   // A method declared outside its type's body (Go's `func (s *Svc) Run()`) is a span of its own.

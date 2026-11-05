@@ -5142,6 +5142,23 @@ function namespacedFunction(
   return null;
 }
 
+/**
+ * The imports whose names a file's code sees: its own and, where an import puts the imported file's names in scope
+ * (`importsShareScope` — a C++ `#include`), those of every header it includes, so `using namespace League;` in a
+ * shared header applies to the files including it.
+ */
+function visibleImports(ctx: LinkContext, analysis: FileAnalysis): readonly ImportInfo[] {
+  if (!manifestFor(analysis.language as Language)?.importsShareScope) return analysis.imports;
+  const closure = includeClosure(ctx, analysis.filePath);
+  if (closure.size < 2) return analysis.imports;
+  const out = [...analysis.imports];
+  for (const file of closure) {
+    const included = file === analysis.filePath ? undefined : ctx.analysisByFile?.get(file);
+    if (included && included.language === analysis.language) out.push(...included.imports);
+  }
+  return out;
+}
+
 /** `league`, `league::util`: a namespace path as a C++ qualifier or `using namespace` directive writes it. */
 const NAMESPACE_PATH = /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$/;
 
@@ -5184,7 +5201,7 @@ function functionThroughNamespace(
     return namespacedFunction(ctx, analysis, outward(`${path}::${leafName}`));
   }
   // `using namespace league::util;`: an import naming a namespace, not a file.
-  const directives = analysis.imports.filter((i) => NAMESPACE_PATH.test(i.source) && (i.source.includes("::") || i.specifiers.join() === i.source));
+  const directives = visibleImports(ctx, analysis).filter((i) => NAMESPACE_PATH.test(i.source) && (i.source.includes("::") || i.specifiers.join() === i.source));
   const candidates = [...(callerNs ? outward(leafName).slice(0, -1) : []), ...directives.map((d) => `${d.source}::${leafName}`)];
   return candidates.length > 0 ? namespacedFunction(ctx, analysis, candidates) : null;
 }
@@ -6550,7 +6567,7 @@ function namespaceScope(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: 
     const parts = ns.split("::");
     for (let i = parts.length; i > 0; i--) chain.push(parts.slice(0, i).join("::"));
   }
-  const usings = analysis.imports.map((i) => i.source.replace(/^::/, "")).filter((s) => /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$/.test(s));
+  const usings = visibleImports(ctx, analysis).map((i) => i.source.replace(/^::/, "")).filter((s) => /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$/.test(s));
   return { chain, usings };
 }
 
