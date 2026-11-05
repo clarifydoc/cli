@@ -41,6 +41,9 @@ describe("Python receivers narrowed by the body", () => {
 
     def rank(self) -> int: ...
 
+    def __enter__(self) -> Club:
+        return self
+
 
 class Car:
     @property
@@ -56,11 +59,18 @@ class LeagueError(Exception):
     def code(self) -> int: ...
 
 
+class Garage:
+    def __enter__(self) -> Car:
+        return Car()
+
+    def save(self) -> None: ...
+
+
 class OtherError(Exception):
     def code(self) -> int: ...
 `,
     "league/use.py": `import importlib
-from league.club import Club, Car, LeagueError
+from league.club import Club, Car, Garage, LeagueError
 
 
 def load() -> tuple[Club, Car]:
@@ -84,6 +94,11 @@ def narrow_tuple(x):
 def ctx():
     with Club() as c:
         c.save()
+
+
+def ctx_other():
+    with Garage() as g:
+        g.save()
 
 
 def caught():
@@ -122,8 +137,9 @@ def dyn2():
     expect(target("narrow", "x.rank")).toEqual(["Club.rank:injection"]);
     expect(target("narrow_tuple", "x.save")).toEqual([]);
   });
-  it("types a with-as target by the context manager it constructs", () => {
+  it("types a with-as target by what the manager's __enter__ returns", () => {
     expect(target("ctx", "c.save")).toEqual(["Club.save:injection"]);
+    expect(target("ctx_other", "g.save")).toEqual(["Car.save:injection"]);
   });
   it("types an except-as variable by the caught class", () => {
     expect(target("caught", "e.code")).toEqual(["LeagueError.code:injection"]);

@@ -29,3 +29,19 @@ export function loadedMemberCall(call: Node): { source: string; name: string } |
   if (!source || property?.type !== "property_identifier" || (object!.type === "call_expression" && object!.childForFieldName("function")?.type === "import" && property.text === "then")) return null;
   return { source, name: property.text };
 }
+
+/**
+ * The path of an `import("./x")` whose module is used for its default export: the body or returned value of a
+ * function (a lazy loader, `() => import("./ClubPage.vue")`), or read as `(await import("./x")).default`. Null for
+ * a destructured, `.then`-bound or member-called import, and for a non-literal path.
+ */
+export function loadedDefaultSource(importCall: Node): string | null {
+  const arg = importCall.childForFieldName("arguments")?.namedChildren[0];
+  if (arg?.type !== "string") return null;
+  let up: Node | null = importCall.parent;
+  while (up && (up.type === "parenthesized_expression" || up.type === "await_expression")) up = up.parent;
+  if (!up) return null;
+  const isDefaultRead = up.type === "member_expression" && up.childForFieldName("property")?.text === "default";
+  const isLoaderBody = up.type === "arrow_function" || up.type === "return_statement";
+  return isDefaultRead || isLoaderBody ? arg.text.slice(1, -1) : null;
+}

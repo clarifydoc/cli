@@ -16,4 +16,18 @@ describe("calls on a module loaded in place", () => {
     expect(calls("d")).toEqual([["relegate", "cross-file", "./rules"]]);
     expect(calls("e")).toEqual([["other.promote", "internal", null]]);
   });
+
+  it("keeps the default link of a lazy loader and of a `.default` read", async () => {
+    const src = `
+      const ClubPage = () => import('./pages/ClubPage.vue');
+      export async function boot() { const m = (await import('./auth')).default; return m(); }
+      export async function pick() { const { promote } = await import('./rules'); return promote(); }`;
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const defaults = (n: string) => fns.find((f) => f.name === n)!.calls.filter((c) => c.name === "default").map((c) => c.target);
+    expect(defaults("ClubPage")).toEqual(["./pages/ClubPage.vue"]);
+    expect(defaults("boot")).toEqual(["./auth"]);
+    expect(defaults("pick")).toEqual([]);
+  });
 });
+

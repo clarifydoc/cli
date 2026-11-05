@@ -570,15 +570,20 @@ export function collectLocalTypes(
       const calls = fromCalls.get(name) ?? fromCalls.set(name, new Map()).get(name)!;
       calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
     },
-    // `with Club() as c:` — the context manager's own type (`__enter__` returns the manager).
+    // `with Club() as c:` — `c` is what the manager's `__enter__()` returns (often the manager, not always:
+    // `with BackupFile(p) as contents` yields `BackupContents`), so the linker reads `__enter__`'s declared return.
     withItem(item) {
       const value = item.childForFieldName("value");
       const expr = value?.namedChild(0);
       const alias = value?.childForFieldName("alias")?.namedChild(0);
       if (!expr || alias?.type !== "identifier") return false;
       const fact = valueFact(expr, scope);
-      table.assign(alias.text, fact === NONE ? UNKNOWN : fact);
-      untyped.add(alias.text);
+      table.assign(alias.text, UNKNOWN);
+      if (typeof fact === "object" && fact.type) {
+        const calls = fromCalls.get(alias.text) ?? fromCalls.set(alias.text, new Map()).get(alias.text)!;
+        const from = `${fact.type}.__enter__()`;
+        calls.set(from, { from, awaited: false });
+      } else untyped.add(alias.text);
       return true;
     },
     // `except LeagueError as e:` — the caught class.
