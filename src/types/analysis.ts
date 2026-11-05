@@ -1307,8 +1307,11 @@ export interface FunctionInfo {
    * `fromIndex`: the name is one target of a tuple unpacking of that call
    * (`a, b = load()`): the local holds the element at that position of the
    * call's declared tuple return type (the manifest's `tupleElementsOf`).
+   * With `fromElement` the local is one element of the collection `from`
+   * returns (`for p in squad.list()`): the manifest's `collectionElementOf`
+   * reads the element class off the declared return type.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; fromElement?: boolean }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

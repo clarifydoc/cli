@@ -204,11 +204,11 @@ export function registerTransparentTypeWrappers(language: Language, wrappers: re
  * a type written so keeps that path, so it means the nested class and not
  * another of the bare name. Pushed in by the registry from `meta.nestedTypePaths`.
  */
-const NESTED_TYPE_PATHS = new Set<Language>();
+const NESTED_TYPE_PATHS = new Map<Language, "." | "::">();
 
 /** Called by the registry while aggregating plugin metas. */
-export function registerNestedTypePaths(language: Language, on: boolean | undefined): void {
-  if (on) NESTED_TYPE_PATHS.add(language);
+export function registerNestedTypePaths(language: Language, on: boolean | undefined, separator?: "." | "::"): void {
+  if (on) NESTED_TYPE_PATHS.set(language, separator ?? "::");
 }
 
 /**
@@ -216,9 +216,9 @@ export function registerNestedTypePaths(language: Language, on: boolean | undefi
  * `::` path, namespaces (lowercase, by convention) and template arguments left off;
  * null when fewer than two remain.
  */
-function nestedTypePath(s: string): string | null {
-  if (!s.includes("::")) return null;
-  const parts = s.split("::").map((p) => p.replace(/<.*$/s, "").trim());
+function nestedTypePath(s: string, separator: "." | "::"): string | null {
+  if (!s.includes(separator)) return null;
+  const parts = s.split(separator).map((p) => p.replace(/<.*$/s, "").trim());
   if (parts.some((p) => !/^[A-Za-z_]\w*$/.test(p))) return null;
   let i = 0;
   while (i < parts.length && !/^[A-Z]/.test(parts[i]!)) i++;
@@ -309,8 +309,9 @@ export function receiverTypeName(raw: string | null | undefined, language: Langu
     }
     break;
   }
-  if (NESTED_TYPE_PATHS.has(language)) {
-    const path = nestedTypePath(s);
+  const separator = NESTED_TYPE_PATHS.get(language);
+  if (separator) {
+    const path = nestedTypePath(s, separator);
     if (path) return path;
   }
   const simple = s.split(/\\|::|\./).filter(Boolean).pop() ?? "";

@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { compilerView } from "../shared/preprocessor-branches.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { cppSpec } from "./index.js";
 import { nativePackages } from "./packages.js";
@@ -26,7 +27,7 @@ export const cppMeta: LanguagePluginMeta = {
   preprocess: (rawSource, relativePath) => (isObjcHeader(relativePath, rawSource) ? { sourceText: rawSource, language: "objc" } : null),
   // Dead-code reachability (see c-family-reachability.ts).
   reachability: cFamilyReachability,
-  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
+  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }], { sourceView: (text) => compilerView(text, true) }),
   ...cppManifest,
   regexSpec: cppSpec,
   antlr: { grammar: "cpp", load: () => import("./antlr.js").then((m) => m.readCpp) },

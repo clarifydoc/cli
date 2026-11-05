@@ -55,7 +55,7 @@ function visitNode(node: TSNode, owner: PatternCallName[] | null, walk: Walk): v
   }
   if (owner && node.type === "message_expression") {
     // At its `[`, where the patterns place a send.
-    const named = nameCall(sendSteps(node), CHAIN_DEPTH);
+    const named = isFoldedAlloc(node) ? null : nameCall(sendSteps(node), CHAIN_DEPTH);
     if (named) owner.push({ ...named, line: node.startPosition.row + 1, column: node.startPosition.column });
   } else if (owner && node.type === "call_expression") {
     // `helper(c)`, and a block property called (`self.onRefresh(YES)`) by its last two names.
@@ -64,6 +64,18 @@ function visitNode(node: TSNode, owner: PatternCallName[] | null, walk: Walk): v
     if (named) owner.push(named);
   }
   visit(node, owner, walk);
+}
+
+/**
+ * The `alloc` of `[[Club alloc] init]`: the allocation half of one construction, which the `init` send names
+ * (`Club.init`, a constructor call) — a row of its own would be a second, unresolvable call.
+ */
+function isFoldedAlloc(node: TSNode): boolean {
+  const method = node.childForFieldName("method");
+  const receiver = node.childForFieldName("receiver");
+  if (method?.text !== "alloc" || receiver?.type !== "identifier") return false;
+  const parent = node.parent;
+  return parent?.type === "message_expression" && parent.childForFieldName("receiver")?.id === node.id && /^init/.test(parent.childForFieldName("method")?.text ?? "");
 }
 
 /** A method's name: its selector's first piece. */

@@ -4191,7 +4191,7 @@ function resolveCallToDefinition(
     }
     // `def build(Club): return Club()` — the parameter, unless it is handed an inner helper of its name
     // or the function the framework injects under that name (a pytest fixture).
-    if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name)) {
+    if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name || (/^[{[]/.test(p.name) && bindsName(p.name, call.name)))) {
       if (nested && nested.confidence === "INFERRED") return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
       const injected = injectedFunction(ctx, analysis, call.name);
       return injected ? mkLink(injected.file, injected.name, injected.line, injected.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct") : null;
@@ -4580,7 +4580,11 @@ function resolveCallToDefinition(
   // import at the call site, so resolve via the (unique) global class name.
   if (!def && isQualified && !call.name.includes("(") && pluginFor(analysis.language as Language)?.nestedTypePaths) {
     // `new Table::Iterator(3)`, read as `Table.Iterator`: the class nested in `Table`, constructed.
-    const path = dealias(ctx, parts.join("::"), sourceFile);
+    let path = dealias(ctx, parts.join("::"), sourceFile);
+    // Where the path is written with a dot a module may lead it (`Club.League.Table`): the longest tail some class is declared at.
+    if (pluginFor(analysis.language as Language)?.nestedTypeSeparator === ".") {
+      while (!ctx.classFiles.has(path) && path.includes("::")) path = path.slice(path.indexOf("::") + 2);
+    }
     const ref = ctx.classFiles.has(path) ? typeRefFor(ctx, path, sourceFile, analysis.projectId) : null;
     const cls = ref ? ctx.classAt.get(memberKey(ref.typeFile, ref.typeName)) : undefined;
     if (ref && cls) {
@@ -5746,6 +5750,8 @@ function chainPoint(
   awaited: boolean,
   /** Receives the head's per-branch types when its local is typed differently per branch (see {@link scopedName}). */
   branches?: InjectionPoint[],
+  /** The chain's last call returns a collection whose element is wanted (`localTypes[].fromElement`). */
+  element = false,
 ): InjectionPoint | null {
   const head = receiver[0]!;
   let point: InjectionPoint | null;
@@ -5769,6 +5775,7 @@ function chainPoint(
     // `Report(…).render()` where no such method exists and `Report` is a
     // class — the instance its constructor makes (as Strategy 5 reads a bare
     // class call).
+    if (element && receiver.length === 1) pendingElement = true;
     point = ownMethodResult(ctx, sourceFile, consumer, head.name, awaited && receiver.length === 1)
       ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true)
       ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1)
@@ -5815,15 +5822,16 @@ function chainPoint(
       }
     }
   }
-  return walkChain(ctx, point, rest, awaited);
+  return walkChain(ctx, point, rest, awaited, element);
 }
 
 /** Each further segment of a receiver chain, from the point its head is typed as. */
-function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonly ChainSegment[], awaited: boolean): InjectionPoint | null {
+function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonly ChainSegment[], awaited: boolean, element = false): InjectionPoint | null {
   let point = start;
   for (let i = 0; i < rest.length; i++) {
     const seg = rest[i]!;
     if (!point?.typeFile) return null;
+    if (element && i === rest.length - 1) pendingElement = true;
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
       : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
@@ -5920,6 +5928,9 @@ const MAX_INITIALIZER_DEPTH = 3;
 /** The tuple position `returnedPoint` takes from the declared return type while a tuple unpacking is typed. */
 let pendingTupleIndex: number | null = null;
 
+/** Set for the one call that ends the chain of a local drawn from a collection (`localTypes[].fromElement`): its return type is read as a collection. */
+let pendingElement = false;
+
 /** A local initialized by a call (`localTypes[].from`), typed by what that call is declared to return. */
 function initializerPoint(
   ctx: LinkContext,
@@ -5927,10 +5938,19 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean; fromIndex?: number },
+  local: { from?: string; awaited?: boolean; fromIndex?: number; fromElement?: boolean },
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
+  if (local.fromElement && local.fromIndex === undefined) {
+    const chain = receiverChain(`${local.from}.x`);
+    if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
+    try {
+      return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true, undefined, true);
+    } finally {
+      pendingElement = false;
+    }
+  }
   if (local.fromIndex !== undefined) {
     // A tuple unpacking (`a, b = load()`): the element of the one call's declared tuple type. Only a single
     // call (no member chain) names its own declared return type here.
@@ -6095,6 +6115,12 @@ function returnedPoint(
 ): InjectionPoint | null {
   if (!returnType) return null;
   let written = returnType.trim();
+  if (pendingElement) {
+    pendingElement = false;
+    const element = pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.collectionElementOf?.(written);
+    if (!element) return null;
+    written = element;
+  }
   if (pendingTupleIndex !== null) {
     const index = pendingTupleIndex;
     pendingTupleIndex = null;
@@ -6388,7 +6414,8 @@ function typeRefFor(
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   if (typeFile) return { typeName, typeFile };
   // A path no nested class is named by (`Engine::Car` where `Engine` is a namespace): its last name.
-  const dc = typeName.lastIndexOf("::");
+  // A longer path (`Club::League::Table`, a module in front of the type's own path) loses its first name at a time.
+  const dc = typeName.indexOf("::");
   return dc > 0 && !ctx.classFiles.has(typeName) ? typeRefFor(ctx, typeName.slice(dc + 2), sourceFile, projectId) : null;
 }
 
@@ -6472,9 +6499,10 @@ function nestedTypeRef(
   declared = true,
 ): { typeName: string; typeFile: string } | null {
   if (!consumer || typeName.includes("::") || !/^[A-Z]/.test(typeName)) return null;
+  const bare = !!pluginFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.nestedTypesScopeBare;
   for (let scope = consumer; scope; scope = scope.includes("::") ? scope.slice(0, scope.lastIndexOf("::")) : "") {
     const name = `${scope}::${typeName}`;
-    if (!ctx.classFiles.has(name) || (declared && ctx.classAt.has(memberKey(sourceFile, name)))) continue;
+    if (!ctx.classFiles.has(name) || (declared && !bare && ctx.classAt.has(memberKey(sourceFile, name)))) continue;
     const typeFile = typeFileFor(ctx, name, sourceFile, ctx.projectOf.get(sourceFile) ?? "root");
     if (typeFile) return { typeName: name, typeFile };
   }

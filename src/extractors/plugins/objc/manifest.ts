@@ -18,6 +18,9 @@ export const objcManifest: LanguagePluginManifest = {
   extensions: [".m", ".mm"],
   // One type spans files here: categories and the `@implementation` file add to a class declared elsewhere.
   typesSpanFiles: true,
+  // `[[Club alloc] init]` / `[Club new]` on a class declaring no `init` of its own construct it: the link is to the class,
+  // as a Java `new Club()` without a declared constructor is.
+  constructorCalls: ["init", "new"],
   // `#import "Club.h"` puts the C functions `Club.h` declares in scope; `Club.m` holds their bodies.
   importsShareScope: true,
   declarationExtensions: [".h"],

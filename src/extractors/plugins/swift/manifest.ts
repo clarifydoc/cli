@@ -1,6 +1,7 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { swiftFrameworkRules } from "./frameworks.js";
 import { swiftpmPackageManager, cocoapodsPackageManager } from "./package-manifests.js";
+import { elementType } from "./collection-types.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -27,6 +28,8 @@ export const swiftManifest: LanguagePluginManifest = {
   typesSpanFiles: true,
   // `Player(name:)` runs the class's `init`.
   constructorNames: ["init"],
+  // `for p in squad.list()` over a declared `-> [Player]`.
+  collectionElementOf: elementType,
   frameworkRules: swiftFrameworkRules,
   activationFiles: ["Package.swift"],
 };

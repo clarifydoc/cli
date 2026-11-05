@@ -1,7 +1,9 @@
 import type { CallInfo, DiBinding, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
-import { callFrom, declaredTypes, settleAnonymousReceivers, swiftFlowLocals } from "./local-flow.js";
+import { callFrom, declaredTypes, settleAnonymousReceivers, swiftFlowLocals, uniqueLocals } from "./local-flow.js";
+
+export { uniqueLocals };
 
 /**
  * Dependency injection as Swift code spells it — Swinject, Resolver and
@@ -482,23 +484,6 @@ function statementsWithLine(bodyLines: string[], words: string[]): Array<[number
 }
 
 const LOCAL_RE = /^\s*(?:(?:if|guard|while)\s+)?(?:let|var)\s+([a-zA-Z_]\w*)\s*(?::\s*([^=]+?))?\s*(?:=\s*(.+?))?\s*(?:\belse\s*\{.*|\{\s*)?$/;
-
-/**
- * One entry per name; a name declared again with a different type or key
- * (`let r = PgRepo()` in one branch, `let r = MemRepo()` in another) is
- * dropped — which declaration a call sees is a scoping question a line scan
- * cannot answer.
- */
-export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): NonNullable<FunctionInfo["localTypes"]> {
-  type Entry = NonNullable<FunctionInfo["localTypes"]>[number];
-  const byName = new Map<string, Entry | null>();
-  for (const e of entries) {
-    const prev = byName.get(e.name);
-    if (prev === undefined) byName.set(e.name, e);
-    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from)) byName.set(e.name, null);
-  }
-  return [...byName.values()].filter((e): e is Entry => e !== null);
-}
 
 /**
  * Locals whose type the body states — `let r: UserRepo = …`, `let r =

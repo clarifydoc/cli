@@ -150,6 +150,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   readmitFiles: [{ marker: "package.json", pattern: "**/*.d.ts", markerIs: isTypesOnlyPackage }],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  // `function run(save) { save() }` calls the parameter, never the module's `save`; a class declared in a function is its own.
+  lexicalCallScope: true,
   moduleLocalsInScope: true,
   // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
   importsBindNames: JS_IMPORTS_BIND_NAMES,
@@ -190,6 +192,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   extensions: [".js", ".jsx", ".mjs", ".cjs"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
+  // `function run(save) { save() }` calls the parameter, never the module's `save`; a class declared in a function is its own.
+  lexicalCallScope: true,
   moduleLocalsInScope: true,
   // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
   importsBindNames: JS_IMPORTS_BIND_NAMES,

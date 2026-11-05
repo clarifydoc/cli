@@ -111,6 +111,10 @@ describe("Swift through tree-sitter", () => {
  * patterns skip it, since a bare name after `)` would let any same-named function capture it.
  */
 const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
+  // A SwiftUI `body` is a chain of modifiers on a view: the parser names each from its first call.
+  "test-fixtures/sample-ios-swiftui/Notes/NotesApp.swift": { "NotesApp.body": [["modelContainer"], ["WindowGroup.modelContainer"]] },
+  "test-fixtures/sample-ios-swiftui/Notes/Views/BallListView.swift": { "BallListView.body": [["sheet"], ["List.toolbar().sheet", "List.toolbar"]] },
+  "test-fixtures/sample-ios-swiftui/Notes/Views/RootTabs.swift": { "RootTabs.body": [[], ["BallListView.tabItem", "SettingsView.tabItem"]] },
   // A call through a property of a lowercase receiver keeps its whole path (`req.content.decode`), so the linker
   // types it field by field; the patterns name its last two (`content.decode`).
   "test-fixtures/sample-ios-swiftui/Notes/Legacy/ArchiveStore.swift": {
@@ -145,9 +149,7 @@ describe("Swift: tree-sitter and the patterns agree on the fixtures", () => {
         ...a.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine, calls: m.calls.map((x) => x.name) }))),
       ];
       const regex = shape(extractWithRegex(src, rel, "swift"));
-      // A computed or observed property's accessors are functions only on the parser's reading.
-      const srcLines = src.split("\n");
-      const tree = shape(extractWithRegex(src, rel, "swift", undefined, parsed)).filter((f) => !/^\s*(?:@\w+\s+)*(?:\w+\s+)*var\s/.test(srcLines[f.line - 1] ?? ""));
+      const tree = shape(extractWithRegex(src, rel, "swift", undefined, parsed));
       expect(tree.map(({ calls: _, ...span }) => span)).toEqual(regex.map(({ calls: _, ...span }) => span));
       const differences: Record<string, [string[], string[]]> = {};
       regex.forEach((fn, i) => {
@@ -185,8 +187,8 @@ describe("Swift body bindings", () => {
 
   it("records an extension of a nested type on that type, and its construction by the nested name", () => {
     const a = read("extension League.Table: Trainable {\n    func train() {}\n}\nfunc mk() {\n    let t = League.Table()\n}\n");
-    expect(a.classes.map((c) => c.name)).toEqual(["Table"]);
-    expect(a.functions.find((f) => f.name === "mk")!.calls.map((c) => c.name)).toEqual(["Table"]);
+    expect(a.classes.map((c) => c.name)).toEqual(["League::Table"]);
+    expect(a.functions.find((f) => f.name === "mk")!.calls.map((c) => c.name)).toEqual(["League.Table"]);
   });
 
   it("types loop, closure and narrowed bindings", () => {

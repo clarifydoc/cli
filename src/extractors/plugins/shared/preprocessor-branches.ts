@@ -127,6 +127,34 @@ function leftOut(compiled: string, read: string): string {
     .join("\n");
 }
 
+/** Whether the braces of the code in `text` (comments, strings and directive lines left out) pair up. */
+function bracesPair(text: string): boolean {
+  const code = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n")
+    .replace(/\/\/.*$/gm, "")
+    .replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, "");
+  let depth = 0;
+  for (const ch of code) {
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * One function's text as `readWithBranches` reads a file, for a reader that cannot tell by parsing: without dead
+ * blocks (`#if 0`) and, when the branches together leave the braces unpaired (a header written once per platform
+ * before one body), with only the first branch of every conditional. Lines are kept.
+ */
+export function compilerView(text: string, cplusplus: boolean): string {
+  if (!text.includes("#")) return text;
+  const compiled = withoutDeadCode(text, cplusplus);
+  return bracesPair(compiled) ? compiled : firstBranches(compiled, cplusplus);
+}
+
 /** A front end's reading of a text; `also` is code the reading leaves out, lines in place, whose calls it counts. */
 type Read = (text: string, also?: string) => ParsedStructure;
 

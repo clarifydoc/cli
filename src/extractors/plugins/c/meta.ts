@@ -1,4 +1,5 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
+import { compilerView } from "../shared/preprocessor-branches.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { cSpec } from "./index.js";
@@ -17,7 +18,7 @@ export const cMeta: LanguagePluginMeta = {
   // Dead-code reachability (see c-family-reachability.ts).
   reachability: cFamilyReachability,
   // C: the brace defaults, plus `goto` drawn as the jump it is.
-  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
+  regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }], { sourceView: (text) => compilerView(text, false) }),
   ...cManifest,
   regexSpec: cSpec,
   // Functions and calls read by the grammars-v4 C grammar, in two passes, while the `antlr:c` feature is on (antlr.ts).
