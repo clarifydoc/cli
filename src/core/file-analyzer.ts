@@ -36,6 +36,7 @@ import {
   inferNextRoutes,
   inferReactRouterConfig,
   inferSvelteKitRoutes,
+  inferAstroRoutes,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
@@ -761,6 +762,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       analysis.routes.push(
         ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
+        ...inferAstroRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
         ...inferFlatRoutes(routePath, analysis, routeFrameworks, {
@@ -820,7 +822,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const hasFrontendRoute = analysis.routes.some((r) => r.kind === "frontend");
     const isUiSource =
       hasFrontendRoute ||
-      /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+      /\.(vue|svelte|astro|jsx|tsx)$/.test(analysis.filePath) ||
       // A Delphi/Lazarus project file is the application's entry point: its
       // ordered `Application.CreateForm` calls name the main form and the
       // startup-created ones, and the form class is an ARGUMENT, so the call

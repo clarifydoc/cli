@@ -22,6 +22,7 @@ export const npmPackages: readonly KnownPackageRule[] = [
   { names: ["@quasar/app-vite", "@quasar/app-webpack", "quasar"], category: "frontend", framework: { id: "quasar", name: "Quasar" } },
   { names: ["svelte"], category: "frontend", framework: { id: "svelte", name: "Svelte" } },
   { names: ["@sveltejs/kit"], category: "frontend", framework: { id: "sveltekit", name: "SvelteKit" } },
+  { names: ["astro"], category: "frontend", framework: { id: "astro", name: "Astro" } },
   { names: ["@angular/core"], category: "frontend", framework: { id: "angular", name: "Angular" } },
   { names: ["@ionic/angular", "@ionic/react", "@ionic/vue"], category: "frontend", framework: { id: "ionic", name: "Ionic" } },
   { names: ["ember-source", "ember-cli"], category: "frontend", framework: { id: "ember", name: "Ember.js" } },

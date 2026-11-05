@@ -46,6 +46,7 @@ import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
+import { astroPreprocess } from "./astro-hooks.js";
 import { bundlePreprocess } from "./bundles.js";
 import { npmPackages } from "./packages.js";
 import { typescriptManifest, javascriptManifest } from "./manifest.js";
@@ -303,11 +304,11 @@ export const typescriptMeta: LanguagePluginMeta = {
   dispatchResolvers,
   routeResolvers,
   autoImports: nuxtAutoImports,
-  // .vue/.svelte files map to typescript; the SFC preprocess swaps in the
+  // .vue/.svelte/.astro files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
   preprocess: (raw, path) =>
-    withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"),
+    withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

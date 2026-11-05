@@ -673,6 +673,9 @@ export function inferFileFrameworks(
   if (filePath.endsWith(".svelte")) {
     fileFrameworks.add("svelte");
   }
+  if (filePath.endsWith(".astro")) {
+    fileFrameworks.add("astro");
+  }
 
   return [...fileFrameworks];
 }

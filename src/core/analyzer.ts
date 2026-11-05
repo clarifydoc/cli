@@ -368,7 +368,7 @@ async function loadCachedFileResult(
   const hasFrontendRoute = (analysis.routes ?? []).some((r) => r.kind === "frontend");
   const isUiSource =
     hasFrontendRoute ||
-    /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+    /\.(vue|svelte|astro|jsx|tsx)$/.test(analysis.filePath) ||
     (analysis.subComponents?.length ?? 0) > 0 ||
     (analysis.interactiveElements?.length ?? 0) > 0;
   let rawSource: string | null = null;
@@ -3145,7 +3145,7 @@ function buildScreensFromComponents(
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
     // An Angular component with an external template is UI even when its tree is empty (a shell of links and an outlet).
-    return hasTree || !!analysis.angularTemplateUrl || /\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath);
+    return hasTree || !!analysis.angularTemplateUrl || /\.(vue|svelte|astro|jsx|tsx|razor)$/.test(analysis.filePath);
   });
   const parts = importIndex ? routerlessParts(allAnalyses, candidates, importIndex) : new Set<string>();
   for (const analysis of candidates) {
@@ -3213,7 +3213,7 @@ function routerlessParts(allAnalyses: FileAnalysis[], candidates: FileAnalysis[]
 function screenNameFromFile(analysis: FileAnalysis): string {
   const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
   // A single-file component IS its file: `UserCard.vue` is `UserCard`.
-  if (/\.(vue|svelte|razor)$/.test(analysis.filePath)) return fileBaseName;
+  if (/\.(vue|svelte|astro|razor)$/.test(analysis.filePath)) return fileBaseName;
   const namedExport = analysis.exports.find(
     (e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"),
   );
@@ -3244,6 +3244,8 @@ function screenFormType(analysis: FileAnalysis, isComponent: boolean): string {
     ? "Blazor"
     : path.endsWith(".vue")
     ? "Vue"
+    : path.endsWith(".astro")
+    ? "Astro"
     : path.endsWith(".svelte")
       ? "Svelte"
       : fw.includes("angular")

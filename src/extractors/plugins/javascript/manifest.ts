@@ -73,6 +73,7 @@ const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "nuxt": "nuxt",
   "svelte": "svelte",
   "@sveltejs/kit": "sveltekit",
+  "astro": "astro",
   "pinia": "pinia",
   "vuex": "vuex",
   "express": "express",
@@ -144,7 +145,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
   serviceConfig: jsServiceConfig,
   parsing: "tree-sitter",
-  extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
+  extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro"],
   // `*.d.ts` is skipped as compiler output, except in a hand-written types package.
   readmitFiles: [{ marker: "package.json", pattern: "**/*.d.ts", markerIs: isTypesOnlyPackage }],
   // A field is only reached through the instance (`this.x`); a bare name never is one.

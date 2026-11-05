@@ -84,6 +84,13 @@ export const javascriptFrameworkRules: readonly FrameworkRule[] = [
     detectedVia: "package.json dependency",
   },
   {
+    // The file router: `src/pages/clubs/[id].astro` is the page at `/clubs/:id`.
+    id: "astro",
+    name: "Astro",
+    check: (info) => hasDep(info, "astro"),
+    detectedVia: "package.json dependency",
+  },
+  {
     id: "express",
     name: "Express",
     check: (info) => hasDep(info, "express"),

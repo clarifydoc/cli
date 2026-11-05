@@ -148,6 +148,22 @@ export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysi
 }
 
 /**
+ * Astro under `src/pages/`: a `.astro` file is a page at its path (`[id]`, `[...slug]` as elsewhere); a
+ * `.ts`/`.js` endpoint serves one `api` route per exported HTTP-method handler. A file or folder whose
+ * name starts with `_` is no route.
+ */
+export function inferAstroRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+  if (!frameworkIds.includes("astro")) return [];
+  const normalized = relativePath.replace(/\\/g, "/");
+  const m = /^(?:.*\/)?src\/pages\/(.+)\.(astro|[cm]?[tj]s)$/.exec(normalized);
+  if (!m || m[1]!.split("/").some((s) => s.startsWith("_"))) return [];
+  const path = routeFromSegments(m[1]!);
+  if (m[2] === "astro") return [route(path, "frontend", { componentPath: null })];
+  // An endpoint's file extension is not part of its URL (`feed.json.ts` serves `/feed.json`).
+  return methodRoutes(path, analysis);
+}
+
+/**
  * Expo Router under `app/` (or `src/app/`): every component file is a screen at
  * its path — `(group)` folders and `index` dropped, brackets as in Next.js.
  * `_layout` files wrap a folder's screens and `+not-found` / `+html` are
