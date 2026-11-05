@@ -3,10 +3,10 @@ import type { PathArgCall } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 
 /** Cheap gate: some call takes a string/template starting with `/` (or `./`, `api/`, `${BASE}/`…) as an argument. */
-const PATH_ARGUMENT = /[(,]\s*(?:['"`](?:\/[\w-]|[.]?[\w-]+\/)|`\$\{[\w$.]+\}\/[\w-])/;
+const PATH_ARGUMENT = /[(,]\s*(?:['"`](?:\/[\w-]|[.]?[\w-]+\/)|`\$\{[\w$.]+\}(?:\/[\w-]|[\w-]+\/))/;
 
-/** `/tag`, `/system/status`, `api/v1/x`, `./x/y`, `${API_BASE}/x` — a path, not a word. */
-const PATH_SHAPED = /^(?:\/[\w-]|[.]?[\w-]+\/|\$\{[\w$.]+\}\/[\w-])/;
+/** `/tag`, `/system/status`, `api/v1/x`, `./x/y`, `${API_BASE}/x`, `${this.baseUrl}download/x` — a path, not a word. */
+const PATH_SHAPED = /^(?:\/[\w-]|[.]?[\w-]+\/|\$\{[\w$.]+\}\/[\w-]|\$\{this\.[\w$]+\}[\w-]+\/)/;
 
 const VERB = /^(?:get|post|put|patch|delete|head|options)$/i;
 
@@ -48,7 +48,10 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
     // A URL parameter of the enclosing function handed on (`_fetch("POST", url)` inside
     // `_post(url)`) is a hole the wrapper's own call sites fill.
     const forwarded = urlParamsOf(call);
-    const args = argNodes.map((a) => literalArg(a) ?? (a.type === "identifier" && forwarded.has(a.text) ? `\${${a.text}}` : urlMember(a, urlObjects)));
+    // A local URL the caller built (`const url = `${this.baseUrl}download/${kind}` + `?id=${id}``) is handed as written.
+    const args = argNodes.map((a) =>
+      literalArg(a) ?? (a.type === "identifier" ? (forwarded.has(a.text) ? `\${${a.text}}` : localUrl(call, a.text)) : urlMember(a, urlObjects)),
+    );
     if (!args.some((a) => a !== null && (PATH_SHAPED.test(a) || /^\$\{[\w$]+(?:\.[\w$]+)?\}$/.test(a)))) continue;
     // `send(url, { method: "POST", … })`: the verb the site's options state — or a verb handed positionally (`_fetch("POST", url)`).
     const options = argNodes.find((a) => a.type === "object");
@@ -91,8 +94,8 @@ function urlMember(node: Node, objects: ReadonlyMap<string, ReadonlySet<string>>
   return object?.type === "identifier" && key && objects.get(object.text)?.has(key) ? `\${${node.text}}` : null;
 }
 
-/** Some function hands a URL-named parameter on to another call. */
-const FORWARD_GATE = /\b(?:url|uri|path|endpoint|route|href)\b\s*[,)]/;
+/** Some function hands a URL-named parameter or local on to another call. */
+const FORWARD_GATE = /\b(?:url|uri|path|endpoint|route|href|\w+(?:Url|Uri|Path))\b\s*[,)]/;
 const URL_PARAM = /^(?:url|uri|path|endpoint|route|href|\w+(?:Url|Uri|Path|Endpoint))$/;
 
 /** The URL-named parameters of the function a call sits in. */
@@ -107,6 +110,37 @@ function urlParamsOf(call: Node): Set<string> {
   }
   return out;
 }
+
+/**
+ * The URL a `const` of the enclosing function holds, as written: a template, or a `+` chain of
+ * strings and templates (any other piece a `${…}` hole). Null when the function reassigns the
+ * name, or its value is anything else.
+ */
+function localUrl(call: Node, name: string): string | null {
+  let fn: Node | null = call.parent;
+  while (fn && !FUNCTION_NODE.test(fn.type)) fn = fn.parent;
+  if (!fn) return null;
+  let value: Node | null = null;
+  for (const d of fn.descendantsOfType("variable_declarator")) {
+    if (!d || d.startIndex > call.startIndex || d.childForFieldName("name")?.text !== name || d.parent?.firstChild?.type !== "const") continue;
+    let owner: Node | null = d.parent;
+    while (owner && !FUNCTION_NODE.test(owner.type)) owner = owner.parent;
+    if (owner?.id === fn.id) value = d.childForFieldName("value");
+  }
+  if (!value) return null;
+  const pieces: Node[] = [];
+  const flatten = (n: Node): void => {
+    if (n.type === "binary_expression" && n.childForFieldName("operator")?.text === "+") {
+      flatten(n.childForFieldName("left")!);
+      flatten(n.childForFieldName("right")!);
+    } else pieces.push(n);
+  };
+  flatten(value);
+  if (!pieces.some((p) => p.type === "string" || p.type === "template_string")) return null;
+  return pieces.map((p) => literalArg(p) ?? `\${${p.text.replace(/\s+/g, " ")}}`).join("");
+}
+
+const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration)$/;
 
 /** A string, or a template as written (its substitutions kept as `${…}` holes); anything else null. */
 function literalArg(node: Node): string | null {

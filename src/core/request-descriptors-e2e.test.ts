@@ -9,7 +9,8 @@ import type { ProjectAnalysis } from "../types/analysis.js";
 /**
  * A frontend's request named somewhere other than the call: a helper handing
  * back a request descriptor (`{ url, params }`) whose `url` the call reads, an
- * endpoint table indexed by the name a call passes, and a descriptor a local holds.
+ * endpoint table indexed by the name a call passes, and a URL built by one
+ * method and handed to another that fetches it.
  */
 const FILES: Record<string, string> = {
   "server/app.js": `const express = require("express");
@@ -22,6 +23,8 @@ app.patch("/api/v1/widget/messages/:id", (req, res) => res.json({}));
 app.put("/public/api/v1/surveys/:uuid", (req, res) => res.json({}));
 app.get("/api/organizers/clubs/empty", (req, res) => res.json({}));
 app.post("/api/v1/widget/integrations/meeting", (req, res) => res.json({}));
+app.get("/api/download/chapter", (req, res) => res.json({}));
+app.get("/api/download/volume", (req, res) => res.json({}));
 module.exports = app;
 `,
   "web/api/endPoints.js": `const endPoints = {
@@ -135,9 +138,29 @@ export default {
   },
 };
 `,
+  "web/services/download.service.ts": `export class DownloadService {
+  private baseUrl = '/api/';
+
+  queueChapter(chapterId: number) {
+    const url = \`\${this.baseUrl}download/chapter\` +
+                \`?chapterId=\${chapterId}\` +
+                \`&_t=\${Date.now()}\`;
+    this.fetchDownload(chapterId, url);
+  }
+
+  queueVolume(volumeId: number) {
+    this.fetchDownload(volumeId, \`\${this.baseUrl}download/volume?volumeId=\${volumeId}\`);
+  }
+
+  private async fetchDownload(id: number, url: string) {
+    const response = await fetch(url);
+    return response.blob();
+  }
+}
+`,
 };
 
-describe("request descriptors (e2e)", () => {
+describe("request descriptors and URLs handed on (e2e)", () => {
   let dir: string;
   let summary: ProjectAnalysis;
   beforeAll(async () => {
@@ -180,5 +203,9 @@ describe("request descriptors (e2e)", () => {
 
   it("reads nothing off an entry named at run time, or a key that is not the descriptor's URL", () => {
     expect(linksFrom("web/api/guesses.js")).toEqual([]);
+  });
+
+  it("follows a URL a method builds into the method that fetches it", () => {
+    expect(linksFrom("web/services/download.service.ts")).toEqual(["12 GET /api/download/volume", "8 GET /api/download/chapter"]);
   });
 });
