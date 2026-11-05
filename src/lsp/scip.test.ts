@@ -26,6 +26,8 @@ interface Occ {
   range: number[];
   symbol: string;
   def?: boolean;
+  /** Raw symbol_roles bits, when more than the Definition bit matters. */
+  roles?: number;
   /** The typed_range oneof: SingleLineRange (field 8) or MultiLineRange (field 9). */
   typed?: number[];
 }
@@ -33,7 +35,7 @@ interface Occ {
 const occurrence = (o: Occ) => [
   ...(o.range.length ? bytes(1, o.range.flatMap(varint)) : []),
   ...str(2, o.symbol),
-  ...(o.def ? int(3, 1) : []),
+  ...(o.roles ? int(3, o.roles) : o.def ? int(3, 1) : []),
   ...(o.typed ? bytes(o.typed.length === 3 ? 8 : 9, o.typed.flatMap((n, i) => int(i + 1, n))) : []),
 ];
 /** Document.position_encoding (6) and Document.text (5), set per path. */
@@ -171,6 +173,28 @@ describe("scipAnswers", () => {
     it("leaves UTF-16 and unspecified documents as they are", () => {
       expect(scipAnswers(run(2, utf16At), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
       expect(scipAnswers(run(undefined, utf16At), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
+    });
+  });
+
+  describe("roles", () => {
+    const CLUB = "scip-typescript npm app 1.0 src/`b.ts`/Club#";
+    const answer = (docs: Array<[string, Occ[]]>, refRoles = 0) =>
+      scipAnswers(decodeScip(index([["src/a.ts", [{ range: [], typed: [0, 0, 4], symbol: CLUB, roles: refRoles }]], ...docs])), [q("src/a.ts", 1, 1)]).answers[0]!.targets;
+
+    it("keeps test and generated definitions out of a production reference's answer", () => {
+      expect(answer([["src/b.ts", [{ range: [2, 0, 4], symbol: CLUB, def: true }]], ["test/b.test.ts", [{ range: [5, 0, 4], symbol: CLUB, roles: 0x21 }]], ["gen/b.ts", [{ range: [7, 0, 4], symbol: CLUB, roles: 0x11 }]]]))
+        .toEqual([{ file: "src/b.ts", line: 3 }]);
+      // Nothing else defines it: no answer, rather than a test file's.
+      expect(answer([["test/b.test.ts", [{ range: [5, 0, 4], symbol: CLUB, roles: 0x21 }]]])).toEqual([]);
+    });
+
+    it("lets a test reference land in test code", () => {
+      expect(answer([["test/b.test.ts", [{ range: [5, 0, 4], symbol: CLUB, roles: 0x21 }]]], 0x20)).toEqual([{ file: "test/b.test.ts", line: 6 }]);
+    });
+
+    it("prefers a definition to a forward declaration, and keeps a lone forward declaration", () => {
+      expect(answer([["inc/club.h", [{ range: [1, 0, 4], symbol: CLUB, roles: 0x40 }]], ["src/club.c", [{ range: [9, 0, 4], symbol: CLUB, def: true }]]])).toEqual([{ file: "src/club.c", line: 10 }]);
+      expect(answer([["inc/club.h", [{ range: [1, 0, 4], symbol: CLUB, roles: 0x40 }]]])).toEqual([{ file: "inc/club.h", line: 2 }]);
     });
   });
 

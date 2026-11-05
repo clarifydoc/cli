@@ -48,6 +48,11 @@ export interface ScipIndex {
 }
 
 const DEFINITION = 0x1;
+const GENERATED = 0x10;
+const TEST = 0x20;
+const FORWARD_DEFINITION = 0x40;
+/** An occurrence that declares its symbol: a definition, or a forward declaration (a C header's). */
+const DECLARES = DEFINITION | FORWARD_DEFINITION;
 
 const normalize = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
 
@@ -244,6 +249,18 @@ export function mergeScip(indexes: readonly ScipIndex[], analysisFiles?: Readonl
 }
 
 /**
+ * What a reference may be answered with, by the roles the index gives the
+ * definitions: a real definition outranks a forward declaration (a header's),
+ * and one in test or generated code is no answer for production code (a
+ * reference that is itself test or generated code may land there).
+ */
+function targetsOf(defs: ReadonlyArray<{ file: string; line: number; roles: number }>, referenceRoles: number): Array<{ file: string; line: number }> {
+  let kept = defs.filter((d) => !(d.roles & (TEST | GENERATED) & ~referenceRoles));
+  if (kept.some((d) => d.roles & DEFINITION)) kept = kept.filter((d) => d.roles & DEFINITION);
+  return kept.map(({ file, line }) => ({ file, line }));
+}
+
+/**
  * Answers to the layer-2 questions from a SCIP index. Local symbols
  * (`local N`) resolve within their document; a definition outside the
  * analysis (a dependency's sources) is not a target.
@@ -255,7 +272,7 @@ export function scipAnswers(
   /** The text of a 0-based line of an analysis file, for a document whose offsets are not UTF-16 and which carries no text. */
   lineText?: (path: string, line0: number) => string | undefined,
 ): DefinitionAnswerFile {
-  const definitions = new Map<string, Array<{ file: string; line: number }>>();
+  const definitions = new Map<string, Array<{ file: string; line: number; roles: number }>>();
   const byPath = new Map<string, ScipDocument[]>();
   // `local N` is scoped to its document; two documents may share a path (two indexers).
   const docIds = new Map<ScipDocument, number>();
@@ -266,9 +283,9 @@ export function scipAnswers(
     docIds.set(d, docIds.size);
     (byPath.get(path) ?? byPath.set(path, []).get(path)!).push(d);
     for (const o of d.occurrences) {
-      if (!(o.roles & DEFINITION) || !o.symbol || o.range.length < 3) continue;
+      if (!(o.roles & DECLARES) || !o.symbol || o.range.length < 3) continue;
       const key = keyOf(d, o.symbol);
-      (definitions.get(key) ?? definitions.set(key, []).get(key)!).push({ file: path, line: o.range[0]! + 1 });
+      (definitions.get(key) ?? definitions.set(key, []).get(key)!).push({ file: path, line: o.range[0]! + 1, roles: o.roles });
     }
   }
   const answers: DefinitionAnswerFile["answers"] = [];
@@ -279,7 +296,7 @@ export function scipAnswers(
     for (const doc of byPath.get(q.file) ?? []) {
       const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
       const at = doc.occurrences.find((o) => {
-        if (o.range.length < 3 || o.roles & DEFINITION) return false;
+        if (o.range.length < 3 || o.roles & DECLARES) return false;
         const [sl, sc] = o.range as [number, number];
         const el = o.range.length === 3 ? sl : o.range[2]!;
         const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
@@ -291,7 +308,7 @@ export function scipAnswers(
       }
     }
     if (!found) continue;
-    answers.push({ file: q.file, line: q.line, column: q.column, targets: definitions.get(keyOf(found.doc, found.at.symbol)) ?? [] });
+    answers.push({ file: q.file, line: q.line, column: q.column, targets: targetsOf(definitions.get(keyOf(found.doc, found.at.symbol)) ?? [], found.at.roles) });
   }
   return { source: "scip", servers: index.tools ?? [index.tool ?? "scip"], answers };
 }
