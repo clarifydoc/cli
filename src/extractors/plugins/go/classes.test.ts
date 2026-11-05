@@ -350,3 +350,23 @@ describe("struct tags containing semicolons", () => {
     expect(photo!.properties.map((p) => [p.name, p.type])).toEqual([["Camera", "*Camera"], ["Albums", "[]Album"]]);
   });
 });
+
+describe("Go //line directives in generated code", () => {
+  it("keeps the physical line of a function and its calls", () => {
+    const src = [
+      "package gen",
+      "",
+      "//line parser.y:10",
+      "func Parse() int {",
+      "//line parser.y:42",
+      "\treturn helper()",
+      "}",
+      "",
+      "/*line parser.y:90:3*/",
+      "func helper() int { return 1 }",
+    ].join("\n");
+    const a = extractWithRegex(src, "gen/parser.go", "go");
+    expect(a.functions.map((f) => [f.name, f.line, f.endLine])).toEqual([["Parse", 4, 7], ["helper", 10, 10]]);
+    expect(a.functions[0]!.calls.map((c) => [c.name, c.line])).toEqual([["helper", 6]]);
+  });
+});
