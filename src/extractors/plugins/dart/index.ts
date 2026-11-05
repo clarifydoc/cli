@@ -1,3 +1,4 @@
+import { addDartElementTypes, fieldCollections } from "./element-types.js";
 import type {
   RouteInfo,
   ClassInfo,
@@ -1244,10 +1245,20 @@ export const dartSpec: RegexLangSpec = {
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
   // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).
   postProcessFunctions: (lines, fns) => {
+    // Element types of collections the body builds or is handed, and `is` narrowing.
+    for (const fn of fns) addDartElementTypes(fn, lines, null);
     const closures = flutterClosureFunctions(lines);
     if (closures.length === 0) return fns;
     if (lines.some((l) => l.includes("Provider") || l.includes("riverpod"))) applyProviderTypes(closures, riverpodProviderTypes(lines));
     return [...fns, ...closures];
+  },
+  // The same for the members of a class, whose collection-typed fields a body iterates.
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) {
+      const fields = fieldCollections(cls.properties);
+      for (const m of cls.methods) addDartElementTypes(m, lines, fields);
+    }
+    return classes;
   },
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
   extractUiComponents: (lines, filePath, classes) => flutterUi(lines, filePath, classes).components,
