@@ -95,6 +95,7 @@ export const javaManifest: LanguagePluginManifest = {
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
   packageEcosystems: ["maven"],
+  importsDeclaredPackages: true,
   // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.
   serviceConfig: jvmServiceConfig,
   parsing: "tree-sitter",
@@ -123,6 +124,9 @@ export const kotlinManifest: LanguagePluginManifest = {
   family: "jvm",
   // A package's top-level functions need no import in its other files.
   directoryScope: true,
+  bareMembersHideFunctions: true,
+  indexerMethod: "get",
+  importsDeclaredPackages: true,
   packageEcosystems: ["maven"],
   // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.
   serviceConfig: jvmServiceConfig,

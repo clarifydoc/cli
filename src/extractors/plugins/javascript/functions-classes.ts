@@ -365,7 +365,7 @@ function declaredLocal(
   let value: Node | null = null;
   for (let i = 1; i < children.length; i++) {
     const c = children[i]!;
-    if (c.type === "type_annotation") annotation = c.text.replace(/^:\s*/, "");
+    if (c.type === "type_annotation") annotation = typeParameterBound(declarator, c.text.replace(/^:\s*/, ""));
     else if (c.type === "=") value = children[i + 1] ?? null;
   }
   if (!annotation && ctx.jsdoc && declarator.parent) {
@@ -999,6 +999,29 @@ function childDecorators(node: Node): string[] {
 /** A `?` token among a node's children — TS optional field, parameter or property signature. */
 function hasOptionalMarker(node: Node): boolean {
   return node.children.some((c) => c.type === "?");
+}
+
+/**
+ * A written type that is a type parameter in scope with a bound (`function f<T extends Club>(x: T)`, a
+ * class's `<T extends Club>`) is the bound: that is what a member read on the value can name. The
+ * innermost declaration wins (a method's `T` shadows its class's); a bound that names another
+ * parameter or has no bound at all stays as written.
+ */
+function typeParameterBound(from: Node, written: string | null): string | null {
+  if (!written || !/^[A-Za-z_$][\w$]*$/.test(written)) return written;
+  for (let n: Node | null = from; n; n = n.parent) {
+    const list = n.childForFieldName("type_parameters") ?? n.namedChildren.find((c) => c.type === "type_parameters") ?? null;
+    if (!list || (n.type !== "function_declaration" && n.type !== "method_definition" && n.type !== "arrow_function"
+      && n.type !== "function_expression" && n.type !== "generator_function_declaration" && n.type !== "generator_function"
+      && n.type !== "class_declaration" && n.type !== "abstract_class_declaration" && n.type !== "class"
+      && n.type !== "method_signature" && n.type !== "abstract_method_signature")) continue;
+    for (const tp of list.namedChildren) {
+      if (tp.type !== "type_parameter" || tp.childForFieldName("name")?.text !== written) continue;
+      const bound = tp.namedChildren.find((c) => c.type === "constraint")?.namedChild(0)?.text;
+      return bound && !bound.includes("|") && !bound.includes("&") ? bound : written;
+    }
+  }
+  return written;
 }
 
 /**
@@ -1943,6 +1966,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const typeNode = child.childForFieldName("type");
         const defaultNode = child.childForFieldName(isAssignment ? "right" : "value");
         let type = typeNode?.text?.replace(/^:\s*/, "") ?? docTypes?.get(name) ?? null;
+        if (typeNode) type = typeParameterBound(child, type);
         // Decorators lead the parameter — one child read rules them out.
         const di = (child.type === "required_parameter" || child.type === "optional_parameter") &&
           child.child(0)?.type === "decorator"
@@ -2332,7 +2356,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const isJsField = member.type === "field_definition";
     const nameNode = member.childForFieldName(isJsField ? "property" : "name");
     const propName = nameNode?.text ?? "unknown";
-    let declared = member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null;
+    let declared = typeParameterBound(member, member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null);
     if (!declared) {
       const doc = this.jsdocOf(member);
       declared = doc ? jsDocTypeTag(doc) : null;
@@ -2446,7 +2470,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const info = params.find((p) => p.name === name);
       out.push({
         name,
-        type: info?.type ?? param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
+        type: info?.type ?? typeParameterBound(param, param.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null),
         visibility: (modifier as "public" | "private" | "protected" | null) ?? "public",
         isStatic: false,
         isReadonly,

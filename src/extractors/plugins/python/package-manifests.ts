@@ -209,6 +209,71 @@ function parsePipfile(text: string, declaredIn: string): DeclaredPackage[] {
   return out;
 }
 
+/**
+ * Top-level modules whose name is not their distribution's (`import yaml` is PyYAML). The keys are the
+ * normalized distribution names `packageKey` produces; a module absent here is its own distribution.
+ */
+const IMPORT_DISTRIBUTIONS: Record<string, string> = {
+  yaml: "pyyaml",
+  PIL: "pillow",
+  sklearn: "scikit-learn",
+  bs4: "beautifulsoup4",
+  cv2: "opencv-python",
+  dateutil: "python-dateutil",
+  jwt: "pyjwt",
+  dotenv: "python-dotenv",
+  attr: "attrs",
+  serial: "pyserial",
+  Crypto: "pycryptodome",
+  Cryptodome: "pycryptodomex",
+  OpenSSL: "pyopenssl",
+  MySQLdb: "mysqlclient",
+  magic: "python-magic",
+  git: "gitpython",
+  docx: "python-docx",
+  pptx: "python-pptx",
+  slugify: "python-slugify",
+  multipart: "python-multipart",
+  jose: "python-jose",
+  socks: "pysocks",
+  skimage: "scikit-image",
+  zmq: "pyzmq",
+  gi: "pygobject",
+  googleapiclient: "google-api-python-client",
+  win32api: "pywin32",
+  win32con: "pywin32",
+  win32com: "pywin32",
+  pythoncom: "pywin32",
+};
+
+/** Distributions that ship one module under several names: the variants answer to the first. */
+const DISTRIBUTION_FAMILIES = new Map<string, string>([
+  ["opencv-python-headless", "opencv-python"],
+  ["opencv-contrib-python", "opencv-python"],
+  ["opencv-contrib-python-headless", "opencv-python"],
+  ["psycopg2-binary", "psycopg2"],
+  ["psycopg-binary", "psycopg"],
+]);
+
+/** A shared `google.*` namespace: the second segment names the distribution. */
+const GOOGLE_NAMESPACE: Record<string, string> = {
+  protobuf: "protobuf",
+  auth: "google-auth",
+  oauth2: "google-auth",
+  api_core: "google-api-core",
+};
+
+/** The distribution key an import names (`google.protobuf.message` → `protobuf`); null for a relative one. */
+function distributionOfImport(source: string): string {
+  const [head = "", second = ""] = source.split(".");
+  if (head === "google") {
+    const service = source.split(".")[2];
+    if (second === "cloud" && service) return `google-cloud-${service.replace(/_/g, "-")}`.toLowerCase();
+    return GOOGLE_NAMESPACE[second] ?? "google";
+  }
+  return IMPORT_DISTRIBUTIONS[head] ?? head.toLowerCase().replace(/_/g, "-");
+}
+
 export const pypiPackageManager: PackageManagerSpec = {
   ecosystem: "pypi",
   manifests: [
@@ -236,7 +301,11 @@ export const pypiPackageManager: PackageManagerSpec = {
       parse: (text, file) => parseRequirements(text, file.declaredIn, /dev|test/i.test(file.path)),
     },
   ],
-  // `django.db.models` → `django`; `typing_extensions` is published as `typing-extensions`.
-  importKey: (s) => (s.startsWith(".") ? null : s.split(".")[0]!.toLowerCase().replace(/_/g, "-")),
-  packageKey: (name) => name.toLowerCase().replace(/_/g, "-"),
+  // `django.db.models` → `django`; `typing_extensions` is published as `typing-extensions`;
+  // `yaml` is PyYAML's module, `PIL` Pillow's (see `IMPORT_DISTRIBUTIONS`).
+  importKey: (s) => (s.startsWith(".") ? null : distributionOfImport(s)),
+  packageKey: (name) => {
+    const key = name.toLowerCase().replace(/[_.]/g, "-");
+    return DISTRIBUTION_FAMILIES.get(key) ?? key;
+  },
 };

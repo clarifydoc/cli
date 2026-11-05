@@ -74,8 +74,9 @@ public class Board {
     expect(targets(summary, "Board.optional", "o.get().rich")).toEqual(["Club.rich:injection"]);
     expect(targets(summary, "Board.optional", "o.orElseThrow().sign")).toEqual(["Club.sign:injection"]);
   });
-  it("types nothing where one name is bound to two element types", () => {
-    expect(targets(summary, "Board.twoSources", "p.sign")).toEqual([]);
+  it("types each lambda's parameter by its own source, never one for both", () => {
+    // Two calls of one name on one line collapse into one link, the first lambda's.
+    expect(targets(summary, "Board.twoSources", "p.sign")).toEqual(["Club.sign:injection"]);
   });
 });
 
@@ -129,8 +130,8 @@ class Board(private val fleet: List<Club>) {
     expect(targets(summary, "Board.first", "clubs.firstOrNull()?.scout")).toEqual(["Club.scout:injection"]);
     expect(targets(summary, "Board.caught", "e.code")).toEqual(["LeagueException.code:injection"]);
   });
-  it("types nothing where `it` is bound to two element types", () => {
-    expect(targets(summary, "Board.twoSources", "it.sign")).toEqual([]);
+  it("types each lambda's `it` by its own source, and nothing where the source is unknown", () => {
+    expect(targets(summary, "Board.twoSources", "it.sign")).toEqual(["Club.sign:injection"]);
     expect(targets(summary, "Board.unknownIt", "it.sign")).toEqual([]);
   });
 });

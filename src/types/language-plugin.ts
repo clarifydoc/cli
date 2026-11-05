@@ -1243,6 +1243,15 @@ export interface LanguagePluginManifest {
    */
   importsNamePackages?: boolean;
   /**
+   * Imports are spelled as the package a file declares (`import com.example.league.Club`) and
+   * conventionally mirror the directories (Java, Kotlin): the symbol linker first looks for the ONE
+   * file whose `FileAnalysis.packageName` is the import's package and which declares the member it
+   * names, so a class in a directory that does not spell its package is found, and a namesake of
+   * another package is not taken for it. Where no file or several qualify, the directory-spelled
+   * resolution decides as before.
+   */
+  importsDeclaredPackages?: boolean;
+  /**
    * With `importsNamePackages`: a type name is looked up as the C# compiler
    * does — in the file's own package, then each enclosing one, innermost
    * first, then among the packages the file imports (its own imports, a
@@ -1441,6 +1450,19 @@ export interface LanguagePluginManifest {
    * leave it unset, so a bare name may still be a field.
    */
   explicitSelfMembers?: boolean;
+  /**
+   * Inside a method, a bare call names the enclosing class's member (or a base's) before a free function
+   * of the same name in the file: the implicit receiver's scope comes first (Kotlin). Outside the class
+   * body the free function stays. Unset where a bare name in a method is the free function (Rust,
+   * whose methods need `self.`) or where this has not been measured.
+   */
+  bareMembersHideFunctions?: boolean;
+  /**
+   * The member an index expression calls (`league[3]` is `league.get(3)`: Kotlin's `operator fun get`),
+   * so a chain through an index follows the member's declared return type. Unset: an index yields an
+   * element of unknown type.
+   */
+  indexerMethod?: string;
   /**
    * A bare call's name is looked up lexically, in the one namespace that
    * holds variables, functions and classes alike (Python): a parameter of the
