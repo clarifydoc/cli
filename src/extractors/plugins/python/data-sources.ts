@@ -905,26 +905,50 @@ function statedPath(target: string, at: Node): string | null {
   return value && value.startsWith("/") && !/[{}]/.test(value) ? value + target.slice(m[0].length) : null;
 }
 
-/** The one string the class enclosing `at` gives `self.<name>` (in any method) or its class attribute `<name>`. */
-function selfAttributeValue(name: string, at: Node): string | null {
+/**
+ * The one string the class enclosing `at` gives `self.<name>` (in any method) or its class attribute `<name>` —
+ * where it gives none, the one a base class the module declares gives (`ENDPOINT` on a test base class).
+ */
+function selfAttributeValue(name: string, at: Node, depth = 0): string | null {
   let cls: Node | null = at.parent;
   while (cls && cls.type !== "class_definition") cls = cls.parent;
-  const body = cls?.childForFieldName("body");
-  if (!body) return null;
+  for (let hops = 0; cls && hops < 4; hops++) {
+    const values = classAttributeValues(cls, name, depth);
+    if (values.size > 0) return values.size === 1 ? [...values][0]! : null;
+    cls = moduleBaseClass(cls);
+  }
+  return null;
+}
+
+function classAttributeValues(cls: Node, name: string, depth: number): Set<string | null> {
   const values = new Set<string | null>();
+  const body = cls.childForFieldName("body");
+  if (!body) return values;
   const visit = (n: Node, inMethod: boolean): void => {
     if (n.type === "class_definition") return;
     if (n.type === "assignment" || n.type === "augmented_assignment") {
       const left = n.childForFieldName("left")?.text;
       if (left === `self.${name}` || (!inMethod && left === name)) {
         const right = n.childForFieldName("right");
-        values.add(n.type === "assignment" && right ? pyStringValue(right, right) : null);
+        values.add(n.type === "assignment" && right && depth < 3 ? pyStringValue(right, right, depth + 1) : null);
       }
     }
     for (const c of n.namedChildren) visit(c, inMethod || n.type === "function_definition");
   };
   for (const c of body.namedChildren) visit(c, false);
-  return values.size === 1 ? [...values][0]! : null;
+  return values;
+}
+
+/** The one base of a class that the module itself declares at top level, by its bare name. */
+function moduleBaseClass(cls: Node): Node | null {
+  const bases = (cls.childForFieldName("superclasses")?.namedChildren ?? []).filter((b) => b.type === "identifier").map((b) => b.text);
+  let module: Node | null = cls.parent;
+  while (module && module.type !== "module") module = module.parent;
+  const declared = (module?.namedChildren ?? []).flatMap((stmt) => {
+    const def = stmt.type === "decorated_definition" ? stmt.childForFieldName("definition") : stmt;
+    return def?.type === "class_definition" && bases.includes(def.childForFieldName("name")?.text ?? "") ? [def] : [];
+  });
+  return declared.length === 1 ? declared[0]! : null;
 }
 
 /** The one string the module assigns `<name>` at top level, when no function enclosing `at` binds the name itself. */
@@ -1082,6 +1106,10 @@ export function pyStringValue(node: Node, at: Node, depth = 0): string | null {
     const value = singleAssignment(node.text, at);
     if (value) return pyStringValue(value, value, depth + 1);
     return moduleBound(node.text, at) ? `\${${node.text}}` : null;
+  }
+  // `self.ENDPOINT`: the one string the class gives it.
+  if (node.type === "attribute" && /^(?:self|cls)\.[A-Za-z_]\w*$/.test(node.text)) {
+    return selfAttributeValue(node.text.slice(node.text.indexOf(".") + 1), at, depth);
   }
   // `Paths.MATCHES`, `urls.BASE`: a value another module (or a class) defines.
   if (node.type === "attribute" && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(node.text)) {
