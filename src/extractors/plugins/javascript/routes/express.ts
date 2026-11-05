@@ -230,6 +230,17 @@ export function extractExpressRoutes(root: Node, routes: RouteInfo[]): void {
   applyRouterLevelGuards(root, routes);
 }
 
+const honoFiles = new WeakMap<object, boolean>();
+/** The file imports Hono: `.route(path, app)` is then a mount, not a chained Express `router.route(path)`. */
+function isHonoFile(node: Node): boolean {
+  let known = honoFiles.get(node.tree);
+  if (known === undefined) {
+    known = /\bfrom\s+['"]hono(?:\/[^'"]*)?['"]|require\(\s*['"]hono['"]/.test(node.tree.rootNode.text);
+    honoFiles.set(node.tree, known);
+  }
+  return known;
+}
+
 function walkForRoutes(node: Node, routes: RouteInfo[]) {
   visitExpressRoute(node, routes);
   for (const child of node.children) {
@@ -248,8 +259,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
     const fn = node.childForFieldName("function");
     if (fn?.type === "member_expression") {
       const prop = fn.childForFieldName("property");
-      const method = prop?.text?.toLowerCase();
+      let method = prop?.text?.toLowerCase();
       const receiver = receiverName(fn);
+      // Hono mounts a sub-app with `app.route("/clubs", clubs)`, which Express spells `app.use`.
+      if (method === "route" && isHonoFile(node)) method = "use";
 
       // Outbound HTTP clients are excluded both by the denylist and by a
       // `*Client` suffix (`accountApiClient`, `licenseApiClient`, …) that no
@@ -375,6 +388,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  */
 export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string): void {
   if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
+  if (sourceText === undefined || sourceText.includes("basePath(")) applyHonoBasePaths(root, routes);
   composeLocalMounts(routes);
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
@@ -553,6 +567,42 @@ function composeLocalMounts(routes: RouteInfo[]): void {
     routeMeta.delete(r);
   }
   routes.splice(0, routes.length, ...next);
+}
+
+/**
+ * Hono's `const app = new Hono().basePath("/api")` (and `const v1 = app.basePath("/v1")`):
+ * every route and mount registered on that instance sits under the base.
+ */
+function applyHonoBasePaths(root: Node, routes: RouteInfo[]): void {
+  const bases = new Map<string, { prefix: string; parent: string | null }>();
+  const visit = (node: Node): void => {
+    if (node.type === "variable_declarator") {
+      const name = node.childForFieldName("name");
+      const value = node.childForFieldName("value");
+      const fn = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+      if (name?.type === "identifier" && fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "basePath") {
+        const object = fn.childForFieldName("object");
+        const arg = value!.childForFieldName("arguments")?.namedChildren[0];
+        const parent = object?.type === "identifier" ? object.text.toLowerCase() : null;
+        if (arg?.type === "string" && (parent !== null || object?.type === "new_expression")) {
+          bases.set(name.text.toLowerCase(), { prefix: stripQuotes(arg.text), parent });
+        }
+      }
+    }
+    for (const child of node.namedChildren) visit(child);
+  };
+  visit(root);
+  if (bases.size === 0) return;
+  const prefixOf = (recv: string, depth = 0): string => {
+    const b = bases.get(recv);
+    if (!b || depth > 6) return "";
+    return joinPrefix(b.parent ? prefixOf(b.parent, depth + 1) : "", b.prefix);
+  };
+  for (const r of routes) {
+    const recv = routeMeta.get(r)?.receiver;
+    const prefix = recv ? prefixOf(recv) : "";
+    if (prefix) r.path = joinPrefix(prefix, r.path);
+  }
 }
 
 /** `"/api"` + `"/users"` → `"/api/users"`; `"/api"` + `"/"` → `"/api"`. */

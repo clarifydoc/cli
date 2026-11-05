@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { isRoutePath, extractExpressRoutes, regexRoutePaths } from "./express.js";
+import { isRoutePath, extractExpressRoutes, applyRouterLevelGuards, regexRoutePaths } from "./express.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 /**
@@ -260,5 +260,33 @@ describe("Express routes with a regex path", () => {
     const routes: RouteInfo[] = [];
     extractExpressRoutes(tree.rootNode, routes);
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /clubs/*", "GET /leagues/*"]);
+  });
+});
+
+describe("Hono prefixes", () => {
+  it("composes `app.route(path, sub)` in one file and a `basePath` on the instance", async () => {
+    const tree = await parseSource(
+      `import { Hono } from 'hono'
+const clubs = new Hono()
+clubs.get('/', (c) => c.json([]))
+clubs.post('/:id/sign', (c) => c.json({}))
+const app = new Hono().basePath('/api')
+app.route('/clubs', clubs)
+app.get('/health', (c) => c.text('ok'))
+const v2 = app.basePath('/v2')
+v2.get('/cars', (c) => c.json([]))`,
+      "typescript" as any,
+      "C.ts",
+    );
+    const routes: RouteInfo[] = [];
+    extractExpressRoutes(tree.rootNode, routes);
+    applyRouterLevelGuards(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual(["GET /api/clubs", "GET /api/health", "GET /api/v2/cars", "POST /api/clubs/:id/sign"]);
+  });
+
+  it("leaves Express's chained `router.route(path)` alone", async () => {
+    expect(await routesOf(`const router = express.Router();
+router.route('/clubs', clubs)
+app.get('/x', (req, res) => res.send(''))`)).toEqual(["GET /x"]);
   });
 });
