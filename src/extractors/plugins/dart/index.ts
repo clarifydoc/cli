@@ -24,7 +24,7 @@ import {
 import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
-import { goRoutes } from "./go-router.js";
+import { goRoutes, materialRoutes } from "./go-router.js";
 import { extractDartImports } from "./imports.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
@@ -261,7 +261,19 @@ function dartStringArg(lines: string[], i: number, col: number): string | null {
 /** A field, getter, local or parameter the file declares as an HTTP client by type: `final Dio _leagueDio;`, `http.Client client`, `Dio get api =>`. */
 const TYPED_CLIENT_RE = /(?<![\w.])(?:Dio|http\.Client)\??\s+(?:get\s+)?(_*[A-Za-z]\w*)\s*(?=[;=,)]|=>|\{)/g;
 
+/** The `@RestApi` class a line sits in (retrofit's generated clients), or null. */
+function restClassOf(lines: string[], at: number): string | null {
+  for (let k = at; k >= 0; k--) {
+    const m = /^\s*(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/.exec(lines[k]!);
+    if (!m) continue;
+    for (let j = k - 1; j >= 0 && /^\s*(?:@|\/\/|$)/.test(lines[j]!); j--) if (/^\s*@RestApi\b/.test(lines[j]!)) return m[1]!;
+    return null;
+  }
+  return null;
+}
+
 function extractDartDataSources(lines: string[]): DataSourceInfo[] {
+  const restApi = lines.some((l) => /^\s*@RestApi\b/.test(l));
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
   // A client whose name says nothing (`_leagueDio`, `_gateway`) is still one when its declared type is.
@@ -282,6 +294,20 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     const trimmed = line.trimStart();
     if (!trimmed || trimmed.startsWith("//")) continue;
     const ln = i + 1;
+
+    // Retrofit: `@GET('/clubs')` above an abstract method of a `@RestApi` class declares the request; the method's
+    // signature line carries it, so the function it belongs to owns the call, and the class is its client.
+    const verb = restApi && /^@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*(?:'([^']*)'|"([^"]*)")/.exec(trimmed);
+    if (verb) {
+      const cls = restClassOf(lines, i);
+      let sig = i + 1;
+      while (sig < lines.length && /^\s*(?:@|$|\/\/)/.test(lines[sig]!)) sig++;
+      if (cls && sig < lines.length) {
+        const path = verb[2] ?? verb[3] ?? "";
+        push({ kind: "api-call", name: verb[1]!, target: path.startsWith("/") || /^https?:/.test(path) ? path : `/${path}`, calls: [], line: sig + 1, baseRef: { kind: "client", key: cls } });
+      }
+      continue;
+    }
 
     // HTTP clients — http / dio / generic clients; `await http` on one line, `.get(…)` on the next.
     const split = new RegExp(String.raw`^(\s*)\.(${HTTP_VERBS})\s*\(`).exec(line);
@@ -473,7 +499,7 @@ function extractDartRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
 
   }
   // GoRouter declarative routes → frontend screens.
-  routes.push(...goRoutes(lines, facts));
+  routes.push(...goRoutes(lines, facts), ...materialRoutes(lines, facts));
 
   // Pipeline middleware is inherited by the routes it wraps. `params` stay
   // absent on purpose: the handler is named, and the project-level join reads
@@ -528,13 +554,29 @@ function extractDartClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
     const decl = declarationText(lines, cls.line - 1);
     const seen = new Set<string>(cls.implements ?? []);
     const withM = decl.match(/\bwith\s+([^{]*?)(?:\s+implements\b|\s*\{|$)/);
-    if (withM) for (const n of splitTypeList(withM[1]!)) seen.add(n);
+    if (withM) {
+      for (const n of splitTypeList(withM[1]!)) seen.add(n);
+      // `class Coach with Trainable`: the mixin's members are the class's, after its own and before its base's.
+      cls.mixins = splitTypeList(withM[1]!).map((n) => ({ name: n.replace(/<.*$/, ""), kind: "include" as const }));
+    }
     const implM = decl.match(/\bimplements\s+([^{]*?)(?:\s*\{|$)/);
     if (implM) for (const n of splitTypeList(implM[1]!)) seen.add(n);
     cls.implements = [...seen];
     // An enum's value list (`venus(4.8e24);`) is shaped like a signature.
     if (/^\s*enum\b/.test(lines[cls.line - 1] ?? "")) continue;
     addBodyLevelMembers(lines, cls, dartSpec, parseDartParam);
+    // `Player get captain => …`: read like a field (`roster.captain.save()` is typed through it).
+    for (const line of lines.slice(cls.line, Math.max(cls.line, cls.endLine - 1))) {
+      const getter = /^\s{1,4}(?:static\s+)?([A-Z][\w$]*(?:<[^()]*?>)?\??)\s+get\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{|async)/.exec(line);
+      if (getter && !cls.properties.some((p) => p.name === getter[2])) {
+        cls.properties.push({ name: getter[2]!, type: getter[1]!.replace(/\?$/, ""), visibility: getter[2]!.startsWith("_") ? "private" : "public", isStatic: false, isReadonly: true, accessor: true });
+      }
+    }
+    // A State's `widget` is the StatefulWidget it was created for: `widget.repo.load()` reads that class's field.
+    const stateOf = /\bextends\s+(?:Consumer)?State\s*<\s*([A-Za-z_$][\w$]*)\s*>/.exec(decl)?.[1];
+    if (stateOf && !cls.properties.some((p) => p.name === "widget")) {
+      cls.properties.push({ name: "widget", type: stateOf, visibility: "public", isStatic: false, isReadonly: true });
+    }
     const values = dartFieldValues(lines, cls);
     if (values) cls.fieldValues = values;
     if (/\bclass\b/.test(decl) && isDartInterface(decl, cls, lines)) cls.kind = "interface";
@@ -725,6 +767,8 @@ const FLUTTER_WIDGET_BASE_RE =
 /** `Navigator.push(context, … (_) => SettingsPage())` / `context.push('/settings')` / `context.push(SettingsPage.routeName)` / `context.router.push(SettingsRoute())` / `showDialog(… SettingsDialog(`. */
 const FLUTTER_NAV_RE = [
   /\bcontext\.(?:push|go|replace|pushReplacement|pushNamed|goNamed)\s*\(\s*(?:['"]([^'"]+)['"]|([A-Z]\w*)\.(?:routeName|routePath|route|path|name)\b)/g,
+  // Flutter's own named routes: `Navigator.pushNamed(context, '/details')`, `Navigator.of(context).pushNamed(TablePage.routeName)`, GetX `Get.toNamed('/x')`.
+  /\b(?:Navigator(?:\.of\(\s*\w+\s*(?:,[^)]*)?\))?|[nN]avigator|navigatorKey\.currentState!?|Get)\.(?:pushNamed|pushReplacementNamed|popAndPushNamed|pushNamedAndRemoveUntil|restorablePushNamed|toNamed|offNamed|offAllNamed)\s*(?:<[^>]*>)?\(\s*(?:\w+\s*,\s*)?(?:['"]([^'"]+)['"]|([A-Z]\w*)\.(?:routeName|routePath|route|path|name)\b)/g,
   /\b(?:Navigator(?:\.of\(\w+\))?|context\.router|router|_router|appRouter)\.(?:push|pushReplacement|pushAndRemoveUntil|navigate|replace)\w*\s*\([^;]*?\b(?:=>\s*(?:const\s+)?|\(\s*)([A-Z]\w*)(?:Route|Page|Screen)?\s*\(/g,
   /\bshow(?:Dialog|ModalBottomSheet|CupertinoDialog|GeneralDialog|Menu)\s*(?:<[^>]*>)?\s*\([^;]*?=>\s*(?:const\s+)?([A-Z]\w*)\s*\(/g,
   // auto_route: `context.pushRoute(AlbumRoute(id: x))`, `context.replaceRoute(const LoginRoute())`,
@@ -1027,6 +1071,21 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
   return ui;
 }
 
+/** `@RestApi(baseUrl: 'https://…') abstract class ClubApi`: the class is the client, its base the literal. */
+function retrofitClients(lines: string[]): HttpClientRegistration[] {
+  const out: HttpClientRegistration[] = [];
+  lines.forEach((l, i) => {
+    if (!/^\s*@RestApi\b/.test(l)) return;
+    let head = l;
+    for (let k = i + 1; k < Math.min(lines.length, i + 6) && !/\bclass\s+\w+/.test(head); k++) head += " " + lines[k]!;
+    const cls = /\bclass\s+([A-Za-z_$][\w$]*)/.exec(head)?.[1];
+    if (!cls) return;
+    const base = /\bbaseUrl\s*:\s*(?:'([^']*)'|"([^"]*)")/.exec(head.slice(0, head.indexOf("class")))?.slice(1, 3).find(Boolean);
+    out.push({ client: cls, scope: "project", ...(base ? { base: { kind: "literal" as const, key: base } } : {}), line: i + 1 });
+  });
+  return out;
+}
+
 /**
  * The API classes of an OpenAPI-generated Dart client (`package:openapi/api.dart`,
  * often a gitignored path dependency): `final AlbumsApi _api;` makes `_api.createAlbum(…)`
@@ -1034,6 +1093,8 @@ function flutterUi(lines: string[], filePath: string, classes: ClassInfo[]): Flu
  * names is registered as a proxy of itself, so the call carries that contract.
  */
 function generatedApiClients(lines: string[]): HttpClientRegistration[] {
+  const retrofit = retrofitClients(lines);
+  if (retrofit.length > 0) return retrofit;
   if (!lines.some((l) => /^\s*import\s+['"]package:openapi\//.test(l))) return [];
   const out: HttpClientRegistration[] = [];
   const seen = new Set<string>();

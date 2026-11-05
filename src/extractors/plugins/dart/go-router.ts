@@ -82,6 +82,41 @@ export function goRoutes(lines: string[], facts: RouteFact[] | undefined): Route
   return routes;
 }
 
+/** `'/details': (context) => DetailsPage(),` / `TablePage.routeName: (c) { return const TablePage(); }` — one entry of a routes table. */
+const TABLE_ENTRY_RE = /(?:'([^']*)'|"([^"]*)"|([A-Z]\w*)\.(\w+))\s*:\s*(?:\([^)]*\)|\w+)\s*(?:=>|\{\s*return)\s*(?:const\s+)?([A-Z]\w*)\s*(?:<[^<>()]*>)?\(/g;
+
+/**
+ * Flutter's own router: `MaterialApp(routes: {'/details': (c) => DetailsPage()})` (also Cupertino and
+ * GetX apps). A literal key is a route; a constant of a screen's class (`TablePage.routeName`) is a fact
+ * the same resolver as GoRouter's reads off that class.
+ */
+export function materialRoutes(lines: string[], facts: RouteFact[] | undefined): RouteInfo[] {
+  const routes: RouteInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const app = /\b(?:Material|Cupertino|GetMaterial|GetCupertino|Widgets)App(?:\.\w+)?\s*\(/.exec(lines[i]!);
+    if (!app || /^\s*\/\//.test(lines[i]!)) continue;
+    const text = callText(lines, i, app.index, 400);
+    const table = /\broutes\s*:\s*(?:<[^<>{}]*>\s*)?\{/.exec(text);
+    if (!table) continue;
+    // The table's own braces: its entries' closures hold braces of their own.
+    let depth = 0;
+    let end = text.length;
+    for (let k = table.index + table[0].length - 1; k < text.length; k++) {
+      if (text[k] === "{") depth++;
+      else if (text[k] === "}" && --depth === 0) { end = k; break; }
+    }
+    const body = text.slice(table.index + table[0].length, end);
+    const base = text.slice(0, table.index + table[0].length).split("\n").length - 1;
+    for (const m of body.matchAll(TABLE_ENTRY_RE)) {
+      const line = i + 1 + base + body.slice(0, m.index!).split("\n").length - 1;
+      const widget = m[5]!;
+      if (m[3]) facts?.push({ kind: GO_ROUTE_FACT, line, data: { cls: m[3], field: m[4]!, widget } satisfies GoRouteFact });
+      else routes.push({ path: m[1] ?? m[2]!, httpMethod: null, kind: "frontend", handler: widget, componentPath: widget, calls: [], middleware: [], line });
+    }
+  }
+  return routes;
+}
+
 /**
  * The shells around GoRoutes, by the line each route opens on: a `StatefulShellRoute`'s builder
  * widget (`MobileBottomNavigationBar(navigationShell: …)`) frames its branches, each branch's

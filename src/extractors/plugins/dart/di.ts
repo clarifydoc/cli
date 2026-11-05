@@ -533,8 +533,11 @@ function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null
   const awaited = /^await\s+/.test(text);
   const body = text.replace(/^await\s+/, "").replace(/^(?:new|const)\s+/, "");
   const m = /^(?:[a-z_]\w*\s*\.\s*)?([A-Z]\w*)\s*(?:<[^()]*>)?\s*\.\s*([a-z_$]\w*)\s*\(/.exec(body);
-  if (!m || closeOf(body, m[0].length - 1) !== body.length) return null;
-  return { from: `${m[1]}.${m[2]}()`, ...(awaited ? { awaited: true } : {}) };
+  if (m && closeOf(body, m[0].length - 1) === body.length) return { from: `${m[1]}.${m[2]}()`, ...(awaited ? { awaited: true } : {}) };
+  // `s.first()`, `this.repo.find(id)`, `widget.repo.load()`: a method of a typed receiver, typed by its declared return type.
+  const chain = /^(?:this\s*\.\s*)?([a-z_$][\w$]*(?:\s*[?!]?\.\s*[a-z_$][\w$]*)+)\s*\(/.exec(body);
+  if (!chain || closeOf(body, chain[0].length - 1) !== body.length) return null;
+  return { from: `${chain[1]!.replace(/\s+/g, "").replace(/[?!]\./g, ".")}()`, ...(awaited ? { awaited: true } : {}) };
 }
 
 /** `List<Club>`, `Iterable<Club>?`, `Set<Club>`: the element class; null for anything else. */
@@ -726,6 +729,8 @@ export const dartDiCallPatterns: CallPattern[] = [
     pattern: /\b([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)<([\w$.?<>, ]+)>\s*\(/,
     buildName: (m) => {
       const recv = strip(m[1]!);
+      // `Badge<int>()`: a generic class's constructor, named as the constructor of any class is.
+      if (/^[A-Z]/.test(recv) && !recv.includes(".")) return { name: recv, leafName: recv };
       return { name: `${recv}<${strip(m[2]!)}>`, leafName: recv.split(".").pop()! };
     },
   },
