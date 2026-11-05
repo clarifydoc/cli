@@ -494,8 +494,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     if (elements) {
       for (const l of elements.locals) {
         const same = localTypes.filter((t) => t.name === l.name);
-        // A stated type replaces the initializer calls a name was waiting on.
-        if (same.length > 0 && !same.every((t) => !t.type)) continue;
+        // A stated type replaces the initializer calls a name was waiting on; an element read never joins them.
+        if (same.length > 0 && (!same.every((t) => !t.type) || l.element)) continue;
         for (const t of same) localTypes.splice(localTypes.indexOf(t), 1);
         localTypes.push(l);
       }

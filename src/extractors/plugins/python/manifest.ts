@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import { pythonMigrationFiles } from "./migration-files.js";
 import { pythonProjectCommands } from "./project-commands.js";
 import { djangoTestSetupRuns } from "./django/test-setup.js";
@@ -24,6 +25,7 @@ export const pythonManifest: LanguagePluginManifest = {
   projectCommands: pythonProjectCommands,
   testSetupRuns: djangoTestSetupRuns,
   language: "python",
+  collectionElementOf: collectionElementText,
   tupleElementsOf(returnType) {
     const m = /^(?:typing\.)?(?:tuple|Tuple)\[([\s\S]+)\]$/.exec(returnType.trim());
     if (!m) return null;

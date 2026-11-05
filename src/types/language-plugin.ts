@@ -1357,6 +1357,12 @@ export interface LanguagePluginManifest {
    */
   tupleElementsOf?(returnType: string): string[] | null;
   /**
+   * The element a declared collection type states (`Club[]`, `list[Club]`, `List<Club>`, `[]*Club` → `Club`), or null
+   * for any other type. Reads the declared type of a field or a call's result for a loop variable
+   * (`localTypes[].element`); whether the element is a project class is the linker's call.
+   */
+  collectionElementOf?(type: string): string | null;
+  /**
    * An import puts the imported file's top-level functions in scope without
    * naming them — PowerShell dot-sourcing / `Import-Module`, Bash `source`:
    * a bare call no definition in its own file answers is linked to the ONE

@@ -240,7 +240,7 @@ export class PythonExtractor extends FunctionClassExtractor {
       if (access.length > 0) fn.requestAccess = access;
     }
     let collections: ReturnType<typeof collectionParams> | undefined;
-    if (body && (LOCAL_TYPE_GATE.test(bodyText) || (LOOP_GATE.test(bodyText) && (collections = collectionParams(params)).size > 0))) {
+    if (body && (LOCAL_TYPE_GATE.test(bodyText) || ((collections = collectionParams(params)), LOOP_GATE.test(bodyText)))) {
       const locals = collectLocalTypes(body, params, typeComments, collections);
       if (locals.length > 0) fn.localTypes = locals;
     }

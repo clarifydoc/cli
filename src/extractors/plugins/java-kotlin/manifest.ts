@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
@@ -92,6 +93,7 @@ export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
+  collectionElementOf: collectionElementText,
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
   packageEcosystems: ["maven"],
@@ -120,6 +122,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   testCommand: jvmTestCommand,
   language: "kotlin",
+  collectionElementOf: collectionElementText,
   family: "jvm",
   // A package's top-level functions need no import in its other files.
   directoryScope: true,

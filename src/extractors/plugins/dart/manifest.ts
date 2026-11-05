@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { dartFrameworkRules } from "./frameworks.js";
 import { dartImportedFile, pubPackageManager } from "./package-manifests.js";
@@ -12,6 +13,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const dartManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "dart",
+  collectionElementOf: collectionElementText,
   family: "dart",
   packageManagers: [pubPackageManager],
   packageEcosystems: ["pub"],

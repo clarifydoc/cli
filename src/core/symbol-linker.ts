@@ -46,6 +46,8 @@ interface SymbolDef {
    * different ones: the arguments would have to pick, and nothing here does.
    */
   returnType?: string | null;
+  /** `FunctionInfo.declaredReturnType`: the return type as written where `returnType` keeps less of it. */
+  declaredReturn?: string;
   /** Only a re-export names it here (`from .impl import Service` in `__init__`): the definition is elsewhere. */
   reexport?: boolean;
   /** A method of the class object (`FunctionInfo.classLevel`), every definition of the name being one. */
@@ -55,6 +57,11 @@ interface SymbolDef {
    * a call hands back the type of that argument when the written type names no class.
    */
   passesThrough?: number;
+  /**
+   * Position of the parameter typed as a collection of the function's return type (`first<T>(items: T[]): T`):
+   * a call hands back the element type of the collection the caller passes.
+   */
+  passesElement?: number;
 }
 
 /**
@@ -754,7 +761,10 @@ function buildSymbolIndex(
         line: fn.line,
         endLine: fn.endLine,
         returnType: overloadReturn(prev, fn.returnType),
+        ...(fn.declaredReturnType && !prev ? { declaredReturn: fn.declaredReturnType } : {}),
         ...(passThroughIndex(fn) >= 0 && !prev ? { passesThrough: passThroughIndex(fn) } : {}),
+        ...(!prev && passThroughIndex(fn) < 0 && passElementIndex(fn, pluginFor(analysis.language)?.collectionElementOf) >= 0
+          ? { passesElement: passElementIndex(fn, pluginFor(analysis.language)?.collectionElementOf) } : {}),
       });
     }
 
@@ -775,6 +785,7 @@ function buildSymbolIndex(
           line: method.line,
           endLine: method.endLine,
           returnType: overloadReturn(prev, method.returnType),
+          ...(method.declaredReturnType && !prev ? { declaredReturn: method.declaredReturnType } : {}),
           ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
         });
         // Also store unqualified as fallback (if not already taken by a function). A constructor
@@ -995,6 +1006,11 @@ function projectTypeHierarchy(analyses: readonly FileAnalysis[]): TypeHierarchy 
 
 /** A name's return type once another definition of it (an overload) is seen: kept only when both agree. */
 /** Index of the parameter typed as the function's return type (`c: T` of `identity<T>(c: T): T`), else -1. */
+function passElementIndex(fn: { returnType: string | null; params: Array<{ type: string | null }> }, elementOf: ((t: string) => string | null) | undefined): number {
+  const ret = fn.returnType?.trim();
+  return ret && elementOf && /^[A-Za-z_$][\w$]*$/.test(ret) ? fn.params.findIndex((p) => !!p.type && elementOf(p.type) === ret) : -1;
+}
+
 function passThroughIndex(fn: { returnType: string | null; params: Array<{ type: string | null }> }): number {
   const ret = fn.returnType?.trim();
   return ret && /^[A-Za-z_$][\w$]*$/.test(ret) ? fn.params.findIndex((p) => p.type?.trim() === ret) : -1;
@@ -5678,6 +5694,23 @@ function resolveThroughDeclaredType(
   // `valid?`), the mark is part of the name it calls.
   leafName = manifestFor(analysis.language as Language)?.marksEndNames ? leafName.replace(/\s+/g, "") : receiverSegment(leafName);
 
+  // Several classes the receiver may be (`isinstance(x, (Club, Car))`, written `Club|Car`): the one that declares
+  // the method is the receiver, when exactly one does and every alternative is a project class.
+  if (call.receiverType?.includes("|") && !call.receiverQualifier) {
+    const hits: InjectionPoint[] = [];
+    for (const alt of call.receiverType.split("|").map((t) => t.trim())) {
+      const typeName = receiverTypeName(alt, analysis.language);
+      const imported = typeName ? importedTypeRef(ctx, typeName, sourceFile, analysis.projectId) : undefined;
+      const name = typeName ? imported?.typeName ?? dealias(ctx, typeName, sourceFile) : null;
+      const typeFile = name ? imported ? imported.typeFile : typeFileFor(ctx, name, sourceFile, analysis.projectId) : null;
+      if (!name || !typeFile) return null;
+      if (findMethodInClass(ctx, declaredTypeName(ctx, typeFile, name), typeFile, leafName)) {
+        hits.push({ typeName: declaredTypeName(ctx, typeFile, name), typeFile, member: "", consumer });
+      }
+    }
+    return hits.length === 1 ? linkThroughPoint(ctx, analysis, sourceFile, hits[0]!, leafName, mkLink) : null;
+  }
+
   if (call.receiverType || call.receiverQualifier) {
     let typeName = receiverTypeName(call.receiverType, analysis.language);
     if (!typeName && !call.receiverQualifier) return null;
@@ -5906,19 +5939,46 @@ function passThroughResult(
         const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, head.name);
         return link ? symbolIn(ctx, link.targetFile, link.targetSymbol) : undefined;
       })();
-  if (def?.passesThrough === undefined) return null;
+  if (def?.passesThrough === undefined && def?.passesElement === undefined) return null;
   // A returned name that is a class is already a type: the plain return-type rule decides.
   const args = splitTopLevel(head.args, ",");
-  const arg = args[def.passesThrough]?.trim();
+  const arg = args[def.passesThrough ?? def.passesElement!]?.trim();
+  if (def.passesThrough === undefined) {
+    // `first(clubs)` with `first<T>(items: T[]): T`: the element of the collection the argument is declared as.
+    if (!arg || !/^(?:(?:this|self)\.)?[A-Za-z_$][\w$]*$/.test(arg)) return null;
+    const declared = argumentDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, arg);
+    const element = declared ? pluginFor(analysis.language)?.collectionElementOf?.(declared.type.trim()) : null;
+    return element ? returnedPoint(ctx, element, declared!.file, { typeName: "", typeFile: null, consumer }) : null;
+  }
   if (!arg || !/^[A-Za-z_$][\w$]*$/.test(arg) || depth >= MAX_INITIALIZER_DEPTH) return null;
   return scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, arg, depth + 1);
 }
 
+/** The declared type of an argument name: the caller's own parameter or typed local, else its class's field. */
+function argumentDeclaredType(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  arg: string,
+): { type: string; file: string } | null {
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  const own = /^(?:this|self)\.(.+)$/.exec(arg);
+  if (!own) {
+    const key = nameKey(analysis.language, arg);
+    const local = callable?.localTypes?.filter((l) => nameKey(analysis.language, l.name) === key) ?? [];
+    if (local.length > 0) return local.length === 1 && local[0]!.type ? { type: local[0]!.type, file: sourceFile } : null;
+    const param = callable?.params.find((p) => nameKey(analysis.language, p.name) === key);
+    if (param) return param.type ? { type: param.type, file: sourceFile } : null;
+    if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
+  }
+  if (!consumer || !ctx.classAt.has(memberKey(sourceFile, consumer))) return null;
+  return fieldDeclaredType(ctx, { typeName: consumer, typeFile: sourceFile }, own ? own[1]! : arg);
+}
+
 /** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
 const MAX_INITIALIZER_DEPTH = 3;
-
-/** The tuple position `returnedPoint` takes from the declared return type while a tuple unpacking is typed. */
-let pendingTupleIndex: number | null = null;
 
 /** A local initialized by a call (`localTypes[].from`), typed by what that call is declared to return. */
 function initializerPoint(
@@ -5927,27 +5987,154 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean; fromIndex?: number },
+  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true },
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
-  if (local.fromIndex !== undefined) {
-    // A tuple unpacking (`a, b = load()`): the element of the one call's declared tuple type. Only a single
-    // call (no member chain) names its own declared return type here.
-    const only = receiverChain(`${local.from}.x`);
-    if (only?.length !== 1 || !only[0]!.call) return null;
-    pendingTupleIndex = local.fromIndex;
-    try {
-      return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, only, depth + 1, local.awaited === true);
-    } finally {
-      pendingTupleIndex = null;
-    }
+  if (local.fromIndex !== undefined || local.element) {
+    // A tuple unpacking (`a, b = repo.load()`) or a loop over a collection (`for c in self.clubs`): the element of
+    // the declared type the call returns or the field states — read off the declaration, never inferred.
+    const chain = receiverChain(`${local.from}.x`);
+    if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
+    const declared = chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth);
+    if (!declared) return null;
+    const plugin = pluginFor((ctx.languageOf.get(declared.file) ?? "") as Language);
+    const written = local.awaited ? awaitedType(declared.type.trim(), plugin?.asyncResultTypes) : declared.type.trim();
+    const element = local.fromIndex !== undefined ? plugin?.tupleElementsOf?.(written)?.[local.fromIndex] : plugin?.collectionElementOf?.(written);
+    if (!element) return null;
+    return returnedPoint(ctx, element, declared.file, { typeName: "", typeFile: null, consumer });
   }
   // The initializer is the receiver of an imagined member call on its result: a call, or a
   // member read off one (`usePublicApi(slug).explore`).
   const chain = receiverChain(`${local.from}.x`);
   if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain.some((seg) => seg.call)) return null;
   return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true);
+}
+
+/**
+ * The declared type, as written, of the LAST segment of a receiver chain — a method's return type or a field's
+ * type — with the file that declares it. `this.clubs` (a field of the caller's class), `self.repo.load()`, `all()`
+ * (the caller's own method, a function of its file or an imported one). The head of the chain is typed as any
+ * receiver is; only the last hop is read as text.
+ */
+function chainDeclaredType(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  chain: ChainSegment[],
+  depth: number,
+): { type: string; file: string } | null {
+  const last = chain[chain.length - 1]!;
+  const prefix = chain.slice(0, -1);
+  const ownClass = consumer && ctx.classAt.has(memberKey(sourceFile, consumer))
+    ? { typeName: consumer, typeFile: sourceFile, member: "", consumer }
+    : null;
+  let owner: InjectionPoint | null;
+  if (prefix.length === 0) {
+    if (last.call) {
+      const own = ownClass ? methodDeclaredReturn(ctx, ownClass, last.name) : null;
+      if (own) return own;
+      const def = symbolIn(ctx, sourceFile, last.name);
+      if (def && def.name === last.name && (def.declaredReturn ?? def.returnType)) return { type: (def.declaredReturn ?? def.returnType)!, file: sourceFile };
+      const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, last.name) ?? packageFunctionLink(ctx, analysis, sourceFile, sourceSymbol, last.name);
+      const imported = link ? symbolIn(ctx, link.targetFile, link.targetSymbol) : undefined;
+      const written = imported?.declaredReturn ?? imported?.returnType;
+      return link && written ? { type: written, file: link.targetFile } : null;
+    }
+    // A bare name read as a field (a language where `clubs` means the class's own): never where fields need `this.`.
+    if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
+    const field = ownClass ? fieldDeclaredType(ctx, ownClass, last.name) : null;
+    return field ?? moduleVariableType(ctx, analysis, last.name);
+  } else if (prefix.length === 1 && !prefix[0]!.call && SELF_HEADS.has(prefix[0]!.name)) {
+    owner = ownClass;
+  } else {
+    owner = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, prefix, depth + 1, false);
+  }
+  if (!owner?.typeFile) return null;
+  return last.call ? methodDeclaredReturn(ctx, owner, last.name) : fieldDeclaredType(ctx, owner, last.name);
+}
+
+/**
+ * A bare function call the file does not define or import, resolved like any other call (a Go function another
+ * file of the package declares) — guarded, since typing a local resolves the very call that reads it.
+ */
+function packageFunctionLink(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string, name: string): SymbolLink | null {
+  const guard = `${sourceFile}\0${sourceSymbol}\0${name}()`;
+  if (resolvingPackageCalls.has(guard)) return null;
+  resolvingPackageCalls.add(guard);
+  try {
+    const link = resolveCallToDefinition(sourceFile, sourceSymbol, { name, kind: "internal", target: null, line: 0 }, analysis, ctx);
+    return link?.relation === "calls" ? link : null;
+  } finally {
+    resolvingPackageCalls.delete(guard);
+  }
+}
+
+/**
+ * The type a variable the module declares at its top level states (`FileAnalysis.moduleBindings`): the file's own,
+ * else — for a language whose package spans the files of a directory — the one the sibling files declare. Two
+ * declarations of the name that differ decide nothing.
+ */
+function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: string): { type: string; file: string } | null {
+  const key = nameKey(analysis.language, name);
+  const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
+  if (own) return { type: own.type, file: analysis.filePath };
+  if (!typesSpanFiles(analysis.language as Language)) return null;
+  const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
+  const found = new Map<string, { type: string; file: string }>();
+  for (const a of ctx.analyses) {
+    if (a === analysis || a.language !== analysis.language || a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1) !== dir) continue;
+    const b = a.moduleBindings?.find((x) => nameKey(a.language, x.name) === key);
+    if (b) found.set(b.type, { type: b.type, file: a.filePath });
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+/** The return type a method of the point's class (own or inherited) declares, with the file of its declaration. */
+function methodDeclaredReturn(ctx: LinkContext, point: Pick<InjectionPoint, "typeName" | "typeFile">, method: string): { type: string; file: string } | null {
+  if (!point.typeFile) return null;
+  const hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  const def = hit ? symbolIn(ctx, hit.file, hit.symbol) : undefined;
+  const written = def?.declaredReturn ?? def?.returnType;
+  return hit && written ? { type: written, file: hit.file } : null;
+}
+
+/**
+ * The type a field of the point's class (or a base's, or a sibling part of a type split over a directory)
+ * declares, as written. A name two parts of the class declare with different types decides nothing.
+ */
+function fieldDeclaredType(ctx: LinkContext, point: Pick<InjectionPoint, "typeName" | "typeFile">, name: string): { type: string; file: string } | null {
+  let className = point.typeName;
+  let file = point.typeFile;
+  const key = nameKey(ctx.languageOf.get(point.typeFile ?? ""), name);
+  const seen = new Set<string>();
+  for (let depth = 0; file && depth < MAX_BASE_DEPTH; depth++) {
+    const memberId = memberKey(file, className);
+    if (seen.has(memberId)) return null;
+    seen.add(memberId);
+    const dir = file.slice(0, file.lastIndexOf("/") + 1);
+    const here: string = file;
+    const parts = typesSpanFiles((ctx.languageOf.get(here) ?? "") as Language)
+      ? (ctx.classFiles.get(className) ?? []).filter((f) => f.slice(0, f.lastIndexOf("/") + 1) === dir && ctx.languageOf.get(f) === ctx.languageOf.get(here))
+      : [];
+    const found = new Map<string, { type: string; file: string }>();
+    for (const f of parts.includes(here) ? parts : [here, ...parts]) {
+      const prop = ctx.classAt.get(memberKey(f, className))?.properties.find((p) => nameKey(ctx.languageOf.get(f), p.name) === key && p.type);
+      if (prop?.type) found.set(prop.type, { type: prop.type, file: f });
+    }
+    if (found.size > 1) return null;
+    if (found.size === 1) return [...found.values()][0]!;
+    const written = ctx.classAt.get(memberId)?.extends?.replace(/^::/, "");
+    if (!written) return null;
+    const base = bareClassName(written);
+    const baseFile = locateClass(ctx, base, here, ctx.projectOf.get(here) ?? "root");
+    if (!baseFile) return null;
+    className = declaredTypeName(ctx, baseFile, base);
+    file = baseFile;
+  }
+  return null;
 }
 
 /** One receiver segment of a call chain: `repo`, `getSheet()` (`call`), `new Report(…)` (`ctor`). */
@@ -6095,13 +6282,6 @@ function returnedPoint(
 ): InjectionPoint | null {
   if (!returnType) return null;
   let written = returnType.trim();
-  if (pendingTupleIndex !== null) {
-    const index = pendingTupleIndex;
-    pendingTupleIndex = null;
-    const element = pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.tupleElementsOf?.(written)?.[index];
-    if (!element) return null;
-    written = element;
-  }
   if (awaited) written = awaitedType(written, pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.asyncResultTypes);
   if (SELF_TYPES.has(written)) {
     return receiver.typeFile ? { typeName: receiver.typeName, typeFile: receiver.typeFile, member: "", consumer: receiver.consumer, container: false } : null;

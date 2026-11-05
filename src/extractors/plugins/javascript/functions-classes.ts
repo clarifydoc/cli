@@ -172,19 +172,29 @@ function scanBody(
     if (c) collections.set(p.name, c);
   }
   /** The parameters of a callback a collection hands its elements to, by function node id. */
-  const callbackElements = new Map<number, { element: string; both: boolean }>();
-  /** The collection `node` reads: a name, or a chain off one that keeps its elements. */
-  const collectionOf = (node: Node | null): { element: string; map: boolean } | null => {
+  const callbackElements = new Map<number, { element?: string; from?: string; both: boolean }>();
+  /**
+   * The collection `node` reads: a name, or a chain off one that keeps its elements — or, where the source states
+   * no type for it, the field or call it reads (`this.clubs`, `repo.all()`), whose DECLARED type the linker reads.
+   */
+  const collectionOf = (node: Node | null): { element: string; map: boolean } | { from: string } | null => {
     for (let hop = 0; node && hop < 6; hop++) {
       if (node.type === "identifier") return collections.get(node.text) ?? null;
       if (node.type === "parenthesized_expression" || node.type === "non_null_expression") {
         node = node.namedChild(0);
         continue;
       }
+      if (node.type === "member_expression") {
+        const from = memberChainText(node);
+        return from ? { from } : null;
+      }
       if (node.type !== "call_expression") return null;
       const fn = node.childForFieldName("function");
       const prop = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : undefined;
-      if (!prop || !KEEPS_ELEMENTS.has(prop)) return null;
+      if (!prop || !KEEPS_ELEMENTS.has(prop)) {
+        const from = callChainText(node, "typescript");
+        return from ? { from } : null;
+      }
       node = fn!.childForFieldName("object");
     }
     return null;
@@ -196,14 +206,18 @@ function scanBody(
     if (!prop || !ELEMENT_CALLBACKS.has(prop)) return;
     const source = collectionOf(fn.childForFieldName("object"));
     // A `Map`'s `forEach` hands the value first; its other callbacks do not exist.
-    if (!source || (source.map && prop !== "forEach")) return;
+    if (!source || ("map" in source && source.map && prop !== "forEach")) return;
+    // A source read by its declaration has no map flag: a map-typed one yields no element, so nothing is typed.
+    if ("from" in source && prop !== "forEach" && prop !== "map" && !ELEMENT_CALLBACKS.has(prop)) return;
     const first = call.childForFieldName("arguments")?.namedChildren[0];
-    if (first && FUNCTION_EXPRESSIONS.has(first.type)) callbackElements.set(first.id, { element: source.element, both: prop === "sort" || prop === "toSorted" });
+    if (first && FUNCTION_EXPRESSIONS.has(first.type)) callbackElements.set(first.id, { ..."from" in source ? { from: source.from } : { element: source.element }, both: prop === "sort" || prop === "toSorted" });
   };
   /** The element a `for (… of <iterable>)` yields, with where it lands: the whole binding, or the value of an entry. */
-  const loopElement = (right: Node | null): { element: string; entry: boolean } | null => {
+  const loopElement = (right: Node | null): { element: string; entry: boolean } | { from: string; awaited: boolean } | null => {
     let node = right;
     while (node?.type === "parenthesized_expression") node = node.namedChild(0);
+    const awaited = node?.type === "await_expression";
+    if (awaited) node = node!.namedChild(0);
     if (node?.type === "identifier") {
       const c = collections.get(node.text);
       return c ? { element: c.element, entry: c.map } : null;
@@ -219,9 +233,20 @@ function scanBody(
         return null;
       }
       const kept = collectionOf(node);
+      if (kept && "from" in kept) return { from: kept.from, awaited };
       return kept && !kept.map ? { element: kept.element, entry: false } : null;
     }
+    if (node?.type === "member_expression" && !awaited) {
+      const from = memberChainText(node);
+      return from ? { from, awaited: false } : null;
+    }
     return null;
+  };
+  const bindFrom = (name: string, from: string, awaited = false): void => {
+    const entry = { local: { name, type: "", from, element: true as const, ...(awaited ? { awaited: true as const } : {}) }, annotated: false };
+    const list = bindings.get(name);
+    if (list) list.push(entry);
+    else bindings.set(name, [entry]);
   };
   const bindTyped = (name: string, element: string): void => {
     const entry = { local: { name, type: element }, annotated: true };
@@ -248,7 +273,7 @@ function scanBody(
       }
     }
 
-    if (inScope && type === "call_expression" && collections.size > 0) noteCallback(node);
+    if (inScope && type === "call_expression") noteCallback(node);
 
     // A module loaded for its default export: a lazy loader (`() => import("./ClubPage.vue")`, a route's
     // component) or `(await import("./auth")).default`. Other uses (`const { f } = await import()`, `.then`, a
@@ -283,8 +308,10 @@ function scanBody(
           const list = node.childForFieldName("parameters") ?? node.childForFieldName("parameter");
           const names = handed && list ? (list.type === "identifier" ? [list] : list.namedChildren.map((p) => p.childForFieldName("pattern") ?? p)) : [];
           names.forEach((p, i) => {
-            if (handed && p.type === "identifier" && (i === 0 || (i === 1 && handed.both))) bindTyped(p.text, handed.element);
-            else bindPattern(p);
+            if (handed && p.type === "identifier" && (i === 0 || (i === 1 && handed.both))) {
+              if (handed.from) bindFrom(p.text, handed.from);
+              else bindTyped(p.text, handed.element!);
+            } else bindPattern(p);
           });
           if (!handed || !list) bindPattern(list);
         }
@@ -309,7 +336,10 @@ function scanBody(
       } else if (type === "for_in_statement") {
         const left = node.childForFieldName("left");
         const over = node.childForFieldName("operator")?.text === "of" ? loopElement(node.childForFieldName("right")) : null;
-        if (over && left?.type === "identifier" && !over.entry) bindTyped(left.text, over.element);
+        if (over && "from" in over) {
+          if (left?.type === "identifier") bindFrom(left.text, over.from, over.awaited);
+          else bindPattern(left);
+        } else if (over && left?.type === "identifier" && !over.entry) bindTyped(left.text, over.element);
         // `for (const [id, club] of clubsById)`: the value is the element, the key states nothing.
         else if (over?.entry && left?.type === "array_pattern") {
           left.namedChildren.forEach((p, i) => {
@@ -339,7 +369,10 @@ function scanBody(
     if (list.some((b) => b!.local.from)) {
       if (!list.every((b) => b!.local.from)) continue;
       const seen = new Set<string>();
-      for (const b of list) if (!seen.has(`${b!.local.from}|${b!.local.awaited}`)) (seen.add(`${b!.local.from}|${b!.local.awaited}`), localTypes.push(b!.local));
+      for (const b of list) {
+        const id = `${b!.local.from}|${b!.local.awaited}|${b!.local.element}`;
+        if (!seen.has(id)) (seen.add(id), localTypes.push(b!.local));
+      }
       continue;
     }
     if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
@@ -385,6 +418,24 @@ function declaredLocal(
     return initializerLocal(value, name);
   }
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
+}
+
+/**
+ * `this.clubs`, `this.repo.clubs`, `repo.clubs`: a member read off `this` or a name, spelled as the linker's receiver
+ * chains are. Null for anything with a call, an index or an optional step in it.
+ */
+function memberChainText(node: Node): string | null {
+  const parts: string[] = [];
+  let cur: Node | null = node;
+  while (cur?.type === "member_expression") {
+    const property = cur.childForFieldName("property");
+    if (property?.type !== "property_identifier" || cur.children.some((c) => c.type === "?.")) return null;
+    parts.unshift(property.text);
+    cur = cur.childForFieldName("object");
+  }
+  if (cur?.type !== "this" && cur?.type !== "identifier") return null;
+  parts.unshift(cur.text);
+  return parts.length >= 2 ? parts.join(".") : null;
 }
 
 /**

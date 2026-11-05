@@ -170,11 +170,11 @@ describe("Go package imports", () => {
   });
 
   it("links a method by its unique name when the caller's package imports its package", () => {
-    expect(linkOf("ParkAll", "v.Park")).toBe("internal/fleet/van.go Van.Park unique-global");
+    expect(linkOf("ParkAll", "v.Park")).toBe("internal/fleet/van.go Van.Park injection");
   });
 
   it("never takes a value another module made for a project value of a method's name (real-repo FP)", () => {
-    expect(linkOf("ParkAll", "v.Header")).toBe("internal/fleet/van.go Van.Header unique-global");
+    expect(linkOf("ParkAll", "v.Header")).toBe("internal/fleet/van.go Van.Header injection");
     expect(linkOf("Respond", "c.Response().Header")).toBeNull();
     expect(linkOf("Respond", "rec.Header")).toBeNull();
     expect(linkOf("Respond", "resp.Header")).toBeNull();

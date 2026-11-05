@@ -471,6 +471,28 @@ function initializerCall(init: Node): { from: string; awaited?: true } | null {
   return awaited ? { from, awaited: true } : { from };
 }
 
+/**
+ * What a `foreach` iterates when its collection's type is not stated in the body: a call (awaited or not,
+ * `repo.AllAsync()`) or a member read (`this.clubs`, `repo.Clubs`), as `localTypes[].from` spells it — the linker
+ * reads the element of the type that call or member DECLARES.
+ */
+export function iterationSource(expr: Node): { from: string; awaited?: true } | null {
+  const call = initializerCall(expr);
+  if (call) return call;
+  let node = unwrapExpression(expr);
+  const parts: string[] = [];
+  while (node.type === "member_access_expression") {
+    const name = node.childForFieldName("name");
+    const target = node.childForFieldName("expression");
+    if (name?.type !== "identifier" || !target) return null;
+    parts.unshift(name.text);
+    node = unwrapExpression(target);
+  }
+  if (node.type !== "this_expression" && node.type !== "identifier") return null;
+  parts.unshift(node.type === "this_expression" ? "this" : node.text);
+  return parts.length >= 2 ? { from: parts.join(".") } : null;
+}
+
 /** A function expression that is not bound to a name (passed as an argument, assigned to an event). */
 export function isAnonymousFunctionExpression(node: Node): boolean {
   return FUNCTION_EXPRESSIONS.has(node.type) && node.parent?.type !== "variable_declarator";

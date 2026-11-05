@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import { goMigrationFiles } from "./migration-files.js";
 import { goProjectCommands } from "./project-commands.js";
 import { goTestCommand } from "./test-command.js";
@@ -21,6 +22,7 @@ export const goManifest: LanguagePluginManifest = {
   testCommand: goTestCommand,
   projectCommands: goProjectCommands,
   language: "go",
+  collectionElementOf: collectionElementText,
   family: "go",
   // A package is its directory: a bare call reaches the function a sibling file declares.
   directoryScope: true,
