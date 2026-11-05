@@ -51,3 +51,26 @@ describe("detectSubProjects — the package each JVM and .NET project publishes"
     }
   });
 });
+
+describe("detectSubProjects — a Go workspace", () => {
+  it("maps a go.work `replace` to the directory it names, as go.mod's does", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cd-gowork-"));
+    try {
+      const files: Record<string, string> = {
+        "go.work": "go 1.21\nuse (\n\t./garage\n)\nreplace example.com/pitkit => ./pitkit\n",
+        "garage/go.mod": "module example.com/garage\ngo 1.21\n",
+        "pitkit/pit.go": "package pit\n",
+      };
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const projects = await detectSubProjects(root);
+      const packages = projects.flatMap((p) => (p.packages ?? []).map((k) => `${k.name}=>${k.root}`));
+      expect(packages).toEqual(["example.com/pitkit=>pitkit"]);
+      expect(projects.find((p) => p.root === "garage")?.packageName).toBe("example.com/garage");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

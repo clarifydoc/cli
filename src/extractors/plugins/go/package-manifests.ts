@@ -51,6 +51,12 @@ export const goPackageManager: PackageManagerSpec = {
     parse: (text, file) => parseGoMod(text, file.declaredIn),
     selfName: (text) => /^module\s+(\S+)/m.exec(text)?.[1] ?? null,
     localPackages: goLocalReplacements,
+  }, {
+    // A workspace's `replace` maps a module path to a directory as go.mod's does. Its `use`
+    // lines name modules that carry their own go.mod, which each is a sub-project for.
+    files: ["go.work"],
+    parse: () => [],
+    localPackages: goLocalReplacements,
   }],
   // The full import path: the module path is it, or an ancestor of it.
   importKey: (s) => (s.startsWith(".") ? null : s.toLowerCase()),
