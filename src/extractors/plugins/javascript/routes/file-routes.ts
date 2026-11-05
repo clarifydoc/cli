@@ -34,6 +34,7 @@ export function routeFromSegments(dir: string): string {
   if (segments[segments.length - 1] === "index") segments.pop();
   const mapped = segments.map((s) =>
     s
+      .replace(/\[\.\.\.\]/g, "*") // Nitro's unnamed catch-all
       .replace(/\[\[\.\.\.(\w+)\]\]/g, "*")
       .replace(/\[\.\.\.(\w+)\]/g, "*")
       .replace(/\[\[(\w+)\]\]/g, ":$1?")

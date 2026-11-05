@@ -223,6 +223,7 @@ describe("Nuxt Nitro server routes", () => {
     expect(rows("server/api/clubs/[id].put.ts")).toEqual(["PUT /api/clubs/:id"]);
     expect(rows("server/api/players.ts")).toEqual(["null /api/players"]);
     expect(rows("server/api/files/[...path].delete.ts")).toEqual(["DELETE /api/files/*"]);
+    expect(rows("server/api/[...].ts")).toEqual(["null /api/*"]);
     expect(rows("server/routes/health.ts")).toEqual(["null /health"]);
     expect(rows("server/routes/sitemap.xml.ts")).toEqual(["null /sitemap.xml"]);
   });
