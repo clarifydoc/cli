@@ -97,6 +97,11 @@ export class JsComponentEmitResolver implements DispatchResolver {
           if (!name) continue; // inline expression, not a named handler
           const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
           if (span) out.push({ file: b.parent.filePath, span });
+          // An Angular output bound to a method of a typed field (`(dismissed)="transferStore.dismiss"`).
+          else if (b.angular) {
+            const target = fieldMethod(b.parent, handler, byPath, filePathMap);
+            if (target) out.push({ file: target.file.filePath, span: target.span });
+          }
         }
       }
       return out;
@@ -523,6 +528,32 @@ function factoryReturned(
   const named = spansOf(at).filter((sp) => sp.symbol === returned.name);
   const span = named.find((sp) => sp.line > fn.line && sp.endLine <= fn.endLine) ?? named[0];
   return span ? { target: at, span } : null;
+}
+
+/**
+ * The method a `field.method` handler names on the class a component's field or constructor
+ * parameter is typed with (`transferStore = inject(TransferStoreService)`), that class being
+ * declared in the file or imported into it by name. An untyped field names nothing.
+ */
+function fieldMethod(
+  parent: FileAnalysis,
+  handler: string,
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): { file: FileAnalysis; span: SymbolSpan } | null {
+  const m = /^(?:this\.)?([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(handler.trim());
+  if (!m) return null;
+  const [, field, method] = m;
+  let type: string | undefined;
+  for (const cls of parent.classes ?? []) {
+    type ??= cls.properties?.find((p) => p.name === field)?.type ?? cls.methods.find((x) => x.name === "constructor")?.params.find((p) => p.name === field)?.type ?? undefined;
+  }
+  const typeName = type && /^[A-Za-z_$][\w$]*$/.test(type) ? type : null;
+  if (!typeName) return null;
+  const source = parent.classes.some((c) => c.name === typeName) ? parent.filePath : parent.imports.find((i) => i.specifiers.includes(typeName))?.source;
+  const file = source === parent.filePath ? parent : source ? byPath.get(resolveTarget(source, parent.filePath, filePathMap) ?? "") : undefined;
+  const span = file ? spansOf(file).find((sp) => sp.symbol === `${typeName}.${method}`) : undefined;
+  return file && span ? { file, span } : null;
 }
 
 /** React's callback-prop convention: `onPress`, `onModalClose`. */

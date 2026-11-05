@@ -168,6 +168,35 @@ describe("JsComponentEmitResolver", () => {
     expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["FixturePagerComponent.next emit:pageChange -> FixturesComponent.reloadFixtures"]);
   });
 
+  it("joins an Angular output bound to a method of a typed field to that method (real-repo FP)", () => {
+    const row = fa("src/app/transfer-row.component.ts", {
+      classes: [{ name: "TransferRowComponent", decorators: ["Component({ selector: 'app-transfer-row' })"], methods: [], properties: [] }] as never,
+      events: [{ name: "dismissed", params: [], line: 6 }],
+      interactiveElements: [{ element: "button", event: "(click)", handler: "dismissed.emit", line: 2 }],
+    });
+    const store = fa("src/app/transfer-store.service.ts", {
+      classes: [{ name: "TransferStoreService", decorators: [], methods: [fn("dismiss", 10, 14)], properties: [] }] as never,
+    });
+    // `(dismissed)="transferStore.dismiss"`, the field typed by what it injects; an untyped field joins nothing.
+    const list = fa("src/app/transfer-list.component.ts", {
+      imports: [{ source: "./transfer-store.service", specifiers: ["TransferStoreService"], line: 1 }] as never,
+      classes: [{
+        name: "TransferListComponent",
+        decorators: ["Component({ selector: 'app-transfer-list' })"],
+        methods: [],
+        properties: [{ name: "transferStore", type: "TransferStoreService" }, { name: "panel", type: null }],
+      }] as never,
+      interactiveElements: [
+        { element: "custom", event: "(dismissed)", handler: "transferStore.dismiss", line: 3, component: "app-transfer-row" },
+        { element: "custom", event: "(dismissed)", handler: "panel.dismiss", line: 4, component: "app-transfer-row" },
+      ],
+    });
+    const links = new JsComponentEmitResolver().resolve([row, store, list]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}:${l.targetSymbol}`)).toEqual([
+      "<template> emit:dismissed -> src/app/transfer-store.service.ts:TransferStoreService.dismiss",
+    ]);
+  });
+
   it("creates nothing for events the child never declares (native fallthrough)", () => {
     const clickParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],
