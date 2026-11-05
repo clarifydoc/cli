@@ -933,6 +933,12 @@ export interface CallExtractionHooks {
     resolve: (node: Node) => string | null,
   ): void;
   /**
+   * Whether a call is one its own file states is a member of a project value, whatever its leaf name says:
+   * `ACTIONS.send(club)` on `const ACTIONS = { send: sendClub }` is the map's `send`, never a response's. Such a
+   * call is kept though its leaf is in the noise list.
+   */
+  statedMember?(node: Node, name: string): boolean;
+  /**
    * The local names a declaration binds from what a call returns (`const { save } = useClubActions()`,
    * `const [rows, refresh] = useMatches()`): a function the factory hands back, so a name handed on
    * from there (`onClick={save}`) is kept for the factory's module to answer.

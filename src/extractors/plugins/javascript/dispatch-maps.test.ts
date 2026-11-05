@@ -104,4 +104,18 @@ export function runLocal(i) { return LOCAL[i](); }`;
     expect(calls("runSpace")).toEqual([]);
     expect(calls("runLocal")).toEqual([]);
   });
+
+  it("keeps a call of a key the map holds though the key is a noise word, and drops it on any other receiver", async () => {
+    const code = `function sendClub(c) { return c; }
+const ACTIONS = { send: sendClub, find: sendClub };
+export function run(club, list) {
+  list.find(club);
+  ACTIONS.other(club);
+  ACTIONS.find(club);
+  return ACTIONS.send(club);
+}`;
+    const tree = await parseSource(code, "typescript" as never, "run.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, code);
+    expect(shown(fns.find((f) => f.name === "run")!.calls)).toEqual(["ACTIONS.other", "ACTIONS.find", "ACTIONS.send"]);
+  });
 });
