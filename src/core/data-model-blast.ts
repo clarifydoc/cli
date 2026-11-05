@@ -258,6 +258,7 @@ const KIND_CATEGORY: Record<TypeUsageKind, "inheritance" | "data" | "function"> 
   return: "function",
   cast: "function",
   instantiation: "function",
+  constant: "data",
 };
 
 /** Pick the dominant category on an edge — the one with the most refs. */
