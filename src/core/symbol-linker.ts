@@ -442,7 +442,8 @@ export function buildSymbolLinks(
       for (const impl of impls) {
         // Where the method actually is: the class body, a sibling file of its
         // package (Go), or a base class it inherits from.
-        const implMethod = findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
+        const implMethod = explicitImplementation(ctx, impl.className, impl.classFile, info.interfaceName, ifaceMethod.name)
+          ?? findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
         // A class that declares none takes the interface's own (a C# `class Match : Club`
         // whose base list names the interface), or an extending interface's restatement
         // of it: no implementation to fan out to.
@@ -6707,7 +6708,7 @@ function linkThroughPoint(
 
   const bound = boundImplementation(ctx, analysis, sourceFile, point);
   if (bound) {
-    const target = findMethodInClass(ctx, bound.className, bound.classFile, method);
+    const target = explicitImplementation(ctx, bound.className, bound.classFile, point.typeName, method) ?? findMethodInClass(ctx, bound.className, bound.classFile, method);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "di-binding"));
   }
   if (!point.typeFile) {
@@ -6730,7 +6731,8 @@ function linkThroughPoint(
     // An implementation that does not declare the member is an abstract base:
     // the call runs in the one class below it that does (`ServiceImpl extends
     // AbstractQuery extends … AbstractSupport implements Service`).
-    const target = findMethodInClass(ctx, impl.className, impl.classFile, method)
+    const target = explicitImplementation(ctx, impl.className, impl.classFile, point.typeName, method)
+      ?? findMethodInClass(ctx, impl.className, impl.classFile, method)
       ?? overrideBelow(ctx, impl.className, impl.classFile, method, sourceIsTest);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "interface-redirect"));
   }
@@ -7143,6 +7145,22 @@ function ownerOverrideLinks(
     });
   }
   return out;
+}
+
+/**
+ * The member a class declares for `iface` explicitly (`void IScout.Report()`), beside another interface's
+ * same-named one. Null when the class states no such member.
+ */
+function explicitImplementation(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  iface: string,
+  method: string,
+): { file: string; symbol: string; line: number } | null {
+  const cls = ctx.classAt.get(memberKey(classFile, className));
+  const m = cls?.methods.find((f) => f.name === method && f.explicitInterface === bareSupertypeName(iface));
+  return m ? { file: classFile, symbol: `${className}.${method}`, line: m.line } : null;
 }
 
 function findMethodInClass(

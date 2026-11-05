@@ -937,6 +937,23 @@ describe("symbol-linker — structural interfaces", () => {
   });
 });
 
+describe("symbol-linker — explicit interface implementations", () => {
+  it("sends each interface's call to the member that names it, though both are called Report", () => {
+    const scout = file("src/IScout.cs", [cls("IScout", { kind: "interface", methods: [method("Report", [], [], 2)] })], { language: "csharp" });
+    const analyst = file("src/IAnalyst.cs", [cls("IAnalyst", { kind: "interface", methods: [method("Report", [], [], 2)] })], { language: "csharp" });
+    const coach = file("src/Coach.cs", [cls("Coach", {
+      implements: ["IScout", "IAnalyst"],
+      methods: [
+        { ...method("Report", [], [], 5), explicitInterface: "IScout" },
+        { ...method("Report", [], [], 9), explicitInterface: "IAnalyst" },
+      ],
+    })], { language: "csharp" });
+    const runner = file("src/Runner.cs", [cls("Runner", { methods: [method("Go", [call("scout.Report"), call("analyst.Report")], [param("scout", "IScout"), param("analyst", "IAnalyst")], 3)] })], { language: "csharp" });
+    const links = callsFrom(buildSymbolLinks([scout, analyst, coach, runner]), "src/Runner.cs");
+    expect(links.map((l) => [l.callName, l.targetLine])).toEqual([["scout.Report", 5], ["analyst.Report", 9]]);
+  });
+});
+
 describe("spec join to an implementing class method (generated interface absent)", () => {
   it("joins a WSDL operation to the method of the class implementing its portType", () => {
     const wsdl = {

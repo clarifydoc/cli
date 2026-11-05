@@ -353,3 +353,16 @@ public class Score {
     expect(byName.get("op_Addition")!.params.map((p) => p.type)).toEqual(["Score", "Score"]);
   });
 });
+
+describe("C# explicit interface implementations", () => {
+  it("records the interface a member is written for, beside a same-named one", async () => {
+    const classes = await classesOf(`namespace League;
+public class Coach : IScout, IAnalyst<Match> {
+    void IScout.Report() { }
+    void League.IAnalyst<Match>.Report() { }
+    public void Train() { }
+}`);
+    const coach = classes.find((c) => c.name === "Coach")!;
+    expect(coach.methods.map((m) => [m.name, m.explicitInterface])).toEqual([["Report", "IScout"], ["Report", "IAnalyst"], ["Train", undefined]]);
+  });
+});

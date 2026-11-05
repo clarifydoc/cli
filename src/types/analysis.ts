@@ -1211,6 +1211,12 @@ export interface FunctionInfo {
    */
   abstract?: true;
   /**
+   * The interface an explicit implementation names (C# `void IScout.Report()`, as written with its type arguments
+   * dropped): the method belongs to that interface only, so two interfaces' same-named members stay two methods.
+   * Absent for any other method.
+   */
+  explicitInterface?: string;
+  /**
    * A method of the class object, not of an instance, where its name does
    * not say so (Ruby `def self.find`, a method in `class << self` or after
    * `module_function`): a bare call in it runs on the class, so it reaches
