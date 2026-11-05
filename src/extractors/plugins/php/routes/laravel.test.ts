@@ -342,7 +342,7 @@ Other::get('/nope', [ClubController::class, 'nope']);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
       "GET /clubs ClubController#index",
       "POST /clubs ClubController#store",
-      "GET /cars ClubController#cars",
+      "GET /v2/cars ClubController#cars",
     ].map((x) => x));
   });
 

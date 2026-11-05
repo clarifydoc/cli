@@ -585,7 +585,9 @@ function emitVerbRoute(
   const stringValue = (node: Node | undefined): string | null => boundString(node, bound);
   const line = call.startPosition.row + 1;
   const scope = groupScopeOf(call);
-  const prefixes = basePrefix ? [basePrefix, ...scope.prefixes] : scope.prefixes;
+  // `Route::prefix('v2')->get('/cars', …)`: a prefix chained on the route itself, inside the groups' own.
+  const chained = chainPrefix(call);
+  const prefixes = [...(basePrefix ? [basePrefix] : []), ...scope.prefixes, ...(chained ? [chained] : [])];
   const own = [...chainMiddleware(call), ...trailingChainMiddleware(call)];
   const named = (own: string | null): { name?: string } => (own ? { name: scope.names.join("") + own } : {});
   const ownerOf = (h: Handler): { owner?: string } => {
