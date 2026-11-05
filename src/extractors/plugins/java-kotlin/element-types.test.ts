@@ -134,3 +134,51 @@ class Board(private val fleet: List<Club>) {
     expect(targets(summary, "Board.unknownIt", "it.sign")).toEqual([]);
   });
 });
+
+describe("Kotlin operator invoke and implicit receivers; Java annotation members, enum constant bodies and outer fields", () => {
+  let summary: ProjectAnalysis;
+  let done: () => Promise<void>;
+  beforeAll(async () => {
+    ({ summary, done } = await scan({
+      "league/Club.kt": "package league\nclass Club { fun sign() {}; fun scout() {} }\nclass Decoy { fun sign() {}; fun scout() {}; fun call(n: Int) = n }\nclass Whistle { operator fun invoke(n: Int): Int = n }\n",
+      "league/Board.kt": `package league
+class Board {
+  fun blow() { val w = Whistle(); w(1) }
+  fun withClub() { with(Club()) { scout() } }
+  fun applyClub() { Club().apply { sign() } }
+  fun withName(club: Club) { with(club) { sign() } }
+  fun outer() { with(Club()) { Club().run { scout() } } }
+}
+`,
+      "league/Since.java": "package league;\npublic @interface Since { String value(); int major() default 1; }\n",
+      "league/Note.java": "package league;\npublic class Note { public String value() { return \"\"; } public int major() { return 2; } }\n",
+      "league/Squad.java": "package league;\npublic class Squad { public void sign() {} public void rank() {} }\n",
+      "league/Table.java": `package league;
+public class Table {
+  enum Kind { FAST { void go() { pace(); } }, SLOW; void pace() {} }
+  private Squad squad = new Squad();
+  class Row { void work() { squad.sign(); } }
+  void read(Since since) { since.value(); since.major(); }
+}
+`,
+    }));
+  });
+  afterAll(async () => done());
+
+  it("links `h(1)` on a value of a class type to its operator invoke", () => {
+    expect(targets(summary, "Board.blow", "w.invoke")).toEqual(["Whistle.invoke:injection"]);
+  });
+  it("links a bare call inside with(x) / x.apply { } to the member of the receiver's class", () => {
+    expect(targets(summary, "Board.withClub", "scout")).toEqual(["Club.scout:class-name"]);
+    expect(targets(summary, "Board.applyClub", "sign")).toEqual(["Club.sign:class-name"]);
+    expect(targets(summary, "Board.withName", "sign")).toEqual(["Club.sign:injection"]);
+  });
+  it("links an annotation element call to the @interface, never to a namesake", () => {
+    expect(targets(summary, "Table.read", "since.value")).toEqual(["Since.value:injection"]);
+    expect(targets(summary, "Table.read", "since.major")).toEqual(["Since.major:injection"]);
+  });
+  it("reads the methods an enum constant's body declares, and an outer field used in an inner class", () => {
+    expect(targets(summary, "Kind.go", "pace")).toEqual(["Kind.pace:direct"]);
+    expect(targets(summary, "Row.work", "squad.sign")).toEqual(["Squad.sign:injection"]);
+  });
+});

@@ -115,12 +115,18 @@ const KOTLIN_RULES: ChainRules = {
 
 export const jvmRules = (language: JkLang): ChainRules => (language === "java" ? JAVA_RULES : KOTLIN_RULES);
 
-/** The declared type text of each field / property of the class a method sits in. */
-function memberTypes(method: Node, language: JkLang): Map<string, string> {
+const CLASS_NODES: ReadonlySet<string> = set("class_declaration", "enum_declaration", "object_declaration", "record_declaration", "interface_declaration");
+
+/** The class declarations around a node, innermost first. */
+function enclosingClasses(node: Node): Node[] {
+  const out: Node[] = [];
+  for (let p: Node | null = node.parent; p; p = p.parent) if (CLASS_NODES.has(p.type)) out.push(p);
+  return out;
+}
+
+/** The declared type text of each field / property of one class declaration (and its primary constructor's parameters). */
+function classMemberTypes(cls: Node, language: JkLang): Map<string, string> {
   const out = new Map<string, string>();
-  let cls: Node | null = method.parent;
-  while (cls && cls.type !== "class_declaration" && cls.type !== "enum_declaration" && cls.type !== "object_declaration" && cls.type !== "record_declaration" && cls.type !== "interface_declaration") cls = cls.parent;
-  if (!cls) return out;
   if (language === "java") {
     const body = cls.childForFieldName("body");
     for (const m of body?.namedChildren ?? []) {
@@ -155,6 +161,47 @@ function memberTypes(method: Node, language: JkLang): Map<string, string> {
         const type = holder?.children.find((x) => x.type === "user_type" || x.type === "nullable_type")?.text;
         if (name && type) out.set(name, type);
       }
+    }
+  }
+  return out;
+}
+
+/** The declared type text of each field / property of the class a method sits in. */
+function memberTypes(method: Node, language: JkLang): Map<string, string> {
+  const cls = enclosingClasses(method)[0];
+  return cls ? classMemberTypes(cls, language) : new Map();
+}
+
+/**
+ * An inner class reads the fields of the class around it (`club.sign()` in `class Inner` of `Garage`, which
+ * declares `Club club`): the head of a call's receiver that the method, its parameters and its own class do not
+ * declare, but an enclosing class does, is typed as that field.
+ */
+export function outerFieldLocals(
+  method: Node,
+  language: JkLang,
+  params: readonly ParamInfo[],
+  localTypes: readonly LocalType[],
+  calls: readonly CallInfo[],
+): LocalType[] {
+  const classes = enclosingClasses(method);
+  if (classes.length < 2) return [];
+  const heads = new Set<string>();
+  for (const c of calls) {
+    const dot = c.name.indexOf(".");
+    const head = dot > 0 ? c.name.slice(0, dot).replace(/\(.*$/s, "") : "";
+    if (/^[a-z_]\w*$/.test(head) && head === c.name.slice(0, dot)) heads.add(head);
+  }
+  const own = new Set<string>([...params.map((p) => p.name), ...localTypes.map((l) => l.name), ...classMemberTypes(classes[0]!, language).keys()]);
+  const out: LocalType[] = [];
+  for (const head of heads) {
+    if (own.has(head)) continue;
+    for (const outer of classes.slice(1)) {
+      const type = classMemberTypes(outer, language).get(head);
+      if (!type) continue;
+      const cls = classOf(type);
+      if (cls && !jvmRules(language).parseType(type)) out.push({ name: head, type: cls });
+      break;
     }
   }
   return out;
@@ -420,4 +467,28 @@ export function jvmElementFacts(
     return valueOfChain(split.receiver, rootState, rules);
   };
   return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf } : null;
+}
+
+/**
+ * `val h = Handler(); h(1)`: calling a value of a class type runs its `operator fun invoke`. A bare call of a name
+ * the body, the parameters or the class state to be a class type is also reported as a call of `<name>.invoke` — the
+ * linker resolves it on the declared type, and a type with no such member links nothing.
+ */
+export function kotlinInvokeCalls(
+  method: Node,
+  params: readonly ParamInfo[],
+  localTypes: readonly LocalType[],
+  calls: readonly CallInfo[],
+): CallInfo[] {
+  if (!calls.some((c) => /^[a-z_]\w*$/.test(c.name))) return [];
+  const typed = new Map<string, string>();
+  for (const [name, type] of memberTypes(method, "kotlin")) if (classOf(type) && !KOTLIN_RULES.parseType(type)) typed.set(name, type);
+  for (const p of params) if (p.type && classOf(p.type) && !KOTLIN_RULES.parseType(p.type)) typed.set(p.name, p.type);
+  for (const l of localTypes) if (l.type && classOf(l.type) && !KOTLIN_RULES.parseType(l.type)) typed.set(l.name, l.type);
+  const out: CallInfo[] = [];
+  for (const c of calls) {
+    if (c.passed || c.read || !typed.has(c.name)) continue;
+    out.push({ ...c, name: `${c.name}.invoke` });
+  }
+  return out;
 }

@@ -71,3 +71,44 @@ public class Board {
     expect(target("Board.Unknown", "c.Sign")).toEqual([]);
   });
 });
+
+describe("C# indexers and local functions", () => {
+  let dir = "";
+  let summary: ProjectAnalysis;
+  const files: Record<string, string> = {
+    "League/Roster.cs": `namespace League;
+public class Player { public void Sign() {} }
+public class Squad { public Player this[int i] => new Player(); }
+public class Decoy { public void Sign() {} }
+`,
+    "League/Board.cs": `namespace League;
+public class Board {
+  void Indexer(Squad squad) { squad[3].Sign(); }
+  void IndexerLocal(Squad squad) { var p = squad[3]; p.Sign(); }
+  void Local() { Player Make() { return new Player(); } Make().Sign(); var q = Make(); q.Sign(); }
+}
+`,
+  };
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-cs-indexers-"));
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, "repo", rel)), { recursive: true });
+      await writeFile(join(dir, "repo", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "repo"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  });
+  afterAll(async () => rm(dir, { recursive: true, force: true }));
+
+  const target = (from: string, callName: string) =>
+    summary.symbolLinks.filter((l) => l.sourceSymbol === from && l.callName === callName).map((l) => `${l.targetSymbol}:${l.strategy}`);
+
+  it("types an indexer access through the indexer's declared return type", () => {
+    expect(target("Board.Indexer", "squad.Item().Sign")).toEqual(["Player.Sign:injection"]);
+    expect(target("Board.IndexerLocal", "p.Sign")).toEqual(["Player.Sign:injection"]);
+  });
+  it("types a call of a local function through its declared return type", () => {
+    expect(target("Board.Local", "Make().Sign")).toEqual(["Player.Sign:injection"]);
+    expect(target("Board.Local", "q.Sign")).toEqual(["Player.Sign:injection"]);
+  });
+});

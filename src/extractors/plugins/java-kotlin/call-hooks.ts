@@ -291,7 +291,45 @@ export const kotlinCallHooks: CallExtractionHooks = {
   overloadTypeKey: kotlinOverloadTypeKey,
   // Where each argument comes from (named arguments by name).
   argOriginsOf: jvmArgOriginsOf,
+  // `with(car) { wash() }` / `Car().apply { wash() }`: the lambda's receiver owns a bare name first.
+  withSubjectsOf: kotlinImplicitReceivers,
 };
+
+/**
+ * The receivers of the scope lambdas (`with(x) { }`, `x.apply { }`, `x.run { }`) a bare call sits in, innermost
+ * first, as the linker reads a subject: a name chain (`car`, `this.car`), or the class a construction names
+ * (`Car()` → `Car`). Null for a qualified call, and for a receiver that says no type.
+ */
+function kotlinImplicitReceivers(node: Node): string[] | null {
+  if (node.type !== "call_expression" || node.child(0)?.type !== "simple_identifier") return null;
+  const out: string[] = [];
+  for (let p: Node | null = node.parent; p && p.type !== "function_declaration" && p.type !== "class_declaration"; p = p.parent) {
+    if (p.type !== "lambda_literal") continue;
+    const call = p.parent?.type === "annotated_lambda" ? p.parent.parent?.parent : null;
+    if (call?.type !== "call_expression") continue;
+    const callee = call.child(0);
+    let subject: Node | null | undefined = null;
+    if (callee?.type === "call_expression" && callee.child(0)?.text === "with") {
+      // `with(car) { … }`: the lambda trails the call `with(car)`.
+      subject = callee.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "value_arguments")?.namedChildren[0]?.namedChildren.slice(-1)[0];
+    } else if (callee?.type === "navigation_expression") {
+      const last = callee.namedChildren[callee.namedChildCount - 1];
+      const method = last?.type === "navigation_suffix" ? last.namedChildren.find((c) => c.type === "simple_identifier")?.text : undefined;
+      if (method === "apply" || method === "run") subject = callee.child(0);
+    }
+    const text = subject ? receiverSubject(subject) : null;
+    if (text) out.push(text);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** `car` / `league.car` → itself; `Car(...)` → `Car`; anything else null. */
+function receiverSubject(node: Node): string | null {
+  if (node.type === "simple_identifier") return node.text;
+  if (node.type === "navigation_expression" && /^[\w.]+$/.test(node.text.replace(/\s+/g, ""))) return node.text.replace(/\s+/g, "");
+  if (node.type === "call_expression" && node.child(0)?.type === "simple_identifier" && /^[A-Z]/.test(node.child(0)!.text)) return node.child(0)!.text;
+  return null;
+}
 
 /** A string literal shaped like a query name (`"match.by.club"`, `"Club.findAll"`): dotted, no spaces. */
 const QUERY_NAME_LITERAL = /^"[A-Za-z][\w-]*(?:\.[\w-]+)+"$/;

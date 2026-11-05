@@ -283,3 +283,32 @@ export function splitCallName(name: string): { receiver: string; method: string 
   }
   return null;
 }
+
+/**
+ * `squad[3].Sign` → `squad.Item().Sign`: an index step spelled as the call of the indexer the language names it by,
+ * which the linker types through that member's declared return type. Null when the text has no index step or is not
+ * a plain chain.
+ */
+export function indexerAsCall(text: string, indexerName: string): string | null {
+  if (!text.includes("[")) return null;
+  const chain = parseChain(text);
+  if (!chain || !chain.steps.some((s) => s.index)) return null;
+  let out = text.trim().replace(/^this(?:@\w+)?\s*\.\s*/, "");
+  let result = "";
+  let i = 0;
+  while (i < out.length) {
+    const ch = out[i]!;
+    if (ch === "[" || (ch === "?" && out[i + 1] === "[")) {
+      const start = ch === "?" ? i + 1 : i;
+      const end = closeOf(out, start);
+      if (end < 0) return null;
+      result += `.${indexerName}()`;
+      i = end;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  out = result;
+  return out;
+}

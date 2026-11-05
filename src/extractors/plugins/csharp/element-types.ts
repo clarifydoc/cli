@@ -6,6 +6,7 @@ import {
   callbackElement,
   chainState,
   genericParts,
+  indexerAsCall,
   loopElement,
   splitCallName,
   stateOfType,
@@ -71,6 +72,11 @@ const RULES: ChainRules = {
   valueCallbacks: set(),
 };
 
+/** The root name of a chain text. */
+function parseRoot(text: string): string | null {
+  return /^(?:this\s*\.\s*)?([A-Za-z_]\w*)/.exec(text.trim())?.[1] ?? null;
+}
+
 /** The declared type text of each field and property of the type a method sits in (and its primary constructor's parameters). */
 function memberTypes(method: Node): Map<string, string> {
   const out = new Map<string, string>();
@@ -103,7 +109,8 @@ function memberTypes(method: Node): Map<string, string> {
 
 export interface CsharpElementFacts {
   locals: LocalType[];
-  receiverOf(call: CallInfo): string | null;
+  /** Type a call's receiver where the call states it: an element access, a local function's result, an indexer. */
+  typeReceiver(call: CallInfo): void;
 }
 
 /**
@@ -121,6 +128,30 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
   for (const [name, type] of memberTypes(method)) setState(name, type);
   for (const p of params) if (!p.isReceiver) setState(p.name, p.type);
   const rootState = (name: string): ElementState | undefined => table.get(name);
+
+  // Local functions, by name, with the class they return (a name declared twice says nothing).
+  const localFunctions = new Map<string, string | null>();
+  for (const node of nodes) {
+    if (node.type !== "local_function_statement") continue;
+    const name = node.childForFieldName("name")?.text;
+    const type = node.childForFieldName("type")?.text ?? node.childForFieldName("returns")?.text;
+    const cls = type && !RULES.parseType(type) ? classOf(type) : null;
+    if (name) localFunctions.set(name, localFunctions.has(name) ? null : cls);
+  }
+  /** The class a `Make()` call of a local function returns. */
+  const localCallType = (text: string): string | null => {
+    const m = /^([A-Za-z_]\w*)\s*\(/.exec(text.trim());
+    if (!m || !localFunctions.get(m[1]!)) return null;
+    const t = text.trim();
+    const open = t.indexOf("(");
+    let depth = 0;
+    for (let i = open; i < t.length; i++) {
+      if (t[i] === "(") depth++;
+      else if (t[i] === ")" && --depth === 0) return i === t.length - 1 ? localFunctions.get(m[1]!)! : null;
+    }
+    return null;
+  };
+  const fromLocals: LocalType[] = [];
 
   const binders = new Map<string, Set<string | null>>();
   const bind = (name: string | null | undefined, type: string | null): void => {
@@ -150,6 +181,16 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
           if (state) table.set(name, state);
           else table.delete(name);
           if (state?.kind === "value") bind(name, state.type);
+          else if (!state && init) {
+            const made = localCallType(init.text);
+            // `var p = Make()` (a local function) is that function's declared type; `var p = squad[3]` is what the
+            // indexer of `squad`'s class returns, which the linker reads.
+            if (made) bind(name, made);
+            else {
+              const asCall = indexerAsCall(init.text, "Item");
+              if (asCall) fromLocals.push({ name, type: "", from: asCall });
+            }
+          }
         }
         break;
       }
@@ -208,11 +249,22 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
     const t = [...types][0];
     if (t) locals.push({ name, type: t });
   }
-  const receiverOf = (call: CallInfo): string | null => {
-    if (call.receiverType) return null;
+  for (const f of fromLocals) if (!binders.has(f.name) && !locals.some((l) => l.name === f.name)) locals.push(f);
+  const typeReceiver = (call: CallInfo): void => {
+    if (call.receiverType) return;
     const split = splitCallName(call.name);
-    if (!split || !/[([]/.test(split.receiver)) return null;
-    return valueOfChain(split.receiver, rootState, RULES);
+    if (!split || !/[([]/.test(split.receiver)) return;
+    const type = valueOfChain(split.receiver, rootState, RULES) ?? localCallType(split.receiver);
+    if (type) {
+      call.receiverType = type;
+      return;
+    }
+    // `squad[3].Sign()` on a class that is no collection: the call of its indexer.
+    const root = parseRoot(split.receiver);
+    if (root && table.get(root)?.kind === "value") {
+      const rewritten = indexerAsCall(split.receiver, "Item");
+      if (rewritten) call.name = `${rewritten}.${split.method}`;
+    }
   };
-  return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf } : null;
+  return locals.length > 0 || /[([]/.test(body.text) ? { locals, typeReceiver } : null;
 }

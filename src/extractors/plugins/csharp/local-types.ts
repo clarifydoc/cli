@@ -290,7 +290,7 @@ export function extractCsharpTopLevelLocalTypes(root: Node): LocalType[] | undef
 /** The node kinds a body's typed locals (and the reassignments that qualify them) come from. */
 const SCOPE_NODE_TYPES = [
   "variable_declaration", "foreach_statement", "declaration_pattern", "declaration_expression",
-  "lambda_expression", "assignment_expression", "catch_declaration",
+  "lambda_expression", "assignment_expression", "catch_declaration", "local_function_statement",
 ];
 
 /**
