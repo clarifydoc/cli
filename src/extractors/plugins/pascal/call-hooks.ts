@@ -81,6 +81,26 @@ function insideWith(node: Node): boolean {
   return false;
 }
 
+/**
+ * The subjects of the `with` statements `node` is in the body of, innermost first (a later subject of one `with`
+ * before an earlier one: `with A, B do` looks in B first), for a call of a bare name. Only a subject that is a plain
+ * name chain is kept: another says nothing the linker could type.
+ */
+function withSubjects(node: Node): string[] | null {
+  const callee = node.type === "statement" ? node.children.find((c) => c.type !== "comment") : node.type === "exprCall" ? node.namedChildren[0] : null;
+  if (callee?.type !== "identifier") return null;
+  const out: string[] = [];
+  for (let p: Node | null = node.parent, child: Node = node; p && p.type !== "defProc"; child = p, p = p.parent) {
+    if (p.type !== "with") continue;
+    const kDo = p.children.find((c) => c.type === "kDo");
+    // The subjects themselves (`with Club.Next do`) are read outside the with.
+    if (!kDo || child.startIndex < kDo.endIndex) continue;
+    const subjects = p.namedChildren.filter((c) => c.startIndex < kDo.startIndex && c.type !== "comment");
+    for (const subject of subjects.reverse()) if (nameChain(subject)) out.push(subject.text.replace(/\s+/g, ""));
+  }
+  return out.length > 0 ? out : null;
+}
+
 /** What one expression operand reads, when that may run a routine. */
 function readOf(operand: Node | null | undefined): { name: string; node: Node } | null {
   if (!operand) return null;
@@ -206,6 +226,9 @@ export const pascalCallHooks: CallExtractionHooks = {
     }
     return out;
   },
+
+  // A bare call inside `with Club do Save;` may be the subject's own member (`Club.Save`).
+  withSubjectsOf: withSubjects,
 
   // A container lookup chained into a call names its receiver's type:
   // `GlobalContainer.Resolve<INotifier>('sms').Send(…)`.

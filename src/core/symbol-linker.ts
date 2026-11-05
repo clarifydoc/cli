@@ -3975,6 +3975,28 @@ function resolveReadName(
   return routine.returnType && !needsArguments ? link : { ...link, relation: "passes" };
 }
 
+/**
+ * A bare name called inside `with Club do Save;` (`CallInfo.withSubjects`): the language looks the name up in the
+ * subject first, so when a subject's DECLARED type has the member, that member is what runs. A subject whose type is
+ * unknown, or has no such member, decides nothing: the name goes on as a bare call (a routine of the unit, a method
+ * of the enclosing class). Only a link the receiver's type states counts — never a guess by the member's name.
+ */
+function resolveWithSubjectMember(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  const { withSubjects, ...bare } = call;
+  for (const subject of withSubjects ?? []) {
+    const link = resolveCallToDefinition(sourceFile, sourceSymbol, { ...bare, name: `${subject}.${call.name}`, receiverType: undefined }, analysis, ctx);
+    if (!link || !link.targetSymbol.includes(".") || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) continue;
+    return { ...link, callName: call.name };
+  }
+  return null;
+}
+
 /** The function or method (`Class.method`) `symbol` names in the file; null for a class or anything else. */
 function routineAt(analysis: FileAnalysis, symbol: string): FunctionInfo | null {
   const fn = analysis.functions.find((f) => f.name === symbol);
@@ -4014,6 +4036,10 @@ function resolveCallToDefinition(
 ): SymbolLink | null {
   if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
   if (call.read) return resolveReadName(sourceFile, sourceSymbol, call, analysis, ctx);
+  if (call.withSubjects && !reference) {
+    const viaSubject = resolveWithSubjectMember(sourceFile, sourceSymbol, call, analysis, ctx);
+    if (viaSubject) return viaSubject;
+  }
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
