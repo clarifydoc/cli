@@ -4145,7 +4145,8 @@ function resolveCallToDefinition(
       const fn = !isQualified && call.target.includes("\\") ? namespacedFunction(ctx, analysis, [call.target.replace(/^\\/, "")]) : null;
       if (fn) return mkLink(fn.file, fn.def.name, fn.def.line, "EXTRACTED", "direct");
       return declaredModuleMember(ctx, analysis, call.target, parts, mkLink)
-        ?? packagedTypeMember(ctx, analysis, call.target, parts, mkLink) ?? throughDeclaredType()
+        ?? packagedTypeMember(ctx, analysis, call.target, parts, mkLink) ?? aliasedNamespaceMember(ctx, analysis, call.target, parts, mkLink)
+        ?? throughDeclaredType()
         ?? (parts.length === 2 ? aliasedClassMember(ctx, analysis, parts[0]!, leafName, mkLink) : null);
     }
   } else if (call.kind === "internal") {
@@ -5234,8 +5235,11 @@ function packagedTypeFiles(ctx: LinkContext, analysis: FileAnalysis, qualified: 
   if (dot <= 0) return null;
   const typeName = qualified.slice(dot + 1);
   const pkgDir = `/${qualified.slice(0, dot).replace(/\./g, "/")}/`;
+  // A package is its directory, or — where the language declares it in the file (a C# namespace) — that name.
+  const packageOf = qualified.slice(0, dot);
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   const files = (ctx.classFiles.get(typeName) ?? []).filter((f) =>
-    `/${f.slice(0, f.lastIndexOf("/") + 1)}`.endsWith(pkgDir) &&
+    (`/${f.slice(0, f.lastIndexOf("/") + 1)}`.endsWith(pkgDir) || ctx.analysisByFile!.get(f)?.packageName === packageOf) &&
     sameTypeSpace(analysis.filePath, analysis.language, f, ctx.languageOf.get(f) ?? ""),
   );
   const own = files.filter((f) => ctx.projectOf.get(f) === analysis.projectId);
@@ -5254,6 +5258,25 @@ function packagedTypeMember(
   const found = packagedTypeFiles(ctx, analysis, target);
   if (found?.files.length !== 1) return null;
   const hit = findMethodInClass(ctx, found.typeName, found.files[0]!, receiverSegment(parts[1]!));
+  return hit ? mkLink(hit.file, hit.symbol, hit.line, "EXTRACTED", "import-file") : null;
+}
+
+/**
+ * `Fx.Calendar.Build()` under `using Fx = League.Fixtures;`: the alias names a namespace, so the call's
+ * second segment is the one type of that namespace and the third its member. Null unless exactly one
+ * class of the namespace has that name.
+ */
+function aliasedNamespaceMember(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  target: string,
+  parts: string[],
+  mkLink: MkLink,
+): SymbolLink | null {
+  if (parts.length !== 3 || !analysis.imports.some((i) => i.source === target && i.specifiers.includes(parts[0]!) && i.specifiers.length === 1 && !i.isNamespace)) return null;
+  const found = packagedTypeFiles(ctx, analysis, `${target}.${parts[1]}`);
+  if (found?.files.length !== 1) return null;
+  const hit = findMethodInClass(ctx, found.typeName, found.files[0]!, receiverSegment(parts[2]!));
   return hit ? mkLink(hit.file, hit.symbol, hit.line, "EXTRACTED", "import-file") : null;
 }
 
@@ -5353,6 +5376,14 @@ function moduleMembers(
   const typeFiles = declared.length > 0 ? { typeName: module, files: declared } : packagedTypeFiles(ctx, analysis, module);
   if (typeFiles && typeFiles.files.length === 1) {
     const hit = findMethodInClass(ctx, typeFiles.typeName, typeFiles.files[0]!, name);
+    const d = hit ? symbolIn(ctx, hit.file, hit.symbol) : undefined;
+    if (hit && d) return [{ file: hit.file, def: d }];
+  }
+  // A type nested in another (`import static a.Club.Status.active`): the one file the outer type's package declares
+  // it in, where the nested class stands by its own name.
+  const outer = module.lastIndexOf(".") > 0 ? packagedTypeFiles(ctx, analysis, module.slice(0, module.lastIndexOf("."))) : null;
+  if (outer?.files.length === 1 && ctx.classAt.has(memberKey(outer.files[0]!, typeName))) {
+    const hit = findMethodInClass(ctx, typeName, outer.files[0]!, name);
     const d = hit ? symbolIn(ctx, hit.file, hit.symbol) : undefined;
     if (hit && d) return [{ file: hit.file, def: d }];
   }

@@ -30,7 +30,8 @@ function resolveJvmCallName(node: Node): string | null {
     const callee = node.child(0);
     if (callee && (callee.type === "navigation_expression" || callee.type === "simple_identifier")) {
       // Collapse whitespace so a multiline fluent chain yields a clean dotted name.
-      return compactChain(callee.text).replace(/\s+/g, "");
+      // `this@ClubScreen.save()` names the labelled class's own member: `ClubScreen.save`.
+      return compactChain(callee.text).replace(/\s+/g, "").replace(/^this@([A-Z]\w*)\.(\w+)$/, "$1.$2");
     }
   }
   return genericResolveCallName(node);
@@ -214,20 +215,59 @@ function javaMethodReference(node: Node, addResult: (name: string, node: Node) =
 }
 
 /**
- * `register(::save)`, `bus.on(Club::save)`, `make(::Club)`: a function or constructor handed on by a
- * callable reference (`Club::class` is a class literal, never one).
+ * A callable reference as a handed-on name: `::save`, `Club::save`, `this::save` (the instance's own member),
+ * `this@Club::save` (the labelled class's). `Club::class` is a class literal. The grammar reads `this::save`
+ * as a navigation expression whose suffix is `::save`, every other head as a `callable_reference`.
  */
-function kotlinCallableReferences(call: Node): Array<{ name: string; node: Node }> {
-  const out: Array<{ name: string; node: Node }> = [];
+function kotlinReferenceName(ref: Node): { name: string; ownMember?: boolean } | null {
+  if (ref.type !== "callable_reference" && !(ref.type === "navigation_expression" && ref.namedChildren[0]?.type === "this_expression")) return null;
+  const m = /^(this(?:@[A-Z]\w*)?|[A-Z][\w.]*)?::([A-Za-z_]\w*)$/.exec(ref.text.replace(/\s+/g, ""));
+  if (!m || m[2] === "class") return null;
+  if (m[1] === "this") return { name: `this.${m[2]}`, ownMember: true };
+  if (m[1]?.startsWith("this@")) return { name: `${m[1].slice(5)}.${m[2]}` };
+  return { name: m[1] ? `${m[1]}.${m[2]}` : m[2]! };
+}
+
+/**
+ * `register(::save)`, `bus.on(Club::save)`, `make(::Club)`, `bus.on(this::save)`: a function, constructor
+ * or own member handed on by a callable reference.
+ */
+function kotlinCallableReferences(call: Node): Array<{ name: string; node: Node; ownMember?: boolean }> {
+  const out: Array<{ name: string; node: Node; ownMember?: boolean }> = [];
   const suffix = call.namedChildren.find((c) => c.type === "call_suffix");
   const args = suffix?.namedChildren.find((c) => c.type === "value_arguments");
   for (const arg of args?.namedChildren ?? []) {
-    const ref = arg.namedChildren.find((c) => c.type === "callable_reference");
-    const m = ref ? /^([A-Z][\w.]*)?::([A-Za-z_]\w*)$/.exec(ref.text.replace(/\s+/g, "")) : null;
-    if (!ref || !m || m[2] === "class") continue;
-    out.push({ name: m[1] ? `${m[1]}.${m[2]}` : m[2]!, node: ref });
+    const ref = arg.namedChildren.find((c) => c.type === "callable_reference" || c.type === "navigation_expression");
+    const named = ref ? kotlinReferenceName(ref) : null;
+    if (ref && named) out.push({ ...named, node: ref });
   }
   return out;
+}
+
+/** Infix functions the Kotlin standard library declares: `1 to 2`, `0 until n`, `a shl 2`, `x and y`. */
+const KOTLIN_STDLIB_INFIX = new Set(["to", "until", "downTo", "step", "shl", "shr", "ushr", "and", "or", "xor", "zip", "compareTo", "rem", "mod", "div", "times", "plus", "minus", "onEach", "matches", "contentEquals", "eq"]);
+
+/**
+ * `club scores goal` calls `club.scores(goal)` when `scores` is declared `infix`: the call is named as the
+ * dotted one, which the linker resolves on the receiver's type or drops. A standard-library infix is no call.
+ */
+function kotlinInfixCall(node: Node): string | null {
+  const [left, op] = node.namedChildren;
+  if (!left || op?.type !== "simple_identifier" || KOTLIN_STDLIB_INFIX.has(op.text)) return null;
+  const receiver = left.text.replace(/\s+/g, "");
+  return /^(?:this|[A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*$/.test(receiver) ? `${receiver}.${op.text}` : null;
+}
+
+/** A callable reference kept in a value (`val on = this::save`, `return ::saveClub`) is handed on too; an argument is `passedArguments`'. */
+function kotlinStoredReference(node: Node, addResult: (name: string, node: Node, passed?: "attribute" | "return" | "property") => void): void {
+  if (node.type === "infix_expression") {
+    const infix = kotlinInfixCall(node);
+    if (infix) addResult(infix, node);
+    return;
+  }
+  if ((node.type !== "callable_reference" && node.type !== "navigation_expression") || node.parent?.type === "value_argument") return;
+  const named = kotlinReferenceName(node);
+  if (named) addResult(named.name, node, "attribute");
 }
 
 export const kotlinCallHooks: CallExtractionHooks = {
@@ -242,6 +282,7 @@ export const kotlinCallHooks: CallExtractionHooks = {
   nestedScopeTypes: [],
   callbackArgNodeTypes: ["call_expression"],
   passedArguments: kotlinCallableReferences,
+  collectExtraCalls: kotlinStoredReference,
   resolveCallName: resolveJvmCallName,
   qualifiedRootCandidates: capitalizedRoot,
   receiverTypeOf: kotlinReceiverType,
