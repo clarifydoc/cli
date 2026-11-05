@@ -551,7 +551,7 @@ function camelProp(prop: string): string {
   return prop.replace(/-([a-z\d])/g, (_, c: string) => c.toUpperCase());
 }
 
-interface SymbolSpan {
+export interface SymbolSpan {
   symbol: string;
   line: number;
   endLine: number;
@@ -569,7 +569,7 @@ function cleanHandler(handler: string): string | null {
   return clean.split(".").pop()!;
 }
 
-function spansOf(a: FileAnalysis): SymbolSpan[] {
+export function spansOf(a: FileAnalysis): SymbolSpan[] {
   const spans: SymbolSpan[] = [];
   for (const fn of a.functions ?? []) spans.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine });
   for (const cls of a.classes ?? []) {
@@ -580,7 +580,7 @@ function spansOf(a: FileAnalysis): SymbolSpan[] {
   return spans;
 }
 
-function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
+export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | null {
   let best: SymbolSpan | null = null;
   let bestSpan = Infinity;
   for (const s of spans) {

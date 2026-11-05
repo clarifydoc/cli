@@ -420,6 +420,14 @@ export interface FileAnalysis {
    * `this.onSubmit(…)`), and the prop-callback resolver joins that call here.
    */
   functionProps?: FunctionPropBinding[];
+  /**
+   * Calls on an app-wide event bus (a `mitt()` / `EventEmitter` instance a module
+   * holds): what each emits and listens to, by event as written, and the calls of
+   * project functions that may wrap a listener (`useBusListener(EVENT, reload)`).
+   * The event-bus resolver joins an emit to the functions listening to the same
+   * event on the same bus.
+   */
+  busEvents?: BusEventSite[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
   /**
@@ -2686,6 +2694,28 @@ export interface FunctionPropBinding {
   prop: string;
   /** The name bound, as written (`confirmDeletion`). */
   handler: string;
+  line: number;
+}
+
+/**
+ * One call on an app-wide event bus, or of a function that may wrap one (`FileAnalysis.busEvents`).
+ * An event is written as a quoted literal (`'clubSaved'`, a module constant holding one included) or
+ * as the module-level name it is read from (`LEAGUE_EVENTS.CLUB_SAVED`, `CMD_RELOAD`); a handler as
+ * the name of a function (`reload`, `this.refreshClubs`). `#n` is parameter n of the named function
+ * the site sits in (`within`) — a wrapper whose callers name the event or handler.
+ */
+export interface BusEventSite {
+  kind: "emit" | "listen" | "call";
+  /** emit/listen: the bus, a module-level name (`emitter`); call: the function called (`useBusListener`). */
+  bus: string;
+  /** emit/listen: the event. */
+  event?: string;
+  /** listen: the function handling it. */
+  handler?: string;
+  /** call: each argument as an event or a handler, `""` for any other. */
+  args?: string[];
+  /** The named function the site sits in, when its event or handler is one of that function's parameters. */
+  within?: string;
   line: number;
 }
 

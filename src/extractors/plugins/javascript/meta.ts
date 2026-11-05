@@ -9,6 +9,7 @@ import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
 import { contextValues } from "./provide-inject.js";
+import { busEvents, JsEventBusResolver } from "./bus-events.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nestInheritedGuards, nestPrefixResolver } from "./routes/nestjs.js";
@@ -250,6 +251,7 @@ function astHooks(language: Language): AstExtractorHooks {
     propBindings,
     componentSubscriptions,
     contextValues,
+    busEvents,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),
@@ -287,7 +289,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, nestInheritedGuards, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

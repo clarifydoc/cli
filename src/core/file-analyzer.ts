@@ -746,6 +746,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (subscriptions && subscriptions.length > 0) analysis.componentSubscriptions = subscriptions;
     const contextValues = hooks?.contextValues?.(tree, sourceText);
     if (contextValues && contextValues.length > 0) analysis.contextValues = contextValues;
+    const busEvents = hooks?.busEvents?.(tree, sourceText);
+    if (busEvents && busEvents.length > 0) analysis.busEvents = busEvents;
     for (const fn of hooks?.markupFunctions?.(analysis.interactiveElements, file.relativePath, declared) ?? []) {
       fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
       analysis.functions.push(fn);

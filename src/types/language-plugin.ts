@@ -664,6 +664,8 @@ export interface AstExtractorHooks {
   componentSubscriptions?(tree: Tree, sourceText: string): import("./analysis.js").ComponentSubscription[];
   /** Values provided to descendant components by key, and injected from ancestors: `FileAnalysis.contextValues`. */
   contextValues?(tree: Tree, sourceText: string): import("./analysis.js").ContextValue[];
+  /** Calls on an app-wide event bus, and calls of functions that may wrap a listener: `FileAnalysis.busEvents`. */
+  busEvents?(tree: Tree, sourceText: string): import("./analysis.js").BusEventSite[];
   /**
    * UI screens for tree-sitter languages with designer/markup code embedded in
    * source files (e.g. WinForms `*.Designer.cs`). Regex-path languages use

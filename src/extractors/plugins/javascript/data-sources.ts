@@ -505,7 +505,7 @@ function emitterReceivers(src: string): Set<string> {
   return out;
 }
 /** A receiver name that reads like an in-process event bus. */
-const EMITTER_NAME_RE = /^(?:bus|emitter|events|eventBus|eventEmitter|eventHub|eventManager|hub|pubsub)$|EventBus$|Emitter$|EventManager$/;
+export const EMITTER_NAME_RE = /^(?:bus|emitter|events|eventBus|eventEmitter|eventHub|eventManager|hub|pubsub)$|EventBus$|Emitter$|EventManager$/;
 /** Receivers whose `on`/`emit` are never a message channel: the process, HTTP objects, streams, the DOM. */
 const NOT_A_CHANNEL_RE = /^(?:process|req|request|res|response|stream|readable|writable|window|document|el|element|\$|server|app|child|proc|ws|wss|db|knex|vm|emit)$/;
 /** AWS SDK v3 commands that put a message on a queue or topic, or take one off. */
