@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 // plugin-aggregated data (extension strip regex, external prefixes) is pushed
 // in by the registry.
 import "../../registry.js";
-import { JsComponentEmitResolver } from "./dispatch.js";
+import { JsComponentEmitResolver, JsProvideInjectResolver } from "./dispatch.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
 /**
@@ -359,5 +359,161 @@ describe("component outputs subscribed in code", () => {
     expect(links.map((l) => [l.sourceFile, l.sourceSymbol, l.callName, l.targetFile, l.targetSymbol])).toEqual([
       ["src/app/common/confirm-dialog.component.ts", "ConfirmDialogComponent.confirm", "emit:confirmClicked", "src/app/squad/squad.component.ts", "SquadComponent.release"],
     ]);
+  });
+});
+
+describe("an event several functions of the child emit", () => {
+  it("links each emitting function to the parent's handler (real-repo FP)", () => {
+    const page = fa("src/pages/Transfers.vue", {
+      functions: [fn("createTransfer", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@create-transfer", handler: "createTransfer", line: 4, component: "TransferForm" }],
+      subComponents: [{ name: "TransferForm", importSource: "../components/TransferForm.vue", props: [], line: 4 }],
+    });
+    const form = fa("src/components/TransferForm.vue", {
+      functions: [fn("handleSendMessage", 4, 6), fn("handleSendWireMessage", 8, 10)],
+      events: [{ name: "createTransfer", params: [], line: 5, sites: [5, 9] }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, form]);
+    expect(links.map((l) => `${l.sourceSymbol}:${l.sourceLine} ${l.callName} -> ${l.targetSymbol}`)).toEqual([
+      "handleSendMessage:5 emit:createTransfer -> createTransfer",
+      "handleSendWireMessage:9 emit:createTransfer -> createTransfer",
+    ]);
+  });
+
+  it("keeps the setup-level site beside the functions emitting it (real-repo FP)", () => {
+    const page = fa("src/pages/Fixtures.vue", {
+      functions: [fn("onFocus", 20, 30)],
+      interactiveElements: [{ element: "custom", event: "@update:focused", handler: "onFocus", line: 4, component: "FixtureGrid" }],
+      subComponents: [{ name: "FixtureGrid", importSource: "../components/FixtureGrid.vue", props: [], line: 4 }],
+    });
+    // `onClickOutside(grid, () => emit('update:focused', null))` at line 12, outside any function.
+    const grid = fa("src/components/FixtureGrid.vue", {
+      functions: [fn("setFocus", 20, 24)],
+      events: [{ name: "update:focused", params: [], line: 12, sites: [12, 22] }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, grid]);
+    expect(links.map((l) => `${l.sourceSymbol}:${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["<template>:12 -> onFocus", "setFocus:22 -> onFocus"]);
+  });
+});
+
+describe("JsProvideInjectResolver", () => {
+  const withSetup = (over: Partial<FileAnalysis>) => over;
+  const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line, column: 2 });
+  const fnCalling = (name: string, line: number, endLine: number, calls: ReturnType<typeof call>[]) => ({ ...fn(name, line, endLine), calls });
+
+  const item = (path: string) =>
+    fa(path, withSetup({
+      functions: [fnCalling("onTransfer", 40, 44, [call("transferPlayer", 42)])],
+      contextValues: [{ kind: "inject", key: "transferPlayer", name: "transferPlayer", line: 5 }],
+    }));
+
+  it("joins a call of an injected function to the function an ancestor provides under that key (real-repo FP)", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+      subComponents: [{ name: "PlayerItem", importSource: "./PlayerItem.vue", props: [], line: 3 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([list, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => [l.sourceFile, l.sourceSymbol, l.sourceLine, l.callName, l.targetFile, l.targetSymbol, l.confidence])).toEqual([
+      ["src/components/PlayerItem.vue", "onTransfer", 42, "transferPlayer", "src/components/SquadList.vue", "onTransferPlayer", "INFERRED"],
+    ]);
+  });
+
+  it("takes the nearest ancestor among several providers, and refuses when none renders the injecting component", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+      subComponents: [{ name: "PlayerRow", importSource: "./PlayerRow.vue", props: [], line: 3 }],
+    });
+    const row = fa("src/components/PlayerRow.vue", {
+      subComponents: [{ name: "PlayerItem", importSource: "./PlayerItem.vue", props: [], line: 3 }],
+    });
+    const page = fa("src/pages/Club.vue", {
+      functions: [fn("transfer", 10, 20)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "transfer", line: 30 }],
+      subComponents: [{ name: "SquadList", importSource: "../components/SquadList.vue", props: [], line: 3 }],
+    });
+    const other = fa("src/pages/Youth.vue", {
+      functions: [fn("promote", 10, 20)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "promote", line: 30 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([page, list, row, other, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["src/components/SquadList.vue::onTransferPlayer"]);
+
+    // Two providers, neither above the injecting component: no guess.
+    const loose = fa("src/components/Bench.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+    });
+    expect(new JsProvideInjectResolver().resolve([loose, other, item("src/components/PlayerItem.vue")])).toEqual([]);
+  });
+
+  it("follows a provided function destructured from a factory to the function the factory returns under that key", () => {
+    const actions = fa("src/composables/useSquadActions.js", {
+      functions: [
+        { ...fn("useSquadActions", 5, 60), calls: [{ name: "doTransfer", kind: "internal", target: null, line: 58, column: 4, passed: "return", returnedAs: "transfer" }] },
+        fn("doTransfer", 10, 20),
+      ] as never,
+    });
+    const list = fa("src/components/SquadList.vue", {
+      imports: [{ source: "../composables/useSquadActions", specifiers: ["useSquadActions"], line: 2 }] as never,
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "transferPlayer", line: 90, from: "useSquadActions", member: "transfer" }],
+    });
+    const links = new JsProvideInjectResolver().resolve([actions, list, item("src/components/PlayerItem.vue")]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "onTransfer transferPlayer -> src/composables/useSquadActions.js::doTransfer",
+    ]);
+  });
+
+  it("links from the markup when only the template calls the injected function", () => {
+    const list = fa("src/components/SquadList.vue", {
+      functions: [fn("onTransferPlayer", 60, 70)],
+      contextValues: [{ kind: "provide", key: "transferPlayer", name: "onTransferPlayer", line: 90 }],
+    });
+    const chip = fa("src/components/PlayerChip.vue", {
+      interactiveElements: [{ element: "button", event: "@click", handler: "transferPlayer(player)", line: 4 }],
+      contextValues: [{ kind: "inject", key: "transferPlayer", name: "transferPlayer", line: 12 }],
+    });
+    const links = new JsProvideInjectResolver().resolve([list, chip]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["<template> transferPlayer -> onTransferPlayer"]);
+  });
+});
+
+describe("a dialog closing itself runs the opener's result handler", () => {
+  const cls = (name: string, methods: Array<[string, number, number, string[]]>, properties: Array<[string, string]> = []) => ({
+    name, extends: null, implements: [], decorators: [], isExported: true, line: 1, endLine: 99,
+    properties: properties.map(([n, type]) => ({ name: n, type, visibility: "private", isStatic: false, isReadonly: true, decorators: [] })),
+    methods: methods.map(([m, a, b, calls]) => ({ ...fn(m, a, b), calls: calls.map((c, i) => ({ name: c, kind: "internal", target: null, line: a + 1 + i, column: 4 })) })),
+  });
+
+  it("joins the dialog's close() through its active-modal reference to the function handling `closed` (real-repo FP)", () => {
+    const modal = fa("src/app/club/edit-club-modal.component.ts", {
+      classes: [cls("EditClubModalComponent", [["save", 40, 50, ["this.clubService.save", "this.modal.close"]], ["cancel", 52, 55, ["this.modal.dismiss"]], ["reset", 60, 62, ["this.form.reset"]]], [["modal", "NgbActiveModal"]])] as never,
+    });
+    const opener = fa("src/app/club/club-detail.component.ts", {
+      classes: [cls("ClubDetailComponent", [["openEdit", 20, 30, []], ["other", 31, 40, []]])] as never,
+      imports: [{ source: "./edit-club-modal.component", specifiers: ["EditClubModalComponent"], line: 2 }] as never,
+      componentSubscriptions: [
+        { component: "EditClubModalComponent", event: "closed", line: 24, result: "close" },
+        { component: "EditClubModalComponent", event: "dismissed", line: 33, result: "dismiss" },
+      ],
+    });
+    const links = new JsComponentEmitResolver().resolve([modal, opener]);
+    expect(links.map((l) => [l.sourceSymbol, l.sourceLine, l.callName, l.targetFile, l.targetSymbol])).toEqual([
+      ["EditClubModalComponent.save", 42, "this.modal.close", "src/app/club/club-detail.component.ts", "ClubDetailComponent.openEdit"],
+      ["EditClubModalComponent.cancel", 53, "this.modal.dismiss", "src/app/club/club-detail.component.ts", "ClubDetailComponent.other"],
+    ]);
+  });
+
+  it("links nothing for a component that holds no active-dialog reference", () => {
+    const card = fa("src/app/club/club-card.component.ts", {
+      classes: [cls("ClubCardComponent", [["save", 40, 50, ["this.modal.close"]]], [["modal", "ModalShell"]])] as never,
+    });
+    const opener = fa("src/app/club/club-detail.component.ts", {
+      classes: [cls("ClubDetailComponent", [["openEdit", 20, 30, []]])] as never,
+      imports: [{ source: "./club-card.component", specifiers: ["ClubCardComponent"], line: 2 }] as never,
+      componentSubscriptions: [{ component: "ClubCardComponent", event: "closed", line: 24, result: "close" }],
+    });
+    expect(new JsComponentEmitResolver().resolve([card, opener])).toEqual([]);
   });
 });

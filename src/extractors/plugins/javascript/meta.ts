@@ -8,6 +8,7 @@ import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
+import { contextValues } from "./provide-inject.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nestInheritedGuards, nestPrefixResolver } from "./routes/nestjs.js";
@@ -59,7 +60,7 @@ import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
-import { JsComponentEmitResolver, JsPropCallbackResolver, angularSelectorsOf } from "./dispatch.js";
+import { JsComponentEmitResolver, JsPropCallbackResolver, JsProvideInjectResolver, angularSelectorsOf } from "./dispatch.js";
 import { JsTemplateRefResolver } from "./template-refs.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
@@ -248,6 +249,7 @@ function astHooks(language: Language): AstExtractorHooks {
     markupFunctions,
     propBindings,
     componentSubscriptions,
+    contextValues,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),
@@ -285,7 +287,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, nestInheritedGuards, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

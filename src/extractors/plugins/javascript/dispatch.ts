@@ -1,4 +1,4 @@
-import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
+import type { ClassInfo, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
@@ -114,11 +114,13 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const callName = `emit:${markup?.name ?? sites[0]!.name}`;
         // Anchor the child side at each function that emits it; a template-inline or
         // setup-level emit has no span — a synthetic `<template>` symbol keeps the edge
-        // (the report joins by callName).
+        // (the report joins by callName), also beside the functions emitting it elsewhere.
         const anchors = new Map<string, number>();
         for (const site of sites) {
-          const fn = innermostAt(spans(child), site.line);
-          if (fn && !anchors.has(fn.symbol)) anchors.set(fn.symbol, site.line);
+          for (const line of site.sites ?? [site.line]) {
+            const symbol = innermostAt(spans(child), line)?.symbol ?? (site.sites ? "<template>" : null);
+            if (symbol && !anchors.has(symbol)) anchors.set(symbol, line);
+          }
         }
         if (anchors.size === 0) anchors.set("<template>", sites[0]?.line ?? markup!.line);
         for (const [symbol, line] of anchors) {
@@ -149,6 +151,25 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const child = childFile ? byPath.get(childFile) : undefined;
         const target = child ? innermostAt(spans(parent), sub.line) : null;
         if (!child || !target) continue;
+        if (sub.result) {
+          // The dialog's own outcome: each method closing it through its active-dialog reference.
+          for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap)) {
+            const k = `${closer.file}\u0000${closer.symbol}\u0000${closer.callName}\u0000${parent.filePath}\u0000${target.symbol}`;
+            if (seenLink.has(k)) continue;
+            seenLink.add(k);
+            links.push({
+              sourceFile: closer.file,
+              sourceSymbol: closer.symbol,
+              sourceLine: closer.line,
+              callName: closer.callName,
+              targetFile: parent.filePath,
+              targetSymbol: target.symbol,
+              targetLine: target.line,
+              confidence: "INFERRED",
+            });
+          }
+          continue;
+        }
         // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
         let emitter: FileAnalysis | undefined = child;
         for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
@@ -159,8 +180,8 @@ export class JsComponentEmitResolver implements DispatchResolver {
           emitter = file ? byPath.get(file) : undefined;
         }
         if (!emitter) continue;
-        for (const site of (emitter.events ?? []).filter((e) => e.name === sub.event)) {
-          const fn = innermostAt(spans(emitter), site.line);
+        for (const line of (emitter.events ?? []).filter((e) => e.name === sub.event).flatMap((e) => e.sites ?? [e.line])) {
+          const fn = innermostAt(spans(emitter), line);
           const symbol = fn?.symbol ?? "<template>";
           const k = `${emitter.filePath}\u0000${symbol}\u0000emit:${sub.event}\u0000${parent.filePath}\u0000${target.symbol}`;
           if (seenLink.has(k)) continue;
@@ -168,7 +189,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
           links.push({
             sourceFile: emitter.filePath,
             sourceSymbol: symbol,
-            sourceLine: site.line,
+            sourceLine: line,
             callName: `emit:${sub.event}`,
             targetFile: parent.filePath,
             targetSymbol: target.symbol,
@@ -180,6 +201,53 @@ export class JsComponentEmitResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/**
+ * The reference an open dialog holds to itself, by type → the methods that close it
+ * (`this.modal.close(result)`) and dismiss it. ng-bootstrap's modal and offcanvas, Material's dialog.
+ */
+const ACTIVE_DIALOG_REFS: Record<string, { close: string; dismiss?: string }> = {
+  NgbActiveModal: { close: "close", dismiss: "dismiss" },
+  NgbActiveOffcanvas: { close: "close", dismiss: "dismiss" },
+  MatDialogRef: { close: "close" },
+};
+
+/**
+ * The methods of the dialog class `component` (or a base it extends, three deep) that close it —
+ * `result: "close"` — or dismiss it, through a field holding its active-dialog reference.
+ */
+function dialogClosers(
+  file: FileAnalysis,
+  component: string,
+  result: "close" | "dismiss",
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): Array<{ file: string; symbol: string; line: number; callName: string }> {
+  const out: Array<{ file: string; symbol: string; line: number; callName: string }> = [];
+  let owner: FileAnalysis | undefined = file;
+  let name: string | undefined = component;
+  for (let depth = 0; owner && name && depth < 3; depth++) {
+    const cls: ClassInfo | undefined = owner.classes.find((c) => c.name === name);
+    if (!cls) break;
+    const verbs = new Set<string>();
+    for (const p of cls.properties ?? []) {
+      const ref = ACTIVE_DIALOG_REFS[(p.type ?? "").replace(/<.*$/s, "").trim()];
+      const verb = ref?.[result];
+      if (verb) verbs.add(`this.${p.name}.${verb}`);
+    }
+    for (const m of cls.methods ?? []) {
+      const call = m.calls.find((c) => verbs.has(c.name));
+      if (call) out.push({ file: owner.filePath, symbol: `${cls.name}.${m.name}`, line: call.line, callName: call.name });
+    }
+    if (out.length) break;
+    const base: string | undefined = cls.extends?.replace(/<.*$/s, "").trim();
+    const from: string | undefined = base ? owner.imports.find((i) => i.specifiers.includes(base))?.source : undefined;
+    const next: string | null = from ? resolveTarget(from, owner.filePath, filePathMap) : null;
+    owner = next ? byPath.get(next) : undefined;
+    name = base;
+  }
+  return out;
 }
 
 /** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */
@@ -329,6 +397,126 @@ export class JsPropCallbackResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/**
+ * Vue's provide/inject of a function: `provide('transferPlayer', onTransferPlayer)` in
+ * an ancestor, `const transferPlayer = inject('transferPlayer')` … `transferPlayer(p)` in a
+ * component below it. Vue finds the key up the component tree at runtime; the join is
+ * by the literal key (`FileAnalysis.contextValues`). One component providing the key in
+ * the sub-project is the one; several, and only the nearest that renders the injecting
+ * component (its tag in their markup, through up to six levels) is — none rendering it,
+ * no link. One link per function calling the injected local (callName as written), or
+ * from `<template>` when only the markup calls it.
+ */
+export class JsProvideInjectResolver implements DispatchResolver {
+  readonly id = "provide-inject";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 33;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const injecting = analyses.filter((a) => a.contextValues?.some((v) => v.kind === "inject"));
+    if (injecting.length === 0) return [];
+    const filePathMap = buildFilePathMap(analyses);
+    const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    // key → the providing files, and the function each hands on, per sub-project.
+    const providers = new Map<string, Array<{ file: FileAnalysis; target: FileAnalysis; span: SymbolSpan }>>();
+    for (const a of analyses) {
+      for (const v of a.contextValues ?? []) {
+        if (v.kind !== "provide") continue;
+        const own = spansOf(a).find((sp) => sp.symbol === v.name || sp.symbol.endsWith(`.${v.name}`));
+        const handed = own ? { target: a, span: own } : v.from && v.member ? factoryReturned(a, v.from, v.member, byPath, filePathMap) : null;
+        if (!handed) continue;
+        const k = `${a.projectId ?? ""}\u0000${v.key}`;
+        (providers.get(k) ?? providers.set(k, []).get(k)!).push({ file: a, ...handed });
+      }
+    }
+    if (providers.size === 0) return [];
+
+    // child file → the files whose markup renders it.
+    const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
+    const parentsOf = new Map<string, Set<string>>();
+    for (const parent of analyses) {
+      if (!parent.subComponents?.length) continue;
+      const auto = autoImported.get(parent.projectId ?? "");
+      for (const sub of parent.subComponents) {
+        const key = tagKey(sub.name);
+        const src = sub.importSource && !sub.global ? sub.importSource : undefined;
+        const child = src ? resolveTarget(src, parent.filePath, filePathMap) : globals.get(key) ?? auto?.get(key) ?? null;
+        if (!child || child === parent.filePath) continue;
+        (parentsOf.get(child) ?? parentsOf.set(child, new Set()).get(child)!).add(parent.filePath);
+      }
+    }
+
+    /** The providers of `key` nearest above `file` in the render tree. */
+    const nearestAbove = (file: string, candidates: Array<{ file: FileAnalysis; target: FileAnalysis; span: SymbolSpan }>) => {
+      const seen = new Set([file]);
+      let frontier = [file];
+      for (let depth = 0; depth < 6 && frontier.length; depth++) {
+        const next: string[] = [];
+        for (const f of frontier) for (const p of parentsOf.get(f) ?? []) if (!seen.has(p)) (seen.add(p), next.push(p));
+        const found = candidates.filter((c) => next.includes(c.file.filePath));
+        if (found.length) return found;
+        frontier = next;
+      }
+      return [];
+    };
+
+    const links: SymbolLink[] = [];
+    for (const a of injecting) {
+      for (const v of a.contextValues!) {
+        if (v.kind !== "inject") continue;
+        const candidates = (providers.get(`${a.projectId ?? ""}\u0000${v.key}`) ?? []).filter((c) => c.file !== a);
+        const targets = candidates.length === 1 ? candidates : nearestAbove(a.filePath, candidates).slice(0, 4);
+        if (targets.length === 0) continue;
+        const callers: Array<{ symbol: string; line: number }> = [];
+        for (const fn of [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
+          const call = fn.calls.find((c) => c.name === v.name && !c.boundLocally);
+          if (call) callers.push({ symbol: fn.name, line: call.line });
+        }
+        const inMarkup = (a.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === v.name);
+        if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line });
+        for (const c of callers) {
+          for (const t of targets) {
+            links.push({
+              sourceFile: a.filePath,
+              sourceSymbol: c.symbol,
+              sourceLine: c.line,
+              callName: v.name,
+              targetFile: t.target.filePath,
+              targetSymbol: t.span.symbol,
+              targetLine: t.span.line,
+              confidence: "INFERRED",
+            });
+          }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/**
+ * The function a factory hands back under `member` (`return { transfer: doTransfer }` in
+ * `useSquadActions`), the factory being declared in `file` or imported into it by that name.
+ */
+function factoryReturned(
+  file: FileAnalysis,
+  factory: string,
+  member: string,
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): { target: FileAnalysis; span: SymbolSpan } | null {
+  const source = file.functions.some((f) => f.name === factory) ? file.filePath : file.imports.find((i) => i.specifiers.includes(factory))?.source;
+  const at = source === file.filePath ? file : source ? byPath.get(resolveTarget(source, file.filePath, filePathMap) ?? "") : undefined;
+  const fn = at?.functions.find((f) => f.name === factory);
+  const returned = fn?.calls.find((c) => c.passed === "return" && c.returnedAs === member && !c.name.includes("."));
+  if (!at || !fn || !returned) return null;
+  // The innermost function of that name the factory's body declares, else the module's.
+  const named = spansOf(at).filter((sp) => sp.symbol === returned.name);
+  const span = named.find((sp) => sp.line > fn.line && sp.endLine <= fn.endLine) ?? named[0];
+  return span ? { target: at, span } : null;
 }
 
 /** React's callback-prop convention: `onPress`, `onModalClose`. */

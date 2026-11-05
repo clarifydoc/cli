@@ -405,6 +405,12 @@ export interface FileAnalysis {
    * child's emit to the function subscribing, as it does a markup binding.
    */
   componentSubscriptions?: ComponentSubscription[];
+  /**
+   * Values the component hands its descendants by key, and those it takes from an
+   * ancestor (Vue `provide('k', fn)` / `const k = inject('k')`): the provide/inject
+   * resolver joins a call of the injected value to the provided function.
+   */
+  contextValues?: ContextValue[];
   propBindings?: PropBinding[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
@@ -2622,13 +2628,35 @@ export interface SubComponentInfo {
   refs?: string[];
 }
 
+/** A value provided to descendant components under `key`, or injected from an ancestor (`FileAnalysis.contextValues`). */
+export interface ContextValue {
+  kind: "provide" | "inject";
+  /** The literal key (`transferPlayer`). */
+  key: string;
+  /** For a provide, the function handed on (`onTransferPlayer`); for an inject, the local holding it. */
+  name: string;
+  line: number;
+  /**
+   * A provided name the file destructured from a factory's result
+   * (`const { transfer: transferPlayer } = useSquadActions()`): the factory called, and the key.
+   */
+  from?: string;
+  member?: string;
+}
+
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */
 export interface ComponentSubscription {
   /** The component class, as the file names it. */
   component: string;
-  /** The output (`confirmClicked`). */
+  /** The output (`confirmClicked`), or the reference's outcome member (`closed`, `result`, `afterClosed`). */
   event: string;
   line: number;
+  /**
+   * Set when it is the dialog's own outcome, not an output: `ref.closed.subscribe(…)`,
+   * `ref.result.then(…)`, `dialogRef.afterClosed().subscribe(…)` run when the dialog
+   * closes itself (`close`), `ref.dismissed` when it is dismissed (`dismiss`).
+   */
+  result?: "close" | "dismiss";
 }
 
 /** A value bound to a child component's prop (`FileAnalysis.propBindings`). */
@@ -2736,6 +2764,11 @@ export interface EventInfo {
   name: string;
   params: ParamInfo[];
   line: number;
+  /**
+   * Every line the component emits it at, when more than one (`line` is the first):
+   * each function emitting it runs the parent's handler.
+   */
+  sites?: number[];
 }
 
 // ─── Screen / Form types ─────────────────────────────────────────────────
