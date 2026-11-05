@@ -150,6 +150,9 @@ export function buildModuleValueLookup(
       const mod = byFile.get(source)?.moduleValues;
       const exported = imp.aliases?.[head];
       const key = exported ? (rest ? `${exported}.${rest}` : exported) : expr;
+      // `import urls from "./urls"; urls.garages`: a default binding names the module's `default` value, whatever it is called here.
+      const byDefault = !exported && rest && imp.isDefault && imp.specifiers[0] === head ? mod?.[`default.${rest}`] : undefined;
+      if (byDefault !== undefined) return { value: byDefault, file: source };
       // `from tests.utils import api_routes` binds the module itself (a file or a package named
       // like the binding): `api_routes.clubs_url` is that module's `clubs_url`.
       const segs = source.replace(/\.[^./]+$/, "").split("/");
