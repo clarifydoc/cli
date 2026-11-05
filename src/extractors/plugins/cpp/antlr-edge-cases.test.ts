@@ -121,7 +121,7 @@ int play() {
     }
 }
 `;
-    expect(read(source)).toEqual({ errors: 0, functions: [["play", ["kick", "recover", "pass", "tackle", "note", "CLUB_PROGRESS"]]] });
+    expect(read(source)).toEqual({ errors: 0, functions: [["play", ["CLUB_TRY", "kick", "CLUB_CATCH_ALL", "recover", "pass", "CLUB_CATCH_ANON", "tackle", "note", "CLUB_PROGRESS"]]] });
   });
 
   it("reads asm statements with operands, in a macro's arguments too", () => {

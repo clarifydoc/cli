@@ -29,6 +29,7 @@ import {
   SelectionStatementContext,
   SimpleDeclarationContext,
   TemplateArgumentContext,
+  TryBlockContext,
   UnqualifiedIdContext,
 } from "../../../parsers/antlr/cpp/CPP14Parser.js";
 import { SPECIFIER_KEYWORDS, TYPE_KEYWORDS } from "../../../parsers/antlr/cpp/CppTypes.js";
@@ -215,6 +216,12 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
         const named = byPattern === undefined ? nameCall([idStep(name)], CHAIN_DEPTH) : byPattern;
         if (named) calls.push(named);
       }
+    } else if (calls && (ctx instanceof TryBlockContext || ctx instanceof HandlerContext) && macroHead(ctx)) {
+      // `CLUB_TRY { … } CLUB_CATCH_ALL { … }`: macros standing for `try` and `catch (…)` are called by their names.
+      const head = macroHead(ctx)!;
+      calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
+      const args = ctx.children.find((c) => c instanceof MacroArgumentsContext);
+      if (args) macroArgumentCalls(args as MacroArgumentsContext, stream, calls);
     } else if (calls && (ctx instanceof MacroStatementContext || ctx instanceof MacroBlockStatementContext)) {
       // `SECTION("x") { … }`, `QFETCH(bool, ok);`: the macro is called by its name, its arguments read off the tokens.
       const head = (ctx.children[0] as TerminalNode).symbol;
@@ -227,6 +234,12 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push({ node: ctx.children[i]!, owner: into });
   }
   return found;
+}
+
+/** The macro standing for `try` or `catch (…)` that opens a try block or a handler: a first token the keyword's own text is not. */
+function macroHead(ctx: TryBlockContext | HandlerContext): Token | null {
+  const first = ctx.children[0];
+  return first instanceof TerminalNode && (first.symbol.type === CPP14Lexer.CatchMacro || (first.symbol.type === CPP14Lexer.Try && first.symbol.text !== "try")) ? first.symbol : null;
 }
 
 /** The calls in a macro's arguments, read off their tokens. */

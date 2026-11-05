@@ -165,6 +165,20 @@ per target at its `// Insert here @header` marker.
   `:` outside such arguments ends them; and `/`, `%`, `|`, `^`, `}`, `operator`, `<<` and — without a comma at the
   template's depth, or after `=`/`return` — `+`/`-` may follow a template-id.
 
+- **C++: the leftovers of the 1.613 baseline.** `override`/`final` used as names (a variable, `final.go()`) read as
+  identifiers where no declarator or class head precedes them (`usedAsName`); a macro call standing for a type or a
+  scope (`using R = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`) is retyped `TypeMacro` and read as a type
+  specifier / nested-name step; non-type template parameters (`template <size_t N>`) never open template brackets,
+  so `conditional_t < N<256, A, B>` compares; a `>=` may follow a closed template; `decltype(auto)` may follow a
+  requires clause; a `static_assert` message is any constant expression; a lambda among template arguments is
+  skipped whole by the scan for the closing `>`; macros standing for `try` (`CATCH_TRY {`) and `catch (…)`
+  (`CatchMacro`) are retyped from the block they bracket; a bare macro ends a block (`COZ_PROGRESS }`, never an
+  initializer's braces) or follows a macro called where a statement starts (`PRAGMA(push) BEGIN_NAMESPACE`); GNU
+  `asm` takes qualifiers and operands the reading skips, and an all-caps call holding an asm template before a `:`
+  is a statement macro; a macro standing for a template parameter may have a default (`ENABLE_IF(c) = 0`); a
+  macro's block may be followed by `else`; a capitalized name in a declaration's parentheses is a type only when no
+  literal is among the arguments (`Result data(Status::Won, Lazy(false))` constructs).
+
   On seven real C++ repositories 0–10% of files keep the patterns' reading (what is left: C++26 reflection and
   annotations, `operator()<T>` called on its own, macros standing for types), and of six C repositories' headers
   0–8%. Cold, the parse runs at 0.4–0.8 MB/s, warm about 1.2 MB/s.
