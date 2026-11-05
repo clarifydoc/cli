@@ -2598,7 +2598,10 @@ function withoutComments(source: string): string {
 const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|urlpath|url_path|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;
 
 function extractNavigationTargets(raw: string, fromBase = false): string[] {
-  const source = withoutComments(raw).replace(BASE_URL_PREFIX, "");
+  // An output tag inside a link's value (`href="/clubs/<%= club.id %>"`) is a parameter like `${club.id}`.
+  const source = withoutComments(raw)
+    .replace(BASE_URL_PREFIX, "")
+    .replace(/\bhref\s*=\s*"[^"\n]*<%[=-][^"\n]*"/g, (attr) => attr.replace(/<%[=-]\s*([^%]*?)\s*%>/g, (_m, e: string) => "${" + e.replace(/[^\w.]+/g, "_") + "}"));
   const targets = new Set<string>();
   // Hash routes (AngularJS, hash-mode routers): `href="#/devices"`, `ng-href="#!/log"`, `$location.path('/devices')`.
   for (const m of source.matchAll(/\b(?:ng-)?href\s*=\s*["']#!?(\/(?:\{\{[^}]*\}\}|[^"'\s])*)|\$location\.(?:path|url)\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);

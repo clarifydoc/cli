@@ -25,7 +25,7 @@ import { literalPath, handlerOf, materializeElementRequests } from "../shared/el
  */
 
 /** The dialects that are languages of their own (own extension, own plugin). */
-export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "freemarker";
+export type TemplateLanguage = "handlebars" | "liquid" | "velocity" | "razor" | "gotemplate" | "freemarker" | "ejs";
 /** Django's templates are `.html`, which the HTML plugin owns and hands here. */
 export type TemplateDialect = TemplateLanguage | "django";
 
@@ -36,6 +36,7 @@ const TAGS: Record<TemplateDialect, RegExp> = {
   razor: /@\*[\s\S]*?\*@|@\{[\s\S]*?\n\}|@\([^)\n]*\)|@[A-Za-z_][\w.]*(?:\([^)\n]*\))?/g,
   gotemplate: /\{\{[\s\S]*?\}\}/g,
   django: /\{#[\s\S]*?#\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g,
+  ejs: /<%[\s\S]*?%>/g,
   freemarker: /<#--[\s\S]*?-->|<\/?[#@][^>]*>|\$\{[^}]*\}/g,
 };
 
@@ -46,6 +47,8 @@ const PARTIALS: Record<TemplateDialect, RegExp> = {
   razor: /<partial\s+name\s*=\s*["']([\w/.~-]+)["']|Html\.Partial(?:Async)?\(\s*"([\w/.~-]+)"|Html\.RenderPartial(?:Async)?\(\s*"([\w/.~-]+)"|Component\.InvokeAsync\(\s*"(\w+)"/g,
   gotemplate: /\{\{-?\s*template\s+"([\w/.-]+)"/g,
   django: /\{%-?\s*include\s+["']([\w/.-]+)["']/g,
+  // `<%- include('partials/x', { … }) %>`, and the older `<% include partials/x %>`.
+  ejs: /<%[-=_]?\s*include\(\s*["']([\w/.-]+)["']|<%\s*include\s+([\w/.-]+)\s*%>/g,
   freemarker: /<#(?:include|import)\s+["']([\w/.-]+)["']/g,
 };
 
@@ -66,6 +69,11 @@ const namedTarget = (target: string): string =>
 const DATA_URL_RE = /<([a-zA-Z][\w-]*)\b([^>]*\bdata-[\w-]*url\s*=[^>]*)>/gi;
 /** htmx requests an element sends: `hx-post="{% url 'clubs:add' %}"`, `hx-get="/clubs"`. */
 const HTMX_RE = /<([a-zA-Z][\w-]*)\b[^>]*?\bhx-(get|post|put|patch|delete)\s*=\s*["']([^"']*)["']/g;
+
+/** EJS with `<%= x %>` / `<%- x %>` as `{{x}}` and every scriptlet (and include) blanked, line for line. */
+const ejsExpressions = (source: string): string =>
+  source.replace(/<%([-=_#]?)([\s\S]*?)[-_]?%>/g, (m, mark: string, body: string) =>
+    (mark === "=" || mark === "-") && !/^\s*include\b/.test(body) && !body.includes("\n") ? `{{${body.trim().replace(/[^\w.$]+/g, "_")}}}` : m.replace(/[^\n]/g, " "));
 
 const lineAt = (text: string, index: number): number => {
   let line = 1;
@@ -102,7 +110,9 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   // Tag helpers and forms read on the raw text (their attributes are what blanking would erase),
   // a URL built from a route name marked first (one line for one line).
   const named = NAMED_URL[dialect];
-  const marked = named ? source.replace(named, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/:/g, "~")) : source;
+  // EJS output tags inside an attribute read as template expressions, and a scriptlet's `%>` must not end the tag.
+  const readable = dialect === "ejs" ? ejsExpressions(source) : source;
+  const marked = named ? readable.replace(named, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/:/g, "~")) : readable;
   const ctlOfView = dialect === "razor" ? viewController(filePath) : null;
   for (const t of marked.matchAll(/<(form|a|button)\b([^>]*)>/gi)) {
     const tag = t[1]!.toLowerCase();
@@ -174,7 +184,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   const caption = /<title>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup);
   const screen: ScreenInfo = {
     name,
-    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", freemarker: "FreeMarkerTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
+    formType: { handlebars: "HandlebarsTemplate", liquid: "LiquidTemplate", velocity: "VelocityTemplate", gotemplate: "GoTemplate", django: "DjangoTemplate", freemarker: "FreeMarkerTemplate", ejs: "EjsTemplate", razor: /(?:^|\/)Pages\//.test(filePath) ? "RazorPage" : "RazorView" }[dialect],
     caption: (caption?.[1] ?? caption?.[2])?.trim() || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),

@@ -26,7 +26,7 @@ const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
  */
 export class DomBindingResolver implements DispatchResolver {
   readonly id = "dom-binding";
-  readonly languages: Language[] = ["javascript", "typescript", "html", "handlebars", "liquid", "velocity", "razor", "erb", "jsp", "php", "heex"];
+  readonly languages: Language[] = ["javascript", "typescript", "html", "handlebars", "liquid", "velocity", "razor", "ejs", "erb", "jsp", "php", "heex"];
   readonly priority = 43;
 
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
