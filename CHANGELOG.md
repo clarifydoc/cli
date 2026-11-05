@@ -14,6 +14,20 @@ recorded in the git history only.
 
 ### Added
 
+- **Route prefixes that were dropped:** Hono `app.route('/clubs', clubs)` and `basePath`, Rocket `.mount("/api/v1",
+  routes![…])`, actix scopes, `.configure(cfg)` and a scope-less `.service(web::resource(…))`, axum `.nest` across
+  files, FastAPI `app.mount("/api", sub_app)`, Laravel 11 `withRouting(apiPrefix: …)`.
+- **Python routes registered by a call:** Flask `add_url_rule` (keyword, positional, `as_view()`), FastAPI
+  `add_api_route`, websocket decorators and registrations (as the `GET` upgrade); Django `path("x/", views.f)` sits
+  on the function in its module; DRF `@api_view([...])` and Django's verb decorators give the route's methods.
+- **Nuxt/Nitro server routes** (`server/api/**/[id].put.ts`, `server/routes/`), joined by `$fetch`/`useFetch`;
+  **SvelteKit form actions** (`POST /clubs?/rename`, joined to `<form action="?/rename">`); **AdonisJS** routes,
+  groups, resources and middleware, Lucid finders as data; **Fastify `addHook` and koa `compose` guards**.
+- **EJS views** (`<%- include(…) %>`, forms and links), read like `.hbs`; **Astro** pages under `src/pages/` as
+  screens, endpoints' exported `GET`/`POST` as routes, frontmatter and `<script>` read as TypeScript.
+- **Router screens:** a pages barrel leads to the page that declares it; several routed pages in one file are one
+  screen each.
+
 - **Functions passed down as Vue props or options** (`:on-confirm="confirmDeletion"`, `@x` reaching a child's `onX`
   prop, `this.onSubmit()` in an options-API child): the child's call of the prop reaches the parent's function
   (`FileAnalysis.functionProps`); only an invocation counts.
@@ -324,6 +338,12 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **Next.js method sets:** an `OPTIONS` preflight or an `if (method === 'POST') … else` no longer narrows a pages
+  route to one method; next-connect chains, handler maps, `withMethods` and `defaultHandler` give their methods;
+  a `pages/api` file with no default export, an app-router `_private` folder and an interception segment are no
+  routes; a tRPC router at `pages/api/trpc/[trpc].ts` is served at `/api/trpc/…`.
+- **Angular `loadChildren`:** the route array a parent lazily loads is no screen of its own.
 
 - **A contract row pairs with the code route serving its own API version** (`/api/v1/…` with the v1 route, not a
   v2 twin); an unpaired row no longer counts twice.
