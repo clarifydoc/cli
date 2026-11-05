@@ -3596,6 +3596,11 @@ export function buildComponentGraph(
   for (const a of analyses) {
     for (const ce of a.customElements ?? []) push(customElToFiles, normTag(ce.tag), a.filePath);
   }
+  // The tags a language's own components are used by when no import names them (Blazor's `<ClubCard />`, Angular's selectors).
+  const pluginTagFiles = new Map<string, string[]>();
+  for (const a of analyses) {
+    for (const t of pluginFor(a.language as Language)?.componentTags?.(a) ?? []) push(pluginTagFiles, normTag(t), a.filePath);
+  }
 
   // The scans below depend only on the candidate string, and the same
   // candidate recurs across files (e.g. many files import "./types"), so
@@ -3871,7 +3876,7 @@ export function buildComponentGraph(
     // the file that registered the tag (customElements.define / @customElement),
     // by tag rather than import path. Names come from flat sub-components and the
     // nested template tree (custom tags with no import land in both).
-    if (customElToFiles.size > 0) {
+    if (customElToFiles.size > 0 || pluginTagFiles.size > 0) {
       const usedNames = new Set<string>();
       for (const comp of a.subComponents) usedNames.add(comp.name);
       const collectTreeNames = (node: import("../types/analysis.js").TemplateComponentNode): void => {
@@ -3880,6 +3885,14 @@ export function buildComponentGraph(
       };
       for (const node of a.templateTree ?? []) collectTreeNames(node);
       for (const name of usedNames) {
+        // A tag a plugin names is a use only when ONE file of the importer's family answers to it.
+        const declared = (pluginTagFiles.get(normTag(name)) ?? []).filter((f) => f !== a.filePath && familyCompatible(a.filePath, f));
+        if (declared.length === 1 && !customElToFiles.has(normTag(name))) {
+          refSet.add(declared[0]!);
+          valueRefs.add(declared[0]!);
+          staticRefs.add(declared[0]!);
+          continue;
+        }
         const files = customElToFiles.get(normTag(name));
         if (!files) continue;
         const target = pickByPathAffinity(files.filter((f) => f !== a.filePath), (c) => c, a.filePath);

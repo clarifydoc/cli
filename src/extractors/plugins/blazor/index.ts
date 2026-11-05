@@ -1,4 +1,5 @@
 import type {
+  CallInfo,
   ClassInfo,
   FunctionInfo,
   RouteInfo,
@@ -187,6 +188,45 @@ export function extractCodeBlockFunctions(lines: string[], commentPrefixes: stri
     }
   }
   return out;
+}
+
+/**
+ * The calls of the markup's inline handlers — `@onclick="() => Clubs.Load()"`, `OnSave="@(() => Svc.Save(club))"` —
+ * as the file's `<setup>`, with the component's `@inject` types as its locals, so `Clubs.Load` is a call on a
+ * `ClubService`. A handler that is a bare method name is the `@code` method itself and adds nothing here.
+ */
+export function extractMarkupSetup(lines: string[], commentPrefixes: string[]): FunctionInfo | null {
+  const injected = lines.flatMap((l) => {
+    const m = INJECT_RE.exec(l);
+    return m ? [{ name: m[2]!, type: m[1]!.trim() }] : [];
+  });
+  const markup = withCodeBlockMarkup(lines, markupOnly(lines));
+  const calls: CallInfo[] = [];
+  for (let i = 0; i < markup.length; i++) {
+    const line = markup[i] ?? "";
+    if (!line.includes("@on") && !/\sOn[A-Z]\w*\s*=/.test(line)) continue;
+    for (const re of [EVENT_RE, CALLBACK_RE]) {
+      re.lastIndex = 0;
+      for (const m of line.matchAll(re)) {
+        const value = (re === EVENT_RE ? m[2] ?? m[3] : m[2]) ?? "";
+        if (!value.includes("(")) continue;
+        for (const c of extractCallsFromBody([value.replace(/^@/, "")], 0, 1, commentPrefixes)) calls.push({ ...c, line: i + 1 });
+      }
+    }
+  }
+  if (calls.length === 0) return null;
+  return {
+    name: "<setup>",
+    params: [],
+    returnType: null,
+    isAsync: false,
+    isExported: false,
+    decorators: [],
+    calls,
+    line: 1,
+    endLine: 1,
+    ...(injected.length > 0 ? { localTypes: injected } : {}),
+  };
 }
 
 function countChar(s: string, ch: string): number {
@@ -381,7 +421,8 @@ function elementForTag(tag: string | null): InteractiveElementInfo["element"] {
  *  bare member path; lambdas/expressions fall back to null. */
 function cleanHandler(raw: string): string | null {
   const val = raw.trim().replace(/^@+/, "");
-  const call = val.match(/([A-Za-z_]\w*)\s*\(/);
+  // A call on a member (`Clubs.Load()`) keeps its receiver: it names the injected service the method is on.
+  const call = val.match(/([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/);
   if (call) return call[1]!;
   const ident = val.match(/^([A-Za-z_][\w.]*)$/);
   if (ident) return ident[1]!;
@@ -533,5 +574,8 @@ export const blazorSpec: RegexLangSpec = {
     return component ? [...classes, component] : classes;
   },
   // The component's own `@code` methods (see `extractCodeBlockFunctions`).
-  postProcessFunctions: (lines, fns) => [...fns, ...extractCodeBlockFunctions(lines, ["//"])],
+  postProcessFunctions: (lines, fns) => {
+    const setup = extractMarkupSetup(lines, ["//"]);
+    return [...(setup ? [setup] : []), ...fns, ...extractCodeBlockFunctions(lines, ["//"])];
+  },
 };

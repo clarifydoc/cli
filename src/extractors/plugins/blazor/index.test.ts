@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { blazorSpec } from "./index.js";
+import { blazorSpec, extractMarkupSetup } from "./index.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
 /**
@@ -285,5 +285,23 @@ describe("Blazor component type (@inherits / @implements)", () => {
     } as unknown as FileAnalysis;
     const links = buildSymbolLinks([page, base]).filter((l) => l.sourceSymbol === "<component>");
     expect(links.map((l) => [l.callName, l.targetFile, l.targetSymbol, l.strategy])).toEqual([["SaveClub", "Pages/ClubPageBase.cs", "ClubPageBase.SaveClub", "inheritance"]]);
+  });
+});
+
+describe("Blazor inline lambda handlers", () => {
+  it("keeps the receiver of a call a lambda makes, and gives the markup's calls a <setup> with the @inject types", () => {
+    const src = lines(`@page "/clubs"
+@inject ClubService Clubs
+<button @onclick="() => Clubs.Load()">Load</button>
+<button @onclick="Save">Save</button>
+<ClubCard OnRemove="@(() => Clubs.Remove(1))" />`);
+    const els = blazorSpec.extractInteractiveElements!(src);
+    expect(els.map((e) => e.handler)).toEqual(["Clubs.Load", "Save", "Clubs.Remove"]);
+    const setup = extractMarkupSetup(src, ["//"])!;
+    expect(setup.name).toBe("<setup>");
+    expect(setup.calls.map((c) => `${c.name}@${c.line}`)).toEqual(["Clubs.Load@3", "Clubs.Remove@5"]);
+    expect(setup.localTypes).toEqual([{ name: "Clubs", type: "ClubService" }]);
+    // A bare method name is the @code method itself: nothing to add.
+    expect(extractMarkupSetup(lines(`<button @onclick="Save">Save</button>`), ["//"])).toBeNull();
   });
 });

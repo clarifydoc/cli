@@ -13,5 +13,7 @@ export const blazorMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: blazorReachability,
   ...blazorManifest,
+  // `<ClubCard />` names the component by its file: Blazor resolves tags by namespace, never by import path.
+  componentTags: (a) => (a.filePath.toLowerCase().endsWith(".razor") ? [a.filePath.slice(a.filePath.lastIndexOf("/") + 1).replace(/\.razor$/i, "")] : []),
   regexSpec: blazorSpec,
 };
