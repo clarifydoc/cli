@@ -112,7 +112,7 @@ describe("xamlSpec sub-components", () => {
 });
 
 describe("XAML view model discovery", () => {
-  const screenOf = (xaml: string) => xamlSpec.extractScreens?.(xaml.split("\n"), "Views/ClubView.xaml")?.[0];
+  const screenOf = (xaml: string) => xamlSpec.extractScreens!(xaml.split("\n"), "Views/ClubView.xaml", [])?.[0];
   it("reads a DataContext element on the root", () => {
     const s = screenOf(`<UserControl x:Class="App.ClubView" xmlns:vm="clr-namespace:App.ViewModels">
   <UserControl.DataContext><vm:ClubViewModel/></UserControl.DataContext>
