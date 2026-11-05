@@ -192,6 +192,10 @@ export function extractKotlinRouterDsl(root: Node, routes: RouteInfo[]): void {
       }
       const nestPrefix = nestPrefixOf(node);
       if (nestPrefix !== null) {
+        // The grammar reads `GET("/a") { … }` + a newline + `("/x" and accept(JSON)).nest { … }` as one call chain:
+        // the statement before the nest is a route of its own, at the prefix it stands in.
+        const before = statementBeforeNest(node);
+        if (before) visit(before, prefix);
         const body = lambdaOf(node);
         if (body) visit(body, join(prefix, nestPrefix) === "/" ? prefix : join(prefix, nestPrefix));
         return;
@@ -208,13 +212,33 @@ export function extractKotlinRouterDsl(root: Node, routes: RouteInfo[]): void {
   }
 }
 
+/**
+ * A nest whose receiver the grammar glued to the statement above it: `GET("/a") { … }` then, on the next line,
+ * `("/x" and accept(JSON)).nest { … }` parses as `GET("/a") { … }("/x" and …)`. That statement, or null when the
+ * parenthesis starts on the line the call ends on (a real call continuation).
+ */
+function statementBeforeNest(call: Node): Node | null {
+  const receiver = call.firstChild?.type === "navigation_expression" ? call.firstChild.firstChild : null;
+  const inner = receiver?.type === "call_expression" ? receiver.firstChild : null;
+  const suffix = receiver?.lastChild;
+  if (inner?.type !== "call_expression" || suffix?.type !== "call_suffix") return null;
+  return suffix.startPosition.row > inner.endPosition.row ? inner : null;
+}
+
+/** The predicate arguments of a nest receiver, past the statement the grammar glued to it. */
+function receiverPredicate(receiver: Node): Node {
+  if (receiver.type !== "call_expression" || receiver.firstChild?.type !== "call_expression") return receiver;
+  const suffix = receiver.lastChild;
+  return suffix?.type === "call_suffix" && suffix.startPosition.row > receiver.firstChild.endPosition.row ? suffix : receiver;
+}
+
 /** `"/x".nest { }`, `("/x" and accept(JSON)).nest { }`, `nest("/x") { }`, `nest(path("/x")) { }`: the prefix, "" when the predicate has no path, null for no nest. */
 function nestPrefixOf(call: Node): string | null {
   const head = call.firstChild;
   if (head?.type === "navigation_expression") {
     const suffix = head.namedChildren.find((c) => c.type === "navigation_suffix");
     if (suffix?.namedChildren.find((c) => c.type === "simple_identifier")?.text !== "nest") return null;
-    return literalIn(head.firstChild!) ?? "";
+    return literalIn(receiverPredicate(head.firstChild!)) ?? "";
   }
   if (head?.type === "call_expression" && callee(head) === "nest") {
     return literalIn(head.descendantsOfType("value_arguments")[0] ?? head) ?? "";

@@ -546,4 +546,19 @@ class KRoutes(private val staff: StaffHandler) {
       "GET /health -> null",
     ]);
   });
+  it("keeps a verb call apart from the parenthesised nest on the next line (the grammar glues them)", async () => {
+    const src = `package x
+class KRoutes(private val staff: StaffHandler) {
+  fun routes(handler: PlayerHandler) = coRouter {
+    GET("/health") { ok().build() }
+    ("/staff" and accept(APPLICATION_JSON)).nest { GET("/all", staff::list) }
+    GET("/clubs", handler::list)
+    ("/api" and accept(APPLICATION_JSON)).nest { POST("/x", handler::create) }
+  }
+}`;
+    const tree = await parseSource(src, "kotlin" as any, "KRoutes.kt");
+    const routes: RouteInfo[] = [];
+    extractKotlinRouterDsl(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /health", "GET /staff/all", "GET /clubs", "POST /api/x"]);
+  });
 });
