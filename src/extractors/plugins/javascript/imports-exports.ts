@@ -142,6 +142,12 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     this.mayRegisterRequire = this.mayHaveRequire && /\.(?:register|use)\s*\(/.test(sourceText);
     this.bindings = [];
     const imports = super.extractImports(tree, sourceText, opts);
+    // `/// <reference path="./types.ts" />`: a file the compiler loads with this one.
+    if (sourceText.includes("<reference")) {
+      for (const m of sourceText.matchAll(/^[ \t]*\/\/\/\s*<reference\s+path\s*=\s*["']([^"']+)["']/gm)) {
+        imports.push({ source: /^[./]/.test(m[1]!) ? m[1]! : `./${m[1]}`, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: sourceText.slice(0, m.index).split("\n").length });
+      }
+    }
     // Scripts it starts as processes (`fork("./worker.js")`): run, not loaded.
     imports.push(...spawnImports(sourceText, "js"));
     // A template beside the script (Vue, Svelte) uses imports the script never mentions.
@@ -155,6 +161,16 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 
       // Static: import ... from "module"
       if (child.type === "import_statement") {
+        // TypeScript's `import club = require("./club")`: the module under one name, as `const club = require(…)`.
+        const required = child.namedChildren.find((c) => c.type === "import_require_clause");
+        if (required) {
+          const id = required.namedChildren.find((c) => c.type === "identifier");
+          const str = required.namedChildren.find((c) => c.type === "string");
+          if (id && str) {
+            imports.push({ source: stripQuotes(str.text), specifiers: [id.text], isDefault: true, isNamespace: false, isType: false, line: child.startPosition.row + 1, commonJs: true });
+          }
+          continue;
+        }
         const info = this.parseImportStatement(child);
         imports.push(info);
         const names = localBindings(child);

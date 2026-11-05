@@ -240,3 +240,16 @@ describe("JS dynamic imports bind the names they hand out", () => {
     ]);
   });
 });
+
+describe("TypeScript import spellings", () => {
+  it("reads `import x = require()` and `/// <reference path>` as imports", async () => {
+    const src = `/// <reference path="./lib/types.ts" />
+import club = require("./lib/club");
+import { a } from "./b";`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const out = new JavaScriptImportExportExtractor().extractImports(tree, src);
+    expect(out.map((i) => [i.source, i.specifiers, i.isDefault])).toEqual([
+      ["./lib/club", ["club"], true], ["./b", ["a"], false], ["./lib/types.ts", [], false],
+    ]);
+  });
+});

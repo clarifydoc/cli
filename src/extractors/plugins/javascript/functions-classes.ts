@@ -1416,6 +1416,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         continue;
       }
 
+      // `namespace Pitch { export function mow() {…} }`: its members are `Pitch.mow`, as a caller writes them.
+      const namespace = child.type === "expression_statement" && child.namedChild(0)?.type === "internal_module" ? child.namedChild(0)! : child.type === "internal_module" ? child : null;
+      if (namespace) {
+        this.extractNamespaceFunctions(namespace, "", functions);
+        continue;
+      }
+
       // `Alpine.data("comboBox", (id) => ({ open() {…} }))`: the same component, registered by name.
       if (moduleLevel && child.type === "expression_statement") {
         const call = child.namedChild(0);
@@ -1512,7 +1519,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               name &&
               value &&
               (value.type === "arrow_function" ||
-                value.type === "function_expression")
+                value.type === "function_expression" ||
+                value.type === "generator_function")
             ) {
               functions.push(this.parseJsArrowOrExpr(name, value, isExported));
               // An Alpine component factory, `let show = function () { return { init() {…}, save() {…} } }`
@@ -1923,6 +1931,35 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         continue;
       }
       this.collectJsClassLike(child, classes, false);
+    }
+  }
+
+  /** The functions a TypeScript namespace declares, named by their path through it (`Pitch.Turf.mow`). */
+  private extractNamespaceFunctions(ns: Node, prefix: string, functions: FunctionInfo[]): void {
+    const name = ns.childForFieldName("name")?.text;
+    const body = ns.childForFieldName("body");
+    if (!name || !body) return;
+    const path = prefix ? `${prefix}.${name}` : name;
+    for (const member of body.namedChildren) {
+      const exported = member.type === "export_statement";
+      const decl = exported ? member.childForFieldName("declaration") ?? member.namedChildren.find((c) => c.type !== "decorator") ?? null : member;
+      if (!decl) continue;
+      const inner = decl.type === "expression_statement" && decl.namedChild(0)?.type === "internal_module" ? decl.namedChild(0)! : decl;
+      if (inner.type === "internal_module") {
+        this.extractNamespaceFunctions(inner, path, functions);
+      } else if (decl.type === "function_declaration" || decl.type === "generator_function_declaration") {
+        const fn = this.parseJsFunction(decl, exported);
+        fn.name = `${path}.${fn.name}`;
+        functions.push(fn);
+      } else if (decl.type === "lexical_declaration" || decl.type === "variable_declaration") {
+        for (const d of decl.namedChildren) {
+          const n = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
+          const value = d.childForFieldName("value");
+          if (n?.type === "identifier" && value && (value.type === "arrow_function" || value.type === "function_expression" || value.type === "generator_function")) {
+            functions.push(this.parseJsArrowOrExpr(`${path}.${n.text}`, value, exported));
+          }
+        }
+      }
     }
   }
 

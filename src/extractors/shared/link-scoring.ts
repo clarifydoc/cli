@@ -363,6 +363,14 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     return null;
   }
 
+  // 1b. An alias with no name of its own (`@/lib/helper`, `~/lib/helper`) is no package — `@` and `~` stand
+  // for a source root no config here maps: the one file whose path ends so is the module.
+  const bare = /^[@~]\/(.+)$/.exec(importSource);
+  if (bare) {
+    const hit = uniqueSuffixMatch(bare[1]!.replace(/\.(?:[mc]?[jt]sx?|vue|svelte)$/, ""), filePathMap);
+    return hit ?? null;
+  }
+
   // 2. Skip well-known external packages/standard libraries
   if (isExternalPackage(importSource)) return null;
   // ...and the importing language's own standard library, unless a project module shadows it.

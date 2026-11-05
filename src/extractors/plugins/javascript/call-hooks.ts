@@ -51,6 +51,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   nestedScopeTypes: [
     "arrow_function",
     "function_expression",
+    "generator_function",
     "function_declaration",
     "generator_function_declaration",
     "class_declaration",
@@ -60,7 +61,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // to the enclosing function (see CallExtractionHooks.anonymousScopeTypes).
   // So are the methods of a class expression built in place
   // (`register(new (class implements Runner { run() { … } })())`).
-  anonymousScopeTypes: ["arrow_function", "function_expression", "class"],
+  anonymousScopeTypes: ["arrow_function", "function_expression", "generator_function", "class"],
   runsAtTopLevel: moduleCallback,
   callbackArgNodeTypes: ["call_expression"],
   // A name the function binds itself is a value when passed as an argument,
