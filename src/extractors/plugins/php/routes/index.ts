@@ -5,6 +5,7 @@ import { LARAVEL_ROUTES_FACT, codeigniterRouteExtractor } from "./codeigniter.js
 import { extractLaravelRoutes } from "./laravel.js";
 import { extractSymfonyAttributeRoutes } from "./symfony.js";
 import { SLIM_GATE, extractSlimRoutes } from "./slim.js";
+import { LARAVEL_ROUTING_FACT, laravelRoutingFact } from "./laravel-routing.js";
 
 /**
  * PHP route extraction — one extractor covering the supported frameworks:
@@ -27,6 +28,10 @@ export const phpRouteExtractor: RouteExtractor = {
       extractLaravelRoutes(tree.rootNode, routes, isApiFile ? "api" : "");
       // A project routed by the facade does not route by CodeIgniter's convention.
       if (routes.length > 0) facts?.push({ kind: LARAVEL_ROUTES_FACT, line: routes[0]!.line, data: null });
+    }
+    if (sourceText.includes("withRouting(")) {
+      const fact = laravelRoutingFact(sourceText);
+      if (fact) facts?.push({ kind: LARAVEL_ROUTING_FACT, line: 1, data: fact });
     }
     if (/#\[\s*(?:[\w\\]+\\)?(Route|Get|Post|Put|Patch|Delete)\b/.test(sourceText)) {
       extractSymfonyAttributeRoutes(tree.rootNode, routes);

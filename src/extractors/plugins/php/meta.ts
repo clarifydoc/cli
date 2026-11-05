@@ -16,6 +16,7 @@ import { PhpEntityExtractor } from "./entities.js";
 import { phpRouteExtractor } from "./routes/index.js";
 import { codeigniterRoutesResolver } from "./routes/codeigniter-resolver.js";
 import { laravelResourceResolver } from "./routes/laravel-resolver.js";
+import { laravelRoutingResolver } from "./routes/laravel-routing.js";
 import { phpViewKey, readPhpView } from "./views.js";
 import { CodeIgniterViewResolver } from "./view-resolver.js";
 import { LaravelEventResolver } from "./laravel-events.js";
@@ -44,7 +45,7 @@ export const phpMeta: LanguagePluginMeta = {
   ...phpManifest,
   routes: phpRouteExtractor,
   // `config/routes.php` aliases onto the CodeIgniter convention routes they name.
-  routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver],
+  routeResolvers: [codeigniterRoutesResolver, laravelResourceResolver, laravelRoutingResolver],
   // A controller's `$this->load->view('x')` reaches that template; a Livewire view's
   // `wire:click` reaches its component's method.
   dispatchResolvers: [new CodeIgniterViewResolver(), new LaravelEventResolver(), new LaravelViewResolver(), new LivewireViewResolver()],
