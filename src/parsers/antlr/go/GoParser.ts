@@ -34,95 +34,97 @@ type int = number;
  import { GoParserBase } from "./GoParserBase.js"; 
 
 export class GoParser extends GoParserBase {
-    public static readonly BREAK = 1;
-    public static readonly CASE = 2;
-    public static readonly CHAN = 3;
-    public static readonly CONST = 4;
-    public static readonly CONTINUE = 5;
-    public static readonly DEFAULT = 6;
-    public static readonly DEFER = 7;
-    public static readonly ELSE = 8;
-    public static readonly FALLTHROUGH = 9;
-    public static readonly FOR = 10;
-    public static readonly FUNC = 11;
-    public static readonly GO = 12;
-    public static readonly GOTO = 13;
-    public static readonly IF = 14;
-    public static readonly IMPORT = 15;
-    public static readonly INTERFACE = 16;
-    public static readonly MAP = 17;
-    public static readonly NIL_LIT = 18;
-    public static readonly PACKAGE = 19;
-    public static readonly RANGE = 20;
-    public static readonly RETURN = 21;
-    public static readonly SELECT = 22;
-    public static readonly STRUCT = 23;
-    public static readonly SWITCH = 24;
-    public static readonly TYPE = 25;
-    public static readonly VAR = 26;
-    public static readonly IDENTIFIER = 27;
-    public static readonly L_PAREN = 28;
-    public static readonly R_PAREN = 29;
-    public static readonly L_CURLY = 30;
-    public static readonly R_CURLY = 31;
-    public static readonly L_BRACKET = 32;
-    public static readonly R_BRACKET = 33;
-    public static readonly ASSIGN = 34;
-    public static readonly COMMA = 35;
-    public static readonly SEMI = 36;
-    public static readonly COLON = 37;
-    public static readonly DOT = 38;
-    public static readonly PLUS_PLUS = 39;
-    public static readonly MINUS_MINUS = 40;
-    public static readonly DECLARE_ASSIGN = 41;
-    public static readonly ELLIPSIS = 42;
-    public static readonly LOGICAL_OR = 43;
-    public static readonly LOGICAL_AND = 44;
-    public static readonly EQUALS = 45;
-    public static readonly NOT_EQUALS = 46;
-    public static readonly LESS = 47;
-    public static readonly LESS_OR_EQUALS = 48;
-    public static readonly GREATER = 49;
-    public static readonly GREATER_OR_EQUALS = 50;
-    public static readonly OR = 51;
-    public static readonly DIV = 52;
-    public static readonly MOD = 53;
-    public static readonly LSHIFT = 54;
-    public static readonly RSHIFT = 55;
-    public static readonly BIT_CLEAR = 56;
-    public static readonly UNDERLYING = 57;
-    public static readonly EXCLAMATION = 58;
-    public static readonly PLUS = 59;
-    public static readonly MINUS = 60;
-    public static readonly CARET = 61;
-    public static readonly STAR = 62;
-    public static readonly AMPERSAND = 63;
-    public static readonly RECEIVE = 64;
-    public static readonly DECIMAL_LIT = 65;
-    public static readonly BINARY_LIT = 66;
-    public static readonly OCTAL_LIT = 67;
-    public static readonly HEX_LIT = 68;
-    public static readonly FLOAT_LIT = 69;
-    public static readonly DECIMAL_FLOAT_LIT = 70;
-    public static readonly HEX_FLOAT_LIT = 71;
-    public static readonly IMAGINARY_LIT = 72;
-    public static readonly RUNE_LIT = 73;
-    public static readonly BYTE_VALUE = 74;
-    public static readonly OCTAL_BYTE_VALUE = 75;
-    public static readonly HEX_BYTE_VALUE = 76;
-    public static readonly LITTLE_U_VALUE = 77;
-    public static readonly BIG_U_VALUE = 78;
-    public static readonly RAW_STRING_LIT = 79;
-    public static readonly INTERPRETED_STRING_LIT = 80;
-    public static readonly WS = 81;
-    public static readonly COMMENT = 82;
-    public static readonly TERMINATOR = 83;
-    public static readonly LINE_COMMENT = 84;
-    public static readonly WS_NLSEMI = 85;
-    public static readonly COMMENT_NLSEMI = 86;
-    public static readonly LINE_COMMENT_NLSEMI = 87;
-    public static readonly EOS = 88;
-    public static readonly OTHER = 89;
+    public static readonly MakeParen = 1;
+    public static readonly NewParen = 2;
+    public static readonly BREAK = 3;
+    public static readonly CASE = 4;
+    public static readonly CHAN = 5;
+    public static readonly CONST = 6;
+    public static readonly CONTINUE = 7;
+    public static readonly DEFAULT = 8;
+    public static readonly DEFER = 9;
+    public static readonly ELSE = 10;
+    public static readonly FALLTHROUGH = 11;
+    public static readonly FOR = 12;
+    public static readonly FUNC = 13;
+    public static readonly GO = 14;
+    public static readonly GOTO = 15;
+    public static readonly IF = 16;
+    public static readonly IMPORT = 17;
+    public static readonly INTERFACE = 18;
+    public static readonly MAP = 19;
+    public static readonly NIL_LIT = 20;
+    public static readonly PACKAGE = 21;
+    public static readonly RANGE = 22;
+    public static readonly RETURN = 23;
+    public static readonly SELECT = 24;
+    public static readonly STRUCT = 25;
+    public static readonly SWITCH = 26;
+    public static readonly TYPE = 27;
+    public static readonly VAR = 28;
+    public static readonly IDENTIFIER = 29;
+    public static readonly L_PAREN = 30;
+    public static readonly R_PAREN = 31;
+    public static readonly L_CURLY = 32;
+    public static readonly R_CURLY = 33;
+    public static readonly L_BRACKET = 34;
+    public static readonly R_BRACKET = 35;
+    public static readonly ASSIGN = 36;
+    public static readonly COMMA = 37;
+    public static readonly SEMI = 38;
+    public static readonly COLON = 39;
+    public static readonly DOT = 40;
+    public static readonly PLUS_PLUS = 41;
+    public static readonly MINUS_MINUS = 42;
+    public static readonly DECLARE_ASSIGN = 43;
+    public static readonly ELLIPSIS = 44;
+    public static readonly LOGICAL_OR = 45;
+    public static readonly LOGICAL_AND = 46;
+    public static readonly EQUALS = 47;
+    public static readonly NOT_EQUALS = 48;
+    public static readonly LESS = 49;
+    public static readonly LESS_OR_EQUALS = 50;
+    public static readonly GREATER = 51;
+    public static readonly GREATER_OR_EQUALS = 52;
+    public static readonly OR = 53;
+    public static readonly DIV = 54;
+    public static readonly MOD = 55;
+    public static readonly LSHIFT = 56;
+    public static readonly RSHIFT = 57;
+    public static readonly BIT_CLEAR = 58;
+    public static readonly UNDERLYING = 59;
+    public static readonly EXCLAMATION = 60;
+    public static readonly PLUS = 61;
+    public static readonly MINUS = 62;
+    public static readonly CARET = 63;
+    public static readonly STAR = 64;
+    public static readonly AMPERSAND = 65;
+    public static readonly RECEIVE = 66;
+    public static readonly DECIMAL_LIT = 67;
+    public static readonly BINARY_LIT = 68;
+    public static readonly OCTAL_LIT = 69;
+    public static readonly HEX_LIT = 70;
+    public static readonly FLOAT_LIT = 71;
+    public static readonly DECIMAL_FLOAT_LIT = 72;
+    public static readonly HEX_FLOAT_LIT = 73;
+    public static readonly IMAGINARY_LIT = 74;
+    public static readonly RUNE_LIT = 75;
+    public static readonly BYTE_VALUE = 76;
+    public static readonly OCTAL_BYTE_VALUE = 77;
+    public static readonly HEX_BYTE_VALUE = 78;
+    public static readonly LITTLE_U_VALUE = 79;
+    public static readonly BIG_U_VALUE = 80;
+    public static readonly RAW_STRING_LIT = 81;
+    public static readonly INTERPRETED_STRING_LIT = 82;
+    public static readonly WS = 83;
+    public static readonly COMMENT = 84;
+    public static readonly TERMINATOR = 85;
+    public static readonly LINE_COMMENT = 86;
+    public static readonly WS_NLSEMI = 87;
+    public static readonly COMMENT_NLSEMI = 88;
+    public static readonly LINE_COMMENT_NLSEMI = 89;
+    public static readonly EOS = 90;
+    public static readonly OTHER = 91;
     public static readonly RULE_sourceFile = 0;
     public static readonly RULE_packageClause = 1;
     public static readonly RULE_packageName = 2;
@@ -231,33 +233,34 @@ export class GoParser extends GoParserBase {
     public static readonly RULE_eos = 105;
 
     public static readonly literalNames = [
-        null, "'break'", "'case'", "'chan'", "'const'", "'continue'", "'default'", 
-        "'defer'", "'else'", "'fallthrough'", "'for'", "'func'", "'go'", 
-        "'goto'", "'if'", "'import'", "'interface'", "'map'", "'nil'", "'package'", 
-        "'range'", "'return'", "'select'", "'struct'", "'switch'", "'type'", 
-        "'var'", null, "'('", "')'", "'{'", "'}'", "'['", "']'", "'='", 
-        "','", "';'", "':'", "'.'", "'++'", "'--'", "':='", "'...'", "'||'", 
-        "'&&'", "'=='", "'!='", "'<'", "'<='", "'>'", "'>='", "'|'", "'/'", 
-        "'%'", "'<<'", "'>>'", "'&^'", "'~'", "'!'", "'+'", "'-'", "'^'", 
-        "'*'", "'&'", "'<-'"
+        null, null, null, "'break'", "'case'", "'chan'", "'const'", "'continue'", 
+        "'default'", "'defer'", "'else'", "'fallthrough'", "'for'", "'func'", 
+        "'go'", "'goto'", "'if'", "'import'", "'interface'", "'map'", "'nil'", 
+        "'package'", "'range'", "'return'", "'select'", "'struct'", "'switch'", 
+        "'type'", "'var'", null, "'('", "')'", "'{'", "'}'", "'['", "']'", 
+        "'='", "','", "';'", "':'", "'.'", "'++'", "'--'", "':='", "'...'", 
+        "'||'", "'&&'", "'=='", "'!='", "'<'", "'<='", "'>'", "'>='", "'|'", 
+        "'/'", "'%'", "'<<'", "'>>'", "'&^'", "'~'", "'!'", "'+'", "'-'", 
+        "'^'", "'*'", "'&'", "'<-'"
     ];
 
     public static readonly symbolicNames = [
-        null, "BREAK", "CASE", "CHAN", "CONST", "CONTINUE", "DEFAULT", "DEFER", 
-        "ELSE", "FALLTHROUGH", "FOR", "FUNC", "GO", "GOTO", "IF", "IMPORT", 
-        "INTERFACE", "MAP", "NIL_LIT", "PACKAGE", "RANGE", "RETURN", "SELECT", 
-        "STRUCT", "SWITCH", "TYPE", "VAR", "IDENTIFIER", "L_PAREN", "R_PAREN", 
-        "L_CURLY", "R_CURLY", "L_BRACKET", "R_BRACKET", "ASSIGN", "COMMA", 
-        "SEMI", "COLON", "DOT", "PLUS_PLUS", "MINUS_MINUS", "DECLARE_ASSIGN", 
-        "ELLIPSIS", "LOGICAL_OR", "LOGICAL_AND", "EQUALS", "NOT_EQUALS", 
-        "LESS", "LESS_OR_EQUALS", "GREATER", "GREATER_OR_EQUALS", "OR", 
-        "DIV", "MOD", "LSHIFT", "RSHIFT", "BIT_CLEAR", "UNDERLYING", "EXCLAMATION", 
-        "PLUS", "MINUS", "CARET", "STAR", "AMPERSAND", "RECEIVE", "DECIMAL_LIT", 
-        "BINARY_LIT", "OCTAL_LIT", "HEX_LIT", "FLOAT_LIT", "DECIMAL_FLOAT_LIT", 
-        "HEX_FLOAT_LIT", "IMAGINARY_LIT", "RUNE_LIT", "BYTE_VALUE", "OCTAL_BYTE_VALUE", 
-        "HEX_BYTE_VALUE", "LITTLE_U_VALUE", "BIG_U_VALUE", "RAW_STRING_LIT", 
-        "INTERPRETED_STRING_LIT", "WS", "COMMENT", "TERMINATOR", "LINE_COMMENT", 
-        "WS_NLSEMI", "COMMENT_NLSEMI", "LINE_COMMENT_NLSEMI", "EOS", "OTHER"
+        null, "MakeParen", "NewParen", "BREAK", "CASE", "CHAN", "CONST", 
+        "CONTINUE", "DEFAULT", "DEFER", "ELSE", "FALLTHROUGH", "FOR", "FUNC", 
+        "GO", "GOTO", "IF", "IMPORT", "INTERFACE", "MAP", "NIL_LIT", "PACKAGE", 
+        "RANGE", "RETURN", "SELECT", "STRUCT", "SWITCH", "TYPE", "VAR", 
+        "IDENTIFIER", "L_PAREN", "R_PAREN", "L_CURLY", "R_CURLY", "L_BRACKET", 
+        "R_BRACKET", "ASSIGN", "COMMA", "SEMI", "COLON", "DOT", "PLUS_PLUS", 
+        "MINUS_MINUS", "DECLARE_ASSIGN", "ELLIPSIS", "LOGICAL_OR", "LOGICAL_AND", 
+        "EQUALS", "NOT_EQUALS", "LESS", "LESS_OR_EQUALS", "GREATER", "GREATER_OR_EQUALS", 
+        "OR", "DIV", "MOD", "LSHIFT", "RSHIFT", "BIT_CLEAR", "UNDERLYING", 
+        "EXCLAMATION", "PLUS", "MINUS", "CARET", "STAR", "AMPERSAND", "RECEIVE", 
+        "DECIMAL_LIT", "BINARY_LIT", "OCTAL_LIT", "HEX_LIT", "FLOAT_LIT", 
+        "DECIMAL_FLOAT_LIT", "HEX_FLOAT_LIT", "IMAGINARY_LIT", "RUNE_LIT", 
+        "BYTE_VALUE", "OCTAL_BYTE_VALUE", "HEX_BYTE_VALUE", "LITTLE_U_VALUE", 
+        "BIG_U_VALUE", "RAW_STRING_LIT", "INTERPRETED_STRING_LIT", "WS", 
+        "COMMENT", "TERMINATOR", "LINE_COMMENT", "WS_NLSEMI", "COMMENT_NLSEMI", 
+        "LINE_COMMENT_NLSEMI", "EOS", "OTHER"
     ];
     public static readonly ruleNames = [
         "sourceFile", "packageClause", "packageName", "identifier", "importDecl", 
@@ -312,7 +315,7 @@ export class GoParser extends GoParserBase {
             this.state = 219;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while (_la === 15) {
+            while (_la === 17) {
                 {
                 {
                 this.state = 214;
@@ -328,7 +331,7 @@ export class GoParser extends GoParserBase {
             this.state = 231;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while ((((_la) & ~0x1F) === 0 && ((1 << _la) & 100665360) !== 0)) {
+            while ((((_la) & ~0x1F) === 0 && ((1 << _la) & 402661440) !== 0)) {
                 {
                 {
                 this.state = 225;
@@ -478,7 +481,7 @@ export class GoParser extends GoParserBase {
                 this.state = 258;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 27 || _la === 38 || _la === 79 || _la === 80) {
+                if (_la === 29 || _la === 40 || _la === 81 || _la === 82) {
                     {
                     this.state = 246;
                     this.importSpec();
@@ -503,7 +506,7 @@ export class GoParser extends GoParserBase {
                     this.state = 256;
                     this.errorHandler.sync(this);
                     _la = this.tokenStream.LA(1);
-                    if (_la === 36 || _la === 88) {
+                    if (_la === 38 || _la === 90) {
                         {
                         this.state = 255;
                         this.eos();
@@ -673,7 +676,7 @@ export class GoParser extends GoParserBase {
                 this.state = 291;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 27) {
+                if (_la === 29) {
                     {
                     this.state = 279;
                     this.constSpec();
@@ -698,7 +701,7 @@ export class GoParser extends GoParserBase {
                     this.state = 289;
                     this.errorHandler.sync(this);
                     _la = this.tokenStream.LA(1);
-                    if (_la === 36 || _la === 88) {
+                    if (_la === 38 || _la === 90) {
                         {
                         this.state = 288;
                         this.eos();
@@ -885,7 +888,7 @@ export class GoParser extends GoParserBase {
                 this.state = 335;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 27) {
+                if (_la === 29) {
                     {
                     this.state = 323;
                     this.typeSpec();
@@ -910,7 +913,7 @@ export class GoParser extends GoParserBase {
                     this.state = 333;
                     this.errorHandler.sync(this);
                     _la = this.tokenStream.LA(1);
-                    if (_la === 36 || _la === 88) {
+                    if (_la === 38 || _la === 90) {
                         {
                         this.state = 332;
                         this.eos();
@@ -990,7 +993,7 @@ export class GoParser extends GoParserBase {
             this.state = 346;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 32) {
+            if (_la === 34) {
                 {
                 this.state = 345;
                 this.typeParameters();
@@ -1084,7 +1087,7 @@ export class GoParser extends GoParserBase {
             this.state = 367;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 35) {
+            if (_la === 37) {
                 {
                 this.state = 366;
                 this.match(GoParser.COMMA);
@@ -1145,7 +1148,7 @@ export class GoParser extends GoParserBase {
             this.state = 379;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while (_la === 51) {
+            while (_la === 53) {
                 {
                 {
                 this.state = 375;
@@ -1220,7 +1223,7 @@ export class GoParser extends GoParserBase {
             this.state = 390;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 32) {
+            if (_la === 34) {
                 {
                 this.state = 389;
                 this.typeParameters();
@@ -1232,7 +1235,7 @@ export class GoParser extends GoParserBase {
             this.state = 394;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 30) {
+            if (_la === 32) {
                 {
                 this.state = 393;
                 this.block();
@@ -1270,7 +1273,7 @@ export class GoParser extends GoParserBase {
             this.state = 400;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 32) {
+            if (_la === 34) {
                 {
                 this.state = 399;
                 this.typeParameters();
@@ -1282,7 +1285,7 @@ export class GoParser extends GoParserBase {
             this.state = 404;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 30) {
+            if (_la === 32) {
                 {
                 this.state = 403;
                 this.block();
@@ -1353,7 +1356,7 @@ export class GoParser extends GoParserBase {
                 this.state = 423;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 27) {
+                if (_la === 29) {
                     {
                     this.state = 411;
                     this.varSpec();
@@ -1378,7 +1381,7 @@ export class GoParser extends GoParserBase {
                     this.state = 421;
                     this.errorHandler.sync(this);
                     _la = this.tokenStream.LA(1);
-                    if (_la === 36 || _la === 88) {
+                    if (_la === 38 || _la === 90) {
                         {
                         this.state = 420;
                         this.eos();
@@ -1429,7 +1432,7 @@ export class GoParser extends GoParserBase {
                 this.state = 432;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 34) {
+                if (_la === 36) {
                     {
                     this.state = 430;
                     this.match(GoParser.ASSIGN);
@@ -1537,7 +1540,7 @@ export class GoParser extends GoParserBase {
                 this.state = 455;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 36 || _la === 88) {
+                if (_la === 38 || _la === 90) {
                     {
                     this.state = 454;
                     this.eos();
@@ -1807,7 +1810,7 @@ export class GoParser extends GoParserBase {
             this.expression(0);
             this.state = 490;
             _la = this.tokenStream.LA(1);
-            if(!(_la === 39 || _la === 40)) {
+            if(!(_la === 41 || _la === 42)) {
             this.errorHandler.recoverInline(this);
             }
             else {
@@ -1866,11 +1869,11 @@ export class GoParser extends GoParserBase {
             this.state = 497;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (((((_la - 51)) & ~0x1F) === 0 && ((1 << (_la - 51)) & 7999) !== 0)) {
+            if (((((_la - 53)) & ~0x1F) === 0 && ((1 << (_la - 53)) & 7999) !== 0)) {
                 {
                 this.state = 496;
                 _la = this.tokenStream.LA(1);
-                if(!(((((_la - 51)) & ~0x1F) === 0 && ((1 << (_la - 51)) & 7999) !== 0))) {
+                if(!(((((_la - 53)) & ~0x1F) === 0 && ((1 << (_la - 53)) & 7999) !== 0))) {
                 this.errorHandler.recoverInline(this);
                 }
                 else {
@@ -2004,7 +2007,7 @@ export class GoParser extends GoParserBase {
             this.state = 516;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 27) {
+            if (_la === 29) {
                 {
                 this.state = 515;
                 this.match(GoParser.IDENTIFIER);
@@ -2038,7 +2041,7 @@ export class GoParser extends GoParserBase {
             this.state = 520;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 27) {
+            if (_la === 29) {
                 {
                 this.state = 519;
                 this.match(GoParser.IDENTIFIER);
@@ -2155,7 +2158,7 @@ export class GoParser extends GoParserBase {
                 {
                 this.state = 532;
                 _la = this.tokenStream.LA(1);
-                if(!(_la === 36 || _la === 88)) {
+                if(!(_la === 38 || _la === 90)) {
                 this.errorHandler.recoverInline(this);
                 }
                 else {
@@ -2172,7 +2175,7 @@ export class GoParser extends GoParserBase {
                 this.simpleStmt();
                 this.state = 535;
                 _la = this.tokenStream.LA(1);
-                if(!(_la === 36 || _la === 88)) {
+                if(!(_la === 38 || _la === 90)) {
                 this.errorHandler.recoverInline(this);
                 }
                 else {
@@ -2189,7 +2192,7 @@ export class GoParser extends GoParserBase {
             this.state = 546;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 8) {
+            if (_la === 10) {
                 {
                 this.state = 541;
                 this.match(GoParser.ELSE);
@@ -2323,7 +2326,7 @@ export class GoParser extends GoParserBase {
             this.state = 569;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while (_la === 2 || _la === 6) {
+            while (_la === 4 || _la === 8) {
                 {
                 {
                 this.state = 566;
@@ -2460,7 +2463,7 @@ export class GoParser extends GoParserBase {
             this.state = 598;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while (_la === 2 || _la === 6) {
+            while (_la === 4 || _la === 8) {
                 {
                 {
                 this.state = 595;
@@ -2682,7 +2685,7 @@ export class GoParser extends GoParserBase {
             this.state = 641;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            while (_la === 2 || _la === 6) {
+            while (_la === 4 || _la === 8) {
                 {
                 {
                 this.state = 638;
@@ -3045,7 +3048,7 @@ export class GoParser extends GoParserBase {
                 this.state = 705;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 32) {
+                if (_la === 34) {
                     {
                     this.state = 704;
                     this.typeArgs();
@@ -3101,7 +3104,7 @@ export class GoParser extends GoParserBase {
             this.state = 717;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 35) {
+            if (_la === 37) {
                 {
                 this.state = 716;
                 this.match(GoParser.COMMA);
@@ -3407,7 +3410,7 @@ export class GoParser extends GoParserBase {
                 this.state = 764;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 36 || _la === 88) {
+                if (_la === 38 || _la === 90) {
                     {
                     this.state = 763;
                     this.eos();
@@ -3719,7 +3722,7 @@ export class GoParser extends GoParserBase {
                 this.state = 819;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 35) {
+                if (_la === 37) {
                     {
                     this.state = 818;
                     this.match(GoParser.COMMA);
@@ -3822,7 +3825,7 @@ export class GoParser extends GoParserBase {
                 this.state = 835;
                 localContext._unary_op = this.tokenStream.LT(1);
                 _la = this.tokenStream.LA(1);
-                if(!(((((_la - 58)) & ~0x1F) === 0 && ((1 << (_la - 58)) & 127) !== 0))) {
+                if(!(((((_la - 60)) & ~0x1F) === 0 && ((1 << (_la - 60)) & 127) !== 0))) {
                     localContext._unary_op = this.errorHandler.recoverInline(this);
                 }
                 else {
@@ -3859,7 +3862,7 @@ export class GoParser extends GoParserBase {
                         this.state = 840;
                         localContext._mul_op = this.tokenStream.LT(1);
                         _la = this.tokenStream.LA(1);
-                        if(!(((((_la - 52)) & ~0x1F) === 0 && ((1 << (_la - 52)) & 3103) !== 0))) {
+                        if(!(((((_la - 54)) & ~0x1F) === 0 && ((1 << (_la - 54)) & 3103) !== 0))) {
                             localContext._mul_op = this.errorHandler.recoverInline(this);
                         }
                         else {
@@ -3881,7 +3884,7 @@ export class GoParser extends GoParserBase {
                         this.state = 843;
                         localContext._add_op = this.tokenStream.LT(1);
                         _la = this.tokenStream.LA(1);
-                        if(!(((((_la - 51)) & ~0x1F) === 0 && ((1 << (_la - 51)) & 1793) !== 0))) {
+                        if(!(((((_la - 53)) & ~0x1F) === 0 && ((1 << (_la - 53)) & 1793) !== 0))) {
                             localContext._add_op = this.errorHandler.recoverInline(this);
                         }
                         else {
@@ -3903,7 +3906,7 @@ export class GoParser extends GoParserBase {
                         this.state = 846;
                         localContext._rel_op = this.tokenStream.LT(1);
                         _la = this.tokenStream.LA(1);
-                        if(!(((((_la - 45)) & ~0x1F) === 0 && ((1 << (_la - 45)) & 63) !== 0))) {
+                        if(!(((((_la - 47)) & ~0x1F) === 0 && ((1 << (_la - 47)) & 63) !== 0))) {
                             localContext._rel_op = this.errorHandler.recoverInline(this);
                         }
                         else {
@@ -4084,7 +4087,7 @@ export class GoParser extends GoParserBase {
             this.state = 883;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 35) {
+            if (_la === 37) {
                 {
                 this.state = 882;
                 this.match(GoParser.COMMA);
@@ -4124,7 +4127,7 @@ export class GoParser extends GoParserBase {
                 this.state = 889;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 32) {
+                if (_la === 34) {
                     {
                     this.state = 888;
                     this.typeArgs();
@@ -4382,7 +4385,7 @@ export class GoParser extends GoParserBase {
             {
             this.state = 925;
             _la = this.tokenStream.LA(1);
-            if(!(((((_la - 65)) & ~0x1F) === 0 && ((1 << (_la - 65)) & 399) !== 0))) {
+            if(!(((((_la - 67)) & ~0x1F) === 0 && ((1 << (_la - 67)) & 399) !== 0))) {
             this.errorHandler.recoverInline(this);
             }
             else {
@@ -4536,7 +4539,7 @@ export class GoParser extends GoParserBase {
                 this.state = 946;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 32) {
+                if (_la === 34) {
                     {
                     this.state = 945;
                     this.typeArgs();
@@ -4579,7 +4582,7 @@ export class GoParser extends GoParserBase {
                 this.state = 953;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 35) {
+                if (_la === 37) {
                     {
                     this.state = 952;
                     this.match(GoParser.COMMA);
@@ -4770,7 +4773,7 @@ export class GoParser extends GoParserBase {
             this.state = 996;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 27 || _la === 62) {
+            if (_la === 29 || _la === 64) {
                 {
                 this.state = 984;
                 this.fieldDecl();
@@ -4795,7 +4798,7 @@ export class GoParser extends GoParserBase {
                 this.state = 994;
                 this.errorHandler.sync(this);
                 _la = this.tokenStream.LA(1);
-                if (_la === 36 || _la === 88) {
+                if (_la === 38 || _la === 90) {
                     {
                     this.state = 993;
                     this.eos();
@@ -4850,7 +4853,7 @@ export class GoParser extends GoParserBase {
             this.state = 1007;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 79 || _la === 80) {
+            if (_la === 81 || _la === 82) {
                 {
                 this.state = 1006;
                 localContext._tag = this.string_();
@@ -4881,7 +4884,7 @@ export class GoParser extends GoParserBase {
             {
             this.state = 1009;
             _la = this.tokenStream.LA(1);
-            if(!(_la === 79 || _la === 80)) {
+            if(!(_la === 81 || _la === 82)) {
             this.errorHandler.recoverInline(this);
             }
             else {
@@ -4913,7 +4916,7 @@ export class GoParser extends GoParserBase {
             this.state = 1012;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 62) {
+            if (_la === 64) {
                 {
                 this.state = 1011;
                 this.match(GoParser.STAR);
@@ -4925,7 +4928,7 @@ export class GoParser extends GoParserBase {
             this.state = 1016;
             this.errorHandler.sync(this);
             _la = this.tokenStream.LA(1);
-            if (_la === 32) {
+            if (_la === 34) {
                 {
                 this.state = 1015;
                 this.typeArgs();
@@ -5112,76 +5115,166 @@ export class GoParser extends GoParserBase {
         this.enterRule(localContext, 208, GoParser.RULE_arguments);
         let _la: number;
         try {
-            this.enterOuterAlt(localContext, 1);
-            {
-            this.state = 1051;
-            this.match(GoParser.L_PAREN);
-            this.state = 1068;
+            this.state = 1095;
             this.errorHandler.sync(this);
-            switch (this.interpreter.adaptivePredict(this.tokenStream, 131, this.context) ) {
-            case 1:
+            switch (this.tokenStream.LA(1)) {
+            case GoParser.L_PAREN:
+                this.enterOuterAlt(localContext, 1);
                 {
-                this.state = 1060;
+                this.state = 1051;
+                this.match(GoParser.L_PAREN);
+                this.state = 1059;
                 this.errorHandler.sync(this);
-                switch (this.interpreter.adaptivePredict(this.tokenStream, 128, this.context) ) {
+                switch (this.interpreter.adaptivePredict(this.tokenStream, 129, this.context) ) {
                 case 1:
                     {
                     this.state = 1052;
-                    if (!(this.isTypeArgument())) {
-                        throw this.createFailedPredicateException("this.isTypeArgument()");
-                    }
-                    this.state = 1053;
-                    this.type_();
-                    this.state = 1056;
+                    this.expressionList();
+                    this.state = 1054;
                     this.errorHandler.sync(this);
-                    switch (this.interpreter.adaptivePredict(this.tokenStream, 127, this.context) ) {
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 44) {
+                        {
+                        this.state = 1053;
+                        this.match(GoParser.ELLIPSIS);
+                        }
+                    }
+
+                    this.state = 1057;
+                    this.errorHandler.sync(this);
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 37) {
+                        {
+                        this.state = 1056;
+                        this.match(GoParser.COMMA);
+                        }
+                    }
+
+                    }
+                    break;
+                }
+                this.state = 1061;
+                this.match(GoParser.R_PAREN);
+                }
+                break;
+            case GoParser.MakeParen:
+                this.enterOuterAlt(localContext, 2);
+                {
+                this.state = 1062;
+                this.match(GoParser.MakeParen);
+                this.state = 1074;
+                this.errorHandler.sync(this);
+                switch (this.interpreter.adaptivePredict(this.tokenStream, 133, this.context) ) {
+                case 1:
+                    {
+                    this.state = 1063;
+                    this.type_();
+                    this.state = 1066;
+                    this.errorHandler.sync(this);
+                    switch (this.interpreter.adaptivePredict(this.tokenStream, 130, this.context) ) {
                     case 1:
                         {
-                        this.state = 1054;
+                        this.state = 1064;
                         this.match(GoParser.COMMA);
-                        this.state = 1055;
+                        this.state = 1065;
                         this.expressionList();
                         }
                         break;
                     }
+                    this.state = 1069;
+                    this.errorHandler.sync(this);
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 44) {
+                        {
+                        this.state = 1068;
+                        this.match(GoParser.ELLIPSIS);
+                        }
+                    }
+
+                    this.state = 1072;
+                    this.errorHandler.sync(this);
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 37) {
+                        {
+                        this.state = 1071;
+                        this.match(GoParser.COMMA);
+                        }
+                    }
+
                     }
                     break;
-                case 2:
-                    {
-                    this.state = 1058;
-                    if (!(this.isExpressionArgument())) {
-                        throw this.createFailedPredicateException("this.isExpressionArgument()");
-                    }
-                    this.state = 1059;
-                    this.expressionList();
-                    }
-                    break;
                 }
-                this.state = 1063;
-                this.errorHandler.sync(this);
-                _la = this.tokenStream.LA(1);
-                if (_la === 42) {
-                    {
-                    this.state = 1062;
-                    this.match(GoParser.ELLIPSIS);
-                    }
-                }
-
-                this.state = 1066;
-                this.errorHandler.sync(this);
-                _la = this.tokenStream.LA(1);
-                if (_la === 35) {
-                    {
-                    this.state = 1065;
-                    this.match(GoParser.COMMA);
-                    }
-                }
-
+                this.state = 1076;
+                this.match(GoParser.R_PAREN);
                 }
                 break;
-            }
-            this.state = 1070;
-            this.match(GoParser.R_PAREN);
+            case GoParser.NewParen:
+                this.enterOuterAlt(localContext, 3);
+                {
+                this.state = 1077;
+                this.match(GoParser.NewParen);
+                this.state = 1092;
+                this.errorHandler.sync(this);
+                switch (this.interpreter.adaptivePredict(this.tokenStream, 138, this.context) ) {
+                case 1:
+                    {
+                    this.state = 1084;
+                    this.errorHandler.sync(this);
+                    switch (this.interpreter.adaptivePredict(this.tokenStream, 135, this.context) ) {
+                    case 1:
+                        {
+                        this.state = 1078;
+                        this.type_();
+                        this.state = 1081;
+                        this.errorHandler.sync(this);
+                        switch (this.interpreter.adaptivePredict(this.tokenStream, 134, this.context) ) {
+                        case 1:
+                            {
+                            this.state = 1079;
+                            this.match(GoParser.COMMA);
+                            this.state = 1080;
+                            this.expressionList();
+                            }
+                            break;
+                        }
+                        }
+                        break;
+                    case 2:
+                        {
+                        this.state = 1083;
+                        this.expressionList();
+                        }
+                        break;
+                    }
+                    this.state = 1087;
+                    this.errorHandler.sync(this);
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 44) {
+                        {
+                        this.state = 1086;
+                        this.match(GoParser.ELLIPSIS);
+                        }
+                    }
+
+                    this.state = 1090;
+                    this.errorHandler.sync(this);
+                    _la = this.tokenStream.LA(1);
+                    if (_la === 37) {
+                        {
+                        this.state = 1089;
+                        this.match(GoParser.COMMA);
+                        }
+                    }
+
+                    }
+                    break;
+                }
+                this.state = 1094;
+                this.match(GoParser.R_PAREN);
+                }
+                break;
+            default:
+                throw new antlr.NoViableAltException(this);
             }
         }
         catch (re) {
@@ -5204,9 +5297,9 @@ export class GoParser extends GoParserBase {
         try {
             this.enterOuterAlt(localContext, 1);
             {
-            this.state = 1072;
+            this.state = 1097;
             _la = this.tokenStream.LA(1);
-            if(!(_la === 36 || _la === 88)) {
+            if(!(_la === 38 || _la === 90)) {
             this.errorHandler.recoverInline(this);
             }
             else {
@@ -5237,8 +5330,6 @@ export class GoParser extends GoParserBase {
             return this.expression_sempred(localContext as ExpressionContext, predIndex);
         case 80:
             return this.primaryExpr_sempred(localContext as PrimaryExprContext, predIndex);
-        case 104:
-            return this.arguments_sempred(localContext as ArgumentsContext, predIndex);
         }
         return true;
     }
@@ -5273,18 +5364,9 @@ export class GoParser extends GoParserBase {
         }
         return true;
     }
-    private arguments_sempred(localContext: ArgumentsContext | null, predIndex: number): boolean {
-        switch (predIndex) {
-        case 8:
-            return this.isTypeArgument();
-        case 9:
-            return this.isExpressionArgument();
-        }
-        return true;
-    }
 
     public static readonly _serializedATN: number[] = [
-        4,1,89,1075,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,
+        4,1,91,1100,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,
         7,6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,
         13,2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,
         20,7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,2,26,7,
@@ -5374,17 +5456,20 @@ export class GoParser extends GoParserBase {
         100,1,101,1,101,1,101,1,101,1,102,1,102,3,102,1029,8,102,1,102,1,
         102,3,102,1033,8,102,1,102,3,102,1036,8,102,1,102,1,102,1,102,1,
         102,1,102,3,102,1043,8,102,1,102,1,102,1,103,1,103,1,103,1,103,1,
-        103,1,104,1,104,1,104,1,104,1,104,3,104,1057,8,104,1,104,1,104,3,
-        104,1061,8,104,1,104,3,104,1064,8,104,1,104,3,104,1067,8,104,3,104,
-        1069,8,104,1,104,1,104,1,105,1,105,1,105,0,1,158,106,0,2,4,6,8,10,
+        103,1,104,1,104,1,104,3,104,1055,8,104,1,104,3,104,1058,8,104,3,
+        104,1060,8,104,1,104,1,104,1,104,1,104,1,104,3,104,1067,8,104,1,
+        104,3,104,1070,8,104,1,104,3,104,1073,8,104,3,104,1075,8,104,1,104,
+        1,104,1,104,1,104,1,104,3,104,1082,8,104,1,104,3,104,1085,8,104,
+        1,104,3,104,1088,8,104,1,104,3,104,1091,8,104,3,104,1093,8,104,1,
+        104,3,104,1096,8,104,1,105,1,105,1,105,0,1,158,106,0,2,4,6,8,10,
         12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,
         56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,
         100,102,104,106,108,110,112,114,116,118,120,122,124,126,128,130,
         132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,
         164,166,168,170,172,174,176,178,180,182,184,186,188,190,192,194,
-        196,198,200,202,204,206,208,210,0,9,1,0,39,40,2,0,51,56,59,63,2,
-        0,36,36,88,88,1,0,58,64,2,0,52,56,62,63,2,0,51,51,59,61,1,0,45,50,
-        2,0,65,68,72,73,1,0,79,80,1153,0,212,1,0,0,0,2,236,1,0,0,0,4,239,
+        196,198,200,202,204,206,208,210,0,9,1,0,41,42,2,0,53,58,61,65,2,
+        0,38,38,90,90,1,0,60,66,2,0,54,58,64,65,2,0,53,53,61,63,1,0,47,52,
+        2,0,67,70,74,75,1,0,81,82,1187,0,212,1,0,0,0,2,236,1,0,0,0,4,239,
         1,0,0,0,6,241,1,0,0,0,8,243,1,0,0,0,10,265,1,0,0,0,12,269,1,0,0,
         0,14,274,1,0,0,0,16,276,1,0,0,0,18,296,1,0,0,0,20,304,1,0,0,0,22,
         312,1,0,0,0,24,320,1,0,0,0,26,342,1,0,0,0,28,344,1,0,0,0,30,351,
@@ -5409,7 +5494,7 @@ export class GoParser extends GoParserBase {
         180,948,1,0,0,0,182,950,1,0,0,0,184,959,1,0,0,0,186,970,1,0,0,0,
         188,976,1,0,0,0,190,980,1,0,0,0,192,982,1,0,0,0,194,1004,1,0,0,0,
         196,1009,1,0,0,0,198,1012,1,0,0,0,200,1018,1,0,0,0,202,1022,1,0,
-        0,0,204,1026,1,0,0,0,206,1046,1,0,0,0,208,1051,1,0,0,0,210,1072,
+        0,0,204,1026,1,0,0,0,206,1046,1,0,0,0,208,1095,1,0,0,0,210,1097,
         1,0,0,0,212,213,3,2,1,0,213,219,3,210,105,0,214,215,3,8,4,0,215,
         216,3,210,105,0,216,218,1,0,0,0,217,214,1,0,0,0,218,221,1,0,0,0,
         219,217,1,0,0,0,219,220,1,0,0,0,220,231,1,0,0,0,221,219,1,0,0,0,
@@ -5417,69 +5502,69 @@ export class GoParser extends GoParserBase {
         0,0,225,223,1,0,0,0,225,224,1,0,0,0,226,227,1,0,0,0,227,228,3,210,
         105,0,228,230,1,0,0,0,229,225,1,0,0,0,230,233,1,0,0,0,231,229,1,
         0,0,0,231,232,1,0,0,0,232,234,1,0,0,0,233,231,1,0,0,0,234,235,5,
-        0,0,1,235,1,1,0,0,0,236,237,5,19,0,0,237,238,3,4,2,0,238,3,1,0,0,
-        0,239,240,3,6,3,0,240,5,1,0,0,0,241,242,5,27,0,0,242,7,1,0,0,0,243,
-        261,5,15,0,0,244,262,3,10,5,0,245,258,5,28,0,0,246,252,3,10,5,0,
+        0,0,1,235,1,1,0,0,0,236,237,5,21,0,0,237,238,3,4,2,0,238,3,1,0,0,
+        0,239,240,3,6,3,0,240,5,1,0,0,0,241,242,5,29,0,0,242,7,1,0,0,0,243,
+        261,5,17,0,0,244,262,3,10,5,0,245,258,5,30,0,0,246,252,3,10,5,0,
         247,248,3,210,105,0,248,249,3,10,5,0,249,251,1,0,0,0,250,247,1,0,
         0,0,251,254,1,0,0,0,252,250,1,0,0,0,252,253,1,0,0,0,253,256,1,0,
         0,0,254,252,1,0,0,0,255,257,3,210,105,0,256,255,1,0,0,0,256,257,
         1,0,0,0,257,259,1,0,0,0,258,246,1,0,0,0,258,259,1,0,0,0,259,260,
-        1,0,0,0,260,262,5,29,0,0,261,244,1,0,0,0,261,245,1,0,0,0,262,9,1,
-        0,0,0,263,266,5,38,0,0,264,266,3,4,2,0,265,263,1,0,0,0,265,264,1,
+        1,0,0,0,260,262,5,31,0,0,261,244,1,0,0,0,261,245,1,0,0,0,262,9,1,
+        0,0,0,263,266,5,40,0,0,264,266,3,4,2,0,265,263,1,0,0,0,265,264,1,
         0,0,0,265,266,1,0,0,0,266,267,1,0,0,0,267,268,3,12,6,0,268,11,1,
         0,0,0,269,270,3,196,98,0,270,13,1,0,0,0,271,275,3,16,8,0,272,275,
         3,24,12,0,273,275,3,46,23,0,274,271,1,0,0,0,274,272,1,0,0,0,274,
-        273,1,0,0,0,275,15,1,0,0,0,276,294,5,4,0,0,277,295,3,18,9,0,278,
-        291,5,28,0,0,279,285,3,18,9,0,280,281,3,210,105,0,281,282,3,18,9,
+        273,1,0,0,0,275,15,1,0,0,0,276,294,5,6,0,0,277,295,3,18,9,0,278,
+        291,5,30,0,0,279,285,3,18,9,0,280,281,3,210,105,0,281,282,3,18,9,
         0,282,284,1,0,0,0,283,280,1,0,0,0,284,287,1,0,0,0,285,283,1,0,0,
         0,285,286,1,0,0,0,286,289,1,0,0,0,287,285,1,0,0,0,288,290,3,210,
         105,0,289,288,1,0,0,0,289,290,1,0,0,0,290,292,1,0,0,0,291,279,1,
-        0,0,0,291,292,1,0,0,0,292,293,1,0,0,0,293,295,5,29,0,0,294,277,1,
+        0,0,0,291,292,1,0,0,0,292,293,1,0,0,0,293,295,5,31,0,0,294,277,1,
         0,0,0,294,278,1,0,0,0,295,17,1,0,0,0,296,302,3,20,10,0,297,299,3,
         122,61,0,298,297,1,0,0,0,298,299,1,0,0,0,299,300,1,0,0,0,300,301,
-        5,34,0,0,301,303,3,22,11,0,302,298,1,0,0,0,302,303,1,0,0,0,303,19,
-        1,0,0,0,304,309,5,27,0,0,305,306,5,35,0,0,306,308,5,27,0,0,307,305,
+        5,36,0,0,301,303,3,22,11,0,302,298,1,0,0,0,302,303,1,0,0,0,303,19,
+        1,0,0,0,304,309,5,29,0,0,305,306,5,37,0,0,306,308,5,29,0,0,307,305,
         1,0,0,0,308,311,1,0,0,0,309,307,1,0,0,0,309,310,1,0,0,0,310,21,1,
-        0,0,0,311,309,1,0,0,0,312,317,3,158,79,0,313,314,5,35,0,0,314,316,
+        0,0,0,311,309,1,0,0,0,312,317,3,158,79,0,313,314,5,37,0,0,314,316,
         3,158,79,0,315,313,1,0,0,0,316,319,1,0,0,0,317,315,1,0,0,0,317,318,
-        1,0,0,0,318,23,1,0,0,0,319,317,1,0,0,0,320,338,5,25,0,0,321,339,
-        3,26,13,0,322,335,5,28,0,0,323,329,3,26,13,0,324,325,3,210,105,0,
+        1,0,0,0,318,23,1,0,0,0,319,317,1,0,0,0,320,338,5,27,0,0,321,339,
+        3,26,13,0,322,335,5,30,0,0,323,329,3,26,13,0,324,325,3,210,105,0,
         325,326,3,26,13,0,326,328,1,0,0,0,327,324,1,0,0,0,328,331,1,0,0,
         0,329,327,1,0,0,0,329,330,1,0,0,0,330,333,1,0,0,0,331,329,1,0,0,
         0,332,334,3,210,105,0,333,332,1,0,0,0,333,334,1,0,0,0,334,336,1,
         0,0,0,335,323,1,0,0,0,335,336,1,0,0,0,336,337,1,0,0,0,337,339,5,
-        29,0,0,338,321,1,0,0,0,338,322,1,0,0,0,339,25,1,0,0,0,340,343,3,
+        31,0,0,338,321,1,0,0,0,338,322,1,0,0,0,339,25,1,0,0,0,340,343,3,
         28,14,0,341,343,3,30,15,0,342,340,1,0,0,0,342,341,1,0,0,0,343,27,
-        1,0,0,0,344,346,5,27,0,0,345,347,3,32,16,0,346,345,1,0,0,0,346,347,
-        1,0,0,0,347,348,1,0,0,0,348,349,5,34,0,0,349,350,3,122,61,0,350,
-        29,1,0,0,0,351,353,5,27,0,0,352,354,3,32,16,0,353,352,1,0,0,0,353,
+        1,0,0,0,344,346,5,29,0,0,345,347,3,32,16,0,346,345,1,0,0,0,346,347,
+        1,0,0,0,347,348,1,0,0,0,348,349,5,36,0,0,349,350,3,122,61,0,350,
+        29,1,0,0,0,351,353,5,29,0,0,352,354,3,32,16,0,353,352,1,0,0,0,353,
         354,1,0,0,0,354,355,1,0,0,0,355,356,3,122,61,0,356,31,1,0,0,0,357,
-        358,5,32,0,0,358,363,3,34,17,0,359,360,5,35,0,0,360,362,3,34,17,
+        358,5,34,0,0,358,363,3,34,17,0,359,360,5,37,0,0,360,362,3,34,17,
         0,361,359,1,0,0,0,362,365,1,0,0,0,363,361,1,0,0,0,363,364,1,0,0,
-        0,364,367,1,0,0,0,365,363,1,0,0,0,366,368,5,35,0,0,367,366,1,0,0,
-        0,367,368,1,0,0,0,368,369,1,0,0,0,369,370,5,33,0,0,370,33,1,0,0,
+        0,364,367,1,0,0,0,365,363,1,0,0,0,366,368,5,37,0,0,367,366,1,0,0,
+        0,367,368,1,0,0,0,368,369,1,0,0,0,369,370,5,35,0,0,370,33,1,0,0,
         0,371,372,3,20,10,0,372,373,3,36,18,0,373,35,1,0,0,0,374,379,3,38,
-        19,0,375,376,5,51,0,0,376,378,3,38,19,0,377,375,1,0,0,0,378,381,
+        19,0,375,376,5,53,0,0,376,378,3,38,19,0,377,375,1,0,0,0,378,381,
         1,0,0,0,379,377,1,0,0,0,379,380,1,0,0,0,380,37,1,0,0,0,381,379,1,
-        0,0,0,382,384,5,57,0,0,383,382,1,0,0,0,383,384,1,0,0,0,384,385,1,
-        0,0,0,385,386,3,122,61,0,386,39,1,0,0,0,387,388,5,11,0,0,388,390,
-        5,27,0,0,389,391,3,32,16,0,390,389,1,0,0,0,390,391,1,0,0,0,391,392,
+        0,0,0,382,384,5,59,0,0,383,382,1,0,0,0,383,384,1,0,0,0,384,385,1,
+        0,0,0,385,386,3,122,61,0,386,39,1,0,0,0,387,388,5,13,0,0,388,390,
+        5,29,0,0,389,391,3,32,16,0,390,389,1,0,0,0,390,391,1,0,0,0,391,392,
         1,0,0,0,392,394,3,150,75,0,393,395,3,50,25,0,394,393,1,0,0,0,394,
-        395,1,0,0,0,395,41,1,0,0,0,396,397,5,11,0,0,397,398,3,44,22,0,398,
-        400,5,27,0,0,399,401,3,32,16,0,400,399,1,0,0,0,400,401,1,0,0,0,401,
+        395,1,0,0,0,395,41,1,0,0,0,396,397,5,13,0,0,397,398,3,44,22,0,398,
+        400,5,29,0,0,399,401,3,32,16,0,400,399,1,0,0,0,400,401,1,0,0,0,401,
         402,1,0,0,0,402,404,3,150,75,0,403,405,3,50,25,0,404,403,1,0,0,0,
         404,405,1,0,0,0,405,43,1,0,0,0,406,407,3,154,77,0,407,45,1,0,0,0,
-        408,426,5,26,0,0,409,427,3,48,24,0,410,423,5,28,0,0,411,417,3,48,
+        408,426,5,28,0,0,409,427,3,48,24,0,410,423,5,30,0,0,411,417,3,48,
         24,0,412,413,3,210,105,0,413,414,3,48,24,0,414,416,1,0,0,0,415,412,
         1,0,0,0,416,419,1,0,0,0,417,415,1,0,0,0,417,418,1,0,0,0,418,421,
         1,0,0,0,419,417,1,0,0,0,420,422,3,210,105,0,421,420,1,0,0,0,421,
         422,1,0,0,0,422,424,1,0,0,0,423,411,1,0,0,0,423,424,1,0,0,0,424,
-        425,1,0,0,0,425,427,5,29,0,0,426,409,1,0,0,0,426,410,1,0,0,0,427,
-        47,1,0,0,0,428,436,3,20,10,0,429,432,3,122,61,0,430,431,5,34,0,0,
+        425,1,0,0,0,425,427,5,31,0,0,426,409,1,0,0,0,426,410,1,0,0,0,427,
+        47,1,0,0,0,428,436,3,20,10,0,429,432,3,122,61,0,430,431,5,36,0,0,
         431,433,3,22,11,0,432,430,1,0,0,0,432,433,1,0,0,0,433,437,1,0,0,
-        0,434,435,5,34,0,0,435,437,3,22,11,0,436,429,1,0,0,0,436,434,1,0,
-        0,0,437,49,1,0,0,0,438,439,5,30,0,0,439,440,3,52,26,0,440,441,5,
-        31,0,0,441,51,1,0,0,0,442,444,3,210,105,0,443,442,1,0,0,0,443,444,
+        0,434,435,5,36,0,0,435,437,3,22,11,0,436,429,1,0,0,0,436,434,1,0,
+        0,0,437,49,1,0,0,0,438,439,5,32,0,0,439,440,3,52,26,0,440,441,5,
+        33,0,0,441,51,1,0,0,0,442,444,3,210,105,0,443,442,1,0,0,0,443,444,
         1,0,0,0,444,457,1,0,0,0,445,451,3,54,27,0,446,447,3,210,105,0,447,
         448,3,54,27,0,448,450,1,0,0,0,449,446,1,0,0,0,450,453,1,0,0,0,451,
         449,1,0,0,0,451,452,1,0,0,0,452,455,1,0,0,0,453,451,1,0,0,0,454,
@@ -5496,202 +5581,212 @@ export class GoParser extends GoParserBase {
         60,30,0,477,482,3,62,31,0,478,482,3,64,32,0,479,482,3,58,29,0,480,
         482,3,68,34,0,481,476,1,0,0,0,481,477,1,0,0,0,481,478,1,0,0,0,481,
         479,1,0,0,0,481,480,1,0,0,0,482,57,1,0,0,0,483,484,3,158,79,0,484,
-        59,1,0,0,0,485,486,3,158,79,0,486,487,5,64,0,0,487,488,3,158,79,
+        59,1,0,0,0,485,486,3,158,79,0,486,487,5,66,0,0,487,488,3,158,79,
         0,488,61,1,0,0,0,489,490,3,158,79,0,490,491,7,0,0,0,491,63,1,0,0,
         0,492,493,3,22,11,0,493,494,3,66,33,0,494,495,3,22,11,0,495,65,1,
         0,0,0,496,498,7,1,0,0,497,496,1,0,0,0,497,498,1,0,0,0,498,499,1,
-        0,0,0,499,500,5,34,0,0,500,67,1,0,0,0,501,502,3,20,10,0,502,503,
-        5,41,0,0,503,504,3,22,11,0,504,69,1,0,0,0,505,506,5,27,0,0,506,508,
-        5,37,0,0,507,509,3,54,27,0,508,507,1,0,0,0,508,509,1,0,0,0,509,71,
-        1,0,0,0,510,512,5,21,0,0,511,513,3,22,11,0,512,511,1,0,0,0,512,513,
-        1,0,0,0,513,73,1,0,0,0,514,516,5,1,0,0,515,517,5,27,0,0,516,515,
-        1,0,0,0,516,517,1,0,0,0,517,75,1,0,0,0,518,520,5,5,0,0,519,521,5,
-        27,0,0,520,519,1,0,0,0,520,521,1,0,0,0,521,77,1,0,0,0,522,523,5,
-        13,0,0,523,524,5,27,0,0,524,79,1,0,0,0,525,526,5,9,0,0,526,81,1,
-        0,0,0,527,528,5,7,0,0,528,529,3,158,79,0,529,83,1,0,0,0,530,538,
-        5,14,0,0,531,539,3,158,79,0,532,533,7,2,0,0,533,539,3,158,79,0,534,
+        0,0,0,499,500,5,36,0,0,500,67,1,0,0,0,501,502,3,20,10,0,502,503,
+        5,43,0,0,503,504,3,22,11,0,504,69,1,0,0,0,505,506,5,29,0,0,506,508,
+        5,39,0,0,507,509,3,54,27,0,508,507,1,0,0,0,508,509,1,0,0,0,509,71,
+        1,0,0,0,510,512,5,23,0,0,511,513,3,22,11,0,512,511,1,0,0,0,512,513,
+        1,0,0,0,513,73,1,0,0,0,514,516,5,3,0,0,515,517,5,29,0,0,516,515,
+        1,0,0,0,516,517,1,0,0,0,517,75,1,0,0,0,518,520,5,7,0,0,519,521,5,
+        29,0,0,520,519,1,0,0,0,520,521,1,0,0,0,521,77,1,0,0,0,522,523,5,
+        15,0,0,523,524,5,29,0,0,524,79,1,0,0,0,525,526,5,11,0,0,526,81,1,
+        0,0,0,527,528,5,9,0,0,528,529,3,158,79,0,529,83,1,0,0,0,530,538,
+        5,16,0,0,531,539,3,158,79,0,532,533,7,2,0,0,533,539,3,158,79,0,534,
         535,3,56,28,0,535,536,7,2,0,0,536,537,3,158,79,0,537,539,1,0,0,0,
         538,531,1,0,0,0,538,532,1,0,0,0,538,534,1,0,0,0,539,540,1,0,0,0,
-        540,546,3,50,25,0,541,544,5,8,0,0,542,545,3,84,42,0,543,545,3,50,
+        540,546,3,50,25,0,541,544,5,10,0,0,542,545,3,84,42,0,543,545,3,50,
         25,0,544,542,1,0,0,0,544,543,1,0,0,0,545,547,1,0,0,0,546,541,1,0,
         0,0,546,547,1,0,0,0,547,85,1,0,0,0,548,551,3,88,44,0,549,551,3,94,
-        47,0,550,548,1,0,0,0,550,549,1,0,0,0,551,87,1,0,0,0,552,563,5,24,
+        47,0,550,548,1,0,0,0,550,549,1,0,0,0,551,87,1,0,0,0,552,563,5,26,
         0,0,553,555,3,158,79,0,554,553,1,0,0,0,554,555,1,0,0,0,555,564,1,
         0,0,0,556,558,3,56,28,0,557,556,1,0,0,0,557,558,1,0,0,0,558,559,
         1,0,0,0,559,561,3,210,105,0,560,562,3,158,79,0,561,560,1,0,0,0,561,
         562,1,0,0,0,562,564,1,0,0,0,563,554,1,0,0,0,563,557,1,0,0,0,564,
-        565,1,0,0,0,565,569,5,30,0,0,566,568,3,90,45,0,567,566,1,0,0,0,568,
+        565,1,0,0,0,565,569,5,32,0,0,566,568,3,90,45,0,567,566,1,0,0,0,568,
         571,1,0,0,0,569,567,1,0,0,0,569,570,1,0,0,0,570,572,1,0,0,0,571,
-        569,1,0,0,0,572,573,5,31,0,0,573,89,1,0,0,0,574,575,3,92,46,0,575,
-        576,5,37,0,0,576,577,3,52,26,0,577,91,1,0,0,0,578,579,5,2,0,0,579,
-        582,3,22,11,0,580,582,5,6,0,0,581,578,1,0,0,0,581,580,1,0,0,0,582,
-        93,1,0,0,0,583,592,5,24,0,0,584,593,3,96,48,0,585,586,3,210,105,
+        569,1,0,0,0,572,573,5,33,0,0,573,89,1,0,0,0,574,575,3,92,46,0,575,
+        576,5,39,0,0,576,577,3,52,26,0,577,91,1,0,0,0,578,579,5,4,0,0,579,
+        582,3,22,11,0,580,582,5,8,0,0,581,578,1,0,0,0,581,580,1,0,0,0,582,
+        93,1,0,0,0,583,592,5,26,0,0,584,593,3,96,48,0,585,586,3,210,105,
         0,586,587,3,96,48,0,587,593,1,0,0,0,588,589,3,56,28,0,589,590,3,
         210,105,0,590,591,3,96,48,0,591,593,1,0,0,0,592,584,1,0,0,0,592,
-        585,1,0,0,0,592,588,1,0,0,0,593,594,1,0,0,0,594,598,5,30,0,0,595,
+        585,1,0,0,0,592,588,1,0,0,0,593,594,1,0,0,0,594,598,5,32,0,0,595,
         597,3,98,49,0,596,595,1,0,0,0,597,600,1,0,0,0,598,596,1,0,0,0,598,
-        599,1,0,0,0,599,601,1,0,0,0,600,598,1,0,0,0,601,602,5,31,0,0,602,
-        95,1,0,0,0,603,604,5,27,0,0,604,606,5,41,0,0,605,603,1,0,0,0,605,
-        606,1,0,0,0,606,607,1,0,0,0,607,608,3,160,80,0,608,609,5,38,0,0,
-        609,610,5,28,0,0,610,611,5,25,0,0,611,612,5,29,0,0,612,97,1,0,0,
-        0,613,614,3,100,50,0,614,615,5,37,0,0,615,616,3,52,26,0,616,99,1,
-        0,0,0,617,618,5,2,0,0,618,621,3,102,51,0,619,621,5,6,0,0,620,617,
+        599,1,0,0,0,599,601,1,0,0,0,600,598,1,0,0,0,601,602,5,33,0,0,602,
+        95,1,0,0,0,603,604,5,29,0,0,604,606,5,43,0,0,605,603,1,0,0,0,605,
+        606,1,0,0,0,606,607,1,0,0,0,607,608,3,160,80,0,608,609,5,40,0,0,
+        609,610,5,30,0,0,610,611,5,27,0,0,611,612,5,31,0,0,612,97,1,0,0,
+        0,613,614,3,100,50,0,614,615,5,39,0,0,615,616,3,52,26,0,616,99,1,
+        0,0,0,617,618,5,4,0,0,618,621,3,102,51,0,619,621,5,8,0,0,620,617,
         1,0,0,0,620,619,1,0,0,0,621,101,1,0,0,0,622,625,3,122,61,0,623,625,
-        5,18,0,0,624,622,1,0,0,0,624,623,1,0,0,0,625,633,1,0,0,0,626,629,
-        5,35,0,0,627,630,3,122,61,0,628,630,5,18,0,0,629,627,1,0,0,0,629,
+        5,20,0,0,624,622,1,0,0,0,624,623,1,0,0,0,625,633,1,0,0,0,626,629,
+        5,37,0,0,627,630,3,122,61,0,628,630,5,20,0,0,629,627,1,0,0,0,629,
         628,1,0,0,0,630,632,1,0,0,0,631,626,1,0,0,0,632,635,1,0,0,0,633,
         631,1,0,0,0,633,634,1,0,0,0,634,103,1,0,0,0,635,633,1,0,0,0,636,
-        637,5,22,0,0,637,641,5,30,0,0,638,640,3,106,53,0,639,638,1,0,0,0,
+        637,5,24,0,0,637,641,5,32,0,0,638,640,3,106,53,0,639,638,1,0,0,0,
         640,643,1,0,0,0,641,639,1,0,0,0,641,642,1,0,0,0,642,644,1,0,0,0,
-        643,641,1,0,0,0,644,645,5,31,0,0,645,105,1,0,0,0,646,647,3,108,54,
-        0,647,648,5,37,0,0,648,649,3,52,26,0,649,107,1,0,0,0,650,653,5,2,
+        643,641,1,0,0,0,644,645,5,33,0,0,645,105,1,0,0,0,646,647,3,108,54,
+        0,647,648,5,39,0,0,648,649,3,52,26,0,649,107,1,0,0,0,650,653,5,4,
         0,0,651,654,3,60,30,0,652,654,3,110,55,0,653,651,1,0,0,0,653,652,
-        1,0,0,0,654,657,1,0,0,0,655,657,5,6,0,0,656,650,1,0,0,0,656,655,
-        1,0,0,0,657,109,1,0,0,0,658,659,3,22,11,0,659,660,5,34,0,0,660,665,
-        1,0,0,0,661,662,3,20,10,0,662,663,5,41,0,0,663,665,1,0,0,0,664,658,
+        1,0,0,0,654,657,1,0,0,0,655,657,5,8,0,0,656,650,1,0,0,0,656,655,
+        1,0,0,0,657,109,1,0,0,0,658,659,3,22,11,0,659,660,5,36,0,0,660,665,
+        1,0,0,0,661,662,3,20,10,0,662,663,5,43,0,0,663,665,1,0,0,0,664,658,
         1,0,0,0,664,661,1,0,0,0,664,665,1,0,0,0,665,666,1,0,0,0,666,667,
-        3,158,79,0,667,111,1,0,0,0,668,672,5,10,0,0,669,673,3,114,57,0,670,
+        3,158,79,0,667,111,1,0,0,0,668,672,5,12,0,0,669,673,3,114,57,0,670,
         673,3,116,58,0,671,673,3,118,59,0,672,669,1,0,0,0,672,670,1,0,0,
         0,672,671,1,0,0,0,672,673,1,0,0,0,673,674,1,0,0,0,674,675,3,50,25,
         0,675,113,1,0,0,0,676,677,3,158,79,0,677,115,1,0,0,0,678,680,3,56,
         28,0,679,678,1,0,0,0,679,680,1,0,0,0,680,681,1,0,0,0,681,683,3,210,
         105,0,682,684,3,158,79,0,683,682,1,0,0,0,683,684,1,0,0,0,684,685,
         1,0,0,0,685,687,3,210,105,0,686,688,3,56,28,0,687,686,1,0,0,0,687,
-        688,1,0,0,0,688,117,1,0,0,0,689,690,3,22,11,0,690,691,5,34,0,0,691,
-        696,1,0,0,0,692,693,3,20,10,0,693,694,5,41,0,0,694,696,1,0,0,0,695,
+        688,1,0,0,0,688,117,1,0,0,0,689,690,3,22,11,0,690,691,5,36,0,0,691,
+        696,1,0,0,0,692,693,3,20,10,0,693,694,5,43,0,0,694,696,1,0,0,0,695,
         689,1,0,0,0,695,692,1,0,0,0,695,696,1,0,0,0,696,697,1,0,0,0,697,
-        698,5,20,0,0,698,699,3,158,79,0,699,119,1,0,0,0,700,701,5,12,0,0,
+        698,5,22,0,0,698,699,3,158,79,0,699,119,1,0,0,0,700,701,5,14,0,0,
         701,702,3,158,79,0,702,121,1,0,0,0,703,705,3,126,63,0,704,706,3,
         124,62,0,705,704,1,0,0,0,705,706,1,0,0,0,706,713,1,0,0,0,707,713,
-        3,128,64,0,708,709,5,28,0,0,709,710,3,122,61,0,710,711,5,29,0,0,
+        3,128,64,0,708,709,5,30,0,0,709,710,3,122,61,0,710,711,5,31,0,0,
         711,713,1,0,0,0,712,703,1,0,0,0,712,707,1,0,0,0,712,708,1,0,0,0,
-        713,123,1,0,0,0,714,715,5,32,0,0,715,717,3,102,51,0,716,718,5,35,
-        0,0,717,716,1,0,0,0,717,718,1,0,0,0,718,719,1,0,0,0,719,720,5,33,
-        0,0,720,125,1,0,0,0,721,724,3,176,88,0,722,724,5,27,0,0,723,721,
+        713,123,1,0,0,0,714,715,5,34,0,0,715,717,3,102,51,0,716,718,5,37,
+        0,0,717,716,1,0,0,0,717,718,1,0,0,0,718,719,1,0,0,0,719,720,5,35,
+        0,0,720,125,1,0,0,0,721,724,3,176,88,0,722,724,5,29,0,0,723,721,
         1,0,0,0,723,722,1,0,0,0,724,127,1,0,0,0,725,734,3,130,65,0,726,734,
         3,192,96,0,727,734,3,136,68,0,728,734,3,148,74,0,729,734,3,138,69,
         0,730,734,3,140,70,0,731,734,3,142,71,0,732,734,3,144,72,0,733,725,
         1,0,0,0,733,726,1,0,0,0,733,727,1,0,0,0,733,728,1,0,0,0,733,729,
         1,0,0,0,733,730,1,0,0,0,733,731,1,0,0,0,733,732,1,0,0,0,734,129,
-        1,0,0,0,735,736,5,32,0,0,736,737,3,132,66,0,737,738,5,33,0,0,738,
+        1,0,0,0,735,736,5,34,0,0,736,737,3,132,66,0,737,738,5,35,0,0,738,
         739,3,134,67,0,739,131,1,0,0,0,740,741,3,158,79,0,741,133,1,0,0,
-        0,742,743,3,122,61,0,743,135,1,0,0,0,744,745,5,62,0,0,745,746,3,
-        122,61,0,746,137,1,0,0,0,747,748,5,16,0,0,748,766,5,30,0,0,749,752,
+        0,742,743,3,122,61,0,743,135,1,0,0,0,744,745,5,64,0,0,745,746,3,
+        122,61,0,746,137,1,0,0,0,747,748,5,18,0,0,748,766,5,32,0,0,749,752,
         3,146,73,0,750,752,3,36,18,0,751,749,1,0,0,0,751,750,1,0,0,0,752,
         760,1,0,0,0,753,756,3,210,105,0,754,757,3,146,73,0,755,757,3,36,
         18,0,756,754,1,0,0,0,756,755,1,0,0,0,757,759,1,0,0,0,758,753,1,0,
         0,0,759,762,1,0,0,0,760,758,1,0,0,0,760,761,1,0,0,0,761,764,1,0,
         0,0,762,760,1,0,0,0,763,765,3,210,105,0,764,763,1,0,0,0,764,765,
         1,0,0,0,765,767,1,0,0,0,766,751,1,0,0,0,766,767,1,0,0,0,767,768,
-        1,0,0,0,768,769,5,31,0,0,769,139,1,0,0,0,770,771,5,32,0,0,771,772,
-        5,33,0,0,772,773,3,134,67,0,773,141,1,0,0,0,774,775,5,17,0,0,775,
-        776,5,32,0,0,776,777,3,122,61,0,777,778,5,33,0,0,778,779,3,134,67,
-        0,779,143,1,0,0,0,780,781,4,72,0,0,781,787,5,3,0,0,782,783,5,3,0,
-        0,783,787,5,64,0,0,784,785,5,64,0,0,785,787,5,3,0,0,786,780,1,0,
+        1,0,0,0,768,769,5,33,0,0,769,139,1,0,0,0,770,771,5,34,0,0,771,772,
+        5,35,0,0,772,773,3,134,67,0,773,141,1,0,0,0,774,775,5,19,0,0,775,
+        776,5,34,0,0,776,777,3,122,61,0,777,778,5,35,0,0,778,779,3,134,67,
+        0,779,143,1,0,0,0,780,781,4,72,0,0,781,787,5,5,0,0,782,783,5,5,0,
+        0,783,787,5,66,0,0,784,785,5,66,0,0,785,787,5,5,0,0,786,780,1,0,
         0,0,786,782,1,0,0,0,786,784,1,0,0,0,787,788,1,0,0,0,788,789,3,134,
-        67,0,789,145,1,0,0,0,790,791,5,27,0,0,791,792,3,154,77,0,792,793,
-        3,152,76,0,793,797,1,0,0,0,794,795,5,27,0,0,795,797,3,154,77,0,796,
-        790,1,0,0,0,796,794,1,0,0,0,797,147,1,0,0,0,798,799,5,11,0,0,799,
+        67,0,789,145,1,0,0,0,790,791,5,29,0,0,791,792,3,154,77,0,792,793,
+        3,152,76,0,793,797,1,0,0,0,794,795,5,29,0,0,795,797,3,154,77,0,796,
+        790,1,0,0,0,796,794,1,0,0,0,797,147,1,0,0,0,798,799,5,13,0,0,799,
         800,3,150,75,0,800,149,1,0,0,0,801,803,3,154,77,0,802,804,3,152,
         76,0,803,802,1,0,0,0,803,804,1,0,0,0,804,151,1,0,0,0,805,808,3,154,
         77,0,806,808,3,122,61,0,807,805,1,0,0,0,807,806,1,0,0,0,808,153,
-        1,0,0,0,809,821,5,28,0,0,810,815,3,156,78,0,811,812,5,35,0,0,812,
+        1,0,0,0,809,821,5,30,0,0,810,815,3,156,78,0,811,812,5,37,0,0,812,
         814,3,156,78,0,813,811,1,0,0,0,814,817,1,0,0,0,815,813,1,0,0,0,815,
-        816,1,0,0,0,816,819,1,0,0,0,817,815,1,0,0,0,818,820,5,35,0,0,819,
+        816,1,0,0,0,816,819,1,0,0,0,817,815,1,0,0,0,818,820,5,37,0,0,819,
         818,1,0,0,0,819,820,1,0,0,0,820,822,1,0,0,0,821,810,1,0,0,0,821,
-        822,1,0,0,0,822,823,1,0,0,0,823,824,5,29,0,0,824,155,1,0,0,0,825,
+        822,1,0,0,0,822,823,1,0,0,0,823,824,5,31,0,0,824,155,1,0,0,0,825,
         827,3,20,10,0,826,825,1,0,0,0,826,827,1,0,0,0,827,829,1,0,0,0,828,
-        830,5,42,0,0,829,828,1,0,0,0,829,830,1,0,0,0,830,831,1,0,0,0,831,
+        830,5,44,0,0,829,828,1,0,0,0,829,830,1,0,0,0,830,831,1,0,0,0,831,
         832,3,122,61,0,832,157,1,0,0,0,833,834,6,79,-1,0,834,838,3,160,80,
         0,835,836,7,3,0,0,836,838,3,158,79,6,837,833,1,0,0,0,837,835,1,0,
         0,0,838,856,1,0,0,0,839,840,10,5,0,0,840,841,7,4,0,0,841,855,3,158,
         79,6,842,843,10,4,0,0,843,844,7,5,0,0,844,855,3,158,79,5,845,846,
         10,3,0,0,846,847,7,6,0,0,847,855,3,158,79,4,848,849,10,2,0,0,849,
-        850,5,44,0,0,850,855,3,158,79,3,851,852,10,1,0,0,852,853,5,43,0,
+        850,5,46,0,0,850,855,3,158,79,3,851,852,10,1,0,0,852,853,5,45,0,
         0,853,855,3,158,79,2,854,839,1,0,0,0,854,842,1,0,0,0,854,845,1,0,
         0,0,854,848,1,0,0,0,854,851,1,0,0,0,855,858,1,0,0,0,856,854,1,0,
         0,0,856,857,1,0,0,0,857,159,1,0,0,0,858,856,1,0,0,0,859,860,4,80,
         6,0,860,864,3,166,83,0,861,862,4,80,7,0,862,864,3,162,81,0,863,859,
-        1,0,0,0,863,861,1,0,0,0,864,876,1,0,0,0,865,866,5,38,0,0,866,868,
-        5,27,0,0,867,869,3,124,62,0,868,867,1,0,0,0,868,869,1,0,0,0,869,
+        1,0,0,0,863,861,1,0,0,0,864,876,1,0,0,0,865,866,5,40,0,0,866,868,
+        5,29,0,0,867,869,3,124,62,0,868,867,1,0,0,0,868,869,1,0,0,0,869,
         875,1,0,0,0,870,875,3,202,101,0,871,875,3,204,102,0,872,875,3,206,
         103,0,873,875,3,208,104,0,874,865,1,0,0,0,874,870,1,0,0,0,874,871,
         1,0,0,0,874,872,1,0,0,0,874,873,1,0,0,0,875,878,1,0,0,0,876,874,
         1,0,0,0,876,877,1,0,0,0,877,161,1,0,0,0,878,876,1,0,0,0,879,880,
-        3,164,82,0,880,881,5,28,0,0,881,883,3,158,79,0,882,884,5,35,0,0,
-        883,882,1,0,0,0,883,884,1,0,0,0,884,885,1,0,0,0,885,886,5,29,0,0,
+        3,164,82,0,880,881,5,30,0,0,881,883,3,158,79,0,882,884,5,37,0,0,
+        883,882,1,0,0,0,883,884,1,0,0,0,884,885,1,0,0,0,885,886,5,31,0,0,
         886,163,1,0,0,0,887,889,3,126,63,0,888,890,3,124,62,0,889,888,1,
         0,0,0,889,890,1,0,0,0,890,902,1,0,0,0,891,902,3,130,65,0,892,902,
         3,192,96,0,893,902,3,138,69,0,894,902,3,140,70,0,895,902,3,142,71,
-        0,896,902,3,144,72,0,897,898,5,28,0,0,898,899,3,122,61,0,899,900,
-        5,29,0,0,900,902,1,0,0,0,901,887,1,0,0,0,901,891,1,0,0,0,901,892,
+        0,896,902,3,144,72,0,897,898,5,30,0,0,898,899,3,122,61,0,899,900,
+        5,31,0,0,900,902,1,0,0,0,901,887,1,0,0,0,901,891,1,0,0,0,901,892,
         1,0,0,0,901,893,1,0,0,0,901,894,1,0,0,0,901,895,1,0,0,0,901,896,
         1,0,0,0,901,897,1,0,0,0,902,165,1,0,0,0,903,913,3,168,84,0,904,906,
         3,174,87,0,905,907,3,124,62,0,906,905,1,0,0,0,906,907,1,0,0,0,907,
-        913,1,0,0,0,908,909,5,28,0,0,909,910,3,158,79,0,910,911,5,29,0,0,
+        913,1,0,0,0,908,909,5,30,0,0,909,910,3,158,79,0,910,911,5,31,0,0,
         911,913,1,0,0,0,912,903,1,0,0,0,912,904,1,0,0,0,912,908,1,0,0,0,
         913,167,1,0,0,0,914,918,3,170,85,0,915,918,3,178,89,0,916,918,3,
         200,100,0,917,914,1,0,0,0,917,915,1,0,0,0,917,916,1,0,0,0,918,169,
-        1,0,0,0,919,924,5,18,0,0,920,924,3,172,86,0,921,924,3,196,98,0,922,
-        924,5,69,0,0,923,919,1,0,0,0,923,920,1,0,0,0,923,921,1,0,0,0,923,
+        1,0,0,0,919,924,5,20,0,0,920,924,3,172,86,0,921,924,3,196,98,0,922,
+        924,5,71,0,0,923,919,1,0,0,0,923,920,1,0,0,0,923,921,1,0,0,0,923,
         922,1,0,0,0,924,171,1,0,0,0,925,926,7,7,0,0,926,173,1,0,0,0,927,
-        928,5,27,0,0,928,175,1,0,0,0,929,930,5,27,0,0,930,931,5,38,0,0,931,
-        932,5,27,0,0,932,177,1,0,0,0,933,934,3,180,90,0,934,935,3,182,91,
+        928,5,29,0,0,928,175,1,0,0,0,929,930,5,29,0,0,930,931,5,40,0,0,931,
+        932,5,29,0,0,932,177,1,0,0,0,933,934,3,180,90,0,934,935,3,182,91,
         0,935,179,1,0,0,0,936,949,3,192,96,0,937,949,3,130,65,0,938,939,
-        5,32,0,0,939,940,5,42,0,0,940,941,5,33,0,0,941,949,3,134,67,0,942,
+        5,34,0,0,939,940,5,44,0,0,940,941,5,35,0,0,941,949,3,134,67,0,942,
         949,3,140,70,0,943,949,3,142,71,0,944,946,3,126,63,0,945,947,3,124,
         62,0,946,945,1,0,0,0,946,947,1,0,0,0,947,949,1,0,0,0,948,936,1,0,
         0,0,948,937,1,0,0,0,948,938,1,0,0,0,948,942,1,0,0,0,948,943,1,0,
-        0,0,948,944,1,0,0,0,949,181,1,0,0,0,950,955,5,30,0,0,951,953,3,184,
-        92,0,952,954,5,35,0,0,953,952,1,0,0,0,953,954,1,0,0,0,954,956,1,
+        0,0,948,944,1,0,0,0,949,181,1,0,0,0,950,955,5,32,0,0,951,953,3,184,
+        92,0,952,954,5,37,0,0,953,952,1,0,0,0,953,954,1,0,0,0,954,956,1,
         0,0,0,955,951,1,0,0,0,955,956,1,0,0,0,956,957,1,0,0,0,957,958,5,
-        31,0,0,958,183,1,0,0,0,959,964,3,186,93,0,960,961,5,35,0,0,961,963,
+        33,0,0,958,183,1,0,0,0,959,964,3,186,93,0,960,961,5,37,0,0,961,963,
         3,186,93,0,962,960,1,0,0,0,963,966,1,0,0,0,964,962,1,0,0,0,964,965,
         1,0,0,0,965,185,1,0,0,0,966,964,1,0,0,0,967,968,3,188,94,0,968,969,
-        5,37,0,0,969,971,1,0,0,0,970,967,1,0,0,0,970,971,1,0,0,0,971,972,
+        5,39,0,0,969,971,1,0,0,0,970,967,1,0,0,0,970,971,1,0,0,0,971,972,
         1,0,0,0,972,973,3,190,95,0,973,187,1,0,0,0,974,977,3,158,79,0,975,
         977,3,182,91,0,976,974,1,0,0,0,976,975,1,0,0,0,977,189,1,0,0,0,978,
         981,3,158,79,0,979,981,3,182,91,0,980,978,1,0,0,0,980,979,1,0,0,
-        0,981,191,1,0,0,0,982,983,5,23,0,0,983,996,5,30,0,0,984,990,3,194,
+        0,981,191,1,0,0,0,982,983,5,25,0,0,983,996,5,32,0,0,984,990,3,194,
         97,0,985,986,3,210,105,0,986,987,3,194,97,0,987,989,1,0,0,0,988,
         985,1,0,0,0,989,992,1,0,0,0,990,988,1,0,0,0,990,991,1,0,0,0,991,
         994,1,0,0,0,992,990,1,0,0,0,993,995,3,210,105,0,994,993,1,0,0,0,
         994,995,1,0,0,0,995,997,1,0,0,0,996,984,1,0,0,0,996,997,1,0,0,0,
-        997,998,1,0,0,0,998,999,5,31,0,0,999,193,1,0,0,0,1000,1001,3,20,
+        997,998,1,0,0,0,998,999,5,33,0,0,999,193,1,0,0,0,1000,1001,3,20,
         10,0,1001,1002,3,122,61,0,1002,1005,1,0,0,0,1003,1005,3,198,99,0,
         1004,1000,1,0,0,0,1004,1003,1,0,0,0,1005,1007,1,0,0,0,1006,1008,
         3,196,98,0,1007,1006,1,0,0,0,1007,1008,1,0,0,0,1008,195,1,0,0,0,
-        1009,1010,7,8,0,0,1010,197,1,0,0,0,1011,1013,5,62,0,0,1012,1011,
+        1009,1010,7,8,0,0,1010,197,1,0,0,0,1011,1013,5,64,0,0,1012,1011,
         1,0,0,0,1012,1013,1,0,0,0,1013,1014,1,0,0,0,1014,1016,3,126,63,0,
         1015,1017,3,124,62,0,1016,1015,1,0,0,0,1016,1017,1,0,0,0,1017,199,
-        1,0,0,0,1018,1019,5,11,0,0,1019,1020,3,150,75,0,1020,1021,3,50,25,
-        0,1021,201,1,0,0,0,1022,1023,5,32,0,0,1023,1024,3,158,79,0,1024,
-        1025,5,33,0,0,1025,203,1,0,0,0,1026,1042,5,32,0,0,1027,1029,3,158,
+        1,0,0,0,1018,1019,5,13,0,0,1019,1020,3,150,75,0,1020,1021,3,50,25,
+        0,1021,201,1,0,0,0,1022,1023,5,34,0,0,1023,1024,3,158,79,0,1024,
+        1025,5,35,0,0,1025,203,1,0,0,0,1026,1042,5,34,0,0,1027,1029,3,158,
         79,0,1028,1027,1,0,0,0,1028,1029,1,0,0,0,1029,1030,1,0,0,0,1030,
-        1032,5,37,0,0,1031,1033,3,158,79,0,1032,1031,1,0,0,0,1032,1033,1,
+        1032,5,39,0,0,1031,1033,3,158,79,0,1032,1031,1,0,0,0,1032,1033,1,
         0,0,0,1033,1043,1,0,0,0,1034,1036,3,158,79,0,1035,1034,1,0,0,0,1035,
-        1036,1,0,0,0,1036,1037,1,0,0,0,1037,1038,5,37,0,0,1038,1039,3,158,
-        79,0,1039,1040,5,37,0,0,1040,1041,3,158,79,0,1041,1043,1,0,0,0,1042,
-        1028,1,0,0,0,1042,1035,1,0,0,0,1043,1044,1,0,0,0,1044,1045,5,33,
-        0,0,1045,205,1,0,0,0,1046,1047,5,38,0,0,1047,1048,5,28,0,0,1048,
-        1049,3,122,61,0,1049,1050,5,29,0,0,1050,207,1,0,0,0,1051,1068,5,
-        28,0,0,1052,1053,4,104,8,0,1053,1056,3,122,61,0,1054,1055,5,35,0,
-        0,1055,1057,3,22,11,0,1056,1054,1,0,0,0,1056,1057,1,0,0,0,1057,1061,
-        1,0,0,0,1058,1059,4,104,9,0,1059,1061,3,22,11,0,1060,1052,1,0,0,
-        0,1060,1058,1,0,0,0,1061,1063,1,0,0,0,1062,1064,5,42,0,0,1063,1062,
-        1,0,0,0,1063,1064,1,0,0,0,1064,1066,1,0,0,0,1065,1067,5,35,0,0,1066,
-        1065,1,0,0,0,1066,1067,1,0,0,0,1067,1069,1,0,0,0,1068,1060,1,0,0,
-        0,1068,1069,1,0,0,0,1069,1070,1,0,0,0,1070,1071,5,29,0,0,1071,209,
-        1,0,0,0,1072,1073,7,2,0,0,1073,211,1,0,0,0,132,219,225,231,252,256,
-        258,261,265,274,285,289,291,294,298,302,309,317,329,333,335,338,
-        342,346,353,363,367,379,383,390,394,400,404,417,421,423,426,432,
-        436,443,451,455,457,474,481,497,508,512,516,520,538,544,546,550,
-        554,557,561,563,569,581,592,598,605,620,624,629,633,641,653,656,
-        664,672,679,683,687,695,705,712,717,723,733,751,756,760,764,766,
-        786,796,803,807,815,819,821,826,829,837,854,856,863,868,874,876,
-        883,889,901,906,912,917,923,946,948,953,955,964,970,976,980,990,
-        994,996,1004,1007,1012,1016,1028,1032,1035,1042,1056,1060,1063,1066,
-        1068
+        1036,1,0,0,0,1036,1037,1,0,0,0,1037,1038,5,39,0,0,1038,1039,3,158,
+        79,0,1039,1040,5,39,0,0,1040,1041,3,158,79,0,1041,1043,1,0,0,0,1042,
+        1028,1,0,0,0,1042,1035,1,0,0,0,1043,1044,1,0,0,0,1044,1045,5,35,
+        0,0,1045,205,1,0,0,0,1046,1047,5,40,0,0,1047,1048,5,30,0,0,1048,
+        1049,3,122,61,0,1049,1050,5,31,0,0,1050,207,1,0,0,0,1051,1059,5,
+        30,0,0,1052,1054,3,22,11,0,1053,1055,5,44,0,0,1054,1053,1,0,0,0,
+        1054,1055,1,0,0,0,1055,1057,1,0,0,0,1056,1058,5,37,0,0,1057,1056,
+        1,0,0,0,1057,1058,1,0,0,0,1058,1060,1,0,0,0,1059,1052,1,0,0,0,1059,
+        1060,1,0,0,0,1060,1061,1,0,0,0,1061,1096,5,31,0,0,1062,1074,5,1,
+        0,0,1063,1066,3,122,61,0,1064,1065,5,37,0,0,1065,1067,3,22,11,0,
+        1066,1064,1,0,0,0,1066,1067,1,0,0,0,1067,1069,1,0,0,0,1068,1070,
+        5,44,0,0,1069,1068,1,0,0,0,1069,1070,1,0,0,0,1070,1072,1,0,0,0,1071,
+        1073,5,37,0,0,1072,1071,1,0,0,0,1072,1073,1,0,0,0,1073,1075,1,0,
+        0,0,1074,1063,1,0,0,0,1074,1075,1,0,0,0,1075,1076,1,0,0,0,1076,1096,
+        5,31,0,0,1077,1092,5,2,0,0,1078,1081,3,122,61,0,1079,1080,5,37,0,
+        0,1080,1082,3,22,11,0,1081,1079,1,0,0,0,1081,1082,1,0,0,0,1082,1085,
+        1,0,0,0,1083,1085,3,22,11,0,1084,1078,1,0,0,0,1084,1083,1,0,0,0,
+        1085,1087,1,0,0,0,1086,1088,5,44,0,0,1087,1086,1,0,0,0,1087,1088,
+        1,0,0,0,1088,1090,1,0,0,0,1089,1091,5,37,0,0,1090,1089,1,0,0,0,1090,
+        1091,1,0,0,0,1091,1093,1,0,0,0,1092,1084,1,0,0,0,1092,1093,1,0,0,
+        0,1093,1094,1,0,0,0,1094,1096,5,31,0,0,1095,1051,1,0,0,0,1095,1062,
+        1,0,0,0,1095,1077,1,0,0,0,1096,209,1,0,0,0,1097,1098,7,2,0,0,1098,
+        211,1,0,0,0,140,219,225,231,252,256,258,261,265,274,285,289,291,
+        294,298,302,309,317,329,333,335,338,342,346,353,363,367,379,383,
+        390,394,400,404,417,421,423,426,432,436,443,451,455,457,474,481,
+        497,508,512,516,520,538,544,546,550,554,557,561,563,569,581,592,
+        598,605,620,624,629,633,641,653,656,664,672,679,683,687,695,705,
+        712,717,723,733,751,756,760,764,766,786,796,803,807,815,819,821,
+        826,829,837,854,856,863,868,874,876,883,889,901,906,912,917,923,
+        946,948,953,955,964,970,976,980,990,994,996,1004,1007,1012,1016,
+        1028,1032,1035,1042,1054,1057,1059,1066,1069,1072,1074,1081,1084,
+        1087,1090,1092,1095
     ];
 
     private static __ATN: antlr.ATN;
@@ -8308,14 +8403,11 @@ export class ArgumentsContext extends antlr.ParserRuleContext {
     public constructor(parent: antlr.ParserRuleContext | null, invokingState: number) {
         super(parent, invokingState);
     }
-    public L_PAREN(): antlr.TerminalNode {
-        return this.getToken(GoParser.L_PAREN, 0)!;
+    public L_PAREN(): antlr.TerminalNode | null {
+        return this.getToken(GoParser.L_PAREN, 0);
     }
     public R_PAREN(): antlr.TerminalNode {
         return this.getToken(GoParser.R_PAREN, 0)!;
-    }
-    public type_(): Type_Context | null {
-        return this.getRuleContext(0, Type_Context);
     }
     public expressionList(): ExpressionListContext | null {
         return this.getRuleContext(0, ExpressionListContext);
@@ -8331,6 +8423,15 @@ export class ArgumentsContext extends antlr.ParserRuleContext {
     	} else {
     		return this.getToken(GoParser.COMMA, i);
     	}
+    }
+    public MakeParen(): antlr.TerminalNode | null {
+        return this.getToken(GoParser.MakeParen, 0);
+    }
+    public type_(): Type_Context | null {
+        return this.getRuleContext(0, Type_Context);
+    }
+    public NewParen(): antlr.TerminalNode | null {
+        return this.getToken(GoParser.NewParen, 0);
     }
     public override get ruleIndex(): number {
         return GoParser.RULE_arguments;

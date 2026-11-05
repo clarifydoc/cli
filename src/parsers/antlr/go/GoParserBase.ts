@@ -31,19 +31,4 @@ export abstract class GoParserBase extends Parser {
   protected isConversion(): boolean {
     return this.inputStream.LA(1) !== GoLexer.IDENTIFIER;
   }
-
-  /**
-   * The arguments of `make(` open with a type. Those of `new(` may too, or since Go 1.26 with an expression
-   * (`new(repo.Load(id))`, `new([]string{"a"})`, `new(-2)`): both alternatives stay open and the lookahead
-   * picks the one that parses. Read after the `(` is matched.
-   */
-  protected isTypeArgument(): boolean {
-    const fn = this.inputStream.LT(-2);
-    return fn?.type === GoLexer.IDENTIFIER && (fn.text === "make" || fn.text === "new");
-  }
-
-  protected isExpressionArgument(): boolean {
-    const fn = this.inputStream.LT(-2);
-    return !(fn?.type === GoLexer.IDENTIFIER && fn.text === "make");
-  }
 }

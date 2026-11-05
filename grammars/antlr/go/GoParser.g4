@@ -547,8 +547,13 @@ typeAssertion
     : DOT L_PAREN type_ R_PAREN
     ;
 
+// `make(` and `new(` arrive as MakeParen / NewParen, retyped by the reader: a `make` opens with a type, a `new` with a
+// type or, since Go 1.26, an expression (`new(repo.Load(id))`), the lookahead picking the one that parses.
+// [ClarifyDoc change]
 arguments
-    : L_PAREN (({this.isTypeArgument()}? type_ (COMMA expressionList)? | {this.isExpressionArgument()}? expressionList) ELLIPSIS? COMMA?)? R_PAREN
+    : L_PAREN (expressionList ELLIPSIS? COMMA?)? R_PAREN
+    | MakeParen (type_ (COMMA expressionList)? ELLIPSIS? COMMA?)? R_PAREN
+    | NewParen ((type_ (COMMA expressionList)? | expressionList) ELLIPSIS? COMMA?)? R_PAREN
     ;
 
 

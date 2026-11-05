@@ -35,95 +35,97 @@ import { Token } from "antlr4ng";
 
 
 export class GoLexer extends antlr.Lexer {
-    public static readonly BREAK = 1;
-    public static readonly CASE = 2;
-    public static readonly CHAN = 3;
-    public static readonly CONST = 4;
-    public static readonly CONTINUE = 5;
-    public static readonly DEFAULT = 6;
-    public static readonly DEFER = 7;
-    public static readonly ELSE = 8;
-    public static readonly FALLTHROUGH = 9;
-    public static readonly FOR = 10;
-    public static readonly FUNC = 11;
-    public static readonly GO = 12;
-    public static readonly GOTO = 13;
-    public static readonly IF = 14;
-    public static readonly IMPORT = 15;
-    public static readonly INTERFACE = 16;
-    public static readonly MAP = 17;
-    public static readonly NIL_LIT = 18;
-    public static readonly PACKAGE = 19;
-    public static readonly RANGE = 20;
-    public static readonly RETURN = 21;
-    public static readonly SELECT = 22;
-    public static readonly STRUCT = 23;
-    public static readonly SWITCH = 24;
-    public static readonly TYPE = 25;
-    public static readonly VAR = 26;
-    public static readonly IDENTIFIER = 27;
-    public static readonly L_PAREN = 28;
-    public static readonly R_PAREN = 29;
-    public static readonly L_CURLY = 30;
-    public static readonly R_CURLY = 31;
-    public static readonly L_BRACKET = 32;
-    public static readonly R_BRACKET = 33;
-    public static readonly ASSIGN = 34;
-    public static readonly COMMA = 35;
-    public static readonly SEMI = 36;
-    public static readonly COLON = 37;
-    public static readonly DOT = 38;
-    public static readonly PLUS_PLUS = 39;
-    public static readonly MINUS_MINUS = 40;
-    public static readonly DECLARE_ASSIGN = 41;
-    public static readonly ELLIPSIS = 42;
-    public static readonly LOGICAL_OR = 43;
-    public static readonly LOGICAL_AND = 44;
-    public static readonly EQUALS = 45;
-    public static readonly NOT_EQUALS = 46;
-    public static readonly LESS = 47;
-    public static readonly LESS_OR_EQUALS = 48;
-    public static readonly GREATER = 49;
-    public static readonly GREATER_OR_EQUALS = 50;
-    public static readonly OR = 51;
-    public static readonly DIV = 52;
-    public static readonly MOD = 53;
-    public static readonly LSHIFT = 54;
-    public static readonly RSHIFT = 55;
-    public static readonly BIT_CLEAR = 56;
-    public static readonly UNDERLYING = 57;
-    public static readonly EXCLAMATION = 58;
-    public static readonly PLUS = 59;
-    public static readonly MINUS = 60;
-    public static readonly CARET = 61;
-    public static readonly STAR = 62;
-    public static readonly AMPERSAND = 63;
-    public static readonly RECEIVE = 64;
-    public static readonly DECIMAL_LIT = 65;
-    public static readonly BINARY_LIT = 66;
-    public static readonly OCTAL_LIT = 67;
-    public static readonly HEX_LIT = 68;
-    public static readonly FLOAT_LIT = 69;
-    public static readonly DECIMAL_FLOAT_LIT = 70;
-    public static readonly HEX_FLOAT_LIT = 71;
-    public static readonly IMAGINARY_LIT = 72;
-    public static readonly RUNE_LIT = 73;
-    public static readonly BYTE_VALUE = 74;
-    public static readonly OCTAL_BYTE_VALUE = 75;
-    public static readonly HEX_BYTE_VALUE = 76;
-    public static readonly LITTLE_U_VALUE = 77;
-    public static readonly BIG_U_VALUE = 78;
-    public static readonly RAW_STRING_LIT = 79;
-    public static readonly INTERPRETED_STRING_LIT = 80;
-    public static readonly WS = 81;
-    public static readonly COMMENT = 82;
-    public static readonly TERMINATOR = 83;
-    public static readonly LINE_COMMENT = 84;
-    public static readonly WS_NLSEMI = 85;
-    public static readonly COMMENT_NLSEMI = 86;
-    public static readonly LINE_COMMENT_NLSEMI = 87;
-    public static readonly EOS = 88;
-    public static readonly OTHER = 89;
+    public static readonly MakeParen = 1;
+    public static readonly NewParen = 2;
+    public static readonly BREAK = 3;
+    public static readonly CASE = 4;
+    public static readonly CHAN = 5;
+    public static readonly CONST = 6;
+    public static readonly CONTINUE = 7;
+    public static readonly DEFAULT = 8;
+    public static readonly DEFER = 9;
+    public static readonly ELSE = 10;
+    public static readonly FALLTHROUGH = 11;
+    public static readonly FOR = 12;
+    public static readonly FUNC = 13;
+    public static readonly GO = 14;
+    public static readonly GOTO = 15;
+    public static readonly IF = 16;
+    public static readonly IMPORT = 17;
+    public static readonly INTERFACE = 18;
+    public static readonly MAP = 19;
+    public static readonly NIL_LIT = 20;
+    public static readonly PACKAGE = 21;
+    public static readonly RANGE = 22;
+    public static readonly RETURN = 23;
+    public static readonly SELECT = 24;
+    public static readonly STRUCT = 25;
+    public static readonly SWITCH = 26;
+    public static readonly TYPE = 27;
+    public static readonly VAR = 28;
+    public static readonly IDENTIFIER = 29;
+    public static readonly L_PAREN = 30;
+    public static readonly R_PAREN = 31;
+    public static readonly L_CURLY = 32;
+    public static readonly R_CURLY = 33;
+    public static readonly L_BRACKET = 34;
+    public static readonly R_BRACKET = 35;
+    public static readonly ASSIGN = 36;
+    public static readonly COMMA = 37;
+    public static readonly SEMI = 38;
+    public static readonly COLON = 39;
+    public static readonly DOT = 40;
+    public static readonly PLUS_PLUS = 41;
+    public static readonly MINUS_MINUS = 42;
+    public static readonly DECLARE_ASSIGN = 43;
+    public static readonly ELLIPSIS = 44;
+    public static readonly LOGICAL_OR = 45;
+    public static readonly LOGICAL_AND = 46;
+    public static readonly EQUALS = 47;
+    public static readonly NOT_EQUALS = 48;
+    public static readonly LESS = 49;
+    public static readonly LESS_OR_EQUALS = 50;
+    public static readonly GREATER = 51;
+    public static readonly GREATER_OR_EQUALS = 52;
+    public static readonly OR = 53;
+    public static readonly DIV = 54;
+    public static readonly MOD = 55;
+    public static readonly LSHIFT = 56;
+    public static readonly RSHIFT = 57;
+    public static readonly BIT_CLEAR = 58;
+    public static readonly UNDERLYING = 59;
+    public static readonly EXCLAMATION = 60;
+    public static readonly PLUS = 61;
+    public static readonly MINUS = 62;
+    public static readonly CARET = 63;
+    public static readonly STAR = 64;
+    public static readonly AMPERSAND = 65;
+    public static readonly RECEIVE = 66;
+    public static readonly DECIMAL_LIT = 67;
+    public static readonly BINARY_LIT = 68;
+    public static readonly OCTAL_LIT = 69;
+    public static readonly HEX_LIT = 70;
+    public static readonly FLOAT_LIT = 71;
+    public static readonly DECIMAL_FLOAT_LIT = 72;
+    public static readonly HEX_FLOAT_LIT = 73;
+    public static readonly IMAGINARY_LIT = 74;
+    public static readonly RUNE_LIT = 75;
+    public static readonly BYTE_VALUE = 76;
+    public static readonly OCTAL_BYTE_VALUE = 77;
+    public static readonly HEX_BYTE_VALUE = 78;
+    public static readonly LITTLE_U_VALUE = 79;
+    public static readonly BIG_U_VALUE = 80;
+    public static readonly RAW_STRING_LIT = 81;
+    public static readonly INTERPRETED_STRING_LIT = 82;
+    public static readonly WS = 83;
+    public static readonly COMMENT = 84;
+    public static readonly TERMINATOR = 85;
+    public static readonly LINE_COMMENT = 86;
+    public static readonly WS_NLSEMI = 87;
+    public static readonly COMMENT_NLSEMI = 88;
+    public static readonly LINE_COMMENT_NLSEMI = 89;
+    public static readonly EOS = 90;
+    public static readonly OTHER = 91;
     public static readonly NLSEMI = 1;
 
     public static readonly channelNames = [
@@ -131,33 +133,34 @@ export class GoLexer extends antlr.Lexer {
     ];
 
     public static readonly literalNames = [
-        null, "'break'", "'case'", "'chan'", "'const'", "'continue'", "'default'", 
-        "'defer'", "'else'", "'fallthrough'", "'for'", "'func'", "'go'", 
-        "'goto'", "'if'", "'import'", "'interface'", "'map'", "'nil'", "'package'", 
-        "'range'", "'return'", "'select'", "'struct'", "'switch'", "'type'", 
-        "'var'", null, "'('", "')'", "'{'", "'}'", "'['", "']'", "'='", 
-        "','", "';'", "':'", "'.'", "'++'", "'--'", "':='", "'...'", "'||'", 
-        "'&&'", "'=='", "'!='", "'<'", "'<='", "'>'", "'>='", "'|'", "'/'", 
-        "'%'", "'<<'", "'>>'", "'&^'", "'~'", "'!'", "'+'", "'-'", "'^'", 
-        "'*'", "'&'", "'<-'"
+        null, null, null, "'break'", "'case'", "'chan'", "'const'", "'continue'", 
+        "'default'", "'defer'", "'else'", "'fallthrough'", "'for'", "'func'", 
+        "'go'", "'goto'", "'if'", "'import'", "'interface'", "'map'", "'nil'", 
+        "'package'", "'range'", "'return'", "'select'", "'struct'", "'switch'", 
+        "'type'", "'var'", null, "'('", "')'", "'{'", "'}'", "'['", "']'", 
+        "'='", "','", "';'", "':'", "'.'", "'++'", "'--'", "':='", "'...'", 
+        "'||'", "'&&'", "'=='", "'!='", "'<'", "'<='", "'>'", "'>='", "'|'", 
+        "'/'", "'%'", "'<<'", "'>>'", "'&^'", "'~'", "'!'", "'+'", "'-'", 
+        "'^'", "'*'", "'&'", "'<-'"
     ];
 
     public static readonly symbolicNames = [
-        null, "BREAK", "CASE", "CHAN", "CONST", "CONTINUE", "DEFAULT", "DEFER", 
-        "ELSE", "FALLTHROUGH", "FOR", "FUNC", "GO", "GOTO", "IF", "IMPORT", 
-        "INTERFACE", "MAP", "NIL_LIT", "PACKAGE", "RANGE", "RETURN", "SELECT", 
-        "STRUCT", "SWITCH", "TYPE", "VAR", "IDENTIFIER", "L_PAREN", "R_PAREN", 
-        "L_CURLY", "R_CURLY", "L_BRACKET", "R_BRACKET", "ASSIGN", "COMMA", 
-        "SEMI", "COLON", "DOT", "PLUS_PLUS", "MINUS_MINUS", "DECLARE_ASSIGN", 
-        "ELLIPSIS", "LOGICAL_OR", "LOGICAL_AND", "EQUALS", "NOT_EQUALS", 
-        "LESS", "LESS_OR_EQUALS", "GREATER", "GREATER_OR_EQUALS", "OR", 
-        "DIV", "MOD", "LSHIFT", "RSHIFT", "BIT_CLEAR", "UNDERLYING", "EXCLAMATION", 
-        "PLUS", "MINUS", "CARET", "STAR", "AMPERSAND", "RECEIVE", "DECIMAL_LIT", 
-        "BINARY_LIT", "OCTAL_LIT", "HEX_LIT", "FLOAT_LIT", "DECIMAL_FLOAT_LIT", 
-        "HEX_FLOAT_LIT", "IMAGINARY_LIT", "RUNE_LIT", "BYTE_VALUE", "OCTAL_BYTE_VALUE", 
-        "HEX_BYTE_VALUE", "LITTLE_U_VALUE", "BIG_U_VALUE", "RAW_STRING_LIT", 
-        "INTERPRETED_STRING_LIT", "WS", "COMMENT", "TERMINATOR", "LINE_COMMENT", 
-        "WS_NLSEMI", "COMMENT_NLSEMI", "LINE_COMMENT_NLSEMI", "EOS", "OTHER"
+        null, "MakeParen", "NewParen", "BREAK", "CASE", "CHAN", "CONST", 
+        "CONTINUE", "DEFAULT", "DEFER", "ELSE", "FALLTHROUGH", "FOR", "FUNC", 
+        "GO", "GOTO", "IF", "IMPORT", "INTERFACE", "MAP", "NIL_LIT", "PACKAGE", 
+        "RANGE", "RETURN", "SELECT", "STRUCT", "SWITCH", "TYPE", "VAR", 
+        "IDENTIFIER", "L_PAREN", "R_PAREN", "L_CURLY", "R_CURLY", "L_BRACKET", 
+        "R_BRACKET", "ASSIGN", "COMMA", "SEMI", "COLON", "DOT", "PLUS_PLUS", 
+        "MINUS_MINUS", "DECLARE_ASSIGN", "ELLIPSIS", "LOGICAL_OR", "LOGICAL_AND", 
+        "EQUALS", "NOT_EQUALS", "LESS", "LESS_OR_EQUALS", "GREATER", "GREATER_OR_EQUALS", 
+        "OR", "DIV", "MOD", "LSHIFT", "RSHIFT", "BIT_CLEAR", "UNDERLYING", 
+        "EXCLAMATION", "PLUS", "MINUS", "CARET", "STAR", "AMPERSAND", "RECEIVE", 
+        "DECIMAL_LIT", "BINARY_LIT", "OCTAL_LIT", "HEX_LIT", "FLOAT_LIT", 
+        "DECIMAL_FLOAT_LIT", "HEX_FLOAT_LIT", "IMAGINARY_LIT", "RUNE_LIT", 
+        "BYTE_VALUE", "OCTAL_BYTE_VALUE", "HEX_BYTE_VALUE", "LITTLE_U_VALUE", 
+        "BIG_U_VALUE", "RAW_STRING_LIT", "INTERPRETED_STRING_LIT", "WS", 
+        "COMMENT", "TERMINATOR", "LINE_COMMENT", "WS_NLSEMI", "COMMENT_NLSEMI", 
+        "LINE_COMMENT_NLSEMI", "EOS", "OTHER"
     ];
 
     public static readonly modeNames = [
@@ -204,7 +207,7 @@ export class GoLexer extends antlr.Lexer {
     public get modeNames(): string[] { return GoLexer.modeNames; }
 
     public static readonly _serializedATN: number[] = [
-        4,0,89,843,6,-1,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,
+        4,0,91,843,6,-1,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,
         7,5,2,6,7,6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,
         2,13,7,13,2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,
         7,19,2,20,7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,
@@ -273,17 +276,17 @@ export class GoLexer extends antlr.Lexer {
         100,4,100,818,8,100,11,100,12,100,819,1,100,1,100,1,100,1,100,1,
         100,5,100,827,8,100,10,100,12,100,830,9,100,1,100,1,100,1,100,3,
         100,835,8,100,1,100,1,100,1,101,1,101,1,101,1,101,1,101,3,694,797,
-        828,0,102,2,1,4,2,6,3,8,4,10,5,12,6,14,7,16,8,18,9,20,10,22,11,24,
-        12,26,13,28,14,30,15,32,16,34,17,36,18,38,19,40,20,42,21,44,22,46,
-        23,48,24,50,25,52,26,54,27,56,28,58,29,60,30,62,31,64,32,66,33,68,
-        34,70,35,72,36,74,37,76,38,78,39,80,40,82,41,84,42,86,43,88,44,90,
-        45,92,46,94,47,96,48,98,49,100,50,102,51,104,52,106,53,108,54,110,
-        55,112,56,114,57,116,58,118,59,120,60,122,61,124,62,126,63,128,64,
-        130,65,132,66,134,67,136,68,138,69,140,70,142,71,144,0,146,0,148,
-        72,150,0,152,73,154,74,156,75,158,76,160,77,162,78,164,79,166,80,
-        168,81,170,82,172,83,174,84,176,0,178,0,180,0,182,0,184,0,186,0,
-        188,0,190,0,192,0,194,0,196,85,198,86,200,87,202,88,204,89,2,0,1,
-        19,1,0,49,57,1,0,48,57,2,0,66,66,98,98,2,0,79,79,111,111,2,0,88,
+        828,0,102,2,3,4,4,6,5,8,6,10,7,12,8,14,9,16,10,18,11,20,12,22,13,
+        24,14,26,15,28,16,30,17,32,18,34,19,36,20,38,21,40,22,42,23,44,24,
+        46,25,48,26,50,27,52,28,54,29,56,30,58,31,60,32,62,33,64,34,66,35,
+        68,36,70,37,72,38,74,39,76,40,78,41,80,42,82,43,84,44,86,45,88,46,
+        90,47,92,48,94,49,96,50,98,51,100,52,102,53,104,54,106,55,108,56,
+        110,57,112,58,114,59,116,60,118,61,120,62,122,63,124,64,126,65,128,
+        66,130,67,132,68,134,69,136,70,138,71,140,72,142,73,144,0,146,0,
+        148,74,150,0,152,75,154,76,156,77,158,78,160,79,162,80,164,81,166,
+        82,168,83,170,84,172,85,174,86,176,0,178,0,180,0,182,0,184,0,186,
+        0,188,0,190,0,192,0,194,0,196,87,198,88,200,89,202,90,204,91,2,0,
+        1,19,1,0,49,57,1,0,48,57,2,0,66,66,98,98,2,0,79,79,111,111,2,0,88,
         88,120,120,2,0,80,80,112,112,2,0,43,43,45,45,1,0,96,96,2,0,34,34,
         92,92,2,0,9,9,32,32,2,0,10,10,13,13,3,0,10,10,13,13,39,39,9,0,34,
         34,39,39,92,92,97,98,102,102,110,110,114,114,116,116,118,118,1,0,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Forward vs reverse order: reads <repo-dir>'s C and C++ files in sorted order in one process and in reverse order in
- * another, and prints every file whose functions or calls differ. Usage: node scripts/c-family-order.mjs <repo-dir> [--examples 5]
+ * Forward vs reverse order: reads <repo-dir>'s C and C++ files (or, with --lang go|lua|rust, that language's files) in sorted order in one process and in reverse order in
+ * another, and prints every file whose functions or calls differ. Usage: node scripts/c-family-order.mjs <repo-dir> [--lang go|lua|rust] [--examples 5]
  * A reading must depend on the file's own bytes only; a file listed here was read differently because of the files read before it.
  * Uses the built readers (dist/). Exit status 1 when any file differs.
  */
@@ -9,15 +9,17 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canonical, listFiles, loadEngine, nameOf, option, positional, readOne } from "./lib/c-family.mjs";
+import { LANGUAGES, canonical, listFiles, loadEngine, nameOf, option, positional, readOne } from "./lib/c-family.mjs";
 
 const argv = process.argv.slice(2);
+const lang = option(argv, "lang");
+if (lang && !LANGUAGES[lang]) throw new Error(`--lang is one of ${Object.keys(LANGUAGES).join(", ")}`);
 
 /** Child mode: read in the given order, write one canonical reading per file as JSON lines. */
 if (argv.includes("--child")) {
   const [dir, order, out] = [option(argv, "dir"), option(argv, "order"), option(argv, "out")];
-  const engine = await loadEngine();
-  const files = listFiles(dir);
+  const engine = await loadEngine(lang);
+  const files = listFiles(dir, lang);
   if (order === "reverse") files.reverse();
   const lines = [];
   for (const f of files) {
@@ -33,14 +35,14 @@ if (argv.includes("--child")) {
   process.exit(0);
 }
 
-const dir = positional(argv, ["examples"])[0];
-if (!dir) throw new Error("usage: c-family-order.mjs <repo-dir> [--examples n]");
+const dir = positional(argv, ["examples", "lang"])[0];
+if (!dir) throw new Error("usage: c-family-order.mjs <repo-dir> [--lang go|lua|rust] [--examples n]");
 const examples = Number(option(argv, "examples", 5));
 const tmp = mkdtempSync(join(tmpdir(), "c-family-order-"));
 const run = (order) => {
   const out = join(tmp, `${order}.jsonl`);
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [process.argv[1], "--child", "--dir", dir, "--order", order, "--out", out], { stdio: ["ignore", "inherit", "inherit"] });
+  const r = spawnSync(process.execPath, [process.argv[1], "--child", "--dir", dir, "--order", order, "--out", out, ...(lang ? ["--lang", lang] : [])], { stdio: ["ignore", "inherit", "inherit"] });
   if (r.status !== 0) throw new Error(`${order} pass failed`);
   return { ms: Date.now() - t0, map: new Map(readFileSync(out, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))) };
 };

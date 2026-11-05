@@ -1,6 +1,7 @@
 /**
- * Shared by the C/C++ front-end measurement tools (c-family-*.mjs): finds the built readers in dist/, lists a
- * directory's C and C++ files in a fixed order, and says which reader a file belongs to. Not run on its own.
+ * Shared by the front-end measurement tools (c-family-*.mjs): finds the built readers in dist/, lists a directory's
+ * files in a fixed order, and says which reader a file belongs to. C and C++ are the default; `lang` selects one of
+ * the single-reader languages in LANGUAGES (Go, Lua, Rust). Not run on its own.
  */
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -20,23 +21,34 @@ export const GROUPS = [
   { id: "h", label: "headers (.h)", exts: [".h"] },
 ];
 
-export function groupOf(file) {
+/** The languages with one reader each: the extensions it reads, its export, and directories that hold copies of others' code. */
+export const LANGUAGES = {
+  go: { exts: [".go"], reader: "readGo", skip: ["vendor"] },
+  lua: { exts: [".lua"], reader: "readLua", skip: [] },
+  rust: { exts: [".rs"], reader: "readRust", skip: ["target", "vendor"] },
+};
+
+export function groupOf(file, lang = null) {
+  if (lang) {
+    const dot = file.lastIndexOf(".");
+    return LANGUAGES[lang].exts.includes(dot < 0 ? "" : file.slice(dot).toLowerCase()) ? lang : null;
+  }
   const dot = file.lastIndexOf(".");
   const ext = dot < 0 ? "" : file.slice(dot).toLowerCase();
   return GROUPS.find((g) => g.exts.includes(ext))?.id ?? null;
 }
 
 /** Every C/C++ file under `dir`, relative posix paths in sorted order (the forward order). Links are not followed. */
-export function listFiles(dir) {
+export function listFiles(dir, lang = null) {
   const root = resolve(dir);
   const out = [];
   const walk = (d) => {
     for (const name of readdirSync(d).sort()) {
-      if (name === ".git" || name === "node_modules") continue;
+      if (name === ".git" || name === "node_modules" || (lang && LANGUAGES[lang].skip.includes(name))) continue;
       const p = join(d, name);
       const st = lstatSync(p);
       if (st.isDirectory()) walk(p);
-      else if (st.isFile() && groupOf(name)) out.push({ rel: relative(root, p).split("\\").join("/"), abs: p, group: groupOf(name) });
+      else if (st.isFile() && groupOf(name, lang)) out.push({ rel: relative(root, p).split("\\").join("/"), abs: p, group: groupOf(name, lang) });
     }
   };
   walk(root);
@@ -54,22 +66,29 @@ function chunkExporting(prefix, name) {
 }
 
 /** The built engine's readers: `readC`, `readCpp`, `isGeneratedSource`, and the engine version. */
-export async function loadEngine() {
+export async function loadEngine(lang = null) {
   if (!existsSync(join(DIST, "index.js"))) throw new Error("dist/index.js is missing: build first (npm run build)");
   const imp = (p) => import(pathToFileURL(p).href);
+  if (lang) {
+    const { reader } = LANGUAGES[lang];
+    const analyzerFile = chunkExporting("file-analyzer-", "isGeneratedSource");
+    const alias = /isGeneratedSource as (\w+)/.exec(readFileSync(analyzerFile, "utf8"))?.[1] ?? "isGeneratedSource";
+    const [mod, analyzer, index] = await Promise.all([imp(chunkExporting("antlr-", reader)), imp(analyzerFile), imp(join(DIST, "index.js"))]);
+    return { reads: { [lang]: mod[reader] }, isGeneratedSource: analyzer[alias], version: index.EXTRACTOR_VERSION };
+  }
   const cFile = chunkExporting("antlr-", "readC");
   const cppFile = chunkExporting("antlr-", "readCpp");
   const analyzerFile = chunkExporting("file-analyzer-", "isGeneratedSource");
   const alias = /isGeneratedSource as (\w+)/.exec(readFileSync(analyzerFile, "utf8"))?.[1] ?? "isGeneratedSource";
   const [c, cpp, analyzer, index] = await Promise.all([imp(cFile), imp(cppFile), imp(analyzerFile), imp(join(DIST, "index.js"))]);
-  return { readC: c.readC, readCpp: cpp.readCpp, isGeneratedSource: analyzer[alias], version: index.EXTRACTOR_VERSION };
+  return { reads: { c: c.readC, cpp: cpp.readCpp, h: cpp.readCpp }, readC: c.readC, readCpp: cpp.readCpp, isGeneratedSource: analyzer[alias], version: index.EXTRACTOR_VERSION };
 }
 
 /** What the engine does with a file: `skipped` (generated, too large) or its reading. */
 export function readOne(engine, group, source) {
   if (source.length > MAX_CHARS) return { skipped: "too-large" };
   if (engine.isGeneratedSource(source)) return { skipped: "generated" };
-  return { parsed: group === "c" ? engine.readC(source) : engine.readCpp(source) };
+  return { parsed: engine.reads[group] ? engine.reads[group](source) : group === "c" ? engine.readC(source) : engine.readCpp(source) };
 }
 
 /** A reading as comparable text: errors, functions with spans, calls with lines. */
