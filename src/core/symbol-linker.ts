@@ -183,7 +183,8 @@ export function buildSymbolLinks(
           sourceFile, sourceSymbol,
           { name: route.handler, kind: "internal", target: null, line: route.line },
           analysis, ctx, true,
-        ) ?? resolveDottedOwnerHandler(sourceFile, sourceSymbol, route.handler, route.line, analysis, ctx);
+        ) ?? resolveDottedOwnerHandler(sourceFile, sourceSymbol, route.handler, route.line, analysis, ctx)
+          ?? resolveRegistrarHandler(sourceFile, sourceSymbol, route.handler, route.line, analysis, ctx);
         // A handler named by its class (`BookController.create`, Play's
         // `OrderController.list`) is that class's method or nothing: a
         // same-named method of ANOTHER class, found by name alone, is a
@@ -2919,6 +2920,38 @@ function resolveDottedOwnerHandler(
     strategy: "class-name",
     relation: relationForStrategy("class-name"),
   };
+}
+
+/**
+ * A route handler named through the function registering it — its receiver, a parameter or a
+ * field of either (`s.clubs.List` inside `func (s *Server) Routes(e *echo.Echo)`, `h.List` with
+ * `h := NewClubHandler(store)` above it): the reference resolved as a call written in that
+ * function, where those names have their declared types. The route keeps the link.
+ */
+function resolveRegistrarHandler(
+  sourceFile: string,
+  sourceSymbol: string,
+  handler: string,
+  line: number,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(handler)) return null;
+  // The innermost function or method spanning the registration.
+  let registrar: string | null = null;
+  let span = Infinity;
+  const callables: Array<[string, { line: number; endLine: number }]> = [
+    ...analysis.functions.map((f): [string, FunctionInfo] => [f.name, f]),
+    ...analysis.classes.flatMap((c) => c.methods.map((m): [string, FunctionInfo] => [`${c.name}.${m.name}`, m])),
+  ];
+  for (const [symbol, fn] of callables) {
+    if (fn.line <= line && line <= fn.endLine && fn.endLine - fn.line < span) [registrar, span] = [symbol, fn.endLine - fn.line];
+  }
+  if (registrar === null) return null;
+  const link = resolveCallToDefinition(sourceFile, registrar, { name: handler, kind: "internal", target: null, line }, analysis, ctx, true);
+  // A leaf name guessed across the project says nothing the registrar's names did not.
+  if (!link || link.strategy === "unique-global" || link.strategy === "unique-global-blind") return null;
+  return { ...link, sourceSymbol };
 }
 
 /** See `LinkContext.namespaceSuffixIndex`. */
