@@ -1427,6 +1427,13 @@ export interface ClassInfo {
    */
   mixins?: Array<{ name: string; kind: "include" | "prepend" | "extend" }>;
   /**
+   * The modules a module extends whatever includes it with, by full path (a Rails concern's
+   * `ClassMethods`, from a `class_methods do` block or a `module ClassMethods` beside
+   * `base.extend(ClassMethods)`): their methods are class-level members of every class that
+   * includes this one, and no members of this module. Absent otherwise.
+   */
+  includerExtends?: string[];
+  /**
    * This part only adds members and conformances to a type declared elsewhere — a Rust `impl` block for a type
    * the file does not declare (`impl RouterExt for Router`). The type's name means its declaration; members
    * are looked up in its parts too, and a part that implements an interface may sit in another sub-project

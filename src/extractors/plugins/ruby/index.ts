@@ -2,6 +2,7 @@ import { rspecFunctions, withDescribedClass } from "./rspec.js";
 import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
+import { addConcernClassMethods } from "./concerns.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
@@ -887,6 +888,8 @@ export const rubySpec: RegexLangSpec = {
   extractClasses: (lines: string[], fns: FunctionInfo[]) => {
     const classes = extractClassesWithSpec(lines, rubySpec);
     if (classes.length === 0) return classes;
+    // A concern's `class_methods do` block is the `ClassMethods` module its includers are extended with.
+    addConcernClassMethods(lines, classes);
 
     for (const cls of classes) {
       addScopeMethods(lines, cls);
