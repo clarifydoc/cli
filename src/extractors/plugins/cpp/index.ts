@@ -4,7 +4,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
-import { cppBases, declaredNamespaces, extractCppClasses } from "./classes.js";
+import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
@@ -28,12 +28,6 @@ const QUALIFIER = String.raw`(?:[A-Za-z_]\w*(?:<[^<>;()]*>)?::)*`;
 /** The defined name: an identifier, a destructor, an operator. */
 const NAME = String.raw`(?!(?:constexpr|consteval|requires|decltype|noexcept|alignas|static_assert)\b)(~?[A-Za-z_]\w*|operator\s*(?:\(\)|\[\]|[^\s\w(]+))`;
 
-/**
- * What may stand between `class` and the class's name: an all-caps export macro (`CLUB_API`, `Q_DECL_EXPORT`),
- * `__declspec(…)`, `__attribute__((…))`, `alignas(…)`, `[[…]]` — each only when a name follows it, so `class URL {`
- * is still `URL`.
- */
-const CLASS_ATTRIBUTES = String.raw`(?:(?:[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?|__declspec\s*\([^()]*\)|__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)|alignas\s*\([^()]*\)|\[\[[^\]]*\]\])\s+(?=[A-Za-z_]\w*\s*(?:final\b|[:{;]|$)))*`;
 
 /** `#define NAME "value"` — how DAOs name their tables (trackschema.h). */
 const DEFINE_STRING_RE = /^\s*#\s*define\s+([A-Za-z_]\w*)\s+"((?:[^"\\]|\\.)*)"\s*$/;
@@ -222,9 +216,9 @@ export const cppSpec: RegexLangSpec = {
   classPatterns: [
     {
       // An export or attribute macro may stand before the name: `class CLUB_API Kit {`, `struct __declspec(dllexport) Car`.
-      pattern: new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+${CLASS_ATTRIBUTES}([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?`),
-      getExtends: (line) => cppBases([line], 0).extends,
-      getImplements: (line) => cppBases([line], 0).implements,
+      // Its bases are read once, over the whole head, by `extractCppClasses`.
+      pattern: CLASS_PATTERN,
+      getExtends: () => null,
     },
     { pattern: /^\s*(?:typedef\s+)?enum(?:\s+class)?\s+([A-Za-z_]\w*)\s*[:{]?/, getExtends: () => null },
     { pattern: /^\s*typedef\s+struct\s+([A-Za-z_]\w*)\s*\{?/, getExtends: () => null },

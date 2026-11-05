@@ -6,6 +6,17 @@ import {
   isControlFlowKeyword,
   type RegexLangSpec,
 } from "../shared/regex-base.js";
+import { stripAngleGroups } from "../shared/path-utils.js";
+
+/**
+ * What may stand between `class` and the class's name: an all-caps export macro (`CLUB_API`, `Q_DECL_EXPORT`),
+ * `__declspec(…)`, `__attribute__((…))`, `alignas(…)`, `[[…]]` — each only when a name follows it, so `class URL {`
+ * is still `URL`.
+ */
+const CLASS_ATTRIBUTES = String.raw`(?:(?:[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?|__declspec\s*\([^()]*\)|__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)|alignas\s*\([^()]*\)|\[\[[^\]]*\]\])\s+(?=[A-Za-z_]\w*\s*(?:final\b|[:{;]|$)))*`;
+
+/** A `class` or `struct` head. An export or attribute macro may stand before the name: `class CLUB_API Kit {`, `struct __declspec(dllexport) Car`. */
+export const CLASS_PATTERN = new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+${CLASS_ATTRIBUTES}([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?`);
 
 /**
  * C++ classes as the linker needs them: a method belongs to its class wherever
@@ -40,7 +51,16 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
   const nsAt = namespacesByLine(lines);
   qualifyNestedClasses(lines, classes, namespaces, nsAt);
   for (const cls of classes) {
-    if (cls.kind === "enum" || /\b(?:enum|typedef)\b/.test(lines[cls.line - 1] ?? "")) continue;
+    const head = lines[cls.line - 1] ?? "";
+    if (cls.kind === "enum" || /\b(?:enum|typedef)\b/.test(head)) {
+      // The class pattern leaves its bases to this pass; a head this pass skips keeps what its own line says.
+      if (cls.kind !== "enum" && CLASS_PATTERN.test(head)) {
+        const own = cppBases([head], 0);
+        cls.extends = own.extends;
+        cls.implements = own.implements;
+      }
+      continue;
+    }
     const bases = cppBases(lines, cls.line - 1);
     cls.extends = bases.extends;
     cls.implements = bases.implements;
@@ -178,6 +198,8 @@ export function cppBases(lines: readonly string[], index: number): { extends: st
   for (let k = 1; k < 8 && !/[{;]/.test(text) && index + k < lines.length; k++) text += " " + lines[index + k]!.replace(/\/\/.*$/, "");
   const end = text.search(/[{;]/);
   if (end >= 0) text = text.slice(0, end);
+  // No colon, no base clause: skip the template and keyword reading.
+  if (!text.includes(":")) return { extends: null, implements: [] };
   // A class template's parameter list may stand on the line above.
   if (index > 0 && /^\s*template\b[^;{]*>\s*$/.test(lines[index - 1] ?? "")) text = lines[index - 1]! + " " + text;
   const header = /^\s*template\s*<((?:[^<>]|<[^<>]*>)*)>/.exec(text);
@@ -211,7 +233,7 @@ export function cppBases(lines: readonly string[], index: number): { extends: st
   const services: string[] = [];
   for (const part of parts) {
     let p = part.replace(/\b(?:public|private|protected|virtual)\b/g, " ").replace(/\.\.\./g, " ").trim();
-    for (let prev = ""; prev !== p;) { prev = p; p = p.replace(/<[^<>]*>/g, ""); }
+    p = stripAngleGroups(p);
     const name = /^(?:::)?((?:\w+\s*::\s*)*\w+)\s*$/.exec(p)?.[1]?.replace(/\s+/g, "");
     if (!name || templateParams.has(name)) continue;
     const leaf = name.replace(/.*::/, "");
