@@ -14,6 +14,25 @@ recorded in the git history only.
 
 ### Added
 
+- **Functions passed down as Vue props or options** (`:on-confirm="confirmDeletion"`, `@x` reaching a child's `onX`
+  prop, `this.onSubmit()` in an options-API child): the child's call of the prop reaches the parent's function
+  (`FileAnalysis.functionProps`); only an invocation counts.
+- **An event bus** (mitt / tiny-emitter, `emitter.emit('x')` → `emitter.on('x', handler)`): the bus is the
+  imported module's export, the event a literal or a module constant; never across apps mounted from different
+  entries (`FileAnalysis.busEvents`).
+- **Vuex actions spread in from another file, or written as methods** of an object handed to a store factory.
+- **devise_token_auth's mount** (`mount_devise_token_auth_for … at:, controllers:, skip:`) expands into the gem's
+  documented route table, each route on the override controller named, else the gem's.
+- **A request on an imported HTTP client instance** (`clubAPI.post('auth/sign_in')` where the module it comes
+  from exports `axios.create({ baseURL })`): an api-call with that client's base, confirmed across the import.
+- **Angular compound template handlers keep every call** (`InteractiveElementInfo.calls`); an output bound to a
+  method of a typed field (`(dismissed)="store.dismiss"`) reaches it.
+- **A function destructured from a composable's result** (`const { save } = usePage()`, through `return
+  { ...crud }` spreads) reaches the function it returns (`FunctionInfo.returnedSpreads`).
+- **Python: a generic repository bound by its caller** (a method returning a wrapper, a free function's result,
+  a lambda), **a class-based view's dependencies** run for each of its routes, **Django custom managers**, a
+  manager held in a local, `request.user.save()`, and a viewset's `queryset = Model.objects`.
+
 - **Vuex: store factories, the caller's own store, local and computed actions.** A module a project factory builds
   (`createStore({ name, API: ClubAPI })` whose actions come from helpers like `updateRecord(types, API)`) has the
   factory's actions, each reaching the method it calls on the class passed in (`FileAnalysis.storeShapes`); a
@@ -305,6 +324,12 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **A contract row pairs with the code route serving its own API version** (`/api/v1/…` with the v1 route, not a
+  v2 twin); an unpaired row no longer counts twice.
+- **Rails: a module is never a routed controller,** and a controller built on a gem's base keeps no guessed
+  routes unless the router hands it to the gem's routing DSL (`devise_for … controllers:`).
+- **Fixed: a file's requests (MCP) left out of an imported-client call the project pass did not confirm.**
 
 - **Fixed: a call on a constant the project never declares** (`I18n.default_locale`) no longer falls back to a
   project method of the same name in a language that looks capitalized names up as constants.
