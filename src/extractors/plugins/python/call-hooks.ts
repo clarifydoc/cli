@@ -9,6 +9,11 @@ import { drfSerializerKey } from "./django/drf.js";
 export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
   nestedScopeTypes: ["function_definition", "class_definition", "lambda"],
+  // `self._wrap(lambda: self.service.seed())`: a lambda is never a symbol of its own, so what it
+  // calls runs on behalf of the function holding it.
+  anonymousScopeTypes: ["lambda"],
+  // `on_ready = lambda: start()` is a function of its own: passing it is a reference.
+  namedBindingTypes: ["assignment"],
   callbackArgNodeTypes: ["call"],
   // `Thread(target=worker)`, `register(self.handle)`, `schedule(cb=self.tick)`: a function handed on.
   passedArguments(call) {

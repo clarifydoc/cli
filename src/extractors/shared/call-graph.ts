@@ -32,6 +32,8 @@ const NESTED_SCOPE_TYPES = new Set<string>();
  */
 const NESTED_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const ANONYMOUS_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
+/** Per language: the parents that bind an anonymous scope to a name (`variable_declarator` always does). */
+const NAMED_BINDING_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const NO_TYPES: ReadonlySet<string> = new Set();
 
 /** Call node types whose arguments are scanned for callback identifiers (union). */
@@ -61,6 +63,7 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   for (const t of hooks.nestedScopeTypes ?? []) NESTED_SCOPE_TYPES.add(t);
   NESTED_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.nestedScopeTypes ?? []));
   ANONYMOUS_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.anonymousScopeTypes ?? []));
+  NAMED_BINDING_BY_LANGUAGE.set(language, new Set(["variable_declarator", ...(hooks.namedBindingTypes ?? [])]));
   for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
   unionFields(BINDING_SITES, hooks.bindingSites);
   unionFields(BINDING_PATTERNS, hooks.bindingPatterns);
@@ -113,11 +116,12 @@ function collectPatternNames(pattern: Node, into: Set<string>): void {
  * an anonymous scope) is no symbol either: it runs on behalf of the function
  * that constructs the object.
  */
-function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>): boolean {
+function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>, named: ReadonlySet<string> = DEFAULT_NAMED_BINDING): boolean {
   const parent = node.parent;
   if (!anonymous.has(node.type)) return !!parent && anonymous.has(parent.type);
-  return parent?.type !== "variable_declarator";
+  return !parent || !named.has(parent.type);
 }
+const DEFAULT_NAMED_BINDING: ReadonlySet<string> = new Set(["variable_declarator"]);
 
 /** True if the node type opens a nested function/class scope (cross-plugin union). */
 export function isNestedScopeType(nodeType: string): boolean {
@@ -164,6 +168,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const argKindsOf = hooks.argKindsOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
+  const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
 
   const visited = new Set<number>();
   const resolve = (n: Node) => resolveCallName(n, language);
@@ -219,7 +224,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // body itself) — those are symbols of their own. Anonymous function
     // expressions are the exception: `onClick={() => addToCart(id)}` has no
     // symbol, so its calls attribute here.
-    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous)) return;
+    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous, named)) return;
 
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
@@ -410,6 +415,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   const keyOf = hooks.keyOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
+  const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
@@ -420,7 +426,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
     // inside one, an inline callback runs on its behalf, as in a function body.
     if (hooks!.isFunctionDefinition?.(node)) return;
     if (nested.has(node.type)) {
-      if (inCallback && isAnonymousFnExpression(node, anonymous)) { /* read on */ }
+      if (inCallback && isAnonymousFnExpression(node, anonymous, named)) { /* read on */ }
       else if (hooks!.runsAtTopLevel?.(node)) inCallback = true;
       else return;
     }

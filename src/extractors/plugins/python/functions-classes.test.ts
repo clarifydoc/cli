@@ -320,6 +320,52 @@ class SquadController:
   });
 });
 
+describe("Python repositories built by a function or a method (real-repo FP)", () => {
+  it("keeps an attribute a free function's result is assigned to, for the project pass to type", async () => {
+    const { classes } = await extract(`
+class TransferService:
+    def __init__(self, session: Session) -> None:
+        self.db = get_repositories(session, league_id=None)
+        self.count = len(session.items)
+`);
+    const props = Object.fromEntries(classes[0]!.properties.map((p) => [p.name, `${p.type ?? "-"} ${p.from ?? ""}`.trim()]));
+    expect(props).toEqual({ db: "- get_repositories()" });
+  });
+
+  it("records what a method that is no property builds the class it returns with", async () => {
+    const { classes } = await extract(`
+class AdminSquadController:
+    def _league_repos(self, league_id) -> AllRepositories:
+        return AllRepositories(self.session, league_id=league_id)
+
+    def _mixins(self, league_id) -> HttpRepo:
+        return HttpRepo[PlayerCreate, PlayerOut](
+            self._league_repos(league_id).players, self.logger
+        )
+
+    def _other(self) -> HttpRepo:
+        return make_repo(self.repo)
+`);
+    const of = (n: string) => classes[0]!.methods.find((m) => m.name === n)!;
+    expect(of("_mixins").constructedWith).toEqual(["self._league_repos(league_id).players", "self.logger"]);
+    expect(of("_other").constructedWith).toBeUndefined();
+    // A property is still recorded as a property, never twice.
+    expect(classes[0]!.properties).toEqual([]);
+  });
+
+  it("calls what a lambda handed to another call runs, on behalf of the function holding it", async () => {
+    const { classes } = await extract(`
+class SeederController:
+    def _wrap(self, func):
+        func()
+
+    def seed_clubs(self, data):
+        return self._wrap(lambda: self.service.seed_clubs(data.locale))
+`);
+    expect(classes[0]!.methods.find((m) => m.name === "seed_clubs")!.calls.map((c) => c.name)).toEqual(["self._wrap", "self.service.seed_clubs"]);
+  });
+});
+
 describe("Python constructor parameters held as classes", () => {
   it("records the parameter a class-typed attribute is assigned from, and nothing for instances", async () => {
     const { classes } = await extract(`

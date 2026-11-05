@@ -816,7 +816,7 @@ const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   selfHeads: new Set(["self", "cls"]),
   memberKey: (name) => name,
   isConstructor: (m) => m.name === "__init__",
-  verbs: /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|all|first|by_|search)\w*$/,
+  verbs: /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|multi_query|all|first|by_|search)\w*$/,
   writeVerbs: /^(create|update|delete|patch|save|add|remove|insert|upsert)/,
 };
 

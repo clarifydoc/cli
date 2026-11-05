@@ -128,6 +128,60 @@ describe("Python repository members assigned from a constructor parameter", () =
   });
 });
 
+describe("Python repositories reached through a method or a free function's result (real-repo FP)", () => {
+  const model = () => file("db/models/player.py", [
+    cls("PlayerModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+    cls("ReportModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+  ]);
+  const generic = () => file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("LeagueRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
+  const factory = () => file("repos/repository_factory.py", [cls("AllRepositories", { methods: [
+    method("players", [], "LeagueRepositoryGeneric[PlayerOut, PlayerModel]"),
+    method("league_reports", [], "LeagueRepositoryGeneric[ReportOut, ReportModel]"),
+  ] })]);
+  const wrapper = () => file("routes/_base/mixins.py", [cls("HttpRepo", {
+    methods: [
+      method("__init__", [], null, [{ name: "repo", type: "RepositoryGeneric", defaultValue: null }, { name: "logger", type: "Logger", defaultValue: null }]),
+      method("create_one", ["self.repo.create"]),
+      method("get_one", ["self.repo.get_one"]),
+    ],
+  })]);
+
+  it("follows a wrapper a method builds from a repository another method returns", () => {
+    const mixins = method("_mixins", [], "HttpRepo", [{ name: "league_id", type: null, defaultValue: null }]);
+    mixins.constructedWith = ["self._league_repos(league_id).players", "self.logger"];
+    const other = method("_audits", [], "HttpRepo");
+    other.constructedWith = ["make_repo(league_id)"];
+    const controller = file("routes/admin/players.py", [cls("AdminPlayerController", {
+      methods: [
+        method("_league_repos", [], "AllRepositories"),
+        mixins,
+        other,
+        method("create_player", ["self._mixins(league_id).create_one"]),
+        method("get_player", ["self._mixins(league_id).get_one"]),
+        method("audit", ["self._audits().get_one"]),
+      ],
+    })]);
+    new PythonEntityExtractor().reconcileProject([model(), generic(), factory(), wrapper(), controller]);
+    expect(controller.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self._mixins(league_id).create_one", "PlayerModel", "write"],
+      ["self._mixins(league_id).get_one", "PlayerModel", "read"],
+    ]);
+  });
+
+  it("types an attribute holding a free function's result, and reads a multi-row query", () => {
+    const builder = file("repos/all_repositories.py", [], [method("get_repositories", [], "AllRepositories")]);
+    const service = file("services/transfer_service.py", [cls("TransferService", {
+      methods: [method("release", ["self.db.players.get_one", "self.db.league_reports.multi_query"])],
+    })]);
+    (service.classes[0] as any).properties.push({ name: "db", type: null, visibility: "public", isStatic: false, isReadonly: false, from: "get_repositories()" });
+    new PythonEntityExtractor().reconcileProject([model(), generic(), factory(), builder, service]);
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self.db.players.get_one", "PlayerModel", "read"],
+      ["self.db.league_reports.multi_query", "ReportModel", "read"],
+    ]);
+  });
+});
+
 /** `select(self.model)` in a generic repository or a mixin of one: the model each construction hands the constructor. */
 describe("Python model held by an instance attribute", () => {
   const ctor = (params: string[], calls: Array<[string, string[]]> = []): any => ({

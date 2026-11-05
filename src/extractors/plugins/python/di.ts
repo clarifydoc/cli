@@ -612,7 +612,7 @@ export function collectInstanceAttributes(
         // `self.items = repos.shopping_items` in `__init__`, `repos: AllRepositories`: a chain on a typed
         // constructor parameter, which the project pass types from that parameter.
         const onParam = right?.type === "attribute" && fn.name === "__init__" && /^\w+(?:\.\w+)+$/.test(right.text) && !!params.get(right.text.split(".")[0]!)?.type;
-        const chain = right ? resultChainText(right) ?? (onParam ? right.text : null) : null;
+        const chain = right ? resultChainText(right) ?? (onParam ? right.text : null) ?? freeCallText(right) : null;
         chains.set(name, chains.has(name) && chains.get(name) !== chain ? null : chain);
       },
     });
@@ -664,6 +664,16 @@ export function constructorParamAttributes({ node, fn, selfName }: MethodSource)
   });
   for (const name of mixed) out.delete(name);
   return out;
+}
+
+/**
+ * A free function's result as the project pass reads it, `get_repositories(session, league_id=g)` →
+ * `get_repositories()`: typed by what that function returns. A class's construction is typed where
+ * it is read, and a builtin returns nothing the project declares.
+ */
+function freeCallText(node: Node): string | null {
+  const fn = node.type === "call" ? node.childForFieldName("function") : null;
+  return fn?.type === "identifier" && !/^[A-Z]/.test(fn.text) && !PY_BUILTIN_CALLS.has(fn.text) ? `${fn.text}()` : null;
 }
 
 /**
