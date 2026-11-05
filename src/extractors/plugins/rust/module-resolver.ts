@@ -17,6 +17,16 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  * one path) is tried as the item of its parent module too. Leaf code.
  */
 export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext, depth = 0): string | null {
+  // `#[path = "export.rs"] mod export_;` is an import of that file, relative to the declaring file's directory.
+  if (source.startsWith(".")) {
+    const parts = (importingFile.includes("/") ? importingFile.slice(0, importingFile.lastIndexOf("/")).split("/") : []);
+    for (const seg of source.split("/")) {
+      if (seg === "..") parts.pop();
+      else if (seg !== "." && seg !== "") parts.push(seg);
+    }
+    const file = parts.join("/");
+    return ctx.files.has(file) ? file : null;
+  }
   // A path may come joined with `.` (`crate::garage.tools`: a module path and the name an import binds).
   const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
   if (segs.length === 0) return null;

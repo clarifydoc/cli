@@ -103,6 +103,8 @@ export function extractWithRegex(
   if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
   const moduleValues = spec.extractModuleValues?.(lines);
   if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
+  const moduleBindings = spec.extractModuleBindings?.(lines);
+  if (moduleBindings && moduleBindings.length > 0) analysis.moduleBindings = moduleBindings;
   if (spec.extractStringConstants) {
     const consts = spec.extractStringConstants(lines);
     if (Object.keys(consts).length > 0) analysis.stringConstants = consts;

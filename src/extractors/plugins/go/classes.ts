@@ -1,7 +1,8 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractParamsFromDeclaration, findEndLine, type ParamParser } from "../shared/regex-base.js";
 import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
-import { extractGoLocalTypes, type GoConstructors } from "./locals.js";
+import { extractGoLocalTypes, goPackageVars, type GoBodyReading, type GoConstructors } from "./locals.js";
+import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { bracketDelta, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
@@ -37,6 +38,12 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
   const structs = new Map<string, ClassInfo>();
   for (const cls of classes) if (cls.kind !== "interface" && !structs.has(cls.name)) structs.set(cls.name, cls);
   const stubs = new Map<string, ClassInfo>();
+  // What this file states about fields, package variables and results, for the types a body does not declare.
+  const env: GoTypeEnv = {
+    fields: new Map(classes.flatMap((c) => c.properties.filter((p) => p.type).map((p) => [`${c.name}.${p.name}`, p.type!] as const))),
+    packageVars: new Map(goPackageVars(lines, constructors).map((v) => [v.name, v.type] as const)),
+    results: constructors,
+  };
 
   for (const fn of fns) {
     const decl = lines[fn.line - 1] ?? "";
@@ -50,7 +57,8 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     const body = lines.slice(fn.line, fn.endLine);
     if (inline >= 0) body.unshift(decl.slice(inline));
     const declared = new Set<string>();
-    const locals = extractGoLocalTypes(body, fn.params, constructors, declared);
+    const reading: GoBodyReading = { env, receiver: receiver?.name ? { name: receiver.name, type: receiver.type } : null, paramTypes: rawParamTypes(lines, fn) };
+    const locals = extractGoLocalTypes(body, fn.params, constructors, declared, reading);
     if (receiver?.name && receiver.name !== "_") {
       // A local of the receiver's name shadows it somewhere in the body: the
       // receiver is no local of the whole method, and each call on the name
@@ -62,6 +70,8 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
+    typeSwitchCalls(lines, fn);
+    if (reading.typeOfName) addExpressionReceiverCalls(fn, lines, env, reading.typeOfName);
 
     if (!receiver) continue;
     const owner = structs.get(receiver.type) ?? stubs.get(receiver.type) ?? newStub(receiver.type, fn, stubs);
@@ -364,6 +374,66 @@ function sameFileConstructors(lines: string[], fns: FunctionInfo[]): GoConstruct
     const results = goResultTextAt(decl, head[0].length - 1);
     const types = results ? goResultTypes(results.text) : [];
     if (types.length > 0) out.set(fn.name, types);
+  }
+  return out;
+}
+
+/**
+ * `switch v := x.(type) { case *Club: v.Promote() }`: inside a clause naming ONE type the switch variable is that
+ * type, so a call on it states it as its `receiverType`; a clause naming several, `default`, and anything outside a
+ * clause stay untyped. The clause ends at the next `case`/`default` of the switch or its closing brace.
+ */
+function typeSwitchCalls(lines: readonly string[], fn: FunctionInfo): void {
+  for (let ln = fn.line; ln <= fn.endLine; ln++) {
+    const head = /^\s*switch\s+([A-Za-z_]\w*)\s*:=\s*.+\.\(\s*type\s*\)\s*\{\s*$/.exec(stripGoComment(lines[ln - 1] ?? ""));
+    if (!head) continue;
+    const name = head[1]!;
+    let depth = 1;
+    let clause: { from: number; type: string | null } | null = null;
+    const spans: Array<{ from: number; to: number; type: string }> = [];
+    const close = (to: number): void => {
+      if (clause?.type) spans.push({ from: clause.from, to, type: clause.type });
+      clause = null;
+    };
+    let end = fn.endLine;
+    for (let i = ln + 1; i <= fn.endLine; i++) {
+      const code = stripGoComment(lines[i - 1] ?? "").replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""');
+      const arm = depth === 1 ? /^\s*(?:case\s+(.+?)\s*:|default\s*:)/.exec(code) : null;
+      if (arm) {
+        close(i - 1);
+        const one = arm[1] !== undefined && !arm[1].includes(",") ? arm[1].trim() : null;
+        clause = { from: i, type: one && /^\*?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?$/.test(one) && one !== "nil" ? one : null };
+      }
+      for (const c of code) {
+        if (c === "{") depth++;
+        else if (c === "}") depth--;
+      }
+      if (depth <= 0) { end = i; break; }
+    }
+    close(end);
+    for (const call of fn.calls) {
+      const parts = call.name.split(".");
+      if (parts.length !== 2 || parts[0] !== name || call.receiverType) continue;
+      const span = spans.find((s) => call.line >= s.from && call.line <= s.to);
+      if (span) call.receiverType = span.type;
+    }
+  }
+}
+
+/** A function's parameter types as written (`clubs []Club`, `a, b map[string]*Club`), by name; grouped names share one. */
+function rawParamTypes(lines: string[], fn: FunctionInfo): Map<string, string> {
+  const out = new Map<string, string>();
+  const decl = lines[fn.line - 1] ?? "";
+  if (!/^\s*func\b/.test(decl)) return out;
+  const raw = extractParamsFromDeclaration(lines, fn.line - 1, fn.name, (t) => ({ name: t.trim(), type: null, defaultValue: null })).map((p) => p.name.trim());
+  let pending: string | null = null;
+  for (let i = raw.length - 1; i >= 0; i--) {
+    const named = /^([A-Za-z_]\w*)\s+(\S.*)$/.exec(raw[i]!);
+    if (named) {
+      pending = named[2]!.replace(/^\.\.\./, "[]");
+      out.set(named[1]!, pending);
+    } else if (/^[A-Za-z_]\w*$/.test(raw[i]!) && pending) out.set(raw[i]!, pending);
+    else pending = null;
   }
   return out;
 }

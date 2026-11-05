@@ -541,8 +541,13 @@ function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null
 }
 
 /** `List<Club>`, `Iterable<Club>?`, `Set<Club>`: the element class; null for anything else. */
-function elementType(type: string | null | undefined): string | null {
+export function elementType(type: string | null | undefined): string | null {
   return /^\s*(?:List|Iterable|Set|Queue|UnmodifiableListView)\s*<\s*([A-Z]\w*)\s*>\s*\??\s*$/.exec(type ?? "")?.[1] ?? null;
+}
+
+/** `Map<String, Club>` → `Club`: the value type of a map whose values are a class; null otherwise. */
+export function mapValueType(type: string | null | undefined): string | null {
+  return /^\s*(?:Map|HashMap|LinkedHashMap|SplayTreeMap)\s*<\s*[\w<>?]+\s*,\s*([A-Z]\w*)\s*>\s*\??\s*$/.exec(type ?? "")?.[1] ?? null;
 }
 
 /** Calls on a collection that hand each element (and nothing else) to their callback, and those that keep the collection's element type. */
@@ -554,8 +559,23 @@ const KEEPS_ELEMENTS = new Set(["where", "toList", "toSet", "skip", "take", "ski
  * `clubs.forEach((c) => c.kickOff())`, `clubs.where(…).map((d) { … })`,
  * `for (final c in clubs)` — typed as the collection's element.
  */
-function elementParams(body: string, collections: ReadonlyMap<string, string>): LocalType[] {
+export function elementParams(body: string, collections: ReadonlyMap<string, string>, maps: ReadonlyMap<string, string> = new Map()): LocalType[] {
   const out: LocalType[] = [];
+  // A map's values are its elements: `byName.values.forEach((c) => …)`, `for (final c in byName.values)`, and
+  // `byName.forEach((k, v) => …)` hands the value second.
+  for (const [name, value] of maps) {
+    const n = escapeRegex(name);
+    for (const m of body.matchAll(new RegExp(String.raw`(?<![\w$.])(?:this\.)?${n}\s*\.\s*forEach\s*\(\s*\(\s*(?:final\s+)?(?:[A-Za-z_]\w*(?:<[^()]*>)?\??\s+)?[a-z_$]\w*\s*,\s*(?:final\s+)?(?:[A-Za-z_]\w*\??\s+)?([a-z_$]\w*)\s*\)\s*(?:async\s*)?(?:=>|\{)`, "g"))) {
+      out.push({ name: m[1]!, type: value });
+    }
+    for (const m of body.matchAll(new RegExp(String.raw`(?<![\w$.])(?:this\.)?${n}\s*\.\s*values\b`, "g"))) {
+      const sub = collectionsOf(body, m.index! + m[0].length, value);
+      out.push(...sub);
+    }
+    for (const f of body.matchAll(new RegExp(String.raw`\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\.)?${n}\s*\.\s*values\s*\)`, "g"))) {
+      out.push({ name: f[1]!, type: value });
+    }
+  }
   for (const [name, element] of collections) {
     const re = new RegExp(String.raw`(?<![\w$.])(?:this\.)?${escapeRegex(name)}\b`, "g");
     let m: RegExpExecArray | null;
@@ -587,6 +607,26 @@ function elementParams(body: string, collections: ReadonlyMap<string, string>): 
     for (const f of body.matchAll(new RegExp(String.raw`\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\.)?${escapeRegex(name)}\s*\)`, "g"))) {
       out.push({ name: f[1]!, type: element });
     }
+  }
+  return out;
+}
+
+/** The closure parameters a callback chain handing `element` out from `at` binds (`.where(…).forEach((c) => …)`). */
+function collectionsOf(body: string, at: number, element: string): LocalType[] {
+  const out: LocalType[] = [];
+  for (let hop = 0; hop < 6; hop++) {
+    const seg = /^\s*[?!]?\.\s*([a-zA-Z_]\w*)\s*(?:<[^()<>]*>)?\s*\(/.exec(body.slice(at));
+    if (!seg) break;
+    const method = seg[1]!;
+    const open = at + seg[0].length - 1;
+    if (ELEMENT_CALLBACKS.has(method)) {
+      const lambda = /^\(\s*\(\s*(?:final\s+)?(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)(?:\s*,\s*(?:final\s+)?(?:[A-Z]\w*\??\s+)?([a-z_$]\w*))?\s*\)\s*(?:async\s*)?(?:=>|\{)/.exec(body.slice(open));
+      if (lambda) out.push({ name: lambda[1]!, type: element });
+    }
+    if (!KEEPS_ELEMENTS.has(method)) break;
+    const close = closeOf(body, open);
+    if (close < 0) break;
+    at = close;
   }
   return out;
 }
