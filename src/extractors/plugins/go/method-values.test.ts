@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { readGo } from "./antlr.js";
+import { enableFeatures } from "../../../core/feature-flags.js";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import { analyze } from "../../../core/analyzer.js";
 import { loadReportSummary } from "../../../core/report-payload.js";
@@ -114,5 +115,32 @@ describe("a method value handed on links as `passes`, only to a method", () => {
       "later -> handler/handler.go::Handler.Kickoff",
     ]);
     expect((summary.symbolLinks ?? []).some((l) => l.targetSymbol === "Name")).toBe(false);
+  });
+});
+
+describe("method values on the regex reading (no-antlr)", () => {
+  const SRC = `package main
+
+func (s *Server) Routes(r chi.Router, h *Handler) {
+	r.Get("/clubs", h.listClubs)
+	r.Get("/health", Wrap(s.handler.Health))
+	s.Use(s.handler.Middleware)
+	consume(h.Kickoff)
+	fmt.Println(h.Name)
+	consume(len(h.Players))
+	consume(handler.New)
+}
+`;
+  it("hands on what the ANTLR reading does, a route's own handler excepted", () => {
+    const before = process.env.CLARIFYDOC_FEATURES;
+    enableFeatures(["no-antlr"]);
+    try {
+      const a = extractWithRegex(SRC, "server.go", "go");
+      const fn = a.classes.flatMap((c) => c.methods).concat(a.functions).find((f) => f.name === "Routes")!;
+      expect(fn.calls.filter((c) => c.passed).map((c) => `${c.name}~${c.passed}`)).toEqual(["handler.Middleware~argument", "h.Kickoff~argument"]);
+    } finally {
+      if (before === undefined) delete process.env.CLARIFYDOC_FEATURES;
+      else process.env.CLARIFYDOC_FEATURES = before;
+    }
   });
 });
