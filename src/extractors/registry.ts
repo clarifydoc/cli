@@ -1,5 +1,6 @@
 import type { Language, PackageCategory, PackageEcosystem } from "../types/analysis.js";
 import type {
+  CompilationDatabaseSpec,
   LanguagePluginMeta,
   LanguagePluginManifest,
   PackageManagerSpec,
@@ -696,6 +697,9 @@ export function inferFileFrameworks(
 export const PACKAGE_MANAGERS: readonly PackageManagerSpec[] = ALL_MANIFESTS.flatMap((m) => m.packageManagers ?? []);
 
 /** Every language's build/test/start reader, in manifest order (the first to name a kind for a root wins). */
+/** The compilation databases the languages read (`compile_commands.json`), one entry per parser. */
+export const COMPILATION_DATABASES: readonly CompilationDatabaseSpec[] = [...new Map(ALL_MANIFESTS.flatMap((m) => (m.compilationDatabase ? [[m.compilationDatabase.parse, m.compilationDatabase] as const] : []))).values()];
+
 export const PROJECT_COMMAND_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["projectCommands"]>> = ALL_MANIFESTS.flatMap((m) => (m.projectCommands ? [m.projectCommands] : []));
 
 /** Every language's reader of the files its test framework runs while setting a test run up. */

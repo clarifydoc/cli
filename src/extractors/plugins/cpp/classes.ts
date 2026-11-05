@@ -106,6 +106,7 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
     }
   }
   const all = [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
+  nameTwinsByPath([...stubs.values()]);
   scopeNestedTypeNames(all, fns, lines);
   return all;
 }
@@ -284,6 +285,15 @@ function qualifyNestedClasses(
   }
   // One file, two classes of one name in different namespaces (`namespace Home { class Club … } namespace Away { class
   // Club … }`): the linker keys a class by file and name, so each is named by its path, `Home::Club`.
+  nameTwinsByPath(classes);
+}
+
+/**
+ * Classes of one name in different namespaces of one file, each named by its path (`Home::Club`). Run over the
+ * header's declarations and over the stubs a source file's out-of-line definitions make, so a header and the file
+ * defining its methods name a class alike when both hold the twins.
+ */
+function nameTwinsByPath(classes: readonly ClassInfo[]): void {
   const byName = new Map<string, ClassInfo[]>();
   for (const cls of classes) (byName.get(cls.name) ?? byName.set(cls.name, []).get(cls.name)!).push(cls);
   for (const same of byName.values()) {

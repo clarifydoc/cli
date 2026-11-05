@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { open, readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
@@ -146,6 +147,7 @@ import { attachWebhookRoutes } from "./webhook-routes.js";
 import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { applyAutoImports } from "../extractors/imports-exports/auto-imports.js";
 import { applyModuleSearchPaths } from "./module-search-paths.js";
+import { loadCompilationDatabase, macrosOf, macrosStamp, placeIncludes } from "./compilation-database.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
@@ -709,6 +711,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // so framework detection can scan each sub-project's own (often nested) manifests.
   progress.step("Detecting sub-projects...");
   const subProjects = await detectSubProjects(projectRoot);
+  // The build's own statement of each translation unit's include directories and macros, when it wrote one.
+  const compilationDb = await loadCompilationDatabase(projectRoot, subProjects, files.map((f) => f.relativePath));
   // Coverage reports: named, or found where test runners write them. Part of the run fingerprint.
   const coverageFiles = findCoverageReports(projectRoot, subProjects.map((sp) => sp.root), options.coverage ?? []);
 
@@ -922,7 +926,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const manifestKey = normalizeManifestKey(file.relativePath);
 
         // The import-rewrite configuration the cached analysis was made with.
-        const resolver = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
+        const buildMacros = macrosOf(compilationDb.get(file.relativePath));
+        const macroStamp = macrosStamp(compilationDb.get(file.relativePath));
+        const rewriteStamp = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
+        const resolver = options.incremental && macroStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(macroStamp).digest("hex").slice(0, 12)}` : rewriteStamp;
         const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
 
         // A file its plugin refused last time, with the same bytes and import configuration: refused again, unread.
@@ -952,6 +959,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const outcome = await runTask({
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
+          ...(buildMacros ? { buildMacros } : {}),
           ...(options.incremental ? { reportSkips: true as const } : {}),
         });
         if (outcome && "failed" in outcome) {
@@ -1098,6 +1106,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (autoImportCount > 0 && verbose) progress.detail(`  auto-imported names: ${autoImportCount}`);
   // A bare import two files answer to, settled by the project's build files (search paths, named unit files).
   const searchPathCount = await applyModuleSearchPaths(allAnalyses, projectRoot, subProjects);
+  // An include the compiler resolves by its `-I` directories, which the suffix fallback cannot tell apart.
+  const includeCount = compilationDb.size > 0 ? placeIncludes(allAnalyses, compilationDb, new Set(allAnalyses.map((a) => a.filePath))) : 0;
+  if (includeCount > 0 && verbose) progress.detail(`  includes placed by the compilation database: ${includeCount}`);
   if (searchPathCount > 0 && verbose) progress.detail(`  imports placed by build search paths: ${searchPathCount}`);
 
   // Out-of-line definitions written through a namespace their file never opens join their class.
