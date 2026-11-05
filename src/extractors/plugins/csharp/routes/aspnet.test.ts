@@ -285,3 +285,43 @@ public class C { [HttpGet("x")] public int X() => 1; }`;
     expect(r!.params).toBeUndefined();
   });
 });
+
+describe("ASP.NET routes — verbs, qualified attributes, regex constraints, Async", () => {
+  it("reads [AcceptVerbs] as one row per verb, with its Route argument", async () => {
+    const routes = await routesOf(`public class ClubsController : ControllerBase {
+    [AcceptVerbs("POST", "PUT", Route = "api/clubs/archive")]
+    public IActionResult Archive() => Ok();
+}`);
+    expect(routes.sort()).toEqual(["POST /api/clubs/archive", "PUT /api/clubs/archive"]);
+  });
+
+  it("reads a fully qualified [HttpHeadAttribute] and an absolute ~/ template", async () => {
+    const routes = await routesOf(`[Route("api/[controller]")]
+public class ClubsController : ControllerBase {
+    [Microsoft.AspNetCore.Mvc.HttpHeadAttribute("~/ping")]
+    public IActionResult Ping() => Ok();
+}`);
+    expect(routes).toEqual(["HEAD /ping"]);
+  });
+
+  it("keeps the whole path after a regex constraint holding braces", async () => {
+    const routes = await routesOf(`[Route("api/cars")]
+public class CarsController : ControllerBase {
+    [HttpGet("plate/{code:regex(^\\\\d{{3}}$)}/{id:int}")]
+    public IActionResult ByCode(string code, int id) => Ok();
+}`);
+    expect(routes).toEqual(["GET /api/cars/plate/{code}/{id}"]);
+  });
+
+  it("drops MVC's Async suffix from the [action] token, but not from [ActionName]", async () => {
+    const routes = await routesOf(`[Route("api/[controller]")]
+public class ClubsController : ControllerBase {
+    [HttpGet("[action]")]
+    public async Task<IActionResult> ListAsync() => Ok();
+    [HttpGet("[action]")]
+    [ActionName("FetchAsync")]
+    public async Task<IActionResult> Other() => Ok();
+}`);
+    expect(routes.sort()).toEqual(["GET /api/Clubs/FetchAsync", "GET /api/Clubs/List"]);
+  });
+});
