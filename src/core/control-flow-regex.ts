@@ -560,8 +560,12 @@ function parseRange(
     // opens a callback and returns, and the return is the part that belongs to
     // the function being drawn.
     const nested = spec.nestedFunction ?? DEFAULT_NESTED_FUNCTION;
-    if (bodyEnd > i + 1 && nested.test(line.code) && !isJump(matched)) {
-      if ((spec as ScanSpec)[MEASURE]) {
+    const measure = (spec as ScanSpec)[MEASURE];
+    // Measured, the callback a jump opens still nests what it holds (`return xs.filter((x) => { if … })`):
+    // the jump is one statement, the callback's body is measured as the parser measures it.
+    if (bodyEnd > i + 1 && nested.test(line.code) && (!isJump(matched) || measure)) {
+      if (measure) {
+        if (isJump(matched)) into.add(node(matched!.type, line, line));
         const closure = node("nested_function", line, lines[bodyEnd - 1]!);
         parseRange(lines, range.from, bodyEnd, spec, depth + 1, closure);
         into.add(closure);
