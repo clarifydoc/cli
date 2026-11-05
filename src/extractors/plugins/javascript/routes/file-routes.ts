@@ -1,4 +1,4 @@
-import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
+import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 
 /**
  * Routes that a meta-framework derives from where a file sits rather than from
@@ -89,6 +89,9 @@ export function inferFileBasedRoute(relativePath: string, frameworkIds: string[]
 
   // app/ router: a folder is a URL segment; `page` renders it, `route` handles requests.
   const app = normalized.match(/^(?:src\/)?app\/(?:(.+)\/)?(page|route)\.(?:tsx?|jsx?)$/);
+  // `_private` folders opt a folder and everything below out of routing; an interception
+  // segment (`(.)car`, `(..)car`, `(...)car`) renders another route inside this one's layout, not a URL of its own.
+  if (app && app[1]?.split("/").some((s) => s.startsWith("_") || /^\((?:\.\.\.|\.\.|\.)\)/.test(s))) return null;
   if (app) return route(routeFromSegments(app[1] ?? ""), app[2] === "page" ? "frontend" : "api");
 
   return null;
@@ -111,23 +114,104 @@ export function inferNextRoutes(relativePath: string, analysis: FileAnalysis, fr
   return [r];
 }
 
+const METHOD_NAMES = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS";
+
+/** The method keys of the object literal whose `{` is at `open` (its own keys only, not nested ones'). */
+function objectMethodKeys(text: string, open: number): string[] {
+  const keys: string[] = [];
+  let depth = 0;
+  const re = new RegExp(`^(${METHOD_NAMES})\\b\\s*(?=[:,}(])`);
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "{" || ch === "(" || ch === "[") depth++;
+    else if (ch === "}" || ch === ")" || ch === "]") {
+      if (--depth === 0) break;
+    } else if (depth === 1 && /[A-Z]/.test(ch) && !/\w/.test(text[i - 1] ?? " ")) {
+      const m = re.exec(text.slice(i, i + 10));
+      if (m) keys.push(m[1]!);
+    }
+  }
+  return keys;
+}
+
+/**
+ * The methods a `pages/api` file declares as a table rather than branching on
+ * the request: next-connect's `.get().patch()`, the literal handed to the
+ * default export's wrapper (`withMethods({ GET, DELETE })`, `defaultHandler({
+ * GET: import(…) })`), or a handler map the function indexes by the request's
+ * method (`handlers[req.method]`).
+ */
+function declaredMethods(sourceText: string): string[] {
+  const methods = new Set<string>();
+  if (/from\s+['"]next-connect['"]|require\(\s*['"]next-connect['"]/.test(sourceText)) {
+    for (const m of sourceText.matchAll(/\.\s*(get|post|put|patch|delete|head|options)\s*\(/g)) methods.add(m[1]!.toUpperCase());
+  }
+  const wrapped = /\bexport\s+default\s+(?:[\w.$]+\s*\(\s*)+\{/.exec(sourceText);
+  if (wrapped) for (const k of objectMethodKeys(sourceText, wrapped.index + wrapped[0].length - 1)) methods.add(k);
+  for (const m of sourceText.matchAll(/\b([A-Za-z_$][\w$]*)\s*\[\s*(?:\w+\.)?method(?:\s*\.\s*toUpperCase\s*\(\s*\))?\s*\]/g)) {
+    const decl = new RegExp(`\\b(?:const|let|var)\\s+${m[1]!.replace(/\$/g, "\\$")}\\b[^=]*=\\s*\\{`).exec(sourceText);
+    if (decl) for (const k of objectMethodKeys(sourceText, decl.index + decl[0].length - 1)) methods.add(k);
+  }
+  return [...methods];
+}
+
+/** A file with no default export (a helper under `pages/api/_lib/`, a `_get.ts`) is no endpoint. */
+function hasDefaultExport(sourceText: string): boolean {
+  return /\bexport\s+default\b|\bexport\s*\{[^}]*\bdefault\b[^}]*\}|\bmodule\.exports\s*=|\bexports\.default\s*=|\bexport\s*\*\s*from/.test(sourceText);
+}
+
 /**
  * A `pages/api` route's handler is the default export — through a wrapping
  * middleware call (`export default withAuth(handler)`) — and the methods it
- * serves are the ones its body branches on (`switch (method) { case 'GET': …`,
- * `req.method === 'POST'`): one row per method, else the method-less row.
+ * serves are the ones it declares (`declaredMethods`) or its body branches on
+ * (`switch (method) { case 'GET': …`, `req.method === 'POST'`): one row per
+ * method, else the method-less row. A body that only answers a CORS
+ * `OPTIONS` preflight and then goes on serves every method; a `=== 'POST'`
+ * branch with an `else` serves the others too (a method-less row beside it).
+ * A file that exports no default is not an endpoint.
  */
 function pagesApiRoutes(r: RouteInfo, analysis: FileAnalysis, sourceText: string): RouteInfo[] {
+  if (!hasDefaultExport(sourceText)) return [];
   const exported = /\bexport\s+default\s+(?:async\s+)?(?:function\s+(\w+)|(?:[\w.]+\s*\(\s*)*(\w+)\s*\)*\s*;?\s*$)/m.exec(sourceText);
   const name = exported?.[1] ?? exported?.[2];
   const fn = name ? analysis.functions.find((f) => f.name === name) : undefined;
+  const declared = declaredMethods(sourceText);
+  const row = (method: string | null): RouteInfo => ({ ...r, httpMethod: method, handler: fn?.name ?? name ?? null, line: fn?.line ?? 1 });
+  if (declared.length > 0) return declared.map(row);
   if (!fn) return [r];
   const body = sourceText.split("\n").slice(fn.line - 1, fn.endLine).join("\n");
   const methods = new Set<string>();
   for (const m of body.matchAll(/\bcase\s+['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*:/g)) methods.add(m[1]!);
-  for (const m of body.matchAll(/\bmethod\s*[!=]==?\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]/g)) methods.add(m[1]!);
+  const equals = new Set<string>();
+  for (const m of body.matchAll(/\bmethod\s*([!=])==?\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]/g)) {
+    methods.add(m[2]!);
+    if (m[1] === "=") equals.add(m[2]!);
+  }
+  // `if (method === 'OPTIONS') return` is a preflight guard, not what the handler serves.
+  if (methods.size === 1 && methods.has("OPTIONS") && equals.has("OPTIONS")) methods.clear();
   if (methods.size === 0) return [{ ...r, handler: fn.name, line: fn.line }];
-  return [...methods].map((method) => ({ ...r, httpMethod: method, handler: fn.name, line: fn.line }));
+  const others = equals.size > 0 && equals.size === methods.size && /\belse\b/.test(body);
+  return [...methods, ...(others ? [null] : [])].map(row);
+}
+
+/**
+ * A tRPC router mounted at a file route — `pages/api/trpc/[trpc].ts` with
+ * `createNextApiHandler({ router: appRouter })`, an App Router `route.ts` with
+ * `fetchRequestHandler({ endpoint: '/api/trpc', router: appRouter, … })` — is
+ * served under that route's path. The `trpc-endpoint` fact names the router
+ * and the base; the tRPC resolver rewrites the router's rows to it.
+ */
+export function inferTrpcEndpointFacts(relativePath: string, sourceText: string, frameworkIds: string[]): RouteFact[] {
+  if (!/\b(?:createNextApiHandler|fetchRequestHandler|createHTTPHandler|createOpenApiNextHandler)\s*\(/.test(sourceText)) return [];
+  const r = inferFileBasedRoute(relativePath, frameworkIds);
+  if (!r || r.kind !== "api") return [];
+  const router = /\brouter\s*:\s*([A-Za-z_$][\w$]*)/.exec(sourceText)?.[1] ?? (/[{,]\s*router\s*[,}]/.test(sourceText) ? "router" : null);
+  if (!router) return [];
+  const endpoint = /\bendpoint\s*:\s*['"`](\/[^'"`]*)['"`]/.exec(sourceText)?.[1];
+  const dynamic = /^(.*)\/(?::\w+\??|\*)$/.exec(r.path);
+  const base = endpoint ?? (dynamic ? dynamic[1]! : null);
+  if (!base) return [];
+  return [{ kind: "trpc-endpoint", line: 1, data: { base: `${base.replace(/\/+$/, "")}/`, router, route: r.path } }];
 }
 
 /**

@@ -36,6 +36,7 @@ import {
   inferNextRoutes,
   inferReactRouterConfig,
   inferSvelteKitRoutes,
+  inferTrpcEndpointFacts,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
@@ -767,6 +768,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
           flatRoutes: routeFrameworks.includes("react-router-framework") && /^(?:app|src)\/routes\//.test(routePath.replace(/\\/g, "/")) && usesFlatRoutes(file.absolutePath, routePath),
         }),
       );
+      const endpoints = inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks);
+      if (endpoints.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...endpoints];
     }
 
     // Detect React directives: 'use client' / 'use server'

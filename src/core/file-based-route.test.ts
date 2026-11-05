@@ -164,3 +164,49 @@ describe("Next.js pages/api handlers", () => {
     expect(inferNextRoutes("pages/api/standings.ts", one, ["nextjs"], plain)).toMatchObject([{ path: "/api/standings", httpMethod: null, handler: "standings" }]);
   });
 });
+
+describe("Next.js pages/api method sets", () => {
+  const rows = (rel: string, src: string, fns: Array<{ name: string; line: number; endLine: number }> = []) =>
+    inferNextRoutes(rel, { functions: fns, exports: [] } as unknown as FileAnalysis, ["nextjs"], src).map((r) => `${r.httpMethod} ${r.path}`);
+
+  it("an OPTIONS preflight guard is not what the handler serves", () => {
+    const src = "export default function handler(req, res) {\n  if (req.method === 'OPTIONS') { res.status(200).end(); return; }\n  res.json([]);\n}";
+    expect(rows("pages/api/clubs.ts", src, [{ name: "handler", line: 1, endLine: 4 }])).toEqual(["null /api/clubs"]);
+  });
+
+  it("a POST branch with an else serves the other methods as well", () => {
+    const src = "export default function handler(req, res) {\n  if (req.method === 'POST') { res.status(201).json({}); } else { res.json([]); }\n}";
+    expect(rows("pages/api/players.ts", src, [{ name: "handler", line: 1, endLine: 3 }])).toEqual(["POST /api/players", "null /api/players"]);
+    const guard = "export default function handler(req, res) {\n  if (req.method !== 'POST') return res.status(405).end();\n  res.json({});\n}";
+    expect(rows("pages/api/players.ts", guard, [{ name: "handler", line: 1, endLine: 4 }])).toEqual(["POST /api/players"]);
+  });
+
+  it("reads next-connect chains, wrapper tables and handler maps", () => {
+    const chain = "import nc from 'next-connect';\nconst handler = nc().get(list).patch(update);\nexport default handler;";
+    expect(rows("pages/api/cars.ts", chain)).toEqual(["GET /api/cars", "PATCH /api/cars"]);
+    const wrapped = "import withMethods from '../../lib/m';\nexport default withMethods({ GET: list, DELETE: remove });";
+    expect(rows("pages/api/trainers.ts", wrapped)).toEqual(["GET /api/trainers", "DELETE /api/trainers"]);
+    const lazy = "export default defaultHandler({\n  GET: import('./_get'),\n  POST: import('./_post'),\n});";
+    expect(rows("pages/api/fixtures.ts", lazy)).toEqual(["GET /api/fixtures", "POST /api/fixtures"]);
+    const map = "const handlers = { GET: list, POST: add };\nexport default function h(req, res) { return handlers[req.method](req, res); }";
+    expect(rows("pages/api/garages.ts", map, [{ name: "h", line: 2, endLine: 2 }])).toEqual(["GET /api/garages", "POST /api/garages"]);
+  });
+
+  it("a pages/api file with no default export is a helper, not a route", () => {
+    expect(rows("pages/api/_lib/respond.ts", "export function respond(res, d) { res.json(d); }")).toEqual([]);
+    expect(rows("pages/api/_get.ts", "export const getAll = (req, res) => res.json([]);")).toEqual([]);
+    expect(rows("pages/api/lazy.ts", "export { handler as default } from './impl';")).toEqual(["null /api/lazy"]);
+  });
+});
+
+describe("Next.js App Router private folders and interception", () => {
+  it("leaves _private folders and interception segments out of the routes", () => {
+    expect(path("app/cars/_parts/page.tsx", ["nextjs"])).toBeNull();
+    expect(path("app/cars/_parts/deep/page.tsx", ["nextjs"])).toBeNull();
+    expect(path("app/cars/(.)car/page.tsx", ["nextjs"])).toBeNull();
+    expect(path("app/cars/(..)garage/[id]/page.tsx", ["nextjs"])).toBeNull();
+    expect(path("app/cars/(...)garage/page.tsx", ["nextjs"])).toBeNull();
+    expect(path("app/cars/[id]/page.tsx", ["nextjs"])).toBe("/cars/:id");
+  });
+});
+
