@@ -19,6 +19,28 @@ import {
 import { parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { patternCallName, recordPatternCalls, type CalleeSegment, type PatternCallName } from "../shared/antlr-calls.js";
 
+/**
+ * The Go lexer, retyping the `(` after a callee named `make` or `new` as `MakeParen` / `NewParen` (the grammar's
+ * `arguments` rule reads them as the built-ins' argument lists). Decided here, from the token before, rather than by
+ * a predicate in the parser: a predicate looking back at tokens before its decision is one the parser's shared
+ * prediction cache may answer from another file's parse.
+ */
+class GoReadLexer extends GoLexer {
+  private callee: Token | null = null;
+
+  override nextToken(): Token {
+    const token = super.nextToken();
+    if (token.channel !== 0) return token;
+    if (token.type === GoLexer.L_PAREN && this.callee?.type === GoLexer.IDENTIFIER) {
+      const name = this.callee.text;
+      if (name === "make") token.type = GoLexer.MakeParen;
+      else if (name === "new") token.type = GoLexer.NewParen;
+    }
+    this.callee = token;
+    return token;
+  }
+}
+
 /** As deep as the Go spec's `callChainPatterns` read a chain. */
 const CHAIN_DEPTH = 3;
 
@@ -33,7 +55,7 @@ const CHAIN_DEPTH = 3;
 export function readGo(source: string): ParsedStructure {
   const { tree, errors } = parseWithAntlr(
     source,
-    (input) => new GoLexer(input),
+    (input) => new GoReadLexer(input),
     (tokens) => new GoParser(tokens),
     (parser) => parser.sourceFile(),
   );

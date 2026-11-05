@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /**
  * Per reader (C `.c`, C++ sources, `.h` headers read as C++ then C): files read, files left to the line patterns
- * (a syntax error), their share and the speed. Usage: node scripts/c-family-failures.mjs <repo-dir> [--list] [--json <file>]
+ * (a syntax error), their share and the speed. Usage: node scripts/c-family-failures.mjs <repo-dir> [--lang go|lua|rust] [--list] [--json <file>]
  * Reads <repo-dir>'s C and C++ files with the built readers (dist/), forward order, one process: run one
  * directory per call for cold numbers. `--list` prints the failing files. A generated file or one past 2 M
  * characters is counted apart (no front end reads it).
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { GROUPS, listFiles, loadEngine, nameOf, option, positional, readOne, table } from "./lib/c-family.mjs";
+import { GROUPS as C_GROUPS, LANGUAGES, listFiles, loadEngine, nameOf, option, positional, readOne, table } from "./lib/c-family.mjs";
 
 const argv = process.argv.slice(2);
-const dir = positional(argv, ["json"])[0];
-if (!dir) throw new Error("usage: c-family-failures.mjs <repo-dir> [--list] [--json <file>]");
-const engine = await loadEngine();
-const files = listFiles(dir);
+const lang = option(argv, "lang");
+if (lang && !LANGUAGES[lang]) throw new Error(`--lang is one of ${Object.keys(LANGUAGES).join(", ")}`);
+const GROUPS = lang ? [{ id: lang, label: `${lang} (${LANGUAGES[lang].exts.join(" ")})` }] : C_GROUPS;
+const dir = positional(argv, ["json", "lang"])[0];
+if (!dir) throw new Error("usage: c-family-failures.mjs <repo-dir> [--lang go|lua|rust] [--list] [--json <file>]");
+const engine = await loadEngine(lang);
+const files = listFiles(dir, lang);
 const stats = Object.fromEntries(GROUPS.map((g) => [g.id, { files: 0, failed: 0, skipped: 0, bytes: 0, ms: 0, failing: [] }]));
 for (const f of files) {
   const source = readFileSync(f.abs, "utf8");

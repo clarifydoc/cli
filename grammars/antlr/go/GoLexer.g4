@@ -40,6 +40,13 @@
 
 lexer grammar GoLexer;
 
+// [ClarifyDoc] The `(` of `make(` and `new(`, retyped by the reader (plugins/go/antlr.ts) so the parser reads which
+// built-in's arguments follow by token rather than by a predicate looking back at the callee's name.
+tokens {
+    MakeParen,
+    NewParen
+}
+
 // Keywords
 
 BREAK       : 'break' -> mode(NLSEMI);

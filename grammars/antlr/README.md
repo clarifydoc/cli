@@ -43,9 +43,12 @@ per target at its `// Insert here @header` marker.
   its next token.
 - **Go: `operandName` is an identifier only**, which removes a qualified/unqualified ambiguity; type arguments may
   follow a selector (`lru.New[string, *Item](n)`).
-- **Go additions:** type parameters on a method (`func (c *Ctx) JSON[T any](v T)`). In the base class, `new(expr)`
-  is read as an expression when its argument opens with a literal, calls a name or selects past a package's type, and
-  a parenthesized type opens a conversion (`([]*T)(nil)`).
+- **Go additions:** type parameters on a method (`func (c *Ctx) JSON[T any](v T)`). `new(expr)` is read as a type or
+  an expression, whichever parses, and in the base class a parenthesized type opens a conversion (`([]*T)(nil)`).
+- **Go: `make(` / `new(` are token types.** Upstream-derived predicates looked back two tokens at the callee's name
+  to say whether a type or an expression opens the arguments, which the shared prediction cache must not depend on.
+  The reader's lexer (`GoReadLexer`, `plugins/go/antlr.ts`) retypes the `(` after such a callee as `MakeParen` /
+  `NewParen` (declared in `GoLexer.g4`'s `tokens`, never matched), and `arguments` has one alternative for each.
 - **Lua, lexer:** LuaJIT's integer suffixes (`0x01ULL`, `12LL`) and imaginary numbers (`12i`).
 - **Lua, base class:** `IsFunctionCall` looks past the whole name path (`a.b[c].d`) for a call. Upstream looked one
   token past the first name, so `gio.File.open(p):read()` parsed as the variable `gio.File.open` and a second
