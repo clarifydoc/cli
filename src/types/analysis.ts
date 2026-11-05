@@ -423,6 +423,12 @@ export interface FileAnalysis {
    */
   functionProps?: FunctionPropBinding[];
   /**
+   * Functions a component's template offers its slot's content: `<slot :save="saveAll" />` —
+   * what a parent's scoped slot (`<template #default="{ save }">`) calls as `save(…)`. The
+   * slot-scope resolver joins the parent's call to the function named here.
+   */
+  slotFunctions?: SlotFunction[];
+  /**
    * Calls on an app-wide event bus (a `mitt()` / `EventEmitter` instance a module
    * holds): what each emits and listens to, by event as written, and the calls of
    * project functions that may wrap a listener (`useBusListener(EVENT, reload)`).
@@ -2766,6 +2772,19 @@ export interface FunctionPropBinding {
   /** The name bound, as written (`confirmDeletion`). */
   handler: string;
   line: number;
+  /** The import the component comes from, when the SCRIPT hands it the callback (`open(ConfirmBox, { onConfirm })`) and no tag names it. */
+  importSource?: string;
+}
+
+/** A function a component's `<slot>` outlet hands its content (`FileAnalysis.slotFunctions`). */
+export interface SlotFunction {
+  /** The slot's name (`default`). */
+  slot: string;
+  /** The slot prop, as the parent reads it (`save`). */
+  prop: string;
+  /** The component's function bound to it, as written (`saveAll`). */
+  handler: string;
+  line: number;
 }
 
 /**
@@ -2870,6 +2889,12 @@ export interface InteractiveElementInfo {
   request?: { method: string; target: string; attribute?: string };
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
+  /**
+   * Names the handler reads that a template scope binds, not the component: a `v-for` loop variable
+   * whose collection's element type the script states (`type`), and a scoped slot's parameter the
+   * component the tag sits in provides (`slot`: that component's tag, the slot, the slot prop).
+   */
+  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string } }>;
   /**
    * A markup element with no handler of its own, as a compound selector of what
    * a script can find it by — `button#save.btn[data-delete]`: tag, id, classes

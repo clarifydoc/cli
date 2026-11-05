@@ -1,10 +1,11 @@
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
-import { extractVueFunctionProps, extractVueInteractiveElements } from "./interactive-elements.js";
+import { extractSlotFunctions, extractVueFunctionProps, extractVueInteractiveElements } from "./interactive-elements.js";
 import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
 import { addTemplateRefs } from "./template-refs.js";
+import { extractOptionCallbacks } from "./option-callbacks.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -51,6 +52,9 @@ export function vuePreprocess(
         const own = new Set([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].map((f) => f.name.split(".").pop()!));
         const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
+        // `<slot :save="saveAll" />`: what a parent's scoped slot calls.
+        const slotFunctions = extractSlotFunctions(sfc.template, raw, (name) => own.has(name));
+        if (slotFunctions.length > 0) analysis.slotFunctions = slotFunctions;
         // `<HomeScreen v-show="screen === 'Home'" />`: the screen a hand-rolled router shows by key.
         const startLine = raw.slice(0, raw.indexOf(sfc.template)).split("\n").length;
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
@@ -58,6 +62,9 @@ export function vuePreprocess(
       }
       // `userSearch.value = q` in a handler re-runs the composable built from that ref.
       addReactiveTriggers(analysis, raw);
+      // `modal.open(ConfirmBox, { onConfirm: saveClub })`: callbacks the script hands a component it opens.
+      const optionCallbacks = extractOptionCallbacks(blankExceptScripts(raw), analysis);
+      if (optionCallbacks.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...optionCallbacks];
       for (const comp of sfc.templateComponents) {
         const importSource =
           analysis.imports.find((imp) =>

@@ -2173,6 +2173,24 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         }
       }
     }
+    // `get form() { return this.formRef; }`: read as `this.form`, a property of the type the getter states
+    // (`get form(): ClubForm`) or the typed field it returns.
+    if (body) {
+      for (const member of body.children) {
+        if (member.type !== "method_definition" || !member.children.some((c) => c.type === "get")) continue;
+        const name = member.childForFieldName("name")?.text;
+        if (!name || properties.some((p) => p.name === name)) continue;
+        let type = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+        if (!type) {
+          const stmts = member.childForFieldName("body")?.namedChildren.filter((c) => c?.type !== "comment") ?? [];
+          const ret = stmts.length === 1 && stmts[0]?.type === "return_statement" ? stmts[0].namedChild(0) : null;
+          const target = ret?.type === "as_expression" || ret?.type === "non_null_expression" ? ret.namedChild(0) : ret;
+          const field = target?.type === "member_expression" && target.childForFieldName("object")?.type === "this" ? target.childForFieldName("property")?.text : null;
+          type = field ? properties.find((p) => p.name === field)?.type ?? null : null;
+        }
+        if (type) properties.push({ name, type, visibility: this.getVisibility(member), isStatic: false, isReadonly: true });
+      }
+    }
     if (ctor) this.constructorAssignments(ctor.body, ctor.params, properties, setValue);
     // `this.onSave = (e) => { … }` in the constructor: a React class component's handler bound
     // as `onSubmit={this.onSave}`, a method in all but syntax — its calls are its own, not the constructor's.

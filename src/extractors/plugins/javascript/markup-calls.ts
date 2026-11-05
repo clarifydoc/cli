@@ -30,10 +30,14 @@ export function markupCalls(elements: readonly InteractiveElementInfo[], filePat
   if (!SFC.test(filePath)) return [];
   const out: CallInfo[] = [];
   const seen = new Set<string>();
-  const add = (name: string, line: number) => {
+  const add = (name: string, line: number, scope?: InteractiveElementInfo["scope"]) => {
     if (!projectCallee(name) || seen.has(`${line}\0${name}`)) return;
     seen.add(`${line}\0${name}`);
-    out.push({ name, kind: "internal", target: null, line });
+    const head = name.split(".")[0]!;
+    const bound = scope?.find((s) => s.name === head);
+    // A scoped slot's parameter is the providing component's function (`slotFunctions`), never the component's own `save`.
+    if (bound?.slot && head === name) return;
+    out.push({ name, kind: "internal", target: null, line, ...(bound?.type && head !== name ? { receiverType: bound.type } : {}) });
   };
   for (const el of elements) {
     const handler = el.handler ? plainChains(el.handler.trim()) : undefined;
@@ -41,10 +45,10 @@ export function markupCalls(elements: readonly InteractiveElementInfo[], filePat
     if (!handler || isPropFunction(el) || isEventFunction(el, declared)) continue;
     const bare = handler.replace(/^(?:void|await)\s+/, "");
     if (CHAIN.test(bare)) {
-      add(bare, el.line);
+      add(bare, el.line, el.scope);
       continue;
     }
-    for (const m of handler.matchAll(CALLEE)) add(m[1]!, el.line);
+    for (const m of handler.matchAll(CALLEE)) add(m[1]!, el.line, el.scope);
   }
   return out;
 }
