@@ -108,6 +108,11 @@ export interface FileTask {
   reportSkips?: boolean;
   /** The macros the file's translation unit sets on its command line (compilation database): `#ifdef` is judged by them. */
   buildMacros?: BuildMacros;
+  /**
+   * The project-dependent reading of this file (`LanguagePluginManifest.readingVariant`), decided by the analyzer from
+   * the project's file mix before any worker starts; handed to the language's front end.
+   */
+  reading?: string;
 }
 
 /** A file its plugin refused by content: what `analyzeFile` returns for it when the task sets `reportSkips`. */
@@ -167,6 +172,7 @@ export async function readWithParser(
   filePath: string,
   generated = false,
   buildMacros?: BuildMacros,
+  variant?: string,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
@@ -182,11 +188,12 @@ export async function readWithParser(
   if (source.length > FRONT_END_MAX_CHARS) return { frontEnd: { parser, grammar, fallback: "too-large" } };
   try {
     const read = await frontEnd.load();
-    const parsed = read(source, buildMacros);
-    if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors } };
-    return { parsed, frontEnd: { parser, grammar } };
+    const parsed = read(source, buildMacros, variant);
+    const named = variant ? { variant } : {};
+    if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors, ...named } };
+    return { parsed, frontEnd: { parser, grammar, ...named } };
   } catch {
-    return { frontEnd: { parser, grammar, fallback: "parser-error" } };
+    return { frontEnd: { parser, grammar, fallback: "parser-error", ...(variant ? { variant } : {}) } };
   }
 }
 
@@ -415,7 +422,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated, task.buildMacros);
+      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated, task.buildMacros, pre?.language ? undefined : task.reading);
       const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
       if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;

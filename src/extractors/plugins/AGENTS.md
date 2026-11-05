@@ -105,6 +105,12 @@ like `knownPackages`. Notes:
   language's meta — swap in the embedded source/language before parsing, and
   optionally merge container data back via `postExtract`.
 - A format with its own parser (.dfm) declares `parsing: "custom"` + `customParse`.
+- An extension several languages share (`.h`) has one owner, but how it is READ can depend on its sub-project: the
+  owner's manifest `readingVariant(relativePath, mix)` gets the project's file counts by extension and names a
+  variant (the C++ plugin: `c-first` for a `.h` in a project with `.c` and no C++ source) that its `meta.antlr` reader
+  receives as a second argument. The analyzer counts the mix once, passes the variant in `FileTask.reading` (workers
+  never see the mix) and folds it into the file's manifest `resolver` stamp, so a project whose mix flips re-reads
+  its headers although no byte changed. `FileAnalysis.frontEnd.variant` records it.
 
 ## Conventions
 

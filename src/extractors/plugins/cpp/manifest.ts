@@ -11,6 +11,20 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
  * body (meta.ts and everything it imports) is loaded lazily per language;
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
+/** The C++ source extensions: a project with one of these reads its `.h` as C++ first. `.mm` is Objective-C++. */
+const CPP_SOURCE_EXTENSIONS = [".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh", ".mm"];
+
+/**
+ * A `.h` belongs to this plugin whatever language includes it. In a sub-project that holds C sources and no C++ ones
+ * its headers are C, so the C grammar reads them first (variant `c-first`; C++'s grammar stays the fallback). A
+ * project with no `.c` file, or any C++ source, keeps the default: C++ first. See `readCpp`.
+ */
+export function cppReadingVariant(relativePath: string, mix: Readonly<Record<string, number>>): string | undefined {
+  if (!/\.h$/i.test(relativePath)) return undefined;
+  if (!mix[".c"]) return undefined;
+  return CPP_SOURCE_EXTENSIONS.some((ext) => mix[ext]) ? undefined : "c-first";
+}
+
 export const cppManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "cpp",
@@ -36,4 +50,5 @@ export const cppManifest: LanguagePluginManifest = {
   bareCallsHideReceivers: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
+  readingVariant: cppReadingVariant,
 };

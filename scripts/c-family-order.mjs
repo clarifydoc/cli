@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LANGUAGES, canonical, listFiles, loadEngine, nameOf, option, positional, readOne } from "./lib/c-family.mjs";
+import { LANGUAGES, canonical, listFiles, loadEngine, nameOf, option, positional, readOne, variantsOf } from "./lib/c-family.mjs";
 
 const argv = process.argv.slice(2);
 const lang = option(argv, "lang");
@@ -20,12 +20,13 @@ if (argv.includes("--child")) {
   const [dir, order, out] = [option(argv, "dir"), option(argv, "order"), option(argv, "out")];
   const engine = await loadEngine(lang);
   const files = listFiles(dir, lang);
+  const variants = variantsOf(engine, files);
   if (order === "reverse") files.reverse();
   const lines = [];
   for (const f of files) {
     let r;
     try {
-      r = readOne(engine, f.group, readFileSync(f.abs, "utf8"));
+      r = readOne(engine, f.group, readFileSync(f.abs, "utf8"), variants.get(f.rel));
     } catch (e) {
       r = { skipped: `threw: ${e?.message ?? e}` };
     }

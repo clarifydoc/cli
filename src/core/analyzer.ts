@@ -623,6 +623,16 @@ class ProgressReporter {
 // ─── Main pipeline ───────────────────────────────────────────────────────
 
 /**
+ * The stamp a cached analysis was made with: the import-rewrite configuration, plus the project-dependent reading the
+ * file got (`readingVariant`) — a project whose file mix flips changes how its headers are read without a byte of
+ * theirs changing, and the cache must notice.
+ */
+function withReading(stamp: string | undefined, reading: string | undefined): string | undefined {
+  if (!reading) return stamp;
+  return stamp ? `${stamp}:${reading}` : `r:${reading}`;
+}
+
+/**
  * Main analysis pipeline:
  * 1. Discover files
  * 2. Detect frameworks
@@ -783,6 +793,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   for (const f of files) {
     fileProjects[f.relativePath] = assignProjectId(f.relativePath, subProjects);
   }
+  // What each sub-project holds, by extension: a language whose files share an extension with another's
+  // (`manifest.readingVariant`) reads them by their project's mix. Counted here, once, so every worker is told.
+  const projectMix = new Map<string, Record<string, number>>();
+  for (const f of files) {
+    const id = fileProjects[f.relativePath] ?? "root";
+    const dot = f.relativePath.lastIndexOf(".");
+    if (dot < 0 || f.relativePath.lastIndexOf("/") > dot) continue;
+    const ext = f.relativePath.slice(dot).toLowerCase();
+    const mix = projectMix.get(id) ?? {};
+    mix[ext] = (mix[ext] ?? 0) + 1;
+    projectMix.set(id, mix);
+  }
+  const readingOf = (file: { relativePath: string; language: Language }, projectId: string): string | undefined =>
+    manifestFor(file.language)?.readingVariant?.(file.relativePath, projectMix.get(projectId) ?? {});
   const realProjectCount = subProjects.filter((p) => p.id !== "root").length;
   progress.detail(
     realProjectCount > 0
@@ -928,8 +952,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         // The import-rewrite configuration the cached analysis was made with.
         const buildMacros = macrosOf(compilationDb.get(file.relativePath));
         const macroStamp = macrosStamp(compilationDb.get(file.relativePath));
+        const reading = readingOf(file, projectId);
         const rewriteStamp = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
-        const resolver = options.incremental && macroStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(macroStamp).digest("hex").slice(0, 12)}` : rewriteStamp;
+        const resolver = options.incremental
+          ? withReading(macroStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(macroStamp).digest("hex").slice(0, 12)}` : rewriteStamp, reading)
+          : undefined;
         const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
 
         // A file its plugin refused last time, with the same bytes and import configuration: refused again, unread.
@@ -961,6 +988,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
           ...(buildMacros ? { buildMacros } : {}),
           ...(options.incremental ? { reportSkips: true as const } : {}),
+          ...(reading ? { reading } : {}),
         });
         if (outcome && "failed" in outcome) {
           failedFiles.push({ path: file.relativePath, reason: outcome.failed });

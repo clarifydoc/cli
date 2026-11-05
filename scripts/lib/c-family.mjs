@@ -65,6 +65,13 @@ function chunkExporting(prefix, name) {
   throw new Error(`no chunk of dist/ exports ${name}: build first (npm run build)`);
 }
 
+/** The export `name` of the built chunk that has it, under whatever name the bundler exports it by. */
+async function importExport(prefix, name) {
+  const file = chunkExporting(prefix, name);
+  const exported = new RegExp(`\\b${name} as (\\w+)`).exec(readFileSync(file, "utf8"))?.[1] ?? name;
+  return (await import(pathToFileURL(file).href))[exported];
+}
+
 /** The built engine's readers: `readC`, `readCpp`, `isGeneratedSource`, and the engine version. */
 export async function loadEngine(lang = null) {
   if (!existsSync(join(DIST, "index.js"))) throw new Error("dist/index.js is missing: build first (npm run build)");
@@ -81,14 +88,39 @@ export async function loadEngine(lang = null) {
   const analyzerFile = chunkExporting("file-analyzer-", "isGeneratedSource");
   const alias = /isGeneratedSource as (\w+)/.exec(readFileSync(analyzerFile, "utf8"))?.[1] ?? "isGeneratedSource";
   const [c, cpp, analyzer, index] = await Promise.all([imp(cFile), imp(cppFile), imp(analyzerFile), imp(join(DIST, "index.js"))]);
-  return { reads: { c: c.readC, cpp: cpp.readCpp, h: cpp.readCpp }, readC: c.readC, readCpp: cpp.readCpp, isGeneratedSource: analyzer[alias], version: index.EXTRACTOR_VERSION };
+  const manifestFor = await importExport("", "manifestFor").catch(() => undefined);
+  const readingVariant = manifestFor?.("cpp")?.readingVariant;
+  return { reads: { c: c.readC, cpp: cpp.readCpp, h: cpp.readCpp }, readC: c.readC, readCpp: cpp.readCpp, isGeneratedSource: analyzer[alias], version: index.EXTRACTOR_VERSION, readingVariant };
 }
 
-/** What the engine does with a file: `skipped` (generated, too large) or its reading. */
-export function readOne(engine, group, source) {
+/**
+ * The reading variant of every file of one directory taken as one sub-project, from the plugin's own hook
+ * (`readingVariant`), as the analyzer decides it: counts by extension in, a variant per path out. `routing: "plain"`
+ * (the default of readCpp, before the hook existed) gives none, so before/after numbers compare like for like.
+ */
+export function variantsOf(engine, files, routing = "project") {
+  const out = new Map();
+  if (routing === "plain" || !engine.readingVariant) return out;
+  const mix = {};
+  for (const f of files) {
+    const dot = f.rel.lastIndexOf(".");
+    const ext = f.rel.slice(dot).toLowerCase();
+    mix[ext] = (mix[ext] ?? 0) + 1;
+  }
+  for (const f of files) {
+    const v = engine.readingVariant(f.rel, mix);
+    if (v) out.set(f.rel, v);
+  }
+  return out;
+}
+
+/** What the engine does with a file: `skipped` (generated, too large) or its reading; `variant` is the project's reading of it (`variantsOf`). */
+export function readOne(engine, group, source, variant) {
   if (source.length > MAX_CHARS) return { skipped: "too-large" };
   if (engine.isGeneratedSource(source)) return { skipped: "generated" };
-  return { parsed: engine.reads[group] ? engine.reads[group](source) : group === "c" ? engine.readC(source) : engine.readCpp(source) };
+  if (group === "c") return { parsed: engine.readC(source) };
+  if (group === "cpp" || group === "h") return { parsed: engine.readCpp(source, undefined, variant) };
+  return { parsed: engine.reads[group](source) };
 }
 
 /** A reading as comparable text: errors, functions with spans, calls with lines. */

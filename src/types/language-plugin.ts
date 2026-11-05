@@ -1319,6 +1319,15 @@ export interface LanguagePluginManifest {
    */
   docComments?: DocCommentSpec;
   /**
+   * How a file of this language is read in its sub-project, from the project's mix of files: `mix` counts the
+   * project's discovered files by lowercase extension (`.c`, `.h`, …), the sub-project's own, nested projects
+   * excluded. An extension several languages share (`.h`) has one owner, so its reading can depend on who else
+   * is in the project. Returns a variant name the owner's `meta.antlr` reader receives as its second argument, or
+   * nothing for the default reading. Pure and cheap: core calls it once per file before any worker starts, and the
+   * variant joins the file's cache stamp, so a project whose mix flips re-reads the files it concerns.
+   */
+  readingVariant?(relativePath: string, mix: Readonly<Record<string, number>>): string | undefined;
+  /**
    * Where a client router renders its pages, as it reads in a UI file's source (`<RouterView`,
    * `<Outlet`, Blazor's `@Body`). A UI file rendering it that no page uses is the app's shell:
    * what its components link to is offered around every page (core/screen-flow.ts).
@@ -1814,7 +1823,7 @@ export interface ParserFrontEnd {
   /** The grammar's name, as the feature names it (`antlr:go`, `tree-sitter:swift`). */
   grammar: string;
   /** Loaded on first use: the parsers are large and most runs never need them. */
-  load(): Promise<(source: string, macros?: BuildMacros) => ParsedStructure>;
+  load(): Promise<(source: string, macros?: BuildMacros, variant?: string) => ParsedStructure>;
   /**
    * The extensions the grammar reads, when the language claims files it does not (Play's `conf/routes` is Scala's):
    * any other file keeps the regex reading without a parse. Absent: every file of the language.

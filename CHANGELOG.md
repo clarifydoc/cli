@@ -43,6 +43,10 @@ recorded in the git history only.
   `except:` and list-form `defdelegate`; Rust inline modules; Lua one-line bodies; Python import-to-distribution
   names in the package inventory.
 
+- **A header is read by its project's language:** in a sub-project with C sources and no C++ ones, a `.h` is read by
+  C's grammar first and C++'s only when C refuses it (`readingVariant` on the language manifest, decided from the
+  project's file mix before any worker starts; `FileAnalysis.frontEnd.variant`). An incremental run re-reads a
+  header when its project's mix flips.
 - **C and C++ function-like macros are call targets** (`FileAnalysis.macros`): a call of `for_each_club(c, l) { … }`,
   `MAX(a, b)` or any other function-like `#define` links to the `#define` in the file itself or in a header it
   includes (up to four levels, nearest first), when no function of that name is in scope. Two headers defining it at

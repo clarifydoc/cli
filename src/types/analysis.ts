@@ -312,6 +312,8 @@ export interface FileAnalysis {
     grammar: string;
     fallback?: "syntax-errors" | "parser-error" | "generated" | "too-large";
     syntaxErrors?: number;
+    /** The project-dependent reading the file got (`LanguagePluginManifest.readingVariant`); absent: the default. */
+    variant?: string;
   };
 
   /**
