@@ -81,7 +81,9 @@ describe("Dart class fields", () => {
 
   it("does not read statements or getters as fields", () => {
     const [cls] = classes(["class A {", "  Router get router {", "    return r;", "  }", "  return x;", "  await y;", "}"].join("\n"));
-    expect(cls.properties).toEqual([]);
+    // `Router get router` is read like a field (typed receivers), but flagged: never serialized.
+    expect(cls.properties.map((p) => [p.name, p.type, p.accessor])).toEqual([["router", "Router", true]]);
+    expect(h.isSerialized(cls.properties[0]!)).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   extractSvelteInteractiveElements,
 } from "../../../parsers/svelte-sfc.js";
 import { routeFromSegments } from "./routes/file-routes.js";
+import { withMarkupExpressions } from "./markup-expressions.js";
 import { blankExceptScripts } from "../../../parsers/vue-sfc.js";
 
 /**
@@ -26,7 +27,7 @@ export function sveltePreprocess(
   return {
     // Full source with non-script blanked out, so extracted line/column numbers
     // are absolute to the .svelte file (not relative to a sliced-out script).
-    sourceText: withAwaitedExpressions(rawSource, blankExceptScripts(rawSource)),
+    sourceText: withMarkupExpressions(rawSource, withAwaitedExpressions(rawSource, blankExceptScripts(rawSource)), "svelte"),
     language: sfc.scriptLang,
     embedded: true,
     postExtract(analysis) {

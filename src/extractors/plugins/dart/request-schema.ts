@@ -93,7 +93,7 @@ export const dartRequestSchema: RequestSchemaHooks = {
   },
 
   isSerialized(prop: PropertyInfo) {
-    if (prop.isStatic) return false;
+    if (prop.isStatic || prop.accessor) return false;
     if (prop.name.startsWith("_")) return false;
     if (decoratorArg(prop.decorators, "JsonKey", "ignore") === "true") return false;
     if (decoratorArg(prop.decorators, "JsonKey", "includeFromJson") === "false") return false;

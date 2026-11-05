@@ -2649,6 +2649,12 @@ function extractNavigationTargets(raw: string, fromBase = false): string[] {
     /\bto\s*:\s*['"`](\/[^'"`\s]*)['"`]/g,
     // Programmatic page navigation in vanilla JS: `location.href = "x.html"`.
     /location(?:\.href)?\s*=\s*['"`]([^'"`]+)['"`]/g,
+    // Next's `redirect('/clubs')` / `permanentRedirect(…)` (a bare call: `res.redirect` answers a request, it is no page leaving),
+    // `location.assign/replace('/x')`, `history.pushState(state, '', '/x')` (replaceState only rewrites the current page's URL: no navigation), and Ionic's `navCtrl.navigateForward/Back/Root('/x')` (a path array too).
+    /(?<![.\w$])(?:permanentRedirect|redirect)\(\s*['"`]([^'"`\s]+)['"`]/g,
+    /\blocation\.(?:assign|replace)\(\s*['"`]([^'"`\s]+)['"`]/g,
+    /\bhistory\.pushState\(\s*(?:\{[^}]*\}|[^,()]*),\s*(?:['"`][^'"`]*['"`]|null|undefined),\s*['"`]([^'"`\s]+)['"`]/g,
+    /\.navigate(?:Forward|Back|Root)\(\s*\[?\s*['"`]([^'"`\s]+)['"`]/g,
     // A page opened in another tab: `window.open('/cases/' + id, '_blank')` (a download's `/api/…` names no screen).
     /\bwindow\.open\(\s*['"`](\/(?!\/)[^'"`\s?#]*)/g,
     // An anchor to an app path — `<a href="/login">`, `:href="`/cases/${id}`"`. One naming no screen

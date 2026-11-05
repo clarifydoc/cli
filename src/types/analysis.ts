@@ -1386,6 +1386,11 @@ export interface PropertyInfo {
    */
   commandHandler?: string;
   /**
+   * A getter (`Player get captain => …`), not a stored field: a read of it is typed by the declared type, but it
+   * is no part of what the class serializes.
+   */
+  accessor?: true;
+  /**
    * A computed member's value as written, when its type is not stated (a
    * Python `@property` returning `self.repos.foods`): the project pass types
    * the member as that chain resolves.

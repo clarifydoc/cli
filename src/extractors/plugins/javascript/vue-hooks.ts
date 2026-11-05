@@ -3,6 +3,7 @@ import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractVueFunctionProps, extractVueInteractiveElements } from "./interactive-elements.js";
 import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
+import { withMarkupExpressions } from "./markup-expressions.js";
 import { addTemplateRefs } from "./template-refs.js";
 
 /**
@@ -25,7 +26,7 @@ export function vuePreprocess(
   return {
     // Full source with non-script blanked out, so extracted line/column numbers
     // are absolute to the .vue file (not relative to a sliced-out script).
-    sourceText: blankExceptScripts(rawSource),
+    sourceText: withMarkupExpressions(rawSource, blankExceptScripts(rawSource), "vue"),
     language: sfc.scriptLang,
     embedded: true,
     postExtract(analysis, raw) {
