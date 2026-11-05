@@ -13,7 +13,8 @@ export { extractStoreShapes } from "./vuex-factories.js";
  * the API call and the route and table behind it.
  *
  * Facts, per file:
- *   - `CallInfo.key` on a dispatch with a literal name (call-hooks.ts);
+ *   - `CallInfo.key` on a dispatch with a literal name, `/`-prefixed with
+ *     `{ root: true }` (`dispatchKeyOfArgs`);
  *   - `FileAnalysis.storeModules` for `modules: { contacts, articles: helpCenterArticles }`
  *     in `createStore({…})` / `new Vuex.Store({…})` or in a module's own definition;
  *   - `FileAnalysis.storeShapes` for a module a project factory builds and for
@@ -24,7 +25,8 @@ export { extractStoreShapes } from "./vuex-factories.js";
  * `actions.act` in the module file or a file it imports (`import { actions } from
  * './actions'`), else named by the `actions` object the module's factory returns.
  * A key without a namespace names a root action or one of a module that is not
- * namespaced. Where several root stores answer differently, the
+ * namespaced. Inside a module, an action context's `dispatch('act')` names the
+ * module's own action first. Where several root stores answer differently, the
  * one the caller's app mounts decides; it joins only when exactly one action is left.
  */
 
@@ -68,6 +70,28 @@ function keyText(pair: Node): string | null {
   return key ? key.text.replace(/^['"]|['"]$/g, "") : null;
 }
 
+/** A dispatch made with `{ root: true }`: the name is global even inside a module. */
+export const ROOT_KEY_PREFIX = "/";
+
+/** A bare `dispatch` (or `context.dispatch`) is the action context's: local to its module. */
+const CONTEXT_DISPATCH = /^(?:dispatch|context\.dispatch)$/;
+
+/**
+ * The key of `dispatch(name, payload, options)`: the action name, a literal;
+ * prefixed `/` with `{ root: true }`. Null when the name is not a literal.
+ */
+export function dispatchKeyOfArgs(args: readonly Node[]): string | null {
+  const first = args[0];
+  const name =
+    first?.type === "string" ? first.text.slice(1, -1)
+    : first?.type === "template_string" && !first.namedChildren.some((c) => c?.type === "template_substitution") ? first.text.slice(1, -1)
+    : "";
+  if (!name) return null;
+  const options = args[2];
+  const root = options?.type === "object" && options.namedChildren.some((p) => p?.type === "pair" && keyText(p) === "root" && p.childForFieldName("value")?.type === "true");
+  return root ? ROOT_KEY_PREFIX + name : name;
+}
+
 type Target = { file: string; symbol: string; line: number; viaType?: string; viaTypeFile?: string };
 /** An action: the function it is (unless written in place in a call), and what else it reaches. */
 type Hit = { file: FileAnalysis; fn?: FunctionInfo; also?: Target[] };
@@ -106,8 +130,9 @@ export class VuexDispatchResolver implements DispatchResolver {
     /** The files a module's actions may be written in: its own, and those it imports. */
     const filesOf = (mod: FileAnalysis): FileAnalysis[] => [mod, ...mod.imports.flatMap((i) => imported(mod, i) ?? [])];
 
-    // Each root's modules by namespace (`a/b`).
+    // Each root's modules by namespace (`a/b`), and for each file of a module, the modules it belongs to.
     const trees = new Map<FileAnalysis, Map<string, Module>>();
+    const ownerOf = new Map<string, Array<{ root: FileAnalysis; ns: string }>>();
     for (const root of roots) {
       const tree = new Map<string, Module>();
       const walk = (file: FileAnalysis, prefix: string, depth: number) => {
@@ -116,6 +141,7 @@ export class VuexDispatchResolver implements DispatchResolver {
           const ns = prefix ? `${prefix}/${m.name}` : m.name;
           if (!mod || tree.has(ns)) continue;
           tree.set(ns, mod);
+          for (const f of filesOf(mod.file)) (ownerOf.get(f.filePath) ?? ownerOf.set(f.filePath, []).get(f.filePath)!).push({ root, ns });
           if (depth < 6) walk(mod.file, ns, depth + 1);
         }
       };
@@ -249,7 +275,12 @@ export class VuexDispatchResolver implements DispatchResolver {
     };
 
     const allMemo = new Map<string, Hit[]>();
-    const pick = (key: string, caller: string): Hit | null => {
+    const pick = (key: string, caller: string, local: boolean): Hit | null => {
+      // Inside a module, an action context's dispatch names the module's own action first.
+      if (local) {
+        const own = distinct((ownerOf.get(caller) ?? []).flatMap(({ root, ns }) => hitsFor(`${ns}/${key}`, [root])));
+        if (own.length === 1) return own[0]!;
+      }
       let all = allMemo.get(key);
       if (!all) allMemo.set(key, (all = hitsFor(key, roots)));
       if (all.length <= 1) return all[0] ?? null;
@@ -267,8 +298,10 @@ export class VuexDispatchResolver implements DispatchResolver {
         for (const call of fn.calls) {
           // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
           if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
-          const key = call.key;
-          const hit = pick(key, a.filePath);
+          const written = call.key;
+          const root = written.startsWith(ROOT_KEY_PREFIX);
+          const key = root ? written.slice(ROOT_KEY_PREFIX.length) : written;
+          const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name));
           if (!hit) continue;
           const link = (t: Target): SymbolLink => ({
             sourceFile: a.filePath,

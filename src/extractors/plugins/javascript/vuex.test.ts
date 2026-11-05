@@ -282,6 +282,15 @@ describe("vuex-action dispatch with several root stores", () => {
       "refresh -dispatch:contacts/update-> src/widget/store/modules/contacts.js#actions.update",
     ]);
   });
+
+  it("joins an action context's dispatch inside a module to the module's own action first", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll(TWO_APPS));
+    expect(show(links, "src/dashboard/store/modules/conversations/actions.js")).toEqual([
+      "actions.send -dispatch:sendWithData-> src/dashboard/store/modules/conversations/actions.js#actions.sendWithData",
+      // `{ root: true }`: the global name, in the store of the module's app.
+      "actions.refreshContact -dispatch:contacts/update-> src/dashboard/store/modules/contacts.js#actions.update",
+    ]);
+  });
 });
 
 describe("vuex-action dispatch from the root store's own imports", () => {

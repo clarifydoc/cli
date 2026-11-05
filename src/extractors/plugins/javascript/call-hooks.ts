@@ -6,6 +6,7 @@ import { boundThroughWrapper } from "./wrapped-functions.js";
 import { dispatchMapCallee, dispatchMapEntries } from "./dispatch-maps.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
+import { dispatchKeyOfArgs } from "./vuex.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -247,11 +248,7 @@ function dispatchKeyOf(node: Node): string | null {
   const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
   if (leaf === "queue" || leaf === "queueAll" || leaf === "emit") return jobOrEventKey(node, leaf);
   if (leaf !== "dispatch") return null;
-  const first = node.childForFieldName("arguments")?.namedChildren[0];
-  if (!first) return null;
-  if (first.type === "string") return first.text.slice(1, -1) || null;
-  if (first.type === "template_string" && !first.namedChildren.some((c) => c.type === "template_substitution")) return first.text.slice(1, -1) || null;
-  return null;
+  return dispatchKeyOfArgs((node.childForFieldName("arguments")?.namedChildren ?? []).filter((a): a is Node => !!a && a.type !== "comment"));
 }
 
 /**
