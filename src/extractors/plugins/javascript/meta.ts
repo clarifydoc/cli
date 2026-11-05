@@ -62,7 +62,7 @@ import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
-import { JsComponentEmitResolver, JsPropCallbackResolver, JsProvideInjectResolver, angularSelectorsOf } from "./dispatch.js";
+import { JsComponentEmitResolver, JsPropCallbackResolver, JsProvideInjectResolver, JsSlotScopeResolver, angularSelectorsOf } from "./dispatch.js";
 import { JsTemplateRefResolver } from "./template-refs.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
@@ -290,7 +290,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsSlotScopeResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestPrefixResolver, nestInheritedGuards, screenTableResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

@@ -1,5 +1,6 @@
+import { templateScopes, type TemplateScope } from "./template-scopes.js";
 import type { Node, Tree } from "web-tree-sitter";
-import type { FunctionPropBinding, InteractiveElementInfo, Language } from "../../../types/analysis.js";
+import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
 
 /** HTML tags that map to interactive element types */
 export const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
@@ -187,6 +188,7 @@ export function extractVueInteractiveElements(
 ): InteractiveElementInfo[] {
   const elements: InteractiveElementInfo[] = [];
   const templateStart = fullSource.indexOf(template);
+  const scopes = templateScopes(template);
 
   // Match tags with @event or v-on: bindings. A quoted attribute value may
   // hold a `>` (`v-if="items.length > 0"`), which does not end the tag.
@@ -216,6 +218,7 @@ export function extractVueInteractiveElements(
         handler,
         line,
         ...(element === "custom" ? { component: tagName } : {}),
+        ...scopeOf(handler, scopes.get(match.index), fullSource),
       });
     }
 
@@ -230,6 +233,7 @@ export function extractVueInteractiveElements(
         handler: vonMatch[2] || vonMatch[3] || null,
         line,
         ...(vonElement === "custom" ? { component: tagName } : {}),
+        ...scopeOf(vonMatch[2] || vonMatch[3] || null, scopes.get(match.index), fullSource),
       });
     }
 
@@ -264,13 +268,57 @@ export function extractVueInteractiveElements(
   return elements;
 }
 
+/** The names `handler` reads that the scopes in force bind (`InteractiveElementInfo.scope`). */
+function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fullSource: string): Pick<InteractiveElementInfo, "scope"> {
+  if (!handler || !scopes) return {};
+  const found: NonNullable<InteractiveElementInfo["scope"]> = [];
+  // The innermost scope binding a name wins.
+  for (const scope of [...scopes].reverse()) {
+    for (const name of scope.names) {
+      if (found.some((f) => f.name === name) || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(handler)) continue;
+      if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.props![name]! } });
+      else {
+        const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
+        if (type) found.push({ name, type });
+        else found.push({ name });
+      }
+    }
+  }
+  return found.length > 0 ? { scope: found } : {};
+}
+
+/**
+ * The class a script states for the elements of a collection a template loops over (`clubs` →
+ * `Club` from `const clubs = ref<Club[]>([])`, `clubs: Club[]` in a props type, `const clubs: Array<Club>`,
+ * `PropType<Club[]>`); one answer, or none.
+ */
+function elementTypeOf(source: string, script: string): string | undefined {
+  const name = /^(?:(?:props|this)\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim())?.[1];
+  if (!name || !/^\w+$/.test(name)) return undefined;
+  const candidates: string[] = [];
+  const grab = (re: RegExp) => {
+    for (const m of script.matchAll(re)) candidates.push(m[1]!);
+  };
+  grab(new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*:\\s*([^=;\\n]+)`, "g"));
+  grab(new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*[\\w$]+\\s*<([^()\\n]+)>\\s*\\(`, "g"));
+  grab(new RegExp(`(?<![\\w$.])${name}\\??\\s*:\\s*([^;,\\n}]+)`, "g"));
+  grab(new RegExp(`(?<![\\w$.])${name}\\s*:\\s*\\{[^}]*PropType<([^>]+(?:<[^>]*>)?)>`, "g"));
+  const types = new Set<string>();
+  for (const c of candidates) {
+    const t = c.trim().replace(/^(?:Ref|ShallowRef|MaybeRef|ComputedRef)<(.+)>$/, "$1").replace(/^readonly\s+/, "").trim();
+    const m = /^([A-Z][\w$]*)\[\]$/.exec(t) ?? /^Array<([A-Z][\w$]*)>$/.exec(t);
+    if (m) types.add(m[1]!);
+  }
+  return types.size === 1 ? [...types][0] : undefined;
+}
+
 /**
  * Functions a Vue template hands a child component by name as a prop (`:on-confirm="confirmDeletion"`,
  * `:update-selected="setSelected"`): a bare name `handsOn` accepts — one of the file's functions, or
  * an `on…` callback it passes on. A data binding (`:club-id="clubId"`) is never one.
  */
 export function extractVueFunctionProps(template: string, fullSource: string, handsOn: (name: string) => boolean): FunctionPropBinding[] {
-  if (!/(?:^|\s)(?::|v-bind:)[\w-]+=/.test(template)) return [];
+  if (!/(?:^|\s)(?::|v-bind:)[\w-]+=|(?:^|\s)v-bind=/.test(template)) return [];
   const out: FunctionPropBinding[] = [];
   const templateStart = fullSource.indexOf(template);
   const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g;
@@ -283,6 +331,36 @@ export function extractVueFunctionProps(template: string, fullSource: string, ha
       if (VUE_RESERVED_ATTRS.has(bind[1]!) || !handsOn(handler)) continue;
       const line = fullSource.slice(0, templateStart + match.index).split("\n").length;
       out.push({ component: tagName, prop: bind[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase()), handler, line });
+    }
+    // `v-bind="{ onSave: saveClub, onClose }"`: an object of props; the `on…` entries naming a function.
+    const objectRegex = /(?:^|\s)v-bind\s*=\s*(?:"\s*\{([^"]*)\}\s*"|'\s*\{([^']*)\}\s*')/g;
+    for (let obj = objectRegex.exec(match[2] ?? ""); obj; obj = objectRegex.exec(match[2] ?? "")) {
+      const line = fullSource.slice(0, templateStart + match.index).split("\n").length;
+      for (const entry of (obj[1] ?? obj[2] ?? "").split(",")) {
+        const e = /^\s*(on[A-Z]\w*)\s*(?::\s*([A-Za-z_$][\w$]*)\s*)?$/.exec(entry);
+        const handler = e?.[2] ?? e?.[1];
+        if (e && handler && handsOn(handler)) out.push({ component: tagName, prop: e[1]!, handler, line });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `<slot name="row" :save="saveAll" />`: the functions of the file the template offers its slot's
+ * content by name. A bare name `handsOn` accepts only.
+ */
+export function extractSlotFunctions(template: string, fullSource: string, handsOn: (name: string) => boolean): SlotFunction[] {
+  if (!/<slot\b/.test(template)) return [];
+  const out: SlotFunction[] = [];
+  const templateStart = fullSource.indexOf(template);
+  for (const m of template.matchAll(/<slot\b((?:[^>"']|"[^"]*"|'[^']*')*?)\/?>/g)) {
+    const attrs = m[1] ?? "";
+    const slot = /(?:^|\s)name\s*=\s*"([^"]+)"/.exec(attrs)?.[1] ?? "default";
+    const line = fullSource.slice(0, templateStart + m.index!).split("\n").length;
+    for (const b of attrs.matchAll(/(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)\s*=\s*"\s*([A-Za-z_$][\w$]*)\s*"/g)) {
+      if (b[1] === "name" || !handsOn(b[2]!)) continue;
+      out.push({ slot, prop: b[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase()), handler: b[2]!, line });
     }
   }
   return out;

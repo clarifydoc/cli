@@ -341,8 +341,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
       if (els.length === 0 && !parent.functionProps?.length) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      const bind = (component: string, prop: string, handler: string, bound?: string) => {
-        const src = subByKey.get(tagKey(component));
+      const bind = (component: string, prop: string, handler: string, bound?: string, importSource?: string) => {
+        const src = importSource ?? subByKey.get(tagKey(component));
         const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
         if (!childFile || !byPath.has(childFile)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
@@ -358,7 +358,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         else bind(el.component!, el.event, el.handler!);
       }
       // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
-      for (const fp of parent.functionProps ?? []) bind(fp.component, fp.prop, fp.handler);
+      for (const fp of parent.functionProps ?? []) bind(fp.component, fp.prop, fp.handler, undefined, fp.importSource);
     }
     if (bindings.size === 0) return [];
 
@@ -416,6 +416,61 @@ export class JsPropCallbackResolver implements DispatchResolver {
               confidence: "INFERRED",
             });
           }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/**
+ * A scoped slot's function: the component offers `<slot :save="saveAll" />`, its parent's
+ * `<template #default="{ save }"> <button @click="save(club)">` calls it. The parent's slot
+ * template sits inside the child's tag, so the tag names the file; the slot and prop name the
+ * function (`FileAnalysis.slotFunctions`, the parent's `InteractiveElementInfo.scope`). One link
+ * per element, from the parent's `<setup>` (where the template's calls live), by the name as
+ * the markup spells it.
+ */
+export class JsSlotScopeResolver implements DispatchResolver {
+  readonly id = "slot-scope";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 34;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    if (!analyses.some((a) => a.slotFunctions?.length)) return [];
+    const filePathMap = buildFilePathMap(analyses);
+    const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
+    const links: SymbolLink[] = [];
+    for (const parent of analyses) {
+      const els = (parent.interactiveElements ?? []).filter((el) => el.scope?.some((s) => s.slot));
+      if (els.length === 0) continue;
+      const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
+      for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
+      for (const el of els) {
+        for (const s of el.scope!) {
+          if (!s.slot) continue;
+          const src = subByKey.get(tagKey(s.slot.component));
+          const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+          const child = childFile ? byPath.get(childFile) : undefined;
+          if (!child) continue;
+          const offered = (child.slotFunctions ?? []).filter((f) => f.slot === s.slot!.name && f.prop === s.slot!.prop);
+          // Two outlets of one slot offering the prop different functions: no guess.
+          if (new Set(offered.map((f) => f.handler)).size !== 1) continue;
+          const name = offered[0]!.handler;
+          const span = spansOf(child).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+          if (!span) continue;
+          links.push({
+            sourceFile: parent.filePath,
+            sourceSymbol: "<setup>",
+            sourceLine: el.line,
+            callName: s.name,
+            targetFile: child.filePath,
+            targetSymbol: span.symbol,
+            targetLine: span.line,
+            confidence: "INFERRED",
+          });
         }
       }
     }
