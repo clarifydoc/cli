@@ -14,6 +14,26 @@ recorded in the git history only.
 
 ### Added
 
+- **Django REST Framework runs what it dispatches.** A ViewSet route reaches the hooks DRF's own action calls
+  (`get_queryset`, `get_object`, `perform_create`, `get_serializer`, …) on the project's nearest override;
+  `serializer.is_valid()` reaches the serializer's `validate_<field>` (fields it declares or `Meta.fields`
+  lists, one-value signature), `validate` and its fields' `validators=[…]`; `serializer.save()` reaches
+  `create`, or `update` when it was built with an instance. A test URL held in a class constant
+  (`self.client.get(self.ENDPOINT)`) is a request at that path.
+- **Code test setup runs counts as tested.** A manifest's `testSetupRuns` names the files a test run executes
+  while setting up (`ProjectAnalysis.testSetupRuns`); for Django under pytest-django or `manage.py test`, every
+  `AppConfig.ready()` and, unless migrations are switched off, every app migration. `clarifydoc_file` says so.
+- **Go tests' in-process requests are API calls.** `httptest.NewRequest(http.MethodGet, "/api/v1/clubs/"+id, nil)`
+  served through `ServeHTTP` — directly or through a helper taking the method and path — joins its route, so a
+  test reaches the handler; a request only built for a context is not one.
+- **A route handler named through the registering function's receiver** (`c.Status` inside
+  `func (c *Migrator) RegisterRoutes`) resolves as a call written there would.
+- **Ruby concern class methods.** `class_methods do … end` is the concern's `ClassMethods` module, and a class
+  including the concern gets them as its own (`Conversation.sort_on_created_at`); `ClassInfo.includerExtends`.
+- **Ruby typed calls in every function.** Top-level `def`s and spec blocks get the typed-local and job-enqueue
+  passes class methods get (`perform_bulk`, `.set(wait:)` included); a helper `def` in a spec group takes the
+  group's types.
+
 - **A test reaches what it starts by name or by request.** Django's `call_command("close_season")` links to that
   command's `Command.handle` (one `management/commands/<name>.py` answering, the caller's sub-project first); an
   RSpec `described_class` is the class the `describe` names, and `let`/`subject` bound to `described_class.new(…)`
@@ -253,6 +273,14 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **Doc-comment syntax lives on the language manifest** (`LanguagePluginManifest.docComments`), so a tool reading
+  it on demand never needs the plugin loaded.
+- **Fixed: `self.x()` and `super().x()` searched every class of the file**, linking a method to a sibling class's
+  namesake or to itself.
+- **Fixed: routes sharing one line and path** (a library CRUD set on its class line) all took requests on the
+  first row; the row is now chosen by method too.
+- **Fixed: a call on a class name no longer answers with a member of a class nested in it.**
 
 - **C/C++ complexity counts the largest `#if` arm.** Only one arm of `#if … #else` is compiled, so a block counts
   as the arm with the most decisions (was every arm), and `#if 0` none.
