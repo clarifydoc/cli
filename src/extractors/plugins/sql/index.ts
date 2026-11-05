@@ -205,6 +205,27 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
       continue;
     }
 
+    // Oracle PL/SQL `CREATE [OR REPLACE] PACKAGE [BODY] name AS|IS`: a class; its body's subprograms are the methods,
+    // so `fee_pkg.calc_fee(…)` links as a call into the package and a bare call inside it as its own member.
+    const pkgMatch = new RegExp(String.raw`^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?PACKAGE\s+(BODY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${QNAME})`, "i").exec(line);
+    if (pkgMatch) {
+      const name = unquoteName(pkgMatch[2]!).split(".").pop()!;
+      const endLine = packageEnd(lines, i, name);
+      const isBody = pkgMatch[1] !== undefined;
+      classes.push({
+        name,
+        extends: null,
+        implements: [],
+        decorators: [isBody ? "package-body" : "package"],
+        methods: isBody ? packageSubprograms(lines, i + 1, endLine) : [],
+        properties: [],
+        isExported: true,
+        line: i + 1,
+        endLine,
+      });
+      continue;
+    }
+
     // CREATE VIEW
     const viewMatch = line.match(
       /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
@@ -305,6 +326,79 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
   }
 
   return classes;
+}
+
+/**
+ * The line a package (spec or body) ends on: its `END name;`, else the `/` that closes the block in SQL*Plus, else
+ * the line before the next `CREATE`.
+ */
+function packageEnd(lines: string[], start: number, name: string): number {
+  const end = new RegExp(String.raw`^\s*END\s+${escapeRegex(name)}\s*;`, "i");
+  for (let i = start + 1; i < lines.length; i++) {
+    const code = codeOf(lines[i]!);
+    if (end.test(code)) return i + 1;
+    if (/^\s*\/\s*$/.test(code) || /^\s*CREATE\b/i.test(code)) return i;
+  }
+  return lines.length;
+}
+
+/**
+ * The `FUNCTION` / `PROCEDURE` subprograms a package body defines (a header ending in `IS` or `AS`; a forward
+ * declaration ending in `;` defines nothing). A subprogram nested in another's declarations is its part.
+ */
+function packageSubprograms(lines: string[], from: number, to: number): FunctionInfo[] {
+  const out: FunctionInfo[] = [];
+  for (let i = from; i < to; i++) {
+    const head = /^\s*(FUNCTION|PROCEDURE)\s+("?[A-Za-z_][\w$#]*"?)/i.exec(codeOf(lines[i]!));
+    if (!head) continue;
+    // The header runs to its `IS` / `AS` outside the parameter list, or to a `;` (a declaration only).
+    let text = "";
+    let depth = 0;
+    let closed: "body" | "decl" | null = null;
+    let last = i;
+    for (let k = i; k < Math.min(to, i + 40) && !closed; k++) {
+      const code = codeOf(lines[k]!);
+      last = k;
+      for (let c = 0; c < code.length && !closed; c++) {
+        const ch = code[c]!;
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        else if (depth === 0 && ch === ";") closed = "decl";
+        else if (depth === 0 && /[A-Za-z]/.test(ch) && !/[\w$#]/.test(code[c - 1] ?? " ") && /^(?:IS|AS)\b/i.test(code.slice(c, c + 3))) closed = "body";
+        if (!closed) text += ch;
+      }
+      text += " ";
+    }
+    if (closed !== "body") continue;
+    const name = head[2]!.replace(/"/g, "");
+    const open = text.indexOf("(");
+    const params: ParamInfo[] = [];
+    let after = text;
+    if (open >= 0 && !/^\s*(?:FUNCTION|PROCEDURE)\s+\S+\s+(?:RETURN\b)/i.test(text)) {
+      const inner = sliceBalanced(text, open);
+      for (const part of splitColumns(inner)) {
+        const prm = parseSqlParam(part);
+        if (prm) params.push(prm);
+      }
+      after = text.slice(open + inner.length + 2);
+    }
+    const ret = /\bRETURN\s+([\w.%$#]+)/i.exec(after)?.[1] ?? null;
+    const endLine = findRoutineEnd(lines, last);
+    const calls = extractCallsFromBody(lines, i + 1, endLine, ["--", "#"]).filter((c) => isRoutineCall(c, lines));
+    out.push({
+      name,
+      params,
+      returnType: ret ? ret.toUpperCase() : null,
+      isAsync: false,
+      isExported: true,
+      decorators: [],
+      calls,
+      line: i + 1,
+      endLine,
+    });
+    i = Math.max(i, endLine - 1);
+  }
+  return out;
 }
 
 /** Slice balanced text starting at `start` (which must be a `(`). Returns inner text. */
@@ -618,7 +712,7 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
 export const sqlSpec: RegexLangSpec = {
   language: "sql",
   // `.drift`: Drift (Dart) query files — tables and named queries (`mergedBucket:`) in plain SQL.
-  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".drift"],
+  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".pkb", ".pks", ".drift"],
   blockStyle: "brace", // overridden in custom extractors via findRoutineEnd/findParenEnd
   lineCommentPrefixes: ["--", "#"],
 

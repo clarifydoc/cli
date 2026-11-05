@@ -12,6 +12,6 @@ export const sqlManifest: LanguagePluginManifest = {
   docComments: SQL_DOCS,
   language: "sql",
   parsing: "regex",
-  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".drift"],
+  extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".pkb", ".pks", ".drift"],
   frameworkRules: sqlFrameworkRules,
 };
