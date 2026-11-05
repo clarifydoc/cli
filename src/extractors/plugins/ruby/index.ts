@@ -6,7 +6,7 @@ import { addConcernClassMethods } from "./concerns.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
-import type { CallInfo, RouteInfo, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
@@ -125,6 +125,32 @@ function railsCamelize(token: string): string {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join("");
+}
+
+/**
+ * The controllers a router hands to a gem's own routing DSL by name —
+ * `devise_for :users, controllers: { sessions: 'staff/sessions' }`,
+ * `mount_devise_token_auth_for … controllers: {…}`, Doorkeeper's
+ * `controllers applications: 'oauth/applications'` — as Rails class names
+ * (`Staff::SessionsController`). The gem draws their routes, so an action the
+ * router never names may still be served: the route anchor keeps its guess.
+ */
+function extractGemRoutedControllers(lines: readonly string[], facts?: RouteFact[]): void {
+  if (!facts || !lines.some((l) => /\.routes\.draw\b/.test(l))) return;
+  const code = rubyCodeLinesOf(lines);
+  for (let i = 0; i < code.length; i++) {
+    const at = /\bcontrollers\b(?::|\s+(?=:?\w+:|:\w+\s*=>))/.exec(code[i] ?? "");
+    if (!at) continue;
+    // The hash may span lines: read on to its closing brace, or to the end of a bare argument list.
+    let text = code[i]!.slice(at.index);
+    for (let k = i + 1; k < code.length && k < i + 20; k++) {
+      const braces = (text.match(/\{/g)?.length ?? 0) - (text.match(/\}/g)?.length ?? 0);
+      if (braces <= 0 && !/,\s*$/.test(text)) break;
+      text += " " + code[k]!.trim();
+    }
+    const names = [...text.matchAll(/(?:\b\w+:|:\w+\s*=>)\s*['"]([\w/]+)['"]/g)].map((m) => railsControllerClass(m[1]!));
+    if (names.length > 0) facts.push({ kind: "rails-gem-controllers", line: i + 1, data: names });
+  }
 }
 
 /**
@@ -1068,6 +1094,7 @@ export const rubySpec: RegexLangSpec = {
     // Grape's nested block DSL (see grape.ts); a Rails router's `mount X => '/'` places a Grape root.
     if (isGrapeFile(lines)) routes.push(...extractGrapeRoutes(lines, classes, (start, end) => extractCallsFromBody(lines, start, end, ["#"], rubySpec.callPatterns), routeFacts));
     extractRackMounts(lines, routeFacts);
+    extractGemRoutedControllers(lines, routeFacts);
 
     // Sinatra's block DSL — gated on the gem being required / subclassed so a
     // `get '/x' do` in a request spec or a Rails router never counts.
@@ -1161,6 +1188,9 @@ export const rubySpec: RegexLangSpec = {
       const match = leaf.match(/^(\w+?)Controller$/);
       if (!match) continue;
       if (leaf === "ApplicationController" || leaf === "ActionController") continue;
+      // A MODULE named like a controller (`module Premium::Api::ClubsController`, prepended
+      // into the real controller at boot) is no controller: Rails routes classes only.
+      if (/^\s*module\b/.test(lines[cls.line - 1] ?? "")) continue;
 
       const modules = enclosingModules(cls, classes);
       const className = [...modules, leaf].join("::");

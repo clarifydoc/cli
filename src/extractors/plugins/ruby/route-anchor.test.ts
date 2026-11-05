@@ -35,7 +35,7 @@ end`;
       file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
       file("app/controllers/api/labels_controller.rb", [cls("Api::LabelsController", "Api::BaseController", [["index", 5], ["show", 9], ["export", 12]])], [
         // The plugin's guesses from action names: `show` is declared by the router, `export` is not
-        // (kept: the chain ends at a base outside the project, which may route it).
+        // (dropped: the router names this controller and hands it to no gem's routing DSL).
         { path: "/api/labels/:id", httpMethod: "GET", kind: "api", handler: "Api::LabelsController#show", calls: [], middleware: ["before_action :authenticate_user!"], line: 9 },
         { path: "/api/labels/export", httpMethod: "GET", kind: "api", handler: "Api::LabelsController#export", calls: [], middleware: [], line: 12 },
       ]),
@@ -52,7 +52,6 @@ end`;
       [
         "GET /api/labels @ app/controllers/api/labels_controller.rb:5",
         "GET /api/labels/:id @ app/controllers/api/labels_controller.rb:9",
-        "GET /api/labels/export @ app/controllers/api/labels_controller.rb:12",
         "GET /api/teams @ app/controllers/api/base_controller.rb:3",
         // An included module's method comes before the superclass's.
         "GET /api/tags @ app/controllers/concerns/label_concern.rb:7",
@@ -164,14 +163,16 @@ end`;
 });
 
 describe("rails-route-anchor — guesses for actions the router never names", () => {
-  it("drops a routed controller's undeclared public helper, but keeps guesses on a gem-based controller", () => {
+  it("drops a routed controller's undeclared public helper, but keeps guesses on a controller a gem's DSL serves", () => {
     const router = `Rails.application.routes.draw do
   resources :clubs, only: [:index]
+  devise_for :managers, controllers: { sessions: 'staff/sessions' }
   get 'staff/logout', to: 'staff/sessions#destroy'
 end`;
     const guess = (handler: string, path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler, calls: [], middleware: [], line });
+    const facts: NonNullable<FileAnalysis["routeFacts"]> = [];
     const out = [
-      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb", [], facts)),
       file("app/controllers/application_controller.rb", [cls("ApplicationController", "ActionController::Base", [])]),
       file("app/controllers/clubs_controller.rb", [cls("ClubsController", "ApplicationController", [["index", 2], ["club_params", 6]])], [
         guess("ClubsController#index", "/clubs", 2),
@@ -182,11 +183,50 @@ end`;
         guess("Staff::SessionsController#new", "/staff/sessions/new", 2),
       ] as FileAnalysis["routes"]),
     ];
+    out[0]!.routeFacts = facts;
     const importIndex = buildImportIndex(out);
     const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
     reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
     const handlers = out.flatMap((a) => a.routes.map((r) => r.handler)).sort();
     expect(handlers).toEqual(["ClubsController#index", "Staff::SessionsController#destroy", "Staff::SessionsController#new"]);
+  });
+});
+
+describe("rails-route-anchor — a gem-based controller the router names itself", () => {
+  it("drops the public helpers of an admin framework's controller its resources route (real-repo FP)", () => {
+    const router = `Rails.application.routes.draw do
+  namespace :back_office do
+    resources :clubs, only: [:index, :show]
+    resource :league_status, only: [:show]
+  end
+end`;
+    const guess = (handler: string, path: string, line: number) => ({ path, httpMethod: "GET", kind: "api", handler, calls: [], middleware: [], line });
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/back_office/application_controller.rb", [cls("BackOffice::ApplicationController", "AdminKit::ApplicationController", [])]),
+      file("app/controllers/back_office/clubs_controller.rb", [cls("BackOffice::ClubsController", "BackOffice::ApplicationController", [["scoped_resource", 2], ["resource_params", 6]])], [
+        guess("BackOffice::ClubsController#scoped_resource", "/back_office/clubs/scoped_resource", 2),
+        guess("BackOffice::ClubsController#resource_params", "/back_office/clubs/resource_params", 6),
+      ] as FileAnalysis["routes"]),
+      file("app/controllers/back_office/league_statuses_controller.rb", [cls("BackOffice::LeagueStatusesController", "BackOffice::ApplicationController", [["show", 2], ["season_label", 8]])], [
+        guess("BackOffice::LeagueStatusesController#show", "/back_office/league_statuses/:id", 2),
+        guess("BackOffice::LeagueStatusesController#season_label", "/back_office/league_statuses/season_label", 8),
+      ] as FileAnalysis["routes"]),
+      // The router never names it: the gem may route it, so its guess stays.
+      file("app/controllers/back_office/reports_controller.rb", [cls("BackOffice::ReportsController", "BackOffice::ApplicationController", [["index", 2]])], [
+        guess("BackOffice::ReportsController#index", "/back_office/reports", 2),
+      ] as FileAnalysis["routes"]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const handlers = out.flatMap((a) => a.routes.map((r) => r.handler)).sort();
+    expect(handlers).toEqual([
+      "BackOffice::ClubsController#index",
+      "BackOffice::ClubsController#show",
+      "BackOffice::LeagueStatusesController#show",
+      "BackOffice::ReportsController#index",
+    ]);
   });
 });
 

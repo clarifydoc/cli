@@ -366,3 +366,46 @@ describe("rubySpec.extractRoutes — devise_token_auth mounts", () => {
     ]);
   });
 });
+
+describe("rubySpec.extractRoutes — modules named like controllers", () => {
+  it("guesses no routes from a module prepended into a controller", () => {
+    const src = `module Premium::Api::V1::ClubsController
+  def transfer_window
+    Club.find(params[:id])
+  end
+end`;
+    const lines = src.split("\n");
+    const classes = rubySpec.extractClasses!(lines, []);
+    expect(rubySpec.extractRoutes!(lines, classes, "premium/app/controllers/premium/api/v1/clubs_controller.rb")).toEqual([]);
+  });
+
+  it("still guesses from a class nested in a namespace module", () => {
+    const src = `module Api
+  class ClubsController < ApplicationController
+    def index; end
+  end
+end`;
+    const lines = src.split("\n");
+    const classes = rubySpec.extractClasses!(lines, []);
+    expect(rubySpec.extractRoutes!(lines, classes, "app/controllers/api/clubs_controller.rb").map(sig)).toEqual(["GET /api/clubs -> Api::ClubsController#index"]);
+  });
+});
+
+describe("rubySpec.extractRoutes — controllers handed to a gem's routing DSL", () => {
+  it("records the controllers a `controllers:` option names", () => {
+    const src = draw(`  devise_for :managers, path: 'staff', controllers: {
+    sessions: 'staff/sessions',
+    passwords: "staff/passwords"
+  }
+  use_doorkeeper do
+    controllers applications: 'oauth/applications'
+  end
+  resources :clubs, only: [:index]`);
+    const facts: NonNullable<Parameters<NonNullable<typeof rubySpec.extractRoutes>>[4]> = [];
+    rubySpec.extractRoutes!(src.split("\n"), [], "config/routes.rb", [], facts);
+    expect(facts.filter((f) => f.kind === "rails-gem-controllers").map((f) => f.data)).toEqual([
+      ["Staff::SessionsController", "Staff::PasswordsController"],
+      ["Oauth::ApplicationsController"],
+    ]);
+  });
+});

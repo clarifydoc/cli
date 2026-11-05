@@ -67,14 +67,30 @@ export const railsRouteAnchor: RouteResolver = {
     // says: a guess for an action it never names (a public helper), or for a
     // controller it never routes at all, is no endpoint — unless a legacy
     // `/:controller(/:action)` route serves any action, or the controller is
-    // built on a gem's (Devise's), whose own routing DSL (`devise_for`) serves it.
+    // built on a gem's (Devise's), whose own routing DSL (`devise_for`) may
+    // serve it. A gem-based controller the router names itself (an admin
+    // framework's `resources :clubs`) and hands to no gem DSL is served only
+    // where it says too.
     const routedProjects = new Set<string | undefined>();
-    for (const a of analyses) if (a.routes.some((r) => r.handler && HANDLER_RE.test(r.handler) && !isGuess(a, r))) routedProjects.add(a.projectId);
+    const named = new Set<string>();
+    for (const a of analyses) {
+      for (const r of a.routes) {
+        const m = r.handler && !isGuess(a, r) ? HANDLER_RE.exec(r.handler) : null;
+        if (!m) continue;
+        routedProjects.add(a.projectId);
+        named.add(m[1]!);
+      }
+    }
+    const gemRouted = new Set<string>();
+    for (const a of analyses) for (const f of a.routeFacts ?? []) if (f.kind === "rails-gem-controllers") for (const c of f.data as string[]) gemRouted.add(c);
     const catchAll = analyses.some((a) => a.routes.some((r) => !isGuess(a, r) && /:action\b/.test(r.path)));
     const guessDropped = (handler: string): boolean => {
-      const ref = byName.get(handler.split("#")[0]!);
+      const controller = handler.split("#")[0]!;
+      const ref = byName.get(controller);
       if (catchAll || !ref || !routedProjects.has(byPath.get(ref.filePath)?.projectId)) return false;
-      return /^(?:::)?ActionController::(?:Base|API)$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "");
+      if (/^(?:::)?ActionController::(?:Base|API)$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "")) return true;
+      // A gem DSL inside a `namespace` may name the controller relative to it: match by suffix.
+      return named.has(controller) && ![...gemRouted].some((c) => c === controller || controller.endsWith(`::${c}`));
     };
 
     // What a guess knew that the router row does not: the controller's filters
