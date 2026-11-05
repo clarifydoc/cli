@@ -14,6 +14,24 @@ recorded in the git history only.
 
 ### Added
 
+- **Laravel:** routes on an aliased or fully qualified `Route` facade; `Route::controller(X::class)->group(…)` actions
+  on that controller; a dispatched job (`SettleFee::dispatch()`, `dispatch(new X)`, `Bus::dispatch`) reaches its
+  `handle()` when one class has that name.
+- **JVM:** WebFlux `RouterFunctions.route(GET("/x"), handler::all)` with predicates and `andNest`, Kotlin `router {}` /
+  `coRouter {}` DSLs, a method reference on a typed receiver as `Type#method`, Scala JAX-RS resources, and every
+  topic of `@KafkaListener(topics = {…})`.
+- **.NET:** FastEndpoints endpoints, Razor Pages routes on their PageModel handlers, `[AcceptVerbs(…, Route=…)]`, a
+  fully qualified `…HttpHeadAttribute`; Blazor `@code` requests on an injected `HttpClient`; XAML view models from a
+  `DataContext` element or `d:DesignInstance`, and commands built over a method (`new RelayCommand(Keep)`) reaching it
+  (`PropertyInfo.commandHandler`).
+- **Calls in markup expressions:** Vue `{{ label(x) }}`, bound attributes, `v-if`/`v-show`/`v-for`; Svelte `{fmt(n)}`,
+  blocks and attribute values.
+- **Navigation calls:** Next.js `redirect`/`permanentRedirect`, `location.assign`/`replace`, `history.pushState`, Ionic
+  `navCtrl.navigate*`.
+- **Flutter:** `MaterialApp` route tables as screens and `pushNamed`/`Get.toNamed` as navigation; `widget.x` in a
+  `State<T>`, getters (`PropertyInfo.accessor`), mixins and generic constructors typing calls; retrofit `@RestApi`
+  clients.
+
 - **Route prefixes that were dropped:** Hono `app.route('/clubs', clubs)` and `basePath`, Rocket `.mount("/api/v1",
   routes![…])`, actix scopes, `.configure(cfg)` and a scope-less `.service(web::resource(…))`, axum `.nest` across
   files, FastAPI `app.mount("/api", sub_app)`, Laravel 11 `withRouting(apiPrefix: …)`.
@@ -338,6 +356,9 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **Fixed: ASP.NET route paths.** A `{code:regex(…)}` constraint was cut at its first escape; `[action]` kept an
+  `Async` suffix MVC strips.
 
 - **Next.js method sets:** an `OPTIONS` preflight or an `if (method === 'POST') … else` no longer narrows a pages
   route to one method; next-connect chains, handler maps, `withMethods` and `defaultHandler` give their methods;
