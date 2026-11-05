@@ -447,19 +447,35 @@ function returnedSegment(body: Node | null): string | null {
 export function extractUrlTemplates(
   body: Node | null,
   paramNames: ReadonlySet<string>,
-  /** Receives the leading expression a template starts with (`this.baseUrl()` in `${this.baseUrl()}/x`), when it is one. */
-  out?: { base?: string | null },
+  /**
+   * Receives the leading expression a template starts with (`this.baseUrl()` in `${this.baseUrl()}/x`), when it is one;
+   * the key of the request descriptor whose URL the templates are (`property`); and the table an indexing helper
+   * hands back an entry of (`entryOf`).
+   */
+  out?: UrlTemplateFound,
 ): string[] {
   if (!body) return [];
 
   const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map(), unset: new Set(), assigned: new Map() };
-  const returns: Node[] = [];
+  let returns: Node[] = [];
   if (body.type === "statement_block") {
     collectReturns(body.namedChildren, locals, returns, 0, null, paramNames);
   } else {
     returns.push(body);
   }
   if (returns.length === 0) return [];
+  // `(page) => endPoints[page]`: an entry of a table, chosen by the argument.
+  const entry = returns.length === 1 ? tableEntry(returns[0]!, paramNames) : null;
+  if (entry) {
+    if (out) out.entryOf = entry;
+    return [];
+  }
+  // `(id) => ({ url: `/messages/${id}`, params })`: a request descriptor — its URL is the key a call reads.
+  const descriptors = returns.map((r) => descriptorUrl(r));
+  if (descriptors.every((d) => d !== null) && new Set(descriptors.map((d) => d!.key)).size === 1) {
+    returns = descriptors.map((d) => d!.value);
+    if (out) out.property = descriptors[0]!.key;
+  }
 
   const scope = new Map<string, ValueExpr>();
   for (const [name, valueNode] of locals.values) {
@@ -547,6 +563,54 @@ export function extractUrlTemplates(
     }
   }
   return templates;
+}
+
+/** What {@link extractUrlTemplates} found besides the templates themselves. */
+export interface UrlTemplateFound {
+  base?: string | null;
+  property?: string;
+  entryOf?: { table: string; param: string };
+}
+
+/** The keys a request descriptor states its URL under. */
+const DESCRIPTOR_URL_KEY = /^(?:url|uri|path|endpoint)$/;
+
+/** `({ url: `/messages/${id}`, data })`: the descriptor's URL key and value; null for any other expression. */
+function descriptorUrl(expr: Node): { key: string; value: Node } | null {
+  let n: Node | null = expr;
+  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
+  if (n?.type !== "object") return null;
+  for (const pair of n.namedChildren) {
+    if (pair.type !== "pair") continue;
+    const key = pair.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+    const value = pair.childForFieldName("value");
+    if (key && DESCRIPTOR_URL_KEY.test(key) && value && /^(?:string|template_string|binary_expression)$/.test(value.type)) return { key, value };
+  }
+  return null;
+}
+
+/** `endPoints[page]` with `page` a parameter: the table and that parameter; null for any other expression. */
+export function tableEntry(expr: Node, params: ReadonlySet<string>): { table: string; param: string } | null {
+  let n: Node | null = expr;
+  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
+  if (n?.type !== "subscript_expression") return null;
+  const table = n.childForFieldName("object");
+  const index = n.childForFieldName("index");
+  return table?.type === "identifier" && index?.type === "identifier" && params.has(index.text) ? { table: table.text, param: index.text } : null;
+}
+
+/** The URL fields of a function record, for what {@link extractUrlTemplates} found. */
+function urlTemplateRecord(
+  templates: string[],
+  found: UrlTemplateFound,
+): Pick<FunctionInfo, "urlTemplate" | "urlTemplateAlternatives" | "urlTemplateBase" | "requestDescriptor" | "returnsEntryOf"> {
+  if (found.entryOf) return { returnsEntryOf: found.entryOf };
+  // A descriptor's URL is not the function's value: kept apart, so only a read of its key takes it.
+  if (found.property) return templates.length > 0 ? { requestDescriptor: { key: found.property, urlTemplates: templates } } : {};
+  return {
+    ...urlTemplateFields(templates),
+    ...(templates.length > 0 && found.base ? { urlTemplateBase: found.base } : {}),
+  };
 }
 
 /** `this.getResourceUrl(id, 'download')` as a template: `${this.getResourceUrl({id}, 'download')}`; null for any other expression. */
@@ -1419,7 +1483,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = node.childForFieldName("body");
     const paramNames = new Set(params.map((p) => p.name));
-    const stripped: { base?: string | null } = {};
+    const stripped: UrlTemplateFound = {};
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
@@ -1435,8 +1499,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
-      ...urlTemplateFields(templates),
-      ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
+      ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
     };
@@ -1480,7 +1543,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
     const paramNames = new Set(params.map((p) => p.name));
-    const stripped: { base?: string | null } = {};
+    const stripped: UrlTemplateFound = {};
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
@@ -1496,8 +1559,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
-      ...urlTemplateFields(templates),
-      ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
+      ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
     };
@@ -1912,7 +1974,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const paramNames = new Set(params.map((p) => p.name));
           // A URL-builder helper is as often a service-class method
           // (`configService.APIUrl(sub)`) as a free function.
-          const stripped: { base?: string | null } = {};
+          const stripped: UrlTemplateFound = {};
           const templates = extractUrlTemplates(methodBody, paramNames, stripped);
           // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
@@ -1929,8 +1991,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
             ...(localTypes ? { localTypes } : {}),
-            ...urlTemplateFields(templates),
-            ...(templates.length > 0 && stripped.base ? { urlTemplateBase: stripped.base } : {}),
+            ...urlTemplateRecord(templates, stripped),
             ...(requestAccess ? { requestAccess } : {}),
             ...(responses ? { responses } : {}),
           });

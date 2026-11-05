@@ -824,6 +824,12 @@ export interface ExportInfo {
    * A call through the binding that imports it (`import AgentAPI from './agents'`, `AgentAPI.get()`) is a call on that class.
    */
   instanceOf?: string;
+  /**
+   * The module's default is an anonymous function returning an entry of its
+   * table by its argument (`export default page => endPoints[page]`): as
+   * `FunctionInfo.returnsEntryOf`.
+   */
+  returnsEntryOf?: { table: string; param: string };
 }
 
 /** A typed variable a module declares at its top level (`FileAnalysis.moduleBindings`). */
@@ -1244,6 +1250,21 @@ export interface FunctionInfo {
    * Absent when there is exactly one template.
    */
   urlTemplateAlternatives?: string[];
+  /**
+   * For a helper handing back a request descriptor — an object literal whose
+   * `url` key is the request's URL (`(id) => ({ url: `/api/v1/messages/${id}`,
+   * params })`) — that key and its templates, written as `urlTemplate` is. Kept
+   * apart from `urlTemplate`: the helper's value is the object, so only a call
+   * reading the key (`messages(id).url`) requests it. Optional; only JS/TS sets it.
+   */
+  requestDescriptor?: { key: string; urlTemplates: string[] };
+  /**
+   * For a helper returning an entry of a module-level table chosen by one of
+   * its parameters (`(page) => endPoints[page]`): the table's name and that
+   * parameter. A call naming the entry (`endPoints('profile').url`) reads the
+   * value the module states for it (`FileAnalysis.moduleValues`).
+   */
+  returnsEntryOf?: { table: string; param: string };
   /**
    * What this function reads from an HTTP request when it is a route handler
    * whose bindings are not declared in its signature — `req.body.name`,
