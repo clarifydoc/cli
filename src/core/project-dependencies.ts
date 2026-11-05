@@ -63,6 +63,8 @@ export function buildProjectDependencies(input: {
   deployment?: DeploymentModel;
   /** Manifests declaring another sub-project's own package (`markLocalPackages`). */
   packageEdges?: readonly LocalPackageEdge[];
+  /** Build files declaring a dependency on a sibling sub-project (`SubProject.references`). */
+  declared?: ReadonlyArray<{ from: string; to: string; file: string }>;
 }): ProjectDependency[] {
   const edges = new Map<string, Acc>();
   const edge = (from: string, to: string, kind: ProjectDependency["kind"]): Acc => {
@@ -131,6 +133,16 @@ export function buildProjectDependencies(input: {
     const acc = edge(p.from, p.to, "package");
     acc.dep.manifest ??= { file: p.file, package: p.package };
     acc.byEndpoint.set(p.package, 0);
+  }
+
+  // Declared references (a build file's `<ProjectReference>`, `project(':x')`):
+  // evidence on an edge the links or a package already draw between the two,
+  // else an edge of their own — never a second row for the same pair.
+  for (const d of input.declared ?? []) {
+    if (d.from === d.to) continue;
+    const existing = [...edges.values()].filter((a) => a.dep.from === d.from && a.dep.to === d.to);
+    if (existing.length === 0) edge(d.from, d.to, "declared").dep.declared = { file: d.file };
+    else for (const a of existing) a.dep.declared ??= { file: d.file };
   }
 
   const out: ProjectDependency[] = [];

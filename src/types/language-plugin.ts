@@ -109,6 +109,28 @@ export interface PackageManifestSpec {
    * the manifest's directory. Recorded on `SubProject.packages` with that root.
    */
   localPackages?(text: string): Array<{ name: string; path: string }>;
+  /**
+   * The sibling projects of this repository the manifest declares it builds
+   * against (`<ProjectReference Include="..\\Core\\Core.csproj" />`, Gradle
+   * `project(':core')`): directories, not packages. Read like `projectImports`
+   * into `SubProject.references`; the linker uses them only to tell two
+   * same-named definitions apart.
+   */
+  projectReferences?(text: string, file: SelfNameContext): ProjectReference[];
+}
+
+/** One declared sibling project (`PackageManifestSpec.projectReferences`). */
+export interface ProjectReference {
+  /** Directory of the referenced project, posix, relative to the manifest's directory (or to `anchor`'s). */
+  path: string;
+  /**
+   * Resolve `path` from the nearest directory, the manifest's own upward, that
+   * holds one of these files (a Gradle build's `settings.gradle`) — the build
+   * root a project path is written from.
+   */
+  anchor?: readonly string[];
+  /** The path is spelled loosely (a type-safe accessor `projects.clubCore` for `club-core`): compare without case and separators. */
+  loose?: boolean;
 }
 
 /** Where a manifest read for its own name sits (`PackageManifestSpec.selfName`). */

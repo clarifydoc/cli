@@ -2223,9 +2223,11 @@ export interface ProjectDependency {
   /**
    * `http` and `bus`: requests or messages cross the edge. `package`: `from`'s
    * manifest declares a package `to` itself is (`manifest`) — a build-time
-   * fact, carrying no links.
+   * fact, carrying no links. `declared`: only a build file states it (MSBuild
+   * `<ProjectReference>`, Gradle `project(':x')`) — when a link or package edge
+   * between the same projects exists it carries `declared` instead of a second row.
    */
-  kind: "http" | "bus" | "package";
+  kind: "http" | "bus" | "package" | "declared";
   /** Links behind the edge — test callers and AMBIGUOUS links excluded. 0 = only deployment or a manifest states it. */
   links: number;
   /** Those links by confidence. */
@@ -2245,6 +2247,8 @@ export interface ProjectDependency {
   deployment?: { via?: string; file: string };
   /** A `package` edge: the manifest of `from` declaring it, and the package of `to` it names (the first, when several). */
   manifest?: { file: string; package: string };
+  /** The build file of `from` that declares a dependency on the project `to` is (`SubProject.references`). */
+  declared?: { file: string };
 }
 
 export interface DataSourceInfo {
@@ -4138,6 +4142,13 @@ export interface SubProject {
    * package manager's `PackageManifestSpec.projectImports`.
    */
   implicitImports?: string[];
+  /**
+   * Sibling sub-projects (ids), each with the manifest declaring it, this one's build declares it depends on — MSBuild
+   * `<ProjectReference>`, Gradle `project(':x')`, a Maven dependency on a
+   * module's coordinates. A tie-breaker for the symbol linker, and `declared`
+   * edges in `projectDependencies`.
+   */
+  references?: Array<{ project: string; file: string }>;
   /**
    * Frameworks/ORMs detected from this sub-project's own manifests (its nested
    * `package.json`, `Gemfile`, `*.csproj`, …). A repo whose build files live in

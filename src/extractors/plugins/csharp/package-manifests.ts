@@ -1,4 +1,4 @@
-import type { DeclaredPackage, PackageManagerSpec, SelfNameContext } from "../../../types/language-plugin.js";
+import type { DeclaredPackage, PackageManagerSpec, ProjectReference, SelfNameContext } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 
 /**
@@ -71,6 +71,23 @@ export async function projectFileUsings(text: string, file: SelfNameContext): Pr
   return [...new Set([...msbuildUsings(text), ...msbuildUsings(props)])];
 }
 
+/**
+ * `<ProjectReference Include="..\\Core\\Core.csproj" />`: the directory of the
+ * referenced project file, posix. A reference with a `$(…)` property names
+ * nothing statically. Not a project file (`Directory.Packages.props`): none.
+ */
+export function projectFileReferences(text: string, file: SelfNameContext): ProjectReference[] {
+  if (!/\.(?:cs|fs|vb)proj$/i.test(file.fileName)) return [];
+  const out: ProjectReference[] = [];
+  for (const m of text.matchAll(/<ProjectReference\s+[^>]*?\bInclude\s*=\s*"([^"]+)"/gi)) {
+    const path = m[1]!.replace(/\\/g, "/");
+    if (path.includes("$(")) continue;
+    const slash = path.lastIndexOf("/");
+    out.push({ path: slash < 0 ? "." : path.slice(0, slash) });
+  }
+  return out;
+}
+
 export const nugetPackageManager: PackageManagerSpec = {
   ecosystem: "nuget",
   manifests: [
@@ -81,6 +98,7 @@ export const nugetPackageManager: PackageManagerSpec = {
       parse: (text, file) => parseCsproj(text, file.declaredIn),
       selfName: projectFileSelfName,
       projectImports: projectFileUsings,
+      projectReferences: projectFileReferences,
     },
   ],
   // The full namespace (`Microsoft.EntityFrameworkCore.Metadata`): it extends

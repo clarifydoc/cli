@@ -752,6 +752,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A declared package that is a sub-project of this repository is no
   // third-party dependency: marked `local`, and an edge between the two.
   const localPackageEdges = markLocalPackages(externalPackages, subProjects, (path) => assignProjectId(path, subProjects));
+  // A dependency on a sibling's own coordinates (a Maven module's groupId:artifactId) declares the reference too.
+  for (const e of localPackageEdges) {
+    const sp = subProjects.find((p) => p.id === e.from);
+    if (sp && e.from !== e.to && !sp.references?.some((r) => r.project === e.to)) (sp.references ??= []).push({ project: e.to, file: e.file });
+  }
   // What the package managers installed (Composer's vendor/ autoload map): makes
   // their import→package mapping reliable; empty when nothing is installed.
   const installedOwners = await collectInstalledOwners(
@@ -1999,6 +2004,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     deployment,
     packageEdges: localPackageEdges,
+    declared: subProjects.flatMap((p) => (p.references ?? []).map((r) => ({ from: p.id, to: r.project, file: r.file }))),
   });
   if (projectDependencies.length > 0) {
     progress.detail(`  Project dependencies (HTTP/bus): ${projectDependencies.length}`);

@@ -74,3 +74,33 @@ describe("detectSubProjects — a Go workspace", () => {
     }
   });
 });
+
+describe("detectSubProjects — the sibling projects a build declares", () => {
+  it("reads .NET ProjectReference, Gradle project() paths and type-safe accessors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cd-refs-"));
+    try {
+      const files: Record<string, string> = {
+        "Garage.Web/Garage.Web.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup><ProjectReference Include="..\\Garage.Core\\Garage.Core.csproj" /><ProjectReference Include="$(Shared)\\X.csproj" /></ItemGroup></Project>',
+        "Garage.Core/Garage.Core.csproj": '<Project Sdk="Microsoft.NET.Sdk" />',
+        "Garage.Old/Garage.Old.csproj": '<Project Sdk="Microsoft.NET.Sdk" />',
+        "league/settings.gradle": "include ':web', ':club-core', ':club-api'\n",
+        "league/web/build.gradle": "dependencies {\n  implementation project(':club-core')\n  // implementation project(':club-api')\n  api(projects.clubApi)\n}\n",
+        "league/club-core/build.gradle": "plugins { id 'java' }\n",
+        "league/club-api/build.gradle": "plugins { id 'java' }\n",
+      };
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const projects = await detectSubProjects(root);
+      const refs = (root_: string) => projects.find((p) => p.root === root_)?.references?.map((r) => `${r.project}<-${r.file}`);
+      expect(refs("Garage.Web")).toEqual([`${projects.find((p) => p.root === "Garage.Core")!.id}<-Garage.Web/Garage.Web.csproj`]);
+      expect(refs("league/web")?.map((r) => r.split("<-")[0]).sort()).toEqual(
+        ["league/club-api", "league/club-core"].map((r) => projects.find((p) => p.root === r)!.id).sort(),
+      );
+      expect(refs("Garage.Old")).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

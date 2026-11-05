@@ -33,6 +33,22 @@ const mq = (sourceFile: string, targetFile: string, dest: string): SymbolLink =>
 const projectOf = (f: string) => f.split("/")[0];
 
 describe("buildProjectDependencies", () => {
+  it("draws a declared reference as its own edge, or as evidence on the edge a link already draws", () => {
+    const deps = buildProjectDependencies({
+      apiRouteLinks: [link("Web", "Api", "/clubs")],
+      symbolLinks: [],
+      projectOf,
+      declared: [
+        { from: "Web", to: "Core", file: "Web/Web.csproj" },
+        { from: "Web", to: "Api", file: "Web/Web.csproj" },
+      ],
+    });
+    expect(deps.map((d) => [d.from, d.to, d.kind, d.declared?.file])).toEqual([
+      ["Web", "Api", "http", "Web/Web.csproj"],
+      ["Web", "Core", "declared", "Web/Web.csproj"],
+    ]);
+  });
+
   it("records a manifest declaring another sub-project's package as a package edge with no links", () => {
     const deps = buildProjectDependencies({
       apiRouteLinks: [],

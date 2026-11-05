@@ -112,6 +112,7 @@ export function buildSymbolLinks(
     importDirectory: importDirectory ?? buildImportDirectoryResolver(analyses, subProjects),
     packageRoots: packageRootsOf(subProjects),
     implicitImports: new Map(subProjects.filter((p) => p.implicitImports?.length).map((p) => [p.id, p.implicitImports!])),
+    declaredReferences: declaredReferenceClosure(subProjects),
     packagesByLanguage: new Map(),
     packageImportsCache: new Map(),
     importedProjectsCache: new Map(),
@@ -1839,6 +1840,8 @@ interface LinkContext {
   packageRoots: Map<string, PackageRoot[]>;
   /** Per sub-project id: the packages its build imports into every file (`SubProject.implicitImports`). */
   implicitImports: Map<string, string[]>;
+  /** Per sub-project id: the sub-projects its build declares (`SubProject.references`), closed over what those declare. */
+  declaredReferences: Map<string, ReadonlySet<string>>;
   /** Per sub-project id: the `projectWide` imports its files write, built on first use. */
   projectWideImports?: Map<string, string[]>;
   /** Per language: the packages of its ecosystems, built on first use (`importPath`). */
@@ -2396,6 +2399,41 @@ function importedStemsOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> 
   return set;
 }
 
+/** Each sub-project's declared references (`SubProject.references`) and, through them, theirs. */
+function declaredReferenceClosure(subProjects: readonly SubProject[]): Map<string, ReadonlySet<string>> {
+  const direct = new Map(subProjects.filter((p) => p.references?.length).map((p) => [p.id, p.references!.map((r) => r.project)]));
+  const out = new Map<string, ReadonlySet<string>>();
+  for (const id of direct.keys()) {
+    const seen = new Set<string>();
+    const queue = [...direct.get(id)!];
+    while (queue.length > 0) {
+      const next = queue.pop()!;
+      if (next === id || seen.has(next)) continue;
+      seen.add(next);
+      queue.push(...(direct.get(next) ?? []));
+    }
+    if (seen.size > 0) out.set(id, seen);
+  }
+  return out;
+}
+
+/**
+ * Tie-break between same-named definitions in several sub-projects by what the
+ * caller's build declares: when exactly ONE of the projects holding `files` is
+ * one its sub-project references, that project's files stand; two referenced
+ * projects (or none) leave the candidates untouched, and a definition in the
+ * caller's own sub-project is never weighed here. Only a ranking among
+ * candidates — it never admits a definition the name alone would not.
+ */
+function declaredReferenceFiles(ctx: LinkContext, projectId: string, files: readonly string[]): readonly string[] {
+  const refs = ctx.declaredReferences.get(projectId);
+  if (!refs || files.length < 2) return files;
+  const projects = new Set(files.map((f) => ctx.projectOf.get(f)));
+  if (projects.size < 2) return files;
+  const referenced = [...projects].filter((p) => p !== undefined && refs.has(p));
+  return referenced.length === 1 ? files.filter((f) => ctx.projectOf.get(f) === referenced[0]) : files;
+}
+
 /** The file stems (names without directory or extension) of one sub-project, cached on the context. */
 function projectStemsOf(projectId: string, ctx: LinkContext): Set<string> {
   let stems = ctx.projectStemsCache.get(projectId);
@@ -2606,11 +2644,14 @@ function classNameMember(
     // A type whose parts span files (a Rust struct in `source/x.rs`, its `impl`
     // in `impls/x.rs`): the parts beside an imported one, in its sub-project.
     const importedProjects = new Set(imported.filter((f) => typesSpanFiles(ctx.languageOf.get(f))).map((f) => ctx.projectOf.get(f)));
+    // Same name in several sub-projects, none the caller's, none imported: the one project its build references.
+    const tieBroken = sameProject.length === 0 && imported.length === 0 ? declaredReferenceFiles(ctx, analysis.projectId, candidateFiles) : [];
     const eligible =
       sameProject.length === candidateFiles.length
         ? sameProject
         : [
             ...sameProject,
+            ...(tieBroken.length < candidateFiles.length ? tieBroken : []),
             ...imported,
             ...candidateFiles.filter((f) => !imported.includes(f) && ctx.projectOf.get(f) !== analysis.projectId && importedProjects.has(ctx.projectOf.get(f))),
           ];
@@ -6703,9 +6744,9 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Elsewhere in the type space: a unique definition — or one type split
   // across files of a single directory.
   const srcLang = ctx.languageOf.get(sourceFile) ?? "";
-  const files = declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
+  const files = declaredReferenceFiles(ctx, projectId, declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
     sameTypeSpace(sourceFile, srcLang, f, ctx.languageOf.get(f) ?? "") && reachable(f),
-  ));
+  ))) as string[];
   if (files.length === 1) return files[0]!;
   if (files.length > 1 && new Set(files.map((f) => f.slice(0, f.lastIndexOf("/") + 1))).size === 1) {
     return pickDefinition(typeName, files, sourceFile, declOf, languageOf);

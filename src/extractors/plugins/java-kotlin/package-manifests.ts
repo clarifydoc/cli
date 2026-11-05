@@ -1,5 +1,5 @@
 import type { PackageScope } from "../../../types/analysis.js";
-import type { DeclaredPackage, PackageManagerSpec, SelfNameContext } from "../../../types/language-plugin.js";
+import type { DeclaredPackage, PackageManagerSpec, ProjectReference, SelfNameContext } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 import { withoutXmlComments } from "../shared/xml-scan.js";
 
@@ -240,6 +240,29 @@ export async function gradleSelfName(text: string, file: SelfNameContext): Promi
   return artifact && group ? `${group}:${artifact}` : null;
 }
 
+/**
+ * What a Gradle build file declares it depends on among the build's own
+ * projects: `project(':core')`, `project(path = ":a:b")` and the type-safe
+ * accessors `projects.core` / `projects.clubCore` (`club-core`). Paths run from
+ * the build root (the directory of `settings.gradle`), as Gradle's do by default.
+ */
+export function gradleProjectReferences(text: string): ProjectReference[] {
+  const out = new Map<string, ProjectReference>();
+  const anchor = ["settings.gradle.kts", "settings.gradle"];
+  const body = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  for (const m of body.matchAll(/\bproject\s*\(\s*(?:path\s*[=:]\s*)?["']:([\w.:-]+)["']/g)) {
+    const path = m[1]!.split(":").join("/");
+    out.set(path, { path, anchor });
+  }
+  for (const m of body.matchAll(/\bprojects\.((?:[A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*)/g)) {
+    // `projects.core.api` — a nested project; its accessors' words are the directory names, case aside.
+    if (/^(?:dependencyResolutionManagement|isolated)$/.test(m[1]!)) continue;
+    const path = m[1]!.split(".").join("/");
+    out.set(path, { path, anchor, loose: true });
+  }
+  return [...out.values()];
+}
+
 export const gradlePackageManager: PackageManagerSpec = {
   ecosystem: "gradle",
   // Gradle resolves from Maven repositories: its coordinates are Maven's.
@@ -249,6 +272,7 @@ export const gradlePackageManager: PackageManagerSpec = {
       files: ["build.gradle.kts", "build.gradle"],
       firstOnly: true,
       selfName: gradleSelfName,
+      projectReferences: gradleProjectReferences,
       parse: async (text, file) => {
         const toml = /\blibs\./.test(text) ? await file.readAbove?.("gradle/libs.versions.toml") : null;
         const properties = text.includes("$") ? (await file.readAbove?.("gradle.properties")) ?? null : null;

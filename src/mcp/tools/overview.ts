@@ -785,8 +785,11 @@ export function servicesTool(ctx: ToolContext): McpTool {
             ? `${plural(d.links, "link")}${d.confidence.INFERRED ? ` (${d.confidence.INFERRED} inferred)` : ""}`
             : d.manifest
               ? `declared in ${d.manifest.file}`
-              : "deployment only, no call found in code");
-        const dep = d.deployment ? ` · deployment: ${d.deployment.via ? `${d.deployment.via} in ` : ""}${d.deployment.file}` : "";
+              : d.declared
+                ? `declared in ${d.declared.file}`
+                : "deployment only, no call found in code");
+        const dep = (d.deployment ? ` · deployment: ${d.deployment.via ? `${d.deployment.via} in ` : ""}${d.deployment.file}` : "") +
+          (d.declared && (d.links > 0 || d.manifest) ? ` · declared in ${d.declared.file}` : "");
         const lines = [head + dep];
         if (d.endpoints.length) {
           const shown = d.endpoints.slice(0, endpointCap).map((e) => (e.links > 1 ? `${e.name} (${e.links})` : e.name));

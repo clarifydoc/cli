@@ -179,6 +179,10 @@ export async function detectSubProjects(
     const implicit = await implicitImports(root, p);
     if (implicit.length > 0) p.implicitImports = implicit;
   }));
+  await Promise.all(subProjects.map(async (p) => {
+    const references = await declaredReferences(root, p, subProjects);
+    if (references.length > 0) p.references = references;
+  }));
   return subProjects;
 }
 
@@ -205,6 +209,60 @@ async function implicitImports(root: string, project: SubProject): Promise<strin
     }
   }
   return [...out];
+}
+
+/**
+ * The sibling sub-projects the build files at a sub-project's root declare it
+ * depends on (`PackageManifestSpec.projectReferences`): each reference is a
+ * directory, resolved from the manifest's own (or the build root's, `anchor`)
+ * to the sub-project rooted there — or, for a loose spelling, the one whose
+ * path matches it ignoring case and separators. Never itself, never none.
+ */
+async function declaredReferences(root: string, project: SubProject, subProjects: readonly SubProject[]): Promise<Array<{ project: string; file: string }>> {
+  const out = new Map<string, string>();
+  const base = project.root.replace(/\\/g, "/");
+  let entries: string[] | null = null;
+  const looseKey = (path: string) => path.toLowerCase().replace(/[^a-z0-9/]/g, "");
+  for (const manager of PACKAGE_MANAGERS) {
+    for (const spec of manager.manifests) {
+      if (!spec.projectReferences) continue;
+      entries ??= await readdir(join(root, project.root)).catch(() => []);
+      const files = spec.glob
+        ? entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))
+        : spec.files.filter((f) => entries!.includes(f));
+      for (const file of spec.firstOnly ? files.slice(0, 1) : files) {
+        const text = await readFile(join(root, project.root, file), "utf-8").catch(() => null);
+        if (text === null) continue;
+        for (const ref of await spec.projectReferences(text, selfNameContext(root, project.root, file))) {
+          let from = base;
+          if (ref.anchor) {
+            let dir = base;
+            let found: string | null = null;
+            for (;;) {
+              const names = await readdir(join(root, dir)).catch(() => [] as string[]);
+              if (ref.anchor.some((a) => names.includes(a))) { found = dir; break; }
+              if (!dir) break;
+              dir = posix.dirname(dir) === "." ? "" : posix.dirname(dir);
+            }
+            if (found === null) continue;
+            from = found;
+          }
+          let target: SubProject | undefined;
+          if (ref.loose) {
+            const want = looseKey(from ? `${from}/${ref.path}` : ref.path);
+            const hits = subProjects.filter((p) => p.id !== project.id && looseKey(p.root.replace(/\\/g, "/")) === want);
+            if (hits.length === 1) target = hits[0];
+          } else {
+            const dir = posix.normalize(posix.join(from, ref.path)).replace(/\/+$/, "");
+            if (dir === ".." || dir.startsWith("../") || posix.isAbsolute(dir)) continue;
+            target = subProjects.find((p) => p.root.replace(/\\/g, "/") === (dir === "." ? "" : dir));
+          }
+          if (target && target.id !== project.id && !out.has(target.id)) out.set(target.id, posix.join(base, file));
+        }
+      }
+    }
+  }
+  return [...out].map(([id, file]) => ({ project: id, file })).sort((a, b) => byOrdinal(a.project, b.project));
 }
 
 /**
