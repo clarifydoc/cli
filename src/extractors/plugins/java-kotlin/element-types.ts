@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { callChainText } from "../../shared/call-graph.js";
 import type { CallInfo, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import {
   type ChainRules,
@@ -243,6 +244,22 @@ export function jvmElementFacts(
     set.add(type);
     binders.set(name, set);
   };
+  /** Names a loop or callback binds from a collection the body does not type, with what it reads (`localTypes[].from`). */
+  const fromElements: LocalType[] = [];
+  const elementSource = (node: Node | null | undefined): string | null => {
+    if (!node) return null;
+    const text = node.text.trim();
+    // `this.clubs`, `repo.clubs`: a field read off `this` or a name; the call forms through the language's call spelling.
+    if (/^(?:this\.)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(text)) return text;
+    return callChainText(node, language);
+  };
+  /** Binds `name` to the element of what `source` reads, unless the body already types the collection. */
+  const bindFrom = (name: string | null | undefined, source: Node | null | undefined, element: string | null): void => {
+    if (!name) return;
+    const from = element ? null : elementSource(source);
+    if (from) fromElements.push({ name, type: "", from, element: true });
+    else bind(name, element);
+  };
   const bindChain = (name: string | null | undefined, init: Node | null | undefined): void => {
     if (!name) return;
     const state = init ? chainState(init.text, rootState, rules) : null;
@@ -284,14 +301,14 @@ export function jvmElementFacts(
   };
 
   /** The receiver text and method a lambda is handed to, null when it is not a plain argument. */
-  const lambdaCallee = (lambda: Node): { receiver: string; method: string } | null => {
+  const lambdaCallee = (lambda: Node): { receiver: string; method: string; node: Node } | null => {
     if (language === "java") {
       const args = lambda.parent;
       const call = args?.parent;
       if (args?.type !== "argument_list" || call?.type !== "method_invocation" || args.namedChildren.length !== 1) return null;
       const object = call.childForFieldName("object");
       const name = call.childForFieldName("name")?.text;
-      return object && name ? { receiver: object.text, method: name } : null;
+      return object && name ? { receiver: object.text, method: name, node: object } : null;
     }
     const call = lambda.parent?.type === "annotated_lambda" ? lambda.parent.parent?.parent : null;
     if (call?.type !== "call_expression") return null;
@@ -300,7 +317,7 @@ export function jvmElementFacts(
     const last = callee.namedChildren[callee.namedChildCount - 1];
     const method = last?.type === "navigation_suffix" ? last.namedChildren.find((c) => c.type === "simple_identifier")?.text : undefined;
     const receiver = callee.child(0);
-    return receiver && method ? { receiver: receiver.text, method } : null;
+    return receiver && method ? { receiver: receiver.text, method, node: receiver } : null;
   };
 
   // The names a lambda binds, over the lambda's own extent: a call inside it reads the lambda's binding of a name
@@ -310,13 +327,17 @@ export function jvmElementFacts(
     const names = lambdaNames(lambda);
     const callee = lambdaCallee(lambda);
     const found = callee ? callbackElement(callee.receiver, callee.method, rootState, rules) : null;
+    // A callback of a collection the body does not type: the elements of what its receiver reads.
+    const open = !found && callee && (rules.callbacks.get(callee.method)?.length ?? 0) > 0 && !(rules.mapCallbacks.has(callee.method) && callee.method !== "forEach");
     names.forEach((n, i) => {
+      const openHere = !n.type && !!open && !!callee && rules.callbacks.get(callee.method)!.includes(i);
       const type = n.type ?? (found && found.positions.includes(i) ? found.type : null);
-      bind(n.name, type);
+      if (openHere) bindFrom(n.name, callee!.node, null);
+      else bind(n.name, type);
       if (n.name) {
         lambdaScopes.push({
           name: n.name,
-          type,
+          type: openHere ? null : type,
           from: [lambda.startPosition.row, lambda.startPosition.column],
           to: [lambda.endPosition.row, lambda.endPosition.column],
         });
@@ -364,7 +385,7 @@ export function jvmElementFacts(
         const type = n.childForFieldName("type")?.text;
         const name = n.childForFieldName("name")?.text;
         const iterable = n.childForFieldName("value");
-        if (type === "var") bind(name, iterable ? loopElement(iterable.text, rootState, rules) : null);
+        if (type === "var") bindFrom(name, iterable, iterable ? loopElement(iterable.text, rootState, rules) : null);
         break;
       }
       case "lambda_expression":
@@ -412,7 +433,7 @@ export function jvmElementFacts(
         const nameOf = (v: Node): string | undefined => v.children.find((x) => x.type === "simple_identifier")?.text;
         if (decl.type === "variable_declaration") {
           const t = decl.children.find((x) => x.type === "user_type" || x.type === "nullable_type")?.text;
-          bind(nameOf(decl), t ? classOf(t) : iterable ? loopElement(iterable.text, rootState, rules) : null);
+          bindFrom(nameOf(decl), iterable, t ? classOf(t) : iterable ? loopElement(iterable.text, rootState, rules) : null);
         } else {
           const vars = decl.namedChildren;
           const state = iterable ? chainState(iterable.text, rootState, rules) : null;
@@ -501,6 +522,10 @@ export function jvmElementFacts(
     if (!leaks) bind(name, [...types][0]!);
   }
 
+  // A name one lambda types and another binds from a collection the body does not type gets no method-wide type:
+  // each lambda's own scope still types its calls.
+  const fromOnly = fromElements.filter((f) => !binders.has(f.name));
+  for (const f of fromElements) binders.get(f.name)?.add(null);
   const locals: LocalType[] = [];
   for (const [name, types] of binders) {
     if (types.size === 1) {
@@ -508,6 +533,7 @@ export function jvmElementFacts(
       if (t) locals.push({ name, type: t });
     }
   }
+  locals.push(...fromOnly);
   const receiverOf = (call: CallInfo): string | null => {
     if (call.receiverType) return null;
     const split = splitCallName(call.name);

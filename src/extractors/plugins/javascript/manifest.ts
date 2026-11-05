@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import { jsMigrationFiles } from "./migration-files.js";
 import { jsProjectCommands } from "./project-commands.js";
 import { STORY_FILE, jsTestCommand } from "./test-command.js";
@@ -137,6 +138,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   projectCommands: jsProjectCommands,
   language: "typescript",
+  collectionElementOf: collectionElementText,
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,
@@ -176,6 +178,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   routerOutlet: JS_ROUTER_OUTLET,
   testCommand: jsTestCommand,
   language: "javascript",
+  collectionElementOf: collectionElementText,
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,

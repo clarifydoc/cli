@@ -83,10 +83,15 @@ export function extractGoLocalTypes(
   if (reading) reading.typeOfName = typeOfName;
   const typed = env ?? { fields: new Map(), packageVars: new Map(), results: new Map() };
   const fromCalls = new Map<string, Set<string>>();
+  // A `range` over a field, package variable or call result the body does not type (another file of the package
+  // declares it): the name is the element of what that expression DECLARES, which the linker reads.
+  const unknownCount = new Map<string, number>();
+  const elementFroms = new Map<string, Set<string>>();
+  const elementBinds = new Map<string, number>();
   const record = (name: string, type: string | null): void => {
     if (name === "_") return;
     declared?.add(name);
-    if (type === null) { unknown.add(name); opaque.add(name); return; }
+    if (type === null) { unknown.add(name); opaque.add(name); unknownCount.set(name, (unknownCount.get(name) ?? 0) + 1); return; }
     let set = seen.get(name);
     if (!set) seen.set(name, (set = new Set()));
     set.add(type.replace(/\s+/g, ""));
@@ -129,6 +134,12 @@ export function extractGoLocalTypes(
         if (second) {
           record(first, null);
           record(second, coll && coll.kind !== "chan" ? coll.value : null);
+          const from = !coll && second !== "_" ? rangeSource(range[3]!) : null;
+          if (from) {
+            const set = elementFroms.get(second) ?? elementFroms.set(second, new Set()).get(second)!;
+            set.add(from);
+            elementBinds.set(second, (elementBinds.get(second) ?? 0) + 1);
+          }
         } else record(first, coll?.kind === "chan" ? coll.value : null);
         continue;
       }
@@ -183,7 +194,25 @@ export function extractGoLocalTypes(
     if (unknown.has(name) || seen.has(name) || params.some((p) => p.name === name)) continue;
     for (const from of calls) out.push({ name, type: "", from });
   }
+  for (const [name, froms] of elementFroms) {
+    if (seen.has(name) || fromCalls.has(name) || params.some((p) => p.name === name) || name === receiver?.name) continue;
+    // Every other binding of the name was an element read too (a name rebound to anything else says nothing).
+    if ((unknownCount.get(name) ?? 0) !== (elementBinds.get(name) ?? 0)) continue;
+    for (const from of froms) out.push({ name, type: "", from, element: true });
+  }
   return out;
+}
+
+/**
+ * What a `range` iterates, as a receiver chain the linker reads the declared type of: `r.Clubs`, `Clubs` (a package
+ * variable), `Load()`, `r.repo.All()`. Null for a literal, an index, a conversion or a chain of calls.
+ */
+function rangeSource(expr: string): string | null {
+  const text = expr.trim().replace(/^&/, "");
+  if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(text)) return text;
+  const call = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
+  if (call && matchingClose(text, call[0].length - 1) === text.length - 1) return `${call[1]}()`;
+  return null;
 }
 
 /** A type without its pointer: `*Club` and `Club` are one for a member call. */

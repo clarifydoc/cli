@@ -1060,7 +1060,8 @@ export interface CallInfo {
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,
    * `sp.GetRequiredService<IMailer>().Send()`, `getIt<Mailer>().send()`).
-   * The linker resolves it exactly like an injected field of that type.
+   * The linker resolves it exactly like an injected field of that type. `A|B`: the receiver is one of several classes
+   * (`isinstance(x, (A, B))`) — the one that declares the called method, when exactly one does.
    */
   receiverType?: string;
   /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */
@@ -1245,6 +1246,11 @@ export interface FunctionInfo {
   variadic?: boolean;
   returnType: string | null;
   /**
+   * The return type as written, when `returnType` keeps less of it (Go strips `[]*Club` to `Club`): the declared
+   * collection or pointer the linker reads an element of. Absent when `returnType` already says it all.
+   */
+  declaredReturnType?: string;
+  /**
    * Builds its class: reached through the type (`Club(…)`, `Club.fromJson(…)`), never through a value of it or by
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
@@ -1308,8 +1314,11 @@ export interface FunctionInfo {
    * `fromIndex`: the name is one target of a tuple unpacking of that call
    * (`a, b = load()`): the local holds the element at that position of the
    * call's declared tuple return type (the manifest's `tupleElementsOf`).
+   * `element`: the name is bound by a loop or comprehension over `from` (a call, or a field read — `self.clubs`,
+   * `repo.all()`): it holds the element of the collection type that call or field declares (the manifest's
+   * `collectionElementOf`).
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

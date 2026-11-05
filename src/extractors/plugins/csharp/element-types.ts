@@ -13,7 +13,7 @@ import {
   valueOfChain,
 } from "../shared/element-chain.js";
 import { CSHARP_BUILTINS } from "./builtins.js";
-import { bareTypeName } from "./local-types.js";
+import { bareTypeName, iterationSource } from "./local-types.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -152,6 +152,7 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
     return null;
   };
   const fromLocals: LocalType[] = [];
+  const fromElements: LocalType[] = [];
 
   const binders = new Map<string, Set<string | null>>();
   const bind = (name: string | null | undefined, type: string | null): void => {
@@ -199,7 +200,12 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
         const left = node.childForFieldName("left");
         const right = node.childForFieldName("right");
         if (typeNode?.type === "implicit_type" && left?.type === "identifier") {
-          bind(left.text, right ? loopElement(right.text, rootState, RULES) : null);
+          const element = right ? loopElement(right.text, rootState, RULES) : null;
+          // A collection the body does not type (`await repo.AllAsync()`, `repo.All()`, a base's field): the element
+          // of the type that call or member declares, read by the linker.
+          const source = !element && right ? iterationSource(right) : null;
+          if (!source) bind(left.text, element);
+          else fromElements.push({ name: left.text, type: "", from: source.from, element: true, ...(source.awaited ? { awaited: true as const } : {}) });
         }
         break;
       }
@@ -249,6 +255,7 @@ export function csharpElementFacts(method: Node, body: Node, params: readonly Pa
     const t = [...types][0];
     if (t) locals.push({ name, type: t });
   }
+  for (const f of fromElements) if (!binders.has(f.name)) locals.push(f);
   for (const f of fromLocals) if (!binders.has(f.name) && !locals.some((l) => l.name === f.name)) locals.push(f);
   const typeReceiver = (call: CallInfo): void => {
     if (call.receiverType) return;

@@ -1,3 +1,4 @@
+import { collectionElementText } from "../../shared/collection-element.js";
 import { csharpMigrationFiles } from "./migration-files.js";
 import { dotnetProjectCommands } from "./project-commands.js";
 import { dotnetTestCommand } from "./test-command.js";
@@ -19,6 +20,7 @@ export const csharpManifest: LanguagePluginManifest = {
   testCommand: dotnetTestCommand,
   projectCommands: dotnetProjectCommands,
   language: "csharp",
+  collectionElementOf: collectionElementText,
   // Blazor code-behind's `Nav.NavigateTo("orders")` and MAUI Shell's `GoToAsync("Basket")` name app-root routes.
   linksFromBase: true,
   family: "dotnet",

@@ -525,7 +525,7 @@ export function collectLocalTypes(
 ): LocalType[] {
   const table = new FactTable();
   const paramNames = new Set(params.map((p) => p.name));
-  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number }>>();
+  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number; element?: true }>>();
   // Also assigned something other than a call (or `None`): hides its `from` calls.
   const untyped = new Set<string>();
   const scope = (name: string): Fact => {
@@ -537,8 +537,24 @@ export function collectLocalTypes(
   const bindLoop = (clause: Node): boolean => {
     const left = clause.childForFieldName("left");
     const over = left ? loopOver(clause.childForFieldName("right"), collections) : null;
-    if (!left || !over) return false;
+    if (!left) return false;
     const targets = left.type === "identifier" ? [left] : left.type === "pattern_list" || left.type === "tuple_pattern" ? left.namedChildren : [];
+    if (!over) {
+      // A loop over a field or a call's result (`for c in self.clubs`, `for c in repo.load()`): the element of the
+      // type that field or call DECLARES, which the linker reads.
+      const source = loopSource(clause.childForFieldName("right"));
+      const element = source ? (source.pair ? targets[1] : targets.length === 1 ? targets[0] : undefined) : undefined;
+      if (!source || !element || element.type !== "identifier" || (source.pair && targets.length !== 2)) return false;
+      for (const t of targets) {
+        if (t !== element) boundNames(t, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
+        else {
+          table.assign(t.text, UNKNOWN);
+          const calls = fromCalls.get(t.text) ?? fromCalls.set(t.text, new Map()).get(t.text)!;
+          calls.set(`element ${source.from}`, { from: source.from, awaited: false, element: true });
+        }
+      }
+      return true;
+    }
     // `for c in clubs`, `for c in by_id.values()`: the target is the element; `for i, c in enumerate(clubs)` and
     // `for k, c in by_id.items()`: the second target is (the first is a counter or a key).
     const element = over.pair ? targets[1] : targets.length === 1 ? targets[0] : undefined;
@@ -566,9 +582,9 @@ export function collectLocalTypes(
   };
   walkStatements(body, {
     loop: bindLoop,
-    ret(stmt) { if (collections.size > 0) comprehensions(stmt); },
+    ret(stmt) { comprehensions(stmt); },
     statement(stmt) {
-      if (collections.size > 0) comprehensions(stmt);
+      comprehensions(stmt);
       const a = stmt.namedChild(0);
       if (a?.type !== "assignment") return;
       const left = a.childForFieldName("left");
@@ -656,7 +672,7 @@ export function collectLocalTypes(
       const calls = fromCalls.get(name);
       if (!calls || untyped.has(name)) continue;
       for (const c of calls.values()) {
-        out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}) });
+        out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}), ...(c.element ? { element: true as const } : {}) });
       }
       continue;
     }
@@ -697,6 +713,50 @@ function loopOver(right: Node | null, collections: ReadonlyMap<string, { element
     }
     if (!["reversed", "sorted", "list", "set", "tuple", "iter"].includes(fn.text)) return null;
     node = args[0]!;
+  }
+  return null;
+}
+
+/** `self.clubs`, `self.repo.clubs`, `repo.clubs`: an attribute chain off a name, spelled for `localTypes[].from`. */
+function attributeChainText(node: Node): string | null {
+  const parts: string[] = [];
+  let cur: Node | null = node;
+  while (cur?.type === "attribute") {
+    const name = cur.childForFieldName("attribute");
+    if (name?.type !== "identifier") return null;
+    parts.unshift(name.text);
+    cur = cur.childForFieldName("object");
+  }
+  if (cur?.type !== "identifier") return null;
+  parts.unshift(cur.text);
+  return parts.length >= 2 ? parts.join(".") : null;
+}
+
+/**
+ * What a loop's iterable reads when the source types none: a field (`self.clubs`) or a call
+ * (`self.repo.load()`), through the wrappers that keep the elements. `pair`: `enumerate(…)`.
+ */
+function loopSource(right: Node | null): { from: string; pair: boolean } | null {
+  let node = right;
+  let pair = false;
+  for (let hop = 0; node && hop < 4; hop++) {
+    if (node.type === "attribute") {
+      const from = attributeChainText(node);
+      return from ? { from, pair } : null;
+    }
+    if (node.type !== "call") return null;
+    const fn = node.childForFieldName("function");
+    const args = node.childForFieldName("arguments")?.namedChildren.filter((c) => c.type !== "comment") ?? [];
+    if (fn?.type === "identifier" && args.length === 1 && (fn.text === "enumerate" || ["reversed", "sorted", "list", "set", "tuple", "iter"].includes(fn.text))) {
+      if (fn.text === "enumerate") {
+        if (pair) return null;
+        pair = true;
+      }
+      node = args[0]!;
+      continue;
+    }
+    const from = callChainText(node, "python");
+    return from && !PY_BUILTIN_CALLS.has(from.slice(0, -2)) ? { from, pair } : null;
   }
   return null;
 }
@@ -1233,8 +1293,7 @@ const mentionsIsinstance = new WeakMap<object, boolean>();
 
 /**
  * `if isinstance(x, Club): x.rank()` — the receiver `x` of a call in the branch is a `Club`. Only the
- * condition's `and` conjuncts narrow, and only the branch the condition guards (never an `else`, never a
- * tuple of classes); the nearest enclosing narrowing wins. A name the branch rebinds before the call is not narrowed.
+ * condition's `and` conjuncts narrow, and only the branch the condition guards (never an `else`; a tuple of classes narrows to its alternatives); the nearest enclosing narrowing wins. A name the branch rebinds before the call is not narrowed.
  */
 function narrowedType(call: Node, name: string): { type: string } | null {
   let seen = mentionsIsinstance.get(call.tree);
@@ -1267,6 +1326,11 @@ function isinstanceOf(cond: Node | null | undefined, name: string): string | nul
   const args = cond.childForFieldName("arguments")?.namedChildren ?? [];
   if (args.length !== 2 || args[0]!.text !== name) return null;
   const cls = args[1]!;
+  // `isinstance(x, (Club, Car))`: the alternatives, `A|B` — the linker takes the one that declares the called method.
+  if (cls.type === "tuple") {
+    const names = cls.namedChildren.map((c) => ((c.type === "identifier" || c.type === "attribute") && isClassName(c.text) ? c.text : null));
+    return names.length >= 2 && names.every((n): n is string => !!n) ? names.join("|") : null;
+  }
   return (cls.type === "identifier" || cls.type === "attribute") && isClassName(cls.text) ? cls.text : null;
 }
 

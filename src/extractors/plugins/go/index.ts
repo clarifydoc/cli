@@ -98,6 +98,26 @@ function parseGoReturnType(line: string): string | null {
   return first ? stripGoTypeModifiers(first) : null;
 }
 
+/** The declared result of a `func` line as written (`[]*Club`), where the stripped return type keeps only the element (a slice). */
+function declaredGoReturn(line: string): string | null {
+  const head = /^\s*func\s+(?:\([^)]*\)\s*)?[A-Za-z_]\w*\s*(?:\[[^\]]*\]\s*)?\(/.exec(line);
+  const results = head ? goResultTextAt(line, head[0].length - 1) : null;
+  if (!results) return null;
+  const types = goResultTypes(results.text);
+  const first = types.find((t) => stripGoTypeModifiers(t) !== "error") ?? types[0];
+  const written = first?.replace(/\s+/g, "");
+  return written && /^\*?\[\d*\]/.test(written) ? written : null;
+}
+
+function withGoDeclaredReturns(lines: string[], fns: FunctionInfo[]): FunctionInfo[] {
+  for (const fn of fns) {
+    if (fn.name === "<setup>" || fn.line < 1) continue;
+    const declared = declaredGoReturn(lines[fn.line - 1] ?? "");
+    if (declared) fn.declaredReturnType = declared;
+  }
+  return fns;
+}
+
 export const goSpec: RegexLangSpec = {
   language: "go",
   extensions: [".go"],
@@ -152,8 +172,11 @@ export const goSpec: RegexLangSpec = {
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
   // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
   // Where each call's arguments come from (a parameter, a request read), for `paramColumns`.
-  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, fns)),
-  postProcessClasses: (lines, classes) => withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes)),
+  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, fns))),
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) withGoDeclaredReturns(lines, cls.methods);
+    return withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes));
+  },
 
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
