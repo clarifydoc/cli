@@ -4,7 +4,8 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { updateLsp } from "../core/lsp-updater.js";
-import { decodeScip, mergeScip, scipAnswers, scipFileAnswers, scipPathMapper } from "./scip.js";
+import { decodeScip, scipFileAnswers, scipPathMapper } from "./scip.js";
+import { mergeScip, scipAnswers } from "./scip-test-helpers.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 
 // A protobuf writer for the handful of fields an index needs.
@@ -162,6 +163,17 @@ describe("scipAnswers", () => {
       // A local symbol resolves within its own document.
       { file: "src/a.ts", line: 7, column: 1, targets: [{ file: "src/a.ts", line: 3 }] },
     ]);
+  });
+
+  it("takes the first occurrence in document order when a multi-line range and a later one cover a position", () => {
+    const idx = decodeScip(index([
+      ["src/a.ts", [{ range: [2, 0, 6, 4], symbol: RUN }, { range: [4, 0, 9], symbol: "other" }]],
+      ["src/b.ts", [{ range: [9, 16, 19], symbol: RUN, def: true }]],
+    ]));
+    const want = [{ file: "src/a.ts", line: 5, column: 2, targets: [{ file: "src/b.ts", line: 10 }] }];
+    expect(scipAnswers(idx, [q("src/a.ts", 5, 2)]).answers).toEqual(want);
+    // Past the multi-line range's end column on its last line, only a later one could answer.
+    expect(scipAnswers(idx, [q("src/a.ts", 7, 4)]).answers).toEqual([]);
   });
 
   it("answers from an index that writes only typed ranges", () => {
