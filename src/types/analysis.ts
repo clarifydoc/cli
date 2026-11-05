@@ -1260,6 +1260,13 @@ export interface FunctionInfo {
    */
   localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean }>;
   /**
+   * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
+   * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort
+   * unique-name guess does not apply to it, however unique the method's name. A local that also has a
+   * `localTypes` initializer is still typed through it first; this only stops the guess.
+   */
+  untypedLocals?: string[];
+  /**
    * The locals whose members the object the function returns spreads
    * (`const crud = useSquadCrud(); return { ...crud, benchAll }` → `["crud"]`):
    * a member of theirs is one the function hands back, found through the

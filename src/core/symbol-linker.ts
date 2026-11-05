@@ -4780,7 +4780,10 @@ function resolveCallToDefinition(
             return !!from && from.length > 1 &&
               ((from.length === 2 && headNamesForeignPackage(analysis, from[0]!, ctx)) || callsOutside(from, analysis, ctx));
           }));
-        if (!contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
+        // A receiver the plugin says is bound to a value of no stated type (a block parameter) has no
+        // type for the name to match: the only definition of the leaf is coincidence.
+        const untypedReceiver = !!findEnclosingCallable(analysis, sourceSymbol)?.untypedLocals?.includes(head.replace(/\?$/, ""));
+        if (!untypedReceiver && !contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,
             entry.def.name,
