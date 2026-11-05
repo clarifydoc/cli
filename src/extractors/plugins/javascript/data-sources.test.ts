@@ -1412,6 +1412,44 @@ describe("JS client instances named like a library", () => {
   });
 });
 
+describe("JS requests on a client instance", () => {
+  it("reads a relative path on an instance the file builds as a request through it", async () => {
+    const calls = await apiCallsOf(`
+      import axios from 'axios';
+      const clubAPI = axios.create({ baseURL: \`\${host}/\` });
+      export const login = (c) => clubAPI.post('auth/sign_in', c);
+      export const resend = (email) => clubAPI.post('resend_confirmation', { email });`);
+    expect(calls.map((c) => [c.name, c.target, c.client, c.clientUnconfirmed])).toEqual([
+      ["post", "auth/sign_in", "clubAPI", undefined],
+      ["post", "resend_confirmation", "clubAPI", undefined],
+    ]);
+  });
+
+  it("leaves a request on an imported binding for the project pass to confirm", async () => {
+    const calls = await apiCallsOf(`
+      import clubAPI from './apiClient';
+      import { fixtures } from '../store/fixtures';
+      export const login = (c) => clubAPI.post('auth/sign_in', c);
+      export const warm = () => fixtures.get('/clubs/1');
+      export const note = () => fixtures.get('note');`);
+    // A rooted path was a request before any project fact: it stays one, unflagged.
+    expect(calls.map((c) => [c.name, c.target, c.client, c.clientUnconfirmed])).toEqual([
+      ["post", "auth/sign_in", "clubAPI", true],
+      ["get", "/clubs/1", "fixtures", undefined],
+      ["get", "note", "fixtures", true],
+    ]);
+  });
+
+  it("reads nothing off a package's import or a binding the file shadows", async () => {
+    expect(await apiCallsOf(`
+      import store from 'vuex-store';
+      export const a = () => store.post('auth/sign_in', 1);`)).toEqual([]);
+    expect(await apiCallsOf(`
+      import clubAPI from './apiClient';
+      export function f() { const clubAPI = new Map(); return clubAPI.get('auth/sign_in'); }`)).toEqual([]);
+  });
+});
+
 describe("JS server registrations are no client calls", () => {
   it("reads nothing from a Fastify plugin's instance, a required Fastify app or a tRPC server procedure", async () => {
     const calls = await apiCallsOf(`

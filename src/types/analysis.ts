@@ -2321,6 +2321,15 @@ export interface DataSourceInfo {
    */
   client?: string;
   /**
+   * For an api-call read off a verb call on a binding the file imports from
+   * the project (`clubAPI.post('auth/sign_in')` with `import clubAPI from
+   * './apiClient'`), which says nothing else about HTTP: whether that binding
+   * is an HTTP client instance is the other module's fact. The plugin's
+   * project pass keeps the row only when it is (`const clubAPI =
+   * axios.create(…)` there) and drops it otherwise.
+   */
+  clientUnconfirmed?: true;
+  /**
    * For `api-call`: the other URLs this call may resolve to, when it goes
    * through a URL-builder helper whose body returns a different URL per branch
    * (see `FunctionInfo.urlTemplateAlternatives`). `target` is the first branch;

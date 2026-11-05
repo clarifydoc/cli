@@ -45,6 +45,26 @@ describe("facts a client call, a library name or a package import used to invent
     expect(s.apiRouteLinks?.map((l) => `${l.url} ${l.routePath} ${l.confidence}`)).toEqual(["/v2/fixtures /v2/fixtures EXTRACTED"]);
   });
 
+  it("JavaScript: a request on an axios instance another module builds is an api-call; a verb on any other import is not", async () => {
+    const s = await analyzed(join(dir, "js-imported-client"), {
+      "package.json": JSON.stringify({ name: "fixtures", dependencies: { axios: "1.6.0", express: "4.18.0" } }),
+      "src/api/apiClient.js": "import axios from 'axios';\nconst { apiHost = '' } = window.leagueConfig || {};\nconst clubAPI = axios.create({ baseURL: `${apiHost}/` });\nexport default clubAPI;\n",
+      "src/api/auth.js": "import clubAPI from './apiClient';\nexport const login = async (credentials) => {\n  const response = await clubAPI.post('auth/sign_in', credentials);\n  return response.data;\n};\nexport const resend = (email) => clubAPI.post('resend_confirmation', { email });\n",
+      "src/api/cache.js": "const entries = {};\nexport default { post(key, value) { entries[key] = value; } };\n",
+      "src/api/warmup.js": "import cache from './cache';\nexport const warm = () => cache.post('auth/sign_in', 1);\n",
+      "src/server.js": "import express from 'express';\nconst app = express();\napp.post('/auth/sign_in', signIn);\napp.post('/resend_confirmation', resendConfirmation);\n",
+    });
+    expect((s.apiCalls ?? []).map((c) => `${c.filePath} ${c.name} ${c.target}`).sort()).toEqual([
+      "src/api/auth.js post /auth/sign_in",
+      "src/api/auth.js post /resend_confirmation",
+    ]);
+    expect((s.apiCalls ?? []).some((c) => "clientUnconfirmed" in c)).toBe(false);
+    expect(s.apiRouteLinks?.map((l) => `${l.source} ${l.method} ${l.routePath}`).sort()).toEqual([
+      "src/api/auth.js POST /auth/sign_in",
+      "src/api/auth.js POST /resend_confirmation",
+    ]);
+  });
+
   it("Python: a package's or the standard library's name never binds a project namesake", async () => {
     const s = await analyzed(join(dir, "py"), {
       "pyproject.toml": '[project]\nname = "league"\ndependencies = ["pydantic", "django"]\n',

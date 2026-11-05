@@ -7,6 +7,7 @@ import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/bas
 import type { ProjectContext } from "../../../types/project.js";
 import { resolveUrlBuilders } from "./url-builders.js";
 import { dropCollectionLookups } from "./collection-lookups.js";
+import { confirmImportedClients } from "./imported-clients.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
@@ -598,6 +599,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   override resolveProject(calls: ProjectApiCall[], analyses: FileAnalysis[], ctx: ProjectContext): number {
     // A lookup in a collection another function returned is no request (collection-lookups.ts).
     dropCollectionLookups(calls, ctx);
+    // A verb on an imported binding is a request only when its module builds an HTTP client instance (imported-clients.ts).
+    confirmImportedClients(calls, ctx);
     // Calls of Kubb-generated clients (kubb.ts) are added first: the module they name is not on disk.
     return resolveKubbClientCalls(calls, analyses, ctx) + resolveRtkHooks(calls, analyses, ctx) + resolveUrlBuilders(calls, analyses, ctx);
   }
@@ -750,6 +753,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.collectionReceivers = null;
     this.routerReceivers = null;
     this.clientKinds = null;
+    this.instances = null;
     this.optionsApi = /\b(?:props|data)\s*[:(]/.test(sourceText);
   }
 
@@ -1228,9 +1232,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         if (kind) this.clientKinds.set(m[1]!, kind);
       }
       // An HTTP client instance (`const client = axios.create({ baseURL })`) talks to an API, never a database.
-      for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*(?:axios|ky|got|wretch|ofetch)\.(?:create|extend)\s*\(/g)) {
-        this.clientKinds.set(m[1]!, "sdk");
-      }
+      for (const name of this.httpInstances()) this.clientKinds.set(name, "sdk");
       const factories = new Map<string, "sdk" | "vector">();
       for (const m of this.sourceText.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*:\s*(?:Promise\s*<\s*)?([A-Za-z_$][\w$]*)/g)) {
         const kind = kindOfClass(m[2]!);
@@ -1248,6 +1250,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return this.clientKinds.get(root) ?? null;
   }
 
+  /** Names this file binds to an HTTP client instance: `const clubAPI = axios.create({ baseURL })`, `ky.extend(…)`. */
+  private instances: Set<string> | null = null;
+
+  private httpInstances(): Set<string> {
+    if (!this.instances) {
+      this.instances = new Set();
+      for (const m of this.sourceText.matchAll(/(?:^|[\s,;({])(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*(?:axios|ky|got|wretch|ofetch)\.(?:create|extend)\s*\(/g)) {
+        this.instances.add(m[1]!);
+      }
+    }
+    return this.instances;
+  }
+
   /**
    * A library root's name held by an instance: `export const http = axios.create(…)`
    * in this file, or `import { http } from './http'`. Its base URL applies to
@@ -1256,6 +1271,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private isClientInstance(name: string): boolean {
     if ((this.imports ??= importEvidence(this.sourceText)).projectNames.has(name)) return true;
     return new RegExp(String.raw`\b(?:const|let|var)\s+${name}\s*(?::[^=;\n]*)?=\s*(?!require\s*\()[\w$]`).test(this.sourceText);
+  }
+
+  /** The file binds `name` itself somewhere (`const clubAPI = …`, a parameter aside): an import of that name may be shadowed. */
+  private declaredLocally(name: string): boolean {
+    return new RegExp(String.raw`\b(?:const|let|var)\s+${escapeRegex(name)}\s*(?::[^=;\n]*)?=`).test(this.sourceText);
   }
 
   /**
@@ -1473,6 +1493,13 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const clientChain = !!recvRoot && CLIENT_ROOT_RE.test(recvRoot) && !this.localNamedLikeLibrary(recvRoot) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText) &&
           !chainText.split(".").slice(1, -1).some((seg) => REQUEST_DATA_SEGMENT.test(seg));
         const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)) && !this.localNamedLikeLibrary(recv));
+        // A verb called on a plain binding (`clubAPI.post(…)`) that is an HTTP client instance: one this
+        // file builds (`axios.create(…)`), or possibly one it imports from the project — which the
+        // module it comes from says, so that row waits for the project pass (`clientUnconfirmed`).
+        const plainReceiver = !!recv && recv === recvRoot && fn?.childForFieldName("object")?.type === "identifier" && HTTP_VERBS.has(fnName);
+        const localInstance = plainReceiver && this.httpInstances().has(recv!);
+        const importedBinding = plainReceiver && !localInstance && !trustedReceiver &&
+          (this.imports ??= importEvidence(this.sourceText)).projectNames.has(recv!) && !this.declaredLocally(recv!);
         // `app.get("/x", handler)` / `router.post(...)` are inbound route
         // definitions (already captured as routes), not outbound calls — exclude.
         // So is a route decorator: NestJS `@Get('public/:id')` is a call too.
@@ -1502,7 +1529,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const exactRoot =
             HTTP_ROOTS.has(fnName.toLowerCase()) &&
             (bareLibrary || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
-          const trusted = exactRoot || trustedReceiver;
+          const trusted = exactRoot || trustedReceiver || localInstance;
           // `http.request('POST', url)` / `this.http.request('GET', url)`:
           // the verb comes first and the URL second.
           let callName = jqueryVerb ?? fnName;
@@ -1555,22 +1582,23 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // named `fetchX(localArg)` (matched by the fuzzy isHttpRoot) isn't read
           // as an HTTP call to a non-URL argument.
           const argIsCall = firstArg?.type === "call_expression";
-          const strictHttp = exactRoot || trustedReceiver;
+          const strictHttp = exactRoot || trustedReceiver || localInstance;
           // An untrusted verb call (`cache.get(k)`, `cy.get(sel)`, a local
           // `put(…)` helper) has only its argument to go on, so the argument
           // must be a request path — not merely contain a slash — and the
           // receiver must not be a collection the file builds itself.
+          // A client instance's first argument is its request path, relative to the base (`'auth/sign_in'`).
+          const instancePath = (localInstance || importedBinding) && !!resolved && (looksLikeUrl(resolved.url) || RELATIVE_WORD.test(resolved.url));
           const urlEvidence = trusted
-            ? !!resolved && looksLikeUrl(resolved.url)
+            ? !!resolved && (looksLikeUrl(resolved.url) || instancePath)
             : !!resolved && urlShaped(resolved.url) && !namesSourceSymbol(resolved.url) && !(recv && this.isCollectionReceiver(recv));
           // A jQuery shorthand is trusted for a URL held in a variable or built
           // by a helper, but a literal must still read as one: `$.get('x')` is not.
           const literalNonUrl = !!jqueryVerb && firstArg?.type === "string" && !urlEvidence;
-          if (
-            resolved != null &&
-            !literalNonUrl &&
-            (urlEvidence || (trusted && (!argIsCall || strictHttp)))
-          ) {
+          const emits = resolved != null && !literalNonUrl && (urlEvidence || (trusted && (!argIsCall || strictHttp)));
+          // What no other evidence made a request is one only if the imported binding is a client instance.
+          const unconfirmed = !emits && importedBinding && instancePath && !!resolved && !namesSourceSymbol(resolved.url);
+          if (resolved && (emits || unconfirmed)) {
             sources.push(this.ds({
               kind: "api-call",
               name: callName,
@@ -1592,6 +1620,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               ...(resolved.confidence === "AMBIGUOUS"
                 ? { targetConfidence: resolved.confidence }
                 : {}),
+              ...(unconfirmed ? { clientUnconfirmed: true as const } : {}),
               ...bodyOf(callName, positional, firstArg),
               ...readsFor(node, fnName),
             }));
@@ -2782,6 +2811,9 @@ function isHttpRoot(name: string): boolean {
  * http scheme) so verb calls on non-clients are excluded — `Map.get("key")`,
  * `set.delete(`approve-${id}`)`, `params.get("tag")` have no path separator.
  */
+/** A bare path word a client instance resolves against its base (`session`, `resend_confirmation`, `me?x=1`). */
+const RELATIVE_WORD = /^[A-Za-z0-9_.~-]+(?:[?#][^\s]*)?$/;
+
 function looksLikeUrl(s: string): boolean {
   return s.includes("/") || /^https?:/i.test(s);
 }
