@@ -94,6 +94,12 @@ function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>, configDir: 
   // (`import { environment } from 'src/environments/environment'`).
   if (parsed.compilerOptions?.baseUrl) aliases.set(BASE_URL_KEY, compilerBase);
   const paths = parsed.compilerOptions?.paths ?? {};
+  // `paths` is one option: a config declaring it replaces the whole table of the config it extends (`baseUrl` stays
+  // inherited). A table of nothing but malformed entries is no declaration anyone meant.
+  const declared = Object.values(paths);
+  if (parsed.compilerOptions?.paths && typeof parsed.compilerOptions.paths === "object" && (declared.length === 0 || declared.some((t) => Array.isArray(t) && t.some((x) => typeof x === "string")))) {
+    for (const key of [...aliases.keys()]) if (key !== BASE_URL_KEY) aliases.delete(key);
+  }
   for (const [alias, targets] of Object.entries(paths)) {
     if (!Array.isArray(targets)) continue;
     // TypeScript refuses a pattern or target with more than one `*`.
