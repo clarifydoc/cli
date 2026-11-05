@@ -25,13 +25,16 @@ export function loadElixirReader(): Promise<(source: string) => ParsedStructure>
 }
 
 interface Walk {
+  /** The definition just read in the current module: its next clause, same name, macro and arity, is one function. */
+  last: { key: string; fn: { span: Omit<ParsedFunctionSpan, "calls">; calls: PatternCallName[] } } | null;
   topLevel: PatternCallName[];
   functions: Array<{ span: Omit<ParsedFunctionSpan, "calls">; calls: PatternCallName[] }>;
 }
 
 /**
  * Elixir's functions and calls from a tree-sitter-elixir tree. A function is a `def`/`defp`/`defmacro`/`defmacrop`
- * clause — each clause its own, as the patterns read them — spanning its line to its `end` (or its `do:` body), and
+ * (its consecutive clauses of one name and arity are ONE function — `def score(%Match{} = m)` then `def score(nil)` —
+ * spanning the first clause's line to the last one's end) spanning its line to its `end` (or its `do:` body), and
  * owns the calls in its body, guard and default arguments; an anonymous function's calls are its owner's, a
  * module's own body (`plug`, `schema`, `field`) is no function's. A call is one with arguments: `socket.assigns` is a
  * field read. A remote call is named by its last two names, as the patterns name it (`MyApp.Accounts.get_user!(id)`
@@ -43,7 +46,7 @@ interface Walk {
  */
 export function readElixirTree(root: TSNode): ParsedStructure {
   const topLevel: PatternCallName[] = [];
-  const walk: Walk = { topLevel, functions: [] };
+  const walk: Walk = { last: null, topLevel, functions: [] };
   visit(root, topLevel, walk);
   walk.functions.sort((a, b) => a.span.line - b.span.line);
   return {
@@ -63,6 +66,15 @@ function namedChildren(node: TSNode): TSNode[] {
 function macroOf(call: TSNode): string | null {
   const target = call.childForFieldName("target");
   return target?.type === "identifier" ? target.text : null;
+}
+
+/** How many arguments a definition's head takes: `score(m, bonus) when …` is 2, `kick_off do` is 0. */
+function arityOf(head: TSNode | undefined): number {
+  if (!head) return 0;
+  if (head.type === "binary_operator") return arityOf(head.childForFieldName("left") ?? undefined);
+  if (head.type !== "call") return 0;
+  const args = namedChildren(head).find((c) => c.type === "arguments");
+  return args ? namedChildren(args).length : 0;
 }
 
 /** A definition's name: `get!(id)`, `index conn, _`, `build(attrs) when is_map(attrs)`; null for `unquote(name)`. */
@@ -96,6 +108,7 @@ function visitNode(node: TSNode, owner: PatternCallName[] | null, walk: Walk): v
     return;
   }
   if (macro && MODULES.has(macro)) {
+    walk.last = null;
     visit(node, owner === walk.topLevel ? null : owner, walk);
     return;
   }
@@ -128,8 +141,18 @@ function definition(call: TSNode, owner: PatternCallName[] | null, walk: Walk): 
   const name = definitionName(parts[0]);
   let calls = owner;
   if (name) {
-    calls = [];
-    walk.functions.push({ span: { name: name.text, line: call.startPosition.row + 1, endLine: call.endPosition.row + 1 }, calls });
+    const key = `${macroOf(call)}/${name.text}/${arityOf(parts[0])}`;
+    const endLine = call.endPosition.row + 1;
+    if (walk.last?.key === key) {
+      // A further clause of the function just read: one function, its calls the union.
+      walk.last.fn.span.endLine = Math.max(walk.last.fn.span.endLine, endLine);
+      calls = walk.last.fn.calls;
+    } else {
+      calls = [];
+      const fn = { span: { name: name.text, line: call.startPosition.row + 1, endLine }, calls };
+      walk.functions.push(fn);
+      walk.last = { key, fn };
+    }
   }
   headCalls(parts[0], calls, walk);
   // `do … end`, and the one-line `, do: expr` among the arguments.

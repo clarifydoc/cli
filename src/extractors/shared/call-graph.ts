@@ -166,6 +166,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const argCountOf = hooks.argCountOf;
   const argOriginsOf = hooks.argOriginsOf;
   const argKindsOf = hooks.argKindsOf;
+  const withSubjectsOf = hooks.withSubjectsOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
@@ -189,6 +190,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argCount?: number | null;
     argOrigins?: CallArgOrigin[] | null;
     argKinds?: string[] | null;
+    withSubjects?: string[] | null;
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
@@ -235,7 +237,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // Standard call expressions
     if (callTypes.has(node.type)) {
       const name = resolve(node);
-      if (name) push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
+      if (name) {
+        push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
+        if (withSubjectsOf) candidates[candidates.length - 1]!.withSubjects = withSubjectsOf(node);
+      }
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
       if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
@@ -298,7 +303,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // site is its own claim about what feeds the callee (`load(params.id)` and `load(params.id, page)`).
     // So is a call on a receiver whose type the site states apart from the rest (a block's own
     // `let v = new Truck()` shadowing a parameter `v: Car`): `v.drive()` there is another method.
-    const typed = c.receiver?.type ? `\0<${c.receiver.type}>` : "";
+    const typed = (c.receiver?.type ? `\0<${c.receiver.type}>` : "") + (c.withSubjects ? `\0with(${c.withSubjects.join(",")})` : "");
     // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
     // A dispatch map's value is one claim per key it is held under (`{ save: saveClub, store: saveClub }`).
     const seenKey = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.read ? `${c.name}\0read` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
@@ -317,6 +322,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.argCount != null) call.argCount = c.argCount;
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
     if (c.argKinds) call.argKinds = c.argKinds;
+    if (c.withSubjects) call.withSubjects = c.withSubjects;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);
@@ -328,7 +334,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       // up by) — a member call on a container lookup is never Array#find.
       if (c.receiver.type) call.receiverType = c.receiver.type;
       if (c.receiver.qualifier) call.receiverQualifier = c.receiver.qualifier;
-    } else if (isNoise(c.name)) {
+    } else if (isNoise(c.name) && !c.withSubjects) {
       // A read is no call worth holding back for a typed receiver.
       if (c.read) continue;
       seen.add(c.name);

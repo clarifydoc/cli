@@ -47,14 +47,14 @@ export async function applyModuleSearchPaths(
     // What each sub-project's build files say, as paths from the analysis root.
     const roots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
     const read = await readAtRoots(projectRoot, subProjects, [spec], (s, text, path, file) => {
-      const { dirs, files: named } = s.parse(text, path);
+      const { dirs, files: named, conditionalDirs } = s.parse(text, path);
       const base = dirOf(file);
-      return [{ base, dirs: dirs.map((d) => join(base, d)), files: named.map((f) => join(base, f)) }];
+      return [{ base, dirs: dirs.map((d) => join(base, d)), conditional: (conditionalDirs ?? []).map((d) => join(base, d)), files: named.map((f) => join(base, f)) }];
     });
-    const plans = new Map<string, { homes: Set<string>; dirs: string[]; pins: Map<string, string | null> }>();
+    const plans = new Map<string, Plan>();
     const planOf = (project: string) => {
       let plan = plans.get(project);
-      if (!plan) plans.set(project, (plan = { homes: new Set([fold(roots.get(project) ?? "")]), dirs: [], pins: new Map() }));
+      if (!plan) plans.set(project, (plan = { homes: new Set([fold(roots.get(project) ?? "")]), dirs: [], conditional: [], pins: new Map() }));
       return plan;
     };
     // A path the build files write in another case than the folder (Windows, `win\garage.pas`).
@@ -72,6 +72,7 @@ export async function applyModuleSearchPaths(
       for (const r of list) {
         plan.homes.add(fold(r.base));
         for (const d of r.dirs.map(fold)) if (!plan.dirs.includes(d)) plan.dirs.push(d);
+        for (const d of r.conditional.map(fold)) if (!plan.conditional.includes(d)) plan.conditional.push(d);
         for (const f of r.files) pin(project, f);
       }
     }
@@ -105,9 +106,17 @@ export async function applyModuleSearchPaths(
   return rewritten;
 }
 
+/** What a sub-project's build files say; directories folded as the language compares names. */
+interface Plan {
+  homes: Set<string>;
+  dirs: string[];
+  /** Directories searched for some platform or configuration only. */
+  conditional: string[];
+  pins: Map<string, string | null>;
+}
+
 function choose(
-  /** Directories folded as the language compares names. */
-  plan: { homes: Set<string>; dirs: string[]; pins: Map<string, string | null> },
+  plan: Plan,
   candidates: readonly string[],
   key: string,
   fold: (s: string) => string,
@@ -122,7 +131,10 @@ function choose(
     if (inDir.length === 1) return inDir[0]!;
     if (inDir.length > 1) return null;
   }
-  return null;
+  // Directories a platform's group adds: which applies is the build's, so the one candidate they hold is the
+  // answer, and two candidates (`Win/Garage.pas`, `Posix/Garage.pas`) are none — never the first listed.
+  const conditioned = candidates.filter((c) => plan.conditional.includes(fold(dirOf(c))));
+  return conditioned.length === 1 ? conditioned[0]! : null;
 }
 
 /** Calls classified into the module by its written name now name its file. */

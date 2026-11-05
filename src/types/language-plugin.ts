@@ -889,6 +889,11 @@ export interface CallExtractionHooks {
    */
   readNames?(node: Node): Array<{ name: string; node: Node; passed?: true }>;
   /**
+   * The subjects of the `with` statements a call node sits in the body of (Pascal `with Club do Save;`), innermost
+   * first, when the call is a bare name one of them may own as a member; recorded as `CallInfo.withSubjects`.
+   */
+  withSubjectsOf?(node: Node): string[] | null;
+  /**
    * Where this grammar binds a name locally, so the callback-argument scan can
    * tell a function passed by reference (`items.map(formatUser)`) from a
    * value passed by name (`save(user)`, `repo.find(user_id)`): an identifier
@@ -1070,8 +1075,10 @@ export interface ModuleSearchPathSpec {
    * What one build file says, paths as written relative to the file's own directory: `dirs` searched in
    * order for a module a bare import names (Delphi `DCC_UnitSearchPath`, Lazarus `OtherUnitFiles`), and
    * `files` that are the module their name says for the whole project (a `.dproj` `DCCReference`).
+   * `conditionalDirs` are searched only for some platform or configuration (a `.dproj` group conditioned on
+   * `$(Platform)`): which one applies is the build's, so a module two of them hold decides nothing.
    */
-  parse(text: string, path: string): { dirs: string[]; files: string[] };
+  parse(text: string, path: string): { dirs: string[]; files: string[]; conditionalDirs?: string[] };
   /**
    * An import that names its module and that module's file (Pascal `uses Garage in 'Win\Garage.pas'`,
    * read as a path source with the module as its one specifier) fixes the file for the whole sub-project.

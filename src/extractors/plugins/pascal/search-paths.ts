@@ -5,8 +5,8 @@ import type { ModuleSearchPathSpec } from "../../../types/language-plugin.js";
  * Leaf code: the manifest imports it.
  *
  * - `.dproj` (MSBuild): `DCC_UnitSearchPath` per `PropertyGroup`, the groups every
- *   build reads (no condition, or the `$(Base)` one) before platform and
- *   configuration groups; `DCCReference Include="Win\Garage.pas"` names a unit's file.
+ *   build reads (no condition, or the `$(Base)` one) searched in order; those of platform and
+ *   configuration groups are `conditionalDirs`, which decide only where they leave one candidate; `DCCReference Include="Win\Garage.pas"` names a unit's file.
  * - `.lpi` (Lazarus): `OtherUnitFiles Value="…"` in each build mode's search paths;
  *   a project unit's `Filename Value="…"` names its file.
  *
@@ -32,7 +32,7 @@ function attr(tag: string, name: string): string | null {
   return m ? m[1]!.replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&") : null;
 }
 
-function delphiPaths(text: string): { dirs: string[]; files: string[] } {
+function delphiPaths(text: string): { dirs: string[]; files: string[]; conditionalDirs: string[] } {
   const general: string[] = [];
   const specific: string[] = [];
   for (const g of text.matchAll(/<PropertyGroup\b([^>]*)>([\s\S]*?)<\/PropertyGroup>/gi)) {
@@ -45,7 +45,7 @@ function delphiPaths(text: string): { dirs: string[]; files: string[] } {
     const include = attr(r[1]!, "Include");
     if (include && /\.(?:pas|pp)$/i.test(include)) files.push(include.replace(/\\/g, "/"));
   }
-  return { dirs: [...new Set([...general, ...specific])], files };
+  return { dirs: [...new Set(general)], files, conditionalDirs: [...new Set(specific)].filter((d) => !general.includes(d)) };
 }
 
 function lazarusPaths(text: string): { dirs: string[]; files: string[] } {

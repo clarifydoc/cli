@@ -29,7 +29,9 @@ export type TypeUsageKind =
   | "variable"
   | "generic-arg"
   | "cast"
-  | "instantiation";
+  | "instantiation"
+  /** A class constant or enum case read through its class (PHP `Rules::GOAL`). */
+  | "constant";
 
 export interface TypeReference {
   /** The original type token as it appeared in source (e.g. "Promise<User>"). */
@@ -990,6 +992,13 @@ export interface CallInfo {
    * guessing. Absent: the site calls it.
    */
   passed?: "argument" | "attribute" | "return" | "property";
+  /**
+   * A bare name called inside Pascal `with Club do Save;`: the subjects of the enclosing `with` statements, innermost
+   * first, each a name or dotted name (`Club`, `Dm.Club`). Any of them may own the name as a member, which the
+   * language prefers to a routine of the same name; the linker answers it only when a subject's declared type
+   * has the member (a subject of unknown type decides nothing), else it reads the name as any bare call.
+   */
+  withSubjects?: string[];
   /**
    * The name is read without parentheses inside an expression (Pascal `N := ACar.Shine`, `if qry.IsEmpty then`,
    * `N + Points`), where the language runs a routine named so and a property's read accessor. The linker keeps it

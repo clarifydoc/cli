@@ -439,6 +439,37 @@ describe("Pascal unit search paths", () => {
     expect(await targets({ "League.dproj": project, "League.dpr": program("") })).toEqual(washes("Win"));
   });
 
+  it("refuses to pick between the directories of platform-conditioned groups by their order", async () => {
+    const both = dproj(`  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='Linux64'">
+    <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    // The order the platforms are listed in decides nothing: the result is the one without any build file.
+    const swapped = dproj(`  <PropertyGroup Condition="'$(Platform)'=='Linux64'">
+    <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    const bare = await targets({});
+    expect(await targets({ "League.dproj": both, "League.dpr": program("") })).toEqual(bare);
+    expect(await targets({ "League.dproj": swapped, "League.dpr": program("") })).toEqual(bare);
+    // A group every build reads still decides, and so does the one directory a platform group leaves.
+    const general = dproj(`  <PropertyGroup>
+    <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='Linux64'">
+    <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    expect(await targets({ "League.dproj": general, "League.dpr": program("") })).toEqual(washes("Win"));
+    const only = dproj(`  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
+  </PropertyGroup>`);
+    expect(await targets({ "League.dproj": only, "League.dpr": program("") })).toEqual(washes("Win"));
+  });
+
   it("takes the file a program's `uses … in` or a .dproj unit reference names, before the search path", async () => {
     const project = dproj(`  <PropertyGroup>
     <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
@@ -461,5 +492,58 @@ describe("Pascal unit search paths", () => {
 </CONFIG>
 `;
     expect(await targets({ "League.lpi": lpi })).toEqual(washes("Win"));
+  });
+});
+
+describe("Pascal with statements", () => {
+  const CLUBS = `unit Clubs;
+interface
+type
+  TClub = class
+    procedure Save;
+  end;
+implementation
+procedure TClub.Save;
+begin
+end;
+end.
+`;
+  const DECOY = `unit Decoy;
+interface
+type
+  TCar = class
+    procedure Save;
+  end;
+implementation
+procedure TCar.Save;
+begin
+end;
+end.
+`;
+  const main = (body: string) => `unit Main;
+interface
+uses Clubs, Decoy;
+procedure Run;
+implementation
+var Home: TClub;
+procedure Run;
+var Club: TClub; Car: TCar; Mystery: TUnknown;
+begin
+${body}
+end;
+end.
+`;
+  const links = (body: string) => linksFrom({ "Clubs.pas": CLUBS, "Decoy.pas": DECOY, "Main.pas": main(body) }, "Main.pas");
+
+  it("links a bare call to the member of the with subject's declared type", async () => {
+    expect(await links("  with Club do Save;")).toEqual(["Run: Save -> Clubs.pas::TClub.Save (injection)"]);
+    expect(await links("  with Home do begin Save; end;")).toEqual(["Run: Save -> Clubs.pas::TClub.Save (injection)"]);
+    // The innermost subject first: `Car` is the inner one.
+    expect(await links("  with Club do with Car do Save;")).toEqual(["Run: Save -> Decoy.pas::TCar.Save (injection)"]);
+  });
+
+  it("decides nothing for a subject of unknown type, and keeps a call outside the with a plain bare call", async () => {
+    expect(await links("  with Mystery do Save;")).toEqual([]);
+    expect(await links("  with Club do Fill(Save);\n  Save;")).toEqual([]);
   });
 });
