@@ -584,11 +584,16 @@ export class AnalysisStore {
    */
   async fileAnalysis(relativePath: string): Promise<FileAnalysis | null> {
     const target = resolve(this.options.analysisDir, `${relativePath}.json`);
+    let analysis: FileAnalysis;
     try {
-      return JSON.parse(await readFile(target, "utf-8")) as FileAnalysis;
+      analysis = JSON.parse(await readFile(target, "utf-8")) as FileAnalysis;
     } catch {
       return null;
     }
+    // Per-file JSON is written before the project passes: a request on an imported client stays
+    // `clientUnconfirmed` there, and is a request only if the project pass kept it (it then sits in the summary).
+    if (analysis?.dataSources?.some((r) => r.clientUnconfirmed)) analysis.dataSources = analysis.dataSources.filter((r) => !r.clientUnconfirmed);
+    return analysis;
   }
 }
 

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildIndex, withStdoutProtected } from "./store.js";
+import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { AnalysisStore, buildIndex, withStdoutProtected } from "./store.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 /**
@@ -115,5 +118,29 @@ describe("buildIndex", () => {
     const index = buildIndex(summary);
     expect([...index.byFile.keys()].sort()).toEqual(["src/a.ts", "src/b.ts"]);
     expect(index.pathLookup.get("src/b.ts")).toBe("src/b.ts");
+  });
+});
+
+describe("fileAnalysis", () => {
+  it("leaves out a request on an imported client the project pass did not confirm", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-store-"));
+    try {
+      await mkdir(join(dir, "src"), { recursive: true });
+      await writeFile(
+        join(dir, "src/garage.ts.json"),
+        JSON.stringify({
+          filePath: "src/garage.ts",
+          dataSources: [
+            { kind: "api-call", name: "post", target: "auth/sign_in", client: "garageAPI", line: 3, calls: [] },
+            { kind: "api-call", name: "get", target: "fuel", client: "storage", clientUnconfirmed: true, line: 7, calls: [] },
+          ],
+        }),
+      );
+      const store = new AnalysisStore({ projectRoot: dir, analysisDir: dir, allowAnalyze: false, allowColdStart: false });
+      const analysis = await store.fileAnalysis("src/garage.ts");
+      expect(analysis?.dataSources.map((r) => r.target)).toEqual(["auth/sign_in"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
