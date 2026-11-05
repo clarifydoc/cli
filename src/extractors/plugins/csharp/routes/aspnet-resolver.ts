@@ -2,7 +2,7 @@ import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
-import { buildPath, optionalTailPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
+import { actionNameOf, buildPath, optionalTailPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
 import { CustomAttributes } from "./aspnet-attributes.js";
 import { areaOfPath, conventionalPath, webApiVerb, CS_CONVENTIONAL_ROUTE_FACT, type CsConventionalPattern } from "./aspnet-conventional.js";
 
@@ -153,9 +153,9 @@ export const aspnetControllerInheritance: RouteResolver = {
     const rowFor = (source: RouteInfo, action: CsActionFact, at: Controller): RouteInfo => {
       const scope = scopeOf(at);
       const controllerToken = at.ref.cls.name.replace(/Controller$/, "");
-      const path = buildPath(scope.template, action.template, controllerToken, action.handler);
+      const path = buildPath(scope.template, action.template, controllerToken, action.action ?? actionNameOf(action.handler));
       const classGuards = [...scope.guards, ...at.fact.guards];
-      const shorter = optionalTailPath(scope.template, action.template, controllerToken, action.handler);
+      const shorter = optionalTailPath(scope.template, action.template, controllerToken, action.action ?? actionNameOf(action.handler));
       const row: RouteInfo = {
         ...source,
         path,
@@ -324,7 +324,7 @@ function applyConventionalRoutes(
         if (r.owner !== owner) return r;
         const action = src.fact.actions.find((a) => a.line === r.line && a.verb === r.httpMethod);
         if (!action || action.template !== null) return r;
-        const path = conventionalPath(pattern, controllerToken, action.action ?? action.handler, area, paramsOf(action.handler));
+        const path = conventionalPath(pattern, controllerToken, action.action ?? actionNameOf(action.handler), area, paramsOf(action.handler));
         if (!path) return r;
         const row: RouteInfo = { ...r, path };
         if (r.params) row.params = rebindParams(r.params, path, false);

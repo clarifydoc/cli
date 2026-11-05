@@ -157,3 +157,17 @@ describe("CsharpUiBridgeResolver — MAUI command bindings", () => {
     expect(links.map((l) => `${l.callName}@${l.sourceLine} -> ${l.targetSymbol}`)).toEqual(["CheckoutCommand@88 -> GarageViewModel.CheckoutAsync"]);
   });
 });
+
+describe("CsharpUiBridgeResolver — hand-written commands", () => {
+  it("joins Command=\"{Binding KeepCommand}\" to the method KeepCommand = new RelayCommand(Keep) runs, not a namesake's", () => {
+    const vm = cls("ClubViewModel", [fn("Keep", 30), fn("Drop", 40)]);
+    vm.properties.push({ name: "KeepCommand", type: "ICommand", visibility: "public", isStatic: false, isReadonly: false, commandHandler: "Keep" });
+    const other = cls("OtherViewModel", [fn("Keep", 5)]);
+    const view = analysis("Views/ClubView.xaml", "xaml", {
+      screens: [{ name: "ClubView", viewModel: "ClubViewModel" } as ScreenInfo],
+      interactiveElements: [{ element: "button", event: "command", handler: "KeepCommand", line: 4 }],
+    });
+    const links = resolver.resolve([view, analysis("Models/ClubViewModel.cs", "csharp", { classes: [vm] }), analysis("Models/Other.cs", "csharp", { classes: [other] })]);
+    expect(links.map((l) => l.targetSymbol)).toEqual(["ClubViewModel.Keep"]);
+  });
+});

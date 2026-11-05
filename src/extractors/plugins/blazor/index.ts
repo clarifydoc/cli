@@ -9,6 +9,7 @@ import type {
 import { applyRouteMeta, splitList, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody } from "../shared/regex-base.js";
+import { extractBlazorDataSources } from "./data-sources.js";
 
 /**
  * Blazor `.razor` markup extraction (regex path).
@@ -526,6 +527,7 @@ export const blazorSpec: RegexLangSpec = {
   extractRoutes: (lines) => extractBlazorRoutes(lines),
   extractSubComponents: (lines) => extractBlazorSubComponents(lines),
   extractInteractiveElements: (lines) => extractBlazorInteractiveElements(lines),
+  extractDataSources: extractBlazorDataSources,
   postProcessClasses: (lines, classes, filePath) => {
     const component = filePath ? extractBlazorComponentClass(lines, filePath) : null;
     return component ? [...classes, component] : classes;

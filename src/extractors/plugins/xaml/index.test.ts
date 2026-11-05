@@ -110,3 +110,22 @@ describe("xamlSpec sub-components", () => {
     expect(names).not.toContain("Button");
   });
 });
+
+describe("XAML view model discovery", () => {
+  const screenOf = (xaml: string) => xamlSpec.extractScreens!(xaml.split("\n"), "Views/ClubView.xaml", [])?.[0];
+  it("reads a DataContext element on the root", () => {
+    const s = screenOf(`<UserControl x:Class="App.ClubView" xmlns:vm="clr-namespace:App.ViewModels">
+  <UserControl.DataContext><vm:ClubViewModel/></UserControl.DataContext>
+  <StackPanel><Button Command="{Binding SaveCommand}"/></StackPanel>
+</UserControl>`);
+    expect(s?.viewModel).toBe("ClubViewModel");
+  });
+  it("reads a design-time instance", () => {
+    const s = screenOf(`<UserControl x:Class="App.ClubView" d:DataContext="{d:DesignInstance Type=vm:ClubViewModel, IsDesignTimeCreatable=True}"><Grid/></UserControl>`);
+    expect(s?.viewModel).toBe("ClubViewModel");
+  });
+  it("does not take a nested control's own DataContext for the view's", () => {
+    const s = screenOf(`<UserControl x:Class="App.ClubView"><StackPanel><ListBox.DataContext><vm:PlayerViewModel/></ListBox.DataContext></StackPanel></UserControl>`);
+    expect(s?.viewModel).toBeUndefined();
+  });
+});

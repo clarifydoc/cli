@@ -36,6 +36,8 @@ interface XamlTag {
   children: XamlTag[];
   /** True for `<Owner.Property>` elements — transparent in the tree. */
   isProperty: boolean;
+  /** The property element this tag is the value of (`Window.DataContext`), when it sits in one. */
+  holder?: string;
 }
 
 // Attr chunk is LAZY so the trailing `/` of a self-closing tag lands in group 4
@@ -84,6 +86,8 @@ export function parseXaml(sourceText: string): { root: XamlTag | null; flat: Xam
     // Attach to the nearest non-property ancestor so DataTemplate content stays
     // in the tree while `<StackPanel.Background>` wrappers stay invisible.
     if (!tag.isProperty) {
+      const holder = stack[stack.length - 1];
+      if (holder?.isProperty) tag.holder = holder.name;
       let parent: XamlTag | undefined;
       for (let i = stack.length - 1; i >= 0; i--) {
         if (!stack[i]!.isProperty) { parent = stack[i]; break; }
@@ -194,8 +198,29 @@ function toScreenComponent(tag: XamlTag): ScreenComponentInfo | null {
   };
 }
 
+/** A type reference as the last segment of its name: `{x:Type vm:ClubViewModel}`, `vm:ClubViewModel`. */
+function typeLeaf(text: string): string | null {
+  const t = text.replace(/^\{x:Type\s+|\}$/g, "").trim().split(":").pop()!.split(".").pop()!;
+  return /^[A-Za-z_]\w*$/.test(t) ? t : null;
+}
+
+/**
+ * The view model a view binds to: `x:DataType`, a `<UserControl.DataContext><vm:Y/>` element, or a
+ * design-time `d:DataContext="{d:DesignInstance Type=vm:Y}"` / `{d:DesignInstance vm:Y, …}`. A
+ * root-level DataContext only — a nested control's own context is not the view's.
+ */
+function viewModelOf(root: XamlTag, flat: XamlTag[]): string | null {
+  const dataType = root.attrs["x:DataType"];
+  if (dataType) return typeLeaf(dataType);
+  const element = root.children.find((c) => c.holder === `${root.name}.DataContext`);
+  if (element) return typeLeaf(element.raw);
+  const design = root.attrs["d:DataContext"] ?? flat[0]?.attrs["d:DataContext"];
+  const m = design && /\{d:DesignInstance\s+(?:Type\s*=\s*)?(?:\{x:Type\s+)?([\w:.]+)/.exec(design);
+  return m ? typeLeaf(m[1]!) : null;
+}
+
 export function extractXamlScreens(lines: string[], filePath: string): ScreenInfo[] {
-  const { root } = parseXaml(lines.join("\n"));
+  const { root, flat } = parseXaml(lines.join("\n"));
   if (!root) return [];
   // Resource-only files (styles, icon dictionaries) aren't screens.
   if (/^(ResourceDictionary|Styles|Application)$/.test(root.name)) return [];
@@ -214,7 +239,7 @@ export function extractXamlScreens(lines: string[], filePath: string): ScreenInf
       routePath: null,
       // A MAUI Shell offers the pages its tabs and flyout items hold.
       navigatesTo: root.name === "Shell" ? extractShellRoutes(lines).map((r) => r.path) : [],
-      ...(root.attrs["x:DataType"] ? { viewModel: root.attrs["x:DataType"].replace(/^\{x:Type\s+|\}$/g, "").split(":").pop()!.split(".").pop()! } : {}),
+      ...(viewModelOf(root, flat) ? { viewModel: viewModelOf(root, flat)! } : {}),
     },
   ];
 }

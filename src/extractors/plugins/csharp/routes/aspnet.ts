@@ -5,6 +5,8 @@ import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, filterKind, routeFilters, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { collectGroupCalls, extractMinimalApiRoutes, GROUP_CALL_GATE, MINIMAL_API_GATE } from "./minimal-api.js";
+import { FAST_ENDPOINT_GATE, extractFastEndpoints } from "./fast-endpoints.js";
+import { PAGE_MODEL_GATE, extractPageModels } from "./razor-pages.js";
 import { AZURE_FUNCTIONS_GATE, extractAzureFunctionRoutes } from "./azure-functions.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
@@ -334,6 +336,10 @@ function parseMethodRoutes(
         constant: template === null ? attributeConstantTemplate(attr) : null,
         line: attr.startPosition.row + 1,
       });
+    } else if (name === "AcceptVerbs") {
+      // `[AcceptVerbs("POST", "PUT", Route = "archive")]`: one row per verb, the template a named argument.
+      const template = namedArguments(attr).get("Route") ?? null;
+      for (const verb of acceptedVerbs(attr)) verbAttrs.push({ verb, template, constant: null, line: attr.startPosition.row + 1 });
     } else if (name === "MapToApiVersion") {
       const v = positionalVersion(attr);
       if (v !== null) mapToVersions.push(v);
@@ -345,7 +351,7 @@ function parseMethodRoutes(
   }
   if (verbAttrs.length === 0) {
     if (conventional && methodName && isPlainAction(methodNode, attrs)) {
-      const action: CsConventionalAction = { handler: methodName, action: actionName ?? methodName, line: methodNode.startPosition.row + 1, guards: guardAttributes(attrs) };
+      const action: CsConventionalAction = { handler: methodName, action: actionName ?? actionNameOf(methodName) ?? methodName, line: methodNode.startPosition.row + 1, guards: guardAttributes(attrs) };
       const params = parameterBindings(methodNode, "", false);
       if (params.length > 0) action.params = params;
       conventional.push(action);
@@ -373,9 +379,9 @@ function parseMethodRoutes(
 
   for (const { verb, template: own, constant, line } of verbAttrs) {
     actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
-    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
+    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
     const params = parameterBindings(methodNode, path, scope.apiController);
-    const shorter = optionalTailPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
+    const shorter = optionalTailPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
     const route: RouteInfo = {
       path,
       httpMethod: verb,
@@ -389,7 +395,7 @@ function parseMethodRoutes(
     // A template (or class template) that is a constant declared elsewhere: the project pass reads it.
     const methodConstant = constant ?? (own === null ? routeAttrConstant : null);
     if (methodConstant || scope.prefixTemplate) {
-      route.pathTemplate = buildPath(scope.prefixTemplate ?? scope.prefix, methodConstant ?? own ?? routeAttrTemplate, scope.controllerName, actionName ?? methodName);
+      route.pathTemplate = buildPath(scope.prefixTemplate ?? scope.prefix, methodConstant ?? own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
     }
     if (scope.className) route.owner = scope.className;
     if (auth) route.auth = auth;
@@ -404,6 +410,20 @@ function parseMethodRoutes(
     if (responses) route.responses = responses;
     routes.push(route);
   }
+}
+
+/** The verbs `[AcceptVerbs("POST", HttpMethods.Put)]` names, upper-case; the `Route = …` argument is not one. */
+function acceptedVerbs(attr: Node): string[] {
+  const argList = findChildByType(attr, "attribute_argument_list");
+  if (!argList) return [];
+  const out: string[] = [];
+  for (const arg of argList.children) {
+    if (arg.type !== "attribute_argument" || isNamedArgument(arg)) continue;
+    const str = findChildByType(arg, "string_literal");
+    const text = str ? stringLiteralText(str) : /^(?:\w+\.)*Http(?:Methods)?\.(\w+)$/.exec(arg.text.trim())?.[1] ?? /^(?:\w+\.)*HttpMethods\.(\w+)$/.exec(arg.text.trim())?.[1];
+    if (text && /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/i.test(text)) out.push(text.toUpperCase());
+  }
+  return out;
 }
 
 /** `StatusCodes.Status201Created` / `201` / `HttpStatusCode.Created`. */
@@ -699,7 +719,7 @@ function argumentValueText(value: Node): string {
 function attributeName(attr: Node): string | null {
   const name = attr.childForFieldName("name")?.text ?? null;
   if (!name) return null;
-  return name.replace(/.*\./, "");
+  return name.replace(/.*\./, "").replace(/(?<=\w)Attribute$/, "");
 }
 
 /**
@@ -749,9 +769,10 @@ function classRouteConstant(attrs: Node[]): string | null {
 
 /** Inner text of a C# string literal (handles the `string_literal_content` child + `@"…"`). */
 function stringLiteralText(str: Node): string {
-  const content = findChildByType(str, "string_literal_content");
-  if (content) return content.text;
-  return str.text.replace(/^@?"/, "").replace(/"$/, "");
+  // The whole literal: an escape (`\\d`) splits the content into several children.
+  const raw = str.text;
+  if (raw.startsWith("@")) return raw.replace(/^@"/, "").replace(/"$/, "").replace(/""/g, '"');
+  return raw.replace(/^"/, "").replace(/"$/, "").replace(/\\(.)/g, "$1");
 }
 
 /** Resolve `[controller]`/`[action]` tokens in a template segment. */
@@ -772,7 +793,39 @@ function substituteTokens(
  * rest of the path, slashes included.
  */
 function stripConstraints(path: string): string {
-  return path.replace(/\{(\*{0,2})([^}:=?]+)[^}]*\}/g, (_m, star: string, name: string) => `{${star ? "*" : ""}${name}}`);
+  let out = "";
+  for (let i = 0; i < path.length; i++) {
+    const ch = path[i]!;
+    if (ch !== "{") {
+      out += ch;
+      continue;
+    }
+    // A parameter ends at the `}` outside the parentheses of a constraint: `{code:regex(^\\d{{3}}$)}` holds `{{3}}`.
+    let depth = 0;
+    let j = i + 1;
+    for (; j < path.length; j++) {
+      const c = path[j]!;
+      if (c === "(") depth++;
+      else if (c === ")") depth = Math.max(0, depth - 1);
+      else if (c === "}" && depth === 0) break;
+    }
+    if (j >= path.length) {
+      out += path.slice(i);
+      break;
+    }
+    const m = /^(\*{0,2})([^:=?]+)/.exec(path.slice(i + 1, j));
+    out += m ? `{${m[1] ? "*" : ""}${m[2]}}` : path.slice(i, j + 1);
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * The action name MVC gives a method: `Async` is dropped (`SuppressAsyncSuffixInActionNames`),
+ * so `[action]` in `ListAsync`'s template reads `List`. An `[ActionName]` is used as written.
+ */
+export function actionNameOf(method: string | null): string | null {
+  return method && method.length > 5 && method.endsWith("Async") ? method.slice(0, -5) : method;
 }
 
 /** Build the full, normalized endpoint path for one route. */
@@ -824,7 +877,7 @@ export function optionalTailPath(
 /** Route-registry adapter for this plugin (see routes/base.ts). */
 // Every route this extractor can produce comes from a `[Http*]`/`[Route]`
 // attribute; `[^\]]` spans newlines, so multi-line attribute lists still match.
-const ROUTE_ATTRIBUTE_GATE = /\[[^\]]*\b(?:Http(?:Get|Post|Put|Patch|Delete|Head|Options)|Route)\b/;
+const ROUTE_ATTRIBUTE_GATE = /\[[^\]]*\b(?:Http(?:Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?|Route(?:Attribute)?|AcceptVerbs)\b/;
 // A controller with no route attribute of its own — it inherits its template
 // and perhaps its actions — still needs its fact recorded.
 const CONTROLLER_CLASS_GATE = /\bclass\s+\w*Controller\b|\[\s*(?:Api)?Controller\b/;
@@ -858,9 +911,13 @@ export const csharpRouteExtractor: RouteExtractor = {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
     const azure = AZURE_FUNCTIONS_GATE.test(sourceText);
+    const fast = FAST_ENDPOINT_GATE.test(sourceText) && /\bEndpoint(?:WithoutRequest|WithMapping)?\s*<|\bEp\.|\bEndpointWithoutRequest\b|:\s*Endpoint\b/.test(sourceText);
+    const pageModel = !!facts && PAGE_MODEL_GATE.test(sourceText);
     if (
       !minimal &&
       !azure &&
+      !fast &&
+      !pageModel &&
       !ROUTE_ATTRIBUTE_GATE.test(sourceText) &&
       !CONTROLLER_CLASS_GATE.test(sourceText) &&
       !ATTRIBUTE_CLASS_GATE.test(sourceText) &&
@@ -874,6 +931,9 @@ export const csharpRouteExtractor: RouteExtractor = {
     if (minimal) extractMinimalApiRoutes(tree.rootNode, routes, facts);
     // Azure Functions HTTP triggers (see azure-functions.ts).
     if (azure) extractAzureFunctionRoutes(tree.rootNode, routes);
+    // FastEndpoints (`Configure() { Get("/x"); }`) and Razor Pages' PageModel handlers.
+    if (fast) extractFastEndpoints(tree.rootNode, routes);
+    if (pageModel && facts) extractPageModels(tree.rootNode, facts);
     return routes;
   },
 };

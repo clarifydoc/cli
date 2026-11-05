@@ -189,10 +189,24 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),
     filePath,
-    routePath: dialect === "razor" ? (/^\s*@page\s+"([^"]+)"/m.exec(source)?.[1] ?? null) : null,
+    routePath: dialect === "razor" ? razorPagePath(source, filePath) : null,
     navigatesTo: [...navigatesTo],
   };
   analysis.screens = [screen];
+}
+
+/**
+ * A Razor Page's route: `@page "/clubs/{id:int}"` is absolute, `@page "{id}"` or a bare `@page`
+ * follows the file's place under `Pages/` (`Pages/Clubs/Detail.cshtml` → `/Clubs/Detail`; `Index` is the folder).
+ */
+function razorPagePath(source: string, filePath: string): string | null {
+  const m = /^\s*@page\b(?:\s+"([^"]*)")?/m.exec(source);
+  if (!m || !/(?:^|\/)Pages\//.test(filePath)) return m?.[1]?.startsWith("/") ? m[1] : null;
+  const t = m[1];
+  if (t?.startsWith("/")) return t;
+  const rel = filePath.replace(/^.*?(?:^|\/)Pages\//, "").replace(/\.cshtml$/, "").replace(/(?:^|\/)Index$/, "");
+  if (/(?:^|\/)_/.test(rel)) return null;
+  return "/" + [rel, t].filter(Boolean).join("/");
 }
 
 export const templateSpec = (dialect: TemplateLanguage, extensions: string[]): RegexLangSpec => ({
