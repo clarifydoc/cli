@@ -1220,3 +1220,15 @@ describe("linkApiCallsToRoutes — the verb of a call named with its client in a
     ]);
   });
 });
+
+describe("a route declared with a query part", () => {
+  it("is the route of the call that asks for that query; a call without one takes the sibling without", () => {
+    const routes = [route("src/routes/clubs/+page.server.ts", "POST", "/clubs?/rename", "actions.rename", 2), route("src/routes/clubs/+page.server.ts", "POST", "/clubs", "actions.default", 3)];
+    const calls = [apiCall("a.svelte", "POST /clubs?/rename", "/clubs?/rename", 1), apiCall("a.svelte", "POST /clubs", "/clubs", 2)];
+    const links = linkApiCallsToRoutes(calls, routes);
+    expect(links.map((l) => `${l.url} -> ${l.handler} ${l.confidence}`)).toEqual([
+      "/clubs?/rename -> actions.rename EXTRACTED",
+      "/clubs -> actions.default EXTRACTED",
+    ]);
+  });
+});
