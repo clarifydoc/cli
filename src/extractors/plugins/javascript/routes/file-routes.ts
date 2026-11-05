@@ -285,15 +285,31 @@ export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysi
  * `.ts`/`.js` endpoint serves one `api` route per exported HTTP-method handler. A file or folder whose
  * name starts with `_` is no route.
  */
-export function inferAstroRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+export function inferAstroRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[], rawSource = ""): RouteInfo[] {
   if (!frameworkIds.includes("astro")) return [];
   const normalized = relativePath.replace(/\\/g, "/");
   const m = /^(?:.*\/)?src\/pages\/(.+)\.(astro|[cm]?[tj]s)$/.exec(normalized);
   if (!m || m[1]!.split("/").some((s) => s.startsWith("_"))) return [];
   const path = routeFromSegments(m[1]!);
-  if (m[2] === "astro") return [route(path, "frontend", { componentPath: null })];
+  if (m[2] === "astro") return [route(path, "frontend", { componentPath: null, ...astroRedirects(rawSource) })];
   // An endpoint's file extension is not part of its URL (`feed.json.ts` serves `/feed.json`).
   return methodRoutes(path, analysis);
+}
+
+/**
+ * `return Astro.redirect("/login")` in a page's frontmatter: a page with no markup of its own is only that
+ * redirect (`redirectTo`, wiring rather than a screen); a page with markup redirects some requests (a guard) and
+ * leads on to the target (`leadsTo`, followed as a server redirect). A computed target says nothing.
+ */
+function astroRedirects(source: string): Pick<RouteInfo, "redirectTo" | "leadsTo"> {
+  if (!source.includes("Astro.redirect")) return {};
+  const parts = source.split(/^---\s*$/m);
+  const frontmatter = parts.length >= 3 ? parts[1]! : "";
+  const markup = parts.length >= 3 ? parts.slice(2).join("---") : "";
+  const targets = [...new Set([...frontmatter.matchAll(/\bAstro\.redirect\(\s*(['"`])(\/[^'"`$]*)\1/g)].map((m) => m[2]!))];
+  if (targets.length === 0) return {};
+  if (targets.length === 1 && markup.trim() === "") return { redirectTo: targets[0]! };
+  return { leadsTo: targets.map((path) => ({ path, on: "redirect", redirect: true as const })) };
 }
 
 /**

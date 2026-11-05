@@ -1674,7 +1674,7 @@ export interface RouteInfo {
    * followed through action and decision states, a subflow to that flow's start
    * — with the event that fires each (`on`).
    */
-  leadsTo?: Array<{ path: string; on?: string }>;
+  leadsTo?: Array<{ path: string; on?: string; /** The page answers with a server redirect (Astro's `Astro.redirect`), not a transition the page triggers. */ redirect?: true }>;
   /**
    * Frontend routes only: the component a router builds around this route's page — a
    * go_router `ShellRoute`/`StatefulShellRoute` builder's widget (`MainNavBar`). `tab`: the

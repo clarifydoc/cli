@@ -768,7 +768,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferNuxtServerRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferAstroRoutes(routePath, analysis, routeFrameworks),
+        ...inferAstroRoutes(routePath, analysis, routeFrameworks, rawSource),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
         ...inferFlatRoutes(routePath, analysis, routeFrameworks, {
