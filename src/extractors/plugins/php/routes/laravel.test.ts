@@ -328,3 +328,37 @@ Route::apiResource('stadiums', StadiumController::class);
     ]);
   });
 });
+
+describe("Laravel facade spellings and controller groups", () => {
+  it("reads an aliased and a fully qualified Route facade", async () => {
+    const routes = await routesOf(`<?php
+use Illuminate\\Support\\Facades\\Route as Router;
+use App\\Http\\Controllers\\ClubController;
+Router::get('/clubs', [ClubController::class, 'index']);
+\\Illuminate\\Support\\Facades\\Route::post('/clubs', [ClubController::class, 'store']);
+Router::prefix('v2')->get('/cars', [ClubController::class, 'cars']);
+Other::get('/nope', [ClubController::class, 'nope']);
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET /clubs ClubController#index",
+      "POST /clubs ClubController#store",
+      "GET /cars ClubController#cars",
+    ].map((x) => x));
+  });
+
+  it("gives the bare actions of Route::controller(X::class)->group the controller", async () => {
+    const routes = await routesOf(`<?php
+use App\\Http\\Controllers\\MatchController;
+Route::controller(MatchController::class)->prefix('matches')->group(function () {
+    Route::get('/', 'index');
+    Route::post('/{id}/settle', 'settle');
+    Route::get('/closure', fn () => 1);
+});
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler} ${r.owner ?? ""}`)).toEqual([
+      "GET /matches MatchController#index App\\Http\\Controllers\\MatchController",
+      "POST /matches/{id}/settle MatchController#settle App\\Http\\Controllers\\MatchController",
+      "GET /matches/closure null ",
+    ].map((x) => x.replace("null ", "null ")));
+  });
+});

@@ -52,4 +52,29 @@ class Authenticate {
       "MatchController.finish -> UpdateLeagueTable.handle (event(MatchPlayed))",
     ]);
   });
+
+  it("links a dispatched job to its handle(), by a name only one class carries", async () => {
+    const analyses = await Promise.all([
+      fileOf("app/Http/Controllers/TransferController.php", `<?php
+class TransferController {
+  public function sign() { SettleFee::dispatch(1); }
+  public function loan() { dispatch(new ScoutReport(2)); }
+  public function sell() { Garage::dispatch(3); }
+}`),
+      fileOf("app/Jobs/SettleFee.php", `<?php
+namespace App\\Jobs;
+class SettleFee implements ShouldQueue { public function handle() {} }`),
+      fileOf("app/Jobs/ScoutReport.php", `<?php
+class ScoutReport { public function handle(Scouts $scouts) {} }`),
+      fileOf("app/A/Garage.php", `<?php
+class Garage { public function handle() {} }`),
+      fileOf("app/B/Garage.php", `<?php
+class Garage { public function handle() {} }`),
+    ]);
+    const links = new LaravelEventResolver().resolve(analyses);
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol} (${l.callName})`).sort()).toEqual([
+      "TransferController.loan -> ScoutReport.handle (dispatch(ScoutReport))",
+      "TransferController.sign -> SettleFee.handle (SettleFee.dispatch)",
+    ]);
+  });
 });

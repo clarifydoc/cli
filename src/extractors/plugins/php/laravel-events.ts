@@ -28,6 +28,25 @@ interface ListenerDef {
   line: number;
 }
 
+/** `dispatch(new SettleFee(…))`, `dispatch_sync(…)`, `Bus::dispatch(…)` — the queue helpers that take the job object. */
+const JOB_DISPATCH_CALL = /^(?:dispatch|dispatch_sync|dispatch_now|Bus\.(?:dispatch|dispatchSync|dispatchNow|chain|batch))$/;
+
+/**
+ * A queued job runs its `handle` when dispatched: the classes with a `handle`
+ * method, by name — a name two classes share is no job we can name.
+ */
+function jobHandlers(analyses: FileAnalysis[]): Map<string, ListenerDef[]> {
+  const byName = new Map<string, Array<{ file: string; cls: ClassInfo }>>();
+  for (const a of analyses) for (const cls of a.classes as ClassInfo[]) (byName.get(cls.name) ?? byName.set(cls.name, []).get(cls.name)!).push({ file: a.filePath, cls });
+  const out = new Map<string, ListenerDef[]>();
+  for (const [name, defs] of byName) {
+    if (defs.length !== 1) continue;
+    const m = defs[0]!.cls.methods.find((x) => x.name === "handle");
+    if (m) out.set(name, [{ file: defs[0]!.file, symbol: `${name}.handle`, line: m.line }]);
+  }
+  return out;
+}
+
 const bareType = (t: string): string => t.replace(/^\?/, "").replace(/^\\?(?:[\w]+\\)*/, "").trim();
 
 export class LaravelEventResolver implements DispatchResolver {
@@ -50,12 +69,13 @@ export class LaravelEventResolver implements DispatchResolver {
         }
       }
     }
-    if (listeners.size === 0) return [];
+    const jobs = jobHandlers(analyses);
+    if (listeners.size === 0 && jobs.size === 0) return [];
 
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
-    const emit = (file: string, symbol: string, line: number, type: string, callName: string): void => {
-      for (const l of listeners.get(type) ?? []) {
+    const emit = (file: string, symbol: string, line: number, type: string, callName: string, table: Map<string, ListenerDef[]> = listeners): void => {
+      for (const l of table.get(type) ?? []) {
         if (l.file === file && l.symbol === symbol) continue;
         const key = `${file}\0${symbol}\0${l.file}\0${l.symbol}`;
         if (seen.has(key)) continue;
@@ -65,10 +85,20 @@ export class LaravelEventResolver implements DispatchResolver {
     };
     const scan = (file: string, symbol: string, fn: FunctionInfo): void => {
       let dispatcher: string | null = null;
+      let jobDispatcher: string | null = null;
       for (const c of fn.calls) {
         const stat = STATIC_DISPATCH.exec(c.name);
         if (stat && listeners.has(stat[1]!)) emit(file, symbol, c.line, stat[1]!, c.name);
+        if (stat && jobs.has(stat[1]!)) emit(file, symbol, c.line, stat[1]!, c.name, jobs);
         if (!dispatcher && DISPATCHER_CALL.test(c.name)) dispatcher = c.name;
+        if (JOB_DISPATCH_CALL.test(c.name)) jobDispatcher ??= c.name;
+      }
+      if (jobDispatcher) {
+        for (const c of fn.calls) {
+          const m = /^new\s+\\?([\w\\]+)/.exec(c.name);
+          const type = m ? bareType(m[1]!) : null;
+          if (type && jobs.has(type)) emit(file, symbol, c.line, type, `${jobDispatcher}(${type})`, jobs);
+        }
       }
       if (!dispatcher) return;
       // The event objects this callable builds are the ones it hands the dispatcher.

@@ -21,7 +21,7 @@ export const phpRouteExtractor: RouteExtractor = {
 
   extractRoutes(tree: Tree, sourceText: string, filePath?: string, facts?: RouteFact[]): RouteInfo[] {
     const routes: RouteInfo[] = [];
-    if (sourceText.includes("Route::")) {
+    if (sourceText.includes("Route::") || sourceText.includes("Facades\\Route")) {
       // Laravel mounts routes/api.php under /api by convention — the prefix
       // is framework config, never written in the file.
       const isApiFile = /(^|[/\\])routes[/\\]api\.php$/i.test(filePath ?? "");

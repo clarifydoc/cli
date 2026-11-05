@@ -307,6 +307,8 @@ interface GroupScope {
   names: string[];
   /** The controller namespace the groups state (`'namespace' => 'League\\Http\\Controllers'`), nested ones appended. */
   namespace: string | null;
+  /** The controller `Route::controller(X::class)->group(…)` gives the bare action names inside, innermost group's. */
+  controller: { cls: string; written: string; classConstant: boolean } | null;
 }
 
 /**
@@ -320,6 +322,7 @@ function groupScopeOf(routeCall: Node): GroupScope {
   const middleware: string[] = [];
   const names: string[] = [];
   const namespaces: string[] = [];
+  let controller: GroupScope["controller"] = null;
   let cur: Node | null = routeCall.parent;
   while (cur) {
     if (cur.type === "anonymous_function" || cur.type === "anonymous_function_creation_expression" || cur.type === "arrow_function") {
@@ -338,6 +341,7 @@ function groupScopeOf(routeCall: Node): GroupScope {
           if (n) names.unshift(n);
           const ns = arrayKeyValue(options, "namespace") ?? chainValue(up, "namespace");
           if (ns) namespaces.unshift(ns);
+          controller ??= chainController(up);
           // `['middleware' => …]` options and the `Route::middleware(…)->…->group(…)` chain both apply.
           middleware.unshift(...arrayKeyValues(options, "middleware"), ...chainMiddleware(up));
         }
@@ -354,7 +358,26 @@ function groupScopeOf(routeCall: Node): GroupScope {
     const clean = ns.replace(/^\\/, "").replace(/\\$/, "");
     namespace = !namespace || ns.startsWith("\\") || clean.startsWith(namespace) ? clean : `${namespace}\\${clean}`;
   }
-  return { prefixes, middleware, names, namespace };
+  return { prefixes, middleware, names, namespace, controller };
+}
+
+/** The `X::class` (or `'X'`) a `Route::controller(…)` in the chain below a group call names. */
+function chainController(call: Node): GroupScope["controller"] {
+  let cur: Node | null = call.type === "member_call_expression" ? call.childForFieldName("object") : null;
+  while (cur && (cur.type === "member_call_expression" || cur.type === "scoped_call_expression")) {
+    if (cur.childForFieldName("name")?.text === "controller") {
+      const arg = callArgs(cur)[0];
+      if (arg?.type === "class_constant_access_expression") {
+        const written = classConstantController(arg).controller?.written;
+        const cls = classConstantName(arg);
+        return cls && written ? { cls, written, classConstant: true } : null;
+      }
+      const str = arg ? stringValue(arg) : null;
+      return str ? { cls: str.split("\\").pop()!, written: str, classConstant: false } : null;
+    }
+    cur = cur.type === "member_call_expression" ? cur.childForFieldName("object") : null;
+  }
+  return null;
 }
 
 /** The string argument of a `->name('x')`-style call in the chain BELOW a call (`Route::name('clubs.')->prefix(…)->group(…)`). */
@@ -474,7 +497,21 @@ function chainRootIsRoute(call: Node): boolean {
   while (cur && cur.type === "member_call_expression") {
     cur = cur.childForFieldName("object");
   }
-  return cur?.type === "scoped_call_expression" && cur.childForFieldName("scope")?.text === "Route";
+  return cur?.type === "scoped_call_expression" && isRouteFacade(cur.childForFieldName("scope")?.text);
+}
+
+/**
+ * The names the `Route` facade goes by in the file being read: `Route`, the
+ * fully qualified `\Illuminate\Support\Facades\Route` and an alias a
+ * `use Illuminate\Support\Facades\Route as Router;` gives it. Set by
+ * `extractLaravelRoutes` for the one synchronous walk of a file.
+ */
+let facadeAliases: ReadonlySet<string> = new Set();
+const FACADE_USE = /\buse\s+\\?Illuminate\\Support\\Facades\\Route(?:\s+as\s+(\w+))?\s*;/g;
+const FACADE_FQN = /^\\?Illuminate\\Support\\Facades\\Route$/;
+
+function isRouteFacade(scope: string | undefined): boolean {
+  return scope === "Route" || (scope !== undefined && (facadeAliases.has(scope) || FACADE_FQN.test(scope)));
 }
 
 /** One pass of a `foreach` over a literal array: the loop variables and what they hold. */
@@ -625,7 +662,12 @@ function emitVerbRoute(
   // Plain verb: Route::get('/x', handler) — `any` dispatches all verbs (null).
   const path = stringValue(args[0]);
   if (path === null) return;
-  const h = resolveHandler(args[1]);
+  let h = resolveHandler(args[1]);
+  // Inside `Route::controller(X::class)->group(…)` a bare action name is that controller's method.
+  const bare = args[1] ? stringValue(args[1]) : null;
+  if (bare && /^\w+$/.test(bare) && scope.controller) {
+    h = { name: `${scope.controller.cls}#${bare}`, calls: [], controller: { written: scope.controller.written, classConstant: scope.controller.classConstant } };
+  }
   emit({
     path: joinPath(prefixes, path),
     httpMethod: verb === "any" ? null : verb.toUpperCase(),
@@ -647,7 +689,7 @@ const ROUTE_CALL_NAMES: ReadonlySet<string> = new Set([
 export function visitLaravelRoute(node: Node, routes: RouteInfo[], basePrefix = ""): void {
   // Route::get(...) / Route::resource(...) — direct facade call.
   if (node.type === "scoped_call_expression") {
-    if (node.childForFieldName("scope")?.text !== "Route") return;
+    if (!isRouteFacade(node.childForFieldName("scope")?.text)) return;
     const verb = node.childForFieldName("name")?.text ?? "";
     if (!ROUTE_CALL_NAMES.has(verb)) return;
     emitLooped(node, verb, routes, basePrefix);
@@ -682,6 +724,17 @@ function emitLooped(node: Node, verb: string, routes: RouteInfo[], basePrefix: s
  * appears in the file itself.
  */
 export function extractLaravelRoutes(root: Node, routes: RouteInfo[], basePrefix = ""): void {
+  const aliases = new Set<string>();
+  for (const m of root.text.matchAll(FACADE_USE)) if (m[1]) aliases.add(m[1]);
+  facadeAliases = aliases;
+  try {
+    walkRoutes(root, routes, basePrefix);
+  } finally {
+    facadeAliases = new Set();
+  }
+}
+
+function walkRoutes(root: Node, routes: RouteInfo[], basePrefix: string): void {
   const walk = (n: Node): void => {
     visitLaravelRoute(n, routes, basePrefix);
     for (const c of n.children) walk(c);
