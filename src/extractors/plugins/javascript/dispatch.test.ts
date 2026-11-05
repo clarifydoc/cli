@@ -154,6 +154,20 @@ describe("JsComponentEmitResolver", () => {
     ]);
   });
 
+  it("joins an Angular output to each method a compound binding calls (real-repo FP)", () => {
+    const card = fa("src/app/fixture-pager.component.ts", {
+      classes: [{ name: "FixturePagerComponent", decorators: ["Component({ selector: 'app-fixture-pager' })"], methods: [fn("next", 4, 8)], properties: [] }] as never,
+      events: [{ name: "pageChange", params: [], line: 6 }],
+    });
+    // `(pageChange)="page.set($event); reloadFixtures()"`
+    const page = fa("src/app/fixtures.component.ts", {
+      classes: [{ name: "FixturesComponent", decorators: ["Component({ selector: 'app-fixtures' })"], methods: [fn("reloadFixtures", 20, 30)], properties: [] }] as never,
+      interactiveElements: [{ element: "custom", event: "(pageChange)", handler: "page.set", calls: ["reloadFixtures"], line: 3, component: "app-fixture-pager" }],
+    });
+    const links = new JsComponentEmitResolver().resolve([card, page]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["FixturePagerComponent.next emit:pageChange -> FixturesComponent.reloadFixtures"]);
+  });
+
   it("creates nothing for events the child never declares (native fallthrough)", () => {
     const clickParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],

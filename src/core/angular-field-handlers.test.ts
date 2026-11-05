@@ -28,6 +28,9 @@ describe("Angular template calls on a component field", () => {
         '@Injectable({ providedIn: "root" })',
         "export class TransferService {",
         "  private http = inject(HttpClient);",
+        "  resumeQueue() {",
+        '    return this.http.post("/api/v2/transfers/resume", {});',
+        "  }",
         "  pauseQueue() {",
         '    return this.http.post("/api/v2/transfers/pause", {});',
         "  }",
@@ -56,7 +59,7 @@ describe("Angular template calls on a component field", () => {
     );
     await file(
       "src/app/transfer-list.component.html",
-      '<button (click)="transfers.pauseQueue()">Pause</button>\n<button (click)="toasts.closeToast()">Close</button>\n<button (click)="limit.set(20)">More</button>\n',
+      '<button (click)="transfers.pauseQueue()">Pause</button>\n<button (click)="toasts.closeToast()">Close</button>\n<button (click)="limit.set(20)">More</button>\n<button (click)="limit.set(5); transfers.resumeQueue()">Resume</button>\n',
     );
     await analyze({ projectRoot: dir, outputDir: join(dir, ".clarifydoc"), lsp: false, gitHistory: false });
   }, 60_000);
@@ -72,11 +75,14 @@ describe("Angular template calls on a component field", () => {
       "transfers.pauseQueue",
       "toasts.closeToast",
       "limit.set",
+      "limit.set",
     ]);
     const links = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === component && l.sourceSymbol === "<component>");
     expect(links.map((l) => [l.callName, l.targetFile, l.targetSymbol]).sort()).toEqual([
       ["toasts.closeToast", "src/app/toast.service.ts", "ToastService.closeToast"],
       ["transfers.pauseQueue", "src/app/transfer.service.ts", "TransferService.pauseQueue"],
+      // A later statement of a compound handler (real-repo FP).
+      ["transfers.resumeQueue", "src/app/transfer.service.ts", "TransferService.resumeQueue"],
     ]);
   });
 });

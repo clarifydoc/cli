@@ -35,7 +35,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
 
     // Every binding of a child's event on its tag: child file → event key → bindings.
     // `bound`: the function a Vue binding is extracted as when it calls anything but one of the file's own functions (`markupFunctions`).
-    interface Binding { parent: FileAnalysis; handler: string; child: FileAnalysis; event: string; angular: boolean; bound?: string }
+    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string }
     const bindings = new Map<string, Map<string, Binding[]>>();
     const selectors = angularSelectors(analyses);
     for (const parent of analyses) {
@@ -64,7 +64,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
       }
     }
 
@@ -91,10 +91,13 @@ export class JsComponentEmitResolver implements DispatchResolver {
           out.push({ file: b.parent.filePath, span: bound });
           continue;
         }
-        const name = cleanHandler(b.handler);
-        if (!name) continue; // inline expression, not a named handler
-        const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
-        if (span) out.push({ file: b.parent.filePath, span });
+        // The named handler, and each further method a compound one calls (`page.set($event); reload()`).
+        for (const handler of [b.handler, ...(b.calls ?? [])]) {
+          const name = cleanHandler(handler);
+          if (!name) continue; // inline expression, not a named handler
+          const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+          if (span) out.push({ file: b.parent.filePath, span });
+        }
       }
       return out;
     };

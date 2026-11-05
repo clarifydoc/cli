@@ -2723,6 +2723,12 @@ export interface InteractiveElementInfo {
   element: "button" | "input" | "form" | "link" | "select" | "textarea" | "custom";
   event: string;
   handler: string | null;
+  /**
+   * The further functions a compound handler calls, when `handler` names the
+   * first (`(click)="page.set($event); reloadClubs()"` → `page.set` +
+   * `["reloadClubs"]`), each spelled as `handler` is.
+   */
+  calls?: string[];
   line: number;
   /**
    * For `element === "custom"`: the component tag the binding sits on

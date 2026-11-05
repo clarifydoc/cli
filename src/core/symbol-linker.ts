@@ -15,6 +15,7 @@ import {
   type SubProject,
   type GlobalMemberDef,
   type ImportInfo,
+  type InteractiveElementInfo,
 } from "../types/analysis.js";
 import type { ImportResolveContext, LanguagePluginManifest, PackageRoot } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
@@ -1614,6 +1615,11 @@ function buildDirTailIndex(
   return map;
 }
 
+/** What a template's handler calls: the function it names, and each further one a compound handler calls. */
+function handlersOf(el: InteractiveElementInfo): string[] {
+  return el.handler ? [el.handler, ...(el.calls ?? [])] : [];
+}
+
 /**
  * A template's event handler that names a method its component class inherits
  * (`(click)="cancel()"` in a dialog extending a base dialog that declares
@@ -1628,8 +1634,8 @@ function inheritedHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkConte
     if (!a.interactiveElements?.length || !a.classes.some((c) => c.extends)) continue;
     const own = new Set([...a.functions.map((f) => f.name), ...a.classes.flatMap((c) => [...c.methods.map((m) => m.name), ...c.properties.map((p) => p.name)])]);
     const done = new Set<string>();
-    for (const el of a.interactiveElements) {
-      const name = el.handler ? /^\s*(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:\(|$)/.exec(el.handler)?.[1] : undefined;
+    for (const el of a.interactiveElements) for (const handler of handlersOf(el)) {
+      const name = /^\s*(?:this\.)?([A-Za-z_$][\w$]*)\s*(?:\(|$)/.exec(handler)?.[1];
       if (!name || own.has(name) || done.has(name)) continue;
       done.add(name);
       for (const cls of a.classes) {
@@ -1673,8 +1679,8 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
   for (const a of analyses) {
     if (!a.interactiveElements?.length || !a.classes.length) continue;
     const done = new Set<string>();
-    for (const el of a.interactiveElements) {
-      const chain = el.handler ? /^\s*(?:this\.)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*(?:\(|$)/.exec(el.handler)?.[1] : undefined;
+    for (const el of a.interactiveElements) for (const handler of handlersOf(el)) {
+      const chain = /^\s*(?:this\.)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*(?:\(|$)/.exec(handler)?.[1];
       if (!chain || done.has(chain)) continue;
       done.add(chain);
       const head = chain.slice(0, chain.indexOf("."));
