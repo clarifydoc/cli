@@ -10,6 +10,12 @@ const SKIP = /^(?:\$?emit|if|for|while|switch|return|function|typeof|await|new|v
 /** A callee the markup spells that may be project code: never a framework `$` member, except a child reached through `$refs`. */
 const projectCallee = (name: string) => !SKIP.test(name) && (!name.startsWith("$") || name.startsWith("$refs."));
 
+/** Whether an expression calls anything a project could define. */
+export function projectCalleeIn(expr: string): boolean {
+  for (const m of expr.matchAll(CALLEE)) if (projectCallee(m[1]!)) return true;
+  return false;
+}
+
 /** `editDialog?.open()` calls `editDialog.open`, as the chain is read everywhere else in markup. */
 const plainChains = (handler: string) => handler.replace(/\?\.(?=[A-Za-z_$])/g, ".");
 
