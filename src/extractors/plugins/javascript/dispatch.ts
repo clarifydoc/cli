@@ -35,7 +35,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
 
     // Every binding of a child's event on its tag: child file → event key → bindings.
     // `bound`: the function a Vue binding is extracted as when it calls anything but one of the file's own functions (`markupFunctions`).
-    interface Binding { parent: FileAnalysis; handler: string; child: FileAnalysis; event: string; angular: boolean; bound?: string }
+    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string }
     const bindings = new Map<string, Map<string, Binding[]>>();
     const selectors = angularSelectors(analyses);
     for (const parent of analyses) {
@@ -64,7 +64,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
       }
     }
 
@@ -79,21 +79,30 @@ export class JsComponentEmitResolver implements DispatchResolver {
       seen.add(at);
       const out: Array<{ file: string; span: SymbolSpan }> = [];
       for (const b of bindings.get(file)?.get(key) ?? []) {
-        const reEmit = (b.angular ? REEMIT_OUTPUT : REEMIT).exec(b.handler.trim());
-        if (reEmit) {
-          out.push(...targetsOf(b.parent.filePath, tagKey(reEmit[1]!), depth + 1, seen));
-          continue;
-        }
+        // Each event the binding passes on, wherever it spells it: `(car) => $emit('save', car)`,
+        // `editing = false; $emit('cancel')`, `full ? $emit('reject') : $emit('swap')`.
+        const handler = b.handler.trim();
+        const passed = b.angular ? [REEMIT_OUTPUT.exec(handler)?.[1]].filter((e): e is string => !!e) : [...handler.matchAll(EMIT_ANYWHERE)].map((m) => m[1]!);
+        for (const event of new Set(passed.map(tagKey))) out.push(...targetsOf(b.parent.filePath, event, depth + 1, seen));
+        if (b.angular ? passed.length > 0 : REEMIT.test(handler)) continue;
         // What an expression binding calls (`unitActions.deleteOne`): its markup function.
         const bound = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
         if (bound) {
           out.push({ file: b.parent.filePath, span: bound });
           continue;
         }
-        const name = cleanHandler(b.handler);
-        if (!name) continue; // inline expression, not a named handler
-        const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
-        if (span) out.push({ file: b.parent.filePath, span });
+        // The named handler, and each further method a compound one calls (`page.set($event); reload()`).
+        for (const handler of [b.handler, ...(b.calls ?? [])]) {
+          const name = cleanHandler(handler);
+          if (!name) continue; // inline expression, not a named handler
+          const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+          if (span) out.push({ file: b.parent.filePath, span });
+          // An Angular output bound to a method of a typed field (`(dismissed)="transferStore.dismiss"`).
+          else if (b.angular) {
+            const target = fieldMethod(b.parent, handler, byPath, filePathMap);
+            if (target) out.push({ file: target.file.filePath, span: target.span });
+          }
+        }
       }
       return out;
     };
@@ -252,6 +261,8 @@ function dialogClosers(
 
 /** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */
 const REEMIT = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(\s*['"]([\w:-]+)['"][^;]*\)$/;
+/** Every `emit('x')` / `$emit('x')` a Vue binding spells. */
+const EMIT_ANYWHERE = /(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:-]+)['"]/g;
 /** Angular's: the parent emits an output of its own (`(reload)="reload.emit()"`, kept as `reload.emit`). */
 const REEMIT_OUTPUT = /^(?:this\.)?([\w$]+)\.emit\b/;
 
@@ -530,6 +541,32 @@ function factoryReturned(
   const named = spansOf(at).filter((sp) => sp.symbol === returned.name);
   const span = named.find((sp) => sp.line > fn.line && sp.endLine <= fn.endLine) ?? named[0];
   return span ? { target: at, span } : null;
+}
+
+/**
+ * The method a `field.method` handler names on the class a component's field or constructor
+ * parameter is typed with (`transferStore = inject(TransferStoreService)`), that class being
+ * declared in the file or imported into it by name. An untyped field names nothing.
+ */
+function fieldMethod(
+  parent: FileAnalysis,
+  handler: string,
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): { file: FileAnalysis; span: SymbolSpan } | null {
+  const m = /^(?:this\.)?([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(handler.trim());
+  if (!m) return null;
+  const [, field, method] = m;
+  let type: string | undefined;
+  for (const cls of parent.classes ?? []) {
+    type ??= cls.properties?.find((p) => p.name === field)?.type ?? cls.methods.find((x) => x.name === "constructor")?.params.find((p) => p.name === field)?.type ?? undefined;
+  }
+  const typeName = type && /^[A-Za-z_$][\w$]*$/.test(type) ? type : null;
+  if (!typeName) return null;
+  const source = parent.classes.some((c) => c.name === typeName) ? parent.filePath : parent.imports.find((i) => i.specifiers.includes(typeName))?.source;
+  const file = source === parent.filePath ? parent : source ? byPath.get(resolveTarget(source, parent.filePath, filePathMap) ?? "") : undefined;
+  const span = file ? spansOf(file).find((sp) => sp.symbol === `${typeName}.${method}`) : undefined;
+  return file && span ? { file, span } : null;
 }
 
 /** React's callback-prop convention: `onPress`, `onModalClose`. */

@@ -120,7 +120,8 @@ function collectAngularInteractive(
     let e: RegExpExecArray | null;
     while ((e = ANGULAR_EVENT_RE.exec(attrs)) !== null) {
       // A component's tag (`<app-cover-image>`) names the component whose output the event is.
-      elements.push({ element, event: `(${e[1]})`, handler: cleanHandler(e[2] ?? null), line, ...(element === "custom" && tag.includes("-") ? { component: tag } : {}) });
+      const [handler, ...calls] = handlerCalls(e[2] ?? null);
+      elements.push({ element, event: `(${e[1]})`, handler: handler ?? null, ...(calls.length ? { calls } : {}), line, ...(element === "custom" && tag.includes("-") ? { component: tag } : {}) });
     }
     // [(ngModel)] two-way binding.
     if (/\[\(ngModel\)\]/.test(attrs)) {
@@ -212,19 +213,66 @@ function splitTopLevel(text: string): string[] {
   return out.map((t) => t.trim()).filter(Boolean);
 }
 
+/** A callee chain written at the top level of a statement, `this.` included: `onChange(`, `downloads.resumeQueue(`. */
+const TOP_CALLEE = /(?:^|[^\w$.])((?:this\.)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g;
+/** A bare reference to a function: `transferStore.dismiss`. */
+const BARE_CHAIN = /^(?:this\.)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)$/;
+
+/** A statement assigning a member: `kickoffFrom = today`, `list.sortField = f.field`. */
+const ASSIGNED = /^\s*(?:this\.)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*=(?![=>])/;
+
 /**
- * Normalize a handler expression to the function it calls (`onClick($event)` → `onClick`,
- * `this.save()` → `save`, `downloads.resumeQueue()` → `downloads.resumeQueue`).
- * An output emitted straight from the markup keeps its output's name
- * (`read.emit(chapter)` → `read.emit`): the parent's handler is found through it.
+ * The functions a handler expression calls, in order, each normalized as one
+ * handler is (`onClick($event)` → `onClick`, `this.save()` → `save`,
+ * `downloads.resumeQueue()` → `downloads.resumeQueue`; an output emitted
+ * straight from the markup keeps its output's name, `read.emit(chapter)` →
+ * `read.emit`, the parent's handler being found through it). Every statement
+ * counts (`page.set($event); reload()`, `ok ? save() : null`), arguments never
+ * (`goToPage(this.max())` calls `goToPage`), nor the event object's own
+ * methods (`$event.stopPropagation()`). The member a statement assigns comes
+ * after the calls — it runs code only through a setter (`list.sortField =
+ * f.field`), which the linker finds on the member's type. A bare reference
+ * names its function; a handler naming nothing is kept as written.
  */
-function cleanHandler(raw: string | null): string | null {
-  if (!raw) return null;
+function handlerCalls(raw: string | null): string[] {
+  if (!raw?.trim()) return [];
   const trimmed = raw.trim();
-  const emit = /^(?:this\.)?([a-zA-Z_$][\w$]*)\.emit\s*\(/.exec(trimmed);
-  if (emit) return `${emit[1]}.emit`;
-  // A member of a component field keeps its receiver (`downloads.resumeQueue()` →
-  // `downloads.resumeQueue`): the linker resolves it through the field's type.
-  const call = /^(?:this\.)?([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/.exec(trimmed);
-  return call ? call[1]! : trimmed;
+  const bare = BARE_CHAIN.exec(trimmed);
+  if (bare) return [bare[1]!];
+  const calls: string[] = [];
+  const assigned: string[] = [];
+  const add = (list: string[], chain: string) => {
+    const name = chain.replace(/^this\./, "");
+    if (!name.startsWith("$event") && !calls.includes(name) && !assigned.includes(name)) list.push(name);
+  };
+  for (const statement of topLevel(trimmed.replace(/\?\.(?=[A-Za-z_$])/g, ".")).split(";")) {
+    const target = ASSIGNED.exec(statement)?.[1];
+    if (target) add(assigned, target);
+    for (const m of statement.matchAll(TOP_CALLEE)) add(calls, m[1]!);
+  }
+  const out = [...calls, ...assigned];
+  return out.length ? out : [trimmed];
+}
+
+/** The text with every string and everything inside parentheses blanked, the parentheses kept. */
+function topLevel(text: string): string {
+  let out = "";
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") (out += " ", i++);
+      else if (c === quote) quote = null;
+      out += " ";
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") {
+      quote = c;
+      out += " ";
+    } else if (c === "(") out += depth++ === 0 ? c : " ";
+    else if (c === ")") out += --depth === 0 ? c : " ";
+    else out += depth > 0 ? " " : c;
+  }
+  return out;
 }

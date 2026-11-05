@@ -29,4 +29,15 @@ describe("template handlers a component inherits (real-repo shape)", () => {
       ["confirm", "web/dialogs/confirm-dialog.component.ts", "ConfirmDialogComponent.confirm", "inheritance"],
     ]);
   });
+
+  it("links every inherited method a compound handler calls (real-repo FP)", () => {
+    const squad = file("web/dialogs/squad-dialog/squad-dialog.component.ts", {
+      imports: [{ source: "../confirm-dialog.component", specifiers: ["ConfirmDialogComponent"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+      classes: [klass("SquadDialogComponent", "ConfirmDialogComponent", [method("pick", 5)])],
+      // `(click)="pick(player); confirm()"`
+      interactiveElements: [{ element: "button", event: "(click)", handler: "pick", calls: ["confirm"], line: 4 }],
+    });
+    const links = buildSymbolLinks([base, squad]).filter((l) => l.sourceSymbol === "<component>");
+    expect(links.map((l) => [l.callName, l.sourceLine, l.targetSymbol])).toEqual([["confirm", 4, "ConfirmDialogComponent.confirm"]]);
+  });
 });

@@ -1248,6 +1248,13 @@ export interface FunctionInfo {
    */
   localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean }>;
   /**
+   * The locals whose members the object the function returns spreads
+   * (`const crud = useSquadCrud(); return { ...crud, benchAll }` → `["crud"]`):
+   * a member of theirs is one the function hands back, found through the
+   * local's initializer (`localTypes[].from`).
+   */
+  returnedSpreads?: string[];
+  /**
    * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
    * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's
    * `declaredNamespace`. A call naming the function through it (`league::util::to_hex(x)`, or `to_hex(x)` after
@@ -2783,6 +2790,12 @@ export interface InteractiveElementInfo {
   element: "button" | "input" | "form" | "link" | "select" | "textarea" | "custom";
   event: string;
   handler: string | null;
+  /**
+   * The further functions a compound handler calls, when `handler` names the
+   * first (`(click)="page.set($event); reloadClubs()"` → `page.set` +
+   * `["reloadClubs"]`), each spelled as `handler` is.
+   */
+  calls?: string[];
   line: number;
   /**
    * For `element === "custom"`: the component tag the binding sits on

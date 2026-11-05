@@ -50,3 +50,27 @@ describe("Angular key-filtered events", () => {
     expect(els.map((e) => [e.event, e.handler])).toEqual([["(keyup.enter)", "loadClub"]]);
   });
 });
+
+describe("Angular compound handlers", () => {
+  it("keeps every call a handler's statements make, then the members they assign, never the event object (real-repo FP)", () => {
+    const els = extractAngularInteractiveElementsFromTemplate(`<ngb-pagination (pageChange)="page.set($event); reloadClubs()"></ngb-pagination>
+<button (click)="kickoffFrom = today; onChangeDebounce()">Today</button>
+<button (click)="$event.preventDefault(); $event.stopPropagation(); closeMatch(m)">Close</button>
+<button (click)="canEdit(club) ? openEditDialog(club) : null; $event.stopPropagation()">Edit</button>
+<button (click)="goToRound(this.lastRound());resetTimer();">Last</button>
+<button (click)="expanded = !expanded">More</button>
+<button (click)="$event.stopPropagation()">Stop</button>
+<app-transfer-row (dismissed)="transferStore.dismiss"></app-transfer-row>`);
+    expect(els.map((e) => [e.handler, e.calls ?? []])).toEqual([
+      ["page.set", ["reloadClubs"]],
+      // An assignment runs code only through a setter: after the calls.
+      ["onChangeDebounce", ["kickoffFrom"]],
+      ["closeMatch", []],
+      ["canEdit", ["openEditDialog"]],
+      ["goToRound", ["resetTimer"]],
+      ["expanded", []],
+      ["$event.stopPropagation()", []],
+      ["transferStore.dismiss", []],
+    ]);
+  });
+});

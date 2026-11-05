@@ -69,10 +69,24 @@ function finishBody(
   body: Node | null,
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
-): { calls: CallInfo[]; localTypes?: LocalType[] } {
+): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[] } {
   const scan = scanBody(body, paramNames, ctx);
   calls.push(...scan.extraCalls);
-  return scan.localTypes.length > 0 ? { calls, localTypes: scan.localTypes } : { calls };
+  return {
+    calls,
+    ...(scan.localTypes.length > 0 ? { localTypes: scan.localTypes } : {}),
+    ...(scan.returnedSpreads.length > 0 ? { returnedSpreads: scan.returnedSpreads } : {}),
+  };
+}
+
+/** The locals a returned object spreads: `{ ...crud, benchAll }` → `crud`. */
+function spreadLocals(value: Node | null | undefined, into: string[]): void {
+  while (value && (value.type === "parenthesized_expression" || value.type === "as_expression" || value.type === "satisfies_expression")) value = value.namedChildren[0];
+  if (value?.type !== "object") return;
+  for (const p of value.namedChildren) {
+    const arg = p.type === "spread_element" ? p.namedChildren[0] : undefined;
+    if (arg?.type === "identifier" && !into.includes(arg.text)) into.push(arg.text);
+  }
 }
 
 /** Nested declarations a body walk never enters: they are symbols of their own. */
@@ -120,6 +134,8 @@ function exportedHandlerOf(value: Node): Node | null {
  * - A function handed to a library option it runs (`mutationFn:
  *   service.update`): a call of that function from this body, as the arrow
  *   form `mutationFn: (x) => service.update(x)` already is.
+ * - The locals the function's own returned object spreads (`return { ...crud }`),
+ *   never a callback's.
  * - Locals whose type the body states, so `x.method()` resolves through `x`'s
  *   type: `const x: T = …`, `/** @type {T} *\/ const x = …`, `const x = new
  *   T()`, a container lookup (`inject(T)`, `moduleRef.get(T)`,
@@ -136,9 +152,12 @@ function scanBody(
   body: Node | null,
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
-): { extraCalls: CallInfo[]; localTypes: LocalType[] } {
+): { extraCalls: CallInfo[]; localTypes: LocalType[]; returnedSpreads: string[] } {
   const extraCalls: CallInfo[] = [];
-  if (!body) return { extraCalls, localTypes: [] };
+  const returnedSpreads: string[] = [];
+  if (!body) return { extraCalls, localTypes: [], returnedSpreads };
+  // A concise arrow returns its body: `() => ({ ...crud })`.
+  spreadLocals(body, returnedSpreads);
   const seenImports = new Set<string>();
   // name → every binding seen (null = a binding whose type is not stated).
   const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
@@ -159,10 +178,12 @@ function scanBody(
 
   // Children are read once per node (each read crosses into WASM) and the
   // parent's type is passed down rather than asked for.
-  const walk = (node: Node, isRoot: boolean, inScope: boolean, parentType: string): void => {
+  // `ownBody`: outside every function expression, where a `return` is the function's own.
+  const walk = (node: Node, isRoot: boolean, inScope: boolean, parentType: string, ownBody: boolean): void => {
     const type = node.type;
     if (!isRoot && SEPARATE_SCOPES.has(type)) return;
     const children = node.children;
+    if (ownBody && type === "return_statement") spreadLocals(node.namedChildren[0], returnedSpreads);
 
     // `useMutation({ mutationFn: service.update })`: the library calls the
     // function it is handed, on this body's behalf — a call of it here.
@@ -228,9 +249,10 @@ function scanBody(
       }
     }
 
-    for (const child of children) walk(child, false, childScope, type);
+    const childOwn = ownBody && (isRoot || !FUNCTION_EXPRESSIONS.has(type));
+    for (const child of children) walk(child, false, childScope, type, childOwn);
   };
-  walk(body, true, true, "");
+  walk(body, true, true, "", true);
 
   const localTypes: LocalType[] = [];
   for (const [name, list] of bindings) {
@@ -249,7 +271,7 @@ function scanBody(
     if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
     localTypes.push(first.local);
   }
-  return { extraCalls, localTypes };
+  return { extraCalls, localTypes, returnedSpreads };
 }
 
 /**
@@ -1489,7 +1511,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
+    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
       params,
@@ -1501,6 +1523,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
+      ...(returnedSpreads ? { returnedSpreads } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -1549,7 +1572,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
+    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
     return {
       name,
       params,
@@ -1561,6 +1584,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
+      ...(returnedSpreads ? { returnedSpreads } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -2008,7 +2032,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
-          const { calls, localTypes } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
+          const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
           methods.push({
             name: methodName,
             params,
@@ -2020,6 +2044,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
             ...(localTypes ? { localTypes } : {}),
+            ...(returnedSpreads ? { returnedSpreads } : {}),
             ...urlTemplateRecord(templates, stripped),
             ...(requestAccess ? { requestAccess } : {}),
             ...(responses ? { responses } : {}),

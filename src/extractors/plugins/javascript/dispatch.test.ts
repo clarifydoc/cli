@@ -154,6 +154,49 @@ describe("JsComponentEmitResolver", () => {
     ]);
   });
 
+  it("joins an Angular output to each method a compound binding calls (real-repo FP)", () => {
+    const card = fa("src/app/fixture-pager.component.ts", {
+      classes: [{ name: "FixturePagerComponent", decorators: ["Component({ selector: 'app-fixture-pager' })"], methods: [fn("next", 4, 8)], properties: [] }] as never,
+      events: [{ name: "pageChange", params: [], line: 6 }],
+    });
+    // `(pageChange)="page.set($event); reloadFixtures()"`
+    const page = fa("src/app/fixtures.component.ts", {
+      classes: [{ name: "FixturesComponent", decorators: ["Component({ selector: 'app-fixtures' })"], methods: [fn("reloadFixtures", 20, 30)], properties: [] }] as never,
+      interactiveElements: [{ element: "custom", event: "(pageChange)", handler: "page.set", calls: ["reloadFixtures"], line: 3, component: "app-fixture-pager" }],
+    });
+    const links = new JsComponentEmitResolver().resolve([card, page]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["FixturePagerComponent.next emit:pageChange -> FixturesComponent.reloadFixtures"]);
+  });
+
+  it("joins an Angular output bound to a method of a typed field to that method (real-repo FP)", () => {
+    const row = fa("src/app/transfer-row.component.ts", {
+      classes: [{ name: "TransferRowComponent", decorators: ["Component({ selector: 'app-transfer-row' })"], methods: [], properties: [] }] as never,
+      events: [{ name: "dismissed", params: [], line: 6 }],
+      interactiveElements: [{ element: "button", event: "(click)", handler: "dismissed.emit", line: 2 }],
+    });
+    const store = fa("src/app/transfer-store.service.ts", {
+      classes: [{ name: "TransferStoreService", decorators: [], methods: [fn("dismiss", 10, 14)], properties: [] }] as never,
+    });
+    // `(dismissed)="transferStore.dismiss"`, the field typed by what it injects; an untyped field joins nothing.
+    const list = fa("src/app/transfer-list.component.ts", {
+      imports: [{ source: "./transfer-store.service", specifiers: ["TransferStoreService"], line: 1 }] as never,
+      classes: [{
+        name: "TransferListComponent",
+        decorators: ["Component({ selector: 'app-transfer-list' })"],
+        methods: [],
+        properties: [{ name: "transferStore", type: "TransferStoreService" }, { name: "panel", type: null }],
+      }] as never,
+      interactiveElements: [
+        { element: "custom", event: "(dismissed)", handler: "transferStore.dismiss", line: 3, component: "app-transfer-row" },
+        { element: "custom", event: "(dismissed)", handler: "panel.dismiss", line: 4, component: "app-transfer-row" },
+      ],
+    });
+    const links = new JsComponentEmitResolver().resolve([row, store, list]);
+    expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}:${l.targetSymbol}`)).toEqual([
+      "<template> emit:dismissed -> src/app/transfer-store.service.ts:TransferStoreService.dismiss",
+    ]);
+  });
+
   it("creates nothing for events the child never declares (native fallthrough)", () => {
     const clickParent = fa("src/pages/Cars.vue", {
       functions: [fn("submit", 20, 30)],
@@ -302,6 +345,51 @@ describe("JsComponentEmitResolver — an emit bound to an expression", () => {
       "submit -emit:restore-> <ClubDataPage@restore@2>",
       "submit -emit:save-> <ClubDataPage@save@2>",
       "submit -emit:transfer-> <ClubDataPage@transfer@2>",
+    ]);
+  });
+});
+
+describe("JsComponentEmitResolver — a compound binding", () => {
+  it("joins the child's emit to every function a compound binding calls, and passes on an emit wherever the binding spells it (real-repo FP)", async () => {
+    const { markupFunctions } = await import("./markup-calls.js");
+    const { extractVueInteractiveElements } = await import("./interactive-elements.js");
+    const template = `<template>
+  <LineupForm
+    @save="saveLineup(); closeDrawer()"
+    @cancel="editing = false; $emit('cancel')"
+    @swap="benchFull ? $emit('reject') : $emit('swap', $event)"
+  />
+</template>`;
+    const elements = extractVueInteractiveElements(template, template);
+    const declared = new Set(["saveLineup", "closeDrawer"]);
+    const fns = markupFunctions(elements, "src/components/Lineup.vue", declared);
+    // Two calls are not one bare handler: the binding is a function of its own, holding both.
+    expect(fns.map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual(["<LineupForm@save@2>: saveLineup,closeDrawer"]);
+    const lineup = fa("src/components/Lineup.vue", {
+      functions: [...fns, fn("saveLineup", 20, 24), fn("closeDrawer", 26, 28)],
+      interactiveElements: elements,
+      subComponents: [{ name: "LineupForm", importSource: "./LineupForm.vue", props: [], line: 2 }],
+      events: [{ name: "cancel", params: [], line: 4 }, { name: "reject", params: [], line: 5 }, { name: "swap", params: [], line: 5 }],
+    });
+    const form = fa("src/components/LineupForm.vue", {
+      functions: [fn("submit", 10, 14)],
+      events: [{ name: "save", params: [], line: 12 }, { name: "cancel", params: [], line: 13 }, { name: "swap", params: [], line: 13 }],
+    });
+    const page = fa("src/pages/Match.vue", {
+      functions: [fn("discardLineup", 20, 24), fn("rejectSwap", 26, 28), fn("makeSwap", 30, 32)],
+      interactiveElements: [
+        { element: "custom", event: "@cancel", handler: "discardLineup", line: 3, component: "Lineup" },
+        { element: "custom", event: "@reject", handler: "rejectSwap", line: 3, component: "Lineup" },
+        { element: "custom", event: "@swap", handler: "makeSwap", line: 3, component: "Lineup" },
+      ],
+      subComponents: [{ name: "Lineup", importSource: "../components/Lineup.vue", props: [], line: 3 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, lineup, form]);
+    expect(links.filter((l) => l.sourceFile === form.filePath).map((l) => `${l.callName} -> ${l.targetFile}:${l.targetSymbol}`).sort()).toEqual([
+      "emit:cancel -> src/pages/Match.vue:discardLineup",
+      "emit:save -> src/components/Lineup.vue:<LineupForm@save@2>",
+      "emit:swap -> src/pages/Match.vue:makeSwap",
+      "emit:swap -> src/pages/Match.vue:rejectSwap",
     ]);
   });
 });

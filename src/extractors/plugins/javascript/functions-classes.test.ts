@@ -659,3 +659,19 @@ function later() { exports.inner = () => 1; }`;
     expect(byName.has("inner")).toBe(false);
   });
 });
+
+describe("locals a returned object spreads", () => {
+  it("names the locals the function's own return spreads, never a callback's", async () => {
+    const src = `export function useSquadPage(id) {
+  const crud = useSquadCrud();
+  const extra = useExtras();
+  const rows = players.map((p) => { return { ...p }; });
+  return { ...crud, ...useKits(), benchAll };
+}
+export const useKitPage = () => ({ ...kitCrud, wash });`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "useSquadPage")?.returnedSpreads).toEqual(["crud"]);
+    expect(fns.find((f) => f.name === "useKitPage")?.returnedSpreads).toEqual(["kitCrud"]);
+  });
+});
