@@ -853,7 +853,7 @@ export const pythonRouteExtractor: RouteExtractor = {
     if (PY_GRAPHQL_GATE.test(sourceText)) extractPythonGraphqlRoutes(tree.rootNode, routes);
     // Django / DRF routing is only facts per file; `django-urlconf` joins them.
     if (facts && DJANGO_GATE.test(sourceText)) collectDjangoFacts(tree.rootNode, facts);
-    if (facts && sourceText.includes("MIGRATION_MODULES")) collectDjangoTextFacts(sourceText, facts);
+    if (facts && (sourceText.includes("MIGRATION_MODULES") || sourceText.includes("INSTALLED_APPS"))) collectDjangoTextFacts(sourceText, facts);
     return routes;
   },
 };

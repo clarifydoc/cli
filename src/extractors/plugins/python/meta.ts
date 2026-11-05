@@ -21,6 +21,7 @@ import { PythonMutationExtractor } from "./data-mutations.js";
 import { PythonEntityExtractor } from "./entities.js";
 import { pythonRouteExtractor } from "./routes.js";
 import { djangoUrlconfResolver } from "./django/resolver.js";
+import { drfLibraryWrites } from "./django/library-writes.js";
 import { fastapiInheritedGuards } from "./fastapi-guards.js";
 import { PytestFixtureResolver } from "./pytest-fixtures.js";
 import { pythonRequestSchema } from "./request-schema.js";
@@ -152,7 +153,7 @@ export const pythonMeta: LanguagePluginMeta = {
   ...pythonManifest,
   knownPackages: pypiPackages,
   routes: pythonRouteExtractor,
-  routeResolvers: [djangoUrlconfResolver, fastapiInheritedGuards],
+  routeResolvers: [djangoUrlconfResolver, drfLibraryWrites, fastapiInheritedGuards],
   // A test's parameter is the fixture of that name (module, then conftest.py).
   dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver(), new DjangoCommandResolver(), new DrfViewSetActionResolver(), new DrfSerializerResolver()],
   functionsClasses: new PythonExtractor(),
