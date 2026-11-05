@@ -279,6 +279,27 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       } else if (t === CPP14Lexer.Semi || t === CPP14Lexer.LeftBrace) break;
     }
   }
+  /** The `}` closing the lambda whose introducer opens at `at` (`[x](int a) mutable -> Club { … }`), or -1. */
+  const lambdaEnd = (at: number): number => {
+    if (close[at]! < 0 || type(at + 1) === CPP14Lexer.LeftBracket) return -1;
+    let k = close[at]! + 1;
+    // `[]<class T>(T t) { … }`: template parameters, skipped by their angle brackets.
+    if (type(k) === CPP14Lexer.Less) {
+      let depth = 0;
+      for (; k < n && k < at + 64; k++) {
+        if (type(k) === CPP14Lexer.Less) depth++;
+        else if (type(k) === CPP14Lexer.Greater && --depth === 0) break;
+      }
+      k++;
+    }
+    for (let steps = 0; k < n && steps < 24; steps++, k++) {
+      const t = type(k);
+      if (t === CPP14Lexer.LeftBrace) return close[k]!;
+      if (t === CPP14Lexer.LeftParen && close[k]! >= 0) k = close[k]!;
+      else if (t === CPP14Lexer.Comma || t === CPP14Lexer.Semi || t === CPP14Lexer.Greater || t === CPP14Lexer.RightBrace) return -1;
+    }
+    return -1;
+  };
   // Template arguments: a `<` after a name whose `>` comes before the statement ends, followed by what may follow one.
   const angle = new Int32Array(n).fill(-1);
   // 1 inside the arguments of a template whose arguments may hold logical operators: so may the templates' there.
@@ -309,8 +330,11 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     let comma = false;
     for (let j = i + 1; j < n; j++) {
       const t = type(j);
+      // `custom<[](T &s) { s.v = 1; }, …>`: a C++20 lambda as an argument, skipped whole.
+      const lambda = t === CPP14Lexer.LeftBracket && (type(j - 1) === CPP14Lexer.Less || type(j - 1) === CPP14Lexer.Comma) ? lambdaEnd(j) : -1;
+      if (lambda >= 0) j = lambda;
       // `write<Opts{.indent = 2}>(…)`: a braced initializer among the arguments; any other `{` ends the scan.
-      if (OPENS.has(t) && (t !== CPP14Lexer.LeftBrace || isId(j - 1) || type(j - 1) === CPP14Lexer.Greater)) {
+      else if (OPENS.has(t) && (t !== CPP14Lexer.LeftBrace || isId(j - 1) || type(j - 1) === CPP14Lexer.Greater)) {
         if (close[j] < 0) break;
         j = close[j]!;
       } else if (t === CPP14Lexer.Less && !shift(j) && ((isId(j - 1) && !values.has(names[j - 1]!)) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;

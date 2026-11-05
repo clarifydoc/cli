@@ -77,6 +77,23 @@ void label() {
   });
 });
 
+describe("C++ edge cases: lambdas as template arguments", () => {
+  it("reads C++20 lambdas among a template's arguments, with parameters, a trailing return type and a template head", () => {
+    const source = `struct Club { int goals; };
+void register_club() {
+  static constexpr auto value = league::custom<[](Club &c, const int &g) { c.goals = g; }, [](const Club &c) -> const int & { return c.goals; }>;
+  using Rule = league::rule<[]<class T>(T t) mutable noexcept { return t; }, [] { return 1; }>;
+  announce(value);
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["register_club", ["announce"]]] });
+  });
+
+  it("still compares in an expression holding a lambda's brackets", () => {
+    expect(read(`bool test(int a, int b) { return a < b && fetch([] { return 1; }) > 0; }\n`)).toEqual({ errors: 0, functions: [["test", ["fetch"]]] });
+  });
+});
+
 describe("C++ edge cases: macros standing for types", () => {
   it("reads a type macro in an alias, and a macro's call before `::` among template arguments and defaults", () => {
     const source = `template <class T>
