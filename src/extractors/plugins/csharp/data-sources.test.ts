@@ -911,3 +911,31 @@ public class Garage {
 }`)).toEqual([]);
   });
 });
+
+describe("C# RestSharp and Flurl requests", () => {
+  async function calls(src: string) {
+    const tree = await parseSource(src, "csharp" as any, "H.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+  }
+  it("reads new RestRequest(path, Method.X) with its verb", async () => {
+    const found = await calls(`using RestSharp;
+public class H { public async Task M(RestClient c) {
+  var a = new RestRequest("clubs/{id}", Method.Get);
+  var b = new RestRequest("clubs", Method.Post);
+} }`);
+    expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "clubs/{id}"], ["POST", "clubs"]]);
+  });
+  it("reads a Flurl chain from a URL string through its path segments to the send", async () => {
+    const found = await calls(`using Flurl.Http;
+public class H { public async Task M() {
+  await "https://league.example.com/api".AppendPathSegment("clubs").GetJsonAsync();
+  await "https://league.example.com/api/players".PostJsonAsync(new {});
+} }`);
+    expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "https://league.example.com/api/clubs"], ["POST", "https://league.example.com/api/players"]]);
+  });
+  it("does not take an HttpClient's GetJsonAsync on a variable for a Flurl URL", async () => {
+    const found = await calls(`using Flurl.Http;
+public class H { public async Task M(HttpClient http) { await http.GetAsync("/clubs"); } }`);
+    expect(found.every((d) => d.name !== "GET")).toBe(true);
+  });
+});

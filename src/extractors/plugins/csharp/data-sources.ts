@@ -120,6 +120,11 @@ const ADO_METHODS = new Set([
   "Open", "OpenAsync", "Fill",
 ]);
 
+/** Flurl's send methods → verb: `GetJsonAsync`, `PostUrlEncodedAsync`, `DeleteAsync`. */
+const FLURL_SEND = /^(Get|Post|Put|Patch|Delete|Head|Options)(?:Json|String|Bytes|Stream|UrlEncoded|Multipart|JsonAsync)?(?:Async)?$/;
+/** Flurl steps that configure the request and leave its URL alone. */
+const FLURL_SETTINGS = /^(?:SetQueryParams?|AppendQueryParam|WithHeaders?|WithOAuth\w+|WithBasicAuth|WithTimeout|WithCookies?|WithAutoRedirect|WithClient|WithSettings|ConfigureRequest|AllowHttpStatus|AllowAnyHttpStatus|SetQueryParam)$/;
+
 const HTTP_CLIENT_METHODS = new Set([
   "GetAsync", "PostAsync", "PutAsync", "PatchAsync", "DeleteAsync",
   "SendAsync", "GetStringAsync", "GetByteArrayAsync", "GetStreamAsync",
@@ -258,6 +263,10 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private usesRedis = false;
   /** The file uses Refit: an interface's verb attributes declare requests. */
   private refitFile = false;
+  /** The file uses RestSharp (`new RestRequest("clubs/{id}", Method.Get)`). */
+  private restSharpFile = false;
+  /** The file uses Flurl.Http (`"https://…".AppendPathSegment("clubs").GetJsonAsync()`). */
+  private flurlFile = false;
   /** The file uses Confluent.Kafka. */
   private usesKafka = false;
   /** The file uses Dapr (`Dapr.Client`, `Dapr.AspNetCore`). */
@@ -291,6 +300,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     }
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
     this.refitFile = REFIT_GATE.test(sourceText);
+    this.restSharpFile = /\bRestSharp\b/.test(sourceText);
+    this.flurlFile = /\bFlurl(?:\.Http)?\b/.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.usesDapr = /\bDapr\b|\bDaprClient\b/.test(sourceText);
     this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
@@ -401,6 +412,42 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (args.some((a) => a !== null)) out.push({ callee, args, line, ...(receiverType ? { receiverType } : {}) });
     }
     return out;
+  }
+
+  /**
+   * The request a Flurl chain builds up to its send: a URL string or `new Url("…")`, or
+   * `client.Request("clubs")` on a client, with each `AppendPathSegment(s)` added. Settings
+   * (`SetQueryParam`, `WithHeader`, …) leave the path alone; any other step makes it unknown.
+   */
+  private flurlRequest(expr: Node | null, line: number): { target: string | null; client?: string } | null {
+    const segments: string[] = [];
+    const segment = (arg: Node): string => {
+      const text = arg.text.trim().replace(NAMED_ARG_RE, "").trim();
+      const lit = /^[@$]*"/.test(text) ? this.evalUri(text, line, 0) : null;
+      return (lit ?? `{${text}}`).replace(/^\/+|\/+$/g, "");
+    };
+    let cur = expr;
+    while (cur?.type === "invocation_expression") {
+      const f = cur.childForFieldName("function");
+      const name = f?.type === "member_access_expression" ? f.childForFieldName("name")?.text.replace(/<.*$/, "") ?? "" : "";
+      if (name === "AppendPathSegment" || name === "AppendPathSegments") segments.unshift(...argumentNodes(cur).map(segment));
+      else if (name === "Request" && f?.type === "member_access_expression") {
+        const owner = f.childForFieldName("expression");
+        if (owner?.type !== "identifier" && owner?.type !== "member_access_expression") return null;
+        segments.unshift(...argumentNodes(cur).map(segment));
+        return { target: `/${segments.join("/")}`, client: owner.text.replace(/^this\./, "") };
+      } else if (!FLURL_SETTINGS.test(name)) return null;
+      cur = f?.type === "member_access_expression" ? f.childForFieldName("expression") : null;
+    }
+    if (!cur) return null;
+    let root: string | null = null;
+    if (/^string_literal$|^verbatim_string_literal$|^interpolated_string_expression$/.test(cur.type)) root = this.evalUri(cur.text, line, 0);
+    else if (cur.type === "object_creation_expression" && /(?:^|\.)Url$/.test(cur.childForFieldName("type")?.text ?? "")) {
+      const first = argumentNodes(cur)[0]?.text.trim();
+      root = first ? this.evalUri(first, line, 0) : null;
+    } else return null;
+    if (root === null) return { target: null };
+    return { target: [root.replace(/\/+$/, ""), ...segments].join("/") };
   }
 
   /** The nearest string local named `name` assigned at or before `line`. */
@@ -847,10 +894,28 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (entity) sources.push(this.ds({ kind: "database", name: `EF: ${method}`, target: entity, entity, ...access(method, EF_ACCESS), line: node.startPosition.row + 1 }));
       return;
     }
+    // RestSharp: `new RestRequest("clubs/{id}", Method.Post)` is the request, whatever sends it.
+    if (node.type === "object_creation_expression" && this.restSharpFile && /(?:^|\.)RestRequest$/.test(node.childForFieldName("type")?.text ?? "")) {
+      const args = argumentNodes(node);
+      const first = args[0]?.text.trim().replace(NAMED_ARG_RE, "").trim();
+      const verb = /^(?:RestSharp\.)?Method\.(\w+)$/.exec(args[1]?.text.trim().replace(NAMED_ARG_RE, "").trim() ?? "")?.[1]?.toUpperCase() ?? "GET";
+      const target = first && /^[@$]*"/.test(first) ? this.evalUri(first, node.startPosition.row + 1, 0) : null;
+      if (first) sources.push(this.ds({ kind: "api-call", name: verb, target, line: node.startPosition.row + 1 }));
+      return;
+    }
     if (node.type !== "invocation_expression") return;
 
     const fn = node.childForFieldName("function");
     if (!fn) return;
+    // Flurl: a URL string or `new Url(…)` extended with path segments, then sent.
+    if (this.flurlFile && fn.type === "member_access_expression") {
+      const verb = FLURL_SEND.exec(fn.childForFieldName("name")?.text.replace(/<.*$/, "") ?? "")?.[1];
+      const flurl = verb ? this.flurlRequest(fn.childForFieldName("expression"), node.startPosition.row + 1) : null;
+      if (verb && flurl) {
+        sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target: flurl.target, line: node.startPosition.row + 1, ...(flurl.client ? { client: flurl.client } : {}) }));
+        return;
+      }
+    }
     const fullName = this.fullCallName(fn);
     if (!fullName) return;
 

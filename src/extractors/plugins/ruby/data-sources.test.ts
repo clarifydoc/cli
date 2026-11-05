@@ -298,3 +298,18 @@ end`.split("\n");
     expect(ds.map((d) => [d.name, d.access, d.line])).toEqual([["Current.club.players.all", "read", 4]]);
   });
 });
+
+describe("rubySpec — Net::HTTP URI wrappers and Faraday bases", () => {
+  it("reads the URL inside Net::HTTP.get(URI(...))", () => {
+    const ds = apiCalls(`Net::HTTP.get(URI("https://league.example.com/api/players"))\nNet::HTTP.get(URI.parse('https://league.example.com/api/matches'))`);
+    expect(ds.map((d) => d.target)).toEqual(["https://league.example.com/api/players", "https://league.example.com/api/matches"]);
+  });
+
+  it("registers a Faraday connection's base and names the connection on its calls", () => {
+    const lines = [`conn = Faraday.new(url: ENV.fetch("LEAGUE_URL", "http://localhost:3000"))`, `conn.get('/clubs')`];
+    expect(rubySpec.extractHttpClientRegistrations?.(lines, "a.rb")).toMatchObject([
+      { client: "conn", scope: "file", base: { kind: "env", key: "LEAGUE_URL", fallback: "http://localhost:3000" } },
+    ]);
+    expect(rubySpec.extractDataSources?.(lines, []).filter((d) => d.kind === "api-call")).toMatchObject([{ name: "get", target: "/clubs", client: "conn" }]);
+  });
+});

@@ -90,6 +90,13 @@ const NEW_REQUEST_RE = /\b(http|httptest)\.NewRequest(?:WithContext\s*\(\s*[\w.]
 /** `client.Get("url")` — any *client-named receiver with an HTTP verb. */
 const CLIENT_VERB_RE = /\b(\w*[Cc]lient)\.\s*(Get|Post|Put|Patch|Delete|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
 
+/**
+ * resty: `client.R().SetBody(x).Post("/clubs")`, `resty.New().R().Get(url)` — a request builder
+ * chain off `.R()` ending in the verb. A constant or local named instead of a literal is read by
+ * the same lookups the stdlib helpers use.
+ */
+const RESTY_RE = /\.R\(\)(?:\s*\.\s*\w+\((?:[^()]|\([^()]*\))*\))*\s*\.\s*(Get|Post|Put|Patch|Delete|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
+
 /** An import of a cache or key-value store client, whose Get/Delete are no HTTP requests. */
 const KV_CLIENT_IMPORT_RE = /"[^"]*(?:\/go-redis\/|redis\/go-redis|gomodule\/redigo|\/gomemcache\/|\/memcache"|\/bigcache|\/groupcache|\/etcd\/client|hashicorp\/consul\/api|\/ristretto|\/badger)[^"]*"/;
 
@@ -168,6 +175,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
   let constants: Map<string, string> | undefined;
   let kvClient: boolean | undefined;
+  const hasResty = lines.some((l) => /go-resty|resty\.New/.test(l));
   let functions: ReturnType<typeof goFunctions> | undefined;
 
   for (let i = 0; i < lines.length; i++) {
@@ -190,6 +198,15 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
         calls: [],
         line: lineNo,
       });
+      continue;
+    }
+
+    const resty = hasResty ? line.match(RESTY_RE) : null;
+    if (resty) {
+      const rest = line.slice(resty.index! + resty[0].length);
+      const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
+      const target = resty[2] ?? (urlArg ? localUrl(lines, i, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }
 
