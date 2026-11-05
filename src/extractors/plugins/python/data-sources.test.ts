@@ -182,6 +182,21 @@ describe("Python database calls", () => {
     ]);
   });
 
+  it("reads the model a class's queryset names by its manager alone (real-repo FP)", async () => {
+    const src = [
+      "class SeasonViewSet(ModelViewSet):",
+      "    queryset = Season.objects",
+      "    model = Season",
+      "",
+      "def build():",
+      "    queryset = Season.objects",
+      "    return queryset",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.line} ${d.name} → ${d.entity ?? "-"} ${d.access ?? ""}`.trim());
+    expect(rows).toEqual(["2 Season.objects → Season read"]);
+  });
+
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
     // Real-repo FP: every one of these was a "database" access.
     expect(await dbCallsOf([

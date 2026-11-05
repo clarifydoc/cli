@@ -123,6 +123,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
       }
       return;
     }
+    // A class's `queryset = Season.objects` — the manager itself, no call: the queryset a view serves
+    // reads that model (with a call, `Season.objects.all()`, the call's row says so).
+    if (node.type === "assignment" && node.childForFieldName("left")?.text === "queryset" && node.parent?.parent?.parent?.type === "class_definition") {
+      const right = node.childForFieldName("right");
+      const model = right?.type === "attribute" ? /^([A-Z]\w*)\.\w*objects$/.exec(right.text)?.[1] : undefined;
+      if (model) sources.push(this.ds({ kind: "database", name: right!.text, target: model, entity: model, access: "read", line: node.startPosition.row + 1 }));
+      return;
+    }
     if (node.type === "call") {
       const fn = node.childForFieldName("function");
       const fnName = fn?.text;
