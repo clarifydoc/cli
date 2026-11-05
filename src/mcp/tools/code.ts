@@ -727,6 +727,11 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     return lines;
   }
   if (verdict.testSetup) lines.push(`run while the tests are set up: ${verdict.testSetup}`);
+  if (verdict.excludedFromDefaultBuild) lines.push(`left out of the default build (${verdict.excludedFromDefaultBuild}): no test run compiles it`);
+  if (verdict.mockedBy?.length) {
+    lines.push(`replaced with a test double by (${verdict.mockedBy.length}) — their dependency and calls do not count:`);
+    lines.push(...bulletList(verdict.mockedBy, limit, (f) => f, { indent: "  " }));
+  }
   const importers = verdict.importers;
   if (importers.length) {
     lines.push(`test files depending on it (${importers.length}):`);

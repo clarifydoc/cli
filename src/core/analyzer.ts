@@ -159,7 +159,7 @@ import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
-import { collectTestFunctions } from "./test-functions.js";
+import { collectMockedModules, collectTestFunctions } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
   type ArchLayer,
@@ -1365,6 +1365,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const projectCommands = collectProjectCommands(projectRoot, subProjects);
   // Files the test framework runs while it sets a test run up (migrations, start-up hooks).
   const testSetupRuns = collectTestSetupRuns(projectRoot, subProjects, allAnalyses);
+  const mockedModules = collectMockedModules(allAnalyses);
   const allEntryPoints = allAnalyses.flatMap((a) => (a.entryPoints ?? []).map((e) => ({ ...e, filePath: a.filePath, ...(a.projectId ? { projectId: a.projectId } : {}) })));
   if (allEntryPoints.length > 0) progress.detail(`  Entry points: ${allEntryPoints.length} (${[...new Set(allEntryPoints.map((e) => e.kind))].join(", ")})`);
   if (thirdParty.length > 0) progress.detail(`  External services: ${thirdParty.map((s) => `${s.name} (${s.calls})`).join(", ")}`);
@@ -2330,6 +2331,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(allEntryPoints.length ? { entryPoints: allEntryPoints } : {}),
     ...(projectCommands.length ? { projectCommands } : {}),
     ...(testSetupRuns.length ? { testSetupRuns } : {}),
+    ...(Object.keys(mockedModules).length ? { mockedModules } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,

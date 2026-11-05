@@ -707,6 +707,8 @@ export interface AstExtractorHooks {
   proxyRules?(tree: Tree, sourceText: string, filePath: string): ProxyRule[];
   /** API-client generators a config file sets up (`kubb.config.ts`) → `FileAnalysis.generatedClients`. */
   generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
+  /** Modules a test file replaces with a test double (`vi.mock("./api")`) → `FileAnalysis.mockedModules`. */
+  mockedModules?(tree: Tree, sourceText: string): string[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** Listeners bound to page elements by selector → `FileAnalysis.domBindings`. */
