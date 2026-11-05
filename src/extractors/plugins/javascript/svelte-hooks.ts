@@ -3,6 +3,7 @@ import {
   parseSvelteSfc,
   extractSvelteInteractiveElements,
 } from "../../../parsers/svelte-sfc.js";
+import { routeFromSegments } from "./routes/file-routes.js";
 import { blankExceptScripts } from "../../../parsers/vue-sfc.js";
 
 /**
@@ -39,7 +40,7 @@ export function sveltePreprocess(
 
       if (sfc.template) {
         analysis.interactiveElements.push(
-          ...extractSvelteInteractiveElements(sfc.template),
+          ...extractSvelteInteractiveElements(sfc.template, svelteKitPagePath(relativePath)),
         );
       }
 
@@ -97,4 +98,10 @@ function withAwaitedExpressions(raw: string, blanked: string): string {
     out = out.slice(0, exprStart) + expr + ";" + out.slice(exprEnd + 1);
   }
   return out;
+}
+
+/** The URL a SvelteKit `+page.svelte` is served at, or undefined for any other component. */
+function svelteKitPagePath(relativePath: string): string | undefined {
+  const m = relativePath.replace(/\\/g, "/").match(/^(?:src\/)?routes\/(.*)\+page\.svelte$/);
+  return m ? routeFromSegments(m[1]!) : undefined;
 }

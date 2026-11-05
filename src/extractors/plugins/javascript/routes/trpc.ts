@@ -187,19 +187,37 @@ export const trpcRouterResolver: RouteResolver = {
         (children.get(parent) ?? children.set(parent, []).get(parent)!).push({ key, child });
       }
     }
-    if (children.size === 0) return;
+    // A router handed to an HTTP adapter mounted at a file route (`pages/api/trpc/[trpc].ts`) is served there.
+    const endpoints = new Map<string, string>();
+    const catchAlls: Array<{ file: FileAnalysis; path: string }> = [];
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== "trpc-endpoint") continue;
+        const { base, router, route } = f.data as { base: string; router: string; route: string };
+        const file = routers.has(`${a.filePath}#${router}`) ? a.filePath : ctx.importIndex.localFor(a.filePath, router);
+        if (!file || !routers.has(`${file}#${router}`)) continue;
+        if (!endpoints.has(`${file}#${router}`)) endpoints.set(`${file}#${router}`, base);
+        catchAlls.push({ file: a, path: route });
+      }
+    }
+    if (children.size === 0 && endpoints.size === 0) return;
     const mounted = new Set([...children.values()].flat().map((c) => c.child));
-    // Every dotted prefix a root reaches each mounted router by.
-    const prefixes = new Map<string, string[]>();
-    const walk = (router: string, prefix: string, seen: Set<string>): void => {
+    // Every base and dotted prefix a root reaches each router by.
+    const prefixes = new Map<string, Array<{ base: string; dotted: string }>>();
+    const walk = (router: string, base: string, prefix: string, seen: Set<string>): void => {
       for (const { key, child } of children.get(router) ?? []) {
         if (seen.has(child)) continue;
         const p = `${prefix}${key}.`;
-        (prefixes.get(child) ?? prefixes.set(child, []).get(child)!).push(p);
-        walk(child, p, new Set([...seen, child]));
+        (prefixes.get(child) ?? prefixes.set(child, []).get(child)!).push({ base, dotted: p });
+        walk(child, base, p, new Set([...seen, child]));
       }
     };
-    for (const r of routers) if (!mounted.has(r)) walk(r, "", new Set([r]));
+    for (const r of routers) {
+      if (mounted.has(r)) continue;
+      const base = endpoints.get(r);
+      if (base) prefixes.set(r, [{ base, dotted: "" }]);
+      walk(r, base ?? TRPC_PREFIX, "", new Set([r]));
+    }
 
     for (const a of analyses) {
       if (!a.routes.some((r) => r.owner && prefixes.has(`${a.filePath}#${r.owner}`) && r.path.startsWith(TRPC_PREFIX))) continue;
@@ -211,9 +229,11 @@ export const trpcRouterResolver: RouteResolver = {
           continue;
         }
         const own = r.path.slice(TRPC_PREFIX.length);
-        for (const p of ps) out.push({ ...r, path: `${TRPC_PREFIX}${p}${own}` });
+        for (const p of ps) out.push({ ...r, path: `${p.base}${p.dotted}${own}` });
       }
       a.routes = out;
     }
+    // The adapter's own `[trpc]` route stands for the procedures just placed under it.
+    for (const { file, path } of catchAlls) file.routes = file.routes.filter((r) => !(r.kind === "api" && !r.owner && r.path === path));
   },
 };

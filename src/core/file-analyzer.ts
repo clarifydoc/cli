@@ -34,9 +34,11 @@ import {
   inferExpoRouterRoutes,
   inferFlatRoutes,
   inferNextRoutes,
+  inferNuxtServerRoutes,
   inferReactRouterConfig,
   inferSvelteKitRoutes,
   inferAstroRoutes,
+  inferTrpcEndpointFacts,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
@@ -761,7 +763,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
       analysis.routes.push(
         ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
+        ...inferNuxtServerRoutes(routePath, analysis, routeFrameworks, sourceText),
+        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferAstroRoutes(routePath, analysis, routeFrameworks),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
@@ -769,6 +772,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
           flatRoutes: routeFrameworks.includes("react-router-framework") && /^(?:app|src)\/routes\//.test(routePath.replace(/\\/g, "/")) && usesFlatRoutes(file.absolutePath, routePath),
         }),
       );
+      const endpoints = inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks);
+      if (endpoints.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...endpoints];
     }
 
     // Detect React directives: 'use client' / 'use server'

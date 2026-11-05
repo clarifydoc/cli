@@ -304,6 +304,8 @@ const ORM_METHODS = new Set([
   "findOneAndUpdate", "findOneAndDelete", "findOneAndRemove", "findOneAndReplace",
   "updateOne", "deleteOne", "replaceOne", "insertMany", "bulkWrite",
   "countDocuments", "estimatedDocumentCount", "distinct",
+  // AdonisJS Lucid's statics, named for no other API (`Club.findOrFail(id)`, `Club.updateOrCreate(…)`).
+  "findOrFail", "findByOrFail", "firstOrFail", "findManyBy", "firstOrCreate", "updateOrCreate", "fetchOrCreateMany", "updateOrCreateMany",
   // Drizzle's `get`/`all`/`values`/`execute`/`returning` are NOT here: they
   // collide with Map.get / Array-ish leaves on arbitrary receivers (phantom
   // `this.__data__.get` "entities" from lodash internals). On a trusted ORM
@@ -328,6 +330,7 @@ const ORM_WRITE_METHODS = new Set([
   "findOneAndUpdate", "findOneAndDelete", "findOneAndRemove", "findOneAndReplace",
   "updateOne", "deleteOne", "replaceOne", "insertMany", "bulkWrite",
   "insert", "del",
+  "firstOrCreate", "updateOrCreate", "fetchOrCreateMany", "updateOrCreateMany",
 ]);
 
 /** What a loaded or constructed ORM document does to its own row (`club.save()`, `club.deleteOne()`). */
@@ -370,6 +373,8 @@ function localDocumentModel(node: Node, name: string): string | null {
 function ormAccessKind(leaf: string): "read" | "write" | undefined {
   if (ORM_WRITE_METHODS.has(leaf)) return "write";
   if (ORM_METHODS.has(leaf)) return "read";
+  // Lucid's `Club.all()` / `Club.findBy('name', x)`: a read, on a model-like receiver only (see isOrmCall).
+  if (leaf === "all" || leaf === "findBy") return "read";
   return undefined;
 }
 
@@ -1554,8 +1559,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const verb = optionsMethod(positional[1]);
             if (verb) callName = verb;
             // The Fetch standard's default: `fetch(url)`, or an init literal that names no method
-            // (and spreads nothing that could), is a GET.
-            else if (/^fetch$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
+            // (and spreads nothing that could), is a GET — as are Nuxt's `$fetch` / `useFetch` and ofetch.
+            else if (/^(?:fetch|\$fetch|ofetch|useFetch|useLazyFetch)$/i.test(fnName) && fn.type === "identifier" && (positional.length === 1 || statesNoMethod(positional[1]))) callName = "get";
             // A generated oazapfts SDK states every other verb (`oazapfts.json({ ...opts, method: "PUT" })`):
             // its `fetchJson(url, { ...opts })` / `fetchBlob` / `fetchText` with none is a GET.
             else if (recv === "oazapfts" && /^fetch(?:Json|Blob|Text)$/.test(fnName)) callName = "get";
@@ -2938,7 +2943,7 @@ function isOrmCall(name: string): boolean {
   // model-like receiver — `Product.find({})` / `Order.find(query)` (Mongoose/
   // Sequelize statics), never `users.find(u => …)`. The immediate receiver is
   // the segment before the leaf.
-  if (leaf === "find") {
+  if (leaf === "find" || leaf === "all" || leaf === "findBy") {
     const receiver = parts[parts.length - 2];
     if (receiver && isModelLikeRoot(receiver)) return true;
   }

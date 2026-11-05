@@ -132,3 +132,46 @@ describe("plugins and routers loaded where they are mounted", () => {
     expect(analyses.flatMap((a) => rows(a.routes))).toEqual(["GET /api/clubs/:id", "GET /admin/users"]);
   });
 });
+
+describe("route guards declared once for a scope", () => {
+  const auth = (routes: RouteInfo[]) => routes.map((r) => `${r.httpMethod} ${r.path} ${r.auth?.policies?.join("+") ?? "-"}`);
+
+  it("Fastify addHook('preHandler', guard) guards the routes of its own plugin function only", async () => {
+    const routes = await routesOf(`
+      fastify.register(async (admin) => {
+        admin.addHook('preHandler', requireAdmin);
+        admin.get('/clubs', async () => []);
+        admin.post('/clubs', async () => ({}));
+      });
+      fastify.register(async (open) => {
+        open.get('/players', async () => []);
+      });
+      fastify.register(async (admin) => {
+        admin.get('/fixtures', async () => []);
+      });
+    `);
+    expect(auth(routes)).toEqual(["GET /clubs requireAdmin", "POST /clubs requireAdmin", "GET /players -", "GET /fixtures -"]);
+  });
+
+  it("an app-level onRequest guard covers the routes after it; a hook that checks nobody guards nothing", async () => {
+    const routes = await routesOf(`
+      app.get('/ping', async () => 'pong');
+      app.addHook('onRequest', app.authenticate);
+      app.addHook('onRequest', async (req) => { req.start = Date.now(); });
+      app.addHook('preHandler', timing);
+      app.get('/clubs', async () => []);
+    `);
+    expect(auth(routes)).toEqual(["GET /ping -", "GET /clubs app.authenticate"]);
+  });
+
+  it("koa-compose's use(compose([…])) puts each guard in the composition on the router's later routes", async () => {
+    const routes = await routesOf(`
+      const router = new Router();
+      const open = new Router();
+      open.get('/players', async (ctx) => { ctx.body = []; });
+      router.use(compose([authenticate, rateLimit]));
+      router.get('/clubs', async (ctx) => { ctx.body = []; });
+    `);
+    expect(auth(routes)).toEqual(["GET /players -", "GET /clubs authenticate"]);
+  });
+});

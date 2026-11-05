@@ -27,3 +27,20 @@ describe("Svelte markup handlers", () => {
     ]);
   });
 });
+
+describe("SvelteKit form posts", () => {
+  const requests = (markup: string) => extractSvelteInteractiveElements(markup, "/clubs/:id").flatMap((e) => (e.request ? [`${e.element} ${e.request.method} ${e.request.target}`] : []));
+
+  it("a POST form without an action posts to the page, `?/name` to the page's named action, `/x?/name` as written", () => {
+    expect(requests(`<form method="POST" action="?/rename"></form>\n<form method="post" use:enhance></form>\n<form method="POST" action="/players?/sign"></form>`)).toEqual([
+      "form POST /clubs/:id?/rename",
+      "form POST /clubs/:id",
+      "form POST /players?/sign",
+    ]);
+  });
+
+  it("leaves GET forms, computed actions and other components' markup alone", () => {
+    expect(requests(`<form action="/search"></form><form method="POST" action={target}></form><form method="POST" action="https://pay.example.com/x"></form>`)).toEqual([]);
+    expect(extractSvelteInteractiveElements(`<form method="POST"></form>`).some((e) => e.request)).toBe(false);
+  });
+});

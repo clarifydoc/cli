@@ -204,6 +204,8 @@ function scanSvelteTags(markup: string): Array<{ tag: string; index: number; att
 
 export function extractSvelteInteractiveElements(
   markup: string,
+  /** The URL the page file is served at (SvelteKit's `+page.svelte`): where a form without an absolute `action` posts. */
+  pagePath?: string,
 ): InteractiveElementInfo[] {
   const elements: InteractiveElementInfo[] = [];
   const lineStarts: number[] = [0];
@@ -221,6 +223,14 @@ export function extractSvelteInteractiveElements(
     const element = resolveInteractiveElementKind(tag);
     // A component (`<ArchiveAction>`, `<Modal.Root>`) takes callbacks as camelCase props (`onClick`, `onCheckedChange`).
     const component = /^[A-Z]/.test(tag) || tag.includes(".");
+    // SvelteKit: `<form method="POST" action="?/rename">` posts to the page's form action of that name.
+    if (pagePath !== undefined && tag === "form" && attrs.some((a) => a.name === "method" && /^post$/i.test(a.value?.trim() ?? ""))) {
+      const action = attrs.find((a) => a.name === "action")?.value?.trim() ?? "";
+      if (!action || action.startsWith("?") || action.startsWith("/")) {
+        const target = !action ? pagePath : action.startsWith("?") ? `${pagePath}${action}` : action;
+        if (!/[{}$]/.test(target)) elements.push({ element: "form", event: "submit", handler: null, line, request: { method: "POST", target } });
+      }
+    }
     for (const a of attrs) {
       let event: string | null = null;
       if (a.name.startsWith("on:")) event = a.name;

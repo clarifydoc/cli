@@ -1487,3 +1487,34 @@ describe("JS MQTT topics", () => {
     ]);
   });
 });
+
+describe("Nuxt $fetch and useFetch", () => {
+  it("request with GET unless the options state another method", async () => {
+    const calls = await apiCallsOf(`
+      const { data } = await useFetch('/api/clubs');
+      const rows = await $fetch('/api/players');
+      await $fetch('/api/clubs', { method: 'POST', body: {} });
+      await useLazyFetch('/api/cars', { query: { page: 1 } });`);
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual(["get /api/clubs", "get /api/players", "post /api/clubs", "get /api/cars"]);
+  });
+});
+
+describe("AdonisJS Lucid model statics", () => {
+  it("reads findOrFail, all, findBy and updateOrCreate on a model the file imports", async () => {
+    const ds = await dbOf(`
+      import Club from '#models/club'
+      export default class ClubsController {
+        async index() { return Club.all() }
+        async show({ params }) { return Club.findOrFail(params.id) }
+        async byName() { return Club.findBy('name', 'Rovers') }
+        async sign() { return Club.updateOrCreate({ id: 1 }, { name: 'x' }) }
+        async both() { return Promise.all([1, 2]) }
+      }`);
+    expect(ds.map((d) => `${d.name} ${d.access}`)).toEqual([
+      "Club.all read",
+      "Club.findOrFail read",
+      "Club.findBy read",
+      "Club.updateOrCreate write",
+    ]);
+  });
+});

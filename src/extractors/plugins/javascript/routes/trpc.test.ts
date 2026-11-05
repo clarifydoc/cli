@@ -3,6 +3,7 @@ import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
 import { javascriptRouteExtractor } from "./index.js";
 import { trpcRouterResolver } from "./trpc.js";
+import { inferNextRoutes, inferTrpcEndpointFacts } from "./file-routes.js";
 import { createEmptyAnalysis, type FileAnalysis, type RouteFact } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 
@@ -93,5 +94,32 @@ export const garageRouter = t.router({
       "POST /trpc/park garages.park [protectedProcedure]",
       "GET /trpc/cars null []",
     ]);
+  });
+});
+
+describe("a tRPC router mounted at a Next.js file route", () => {
+  it("is served under the file's path, nested routers included, and the [trpc] catch-all is dropped", async () => {
+    const src = `import { createNextApiHandler } from "@trpc/server/adapters/next";
+import { appRouter } from "../../../server/router";
+export default createNextApiHandler({ router: appRouter });`;
+    const endpoint: FileAnalysis = { ...createEmptyAnalysis("pages/api/trpc/[trpc].ts", "typescript") };
+    endpoint.routes = inferNextRoutes(endpoint.filePath, endpoint, ["nextjs"], src);
+    endpoint.routeFacts = inferTrpcEndpointFacts(endpoint.filePath, src, ["nextjs"]);
+    expect(endpoint.routeFacts[0]!.data).toMatchObject({ base: "/api/trpc/", router: "appRouter" });
+    const root = await fileOf("server/router.ts", `export const appRouter = createTRPCRouter({ clubList: publicProcedure.query(() => []), car: carRouter });`);
+    const car = await fileOf("server/car.ts", `export const carRouter = createTRPCRouter({ byId: publicProcedure.query(() => 1) });`);
+    const decoy = await fileOf("server/other.ts", `export const otherRouter = createTRPCRouter({ ping: publicProcedure.query(() => 1) });`);
+    const ctx = {
+      importIndex: {
+        localFor: (f: string, n: string) => (n === "appRouter" ? "server/router.ts" : f === "server/router.ts" && n === "carRouter" ? "server/car.ts" : null),
+        sourceFor: () => null,
+        namespacesFor: () => [],
+      },
+    } as unknown as ProjectContext;
+    trpcRouterResolver.resolve([endpoint, root, car, decoy], ctx);
+    expect(endpoint.routes).toEqual([]);
+    expect(root.routes.map((r) => r.path)).toEqual(["/api/trpc/clubList"]);
+    expect(car.routes.map((r) => r.path)).toEqual(["/api/trpc/car.byId"]);
+    expect(decoy.routes.map((r) => r.path)).toEqual(["/trpc/ping"]);
   });
 });
