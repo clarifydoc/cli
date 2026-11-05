@@ -1,4 +1,4 @@
-import type { ImportInfo } from "../../../types/analysis.js";
+import type { ExportInfo, ImportInfo } from "../../../types/analysis.js";
 
 /** A directive's start: `import 'x'`, `export "x"`, `part 'x'` (never `part of`). */
 const DIRECTIVE = /^\s*(import|export|part)\s+(?=['"])/;
@@ -29,7 +29,21 @@ function importSpecifiers(tail: string): string[] {
  * (`inScope.shared`): each sees the other's declarations and imports.
  */
 export function extractDartImports(lines: string[]): ImportInfo[] {
+  return readDirectives(lines).imports;
+}
+
+/**
+ * A barrel's `export 'src/club.dart';` forwards that library's names (all of them, or the `show` list): one
+ * `re-export` row per shown name, else `*`. `hide` is not followed — the hidden names stay forwarded, a name an
+ * importer then reaches only when no other definition of it competes.
+ */
+export function extractDartReExports(lines: string[]): ExportInfo[] {
+  return readDirectives(lines).exports;
+}
+
+function readDirectives(lines: string[]): { imports: ImportInfo[]; exports: ExportInfo[] } {
   const out: ImportInfo[] = [];
+  const exported: ExportInfo[] = [];
   for (let i = 0; i < lines.length; i++) {
     const m = DIRECTIVE.exec(lines[i]!);
     if (!m) continue;
@@ -52,8 +66,11 @@ export function extractDartImports(lines: string[]): ImportInfo[] {
         : kind === "import" && !/\bas\s+[A-Za-z_$]/.test(tail) ? { module: first[2]!, ...(show?.length ? { names: show } : {}) }
           : undefined;
     out.push({ source: first[2]!, ...base, ...(scope ? { inScope: scope } : {}) });
+    if (kind === "export") {
+      for (const name of show?.length ? show : ["*"]) exported.push({ name, kind: "re-export", line: i + 1, source: first[2]! });
+    }
     for (const branch of branches) out.push({ source: branch, ...base });
     i = j;
   }
-  return out;
+  return { imports: out, exports: exported };
 }

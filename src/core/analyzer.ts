@@ -151,7 +151,7 @@ import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
 import { expandChannelFactories } from "./channel-factories.js";
-import { scopeChannelTopics } from "./channel-topics.js";
+import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -1931,6 +1931,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // An event sent within a topic meets only the handlers of channels joined on that topic.
   const topicRows = scopeChannelTopics(allAnalyses);
   if (topicRows > 0 && verbose) progress.detail(`  Channel events kept apart by topic: ${topicRows} row(s)`);
+  // An MQTT publish meets the wildcard filters (`league/+/score`) that cover its topic.
+  const filterRows = joinMqttTopicFilters(allAnalyses);
+  if (filterRows > 0 && verbose) progress.detail(`  MQTT publishes joined to topic filters: ${filterRows} row(s)`);
 
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),

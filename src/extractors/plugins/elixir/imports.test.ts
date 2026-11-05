@@ -34,12 +34,14 @@ end`;
       review?: 1
     ]
   alias League.Clubs
+  import League.Whistle, except: [blow: 1, stop: 2]
 end`;
     expect(extractElixirImports(src.split("\n")).map((i) => i.inScope)).toEqual([
       { module: "League.Rules" },
       { module: "League.Cards", names: ["book", "send_off"] },
       { module: "League.Var", names: ["review?"] },
       undefined,
+      { module: "League.Whistle", except: ["blow", "stop"] },
     ]);
   });
 });

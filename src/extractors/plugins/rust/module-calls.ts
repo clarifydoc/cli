@@ -28,12 +28,19 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
       imported.set(s, imp.source === "self" ? `self::${name}` : `${imp.source}::${name}`);
     }
   }
+  const modules = inlineModules(lines);
   const promote = (calls: CallInfo[]) => {
     for (const c of calls) {
       if (c.kind !== "internal" || c.name.includes(".") || !c.name.includes("::")) continue;
       const cut = c.name.lastIndexOf("::");
       const path = c.name.slice(0, cut);
       const member = c.name.slice(cut + 2);
+      // `sys::ignite()` through `mod sys { pub fn ignite() {} }` of this very file: that function, when no
+      // other function of the file shares its name (the per-file index cannot tell two apart).
+      if (modules.length > 0 && inlineModuleMember(analysis, modules, imported, c, path, member)) {
+        c.name = member;
+        continue;
+      }
       let segs = path.split("::");
       // Inside `mod tests { … }` (and deeper inline modules) `super` climbs those first:
       // `super::helper()` there is the file's own `helper`.
@@ -72,4 +79,63 @@ function inlineModuleSpans(lines: string[]): Array<[number, number]> {
     if (/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?\w+\s*\{/.test(lines[i]!)) spans.push([i + 1, blockEndLine(lines, i, rustSpec)]);
   }
   return spans;
+}
+
+interface InlineModule {
+  /** The module's path from the file's own root (`outer::inner`). */
+  path: string;
+  from: number;
+  to: number;
+}
+
+/** The inline modules of a file with their nested paths. */
+function inlineModules(lines: string[]): InlineModule[] {
+  const found: Array<{ name: string; from: number; to: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?(\w+)\s*\{/.exec(lines[i]!);
+    if (m) found.push({ name: m[1]!, from: i + 1, to: blockEndLine(lines, i, rustSpec) });
+  }
+  return found.map((f) => ({
+    path: found.filter((o) => o.from <= f.from && o.to >= f.to).map((o) => o.name).join("::"),
+    from: f.from,
+    to: f.to,
+  }));
+}
+
+/** True when the call `path::member` names a function declared directly in an inline module of the same file and unique by name. */
+function inlineModuleMember(analysis: FileAnalysis, modules: InlineModule[], imported: Map<string, string>, call: CallInfo, path: string, member: string): boolean {
+  const here = modules.filter((m) => call.line >= m.from && call.line <= m.to).map((m) => m.path).sort((a, b) => b.length - a.length)[0] ?? "";
+  const root = /(?:^|\/)(?:main|lib)\.rs$/.test(analysis.filePath);
+  let segs = path.split("::");
+  const head = segs[0]!;
+  const through = head === "crate" || head === "super" || head === "self" ? undefined : imported.get(head);
+  const candidates: string[] = [];
+  const join = (...p: string[]) => p.filter(Boolean).join("::");
+  if (through) {
+    const full = [...through.split("::"), ...segs.slice(1)];
+    if (full[0] === "crate" && root) candidates.push(full.slice(1).join("::"));
+    else if (full[0] === "self") candidates.push(join(here, ...full.slice(1)));
+  } else if (head === "crate") {
+    if (root) candidates.push(segs.slice(1).join("::"));
+  } else if (head === "self") {
+    candidates.push(join(here, ...segs.slice(1)));
+  } else if (head === "super") {
+    let up = here.split("::").filter(Boolean);
+    while (segs[0] === "super") {
+      up = up.slice(0, -1);
+      segs = segs.slice(1);
+    }
+    candidates.push(join(...up, ...segs));
+  } else {
+    candidates.push(join(here, ...segs));
+    if (here) candidates.push(segs.join("::"));
+  }
+  const matched = modules.filter((m) => candidates.includes(m.path));
+  if (matched.length !== 1) return false;
+  const mod = matched[0]!;
+  const deeper = modules.filter((m) => m.from > mod.from && m.to <= mod.to);
+  const same = analysis.functions.filter((f) => f.name === member);
+  if (same.length !== 1) return false;
+  const fn = same[0]!;
+  return fn.line >= mod.from && fn.line <= mod.to && !deeper.some((m) => fn.line >= m.from && fn.line <= m.to);
 }

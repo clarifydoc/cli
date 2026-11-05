@@ -86,3 +86,47 @@ function bindChannelTopics(analyses: readonly FileAnalysis[]): number {
   }
   return changed;
 }
+
+/** Whether an MQTT topic filter (`league/+/score`, `league/#`, `$share/g/league/#`) covers a topic name. */
+export function mqttFilterMatches(filter: string, topic: string): boolean {
+  const f = filter.replace(/^\$share\/[^/]+\//, "").split("/");
+  const t = topic.split("/");
+  // A topic of the broker's own (`$SYS/…`) is never reached by a filter starting with a wildcard.
+  if (topic.startsWith("$") && (f[0] === "+" || f[0] === "#")) return false;
+  for (let i = 0; i < f.length; i++) {
+    if (f[i] === "#") return i === f.length - 1;
+    if (i >= t.length) return false;
+    if (f[i] !== "+" && f[i] !== t[i]) return false;
+  }
+  return f.length === t.length;
+}
+
+/**
+ * MQTT filters meet the topics they cover: the data-access graph joins publish and consume rows by `target`, so a
+ * publish on `league/premier/score` never met the subscriber of `league/+/score`. Each publish row of an MQTT
+ * topic (`DataSourceInfo.topicSyntax`) is repeated at every wildcard filter some file subscribes with that covers
+ * it; the row on its own topic stays. Only rows marked `mqtt` take part — any other bus joins exactly. In memory
+ * only. Returns the number of rows added.
+ */
+export function joinMqttTopicFilters(analyses: readonly FileAnalysis[]): number {
+  const filters = new Set<string>();
+  for (const a of analyses) {
+    for (const row of a.dataSources ?? []) {
+      if (row.topicSyntax === "mqtt" && row.kind === "queue-consume" && row.target && /[+#]/.test(row.target)) filters.add(row.target);
+    }
+  }
+  if (filters.size === 0) return 0;
+  let added = 0;
+  for (const a of analyses) {
+    const extra: DataSourceInfo[] = [];
+    for (const row of a.dataSources ?? []) {
+      if (row.topicSyntax !== "mqtt" || row.kind !== "queue-publish" || !row.target || /[+#]/.test(row.target)) continue;
+      for (const filter of filters) {
+        if (mqttFilterMatches(filter, row.target) && !a.dataSources.some((d) => d.kind === row.kind && d.target === filter && d.line === row.line)) extra.push({ ...row, target: filter });
+      }
+    }
+    a.dataSources.push(...extra);
+    added += extra.length;
+  }
+  return added;
+}

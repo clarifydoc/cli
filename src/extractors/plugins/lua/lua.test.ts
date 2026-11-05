@@ -5,6 +5,25 @@ import { restoreTypedReceiverCalls } from "../../../core/typed-receivers.js";
 import { luaTables } from "./tables.js";
 import { readLua } from "./antlr.js";
 
+describe("Lua one-line functions on the regex reading", () => {
+  it("takes the calls of a body written on the declaration line", () => {
+    const a = extractWithRegex(`local M = {}
+function M.kick() return 1 end
+function M:pass(x) return M.kick() end
+local function helper() return M.kick() end
+function M.run()
+  return helper()
+end
+return M
+`, "m.lua", "lua");
+    const callsOf = (n: string) => a.functions.find((f) => f.name === n)?.calls.map((c) => c.name);
+    expect(callsOf("M.kick")).toEqual([]);
+    expect(callsOf("M:pass")).toEqual(["M.kick"]);
+    expect(callsOf("helper")).toEqual(["M.kick"]);
+    expect(callsOf("M.run")).toEqual(["helper"]);
+  });
+});
+
 describe("Lua scripts", () => {
   it("records a script's own statements as <setup>, never words in a long comment or string or a word operator (real-repo FP)", () => {
     const a = extractWithRegex(`--[[

@@ -52,6 +52,8 @@ export function extractWithRegex(
   }
   analysis.imports = spec.extractImports ? spec.extractImports(lines) : extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
+  const reExports = spec.extractReExports?.(lines);
+  if (reExports?.length) analysis.exports.push(...reExports);
   // Test files (unit/integration/e2e specs) never expose real routes.
   const routeFacts: RouteFact[] = [];
   analysis.routes = isTestFile(filePath, language)

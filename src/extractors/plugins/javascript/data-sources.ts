@@ -595,6 +595,16 @@ const NOISE_METHODS = new Set([
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
+  /** The literal topics a client subscribes to in this file (`client.subscribe('a/+')`, `client.subscribe(['a', 'b'])`). */
+  private subscribedTopics(client: string): string[] {
+    const out: string[] = [];
+    const re = new RegExp(String.raw`(?<![\w$])${escapeRegex(client)}\s*\.\s*subscribe\s*\(\s*(\[[^\]]*\]|(['"\x60])[^'"\x60]*\2)`, "g");
+    for (const m of this.sourceText.matchAll(re)) {
+      for (const t of m[1]!.matchAll(/(['"\x60])([^'"\x60]*)\1/g)) if (t[2] && !out.includes(t[2])) out.push(t[2]);
+    }
+    return out;
+  }
+
   /**
    * URL-builder helper calls in api-call targets
    * (`axios.get(requestUri('teamtalk','v4'))` → `/api/v4/institution/{}/teamtalk`):
@@ -1762,7 +1772,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             const first = mqArgs[0];
             const topics = first?.type === "array" ? first.namedChildren.map((t) => literalString(t)) : [literalString(first ?? null)];
             if (topics.length > 0 && topics.every((t) => !!t)) {
-              for (const topic of topics) sources.push(this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic, line }));
+              for (const topic of topics) sources.push({ ...this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic, line }), topicSyntax: "mqtt" });
+              return;
+            }
+          }
+          // `client.on('message', (topic, msg) => …)`: the handler of every topic the same client subscribes to —
+          // a consume row on each, at the handler's own line, so the calls it makes are the consumer's.
+          if (mqev.mqtt && (fnName === "on" || fnName === "once") && ["message", "messageBuffer"].includes(literalString(mqArgs[0] ?? null) ?? "") && mqArgs.length >= 2 && recv) {
+            const topics = this.subscribedTopics(recv);
+            if (topics.length > 0) {
+              const handlerNode = mqArgs[1]!;
+              const handler = handlerNode.type === "identifier" ? handlerNode.text : undefined;
+              const at = (fn.childForFieldName("property")?.startPosition.row ?? line - 1) + 1;
+              for (const topic of topics) sources.push({ ...this.ds({ kind: "queue-consume", name: "MQTT: message", target: topic, line: at }), topicSyntax: "mqtt", ...(handler ? { handler } : {}) });
               return;
             }
           }

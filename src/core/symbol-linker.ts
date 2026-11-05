@@ -5485,6 +5485,7 @@ function inScopeMember(
   for (const { scope, from, aliases } of scopes) {
     const exported = aliases?.[name] ?? name;
     if (scope.names && !scope.names.includes(exported)) continue;
+    if (scope.except?.includes(exported)) continue;
     for (const hit of moduleMembers(ctx, analysis, scope.module, from, exported)) {
       if (hit.file !== analysis.filePath) hits.set(`${hit.file}\0${hit.def.name}`, { ...hit, named: !!scope.names });
     }
@@ -5522,13 +5523,16 @@ function moduleMembers(
   name: string,
 ): Array<{ file: string; def: SymbolDef }> {
   const typeName = module.split(/[./\\:]+/).pop() ?? module;
-  const memberOf = (file: string, types: string[]): SymbolDef | undefined => {
+  const memberOf = (file: string, types: string[]): { file: string; def: SymbolDef } | undefined => {
     for (const t of types) {
       const d = symbolIn(ctx, file, `${t}.${name}`);
-      if (d) return d;
+      if (d) return { file, def: d };
     }
     const d = symbolIn(ctx, file, name);
-    return d && d.name === name ? d : undefined;
+    if (d && d.name === name) return { file, def: d };
+    // A barrel (`export 'src/club.dart';`) puts the names of the libraries it forwards in scope.
+    const fwd = definitionIn(ctx, file, name, 0, new Set());
+    return fwd && !fwd.namespace && fwd.file !== file ? { file: fwd.file, def: fwd.def } : undefined;
   };
   const inDirectory = (): Array<{ file: string; def: SymbolDef }> => {
     const dir = ctx.importDirectory(module, from);
@@ -5547,8 +5551,8 @@ function moduleMembers(
   if (importsNameDirectories(analysis.language)) return inDirectory();
   const file = importPath(ctx, module, from);
   if (file) {
-    const d = memberOf(file, [module, typeName]);
-    if (d) return [{ file, def: d }];
+    const hit = memberOf(file, [module, typeName]);
+    if (hit) return [hit];
   }
   // A module declared under that name (Elixir `League.Rules`), or a type of the package the name gives.
   const declared = (ctx.classFiles.get(module) ?? []).filter((f) => sameTypeSpace(from, analysis.language, f, ctx.languageOf.get(f) ?? ""));

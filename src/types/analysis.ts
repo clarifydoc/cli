@@ -830,11 +830,12 @@ export interface ImportInfo {
    * Kotlin `import a.Config.limit`, Go `import . "x/util"`, Elixir `import
    * League.Rules`, an unprefixed Dart `import`). `module` names that module or
    * type as written — a file path, a package or a declared name; `names` the
-   * members it binds, absent for every one it declares (`only:`, `show`).
+   * members it binds, absent for every one it declares (`only:`, `show`); `except` the ones it leaves out
+   * (Elixir `except: [kick: 1]`, by name).
    * `shared`: the module is part of this file's own scope, and this file of
    * its (a Dart `part`) — each sees the other's declarations and imports.
    */
-  inScope?: { module: string; names?: string[]; shared?: true };
+  inScope?: { module: string; names?: string[]; except?: string[]; shared?: true };
 }
 
 /**
@@ -2364,6 +2365,12 @@ export interface DataSourceInfo {
    * without one still meets them all.
    */
   topic?: string;
+  /**
+   * For `queue-publish`/`queue-consume` on an MQTT topic: `target` is a topic (publish) or a topic filter
+   * (consume), whose `+` (one level) and `#` (the rest) wildcards meet the topics they cover. Core repeats a
+   * publish row at each filter it matches, so the join (which is by exact target) finds it.
+   */
+  topicSyntax?: "mqtt";
   /** A channel module's event whose topic its own code did not state: a `FileAnalysis.channelBindings` entry naming the module supplies it. */
   topicFromBinding?: boolean;
   /**
