@@ -8,6 +8,7 @@ import { C_CODE, definitionAt } from "../shared/c-family-code.js";
 import { markLocalCallables } from "../shared/c-family-callables.js";
 import { extractCFamilyLocalTypes } from "../shared/c-family-locals.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
+import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 
 function stripCType(raw: string): string {
   return stripTypeModifiers(raw, "c");
@@ -119,4 +120,6 @@ export const cSpec: RegexLangSpec = {
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,
+  // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition.
+  extractMacros: (lines, analysis) => extractCFamilyMacros(lines, analysis, false),
 };

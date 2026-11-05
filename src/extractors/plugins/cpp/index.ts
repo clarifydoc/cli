@@ -8,6 +8,7 @@ import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.
 import { markLocalCallables } from "../shared/c-family-callables.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
+import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
@@ -267,6 +268,8 @@ export const cppSpec: RegexLangSpec = {
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,
+  // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition.
+  extractMacros: (lines, analysis) => extractCFamilyMacros(lines, analysis, true),
   extractStringConstants: extractCppStringConstants,
 
   // Qt Widgets `connect(Widget, &QClass::signal, this, &Dlg::slot)` wiring —

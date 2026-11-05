@@ -4,6 +4,7 @@ import {
   type DiBinding,
   type FileAnalysis,
   type FunctionInfo,
+  type MacroInfo,
   type Language,
   type SymbolLink,
   type SymbolLinkStrategy,
@@ -1726,6 +1727,10 @@ interface LinkContext {
   scopeLibraries?: Map<string, string[]>;
   /** Analyzed files by lowercased stem, built on first use (`declarationExtensions`). */
   filesByStem?: Map<string, string[]>;
+  /** Every function-like macro name some analyzed file defines, built on first use: a call of any other name asks nothing further. */
+  macroNames?: Set<string>;
+  /** Per file, built on first use: the macros its includes reach, by name, one list of definitions per include depth (nearest first). */
+  macroReach?: Map<string, Array<Map<string, Array<{ file: string; macro: MacroInfo }>>>>;
   /** Per file, how its callables nest (null: none nests in another), built on first use. */
   nestedScopes?: Map<string, NestedScopes | null>;
   /** What a plugin's import resolver asks of the project, built on first use. */
@@ -4751,6 +4756,14 @@ function resolveCallToDefinition(
     if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, hit.named ? "EXTRACTED" : "INFERRED", "import-file");
   }
 
+  // ── Strategy 6e: a bare call of a function-like macro (`#define for_each_club(c, l) …`) ──
+  // After every real function: a macro is only what a call falls back on when no function of the name is in scope,
+  // and only through the file itself or the headers it includes (`importsShareScope`) — never by name project-wide.
+  if (!def && !isQualified && !reference && call.kind === "internal") {
+    const hit = macroDefinition(ctx, analysis, sourceFile, call.name);
+    if (hit) return mkLink(hit.file, call.name, hit.macro.line, hit.file === sourceFile ? "EXTRACTED" : "INFERRED", hit.file === sourceFile ? "direct" : "import-file");
+  }
+
   // ── Strategy 7: Unique global definition (heuristic) ──
   // Qualified internal call whose receiver type we can't track
   // (`parser.tokenize()`): if exactly one file in the whole project defines the
@@ -7533,6 +7546,57 @@ function methodResolutionOrder(ctx: LinkContext, name: string, file: string, dep
     for (const l of lists) if (l.length > 0 && id(l[0]!) === id(head)) l.shift();
   }
   return out;
+}
+
+/**
+ * The function-like macro a bare call names (`FileAnalysis.macros`): the caller's own, else the one definition of the
+ * headers its includes reach — the includes themselves, then what those headers include, up to three headers deep,
+ * the nearest level that has any deciding. Two files defining it (a platform's `#if` arms) decide nothing, and a
+ * macro its file `#undef`s later is its own file's only.
+ */
+function macroDefinition(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, name: string): { file: string; macro: MacroInfo } | null {
+  ctx.macroNames ??= new Set(ctx.analyses.flatMap((a) => a.macros?.map((m) => m.name) ?? []));
+  if (!ctx.macroNames.has(name)) return null;
+  const own = analysis.macros?.find((m) => m.name === name);
+  if (own) return { file: sourceFile, macro: own };
+  if (!importsShareScope(analysis.language)) return null;
+  ctx.macroReach ??= new Map();
+  let levels = ctx.macroReach.get(sourceFile);
+  if (!levels) {
+    levels = [];
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const seen = new Set([sourceFile]);
+    let level: FileAnalysis[] = [analysis];
+    for (let depth = 0; depth < 4 && level.length > 0; depth++) {
+      const next: FileAnalysis[] = [];
+      const byName = new Map<string, Array<{ file: string; macro: MacroInfo }>>();
+      for (const from of level) {
+        for (const imp of from.imports) {
+          if (imp.executes) continue;
+          const file = importPath(ctx, imp.source, from.filePath);
+          if (!file || seen.has(file)) continue;
+          seen.add(file);
+          const target = ctx.analysisByFile.get(file);
+          if (!target || target.projectId !== analysis.projectId) continue;
+          for (const macro of target.macros ?? []) {
+            if (macro.fileScoped) continue;
+            const list = byName.get(macro.name);
+            if (list) list.push({ file, macro });
+            else byName.set(macro.name, [{ file, macro }]);
+          }
+          next.push(target);
+        }
+      }
+      levels.push(byName);
+      level = next;
+    }
+    ctx.macroReach.set(sourceFile, levels);
+  }
+  for (const byName of levels) {
+    const hits = byName.get(name);
+    if (hits) return hits.length === 1 ? hits[0]! : null;
+  }
+  return null;
 }
 
 /** A symbol of `file` by name — case-insensitively where the file's language names callables so. */

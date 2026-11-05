@@ -592,6 +592,13 @@ export interface FileAnalysis {
    */
   typeAliases?: TypeAliasInfo[];
   /**
+   * The function-like macros a C-family file `#define`s outside any function body (`#define for_each_club(c, l) \`),
+   * which a call of that name in a file that includes this one, or in this one, resolves to when no function of the
+   * name is in scope. Not functions: a macro has no body to judge, so dead code, complexity and health never see
+   * it. Omitted when the file defines none.
+   */
+  macros?: MacroInfo[];
+  /**
    * Module-level names bound to another name the module sees (Python
    * `s = attributes = attrs`, TypeScript `export const s = attrs`): a call of
    * the alias is a call of what it names. The name as written — core follows
@@ -896,6 +903,19 @@ export interface NameAliasInfo {
   name: string;
   target: string;
   line: number;
+}
+
+/** A function-like `#define`: `#define for_each_club(c, l) …`. Object-like ones (`#define MAX 1`) are not symbols. */
+export interface MacroInfo {
+  name: string;
+  /** The parameter names as written (`...` for a variadic one). */
+  params: string[];
+  /** 1-based line of the `#define`. */
+  line: number;
+  /** Last line of the definition, its `\` continuations included. */
+  endLine: number;
+  /** The file `#undef`s it later: the name means it only inside this file, never in a file that includes it. */
+  fileScoped?: true;
 }
 
 /** A type alias a file declares: `name` stands for `type`, as written. */
