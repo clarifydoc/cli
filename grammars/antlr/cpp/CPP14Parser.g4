@@ -343,7 +343,7 @@ macroStatement
 
 // [ClarifyDoc] A statement macro taking the statement after it as its body: `SECTION("kickoff") { … }`.
 macroBlockStatement
-    : {this.IsMacroBlock()}? (Identifier macroArguments | MacroName macroArguments?) statement
+    : {this.IsMacroBlock()}? (Identifier macroArguments | MacroName macroArguments?) statement (Else statement)? // [ClarifyDoc] `IF_CONSTEXPR(c) { … } else { … }`
     ;
 
 // [ClarifyDoc] C++17: `if (auto it = squad.find(id); it != squad.end())`.
@@ -664,8 +664,9 @@ usingDirective
     : attributeSpecifierSeq? Using Namespace nestedNameSpecifier? namespaceName Semi
     ;
 
+// [ClarifyDoc] GNU extended asm: qualifiers, then operands the reading skips.
 asmDefinition
-    : Asm LeftParen StringLiteral RightParen Semi
+    : Asm (Volatile | Inline | Goto)* LeftParen macroArgument* RightParen Semi
     ;
 
 linkageSpecification
@@ -1117,7 +1118,7 @@ templateParameterList
 templateParameter
     : typeParameter
     | parameterDeclaration
-    | {this.IsMacroParameter()}? (Identifier | MacroName) macroArguments // [ClarifyDoc] `ENABLE_IF(cond)` standing for one
+    | {this.IsMacroParameter()}? (Identifier | MacroName) macroArguments (Assign constantExpression)? // [ClarifyDoc] `ENABLE_IF(cond)` standing for one, `ENABLE_IF(cond) = 0`
     ;
 
 typeParameter
@@ -1180,6 +1181,7 @@ handlerSeq
 
 handler
     : Catch LeftParen exceptionDeclaration RightParen compoundStatement
+    | CatchMacro macroArguments? compoundStatement // [ClarifyDoc] `CATCH_ALL { … }`, a macro standing for `catch (…)`, the first pass retyped
     ;
 
 exceptionDeclaration

@@ -12,6 +12,7 @@ tokens {
     CastLeftParen,
     MacroName,
     TypeMacro,
+    CatchMacro,
     FoldLeftParen
 }
 
@@ -51,7 +52,7 @@ Alignas: 'alignas';
 
 Alignof: 'alignof';
 
-Asm: 'asm';
+Asm: 'asm' | '__asm__' | '__asm'; // [ClarifyDoc] GNU and MSVC spellings
 
 Auto: 'auto';
 

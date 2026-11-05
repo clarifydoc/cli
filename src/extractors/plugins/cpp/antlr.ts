@@ -221,7 +221,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
       const args = ctx.children[1];
       if (args instanceof MacroArgumentsContext) macroArgumentCalls(args, stream, calls);
-      if (ctx instanceof MacroBlockStatementContext) stack.push({ node: ctx.statement(), owner: into });
+      if (ctx instanceof MacroBlockStatementContext) for (const body of ctx.statement().reverse()) stack.push({ node: body, owner: into });
       continue;
     }
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push({ node: ctx.children[i]!, owner: into });

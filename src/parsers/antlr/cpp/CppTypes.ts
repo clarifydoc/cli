@@ -140,6 +140,12 @@ const BEFORE_CAST: ReadonlySet<number> = new Set([
 /** Where a bare macro statement or declaration may start. */
 const BARE_MACRO_AFTER: ReadonlySet<number> = new Set([CPP14Lexer.Semi, CPP14Lexer.LeftBrace, CPP14Lexer.RightBrace]);
 
+/** What may stand before the `{` of a block of statements: a function's `)` and qualifiers, `else`, `do`, `try`, a statement's end (a namespace's name too, below). */
+const BLOCK_BEFORE: ReadonlySet<number> = new Set([
+  CPP14Lexer.RightParen, CPP14Lexer.Else, CPP14Lexer.Do, CPP14Lexer.Try, CPP14Lexer.Const, CPP14Lexer.Noexcept,
+  CPP14Lexer.Override, CPP14Lexer.Final, CPP14Lexer.Semi, CPP14Lexer.LeftBrace, CPP14Lexer.RightBrace,
+]);
+
 /** What only starts a statement or a declaration, so a bare macro may stand before it. */
 const BARE_MACRO_BEFORE: ReadonlySet<number> = new Set([
   CPP14Lexer.LeftBrace, CPP14Lexer.If, CPP14Lexer.For, CPP14Lexer.While, CPP14Lexer.Do,
@@ -216,6 +222,10 @@ export interface CppTokenFacts {
   macroCall: Uint8Array;
   /** 1 where an all-caps name calls a macro that stands for a type or a scope: `REMOVE_REF_(T) *`, `IS_COPYABLE(T)::value`. */
   typeMacro: Uint8Array;
+  /** 1 where an all-caps name stands for `try` (`CATCH_TRY {`): its block is followed by handlers. */
+  tryMacro: Uint8Array;
+  /** 1 where an all-caps name stands for `catch (…)` after such a block. */
+  catchMacro: Uint8Array;
   /** 1 where a `(` holds a C++17 fold expression: `...` beside an operator at its own depth. */
   fold: Uint8Array;
   /** 1 where a `(` directly holds what no expression does: a type keyword, a specifier, `{`, `;`. */
@@ -472,21 +482,57 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || type(i + 1) !== CPP14Lexer.LeftParen || close[i + 1]! < 0) continue;
     // `Resolver::CIDR::CIDR(…)`, `p->MAX(…)`: a member or a qualified name is no macro.
     if (type(i - 1) === CPP14Lexer.Doublecolon || type(i - 1) === CPP14Lexer.Dot || type(i - 1) === CPP14Lexer.Arrow) continue;
+    // `ASM(("" : "+w"(x)))`: an asm template before its operands' `:`, in a call with no `?` to make it a conditional.
+    let asmOperands = false;
+    let conditional = false;
     for (let j = i + 2; j < close[i + 1]!; j++) {
       const t = type(j);
+      if (t === CPP14Lexer.Question) conditional = true;
+      else if (t === CPP14Lexer.StringLiteral && type(j + 1) === CPP14Lexer.Colon) asmOperands = true;
       if (NON_EXPRESSION.has(t) || (POINTER.has(t) && (type(j + 1) === CPP14Lexer.RightParen || type(j + 1) === CPP14Lexer.Comma))) {
         macroCall[i] = 1;
         break;
       }
     }
+    if (asmOperands && !conditional) macroCall[i] = 1;
   }
   // `BENCHMARK_LOOP {`, `SET_SOURCE_PATH return …`, `BEGIN_NAMESPACE class …`: a bare macro where a statement or
   // declaration starts, before what only starts another — a name alone there would be an expression.
+  const tryMacro = new Uint8Array(n);
+  const catchMacro = new Uint8Array(n);
+  const openOf = new Int32Array(n).fill(-1);
+  close.forEach((c, o) => c >= 0 && (openOf[c] = o));
+  /** The `}` ending the handler that starts at `k` (`catch (…) { … }`, `CATCH_ALL { … }`, `CATCH_ANY(type) { … }`), or -1. */
+  const handlerAt = (k: number): number => {
+    let at = k + 1;
+    if (type(k) === CPP14Lexer.Catch) {
+      if (type(at) !== CPP14Lexer.LeftParen || close[at]! < 0) return -1;
+      at = close[at]! + 1;
+    } else if (isId(k) && MACRO_NAME.test(names[k]!) && /CATCH|EXCEPT|HANDLE|RESCUE/.test(names[k]!) && !types.has(names[k]!)) {
+      if (type(at) === CPP14Lexer.LeftParen && close[at]! >= 0) at = close[at]! + 1;
+    } else return -1;
+    return type(at) === CPP14Lexer.LeftBrace ? close[at]! : -1;
+  };
+  // The `)` ending a macro called where a statement starts: a bare macro may follow it, `PRAGMA(push) BEGIN_NAMESPACE`.
+  const callEnd = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
-    // After another bare macro too: `BEGIN_NAMESPACE BEGIN_EXPORT template …`.
-    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || (i > 0 && !BARE_MACRO_AFTER.has(type(i - 1)) && macroCall[i - 1] !== 1)) continue;
+    const starts = i === 0 || BARE_MACRO_AFTER.has(type(i - 1)) || macroCall[i - 1] === 1 || callEnd[i - 1] === 1;
+    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || !starts) continue;
+    if (type(i + 1) === CPP14Lexer.LeftParen && close[i + 1]! >= 0) {
+      callEnd[close[i + 1]!] = 1;
+      continue;
+    }
+    // `CATCH_TRY { … } CATCH_ALL { … }`: macros standing for `try` and `catch (…)`; a plain `catch` may follow too.
+    if (type(i + 1) === CPP14Lexer.LeftBrace && close[i + 1]! >= 0 && handlerAt(close[i + 1]! + 1) >= 0) {
+      tryMacro[i] = 1;
+      for (let k = close[i + 1]! + 1, end = handlerAt(k); end >= 0; k = end + 1, end = handlerAt(k)) if (type(k) !== CPP14Lexer.Catch) catchMacro[k] = 1;
+      continue;
+    }
     const next = type(i + 1);
-    if (BARE_MACRO_BEFORE.has(next) || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
+    // `COZ_PROGRESS }` ends a block (a function's, a loop's or a branch's), never an initializer's braces.
+    const before = openOf[i + 1]! - 1;
+    const endsBlock = next === CPP14Lexer.RightBrace && (BLOCK_BEFORE.has(type(before)) || type(before) === CPP14Lexer.Namespace || (isId(before) && type(before - 1) === CPP14Lexer.Namespace));
+    if (BARE_MACRO_BEFORE.has(next) || endsBlock || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
   }
   // `using Ref = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`: a macro call where only a type or a scope goes.
   const typeMacro = new Uint8Array(n);
@@ -535,7 +581,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
   }
-  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, fold);
+  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, tryMacro, catchMacro, fold);
 
   /** Whether a cast may follow the `)` at `i`: another cast's, or a control header's. */
   function castAfterParen(i: number): boolean {
@@ -560,6 +606,8 @@ function facts(
   cast: Uint8Array,
   macroCall: Uint8Array,
   typeMacro: Uint8Array,
+  tryMacro: Uint8Array,
+  catchMacro: Uint8Array,
   fold: Uint8Array,
 ): CppTokenFacts {
   const size = all.length;
@@ -572,6 +620,8 @@ function facts(
     cast: new Uint8Array(size),
     macroCall: new Uint8Array(size),
     typeMacro: new Uint8Array(size),
+    tryMacro: new Uint8Array(size),
+    catchMacro: new Uint8Array(size),
     fold: new Uint8Array(size),
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
@@ -604,11 +654,13 @@ function facts(
     if (cast[i] === 1) out.cast[k] = 1;
     if (macroCall[i] === 1) out.macroCall[k] = 1;
     if (typeMacro[i] === 1) out.typeMacro[k] = 1;
+    if (tryMacro[i] === 1) out.tryMacro[k] = 1;
+    if (catchMacro[i] === 1) out.catchMacro[k] = 1;
     if (fold[i] === 1) out.fold[k] = 1;
     const name = names[i];
     if (name === undefined) return;
     if (types.has(name)) out.known[k] = 1;
-    if (MACRO_NAME.test(name) || name.startsWith("__") || (defined.has(name) && tokens[i + 1]?.type === CPP14Lexer.LeftParen)) out.macro[k] = 1;
+    if (MACRO_NAME.test(name) || name.startsWith("__") || name === "_Pragma" || (defined.has(name) && tokens[i + 1]?.type === CPP14Lexer.LeftParen)) out.macro[k] = 1;
   });
   return out;
 }

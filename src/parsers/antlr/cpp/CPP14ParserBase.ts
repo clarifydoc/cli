@@ -35,6 +35,12 @@ const AFTER_PARAMETERS: ReadonlySet<number> = new Set([
 
 
 
+/** Literals: an argument holding one is a value, not a parameter's type. */
+const VALUE_LITERALS: ReadonlySet<number> = new Set([
+  CPP14Lexer.IntegerLiteral, CPP14Lexer.FloatingLiteral, CPP14Lexer.CharacterLiteral, CPP14Lexer.StringLiteral,
+  CPP14Lexer.BooleanLiteral, CPP14Lexer.PointerLiteral,
+]);
+
 /** What may follow a macro after a declarator. */
 const MACRO_SUFFIX_END: ReadonlySet<number> = new Set([
   CPP14Lexer.Semi, CPP14Lexer.Comma, CPP14Lexer.Assign, CPP14Lexer.LeftBrace, CPP14Lexer.RightParen, CPP14Lexer.Colon,
@@ -203,6 +209,8 @@ const NO_FACTS: CppTokenFacts = {
   cast: new Uint8Array(0),
   macroCall: new Uint8Array(0),
   typeMacro: new Uint8Array(0),
+  tryMacro: new Uint8Array(0),
+  catchMacro: new Uint8Array(0),
   fold: new Uint8Array(0),
   nonExpression: new Uint8Array(0),
   next: new Int32Array(0),
@@ -237,6 +245,12 @@ export abstract class CPP14ParserBase extends Parser {
     });
     this.facts.typeMacro.forEach((macro, name) => {
       if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.TypeMacro;
+    });
+    this.facts.tryMacro.forEach((macro, name) => {
+      if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.Try;
+    });
+    this.facts.catchMacro.forEach((macro, name) => {
+      if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.CatchMacro;
     });
     this.facts.fold.forEach((fold, open) => {
       if (fold === 1) (stream.get(open) as { type: number }).type = CPP14Lexer.FoldLeftParen;
@@ -454,10 +468,33 @@ export abstract class CPP14ParserBase extends Parser {
     const close = this.facts.close[open.tokenIndex] ?? -1;
     // `void open(QString);`: a capitalized name, no macro's, is more likely a type than a variable.
     const name = this.inputStream.get(path.last).text ?? "";
-    return this.known(path.last) || (/^[A-Z]/.test(name) && !this.macro(path.last)) || AFTER_PARAMETERS.has(this.typeAt(this.following(close)));
+    return this.known(path.last) || (/^[A-Z]/.test(name) && !this.macro(path.last) && !this.holdsValue(open.tokenIndex)) || AFTER_PARAMETERS.has(this.typeAt(this.following(close)));
   }
 
 
+
+  /** A literal among a parenthesized list's arguments (outside template brackets and after no `=`): values, not types. */
+  private holdsValue(open: number): boolean {
+    const close = this.facts.close[open] ?? -1;
+    let defaulted = false;
+    for (let i = this.following(open); i >= 0 && i !== close; i = this.following(i)) {
+      const type = this.typeAt(i);
+      if (type === CPP14Lexer.TemplateLess) {
+        const end = this.facts.angle[i] ?? -1;
+        if (end < 0) return false;
+        i = end;
+      } else if (type === CPP14Lexer.LeftParen || type === CPP14Lexer.LeftBracket || type === CPP14Lexer.LeftBrace) {
+        const end = this.facts.close[i] ?? -1;
+        if (end < 0) return false;
+        // A literal in a nested call's arguments is a value too: `Rule(false)`.
+        if (!defaulted && this.holdsValue(i)) return true;
+        i = end;
+      } else if (type === CPP14Lexer.Assign) defaulted = true;
+      else if (type === CPP14Lexer.Comma) defaulted = false;
+      else if (!defaulted && VALUE_LITERALS.has(type)) return true;
+    }
+    return false;
+  }
 
   private macro(index: number): boolean {
     return this.facts.macro[index] === 1;
@@ -580,12 +617,12 @@ export abstract class CPP14ParserBase extends Parser {
     return this.typeAt(after) === CPP14Lexer.Semi;
   }
 
-  /** `ENABLE_IF(cond)` among template parameters: a macro standing for one, before `,` or `>`. */
+  /** `ENABLE_IF(cond)` among template parameters: a macro standing for one, before `,`, `>` or a default `= 0`. */
   protected IsMacroParameter(): boolean {
     const t = this.lt(1);
     if (!this.macroAt(t) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
     const after = this.typeAt(this.afterMacro(t.tokenIndex));
-    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater;
+    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater || after === CPP14Lexer.Assign;
   }
 
   /** `module league;`, `module;`, `export module league:stats;`: `module` as a keyword. */

@@ -94,6 +94,58 @@ void register_club() {
   });
 });
 
+describe("C++ edge cases: statement macros", () => {
+  it("reads a bare macro before the } of a block, a pragma at file scope, and macros standing for try and catch", () => {
+    const source = `_Pragma("GCC diagnostic push")
+namespace league {
+    CLUB_WARNINGS_OFF
+    static Club leader;
+    CLUB_WARNINGS_ON
+}
+
+int play() {
+    CLUB_TRY {
+        kick();
+    } CLUB_CATCH_ALL {
+        recover();
+    }
+    CLUB_TRY {
+        pass();
+    } CLUB_CATCH_ANON(Foo) {
+        tackle();
+    } catch (std::exception &e) {
+        note(e);
+    }
+    if (ok) {
+        CLUB_PROGRESS
+    }
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["play", ["kick", "recover", "pass", "tackle", "note", "CLUB_PROGRESS"]]] });
+  });
+
+  it("reads asm statements with operands, in a macro's arguments too", () => {
+    const source = `void keep(Car *p) {
+  asm volatile("" : : "g"(p) : "memory");
+  CAR_ASM(("" : "+w"(p)));
+  start(p);
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["keep", ["CAR_ASM", "start"]]] });
+  });
+
+  it("reads a macro as a template parameter with a default, and a macro's block followed by else", () => {
+    const source = `template <typename T, CAR_ENABLE_IF(!std::is_same<T, char>::value) = 0>
+void load() {
+  CAR_IF_CONSTEXPR(a) { one(); }
+  else { two(); }
+  Result data(Status::Won, Lazy(false));
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["load", ["CAR_IF_CONSTEXPR", "one", "two", "Lazy"]]] });
+  });
+});
+
 describe("C++ edge cases: macros standing for types", () => {
   it("reads a type macro in an alias, and a macro's call before `::` among template arguments and defaults", () => {
     const source = `template <class T>
