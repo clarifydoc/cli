@@ -61,13 +61,36 @@ function isPropFunction(el: InteractiveElementInfo): boolean {
 export function isEventFunction(el: InteractiveElementInfo, declared?: ReadonlySet<string>): boolean {
   if (el.element !== "custom" || !el.component || !el.event.startsWith("@") || !el.handler) return false;
   const handler = el.handler.trim();
-  const bare = BARE_HANDLER.exec(handler)?.[1];
+  const bare = bareHandler(handler);
   if (bare && (!declared || declared.has(bare))) return false;
   return !REEMIT_HANDLER.test(handler) && eventCalls(handler).length > 0;
 }
 
 /** `onSave`, `onSave($event)`, `void onSave()`: a function called by its bare name. */
-const BARE_HANDLER = /^(?:void\s+|await\s+)?([A-Za-z_$][\w$]*)\s*(?:\(.*\))?$/s;
+const BARE_HANDLER = /^(?:void\s+|await\s+)?([A-Za-z_$][\w$]*)\s*(\(.*\))?$/s;
+
+/**
+ * The function a handler calls by its bare name, and nothing else: `save(club)`, but not
+ * `save(); close()` or `save(a) && close()`, whose parentheses only open and close the text.
+ */
+function bareHandler(handler: string): string | undefined {
+  const m = BARE_HANDLER.exec(handler);
+  if (!m) return undefined;
+  const args = m[2];
+  if (!args) return m[1];
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0 && i < args.length - 1) return undefined;
+  }
+  return m[1];
+}
 /** An event passed on: `$emit('save', car)`, `(car) => emit('save', car)`. */
 const REEMIT_HANDLER = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(/;
 

@@ -79,11 +79,12 @@ export class JsComponentEmitResolver implements DispatchResolver {
       seen.add(at);
       const out: Array<{ file: string; span: SymbolSpan }> = [];
       for (const b of bindings.get(file)?.get(key) ?? []) {
-        const reEmit = (b.angular ? REEMIT_OUTPUT : REEMIT).exec(b.handler.trim());
-        if (reEmit) {
-          out.push(...targetsOf(b.parent.filePath, tagKey(reEmit[1]!), depth + 1, seen));
-          continue;
-        }
+        // Each event the binding passes on, wherever it spells it: `(car) => $emit('save', car)`,
+        // `editing = false; $emit('cancel')`, `full ? $emit('reject') : $emit('swap')`.
+        const handler = b.handler.trim();
+        const passed = b.angular ? [REEMIT_OUTPUT.exec(handler)?.[1]].filter((e): e is string => !!e) : [...handler.matchAll(EMIT_ANYWHERE)].map((m) => m[1]!);
+        for (const event of new Set(passed.map(tagKey))) out.push(...targetsOf(b.parent.filePath, event, depth + 1, seen));
+        if (b.angular ? passed.length > 0 : REEMIT.test(handler)) continue;
         // What an expression binding calls (`unitActions.deleteOne`): its markup function.
         const bound = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
         if (bound) {
@@ -252,6 +253,8 @@ function dialogClosers(
 
 /** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */
 const REEMIT = /^(?:(?:\([^()]*\)|[\w$]+)\s*=>\s*)?\$?emit\s*\(\s*['"]([\w:-]+)['"][^;]*\)$/;
+/** Every `emit('x')` / `$emit('x')` a Vue binding spells. */
+const EMIT_ANYWHERE = /(?:^|[^\w$.])\$?emit\s*\(\s*['"]([\w:-]+)['"]/g;
 /** Angular's: the parent emits an output of its own (`(reload)="reload.emit()"`, kept as `reload.emit`). */
 const REEMIT_OUTPUT = /^(?:this\.)?([\w$]+)\.emit\b/;
 

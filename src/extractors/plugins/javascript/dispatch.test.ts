@@ -306,6 +306,51 @@ describe("JsComponentEmitResolver — an emit bound to an expression", () => {
   });
 });
 
+describe("JsComponentEmitResolver — a compound binding", () => {
+  it("joins the child's emit to every function a compound binding calls, and passes on an emit wherever the binding spells it (real-repo FP)", async () => {
+    const { markupFunctions } = await import("./markup-calls.js");
+    const { extractVueInteractiveElements } = await import("./interactive-elements.js");
+    const template = `<template>
+  <LineupForm
+    @save="saveLineup(); closeDrawer()"
+    @cancel="editing = false; $emit('cancel')"
+    @swap="benchFull ? $emit('reject') : $emit('swap', $event)"
+  />
+</template>`;
+    const elements = extractVueInteractiveElements(template, template);
+    const declared = new Set(["saveLineup", "closeDrawer"]);
+    const fns = markupFunctions(elements, "src/components/Lineup.vue", declared);
+    // Two calls are not one bare handler: the binding is a function of its own, holding both.
+    expect(fns.map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual(["<LineupForm@save@2>: saveLineup,closeDrawer"]);
+    const lineup = fa("src/components/Lineup.vue", {
+      functions: [...fns, fn("saveLineup", 20, 24), fn("closeDrawer", 26, 28)],
+      interactiveElements: elements,
+      subComponents: [{ name: "LineupForm", importSource: "./LineupForm.vue", props: [], line: 2 }],
+      events: [{ name: "cancel", params: [], line: 4 }, { name: "reject", params: [], line: 5 }, { name: "swap", params: [], line: 5 }],
+    });
+    const form = fa("src/components/LineupForm.vue", {
+      functions: [fn("submit", 10, 14)],
+      events: [{ name: "save", params: [], line: 12 }, { name: "cancel", params: [], line: 13 }, { name: "swap", params: [], line: 13 }],
+    });
+    const page = fa("src/pages/Match.vue", {
+      functions: [fn("discardLineup", 20, 24), fn("rejectSwap", 26, 28), fn("makeSwap", 30, 32)],
+      interactiveElements: [
+        { element: "custom", event: "@cancel", handler: "discardLineup", line: 3, component: "Lineup" },
+        { element: "custom", event: "@reject", handler: "rejectSwap", line: 3, component: "Lineup" },
+        { element: "custom", event: "@swap", handler: "makeSwap", line: 3, component: "Lineup" },
+      ],
+      subComponents: [{ name: "Lineup", importSource: "../components/Lineup.vue", props: [], line: 3 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([page, lineup, form]);
+    expect(links.filter((l) => l.sourceFile === form.filePath).map((l) => `${l.callName} -> ${l.targetFile}:${l.targetSymbol}`).sort()).toEqual([
+      "emit:cancel -> src/pages/Match.vue:discardLineup",
+      "emit:save -> src/components/Lineup.vue:<LineupForm@save@2>",
+      "emit:swap -> src/pages/Match.vue:makeSwap",
+      "emit:swap -> src/pages/Match.vue:rejectSwap",
+    ]);
+  });
+});
+
 describe("component-emit through a Nuxt project's auto-imported components", () => {
   it("joins a tag the parent never imports to the component file of that name, and an emit made in the child's markup", () => {
     const config = fa("web/nuxt.config.ts", { projectId: "web" } as Partial<FileAnalysis>);
