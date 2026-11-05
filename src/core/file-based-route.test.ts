@@ -241,6 +241,12 @@ describe("Nuxt Nitro server routes", () => {
     expect(r!.calls.map((c) => c.name)).toEqual(["getQuery", "loadAll"]);
     expect(r!.line).toBe(3);
   });
+
+  it("is no route when the handler forwards the request elsewhere (a proxy, not a page the app serves)", () => {
+    const proxy = file([call("defineEventHandler", 3), call("joinURL", 5), call("sendRedirect", 7), call("proxyRequest", 9)]);
+    expect(inferNuxtServerRoutes("server/api/[...].ts", proxy, ["nuxt"], "x\nexport default defineEventHandler(() => 1)")).toEqual([]);
+    expect(inferNuxtServerRoutes("server/routes/docs.ts", file([call("sendProxy", 4)]), ["nuxt"], "x\nexport default defineEventHandler(() => 1)")).toEqual([]);
+  });
 });
 
 describe("SvelteKit form actions", () => {

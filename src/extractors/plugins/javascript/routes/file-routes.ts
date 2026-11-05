@@ -233,6 +233,9 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   const line = analysis.exports.find((e) => e.name === "default" || e.kind === "default")?.line ?? 1;
   const wrappers = /^(?:define(?:Cached|Lazy)?EventHandler|eventHandler|defineWebSocketHandler|defineCachedEventHandler)$/;
   const calls = (analysis.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.line >= line && !wrappers.test(c.name));
+  // A handler that forwards (h3's `proxyRequest`/`sendProxy`) is a proxy to another service, not a route this one
+  // serves: a catch-all `server/api/[...].ts` would otherwise take every call the backend's routes did not.
+  if (calls.some((c) => /^(?:proxyRequest|sendProxy)$/.test(c.name))) return [];
   return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : null, handler: null, calls, line })];
 }
 
