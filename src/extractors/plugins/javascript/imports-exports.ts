@@ -247,14 +247,18 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         if (firstArg && firstArg.type === "string") {
           // `const ClubPage = lazy(() => import("./ClubPage"))`: the name binds the module's default export.
           const bound = lazyBinding(node);
+          // `const { f: g } = await import("./x")`, `import("./x").then(({ f }) => …)`, `const m = await import("./x")`:
+          // the names the module's members are bound to.
+          const names = bound ? null : dynamicBindings(node);
           imports.push({
             source: stripQuotes(firstArg.text),
-            specifiers: bound ? [bound] : [],
+            specifiers: bound ? [bound] : names?.specifiers ?? [],
             isDefault: !!bound,
-            isNamespace: false,
+            isNamespace: !!names?.isNamespace,
             isType: false,
             line: node.startPosition.row + 1,
             dynamic: true,
+            ...(names && Object.keys(names.aliases).length > 0 ? { aliases: names.aliases } : {}),
           });
         }
       }
@@ -559,6 +563,51 @@ export function requiredSource(node: Node): string | null {
   if (node.type !== "call_expression" || node.childForFieldName("function")?.text !== "require") return null;
   const args = node.childForFieldName("arguments")?.namedChildren ?? [];
   return args.length === 1 && args[0]!.type === "string" ? stripQuotes(args[0]!.text) : null;
+}
+
+/** The local names a pattern binds, each with the name the module declares (`{ f: g }` -> g, f). */
+function patternBindings(pattern: Node): { specifiers: string[]; aliases: Record<string, string> } {
+  const specifiers: string[] = [];
+  const aliases: Record<string, string> = {};
+  for (const p of pattern.namedChildren) {
+    if (p.type === "shorthand_property_identifier_pattern") specifiers.push(p.text);
+    else if (p.type === "object_assignment_pattern") {
+      const left = p.childForFieldName("left");
+      if (left?.type === "shorthand_property_identifier_pattern") specifiers.push(left.text);
+    } else if (p.type === "pair_pattern") {
+      const key = p.childForFieldName("key");
+      const value = p.childForFieldName("value");
+      if (value?.type === "identifier" && key && (key.type === "property_identifier" || key.type === "string")) {
+        specifiers.push(value.text);
+        aliases[value.text] = stripQuotes(key.text);
+      }
+    }
+  }
+  return { specifiers, aliases };
+}
+
+/**
+ * What a dynamic `import("./x")` binds where it stands: `const { f: g } = await import("./x")` (names),
+ * `import("./x").then(({ f }) => …)` (the callback's first parameter), or the whole module under one name
+ * (`const m = await import("./x")`, `.then((m) => …)`). Null when it is not bound.
+ */
+function dynamicBindings(importCall: Node): { specifiers: string[]; aliases: Record<string, string>; isNamespace: boolean } | null {
+  const of = (target: Node | null | undefined) => {
+    if (target?.type === "object_pattern") return { ...patternBindings(target), isNamespace: false };
+    if (target?.type === "identifier") return { specifiers: [target.text], aliases: {}, isNamespace: true };
+    return null;
+  };
+  let up: Node | null = importCall.parent;
+  while (up && (up.type === "parenthesized_expression" || up.type === "await_expression")) up = up.parent;
+  if (up?.type === "variable_declarator") return of(up.childForFieldName("name"));
+  if (up?.type === "member_expression" && up.childForFieldName("property")?.text === "then" && up.parent?.type === "call_expression") {
+    const callback = up.parent.childForFieldName("arguments")?.namedChildren[0];
+    if (callback && (callback.type === "arrow_function" || callback.type === "function_expression" || callback.type === "function")) {
+      const params = callback.childForFieldName("parameters") ?? callback.childForFieldName("parameter");
+      return of(params?.type === "formal_parameters" ? params.namedChildren[0] : params);
+    }
+  }
+  return null;
 }
 
 /** A loader that renders a module's default export once it arrives: `lazy`, `React.lazy`, `loadable`, `defineAsyncComponent`, `lazyWithRetry`. */

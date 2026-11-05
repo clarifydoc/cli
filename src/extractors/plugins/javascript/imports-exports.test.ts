@@ -222,3 +222,21 @@ describe("CommonJS module shapes", () => {
     expect(imp!.aliases).toEqual({ fetchClub: "getClub" });
   });
 });
+
+describe("JS dynamic imports bind the names they hand out", () => {
+  const imports = async (src: string) => {
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    return new JavaScriptImportExportExtractor().extractImports(tree, src);
+  };
+  it("destructured await, .then callback pattern, whole module", async () => {
+    const out = await imports(`
+      async function a() { const { relegate: rel, promote } = await import('./rules'); }
+      function b() { import('./rules').then(({ promote }) => promote(3)); }
+      async function c() { const m = await import('./rules'); }`);
+    expect(out.map((i) => [i.specifiers, i.aliases ?? null, i.isNamespace])).toEqual([
+      [["rel", "promote"], { rel: "relegate" }, false],
+      [["promote"], null, false],
+      [["m"], null, true],
+    ]);
+  });
+});

@@ -123,6 +123,17 @@ describe("classifyCalls — the file's own code is not a DB call by name", () =>
   });
 });
 
+describe("classifyCalls — an explicit import beats an auto-imported global", () => {
+  it("a Vue macro name the file imports from a module is that module's", async () => {
+    const { classifyCalls } = await import("./call-graph.js");
+    await ensureLanguagesLoaded(["typescript"]);
+    const imp = [{ source: "./bus", specifiers: ["emit"], isDefault: false, isNamespace: false, isType: false, line: 1 }];
+    const calls = (n: string) => ({ name: n, kind: "internal" as const, target: null, line: 1 });
+    expect(classifyCalls([calls("emit")], imp, "typescript")[0]!.target).toBe("./bus");
+    expect(classifyCalls([calls("emit")], [], "typescript")[0]!.target).toBe("vue");
+  });
+});
+
 describe("extractCalls — classes built in place are no symbols", () => {
   it("TypeScript: a class expression's methods run on behalf of the function that builds it; a bound one stays a boundary", async () => {
     expect(await callsIn(`

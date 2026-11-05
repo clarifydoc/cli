@@ -73,6 +73,13 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   const bindsNames = manifestFor(language)?.importsBindNames !== undefined;
   const imported = new Set<string>();
   for (const imp of analysis.imports) for (const n of [...imp.specifiers, ...Object.keys(imp.aliases ?? {})]) imported.add(fold(n));
+  // A name a named import binds (`import { send } from "./match"`, `from m import parse`): a bare call of it
+  // is the imported function, whatever noise its leaf looks like. A namespace import binds a module, not a function.
+  const importedFns = new Set<string>();
+  for (const imp of analysis.imports) {
+    if (imp.isNamespace || imp.executes) continue;
+    for (const n of imp.specifiers) importedFns.add(fold(n));
+  }
   const namesClass = (head: string): boolean => {
     // A constant path (`League::Helper`, `V2::Reports::Builder`) names a class when its last name could.
     const names = head.split("::");
@@ -82,9 +89,11 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
 
   const restore = (fn: FunctionInfo, members: ReadonlySet<string>, own: ReadonlySet<string>): void => {
     const scope = scopeOf(fn, members);
+    // A parameter of that name is a value handed in, not the import.
+    const params = new Set(fn.params.map((p) => fold(p.name)));
     restoreHeldCalls(
       fn.calls,
-      (call) => receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
+      (call) => (!call.name.includes(".") && importedFns.has(fold(call.name)) && !params.has(fold(call.name))) || receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
     );
   };
 

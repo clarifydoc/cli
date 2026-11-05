@@ -22,6 +22,7 @@ import {
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedFunction } from "./wrapped-functions.js";
+import { loadedMemberCall } from "./loaded-members.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
@@ -249,25 +250,13 @@ function scanBody(
 
     if (inScope && type === "call_expression" && collections.size > 0) noteCallback(node);
 
-    if (type === "call_expression" && children[0]?.type === "import") {
-      const args = children[children.length - 1];
-      const arg = args?.type === "arguments" ? args.child(1) : null;
-      if (arg && arg.type === "string") {
-        const source = stripQuotes(arg.text);
-        // Project-local specifiers only (relative or path-alias) — a bare
-        // package import isn't a project file. Unresolvable ones simply
-        // produce no link downstream.
-        const local = /^[./]/.test(source) || /^[@~]/.test(source);
-        if (local && !seenImports.has(source)) {
-          seenImports.add(source);
-          extraCalls.push({
-            name: "default",
-            kind: "cross-file",
-            target: source,
-            line: node.startPosition.row + 1,
-            confidence: "EXTRACTED",
-          });
-        }
+    // `(await import("./rules")).promote()` / `require("./rules").promote()`: a call of the module's member, at its
+    // path. (The import itself binds nothing here; `const { f } = await import()` is an import fact.)
+    if (type === "call_expression") {
+      const loaded = loadedMemberCall(node);
+      if (loaded && /^[./@~]/.test(loaded.source) && !seenImports.has(`${loaded.source}\0${loaded.name}`)) {
+        seenImports.add(`${loaded.source}\0${loaded.name}`);
+        extraCalls.push({ name: loaded.name, kind: "cross-file", target: loaded.source, line: node.startPosition.row + 1, column: node.startPosition.column, confidence: "EXTRACTED" });
       }
     }
 

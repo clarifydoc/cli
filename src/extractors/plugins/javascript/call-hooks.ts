@@ -7,6 +7,7 @@ import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember } from "./disp
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
+import { loadedMemberCall } from "./loaded-members.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -114,7 +115,8 @@ export const javascriptCallHooks: CallExtractionHooks = {
   },
 
   // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
-  resolveCallName: (node) => genericResolveCallName(node, { extraCallee: dispatchMapCallee }),
+  // A call on a module loaded in place is the module's own member, read where the body is scanned.
+  resolveCallName: (node) => (loadedMemberCall(node) ? null : genericResolveCallName(node, { extraCallee: dispatchMapCallee })),
 
   // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.
   statedMember: (node, name) => dispatchMapMember(name, node),
