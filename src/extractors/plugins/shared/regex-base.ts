@@ -265,6 +265,8 @@ export interface RegexLangSpec {
   /** String values the file defines at its top level, by name → `FileAnalysis.moduleValues`
    *  (another file's `config.ApiUri` resolves here through the import graph). */
   extractModuleValues?: (lines: string[]) => Record<string, string>;
+  /** Typed variables the file declares at its top level (`FileAnalysis.moduleBindings`). */
+  extractModuleBindings?: (lines: string[]) => import("../../../types/analysis.js").ModuleBindingInfo[];
   /**
    * Module references the toolchain follows that are not imports (Rust's
    * `mod x;`, `#[path]`, `include!`) → `FileAnalysis.pathReferences`, in the

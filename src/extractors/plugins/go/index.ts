@@ -1,6 +1,7 @@
 import { extractGoPathArgCalls } from "./path-arg-calls.js";
 import { goFuncVars, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoModuleValues } from "./module-values.js";
+import { goPackageVars } from "./locals.js";
 import { extractGoScheduledJobs } from "./scheduled-jobs.js";
 import { withCompositeArgs, withCompositeArgsInClasses } from "./call-args.js";
 import { addGoWhereFields, withGoArgOrigins, withGoArgOriginsInClasses } from "./arg-origins.js";
@@ -186,6 +187,8 @@ export const goSpec: RegexLangSpec = {
   },
   // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
   extractModuleValues: extractGoModuleValues,
+  // Typed package-level variables (`var first = &Club{}`) a bare name in the file's functions reaches.
+  extractModuleBindings: (lines) => goPackageVars(lines).map((v) => ({ name: v.name, type: v.type, line: v.line, exported: false })),
   // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).
   extractPathArgCalls: extractGoPathArgCalls,
   extractRequestAccess: extractGoRequestAccess,
