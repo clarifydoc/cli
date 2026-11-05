@@ -370,7 +370,46 @@ recorded in the git history only.
   `.native` / `.web` when no plain file exists, and dead-code analysis keeps every platform variant of a
   module alive instead of reporting them unreachable.
 
+- **Dispatch maps another file declares:** `import { ACTIONS }` then `ACTIONS.save(club)` / `ACTIONS[kind](club)`
+  links to the map's functions (a computed key to each, INFERRED); a key a file's own map holds is kept though its
+  name is a noise word (`ACTIONS.send`). Vuex actions spread inline into a module or defined through a helper
+  (`defineActions({ … })`) join their dispatches; a URL table a module exports as its default is read through the
+  importer's name for it.
+- **Template wiring (Vue, Angular):** `onX` callbacks in a script's options objects (`modal.open(ConfirmBox,
+  { onConfirm: saveClub })`) and in `v-bind="{ onClick: … }"`; a `v-for` variable typed by the list's stated element
+  type; a scoped-slot function joined to the function the child's `<slot>` offers (`slotFunctions`); an Angular
+  getter with a stated return type is a typed property.
+- **Django REST framework writes the library performs:** an inherited `create`/`update`/`destroy` of a ModelViewSet
+  or generic view writes the model its `queryset` names, `ModelSerializer.save()` writes `Meta.model`, and
+  `serializer.data` runs the serializer's method fields and `to_representation`. Reverse relation managers are read
+  on more verbs; Django test setup counts only the apps `INSTALLED_APPS` lists.
+- **Ruby:** a block parameter is typed by the association or query it iterates (`team.players.each { |p| … }`);
+  instances of an anonymous `Class.new(Base)` resolve through `Base`.
+- **C# `using static` and namespace aliases, a Java static import of a nested type's member, Kotlin `this@Label`,
+  infix calls and callable references** (`this::save`, `::saveClub`, as `passes`).
+- **Scala 3 extension methods, Elixir multi-clause functions as one function, PHP class constants read through a
+  class (`Rules::GOAL`, type usage `constant`), Delphi `with` bodies** (`CallInfo.withSubjects`).
+- **C and C++:** function tables and designated initializers (`.on_goal = handle_goal`) and Qt `connect` slots as
+  `passes`; two classes of one name in different namespaces of one file; `Away::Club::create()`; a header's
+  `using` directives apply to its includers.
+- **Go:** an Echo group joins a sub-path as Echo does (`g.GET("s")` under `/users` is `/userss`; Gin and Fiber
+  insert the slash); a ServeMux pattern with a host serves its path; method values on the regex reading.
+- **Tests as evidence:** a browser test reaches the layout route above the page it visits; a Nuxt app's `app.vue` /
+  default layout is its mount; a mocked module hides everything below it from that test; `clarifydoc_explain` lists
+  the tests a coverage run saw execute a function; parallel `.coverage.*` data files are read; Zig and D test
+  commands.
+- **`clarifydoc_file` on a folder** summarizes each file's test verdict; its decisions section shows comment and
+  commit reasons; doc comments for thirteen more languages and above decorators spread over several rows.
+
 ### Changed
+
+- **A block parameter with no stated type no longer takes the only definition of a name** (Ruby,
+  `FunctionInfo.untypedLocals`), unless it is named exactly for that definition's class.
+- **A handler wrapped in a call** (`const getClubs = withAuth(async …)`) is its own function, exported or not; its
+  calls no longer also land in `<setup>`.
+- **A child tsconfig's `paths` replace its base's**, as TypeScript reads them.
+- **Rust `quote!` bodies** (and `quote_spanned!`, `parse_quote!`) are generated code, not calls of the crate.
+- **Delphi unit search paths** a platform or configuration conditions are used only when exactly one candidate lies in them.
 
 - **Fixed: a Go structural interface matched any type with methods of the same names and arities.** The match
   now compares parameter and result types as written (unknown types decide nothing), and an unexported method only
