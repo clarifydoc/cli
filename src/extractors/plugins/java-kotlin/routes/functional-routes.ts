@@ -104,20 +104,45 @@ export function methodRefHandler(ref: Node): string | null {
   return type ? `${type}#${method}` : method;
 }
 
-/** The first `GET("/x")`-style predicate in a route's first argument, `GET("/x").and(accept(JSON))` included. */
-function predicateVerb(node: Node): { verb: string; path: Node | undefined } | null {
-  if (node.type === "method_invocation") {
-    const verb = node.childForFieldName("name")?.text ?? "";
-    const obj = node.childForFieldName("object")?.text;
-    if (VERBS.has(verb) && (!obj || /(?:^|\.)RequestPredicates$/.test(obj))) {
-      return { verb, path: node.childForFieldName("arguments")?.namedChildren[0] };
+/** What a request predicate pins down: a verb, a path, both, or (an `accept(…)`) neither. */
+export interface PredicatePart { verb?: string; path?: Node }
+
+const isPredicateFactory = (obj: string | undefined): boolean => !obj || /(?:^|\.)RequestPredicates$/.test(obj);
+
+/**
+ * The alternatives a predicate expression stands for. `GET("/x")` is a verb and a path, `path("/x")` a path,
+ * `method(HttpMethod.GET)` a verb, `a.and(b)` both sides at once and `a.or(b)` either side — so
+ * `GET("/a").or(GET("/b"))` is two routes and `path("/x").and(method(GET))` one.
+ */
+export function predicateParts(node: Node): PredicatePart[] {
+  if (node.type !== "method_invocation") {
+    for (const c of node.namedChildren) {
+      const found = predicateParts(c);
+      if (found.some((f) => f.verb || f.path)) return found;
+    }
+    return [];
+  }
+  const name = node.childForFieldName("name")?.text ?? "";
+  const obj = node.childForFieldName("object");
+  const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+  if ((name === "and" || name === "or") && obj) {
+    const left = predicateParts(obj);
+    const right = args[0] ? predicateParts(args[0]) : [];
+    if (name === "or") return [...left, ...right];
+    if (left.length === 0) return right;
+    if (right.length === 0) return left;
+    return left.flatMap((l) => right.map((r) => ({ verb: l.verb ?? r.verb, path: l.path ?? r.path })));
+  }
+  if (isPredicateFactory(obj?.text)) {
+    if (VERBS.has(name)) return [{ verb: name, path: args[0] }];
+    if (name === "path" && args[0]) return [{ path: args[0] }];
+    if (name === "method" && args[0]) {
+      const verb = args[0].text.split(".").pop()!;
+      return VERBS.has(verb) ? [{ verb }] : [];
     }
   }
-  for (const c of node.namedChildren) {
-    const found = predicateVerb(c);
-    if (found) return found;
-  }
-  return null;
+  // Anything else (`accept(JSON)`, `headers(…)`) pins nothing; a chain is read through its receiver.
+  return obj ? predicateParts(obj) : [];
 }
 
 const pathOf = (n: Node | undefined): string | null => {
@@ -143,22 +168,25 @@ const join = (prefix: string, path: string): string => {
  * Java: `RouterFunctions.route(GET("/x"), handler::all)` and its `.andRoute(POST("/x"), handler::one)`.
  * Null when the call is no predicate route. The nest prefix is the caller's to add.
  */
-export function staticRoute(node: Node): { verb: string; path: string; handler: string | null; calls: CallInfo[]; line: number } | null {
+export function staticRoutes(node: Node): Array<{ verb: string; path: string; handler: string | null; calls: CallInfo[]; line: number }> {
   const name = node.childForFieldName("name")?.text;
-  if (name !== "route" && name !== "andRoute") return null;
+  if (name !== "route" && name !== "andRoute") return [];
   const args = node.childForFieldName("arguments")?.namedChildren ?? [];
-  if (args.length < 2) return null;
-  const pred = predicateVerb(args[0]!);
-  const path = pred ? pathOf(pred.path) : null;
-  if (!pred || path === null) return null;
+  if (args.length < 2) return [];
   const h = args[1]!;
-  return {
-    verb: pred.verb,
-    path,
-    handler: h.type === "method_reference" ? methodRefHandler(h) : null,
-    calls: h.type === "lambda_expression" ? extractCalls(h, "java") : [],
-    line: (node.childForFieldName("name") ?? node).startPosition.row + 1,
-  };
+  const out: Array<{ verb: string; path: string; handler: string | null; calls: CallInfo[]; line: number }> = [];
+  for (const pred of predicateParts(args[0]!)) {
+    const path = pred.path ? pathOf(pred.path) : null;
+    if (!pred.verb || path === null) continue;
+    out.push({
+      verb: pred.verb,
+      path,
+      handler: h.type === "method_reference" ? methodRefHandler(h) : null,
+      calls: h.type === "lambda_expression" ? extractCalls(h, "java") : [],
+      line: (node.childForFieldName("name") ?? node).startPosition.row + 1,
+    });
+  }
+  return out;
 }
 
 // ─── Kotlin router DSL ──────────────────────────────────────────────────────

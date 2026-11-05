@@ -395,6 +395,29 @@ class MyClubsEndpoint {
     ]);
   });
 
+  it("reads RequestPredicates.path and .or: alternatives are routes, a path with a method predicate is one", async () => {
+    const src = `package x;
+class CarEndpoint {
+  public RouterFunction<ServerResponse> endpoint() {
+    return RouterFunctions.route(GET("/cars").or(GET("/vehicles")), handler::all)
+        .andRoute(RequestPredicates.path("/cars/{id}").and(RequestPredicates.method(HttpMethod.DELETE)), handler::remove)
+        .andRoute(POST("/cars").and(accept(MediaType.APPLICATION_JSON)), handler::create)
+        .andNest(RequestPredicates.path("/garage").or(RequestPredicates.path("/depot")), RouterFunctions.route(GET("/slots"), handler::slots));
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "CarEndpoint.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`).sort()).toEqual([
+      "DELETE /cars/{id} -> remove",
+      "GET /cars -> all",
+      "GET /depot/slots -> slots",
+      "GET /garage/slots -> slots",
+      "GET /vehicles -> all",
+      "POST /cars -> create",
+    ]);
+  });
+
   it("reads a path a constant of the file holds, its value on the next line (real-repo FP)", async () => {
     const src = `package x;
 class SubscriptionRouter {

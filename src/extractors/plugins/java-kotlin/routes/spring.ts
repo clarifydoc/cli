@@ -5,7 +5,7 @@ import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/n
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
-import { methodRefHandler, staticRoute } from "./functional-routes.js";
+import { methodRefHandler, predicateParts, staticRoutes } from "./functional-routes.js";
 import { customEndpointPrefix, customEndpointUnresolvedPrefix } from "./halo.js";
 
 /** Spring Boot mapping annotations */
@@ -368,38 +368,41 @@ function walkForJavaKotlinRoutes(
         const ref = handlerArg?.type === "method_reference" ? methodRefHandler(handlerArg) : null;
         const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
         const unresolved = classPrefix ? null : functionalClassUnresolved(node);
-        const route: RouteInfo = {
-          path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (path === "" ? "" : path.startsWith("/") ? path : "/" + path)),
-          ...(unresolved ? { prefixUnresolved: unresolved } : {}),
-          httpMethod: verb,
-          kind: "api",
-          handler: ref,
-          calls,
-          middleware: [],
-          // The invocation node starts where its chain starts; the verb token is the route's line.
-          line: (node.childForFieldName("name") ?? node).startPosition.row + 1,
-        };
-        applyRouteMeta(route, { inheritedGuards: classGuards });
-        routes.push(route);
+        for (const nest of functionalNestPrefixes(node)) {
+          const route: RouteInfo = {
+            path: mergePrefix(classPrefix || functionalClassPrefix(node), nest + (path === "" ? "" : path.startsWith("/") ? path : "/" + path)),
+            ...(unresolved ? { prefixUnresolved: unresolved } : {}),
+            httpMethod: verb,
+            kind: "api",
+            handler: ref,
+            calls,
+            middleware: [],
+            // The invocation node starts where its chain starts; the verb token is the route's line.
+            line: (node.childForFieldName("name") ?? node).startPosition.row + 1,
+          };
+          applyRouteMeta(route, { inheritedGuards: classGuards });
+          routes.push(route);
+        }
       }
     }
   }
 
   // Static predicate routes: `RouterFunctions.route(GET("/x"), handler::all)` and `.andRoute(POST("/y"), …)`.
   if (!suppress && node.type === "method_invocation") {
-    const r = staticRoute(node);
-    if (r) {
-      const route: RouteInfo = {
-        path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (r.path === "" ? "" : r.path.startsWith("/") ? r.path : "/" + r.path)),
-        httpMethod: r.verb,
-        kind: "api",
-        handler: r.handler,
-        calls: r.calls,
-        middleware: [],
-        line: r.line,
-      };
-      applyRouteMeta(route, { inheritedGuards: classGuards });
-      routes.push(route);
+    for (const r of staticRoutes(node)) {
+      for (const nest of functionalNestPrefixes(node)) {
+        const route: RouteInfo = {
+          path: mergePrefix(classPrefix || functionalClassPrefix(node), nest + (r.path === "" ? "" : r.path.startsWith("/") ? r.path : "/" + r.path)),
+          httpMethod: r.verb,
+          kind: "api",
+          handler: r.handler,
+          calls: r.calls,
+          middleware: [],
+          line: r.line,
+        };
+        applyRouteMeta(route, { inheritedGuards: classGuards });
+        routes.push(route);
+      }
     }
   }
 
@@ -438,8 +441,8 @@ function functionalClassUnresolved(node: Node): string | null {
  * Path prefix from enclosing `.nest(path("/api"), b -> …)` / `.path("/api", b -> …)` calls, outermost first —
  * and, for routes a method builds, the nest that calls it: `.nest(path("/users/{name}"), userScopedApis())`.
  */
-function functionalNestPrefix(node: Node, depth = 0): string {
-  const parts: string[] = [];
+function functionalNestPrefixes(node: Node, depth = 0): string[] {
+  const levels: string[][] = [];
   let from: Node = node;
   let cur: Node | null = node.parent;
   while (cur) {
@@ -448,18 +451,27 @@ function functionalNestPrefix(node: Node, depth = 0): string {
       const name = cur.childForFieldName("name")?.text;
       if (name === "nest" || name === "andNest" || name === "path") {
         const first = cur.childForFieldName("arguments")?.namedChildren[0];
-        const prefix = first && first.type !== "lambda_expression" ? firstStringLiteral(first) : null;
-        if (prefix) parts.unshift(prefix.startsWith("/") ? prefix : "/" + prefix);
+        // `path("/a").or(path("/b"))` is two prefixes: the nest serves both.
+        const spelled = first && first.type !== "lambda_expression" ? nestPaths(first) : [];
+        if (spelled.length > 0) levels.unshift(spelled.map((p) => (p.startsWith("/") ? p : "/" + p)));
       }
     } else if (cur.type === "method_declaration" && depth < 3) {
       const caller = nestCallerOf(cur);
-      if (caller) parts.unshift(functionalNestPrefix(caller, depth + 1));
+      if (caller) levels.unshift(functionalNestPrefixes(caller, depth + 1));
       break;
     }
     from = cur;
     cur = cur.parent;
   }
-  return parts.join("").replace(/\/+$/, "");
+  return levels.reduce<string[]>((acc, level) => acc.flatMap((a) => level.map((l) => a + l)), [""]).map((p) => p.replace(/\/+$/, ""));
+}
+
+/** The paths a nest predicate names: each `path(…)` alternative, else its first string literal. */
+function nestPaths(predicate: Node): string[] {
+  const paths = predicateParts(predicate).flatMap((p) => (p.path ? [firstStringLiteral(p.path)] : [])).filter((p): p is string => !!p);
+  if (paths.length > 0) return paths;
+  const literal = firstStringLiteral(predicate);
+  return literal ? [literal] : [];
 }
 
 /** The one argument of a `.nest(…)`/`.path(…)` in the file that calls this method (`userScopedApis()`), as the node to climb from. */
