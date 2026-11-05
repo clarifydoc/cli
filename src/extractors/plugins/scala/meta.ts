@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { scalaSpec } from "./index.js";
 import { scalaPackages } from "./packages.js";
 import { scalaManifest } from "./manifest.js";
+import { applyScalaExtensions } from "./extensions.js";
 import { scalaRequestSchema } from "./request-schema.js";
 import { scalaReachability } from "./reachability.js";
 
@@ -26,10 +27,15 @@ export const scalaMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: scalaReachability,
   ...scalaManifest,
-  preprocess: (rawSource, relativePath) =>
-    relativePath.toLowerCase().endsWith(".sc") && !SCALA_DECLARATION_RE.test(rawSource)
-      ? { skip: "not a Scala script (no Scala declaration — SuperCollider?)" }
-      : null,
+  preprocess: (rawSource, relativePath) => {
+    if (relativePath.toLowerCase().endsWith(".sc") && !SCALA_DECLARATION_RE.test(rawSource)) {
+      return { skip: "not a Scala script (no Scala declaration — SuperCollider?)" };
+    }
+    // Scala 3 `extension (c: Club) def …`: the block's parameter is its methods' receiver (extensions.ts).
+    return /^\s*extension\s*[(\[]/m.test(rawSource)
+      ? { sourceText: rawSource, language: "scala", postExtract: applyScalaExtensions }
+      : null;
+  },
   regexSpec: scalaSpec,
   // Functions and calls read by tree-sitter-scala while the `tree-sitter:scala` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "scala", extensions: [".scala", ".sc"], load: () => import("./tree-sitter.js").then((m) => m.loadScalaReader()) },
