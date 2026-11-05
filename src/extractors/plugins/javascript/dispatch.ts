@@ -303,7 +303,10 @@ function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
  * four levels. Only `on[A-Z]…` props — React's convention for callbacks, which
  * keeps data props out — and Vue props the parent's markup binds to an inline
  * function (`:add="(club) => create.mutateAsync(club)"`, extracted as its own
- * function by `markupFunctions`), which the child calls as `props.add(…)`. One link per child function calling the prop (callName
+ * function by `markupFunctions`), which the child calls as `props.add(…)`, or to one of
+ * its own functions by name (`:on-confirm="confirmDeletion"`, `FileAnalysis.functionProps`),
+ * and Vue listeners (`@refresh="reload"`), which reach a child declaring `onRefresh` as a
+ * prop as that prop. An options-API child calls it as `this.onSubmit(…)`. One link per child function calling the prop (callName
  * as written, so the report resolves `onPress={onModalClose}` through it), or
  * from `<template>` when only the markup uses it.
  */
@@ -322,21 +325,29 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string }>>>();
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
-        (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event)),
+        (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event)),
       );
-      if (els.length === 0) continue;
+      if (els.length === 0 && !parent.functionProps?.length) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      for (const el of els) {
-        const src = subByKey.get(tagKey(el.component!));
+      const bind = (component: string, prop: string, handler: string, bound?: string) => {
+        const src = subByKey.get(tagKey(component));
         const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
-        if (!childFile || !byPath.has(childFile)) continue;
+        if (!childFile || !byPath.has(childFile)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
-        // Vue's `:update-permission="…"` is the child's `props.updatePermission`.
-        const prop = VUE_PROP.test(el.event) ? camelProp(el.event.slice(1)) : el.event;
         const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
-        list.push({ parent, handler: el.handler!, ...(VUE_PROP.test(el.event) ? { bound: propFunctionName(el.component!, el.event, el.line) } : {}) });
+        list.push({ parent, handler, ...(bound ? { bound } : {}) });
+      };
+      for (const el of els) {
+        const bound = propFunctionName(el.component!, el.event, el.line);
+        // Vue's `:update-permission="…"` is the child's `props.updatePermission`; a listener
+        // `@refresh="reload"` reaches a child declaring `onRefresh` as a prop as that prop.
+        if (VUE_PROP.test(el.event)) bind(el.component!, camelProp(el.event.slice(1)), el.handler!, bound);
+        else if (VUE_LISTENER.test(el.event)) bind(el.component!, listenerProp(el.event), el.handler!, bound);
+        else bind(el.component!, el.event, el.handler!);
       }
+      // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
+      for (const fp of parent.functionProps ?? []) bind(fp.component, fp.prop, fp.handler);
     }
     if (bindings.size === 0) return [];
 
@@ -374,7 +385,9 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (targets.length === 0) continue;
         const callers: Array<{ symbol: string; line: number; callName: string }> = [];
         for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
-          const call = fn.calls.find((c) => c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}`);
+          // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
+          // Invoked, never a value read or handed on (`return this.isNote`).
+          const call = fn.calls.find((c) => !c.passed && !c.read && (c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}` || c.name === `this.${prop}`));
           if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
         }
         const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop);
@@ -523,6 +536,15 @@ function factoryReturned(
 const PROP_CALLBACK = /^on[A-Z]\w*$/;
 /** A Vue prop bound to a function in markup (`:add="(club) => …"`, see `markupFunctions`). */
 const VUE_PROP = /^:[a-zA-Z][\w-]*$/;
+
+/** A Vue listener on a component's tag (`@refresh`, `@save-club.once`): a child may declare it as its `onRefresh` prop. */
+const VUE_LISTENER = /^@[a-zA-Z][\w-]*(?:\.[\w-]+)*$/;
+
+/** `@save-club.once` → `onSaveClub`: the prop Vue hands a listener to. */
+function listenerProp(event: string): string {
+  const name = camelProp(event.slice(1).split(".")[0]!);
+  return `on${name[0]!.toUpperCase()}${name.slice(1)}`;
+}
 
 /** `update-permission` → `updatePermission`: how the child's script names a prop the template kebab-cases. */
 function camelProp(prop: string): string {

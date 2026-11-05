@@ -1,6 +1,6 @@
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
-import { extractVueInteractiveElements } from "./interactive-elements.js";
+import { extractVueFunctionProps, extractVueInteractiveElements } from "./interactive-elements.js";
 import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
 import { addTemplateRefs } from "./template-refs.js";
@@ -46,6 +46,10 @@ export function vuePreprocess(
         analysis.interactiveElements.push(
           ...extractVueInteractiveElements(sfc.template, raw),
         );
+        // `:on-confirm="confirmDeletion"`: one of the script's functions handed to a child, or an `on…` callback passed on.
+        const own = new Set([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].map((f) => f.name.split(".").pop()!));
+        const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name));
+        if (functionProps.length > 0) analysis.functionProps = functionProps;
         // `<HomeScreen v-show="screen === 'Home'" />`: the screen a hand-rolled router shows by key.
         const startLine = raw.slice(0, raw.indexOf(sfc.template)).split("\n").length;
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);

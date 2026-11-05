@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { InteractiveElementInfo, Language } from "../../../types/analysis.js";
+import type { FunctionPropBinding, InteractiveElementInfo, Language } from "../../../types/analysis.js";
 
 /** HTML tags that map to interactive element types */
 export const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
@@ -262,6 +262,30 @@ export function extractVueInteractiveElements(
   }
 
   return elements;
+}
+
+/**
+ * Functions a Vue template hands a child component by name as a prop (`:on-confirm="confirmDeletion"`,
+ * `:update-selected="setSelected"`): a bare name `handsOn` accepts — one of the file's functions, or
+ * an `on…` callback it passes on. A data binding (`:club-id="clubId"`) is never one.
+ */
+export function extractVueFunctionProps(template: string, fullSource: string, handsOn: (name: string) => boolean): FunctionPropBinding[] {
+  if (!/(?:^|\s)(?::|v-bind:)[\w-]+=/.test(template)) return [];
+  const out: FunctionPropBinding[] = [];
+  const templateStart = fullSource.indexOf(template);
+  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g;
+  for (let match = tagRegex.exec(template); match; match = tagRegex.exec(template)) {
+    const tagName = match[1]!;
+    if (resolveVueElementType(tagName) !== "custom") continue;
+    const bindRegex = /(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)=(?:"\s*([A-Za-z_$][\w$]*)\s*"|'\s*([A-Za-z_$][\w$]*)\s*')/g;
+    for (let bind = bindRegex.exec(match[2] ?? ""); bind; bind = bindRegex.exec(match[2] ?? "")) {
+      const handler = bind[2] ?? bind[3]!;
+      if (VUE_RESERVED_ATTRS.has(bind[1]!) || !handsOn(handler)) continue;
+      const line = fullSource.slice(0, templateStart + match.index).split("\n").length;
+      out.push({ component: tagName, prop: bind[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase()), handler, line });
+    }
+  }
+  return out;
 }
 
 /** Attributes Vue handles itself, never passed to the component as props. */

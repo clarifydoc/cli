@@ -41,6 +41,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   dataMutations: "required",
   stringConstants: "optional",
   propBindings: "optional",
+  functionProps: "optional",
   componentSubscriptions: "optional",
   contextValues: "optional",
   subComponents: "required",

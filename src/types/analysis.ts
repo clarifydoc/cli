@@ -412,6 +412,14 @@ export interface FileAnalysis {
    */
   contextValues?: ContextValue[];
   propBindings?: PropBinding[];
+  /**
+   * Functions the file's markup hands a child component by name as a prop
+   * (Vue `:on-confirm="confirmDeletion"`, `:update-selected="setSelected"`):
+   * one of the file's own functions, or an `on…` name it passes on from its
+   * own props. Not a click — the child calls the prop (`props.onConfirm()`,
+   * `this.onSubmit(…)`), and the prop-callback resolver joins that call here.
+   */
+  functionProps?: FunctionPropBinding[];
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
   /**
@@ -2668,6 +2676,17 @@ export interface PropBinding {
   line: number;
   origin: CallArgOrigin["origin"];
   transform?: string;
+}
+
+/** A function a component's markup hands a child by name as a prop (`FileAnalysis.functionProps`). */
+export interface FunctionPropBinding {
+  /** The child's tag as written (`ClubDeleteModal`, `club-delete-modal`). */
+  component: string;
+  /** The prop, camel-cased (`onConfirm` for `:on-confirm`). */
+  prop: string;
+  /** The name bound, as written (`confirmDeletion`). */
+  handler: string;
+  line: number;
 }
 
 /** One app-wide instance member a file installs (`FileAnalysis.globalMembers`). */
