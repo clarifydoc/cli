@@ -23,10 +23,11 @@ describe("MCP tools on a server that loaded no plugin yet", () => {
       ["/** Parks one car. */", "export function park(car: string): string {", "  // Kept as text because the garage reads number plates as text.", "  return car;", "}", ""].join("\n"),
     );
     await analyze({ projectRoot: dir, outputDir: join(dir, ".clarifydoc"), lsp: false, gitHistory: false });
-    vi.resetModules();
-    const { buildMcpServer } = await import("./server.js");
-    const { server } = buildMcpServer({ projectRoot: dir, analysisDir: join(dir, ".clarifydoc"), allowAnalyze: false, allowColdStart: false });
+    // A server of its own per call: a tool that loads a plugin must not hide one that forgot to.
     call = async (name, args) => {
+      vi.resetModules();
+      const { buildMcpServer } = await import("./server.js");
+      const { server } = buildMcpServer({ projectRoot: dir, analysisDir: join(dir, ".clarifydoc"), allowAnalyze: false, allowColdStart: false });
       const res = await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
       const result = res?.result as { content: Array<{ text: string }>; isError?: boolean };
       return { text: result.content[0]!.text, isError: result.isError };
@@ -52,6 +53,20 @@ describe("MCP tools on a server that loaded no plugin yet", () => {
     const { text, isError } = await call("clarifydoc_context_docs", { file: "src/garage.ts" });
     expect(isError).toBeFalsy();
     expect(text).toContain("because the garage reads number plates as text");
+  });
+
+  it("control flow loads the language it draws", async () => {
+    const { text, isError } = await call("clarifydoc_control_flow", { file: "src/garage.ts", function: "park" });
+    expect(isError).toBeFalsy();
+    expect(text).toContain("flowchart");
+  });
+
+  it("impact of a proposed edit re-reads the file it changes", async () => {
+    const proposed = [{ file: "src/garage.ts", content: ["/** Parks one car. */", "export function park(car: string, bay: number): string {", "  return car + bay;", "}", ""].join("\n") }];
+    const { text, isError } = await call("clarifydoc_impact", { proposed });
+    expect(isError).toBeFalsy();
+    // The edited file is read again on the spot: its signature change is only known from that reading.
+    expect(text).toContain("`park` 1 → 2 required parameters");
   });
 });
 
