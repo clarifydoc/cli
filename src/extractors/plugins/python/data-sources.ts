@@ -371,6 +371,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           table ??= managerModel(fnName) ?? heldManager ?? clsManagerModel(fnName, node);
           // The row a session is handed (`session.add(Club(…))`, `session.delete(club)`, `session.get(Club, id)`): its model.
           if (!table && (isSessionWrite || sessionGet)) table = sessionModelArg(node, leaf, this.sourceText);
+          // `session.add_all([Club(…), Player(…)])` writes every model it is handed: a row of its own for each after the first.
+          const addedAlso = leaf === "add_all" && isSessionWrite ? (sessionModelsArg(node, this.sourceText) ?? []).filter((m) => m !== table) : [];
           // A row saved or deleted through the variable holding it (`self.club1.save()`,
           // `match.delete()`): its model is what the variable was built from, else
           // unknown — never the variable's name.
@@ -434,6 +436,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(access ? { access } : {}),
           }));
           sources.push(...joined);
+          for (const model of addedAlso) sources.push(this.ds({ kind: "database", name: fnName, target: model, entity: model, line: node.startPosition.row + 1, access: "write" }));
         }
       }
     }
@@ -606,15 +609,28 @@ function clsManagerModel(fnName: string, at: Node): string | null {
 }
 
 /** Session verbs that take the row (or, for `get`, the model) as their first argument. */
-const PY_SESSION_ROW_LEAVES = new Set(["add", "delete", "merge", "refresh", "expunge", "get"]);
+const PY_SESSION_ROW_LEAVES = new Set(["add", "add_all", "delete", "merge", "refresh", "expunge", "get"]);
+
+/** The models of a list/tuple/set a session is handed (`add_all([Club(…), Player(…)])`), each once, in order; null when the argument is no literal collection. */
+function sessionModelsArg(call: Node, sourceText: string): string[] | null {
+  const arg = positional(call)[0];
+  if (!arg || !["list", "tuple", "set"].includes(arg.type)) return null;
+  const models: string[] = [];
+  for (const el of arg.namedChildren) {
+    const m = sessionModelArg(call, "add", sourceText, el);
+    if (m && !models.includes(m)) models.push(m);
+  }
+  return models;
+}
 
 /**
  * The model a session verb is handed: `Club` (`get(Club, id)`), `Club(…)` (`add(Club(name=n))`) or a local /
  * parameter that is one — annotated (`club: Club`) or assigned a construction. Anything else: null.
  */
-function sessionModelArg(call: Node, leaf: string, sourceText?: string): string | null {
+function sessionModelArg(call: Node, leaf: string, sourceText?: string, element?: Node): string | null {
   if (!PY_SESSION_ROW_LEAVES.has(leaf)) return null;
-  const arg = positional(call)[0];
+  if (leaf === "add_all" && !element) return sessionModelsArg(call, sourceText ?? "")?.[0] ?? null;
+  const arg = element ?? positional(call)[0];
   if (!arg) return null;
   if (leaf === "get") return /^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(arg.text) ? arg.text.split(".").pop()! : null;
   if (sourceText === undefined) return null;
@@ -806,7 +822,7 @@ function queueName(raw: string): string | null {
 }
 
 /** HTTP client modules whose verb functions are always outbound calls. */
-const PY_HTTP_MODULES = new Set(["requests", "httpx", "aiohttp"]);
+const PY_HTTP_MODULES = new Set(["requests", "httpx", "aiohttp", "grequests"]);
 const PY_HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 /** A client/session object (`session.get`, `self.client.post`) — an HTTP call only with a URL-shaped argument. */
 const PY_HTTP_RECEIVER_RE = /(^|_)(session|client|http)$/i;

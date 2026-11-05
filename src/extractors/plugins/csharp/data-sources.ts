@@ -268,6 +268,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private refitFile = false;
   /** The file uses RestSharp (`new RestRequest("clubs/{id}", Method.Get)`). */
   private restSharpFile = false;
+  /** Locals and fields the file builds with `new RestRequest(…)`: sending one is no second request. */
+  private restRequestVars = new Set<string>();
   /** The file uses Flurl.Http (`"https://…".AppendPathSegment("clubs").GetJsonAsync()`). */
   private flurlFile = false;
   /** The file uses Confluent.Kafka. */
@@ -305,6 +307,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
     this.refitFile = REFIT_GATE.test(sourceText);
     this.restSharpFile = /\bRestSharp\b/.test(sourceText);
+    this.restRequestVars = new Set(this.restSharpFile ? [...sourceText.matchAll(/\b(\w+)\s*=\s*new\s+(?:RestSharp\.)?RestRequest\b/g)].map((m) => m[1]!) : []);
     this.flurlFile = /\bFlurl(?:\.Http)?\b/.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.usesDapr = /\bDapr\b|\bDaprClient\b/.test(sourceText);
@@ -1338,6 +1341,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (!ownMethod && !hubPush && (!HTTP_AMBIGUOUS_METHODS.has(method) || httpish)) {
         // Which registered client the call goes through — its base address
         // says which service the relative URI is relative to.
+        // `client.GetAsync(request)` on a RestRequest hands over the request `new RestRequest(…)` already is.
+        if (this.restSharpFile && this.sendsRestRequest(argumentNodes(node)[0] ?? null)) return;
         const client = csharpCallClient(node, root);
         const reads = /^(?:Get|Send)/.test(method) ? csharpResponseReads(node) : undefined;
         const body = /^(?:Post|Put|Patch)AsJsonAsync$/.test(method) ? csharpJsonBody(node) : null;
@@ -1367,6 +1372,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         line: node.startPosition.row + 1,
       }));
     }
+  }
+
+  private sendsRestRequest(arg: Node | null): boolean {
+    const text = arg?.text.trim().replace(NAMED_ARG_RE, "").trim() ?? "";
+    return /^new\s+(?:RestSharp\.)?RestRequest\b/.test(text) || this.restRequestVars.has(text);
   }
 
   /** Build a dot-qualified call name from `function` field of an invocation. */

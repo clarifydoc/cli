@@ -826,6 +826,12 @@ export interface GrammarSpec {
   keyForFile?(filePath: string): string;
 }
 
+/** Where the file being preprocessed lives, for a plugin whose reading depends on its project's files. */
+export interface PreprocessContext {
+  absolutePath: string;
+  projectRoot: string;
+}
+
 /** Result of a container-format preprocess (e.g. Vue SFC → its <script> block). */
 export interface PreprocessOutcome {
   /** The source text to parse (e.g. the <script> block). */
@@ -1786,7 +1792,12 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * source/language before parsing, or skip the file entirely.
    * Return null to proceed with the file as-is.
    */
-  preprocess?(rawSource: string, relativePath: string): PreprocessOutcome | { skip: string } | null;
+  preprocess?(rawSource: string, relativePath: string, context?: PreprocessContext): PreprocessOutcome | { skip: string } | null;
+  /**
+   * A fingerprint of what `preprocess` reads besides the file (a dbt project file and its schema YAMLs), or
+   * undefined when none applies: an incremental run reuses a cached analysis only while it is unchanged.
+   */
+  preprocessStamp?(absolutePath: string, projectRoot: string): string | undefined;
 
   /** Builtin/stdlib type names — never tracked as project type references. */
   builtinTypes?: ReadonlySet<string>;
