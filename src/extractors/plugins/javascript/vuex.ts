@@ -16,14 +16,16 @@ export { extractStoreShapes } from "./vuex-factories.js";
  *   - `CallInfo.key` on a dispatch with a literal name (call-hooks.ts);
  *   - `FileAnalysis.storeModules` for `modules: { contacts, articles: helpCenterArticles }`
  *     in `createStore({…})` / `new Vuex.Store({…})` or in a module's own definition;
- *   - `FileAnalysis.storeShapes` for a module a project factory builds (vuex-factories.ts).
+ *   - `FileAnalysis.storeShapes` for a module a project factory builds and for
+ *     modules declaring `namespaced: true` (vuex-factories.ts).
  *
  * The join walks the namespace from the root store: `a/b/act` → the root's
  * module `a` (its import) → that file's module `b` → action `act`, defined as
  * `actions.act` in the module file or a file it imports (`import { actions } from
  * './actions'`), else named by the `actions` object the module's factory returns.
  * A key without a namespace names a root action or one of a module that is not
- * namespaced; it joins only when exactly one store file defines it.
+ * namespaced. Where several root stores answer differently, the
+ * one the caller's app mounts decides; it joins only when exactly one action is left.
  */
 
 const STORE_FACTORY_RE = /\b(?:createStore|Vuex\.Store|Store)\s*\(/;
@@ -121,9 +123,17 @@ export class VuexDispatchResolver implements DispatchResolver {
       trees.set(root, tree);
     }
 
+    // Modules declaring `namespaced: true`: their actions answer only their namespace.
+    const namespacedFiles = new Set<FileAnalysis>();
+    for (const tree of trees.values()) for (const m of tree.values()) {
+      if (m.file.storeShapes?.namespaced?.some((n) => n === m.exported || n === localName(m.file, m.exported))) namespacedFiles.add(m.file);
+    }
+
     /** The `actions.<act>` a module file defines, there or in a file it imports. */
     const literalAction = (mod: FileAnalysis, act: string): Hit | null => {
+      // A module file it imports (to register under `modules:`) holds that module's actions, not its own.
       for (const f of filesOf(mod)) {
+        if (f !== mod && registered.has(f.filePath)) continue;
         const fn = f.functions.find((x) => x.name === `actions.${act}` || x.name.endsWith(`.actions.${act}`));
         if (fn) return { file: f, fn };
       }
@@ -188,7 +198,7 @@ export class VuexDispatchResolver implements DispatchResolver {
           files.add(root);
           for (const m of trees.get(root)?.values() ?? []) files.add(m.file);
         }
-        return distinct([...files].map((f) => literalAction(f, act)));
+        return distinct([...files].filter((f) => !namespacedFiles.has(f)).map((f) => literalAction(f, act)));
       }
       return distinct(among.map((root) => {
         const mod = trees.get(root)?.get(parts.join("/"));
@@ -196,13 +206,58 @@ export class VuexDispatchResolver implements DispatchResolver {
       }));
     };
 
-    const memo = new Map<string, Hit | null>();
-    const pick = (key: string): Hit | null => {
-      if (!memo.has(key)) {
-        const hits = hitsFor(key, roots);
-        memo.set(key, hits.length === 1 ? hits[0]! : null); // two stores disagree: none
+    // The root store the caller's app uses: the one the app's entry (its mount) reaches through
+    // imports and whose closure holds the caller, else the one whose directory the caller shares.
+    const mounts = analyses.filter((a) => a.appMount);
+    const closures = new Map<FileAnalysis, Set<string>>();
+    const closureOf = (entry: FileAnalysis): Set<string> => {
+      let seen = closures.get(entry);
+      if (seen) return seen;
+      seen = new Set([entry.filePath]);
+      const queue = [entry];
+      while (queue.length > 0) {
+        const a = queue.pop()!;
+        for (const i of a.imports) {
+          if (i.isType) continue;
+          const f = imported(a, i);
+          if (f && !seen.has(f.filePath)) {
+            seen.add(f.filePath);
+            queue.push(f);
+          }
+        }
       }
-      return memo.get(key)!;
+      closures.set(entry, seen);
+      return seen;
+    };
+    const mountRoots = (entry: FileAnalysis): FileAnalysis[] => {
+      const direct = roots.filter((r) => entry.imports.some((i) => imported(entry, i) === r));
+      return direct.length > 0 ? direct : roots.filter((r) => closureOf(entry).has(r.filePath));
+    };
+    const preferredMemo = new Map<string, FileAnalysis[]>();
+    const preferred = (caller: string): FileAnalysis[] => {
+      let out = preferredMemo.get(caller);
+      if (out) return out;
+      const byMount = new Set(mounts.filter((m) => closureOf(m).has(caller)).flatMap(mountRoots));
+      if (byMount.size > 0) out = [...byMount];
+      else {
+        const shared = roots.map((r) => commonDirs(caller, r.filePath));
+        const best = Math.max(0, ...shared);
+        out = best > 0 && shared.filter((x) => x === best).length === 1 ? [roots[shared.indexOf(best)]!] : [];
+      }
+      preferredMemo.set(caller, out);
+      return out;
+    };
+
+    const allMemo = new Map<string, Hit[]>();
+    const pick = (key: string, caller: string): Hit | null => {
+      let all = allMemo.get(key);
+      if (!all) allMemo.set(key, (all = hitsFor(key, roots)));
+      if (all.length <= 1) return all[0] ?? null;
+      // Several root stores answer: the caller's app's own.
+      const pref = preferred(caller);
+      if (pref.length === 0 || pref.length === roots.length) return null;
+      const hits = hitsFor(key, pref);
+      return hits.length === 1 ? hits[0]! : null;
     };
 
     const links: SymbolLink[] = [];
@@ -213,7 +268,7 @@ export class VuexDispatchResolver implements DispatchResolver {
           // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
           if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
           const key = call.key;
-          const hit = pick(key);
+          const hit = pick(key, a.filePath);
           if (!hit) continue;
           const link = (t: Target): SymbolLink => ({
             sourceFile: a.filePath,
@@ -239,6 +294,15 @@ function distinct(hits: Array<Hit | null>): Hit[] {
   const seen = new Map<string, Hit>();
   for (const h of hits) if (h) seen.set(h.fn ? `${h.file.filePath}#${h.fn.name}#${h.fn.line}` : `${h.file.filePath}#${(h.also ?? []).map((t) => `${t.file}#${t.symbol}`).join(",")}`, h);
   return [...seen.values()];
+}
+
+/** How many leading directories two paths share. */
+function commonDirs(a: string, b: string): number {
+  const x = a.split("/").slice(0, -1);
+  const y = b.split("/").slice(0, -1);
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  return i;
 }
 
 /** A local name for an exported one: `export default createStore` → createStore. */

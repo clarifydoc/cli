@@ -35,6 +35,7 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   if (/\.(?:vue|svelte|jsx|tsx)$/.test(filePath) || !/\bexport\b|module\.exports/.test(sourceText)) return undefined;
   const values: Record<string, ShapeExpr> = {};
   const functions: Record<string, ShapeFunction> = {};
+  const namespaced: string[] = [];
   const factoryFile = /actions/i.test(sourceText);
   const declarator = (d: Node) => {
     const name = d.childForFieldName("name");
@@ -42,6 +43,8 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
     if (name?.type !== "identifier" || !value) return;
     if (FUNCTION_TYPES.has(value.type)) {
       if (factoryFile) addFunction(functions, name.text, value);
+    } else if (value.type === "object") {
+      if (declaresNamespaced(value)) namespaced.push(name.text);
     } else if (value.type === "call_expression" && hasObjectArg(value)) {
       const s = shape(value, 0);
       if (s) values[name.text] = s;
@@ -57,6 +60,7 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
       const decl = st.childForFieldName("declaration");
       if (decl) return statement(decl);
       const value = unwrap(st.childForFieldName("value"));
+      if (value?.type === "object" && declaresNamespaced(value)) namespaced.push("default");
       if (value?.type === "identifier" || (value?.type === "call_expression" && hasObjectArg(value))) {
         const s = shape(value, 0);
         if (s) values.default = s;
@@ -67,13 +71,18 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   const out: StoreShapes = {};
   if (Object.keys(values).length > 0) out.values = values;
   if (Object.keys(functions).length > 0) out.functions = functions;
-  if (!out.values && !out.functions) return undefined;
+  if (namespaced.length > 0) out.namespaced = namespaced;
+  if (!out.values && !out.functions && !out.namespaced) return undefined;
   return JSON.stringify(out).length > MAX_SHAPES_SIZE ? undefined : out;
 }
 
 function unwrap(n: Node | null | undefined): Node | null {
   while (n && WRAPPERS.has(n.type)) n = n.namedChildren.find((c) => c?.type !== "comment") ?? null;
   return n ?? null;
+}
+
+function declaresNamespaced(obj: Node): boolean {
+  return obj.namedChildren.some((p) => p?.type === "pair" && keyName(p.childForFieldName("key")) === "namespaced" && p.childForFieldName("value")?.type === "true");
 }
 
 function hasObjectArg(call: Node): boolean {

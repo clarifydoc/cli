@@ -1781,6 +1781,8 @@ export interface StoreShapes {
   values?: Record<string, ShapeExpr>;
   /** Functions by name. */
   functions?: Record<string, ShapeFunction>;
+  /** Module-level objects declaring `namespaced: true` (`export default { namespaced: true, … }` under `default`): their actions are never global. */
+  namespaced?: string[];
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */

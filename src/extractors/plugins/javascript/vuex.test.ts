@@ -207,3 +207,98 @@ describe("vuex-action dispatch into a module a project factory builds", () => {
     ]);
   });
 });
+
+describe("vuex-action dispatch without a namespace", () => {
+  it("skips a module declaring namespaced: true, whose actions are never global", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import auth from './modules/auth';
+import players from './modules/players';
+export default createStore({ modules: { auth, players } });`,
+      "src/store/modules/auth.js": `const actions = { deleteAvatar: async ({ commit }) => { commit('CLEAR'); } };
+export default { state: {}, actions };`,
+      "src/store/modules/players.js": `const actions = { deleteAvatar: async ({ commit }, id) => { commit('CLEAR', id); } };
+export default { namespaced: true, state: {}, actions };`,
+      "src/pages/Profile.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const remove = () => store.dispatch('deleteAvatar');`,
+    }));
+    expect(show(links, "src/pages/Profile.js")).toEqual(["remove -dispatch:deleteAvatar-> src/store/modules/auth.js#actions.deleteAvatar"]);
+  });
+});
+
+/** Two apps, each mounting its own root store, both registering `contacts`. */
+const TWO_APPS = {
+  "src/entrypoints/dashboard.js": `import { createApp } from 'vue';
+import store from '../dashboard/store';
+import App from '../dashboard/App';
+createApp(App).use(store).mount('#app');`,
+  "src/entrypoints/widget.js": `import { createApp } from 'vue';
+import store from '../widget/store';
+import App from '../widget/App';
+createApp(App).use(store).mount('#widget');`,
+  "src/dashboard/App.js": `import ContactsPage from './pages/ContactsPage';
+export default { components: { ContactsPage } };`,
+  "src/widget/App.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const refresh = () => store.dispatch('contacts/update');`,
+  "src/dashboard/store/index.js": `import { createStore } from 'vuex';
+import contacts from './modules/contacts';
+import conversations from './modules/conversations';
+export default createStore({ modules: { contacts, conversations } });`,
+  "src/dashboard/store/modules/contacts.js": `const actions = { update: async ({ commit }, c) => { commit('EDIT', c); } };
+export default { namespaced: true, state: {}, actions };`,
+  "src/dashboard/store/modules/conversations/index.js": `import actions from './actions';
+export default { namespaced: true, state: {}, actions };`,
+  "src/dashboard/store/modules/conversations/actions.js": `const actions = {
+  send: async ({ dispatch }, m) => { await dispatch('sendWithData', m); },
+  sendWithData: async ({ commit }, m) => { commit('ADD', m); },
+  refreshContact: async ({ dispatch }, c) => { await dispatch('contacts/update', c, { root: true }); },
+};
+export default actions;`,
+  "src/widget/store/index.js": `import { createStore } from 'vuex';
+import contacts from './modules/contacts';
+import conversation from './modules/conversation';
+export default createStore({ modules: { contacts, conversation } });`,
+  "src/widget/store/modules/contacts.js": `const actions = { update: async ({ commit }, c) => { commit('SET', c); } };
+export default { namespaced: true, state: {}, actions };`,
+  "src/widget/store/modules/conversation.js": `const actions = { sendWithData: async ({ commit }, m) => { commit('PUSH', m); } };
+export default { namespaced: true, state: {}, actions };`,
+  "src/dashboard/pages/ContactsPage.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const save = c => store.dispatch('contacts/update', c);`,
+  // Reached by no app's imports: the store of the app directory it sits in.
+  "src/dashboard/components/ContactCard.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const save = c => store.dispatch('contacts/update', c);`,
+};
+
+describe("vuex-action dispatch with several root stores", () => {
+  it("joins the root store the caller's app mounts, else the one of its app directory", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll(TWO_APPS));
+    expect([...show(links, "src/dashboard/pages/ContactsPage.js"), ...show(links, "src/dashboard/components/ContactCard.js"), ...show(links, "src/widget/App.js")]).toEqual([
+      "save -dispatch:contacts/update-> src/dashboard/store/modules/contacts.js#actions.update",
+      "save -dispatch:contacts/update-> src/dashboard/store/modules/contacts.js#actions.update",
+      "refresh -dispatch:contacts/update-> src/widget/store/modules/contacts.js#actions.update",
+    ]);
+  });
+});
+
+describe("vuex-action dispatch from the root store's own imports", () => {
+  it("reads a module's actions in the module, never in the root store that imports it", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import auth from './modules/auth';
+import bots from './modules/bots';
+export default createStore({ modules: { auth, bots } });`,
+      "src/store/modules/auth.js": `export const actions = { resetToken: async ({ commit }) => { commit('RESET'); } };
+export default { state: {}, actions };`,
+      "src/store/modules/bots.js": `export const actions = { resetToken: async ({ commit }, id) => { commit('RESET_BOT', id); } };
+export default { namespaced: true, state: {}, actions };`,
+      "src/pages/Profile.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const reset = () => store.dispatch('resetToken');`,
+    }));
+    expect(show(links, "src/pages/Profile.js")).toEqual(["reset -dispatch:resetToken-> src/store/modules/auth.js#actions.resetToken"]);
+  });
+});
