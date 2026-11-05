@@ -94,6 +94,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   externalServices: "optional",
   entryPoints: "optional",
   projectCommands: "optional",
+  testSetupRuns: "optional",
   testCoverage: "optional",
   testFunctions: "optional",
   docDrift: "optional",

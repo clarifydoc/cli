@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteFact } from "../../../../types/analysis.js";
+import { DJ_MIGRATION_MODULES } from "./test-setup.js";
 /** A Python string literal's content: `r"^api/"`, `'x'`, `"""doc"""` → what is between the quotes. */
 function pyString(text: string): string {
   const m = /^[a-zA-Z]*("""|'''|"|')([\s\S]*)\1$/.exec(text);
@@ -117,6 +118,14 @@ export interface DrfSerializerFieldsFact {
   fields?: string[];
   metaFields?: string[] | "__all__";
   validators?: string[];
+}
+
+const MIGRATION_MODULES = /^[ \t]*MIGRATION_MODULES\s*=/m;
+
+/** Facts read off the file's text before its tree: what no statement position decides. */
+export function collectDjangoTextFacts(sourceText: string, facts: RouteFact[]): void {
+  const m = MIGRATION_MODULES.exec(sourceText);
+  if (m) facts.push({ kind: DJ_MIGRATION_MODULES, line: sourceText.slice(0, m.index).split("\n").length, data: {} });
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */

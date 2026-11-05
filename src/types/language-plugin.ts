@@ -1489,6 +1489,14 @@ export interface LanguagePluginManifest {
    */
   projectCommands?: ProjectCommandSpec["commands"];
   /**
+   * The files of a project that its test framework runs while setting a test run up — before any
+   * test calls them (a migration applied to the test database, an application's start-up hook) —
+   * read off the root's test configuration and the project's analyses: what `fileTestVerdict` counts
+   * tested without a call (`ProjectAnalysis.testSetupRuns`). Empty when the configuration turns that
+   * setup off or does not say the framework runs it. Leaf code: reads only its arguments.
+   */
+  testSetupRuns?(root: ProjectRootView, files: readonly FileAnalysis[]): Array<{ file: string; reason: string }>;
+  /**
    * Ecosystems this language's imports are matched against — usually one;
    * Swift/Objective-C import from SwiftPM AND CocoaPods packages.
    */

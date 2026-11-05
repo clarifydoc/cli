@@ -690,6 +690,9 @@ export const PACKAGE_MANAGERS: readonly PackageManagerSpec[] = ALL_MANIFESTS.fla
 /** Every language's build/test/start reader, in manifest order (the first to name a kind for a root wins). */
 export const PROJECT_COMMAND_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["projectCommands"]>> = ALL_MANIFESTS.flatMap((m) => (m.projectCommands ? [m.projectCommands] : []));
 
+/** Every language's reader of the files its test framework runs while setting a test run up. */
+export const TEST_SETUP_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["testSetupRuns"]>> = ALL_MANIFESTS.flatMap((m) => (m.testSetupRuns ? [m.testSetupRuns] : []));
+
 const MATCHING_FIELDS = ["importKey", "packageKey", "prefixMatch", "assertsUnused", "installedOwners"] as const;
 
 /**
