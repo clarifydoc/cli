@@ -1,4 +1,4 @@
-import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo, UiComponentInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportInfo, ParamInfo, PropertyInfo, RouteInfo, RouteParamInfo, RouteResponseInfo, ScreenInfo, DataSourceInfo, EntityRelation, Language, SubComponentInfo, InteractiveElementInfo, DiBinding, EntryPointInfo, HttpClientRegistration, PathArgCall, TypeAliasInfo, MacroInfo, FileAnalysis, UiComponentInfo } from "../../../types/analysis.js";
 
 import { holdNoiseCall } from "../../shared/call-graph.js";
 import { escapeRegex } from "./path-utils.js";
@@ -277,6 +277,8 @@ export interface RegexLangSpec {
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
   /** Type aliases the file declares (Go `type A = B`, Rust `type A = B;`) → `FileAnalysis.typeAliases`. */
   extractTypeAliases?: (lines: string[]) => TypeAliasInfo[];
+  /** Function-like macros the file defines outside function bodies (C family `#define`) → `FileAnalysis.macros`. */
+  extractMacros?: (lines: string[], analysis: FileAnalysis) => MacroInfo[];
   /**
    * The package the file's declarations belong to → `FileAnalysis.packageName`
    * (Scala `package league.clubs`; a Swift file's module, the SwiftPM target its directory is).

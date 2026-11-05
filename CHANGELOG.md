@@ -14,6 +14,14 @@ recorded in the git history only.
 
 ### Added
 
+- **C and C++ function-like macros are call targets** (`FileAnalysis.macros`): a call of `for_each_club(c, l) { … }`,
+  `MAX(a, b)` or any other function-like `#define` links to the `#define` in the file itself or in a header it
+  includes (up to four levels, nearest first), when no function of that name is in scope. Two headers defining it at
+  the same level link nothing; a macro the file later `#undef`s stays its own; macros never join by name across the
+  project and never count as functions for dead code, complexity or health.
+- **C/C++ reader measurement scripts** in `scripts/`: refusal rate and speed per reader, the first error of each
+  refused file, a forward/reverse order comparison and a bisect for order-dependent readings; and a test that reads
+  the C and C++ inputs in both orders in fresh processes.
 - **SCIP indexes as indexers write them today** (`lsp-update --scip`): typed ranges (`single_line_range`,
   `multi_line_range`), each document's position encoding (UTF-8/16/32), several `--scip` files (one per indexer),
   symbol roles (a test or generated definition never answers production code; a forward declaration yields to a
