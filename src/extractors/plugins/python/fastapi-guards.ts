@@ -1,4 +1,5 @@
-import type { FileAnalysis } from "../../../types/analysis.js";
+import { posix } from "node:path";
+import type { CallInfo, FileAnalysis } from "../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { withInheritedGuards, type GuardAttr } from "../../shared/route-metadata.js";
@@ -25,8 +26,11 @@ export interface PyRouterCtorFact {
  */
 export const PY_VIEW_CLASS = "py:view-class";
 export interface PyViewClassFact {
-  /** Every class-level attribute name with its guard; null for a non-guard, so a subclass can shadow a base's guard. */
-  attrs: Array<{ name: string; guard: GuardAttr | null }>;
+  /**
+   * Every class-level attribute name with its guard; null for a non-guard, so a subclass can shadow a base's guard.
+   * `dependency` is the callable its `Depends(…)` has the framework run (`get_current_user`).
+   */
+  attrs: Array<{ name: string; guard: GuardAttr | null; dependency?: string }>;
   lines: number[];
 }
 
@@ -40,7 +44,9 @@ export interface PyViewClassFact {
  * chain through the class index and adds the guards to the routes — mounts
  * included, so a guarded router's `include_router` passes them on to the
  * routers it includes. A constructor or base the index cannot resolve adds
- * nothing.
+ * nothing. A view's class-level dependencies are run before each of its
+ * endpoints, so each route also calls them (`return self.user` reaches what
+ * `get_current_user` reads), named so they resolve from the route's own file.
  */
 export const fastapiInheritedGuards: RouteResolver = {
   id: "fastapi-inherited-guards",
@@ -89,26 +95,78 @@ export const fastapiInheritedGuards: RouteResolver = {
         const owner = chainOf(ref).find((r) => routerClasses.has(r));
         if (owner) add(c.lines, routerClasses.get(owner)!);
       }
+      const depsByLine = new Map<number, string[]>();
+      const calls = new Map<string, Omit<CallInfo, "line"> | null>();
       for (const v of views) {
         const ref = refIn(analysis.filePath, v.owner);
         if (!ref) continue;
         const seen = new Set<string>();
         const guards: GuardAttr[] = [];
+        const deps: string[] = [];
         for (const cls of chainOf(ref)) {
           const fact = cls === ref ? v.fact : viewClasses.get(cls);
           for (const attr of fact?.attrs ?? []) {
             if (seen.has(attr.name)) continue; // shadowed by a subclass
             seen.add(attr.name);
             if (attr.guard) guards.push(attr.guard);
+            if (!attr.dependency) continue;
+            const key = `${cls.filePath}\0${attr.dependency}`;
+            if (!calls.has(key)) calls.set(key, dependencyCall(attr.dependency, cls.filePath, analysis.filePath, ctx));
+            if (calls.get(key) && !deps.includes(key)) deps.push(key);
           }
         }
         add(v.fact.lines, guards);
+        for (const line of v.fact.lines) depsByLine.set(line, deps);
       }
-      if (byLine.size === 0) continue;
+      if (byLine.size === 0 && depsByLine.size === 0) continue;
       analysis.routes = analysis.routes.map((r) => {
-        const guards = r.kind === "api" ? byLine.get(r.line) : undefined;
-        return guards ? withInheritedGuards(r, guards) : r;
+        if (r.kind !== "api") return r;
+        const guards = byLine.get(r.line);
+        const route = guards ? withInheritedGuards(r, guards) : r;
+        const deps = (depsByLine.get(r.line) ?? []).map((k) => ({ ...calls.get(k)!, line: r.line }) as CallInfo);
+        const fresh = deps.filter((d) => !route.calls.some((c) => c.name === d.name));
+        return fresh.length > 0 ? { ...route, calls: [...route.calls, ...fresh] } : route;
       });
     }
   },
 };
+
+/**
+ * A class-level dependency as a call the route's own file resolves: the
+ * function the declaring file defines or imports under that name, spelled by
+ * the module the declaring file imports it from when that module is the same
+ * file from the route's, else relative to the route's file. Null when the
+ * dependency is no project function (`Depends(OAuth2PasswordBearer(…))`).
+ */
+function dependencyCall(dependency: string, declFile: string, routeFile: string, ctx: ProjectContext): Omit<CallInfo, "line"> | null {
+  const decl = ctx.fileOf(declFile);
+  if (!decl) return null;
+  const [head, ...rest] = dependency.split(".");
+  let name = dependency;
+  let file: string | null = null;
+  let written: string | null = null;
+  if (decl.functions.some((f) => f.name === head) || decl.classes.some((c) => c.name === head)) file = declFile;
+  else {
+    const imp = decl.imports.find((i) => !i.isType && (i.specifiers.includes(head!) || i.aliases?.[head!] !== undefined));
+    if (!imp) return null;
+    const exported = imp.aliases?.[head!];
+    if (exported && exported !== "default") name = [exported, ...rest].join(".");
+    file = ctx.resolveModule(declFile, imp.source);
+    written = imp.source;
+  }
+  if (!file) return null;
+  // The view states the dependency: a call as certain as an import's.
+  if (file === routeFile) return { name, kind: "internal", target: null, confidence: "EXTRACTED" };
+  if (written && !written.startsWith(".") && ctx.resolveModule(routeFile, written) === file) return { name, kind: "cross-file", target: written, confidence: "EXTRACTED" };
+  const relative = relativeModule(routeFile, file);
+  return ctx.resolveModule(routeFile, relative) === file ? { name, kind: "cross-file", target: relative, confidence: "EXTRACTED" } : null;
+}
+
+/** `league/routes/players.py` → `league/core/deps.py`: `..core.deps`. */
+function relativeModule(fromFile: string, toFile: string): string {
+  const from = posix.dirname(fromFile).split("/").filter((x) => x && x !== ".");
+  const to = toFile.replace(/\.pyi?$/, "").replace(/\/__init__$/, "").split("/");
+  let common = 0;
+  while (common < from.length && common < to.length && from[common] === to[common]) common++;
+  return ".".repeat(from.length - common + 1) + to.slice(common).join(".");
+}

@@ -269,6 +269,19 @@ function guardsFromDependencies(list: Node): GuardAttr[] {
   return guards;
 }
 
+/**
+ * The callable a `Depends(…)` / `Security(…)` marker has the framework run: the
+ * dependency named as a callable (`Depends(get_club)`), or the factory a call
+ * builds it with (`Depends(get_authorizer())`); `dep` is the argument itself.
+ */
+function dependencyCallee(marker: Node): { named: Node | null; dep: Node | null } {
+  const args = marker.childForFieldName("arguments");
+  const dep = args ? firstPositionalArg(args) : null;
+  const factory = dep?.type === "call" ? dep.childForFieldName("function") : null;
+  const named = dep && (dep.type === "identifier" || dep.type === "attribute") ? dep : factory && (factory.type === "identifier" || factory.type === "attribute") ? factory : null;
+  return { named, dep };
+}
+
 /** `Security(x)` — FastAPI's own marker for a security dependency; always a guard. */
 function isSecurityMarker(call: Node): boolean {
   return call.childForFieldName("function")?.text === "Security";
@@ -552,7 +565,12 @@ function classGuardFacts(cls: Node, facts: RouteFact[]): void {
       const right = assignment!.childForFieldName("right");
       const dependency = right?.type === "call" ? dependencyGuard(right) : null;
       if (dependency) dependencies = true;
-      attrs.push({ name: left.text, guard: dependency && (isSecurityMarker(right!) || isAuthDependency(right!)) ? dependency : null });
+      const callee = dependency ? dependencyCallee(right!).named?.text : undefined;
+      attrs.push({
+        name: left.text,
+        guard: dependency && (isSecurityMarker(right!) || isAuthDependency(right!)) ? dependency : null,
+        ...(callee ? { dependency: callee } : {}),
+      });
     } else if (stmt.type === "decorated_definition" && stmt.childForFieldName("definition")?.type === "function_definition") {
       if (stmt.namedChildren.some((d) => d.type === "decorator" && routeDecorator(d))) lines.push(stmt.startPosition.row + 1);
     }
@@ -675,10 +693,7 @@ function signatureParams(fnDef: Node, path: string): { params: RouteParamInfo[];
         // what it reads. A factory call (`Depends(get_authorizer())`) hands it
         // the dependency it returns: the route reaches what the factory hands
         // out (a module function it returns by name is a call of the factory).
-        const args = marker!.childForFieldName("arguments");
-        const dep = args ? firstPositionalArg(args) : null;
-        const factory = dep?.type === "call" ? dep.childForFieldName("function") : null;
-        const named = dep && (dep.type === "identifier" || dep.type === "attribute") ? dep : factory && (factory.type === "identifier" || factory.type === "attribute") ? factory : null;
+        const { named, dep } = dependencyCallee(marker!);
         if (named) {
           // FastAPI hands a dependency the route's parameters by name (`def get_club(slug: str = Path(...))`).
           dependencies.push({ name: named.text, kind: "internal", target: null, line: named.startPosition.row + 1, ...(named === dep ? { routeParamsByName: true as const } : {}) });

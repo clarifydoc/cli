@@ -846,6 +846,12 @@ export interface CallExtractionHooks {
    */
   anonymousScopeTypes?: readonly string[];
   /**
+   * Parent node types that bind an `anonymousScopeTypes` node to a name — it is
+   * then a function of its own and stays a boundary, as JS's `const f = () => {…}`
+   * (`variable_declarator`, always) does: Python `on_ready = lambda: start()`.
+   */
+  namedBindingTypes?: readonly string[];
+  /**
    * A node that DEFINES a named function, for a grammar whose function and
    * value bindings share one node type (F# `let f x = …` vs `let x = …`, both
    * `function_or_value_defn`): the module-level walk that builds `<setup>`

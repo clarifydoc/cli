@@ -1304,6 +1304,14 @@ export interface FunctionInfo {
    */
   returnsEntryOf?: { table: string; param: string };
   /**
+   * The arguments of the construction a method returns, as written, when it
+   * builds the class it declares it returns (`def _mixins(self, id) -> HttpRepo:
+   * return HttpRepo(self._repos(id).clubs, self.logger)` → `["self._repos(id).clubs",
+   * "self.logger"]`): `PropertyInfo.constructedWith` for a method that is no
+   * property. Keyword arguments omitted.
+   */
+  constructedWith?: string[];
+  /**
    * What this function reads from an HTTP request when it is a route handler
    * whose bindings are not declared in its signature — `req.body.name`,
    * `c.ShouldBindJSON(&input)`, `req.content.decode(T.self)`,
@@ -2219,6 +2227,12 @@ export interface DataSourceInfo {
    * leaves `entity` empty instead of reading the variable's name as a table.
    */
   receiverIsInstance?: boolean;
+  /**
+   * For `database`: the row is the signed-in user (Django `request.user.save()`),
+   * an instance of the project's user model — `entity` names the framework's
+   * default until the plugin's project pass finds the model the project declares.
+   */
+  authUser?: true;
   /**
    * For `database`: a related manager queried (`club.players.all()`,
    * `self.tags.filter(…)`), named after the relation field it reads through.

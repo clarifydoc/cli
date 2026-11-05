@@ -215,7 +215,10 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
   const wrappedAccess = (ownerType: string | null, member: string, leaf: string): { entity: string; write: boolean } | null => {
     const owner = bare(ownerType);
     const wanted = knobs.memberKey(member);
-    const prop = findOn(owner, (cls) => cls.properties.find((p) => knobs.memberKey(p.name) === wanted && p.constructedWith?.length));
+    // A property built with it, or a method returning the construction (`def _mixins(self, id): return HttpRepo(…)`).
+    const prop: { type: string | null; constructedWith?: string[] } | null =
+      findOn(owner, (cls) => cls.properties.find((p) => knobs.memberKey(p.name) === wanted && p.constructedWith?.length)) ??
+      findOn(owner, (cls) => cls.methods.filter((m) => m.name === member && m.constructedWith?.length).map((m) => ({ type: m.returnType, constructedWith: m.constructedWith }))[0]);
     const wrapper = bare(prop?.type);
     if (!prop || !wrapper || !owner) return null;
     const method = findOn(wrapper, (cls) => cls.methods.find((m) => m.name === leaf));
@@ -227,8 +230,8 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
       const segs = inner.name.split(".");
       if (segs.length !== 3 || !knobs.selfHeads.has(segs[0]!) || !knobs.verbs.test(segs[2]!)) continue;
       const at = ctor.params.findIndex((p) => knobs.memberKey(p.name) === knobs.memberKey(segs[1]!));
-      const arg = (at >= 0 ? prop.constructedWith![at] : undefined)?.split(".");
-      if (!arg || !knobs.selfHeads.has(arg[0]!) || arg.some((x) => !/^[\w$]+$/.test(x))) continue;
+      const arg = chainSegments(at >= 0 ? prop.constructedWith![at] : undefined);
+      if (!arg || !knobs.selfHeads.has(arg[0]!)) continue;
       const found = repoEntity(resolveChain(arg.slice(1), owner));
       if (!found || (entity && found !== entity)) return null;
       entity = found;
@@ -244,8 +247,9 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     const visit = (fn: FunctionInfo, owner: ClassInfo | null): void => {
       for (const call of fn.calls ?? []) {
         if (!call.name.includes(".")) continue;
-        const parts = call.name.split(".");
-        if (parts.some((p) => /[^\w$]/.test(p))) continue;
+        // A member called on the way (`self._mixins(id).create_one`) is typed by what it returns.
+        const parts = chainSegments(call.name);
+        if (!parts || call.name.startsWith(`${parts[0]}(`)) continue;
         const leaf = parts[parts.length - 1]!;
         if (!knobs.verbs.test(leaf)) continue;
         // A typed parameter or local, else a member of the enclosing class named without `this`.
@@ -280,6 +284,30 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     for (const cls of a.classes ?? []) for (const m of cls.methods ?? []) visit(m, cls);
     if (changed) a.dataSources = rows.sort((x, y) => x.line - y.line);
   }
+}
+
+/**
+ * A member chain's names with the arguments of the calls along it left off:
+ * `self._repos(id).clubs` → `["self", "_repos", "clubs"]`; null for anything
+ * but names, dots and argument lists.
+ */
+function chainSegments(text: string | undefined): string[] | null {
+  if (!text) return null;
+  const out: string[] = [];
+  let depth = 0;
+  let name = "";
+  let called = false; // the current name's argument list closed: only `.` or another call may follow
+  for (const c of text) {
+    if (c === "(") { if (depth++ === 0 && !name) return null; }
+    else if (c === ")") { if (--depth < 0) return null; if (depth === 0) called = true; }
+    else if (depth > 0) continue;
+    else if (c === ".") { if (!name) return null; out.push(name); name = ""; called = false; }
+    else if (/[\w$]/.test(c) && !called) name += c;
+    else return null;
+  }
+  if (depth !== 0 || !name) return null;
+  out.push(name);
+  return out;
 }
 
 /** Top-level type arguments of `<…>` / `[…]` text: `A, Dict[str, B]` → `["A", "Dict[str, B]"]`. */

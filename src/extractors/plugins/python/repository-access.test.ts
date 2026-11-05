@@ -128,6 +128,60 @@ describe("Python repository members assigned from a constructor parameter", () =
   });
 });
 
+describe("Python repositories reached through a method or a free function's result (real-repo FP)", () => {
+  const model = () => file("db/models/player.py", [
+    cls("PlayerModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+    cls("ReportModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+  ]);
+  const generic = () => file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("LeagueRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
+  const factory = () => file("repos/repository_factory.py", [cls("AllRepositories", { methods: [
+    method("players", [], "LeagueRepositoryGeneric[PlayerOut, PlayerModel]"),
+    method("league_reports", [], "LeagueRepositoryGeneric[ReportOut, ReportModel]"),
+  ] })]);
+  const wrapper = () => file("routes/_base/mixins.py", [cls("HttpRepo", {
+    methods: [
+      method("__init__", [], null, [{ name: "repo", type: "RepositoryGeneric", defaultValue: null }, { name: "logger", type: "Logger", defaultValue: null }]),
+      method("create_one", ["self.repo.create"]),
+      method("get_one", ["self.repo.get_one"]),
+    ],
+  })]);
+
+  it("follows a wrapper a method builds from a repository another method returns", () => {
+    const mixins = method("_mixins", [], "HttpRepo", [{ name: "league_id", type: null, defaultValue: null }]);
+    mixins.constructedWith = ["self._league_repos(league_id).players", "self.logger"];
+    const other = method("_audits", [], "HttpRepo");
+    other.constructedWith = ["make_repo(league_id)"];
+    const controller = file("routes/admin/players.py", [cls("AdminPlayerController", {
+      methods: [
+        method("_league_repos", [], "AllRepositories"),
+        mixins,
+        other,
+        method("create_player", ["self._mixins(league_id).create_one"]),
+        method("get_player", ["self._mixins(league_id).get_one"]),
+        method("audit", ["self._audits().get_one"]),
+      ],
+    })]);
+    new PythonEntityExtractor().reconcileProject([model(), generic(), factory(), wrapper(), controller]);
+    expect(controller.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self._mixins(league_id).create_one", "PlayerModel", "write"],
+      ["self._mixins(league_id).get_one", "PlayerModel", "read"],
+    ]);
+  });
+
+  it("types an attribute holding a free function's result, and reads a multi-row query", () => {
+    const builder = file("repos/all_repositories.py", [], [method("get_repositories", [], "AllRepositories")]);
+    const service = file("services/transfer_service.py", [cls("TransferService", {
+      methods: [method("release", ["self.db.players.get_one", "self.db.league_reports.multi_query"])],
+    })]);
+    (service.classes[0] as any).properties.push({ name: "db", type: null, visibility: "public", isStatic: false, isReadonly: false, from: "get_repositories()" });
+    new PythonEntityExtractor().reconcileProject([model(), generic(), factory(), builder, service]);
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self.db.players.get_one", "PlayerModel", "read"],
+      ["self.db.league_reports.multi_query", "ReportModel", "read"],
+    ]);
+  });
+});
+
 /** `select(self.model)` in a generic repository or a mixin of one: the model each construction hands the constructor. */
 describe("Python model held by an instance attribute", () => {
   const ctor = (params: string[], calls: Array<[string, string[]]> = []): any => ({
@@ -194,6 +248,34 @@ describe("Python model held by an instance attribute", () => {
   it("names none when a construction hands an untyped parameter anything but a class", () => {
     expect(untyped([["self.session", "MatchModel"], ["self.session", "model_for(kind)"]])).toBeNull();
     expect(untyped([["self.session", "MatchModel"], ["self.session", "chosen_model"]])).toBeNull();
+  });
+});
+
+describe("Django's signed-in user saved", () => {
+  const saved = (filePath: string): FileAnalysis => {
+    const f = file(filePath, []);
+    f.dataSources = [{ kind: "database", name: "request.user.save", target: "User", entity: "User", authUser: true, access: "write", calls: [], line: 3 }];
+    return f;
+  };
+  it("is a row of the user model the project declares, else of Django's own", () => {
+    const views = saved("league/views.py");
+    const accounts = file("accounts/models.py", [cls("Manager", { extends: "AbstractUser", decorators: ["entity", "django"] })]);
+    new PythonEntityExtractor().reconcileProject([accounts, views]);
+    expect(views.dataSources[0]!.entity).toBe("Manager");
+
+    const plain = saved("league/views.py");
+    new PythonEntityExtractor().reconcileProject([plain]);
+    expect(plain.dataSources[0]!.entity).toBe("User");
+  });
+
+  it("names none when the project declares two user models", () => {
+    const views = saved("league/views.py");
+    const models = file("accounts/models.py", [
+      cls("Manager", { extends: "AbstractUser", decorators: ["entity", "django"] }),
+      cls("Scout", { extends: "models.AbstractBaseUser", decorators: ["entity", "django"] }),
+    ]);
+    new PythonEntityExtractor().reconcileProject([models, views]);
+    expect(views.dataSources[0]!.entity).toBeUndefined();
   });
 });
 

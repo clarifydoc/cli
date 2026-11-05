@@ -12,10 +12,11 @@ const FILES: Record<string, string> = {
   "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
   "config/urls.py": `from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from league.api.views import ClubViewSet
+from league.api.views import ClubViewSet, SeasonViewSet
 
 router = DefaultRouter()
 router.register(r"clubs", ClubViewSet)
+router.register(r"seasons", SeasonViewSet)
 
 urlpatterns = [path("api/", include(router.urls))]
 `,
@@ -24,6 +25,10 @@ urlpatterns = [path("api/", include(router.urls))]
 
 class Club(models.Model):
     name = models.CharField(max_length=100)
+
+
+class Season(models.Model):
+    year = models.IntegerField()
 `,
   "league/api/viewsets.py": `from rest_framework import viewsets
 
@@ -35,12 +40,17 @@ class LeagueModelViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, pk=None):
         return self.get_object()
 `,
-  "league/api/views.py": `from league.models import Club
+  "league/api/views.py": `from rest_framework import viewsets
+from league.models import Club, Season
 from league.api.viewsets import LeagueModelViewSet
 
 
 class ClubViewSet(LeagueModelViewSet):
     queryset = Club.objects.all()
+
+
+class SeasonViewSet(viewsets.ModelViewSet):
+    queryset = Season.objects
 `,
 };
 
@@ -65,5 +75,12 @@ describe("a DRF viewset's queryset", () => {
     expect(routes.length).toBeGreaterThan(0);
     const reads = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && f.resource === "Club").map((f) => f.entryLabel).sort();
     expect(reads).toEqual(routes);
+  });
+
+  it("is the model its manager names when the queryset is the manager alone (real-repo FP)", () => {
+    const routes = summary.routeMap.filter((r) => r.owner === "SeasonViewSet").map((r) => `${r.httpMethod} ${r.path}`).sort();
+    expect(routes.length).toBe(6);
+    const reached = new Set((summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && f.resource === "Season").map((f) => f.entryLabel));
+    expect(routes.filter((r) => !reached.has(r))).toEqual([]);
   });
 });

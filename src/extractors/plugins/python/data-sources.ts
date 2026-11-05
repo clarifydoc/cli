@@ -123,6 +123,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
       }
       return;
     }
+    // A class's `queryset = Season.objects` — the manager itself, no call: the queryset a view serves
+    // reads that model (with a call, `Season.objects.all()`, the call's row says so).
+    if (node.type === "assignment" && node.childForFieldName("left")?.text === "queryset" && node.parent?.parent?.parent?.type === "class_definition") {
+      const right = node.childForFieldName("right");
+      const model = right?.type === "attribute" ? /^([A-Z]\w*)\.\w*objects$/.exec(right.text)?.[1] : undefined;
+      if (model) sources.push(this.ds({ kind: "database", name: right!.text, target: model, entity: model, access: "read", line: node.startPosition.row + 1 }));
+      return;
+    }
     if (node.type === "call") {
       const fn = node.childForFieldName("function");
       const fnName = fn?.text;
@@ -298,7 +306,10 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // manager (`.objects`), a SQLAlchemy query (`.query(...)`).
         // A model's Django manager queried, whatever the verb or custom manager method
         // (`Site.objects.annotate(…)`, `ContentType.objects.get_for_model(…)`, `.bulk_update(…)`).
-        const djangoManager = /\.objects\./.test(fnName) && managerModel(fnName) !== null;
+        // A manager held in a local (`manager = Doc.global_objects if deleted else Doc.objects`): its model.
+        const heldManager = parts.length >= 2 && /^[a-z_]\w*$/.test(parts[0]!) && parts[0] !== "self" && MANAGER_ASSIGNED.test(this.sourceText)
+          ? heldManagerModel(parts[0]!, node) : null;
+        const djangoManager = (/\.\w*objects\./.test(fnName) && managerModel(fnName) !== null) || heldManager !== null;
         const isQuery =
           PY_DB_LEAVES.has(leaf) || djangoManager ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf))) ||
@@ -337,15 +348,20 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }
           // A model's manager or query attribute (`Order.objects.filter`, `User.query.filter_by`)
           // names the model before it, not after: the segment ahead of the leaf is the manager.
-          table ??= managerModel(fnName);
+          table ??= managerModel(fnName) ?? heldManager;
           // A row saved or deleted through the variable holding it (`self.club1.save()`,
           // `match.delete()`): its model is what the variable was built from, else
           // unknown — never the variable's name.
           let instance = false;
+          // The signed-in user (`request.user.save()`, a local assigned it): a row of the user model.
+          let authUser = false;
           if (!table && INSTANCE_VERBS.has(leaf) && parts.length >= 2) {
             const held = parts.slice(0, -1).join(".");
             const name = parts[parts.length - 2]!;
-            if (/^(?:self\.)?[a-z_]\w*$/.test(held) && name !== "self" && name !== "objects" && !PY_DATASTORE_SEGMENT_RE.test(name)) {
+            if (SIGNED_IN_USER.test(held) || (/^[a-z_]\w*$/.test(held) && holdsSignedInUser(held, node, this.sourceText))) {
+              table = DJANGO_DEFAULT_USER_MODEL;
+              authUser = true;
+            } else if (/^(?:self\.)?[a-z_]\w*$/.test(held) && name !== "self" && name !== "objects" && !PY_DATASTORE_SEGMENT_RE.test(name)) {
               table = heldModel(held, this.sourceText);
               instance = !table;
             }
@@ -353,7 +369,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // A manager on a model held in a variable (`model.objects.filter`, `self.Meta.model.objects.all`):
           // the model is a run-time value, and the manager's name is no table either.
           // Also further down its chain (`self.child_model.objects.restrict(user).filter(…)`).
-          if (!table && !instance && /(?:^|\.)objects\.[A-Za-z_]\w*/.test(fnName.replace(/\([^()]*\)/g, "()"))) instance = true;
+          if (!table && !instance && /(?:^|\.)\w*objects\.[A-Za-z_]\w*/.test(fnName.replace(/\([^()]*\)/g, "()"))) instance = true;
           // A queryset held in a variable or attribute (`self.queryset.filter(…)` in a generic view,
           // `qs.count()`): its model is what it was assigned — a class attribute
           // `queryset = Club.objects.all()` included — else a run-time value, never a table named `queryset`.
@@ -389,6 +405,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(whereFields ? { whereFields } : {}),
             ...(table ? { entity: table } : tableRef ? { entity: tableRef, targetRef: tableRef } : {}),
             ...(instance ? { receiverIsInstance: true } : {}),
+            ...(authUser ? { authUser: true as const } : {}),
             ...(relatedField ? { relatedField } : {}),
             ...(entityAttribute ? { entityAttribute } : {}),
             ...(access ? { access } : {}),
@@ -543,10 +560,43 @@ function relatedManager(fnName: string, leaf: string): boolean {
     /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){2,}$/.test(fnName);
 }
 
-/** `Order.objects.filter(…).first` / `User.query.filter_by` → the capitalised model before the manager. */
+/**
+ * `Order.objects.filter(…).first` / `User.query.filter_by` → the capitalised model before the manager.
+ * A custom manager is named like the default one (`Doc.global_objects`, `Doc.all_objects`).
+ */
 function managerModel(fnName: string): string | null {
-  const m = /(?:^|\.)([A-Z]\w*)\.(?:objects|query)\./.exec(fnName.replace(/\([^()]*\)/g, "()"));
+  const m = /(?:^|\.)([A-Z]\w*)\.(?:\w*objects|query)\./.exec(fnName.replace(/\([^()]*\)/g, "()"));
   return m ? m[1]! : null;
+}
+
+/** `Doc.objects`, or a choice of two of one model's managers: `Doc.global_objects if deleted else Doc.objects`. */
+const MANAGER_VALUE = /^([A-Z]\w*)\.\w*objects(?:\s+if\s+.+?\s+else\s+([A-Z]\w*)\.\w*objects)?$/;
+
+/** A file that assigns a model's manager to a name at all: the gate before reading any local's assignments. */
+const MANAGER_ASSIGNED = /^[ \t]*[a-z_]\w*\s*=\s*[A-Z]\w*\.\w*objects\b(?!\.)/m;
+
+/** The model whose manager a local holds: every assignment in its function names a manager of that one model. */
+function heldManagerModel(name: string, node: Node): string | null {
+  const models = new Set<string>();
+  for (const v of assignedValues(name, node)) {
+    const m = MANAGER_VALUE.exec(v.text.replace(/\s+/g, " "));
+    if (!m) return null;
+    models.add(m[1]!);
+    if (m[2]) models.add(m[2]);
+  }
+  return models.size === 1 ? [...models][0]! : null;
+}
+
+/** Django's signed-in user on the request, an instance of the project's user model. */
+const SIGNED_IN_USER = /^(?:self\.)?request\.user$/;
+/** Its class when the project declares none of its own (`django.contrib.auth.models.User`). */
+const DJANGO_DEFAULT_USER_MODEL = "User";
+
+/** A local every assignment of which in its function is the signed-in user (`user = self.request.user`, `… if … else None`). */
+function holdsSignedInUser(name: string, node: Node, sourceText: string): boolean {
+  if (!/\bdjango\b|\brest_framework\b/.test(sourceText)) return false;
+  const values = assignedValues(name, node);
+  return values.length > 0 && values.every((v) => /^(?:self\.)?request\.user(?: if .+ else None)?$/.test(v.text.replace(/\s+/g, " ")));
 }
 
 /**

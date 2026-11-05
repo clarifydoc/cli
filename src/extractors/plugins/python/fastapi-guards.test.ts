@@ -189,4 +189,44 @@ class GuestView(MemberView):
       "GET /squad [get_current_user] Depends(get_current_user)",
     ]);
   });
+  it("has each route of a view call the class-level dependencies its view and bases declare, spelled from the route's file", async () => {
+    const out = await analyze({
+      "league/core/deps.py": `
+def get_current_user():
+    pass
+
+def get_locale():
+    pass
+`,
+      "league/routes/base/views.py": `
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+from ...core.deps import get_current_user, get_locale as locale_of
+
+class BaseView:
+    locale = Depends(locale_of)
+    token = Depends(OAuth2PasswordBearer(tokenUrl="token"))
+
+class MemberView(BaseView):
+    user = Depends(get_current_user)
+`,
+      "league/routes/players.py": `
+from fastapi import APIRouter
+from league.routes.base.views import MemberView
+
+router = APIRouter(prefix="/players")
+
+@controller(router)
+class PlayerView(MemberView):
+    @router.get("/self")
+    def get_self(self):
+        return self.user
+`,
+    });
+    const route = out.flatMap((a) => a.routes).find((r) => r.path === "/players/self")!;
+    expect(route.calls.map((c) => [c.name, c.kind, c.target])).toEqual([
+      ["get_current_user", "cross-file", "..core.deps"],
+      ["get_locale", "cross-file", "..core.deps"],
+    ]);
+  });
 });

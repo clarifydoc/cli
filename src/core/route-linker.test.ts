@@ -684,6 +684,35 @@ describe("linkApiCallsToRoutes — code rows and their API-contract twins", () =
     expect(link).toMatchObject({ target: ctl.filePath, targetLine: 120, routePath: "/api/v3/movie", confidence: "EXTRACTED" });
   });
 
+  it("pairs a contract row with the twin serving its own API version, not another version's (real-repo FP)", () => {
+    // Real-repo shape: the v1 API is routed one way, the v2 API another, and the
+    // contract documents v1. Path normalization folds both versions into one key.
+    const v1 = route("pkg/routes/routes.go", "GET", "/api/v1/clubs/:club", "clubHandler.ReadOneWeb", 816);
+    const v2 = route("pkg/routes/api/v2/clubs.go", "GET", "/api/v2/clubs/{id}", "clubsRead", 51);
+    const spec = route("pkg/swagger/swagger.json", "GET", "/api/v1/clubs/{id}", "", 944);
+    expect(pairContractTwins([v1, v2, spec], [], isContract).get(spec)).toBe(v1);
+  });
+
+  it("reads the contract row's version off its path, not the document version a spec states", () => {
+    const code = route("app/controllers/platform/api/v1/clubs_controller.rb", "PATCH", "/platform/api/v1/clubs/:id", "update", 18);
+    const spec = { ...route("swagger/swagger.json", "PATCH", "/platform/api/v1/clubs/{club_id}", "update-a-club", 126), versions: ["1.1.0"] };
+    expect(pairContractTwins([code, spec], [], isContract).get(spec)).toBe(code);
+  });
+
+  it("never pairs a contract row with a code row of another API version (real-repo FP)", () => {
+    const v2 = route("pkg/routes/api/v2/clubs.go", "PUT", "/api/v2/clubs/{id}", "clubsUpdate", 69);
+    const spec = route("pkg/swagger/swagger.json", "PUT", "/api/v1/clubs/{id}", "", 997);
+    const join = {
+      sourceFile: "pkg/swagger/swagger.json",
+      sourceLine: 997,
+      targetFile: "pkg/routes/api/v2/clubs.go",
+      targetSymbol: "clubsUpdate",
+      targetLine: 69,
+      strategy: "spec-join",
+    };
+    expect(pairContractTwins([v2, spec], [join], isContract).size).toBe(0);
+  });
+
   it("pairs nothing when several code rows could be the twin", () => {
     const a = route("svcA/x.ts", "GET", "/api/x", "x");
     const b = route("svcB/x.ts", "GET", "/api/x", "x");

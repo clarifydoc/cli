@@ -331,6 +331,12 @@ export class PythonExtractor extends FunctionClassExtractor {
           properties.push(...collectInstanceAttributes(sources, declared, assigning.some((p) => p.typeComments)));
         }
         properties.push(...propertyMembers(parsed, properties));
+        // A method that is no property but returns a construction of its declared class: what it is built with.
+        for (const p of parsed) {
+          if (isPropertyMember(p) || !p.fn.returnType) continue;
+          const built = returnedConstruction(lastReturned(p), p.fn.returnType);
+          if (built?.constructedWith) p.fn.constructedWith = built.constructedWith;
+        }
         // `def __init__(self, model: type[Club]): self.model = model`: the class an instance
         // holds is the one each construction passes — the project pass reads it there.
         const init = parsed.find((p) => p.fn.name === "__init__");
@@ -401,27 +407,12 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
   const typed = new Map(declared.map((p) => [p.name, p.type]));
   const out: PropertyInfo[] = [];
   for (const p of parsed) {
-    if (!p.fn.decorators.some((d) => PROPERTY_DECORATOR.test(d.trim())) || typed.get(p.fn.name)) continue;
-    const returned = p.node.childForFieldName("body")?.descendantsOfType("return_statement").filter((r): r is Node => !!r).pop()?.namedChild(0) ?? null;
-    let type = p.fn.returnType;
+    if (!isPropertyMember(p) || typed.get(p.fn.name)) continue;
+    const returned = lastReturned(p);
+    const built = returnedConstruction(returned, p.fn.returnType);
+    let type = p.fn.returnType ?? built?.ctor ?? null;
     let from: string | undefined;
-    let constructedWith: string[] | undefined;
-    if (returned?.type === "call") {
-      const callee = returned.childForFieldName("function");
-      const name = (callee?.type === "subscript" ? callee.childForFieldName("value") : callee)?.text ?? "";
-      if (/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) {
-        const ctor = name.split(".").pop()!;
-        type ??= ctor;
-        // Annotated as the class it builds (`-> HttpRepo[A, B]` returning `HttpRepo(…)`): its arguments too.
-        if (type === ctor || type.replace(/\[[\s\S]*$/, "").split(".").pop() === ctor) {
-          const args = returned.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
-          // Positional only: a keyword or a splat would shift every index after it.
-          const stop = args.findIndex((a) => a.type === "keyword_argument" || /splat/.test(a.type));
-          const positional = stop < 0 ? args : args.slice(0, stop);
-          if (positional.length > 0) constructedWith = positional.map((a) => a.text);
-        }
-      }
-    }
+    const constructedWith = built?.constructedWith;
     if (!type && returned?.type === "attribute" && /^self\.\w+(?:\.\w+)*$/.test(returned.text)) {
       const own = /^self\.(\w+)$/.exec(returned.text)?.[1];
       type = own ? typed.get(own) ?? null : null;
@@ -440,6 +431,33 @@ function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly P
     out.push(prop);
   }
   return out;
+}
+
+const isPropertyMember = (p: ParsedFunction): boolean => p.fn.decorators.some((d) => PROPERTY_DECORATOR.test(d.trim()));
+
+/** The value of a function's last `return`. */
+function lastReturned(p: ParsedFunction): Node | null {
+  return p.node.childForFieldName("body")?.descendantsOfType("return_statement").filter((r): r is Node => !!r).pop()?.namedChild(0) ?? null;
+}
+
+/**
+ * A returned construction (`HttpRepo(…)`, `HttpRepo[A, B](…)`): the class, and — when the function
+ * is annotated as that class or not at all — its positional arguments as written.
+ */
+function returnedConstruction(returned: Node | null, returnType: string | null): { ctor: string; constructedWith?: string[] } | null {
+  if (returned?.type !== "call") return null;
+  const callee = returned.childForFieldName("function");
+  const name = (callee?.type === "subscript" ? callee.childForFieldName("value") : callee)?.text ?? "";
+  if (!/^(?:[\w]+\.)*[A-Z]\w*$/.test(name)) return null;
+  const ctor = name.split(".").pop()!;
+  const type = returnType ?? ctor;
+  // Annotated as the class it builds (`-> HttpRepo[A, B]` returning `HttpRepo(…)`): its arguments too.
+  if (type !== ctor && type.replace(/\[[\s\S]*$/, "").split(".").pop() !== ctor) return { ctor };
+  const args = returned.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
+  // Positional only: a keyword or a splat would shift every index after it.
+  const stop = args.findIndex((a) => a.type === "keyword_argument" || /splat/.test(a.type));
+  const positional = stop < 0 ? args : args.slice(0, stop);
+  return positional.length > 0 ? { ctor, constructedWith: positional.map((a) => a.text.replace(/\s+/g, " ")) } : { ctor };
 }
 
 /** A type that holds a class, not an instance: `type[Club]`, `Type[ModelType]`, `typing.Type[T]`. */

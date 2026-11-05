@@ -50,6 +50,7 @@ export class PythonEntityExtractor extends EntityExtractor {
     resolveEntityAttributes(analyses);
     inheritDjangoModels(analyses);
     resolveDjangoRelatedManagers(analyses);
+    resolveDjangoUserModel(analyses);
   }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
@@ -816,7 +817,7 @@ const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   selfHeads: new Set(["self", "cls"]),
   memberKey: (name) => name,
   isConstructor: (m) => m.name === "__init__",
-  verbs: /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|all|first|by_|search)\w*$/,
+  verbs: /^(get|find|fetch|create|update|delete|patch|save|add|remove|insert|upsert|list|page|count|exists|query|multi_query|all|first|by_|search)\w*$/,
   writeVerbs: /^(create|update|delete|patch|save|add|remove|insert|upsert)/,
 };
 
@@ -1043,6 +1044,32 @@ function resolveDjangoRelatedManagers(analyses: FileAnalysis[]): void {
         ds.entity = model;
         ds.target ??= model;
       }
+    }
+  }
+}
+
+/**
+ * The signed-in user saved (`request.user.save()`, `DataSourceInfo.authUser`)
+ * is a row of the project's user model: the one Django model the project
+ * declares on Django's user bases (`AbstractUser`, `AbstractBaseUser`), else
+ * Django's own `User`. Several such models name none.
+ */
+function resolveDjangoUserModel(analyses: FileAnalysis[]): void {
+  const python = analyses.filter((a) => a.language === "python");
+  if (!python.some((a) => a.dataSources.some((d) => d.authUser))) return;
+  const own = new Set<string>();
+  for (const a of python) {
+    for (const c of a.classes) {
+      if (c.decorators.includes("entity") && [c.extends, ...c.implements].some((b) => /(?:^|\.)Abstract(?:Base)?User$/.test(b ?? ""))) own.add(c.name);
+    }
+  }
+  if (own.size === 0) return;
+  const model = own.size === 1 ? [...own][0]! : null;
+  for (const a of python) {
+    for (const ds of a.dataSources) {
+      if (!ds.authUser) continue;
+      if (model) ds.entity = ds.target = model;
+      else { delete ds.entity; ds.target = null; }
     }
   }
 }
