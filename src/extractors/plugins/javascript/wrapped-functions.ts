@@ -86,3 +86,35 @@ export function boundThroughWrapper(fn: Node): boolean {
   if (holder?.type === "variable_declarator") return holder.childForFieldName("name")?.type === "identifier";
   return holder?.type === "export_statement" && fn.type === "function_expression" && !!fn.childForFieldName("name");
 }
+
+/**
+ * The function a module-level binding made by handing it to a wrapper of the project or a library
+ * runs — `export const main = handler(async (event) => {…})`, `export const getClub =
+ * asyncHandler(async (req, res) => {…})`, `export const GET = withAuth(async (req) => {…})`: what the
+ * binding runs is that function, so it names it. Only a handler-shaped argument — async, or (exported)
+ * a block body; a factory returning an object (`create((set) => ({…}))`) is no handler. A binding no
+ * one imports (`const getClubs = withAuth(async …)`, registered later) holds to `async`.
+ */
+export function handlerOf(value: Node, exported: boolean): Node | null {
+  if (value.type !== "call_expression" || value.childForFieldName("function")?.type !== "identifier") return null;
+  const first = value.childForFieldName("arguments")?.namedChildren[0];
+  if (!first || !FUNCTION_EXPRESSIONS.has(first.type)) return null;
+  const async = first.text.startsWith("async");
+  return async || (exported && first.childForFieldName("body")?.type === "statement_block") ? first : null;
+}
+
+/**
+ * Whether a function expression is the handler a module-level binding names through a wrapper
+ * (`handlerOf`): that binding is a function of its own, so its calls are not the module's top level.
+ */
+export function boundHandler(fn: Node): boolean {
+  const call = fn.parent?.type === "arguments" ? fn.parent.parent : null;
+  const declarator = call?.parent;
+  if (call?.type !== "call_expression" || declarator?.type !== "variable_declarator" || declarator.childForFieldName("name")?.type !== "identifier") return false;
+  const declaration = declarator.parent;
+  const holder = declaration?.parent;
+  if (declaration?.type !== "lexical_declaration" && declaration?.type !== "variable_declaration") return false;
+  const exported = holder?.type === "export_statement" && holder.parent?.type === "program";
+  if (!exported && holder?.type !== "program") return false;
+  return handlerOf(call, exported)?.id === fn.id;
+}

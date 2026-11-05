@@ -2,8 +2,8 @@ import { argOriginsOf } from "./arg-origins.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
-import { boundThroughWrapper } from "./wrapped-functions.js";
-import { dispatchMapCallee, dispatchMapEntries } from "./dispatch-maps.js";
+import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
+import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember } from "./dispatch-maps.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
@@ -115,6 +115,9 @@ export const javascriptCallHooks: CallExtractionHooks = {
 
   // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
   resolveCallName: (node) => genericResolveCallName(node, { extraCallee: dispatchMapCallee }),
+
+  // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.
+  statedMember: (node, name) => dispatchMapMember(name, node),
 
   // `addEventListener("resize", this.onResize)`: the instance's own method, handed on.
   passedArguments(call) {
@@ -376,7 +379,7 @@ function mappedActions(node: Node): Map<string, string> {
 function moduleCallback(node: Node): boolean {
   if (node.type !== "arrow_function" && node.type !== "function_expression") return false;
   // `export const Tyre = observer(() => …)`: the binding's own function, not the module's.
-  if (boundThroughWrapper(node)) return false;
+  if (boundThroughWrapper(node) || boundHandler(node)) return false;
   let at: Node | null = node.parent;
   // `useQuery({ queryFn: … })`, `[{ action: … }]`: through the option object and its arrays.
   while (at && (at.type === "pair" || at.type === "object" || at.type === "array")) at = at.parent;
