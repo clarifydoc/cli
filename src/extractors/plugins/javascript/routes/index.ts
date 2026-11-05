@@ -77,7 +77,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
       applyPrefixScopes(scopes, routeObjects);
     }
     // Route arrays another file may `.map` into <Route> (react-router-resolver.ts).
-    if (facts && /\bpath\s*:/.test(sourceText)) collectRouteArrays(tree.rootNode, sourceText, facts);
+    if (facts && (/\bpath\s*:/.test(sourceText) || sourceText.includes("Object.entries("))) collectRouteArrays(tree.rootNode, sourceText, facts);
     // A hand-rolled router's `{ path, screen }` table, joined to the layout showing each screen (screen-tables.ts).
     if (facts) collectScreenTables(tree.rootNode, sourceText, facts);
     // A NestJS controller's guard on a base class in another file (shared/class-guards.ts).

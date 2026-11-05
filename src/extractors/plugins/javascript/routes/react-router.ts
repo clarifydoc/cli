@@ -94,6 +94,51 @@ function mappedPath(openingEl: Node): { array: string; param: string; prop: stri
   return null;
 }
 
+/**
+ * `Object.entries(defs).map(([path, def]) => <Route path={path} element={<def.component />} />)`: the object's keys
+ * are the paths. `pathProp` is `$key`; the page is a property of the value (`def.component`) or the value itself
+ * (`([path, Page]) => … <Page />`, `$value`).
+ */
+function mappedEntry(openingEl: Node): { array: string; componentProp: string | null } | null {
+  const raw = routeAttrValue(openingEl, "path");
+  const keyRead = raw?.type === "jsx_expression" ? raw.namedChildren[0] : null;
+  if (keyRead?.type !== "identifier") return null;
+  for (let n: Node | null = openingEl.parent; n; n = n.parent) {
+    if (n.type !== "arrow_function" && n.type !== "function_expression") continue;
+    const params = n.childForFieldName("parameters") ?? n.childForFieldName("parameter");
+    const first = params?.type === "identifier" ? params : params?.namedChildren[0];
+    const pattern = first?.type === "required_parameter" ? first.namedChildren[0] : first;
+    if (pattern?.type !== "array_pattern") return null;
+    const [key, value] = pattern.namedChildren;
+    if (key?.type !== "identifier" || key.text !== keyRead.text) return null;
+    const call = n.parent?.type === "arguments" ? n.parent.parent : null;
+    const fn = call?.type === "call_expression" ? call.childForFieldName("function") : null;
+    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "map") return null;
+    const source = fn.childForFieldName("object");
+    const entries = source?.type === "call_expression" ? source : null;
+    if (entries?.childForFieldName("function")?.text !== "Object.entries") return null;
+    const array = entries.childForFieldName("arguments")?.namedChildren[0];
+    if (array?.type !== "identifier") return null;
+    let componentProp: string | null = null;
+    if (value?.type === "identifier") {
+      for (const attr of RENDER_ATTRIBUTES) {
+        const attrValue = routeAttrValue(openingEl, attr);
+        const inner = attrValue?.type === "jsx_expression" ? attrValue.namedChildren[0] : attrValue;
+        if (!inner) continue;
+        const tag = inner.type === "jsx_self_closing_element" || inner.type === "jsx_element" ? tagOf(inner) : inner.type === "member_expression" || inner.type === "identifier" ? inner.text : undefined;
+        if (tag === value.text) componentProp = "$value";
+        else {
+          const m = tag ? new RegExp(`^${escapeRegex(value.text)}\\.([\\w$]+)$`).exec(tag) : null;
+          if (m) componentProp = m[1]!;
+        }
+        if (componentProp) break;
+      }
+    }
+    return { array: array.text, componentProp };
+  }
+  return null;
+}
+
 /** Which property of the mapped element names the page: `element={<r.view />}`, `Component={r.page}`, `element={r.element}`. */
 function mappedComponentProp(openingEl: Node, param: string): string | null {
   for (const attr of RENDER_ATTRIBUTES) {
@@ -115,6 +160,12 @@ export function visitReactRouterRoute(node: Node, routes: RouteInfo[], facts?: R
   ) {
     const nameNode = node.childForFieldName("name") ?? node.child(1);
     if (nameNode?.text === "Route" || (hasAttr(node, "path") && inSwitch(node))) {
+      const entry = mappedEntry(node);
+      if (entry) {
+        const data: RouteMapFact = { array: entry.array, head: "", pathProp: "$key", componentProp: entry.componentProp, prefix: ancestorRoutePrefix(node) };
+        facts?.push({ kind: "react-router-map", line: node.startPosition.row + 1, data });
+        return;
+      }
       const mapped = mappedPath(node);
       if (mapped) {
         const data: RouteMapFact = { array: mapped.array, head: mapped.head, pathProp: mapped.prop, componentProp: mappedComponentProp(node, mapped.param), prefix: ancestorRoutePrefix(node) };
@@ -436,6 +487,32 @@ export function collectRouteArrays(root: Node, sourceText: string, facts: RouteF
       let value = d.childForFieldName("value");
       while (value && (value.type === "as_expression" || value.type === "satisfies_expression" || value.type === "parenthesized_expression")) value = value.namedChildren[0] ?? null;
       if (name?.type !== "identifier" || (value?.type !== "array" && value?.type !== "object")) continue;
+      // A table keyed by path (`const defs = { "/clubs": { component: Clubs } }`) that `Object.entries(defs).map` renders as routes.
+      if (value.type === "object" && new RegExp(`\\bObject\\.entries\\(\\s*${escapeRegex(name.text)}\\s*\\)\\s*\\.map\\b`).test(sourceText) && value.namedChildren.some((p) => p.type === "pair" && /^["'`]\//.test(p.childForFieldName("key")?.text ?? ""))) {
+        const items: RouteArrayFact["items"] = [];
+        for (const pair of value.namedChildren) {
+          if (pair.type !== "pair") continue;
+          const key = pair.childForFieldName("key");
+          const v = pair.childForFieldName("value");
+          if (!key || !v || key.type !== "string") continue;
+          const props: RouteArrayFact["items"][number]["props"] = {};
+          if (v.type === "identifier" && /^[A-Z]/.test(v.text)) props["$value"] = { name: v.text, specifier: v.text };
+          else if (v.type === "object") {
+            for (const inner of v.namedChildren) {
+              const ik = inner.type === "pair" ? inner.childForFieldName("key")?.text : null;
+              const iv = inner.type === "pair" ? inner.childForFieldName("value") : null;
+              if (ik && iv?.type === "identifier" && /^[A-Z]/.test(iv.text)) props[ik] = { name: iv.text, specifier: iv.text };
+              else if (ik && iv) {
+                const c = iv.type === "jsx_element" || iv.type === "jsx_self_closing_element" || iv.type === "arrow_function" || iv.type === "call_expression" ? componentOf(iv) : null;
+                if (c) props[ik] = c;
+              }
+            }
+          }
+          items.push({ path: stripQuotes(key.text), line: pair.startPosition.row + 1, props });
+        }
+        if (items.length > 0) facts.push({ kind: "react-router-array", line: d.startPosition.row + 1, data: { name: name.text, items } satisfies RouteArrayFact });
+        continue;
+      }
       // A route object of its own (`export const ordersRoute = { path, element }`) is an array of one.
       if (value.type === "object" && !/\bpath\s*:/.test(value.text.slice(0, 2000))) continue;
       if (value.type === "object" ? stmt.type !== "export_statement" && sourceText.split(name.text).length < 3 : stmt.type !== "export_statement" && !(sourceText.includes("<Route") && new RegExp(`\\b${escapeRegex(name.text)}\\s*\\.\\s*map\\s*\\(`).test(sourceText)) && !childrenOf(name.text, sourceText)) continue;

@@ -102,7 +102,7 @@ export const reactRouterResolver: RouteResolver = {
       for (const f of a.routeFacts ?? []) {
         if (f.kind !== "react-router-map") continue;
         const m = f.data as RouteMapFact;
-        if (m.pathProp !== "path") continue;
+        if (m.pathProp !== "path" && m.pathProp !== "$key") continue;
         // A parent path a helper or an imported constant builds is filled like any other.
         const prefix = m.prefix ? fill(m.prefix, a.filePath) : null;
         if (m.prefix && prefix === null) continue;
