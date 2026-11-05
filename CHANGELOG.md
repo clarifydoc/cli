@@ -14,6 +14,21 @@ recorded in the git history only.
 
 ### Added
 
+- **SCIP indexes as indexers write them today** (`lsp-update --scip`): typed ranges (`single_line_range`,
+  `multi_line_range`), each document's position encoding (UTF-8/16/32), several `--scip` files (one per indexer),
+  symbol roles (a test or generated definition never answers production code; a forward declaration yields to a
+  definition), and a streaming reader that holds one document at a time.
+- **Ruby members a macro declares:** `attr_*`, `cattr_*`/`mattr_*`, `class_attribute`, `delegate`, `def_delegator(s)`,
+  `alias_method`/`alias`, `define_method` and association readers (`has_many`, `has_one`, `belongs_to`, typed by the
+  associated model) are members a call resolves to; a paren-less step reads the reader (`parenlessMemberReads`).
+- **Java calling Kotlin:** a facade class (`ClubsKt.rank`, `@file:JvmName`), `INSTANCE`, `Companion` and property
+  accessors (`getName`/`setPoints`/`isActive`) reach the Kotlin declaration.
+- **Element types:** a `for…of` variable and an array method's callback parameter (JS/TS), a `for`/comprehension
+  target (Python) are typed from the collection's stated type.
+- **C++ base clauses:** every base, with access keywords, `virtual` and template arguments; C3 member lookup.
+- **C# explicit interface implementations** (`void IScout.Report()`, `FunctionInfo.explicitInterface`) answer calls
+  through that interface; `new global::League.Match()` links; Go `go.work` `replace` maps to a package root.
+
 - **Laravel:** routes on an aliased or fully qualified `Route` facade; `Route::controller(X::class)->group(…)` actions
   on that controller; a dispatched job (`SettleFee::dispatch()`, `dispatch(new X)`, `Bus::dispatch`) reaches its
   `handle()` when one class has that name.
@@ -356,6 +371,10 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **Fixed: a Go structural interface matched any type with methods of the same names and arities.** The match
+  now compares parameter and result types as written (unknown types decide nothing), and an unexported method only
+  matches within its package.
 
 - **Fixed: ASP.NET route paths.** A `{code:regex(…)}` constraint was cut at its first escape; `[action]` kept an
   `Async` suffix MVC strips.
