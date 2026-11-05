@@ -586,6 +586,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (moduleBindings && moduleBindings.length > 0) analysis.moduleBindings = moduleBindings;
     const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
     if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
+    const facadeClass = analysis.functions.some((f) => !f.name.startsWith("<")) ? hooks?.facadeClass?.(sourceText, file.relativePath) : null;
+    if (facadeClass) analysis.facadeClass = facadeClass;
     const packageName = hooks?.packageName?.(tree, sourceText);
     if (packageName) analysis.packageName = packageName;
 

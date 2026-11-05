@@ -9,6 +9,7 @@ const androidScreenClasses = screenClassResolver("android-screen-classes", ["jav
   "Fragment", "DialogFragment", "AppCompatDialogFragment", "BottomSheetDialogFragment", "ListFragment", "PreferenceFragmentCompat",
 ]));
 import { javaTaint, kotlinTaint } from "./taint.js";
+import { kotlinFacadeClass } from "./kotlin-facade.js";
 import { haloGvkResolver } from "./routes/halo.js";
 import { jaxrsSubResourceResolver } from "./routes/jaxrs-resolver.js";
 import { ktorRouteFnResolver } from "./routes/ktor.js";
@@ -126,6 +127,7 @@ function jvmMeta(language: Language, opts: {
     dbRootTypes: JVM_DB_ROOT_TYPES,
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
+      ...(language === "kotlin" ? { facadeClass: kotlinFacadeClass } : {}),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
       // `RestClient.createClient(X.class, url)` and other proxy factories.

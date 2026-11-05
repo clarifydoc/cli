@@ -112,6 +112,8 @@ export const javaManifest: LanguagePluginManifest = {
   frameworkRules: javaKotlinFrameworkRules,
   activationFiles: ["pom.xml", "build.gradle", "build.gradle.kts"],
   builtinMembers: JVM_BUILTIN_MEMBERS,
+  // Kotlin's `object` (`INSTANCE`) and companion (`Companion`) as Java sees them.
+  classMemberHolders: ["INSTANCE", "Companion"],
 };
 
 export const kotlinManifest: LanguagePluginManifest = {

@@ -603,6 +603,12 @@ export interface FileAnalysis {
    */
   declaredNamespace?: string;
   /**
+   * The class a file of the same language family calls this file's top-level functions through (Java reaching a Kotlin
+   * file's `fun rank()` as `ClubsKt.rank()`, or under the `@file:JvmName` the file states). Omitted for a file with no
+   * such functions, and for a language whose files are no classes.
+   */
+  facadeClass?: string;
+  /**
    * The package or namespace the file's declarations belong to, as the
    * language writes it (Scala `package league.clubs`, chained clauses joined;
    * C# `namespace League.Clubs;`). Where imports name packages rather than

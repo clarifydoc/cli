@@ -13,7 +13,7 @@ import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotation
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { typeVariableArgs } from "./arg-kinds.js";
-import { synthesizeJavaMembers, synthesizeKotlinDataMembers } from "./synthesized-members.js";
+import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -90,6 +90,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     classes.push(cls);
     if (lang === "kotlin") {
       synthesizeKotlinDataMembers(node, cls);
+      synthesizeKotlinAccessors(cls);
       return;
     }
     const body = node.childForFieldName("body");

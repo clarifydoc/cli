@@ -760,6 +760,11 @@ export interface AstExtractorHooks {
   moduleBindings?(tree: Tree, sourceText: string): import("./analysis.js").ModuleBindingInfo[];
   /** The namespace the file's free functions live in → `FileAnalysis.declaredNamespace` (PHP `namespace X;`). */
   declaredNamespace?(tree: Tree, sourceText: string): string | null;
+  /**
+   * The class another file of the language family names this file's top-level functions through → `FileAnalysis.facadeClass`
+   * (Kotlin: `ClubsKt` for `Clubs.kt`, or the `@file:JvmName` it states). Read only for a file that has such functions.
+   */
+  facadeClass?(sourceText: string, filePath: string): string | null;
   /** The package or namespace the file's declarations belong to → `FileAnalysis.packageName` (C# `namespace League.Clubs;`). */
   packageName?(tree: Tree, sourceText: string): string | null;
   /**
@@ -1155,6 +1160,12 @@ export interface LanguagePluginManifest {
    * `disabled`), never a mark on a nullable receiver.
    */
   marksEndNames?: boolean;
+  /**
+   * Names a call may put between a class and its member without leaving the class (`Referee.INSTANCE.whistle()`,
+   * `Club.Companion.build()` — what the other JVM language's `object` and companion compile to): the call reaches
+   * the member as `Referee.whistle`. A class that declares a member of that name itself keeps the longer reading.
+   */
+  classMemberHolders?: readonly string[];
   /**
    * A member read written without parentheses (`club.stadium`, `self.players`) may be a method the class declares
    * (Ruby has no property access): where the class lists no field of that name, the chain goes on from the method's
