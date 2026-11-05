@@ -76,6 +76,12 @@ export function extractWithRegex(
   if (spec.postProcessClasses) {
     analysis.classes = spec.postProcessClasses(lines, analysis.classes, filePath);
   }
+  // The exports were read off the raw candidates: one a post-processor dropped (a call that looked like
+  // a definition) must not stay exported, or a link lands on a function the file does not define.
+  if (spec.postProcessFunctions || spec.postProcessClasses) {
+    const defined = new Set([...analysis.functions.map((f) => `${f.name}:${f.line}`), ...analysis.classes.map((c) => `${c.name}:${c.line}`)]);
+    analysis.exports = analysis.exports.filter((e) => (e.kind !== "function" && e.kind !== "class") || defined.has(`${e.name}:${e.line}`));
+  }
   if (!parsed && spec.markLocalCalls) {
     spec.markLocalCalls(spec.callSourceLines?.(lines) ?? lines, [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)]);
   }

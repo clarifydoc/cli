@@ -246,6 +246,7 @@ clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mer
 clarifydoc seq <path> --route "POST /x" # Draw what a route does, in order, as a Mermaid sequence diagram
 clarifydoc cfg <file> --slice <line>   # What can affect the values used at that line (backward slice)
 clarifydoc detect <path>               # Print detected languages + frameworks only
+clarifydoc lint <outputDir>            # Check an analysis for contradictions in its own facts (exit 1 on any)
 clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json
 clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, openapi.json, sbom.cdx.json, Mermaid, GraphML, Cypher, CSV, an Obsidian vault (--format obsidian), linked screen specs with user flows and story drafts (--format screens)
 clarifydoc facts <path> --check doc.md  # Check the fact IDs a document cites ([R-3fa2c1]) against the analysis

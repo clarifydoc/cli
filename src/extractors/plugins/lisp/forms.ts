@@ -400,6 +400,9 @@ export function readLispFile(forms: readonly Form[], dialect: LispDialect): Lisp
   };
   for (const f of forms) visit(f, true);
   file.setup = callsIn(setupForms, new Set(), true);
+  // A package's export list names variables too (`(:export #:*web*)`): only a name the file defines is a function.
+  const defined = new Set([...file.functions.map((f) => f.name), ...file.classes.map((c) => c.name)]);
+  for (const e of file.exports) if (e.kind === "function" && !defined.has(e.name)) e.kind = "variable";
   return file;
 }
 

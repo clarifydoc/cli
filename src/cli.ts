@@ -356,6 +356,36 @@ program
   });
 
 program
+  .command("lint")
+  .description(
+    "Check an analysis output for contradictions in its own facts — a link whose end is no function of its file, " +
+      "a call past the file's last line, two routes with one identity, a link to a missing route or call. Exits 1 when any is found",
+  )
+  .argument("<outputDir>", "Analysis output directory (holds project-summary.json)")
+  .option("--json", "Print JSON instead of text")
+  .action(async (outputDir: string, opts: { json?: boolean }) => {
+    const { loadReportSummary } = await import("./core/report-payload.js");
+    const { lintAnalysis, loadFileAnalyses, countByRule } = await import("./core/analysis-lint.js");
+    const dir = resolve(outputDir);
+    let summary;
+    try {
+      summary = await loadReportSummary(dir);
+    } catch {
+      console.error(`lint: no project-summary.json in ${dir} — run \`clarifydoc analyze\` first.`);
+      process.exitCode = 1;
+      return;
+    }
+    const findings = lintAnalysis(summary, await loadFileAnalyses(dir, summary.files ?? []));
+    if (opts.json) {
+      console.log(JSON.stringify({ findings, byRule: countByRule(findings) }, null, 2));
+    } else {
+      for (const f of findings) console.log(`${f.rule}  ${f.file ? `${f.file}${f.line ? `:${f.line}` : ""}  ` : ""}${f.message}`);
+      console.log(findings.length === 0 ? "No contradictions found." : `${findings.length} finding(s): ${Object.entries(countByRule(findings)).map(([r, n]) => `${r} ${n}`).join(", ")}`);
+    }
+    if (findings.length > 0) process.exitCode = 1;
+  });
+
+program
   .command("detect")
   .description(
     "Detect languages and frameworks in a project. With --json and no path, print only " +
