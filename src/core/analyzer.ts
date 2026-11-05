@@ -2921,6 +2921,25 @@ function buildScreensFromRoutes(
   const byPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const knownFiles = new Set(byPath.keys());
 
+  // A page imported through a barrel (`export { default as GaragePage } from './GaragePage'`) is the
+  // file that declares it: follow the re-exports of `name` until a file stating it itself.
+  const throughBarrels = (file: string, name: string, depth = 0): string => {
+    const barrel = byPath.get(file);
+    if (!barrel || depth > 4) return file;
+    const stated = barrel.exports.find((e) => e.name === name && e.source);
+    const sources = stated ? [stated] : barrel.exports.filter((e) => e.name === "*" && e.source);
+    const targets = new Set<string>();
+    for (const e of sources) {
+      const next = resolveImportSource(file, e.source!, knownFiles);
+      if (!next) continue;
+      const inner = stated?.sourceName ?? name;
+      // `export *` forwards only a module that defines the name.
+      if (!stated && !byPath.get(next)?.exports.some((x) => x.name === inner)) continue;
+      targets.add(throughBarrels(next, inner === "default" ? name : inner, depth + 1));
+    }
+    return targets.size === 1 ? [...targets][0]! : file;
+  };
+
   // Follow a route's `component` to the concrete project file it renders.
   // Relative/absolute specifiers (lazy `import("./pak.vue")` paths) resolve
   // against the route-config file; a bare identifier (statically-imported
@@ -2938,7 +2957,7 @@ function buildScreensFromRoutes(
       return null;
     }
     const viaImport = importIndex.localFor(configFile, spec);
-    if (viaImport) return viaImport;
+    if (viaImport) return throughBarrels(viaImport, spec);
     // A view class whose screen is its markup (`CatalogView` → `CatalogView.xaml`, its code-behind a
     // `.xaml.cs`): the one file of the sub-project with a screen of that name.
     // A module the router names (`ClubWeb.Live.Clubs`, or the alias-less `Live.Clubs`) is the screen of that module name.
@@ -3042,7 +3061,9 @@ function buildScreensFromRoutes(
   // A file several screen classes live in (three view controllers in one Swift file): one screen per class.
   const pages: Array<{ analysis: FileAnalysis; routes: RouteInfo[] }> = [];
   for (const entry of byComponent.values()) {
-    const declared = (n: string | null | undefined): n is string => !!n && entry.analysis.classes.some((c) => c.name === n);
+    // A function component counts as well: two pages of one `.tsx` file are two screens.
+    const declared = (n: string | null | undefined): n is string =>
+      !!n && (entry.analysis.classes.some((c) => c.name === n) || (/^[A-Z]/.test(n) && entry.analysis.functions.some((f) => f.name === n)));
     const names = [...new Set(entry.routes.map((r) => r.componentPath).filter(declared))];
     if (names.length < 2) {
       pages.push(entry);
