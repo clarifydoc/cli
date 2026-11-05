@@ -604,6 +604,15 @@ export interface FileAnalysis {
    */
   storeModules?: Array<{ name: string; ref: string; line: number }>;
   /**
+   * What this file's store-building code returns, as written, for a store module
+   * no literal `actions` object defines: `export default createStore({ name: 'Club',
+   * API: ClubAPI })`, and the project functions that build one (`createStore(options)`
+   * returning `{ actions: { ...crudActions(options.API) } }`, `crudActions(API)`
+   * returning `{ update: updateRecord(API) }`). A dispatch resolver evaluates them to
+   * learn which function each action runs and what its parameters are bound to.
+   */
+  storeShapes?: StoreShapes;
+  /**
    * Handlers this file registers under a message name — a command bus, an FFI
    * event (`AFPlugin::new().event(FolderEvent::CreateView, create_view_handler)`),
    * an IPC channel. `message` is written as the registration names it
@@ -1734,6 +1743,44 @@ export interface TestNavigationRow {
   screens?: string[];
   /** The file starting the app those screens belong to (`FileAnalysis.appMount`), when one does. */
   entry?: string;
+}
+
+/**
+ * An expression as written, kept only as far as a store factory needs it
+ * (`FileAnalysis.storeShapes`): a name, a member of a value, a call, an object
+ * literal (its keys, spreads kept in order), an inline function (its line, and
+ * what it returns when that is an expression), or either of several values
+ * (`a ? b : c`, `a ?? b`). Anything else is null: unknown.
+ */
+export type ShapeExpr =
+  | { ref: string }
+  | { member: ShapeExpr | null; key: string }
+  | { call: ShapeExpr | null; args: Array<ShapeExpr | null> }
+  | { object: ShapeEntry[] }
+  | { fn: number; end?: number; returns?: Array<ShapeExpr | null> }
+  | { either: Array<ShapeExpr | null> };
+
+/** One member of an object literal: `key: value`, a method (`{ fn }`), or `...spread`. */
+export type ShapeEntry = { key: string; value: ShapeExpr | null } | { spread: ShapeExpr | null };
+
+/**
+ * A function that returns an object or a call built from its parameters. A
+ * destructured parameter is named `$<index>`; its properties are `locals`.
+ */
+export interface ShapeFunction {
+  params: Array<string | null>;
+  /** `const { API } = options`, `const extra = actions ? actions(t) : {}`: each local's value. */
+  locals?: Record<string, ShapeExpr | null>;
+  /** Every `return` (or the expression body). */
+  returns: Array<ShapeExpr | null>;
+}
+
+/** See `FileAnalysis.storeShapes`. */
+export interface StoreShapes {
+  /** Module-level values built by a call: `export default createStore({…})` under `default`, `const x = f({…})` under `x`. */
+  values?: Record<string, ShapeExpr>;
+  /** Functions by name. */
+  functions?: Record<string, ShapeFunction>;
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */

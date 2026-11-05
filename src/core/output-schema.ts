@@ -74,6 +74,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   packageName: "optional",
   httpClientBases: "optional",
   storeModules: "optional",
+  storeShapes: "optional",
   messageHandlers: "optional",
   deployedResources: "optional",
   entryPoints: "optional",

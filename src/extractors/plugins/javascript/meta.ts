@@ -32,7 +32,7 @@ import { javascriptCallHooks, typescriptCallHooks } from "./call-hooks.js";
 import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
-import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
+import { extractStoreModules, extractStoreShapes, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractKubbConfigs } from "./kubb.js";
 import { extractMockedModules } from "./test-mocks.js";
@@ -253,6 +253,7 @@ function astHooks(language: Language): AstExtractorHooks {
     globalMembers: (sourceText) => extractGlobalMembers(sourceText),
     httpClientBases: extractHttpClientBases,
     storeModules: extractStoreModules,
+    storeShapes: extractStoreShapes,
     httpClientRegistrations: extractHttpClientRegistrations,
     entryPoints: extractEntryPoints,
     // AWS CDK stacks: the queues, tables and functions they create, for the deployment model.

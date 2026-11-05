@@ -1,7 +1,10 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
+import { factoryActions, importedName, type FactoryAction, type FactoryContext } from "./vuex-factories.js";
+
+export { extractStoreShapes } from "./vuex-factories.js";
 
 /**
  * Vuex: `store.dispatch('contacts/get')` runs the `get` action of the store
@@ -12,13 +15,15 @@ import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
  * Facts, per file:
  *   - `CallInfo.key` on a dispatch with a literal name (call-hooks.ts);
  *   - `FileAnalysis.storeModules` for `modules: { contacts, articles: helpCenterArticles }`
- *     in `createStore({…})` / `new Vuex.Store({…})` or in a module's own definition.
+ *     in `createStore({…})` / `new Vuex.Store({…})` or in a module's own definition;
+ *   - `FileAnalysis.storeShapes` for a module a project factory builds (vuex-factories.ts).
  *
  * The join walks the namespace from the root store: `a/b/act` → the root's
  * module `a` (its import) → that file's module `b` → action `act`, defined as
  * `actions.act` in the module file or a file it imports (`import { actions } from
- * './actions'`). A key without a namespace names a root action or a module that
- * is not namespaced; it joins only when exactly one store file defines it.
+ * './actions'`), else named by the `actions` object the module's factory returns.
+ * A key without a namespace names a root action or one of a module that is not
+ * namespaced; it joins only when exactly one store file defines it.
  */
 
 const STORE_FACTORY_RE = /\b(?:createStore|Vuex\.Store|Store)\s*\(/;
@@ -61,6 +66,11 @@ function keyText(pair: Node): string | null {
   return key ? key.text.replace(/^['"]|['"]$/g, "") : null;
 }
 
+type Target = { file: string; symbol: string; line: number; viaType?: string; viaTypeFile?: string };
+/** An action: the function it is (unless written in place in a call), and what else it reaches. */
+type Hit = { file: FileAnalysis; fn?: FunctionInfo; also?: Target[] };
+type Module = { file: FileAnalysis; exported: string };
+
 export class VuexDispatchResolver implements DispatchResolver {
   readonly id = "vuex-action";
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -71,79 +81,203 @@ export class VuexDispatchResolver implements DispatchResolver {
     if (registering.length === 0) return [];
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    const ctx: FactoryContext = { byPath, filePathMap };
+    const imported = (a: FileAnalysis, i: { source: string }) => {
+      const f = resolveTarget(i.source, a.filePath, filePathMap);
+      return f ? byPath.get(f) ?? null : null;
+    };
 
-    /** `name` registered in `a` → the module file. */
-    const moduleFile = (a: FileAnalysis, name: string): FileAnalysis | null => {
+    /** `name` registered in `a` → the module file, and the name it exports the module under. */
+    const moduleOf = (a: FileAnalysis, name: string): Module | null => {
       const reg = a.storeModules?.find((m) => m.name === name);
-      if (!reg) return null;
-      const imp = a.imports.find((i) => i.specifiers.includes(reg.ref));
-      const file = imp ? resolveTarget(imp.source, a.filePath, filePathMap) : null;
-      return file ? byPath.get(file) ?? null : null;
+      const imp = reg ? importedName(a, reg.ref, ctx) : null;
+      return imp ? { file: imp.file, exported: imp.name } : null;
     };
     // Module files: registered by someone. Root stores: register modules but nobody registers them.
     const registered = new Set<string>();
     for (const a of registering) for (const m of a.storeModules!) {
-      const f = moduleFile(a, m.name);
-      if (f) registered.add(f.filePath);
+      const f = moduleOf(a, m.name);
+      if (f) registered.add(f.file.filePath);
     }
     const roots = registering.filter((a) => !registered.has(a.filePath));
 
+    /** The files a module's actions may be written in: its own, and those it imports. */
+    const filesOf = (mod: FileAnalysis): FileAnalysis[] => [mod, ...mod.imports.flatMap((i) => imported(mod, i) ?? [])];
+
+    // Each root's modules by namespace (`a/b`).
+    const trees = new Map<FileAnalysis, Map<string, Module>>();
+    for (const root of roots) {
+      const tree = new Map<string, Module>();
+      const walk = (file: FileAnalysis, prefix: string, depth: number) => {
+        for (const m of file.storeModules ?? []) {
+          const mod = moduleOf(file, m.name);
+          const ns = prefix ? `${prefix}/${m.name}` : m.name;
+          if (!mod || tree.has(ns)) continue;
+          tree.set(ns, mod);
+          if (depth < 6) walk(mod.file, ns, depth + 1);
+        }
+      };
+      walk(root, "", 0);
+      trees.set(root, tree);
+    }
+
     /** The `actions.<act>` a module file defines, there or in a file it imports. */
-    const actionIn = (mod: FileAnalysis, act: string): { file: FileAnalysis; fn: FunctionInfo } | null => {
-      const files = [mod, ...mod.imports.map((i) => resolveTarget(i.source, mod.filePath, filePathMap)).flatMap((f) => (f && byPath.get(f) ? [byPath.get(f)!] : []))];
-      for (const f of files) {
+    const literalAction = (mod: FileAnalysis, act: string): Hit | null => {
+      for (const f of filesOf(mod)) {
         const fn = f.functions.find((x) => x.name === `actions.${act}` || x.name.endsWith(`.actions.${act}`));
         if (fn) return { file: f, fn };
       }
       return null;
     };
 
-    const resolveKey = (key: string): { file: FileAnalysis; fn: FunctionInfo } | null => {
+    /** A module a project factory builds: the action its `actions` object names (vuex-factories.ts). */
+    const tables = new Map<string, Map<string, FactoryAction[]>>();
+    const factoryAction = (mod: Module, act: string): Hit | null => {
+      const values = mod.file.storeShapes?.values;
+      if (!values) return null;
+      const memoKey = `${mod.file.filePath}\0${mod.exported}`;
+      let table = tables.get(memoKey);
+      if (!table) {
+        let value = values[mod.exported] ?? values[localName(mod.file, mod.exported)];
+        if (value && "ref" in value && values[value.ref]) value = values[value.ref];
+        table = value ? factoryActions(mod.file, value, ctx) : new Map();
+        tables.set(memoKey, table);
+      }
+      const hits = distinct((table.get(act) ?? []).map((a) => hitOfAction(a)));
+      return hits.length === 1 && hits[0] ? hits[0] : null;
+    };
+    const hitOfAction = (a: FactoryAction): Hit | null => {
+      if ("fn" in a) return { file: a.fn.file, fn: a.fn.fn };
+      if ("inline" in a) {
+        // Its calls are those its enclosing function makes on its lines: the methods it calls on a class.
+        const { file, line, end } = a.inline;
+        const calls = file.functions
+          .filter((f) => f.name === "<setup>" || (f.line <= line && f.endLine >= end))
+          .flatMap((f) => f.calls.filter((c) => c.line >= line && c.line <= end));
+        const also = methodsCalled(calls, (head) => (file.imports.some((i) => i.specifiers.includes(head)) || file.classes.some((c) => c.name === head) ? [{ file, name: head }] : []));
+        return also.length > 0 ? { file, also } : null;
+      }
+      if (!("helper" in a)) return null;
+      // The helper's calls on a parameter the module bound to a class: that class's method.
+      const also = methodsCalled(a.helper.fn.calls, (head) => a.bound.get(head) ?? []);
+      return { file: a.helper.file, fn: a.helper.fn, ...(also.length ? { also } : {}) };
+    };
+    const methodsCalled = (calls: readonly CallInfo[], namesFor: (head: string) => Array<{ file: FileAnalysis; name: string }>): Target[] => {
+      const out: Target[] = [];
+      for (const c of calls) {
+        const [head, member, ...rest] = c.name.split(".");
+        if (!head || !member || rest.length > 0) continue;
+        for (const n of namesFor(head)) {
+          const m = methodOf(n.file, n.name, member, ctx);
+          if (m && !out.some((x) => x.file === m.file && x.symbol === m.symbol)) out.push(m);
+        }
+      }
+      return out;
+    };
+    const actionIn = (mod: Module, act: string): Hit | null => literalAction(mod.file, act) ?? factoryAction(mod, act);
+
+    /** The distinct actions `key` names under the given root stores. */
+    const hitsFor = (key: string, among: readonly FileAnalysis[]): Hit[] => {
       const parts = key.split("/").filter(Boolean);
       const act = parts.pop();
-      if (!act) return null;
+      if (!act) return [];
       if (parts.length === 0) {
-        // Un-namespaced: exactly one store file defines it.
-        const hits = [...roots, ...[...registered].map((p) => byPath.get(p)!)].map((m) => actionIn(m, act)).filter((h): h is NonNullable<typeof h> => !!h);
-        const unique = new Set(hits.map((h) => `${h.file.filePath}#${h.fn.line}`));
-        return unique.size === 1 ? hits[0]! : null;
+        // Un-namespaced: a root action, or one of a module that is not namespaced.
+        const files = new Set<FileAnalysis>();
+        for (const root of among) {
+          files.add(root);
+          for (const m of trees.get(root)?.values() ?? []) files.add(m.file);
+        }
+        return distinct([...files].map((f) => literalAction(f, act)));
       }
-      let found: { file: FileAnalysis; fn: FunctionInfo } | null = null;
-      for (const root of roots) {
-        let mod: FileAnalysis | null = root;
-        for (const ns of parts) mod = mod ? moduleFile(mod, ns) : null;
-        const hit = mod ? actionIn(mod, act) : null;
-        if (!hit) continue;
-        if (found && (found.file !== hit.file || found.fn !== hit.fn)) return null; // two stores disagree
-        found = hit;
+      return distinct(among.map((root) => {
+        const mod = trees.get(root)?.get(parts.join("/"));
+        return mod ? actionIn(mod, act) : null;
+      }));
+    };
+
+    const memo = new Map<string, Hit | null>();
+    const pick = (key: string): Hit | null => {
+      if (!memo.has(key)) {
+        const hits = hitsFor(key, roots);
+        memo.set(key, hits.length === 1 ? hits[0]! : null); // two stores disagree: none
       }
-      return found;
+      return memo.get(key)!;
     };
 
     const links: SymbolLink[] = [];
-    const memo = new Map<string, ReturnType<typeof resolveKey>>();
     for (const a of analyses) {
       const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       for (const fn of fns) {
         for (const call of fn.calls) {
           // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
           if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
-          if (!memo.has(call.key)) memo.set(call.key, resolveKey(call.key));
-          const hit = memo.get(call.key);
+          const key = call.key;
+          const hit = pick(key);
           if (!hit) continue;
-          links.push({
+          const link = (t: Target): SymbolLink => ({
             sourceFile: a.filePath,
             sourceSymbol: fn.name,
             sourceLine: call.line,
-            callName: `dispatch:${call.key}`,
-            targetFile: hit.file.filePath,
-            targetSymbol: hit.fn.name,
-            targetLine: hit.fn.line,
+            callName: `dispatch:${key}`,
+            targetFile: t.file,
+            targetSymbol: t.symbol,
+            targetLine: t.line,
             confidence: "INFERRED",
+            ...(t.viaType ? { viaType: t.viaType, viaTypeFile: t.viaTypeFile } : {}),
           });
+          if (hit.fn) links.push(link({ file: hit.file.filePath, symbol: hit.fn.name, line: hit.fn.line }));
+          for (const t of hit.also ?? []) links.push(link(t));
         }
       }
     }
     return links;
   }
+}
+
+function distinct(hits: Array<Hit | null>): Hit[] {
+  const seen = new Map<string, Hit>();
+  for (const h of hits) if (h) seen.set(h.fn ? `${h.file.filePath}#${h.fn.name}#${h.fn.line}` : `${h.file.filePath}#${(h.also ?? []).map((t) => `${t.file}#${t.symbol}`).join(",")}`, h);
+  return [...seen.values()];
+}
+
+/** A local name for an exported one: `export default createStore` → createStore. */
+function localName(file: FileAnalysis, exported: string): string {
+  return file.exports.find((x) => x.name === exported && !x.source)?.sourceName ?? exported;
+}
+
+/**
+ * The method `method` of the class a name of `file` stands for — an imported
+ * instance (`export default new Clubs()`) or class, or the file's own class —
+ * declared there or on a base class, followed through `extends` four deep. On a
+ * base class, the link names the receiver's class (`viaType`), so a request the
+ * HTTP pass resolved per subclass moves onto it.
+ */
+function methodOf(file: FileAnalysis, name: string, method: string, ctx: FactoryContext): Target | null {
+  const classNamed = (f: FileAnalysis, n: string): { file: FileAnalysis; cls: ClassInfo } | null => {
+    const own = f.classes.find((c) => c.name === n);
+    if (own) return { file: f, cls: own };
+    const imp = importedName(f, n, ctx);
+    if (!imp) return null;
+    const exp = imp.file.exports.find((x) => x.name === imp.name && !x.source);
+    const local = exp?.instanceOf ?? localName(imp.file, imp.name);
+    const cls = imp.file.classes.find((c) => c.name === local);
+    return cls ? { file: imp.file, cls } : null;
+  };
+  const start = classNamed(file, name);
+  let at = start;
+  for (let depth = 0; at && depth < 5; depth++) {
+    const m = at.cls.methods.find((x) => x.name === method && !x.isConstructor);
+    if (m) {
+      const inherited = at !== start;
+      return {
+        file: at.file.filePath,
+        symbol: `${at.cls.name}.${method}`,
+        line: m.line,
+        ...(inherited ? { viaType: start!.cls.name, viaTypeFile: start!.file.filePath } : {}),
+      };
+    }
+    at = at.cls.extends ? classNamed(at.file, at.cls.extends) : null;
+  }
+  return null;
 }

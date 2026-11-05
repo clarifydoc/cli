@@ -18,6 +18,7 @@ import type {
   ExternalPackage,
   PackageEcosystem,
   PathArgCall,
+  StoreShapes,
   Instantiation,
   CallBaseRef,
   HttpClientRegistration,
@@ -697,6 +698,8 @@ export interface AstExtractorHooks {
   httpClientBases?(tree: Tree, sourceText: string): Record<string, string>;
   /** State-store module registrations → `FileAnalysis.storeModules`. */
   storeModules?(tree: Tree, sourceText: string): Array<{ name: string; ref: string; line: number }>;
+  /** What store-building code returns, as written → `FileAnalysis.storeShapes`. */
+  storeShapes?(tree: Tree, sourceText: string, filePath: string): StoreShapes | undefined;
   /** HTTP clients configured with a base, host included → `FileAnalysis.httpClientRegistrations`. */
   httpClientRegistrations?(tree: Tree, sourceText: string): HttpClientRegistration[];
   /** Infrastructure the code declares (AWS CDK constructs) → `FileAnalysis.deployedResources`. */

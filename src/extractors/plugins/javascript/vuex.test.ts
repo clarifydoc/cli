@@ -5,7 +5,11 @@ import { extractFunctions } from "../../functions-classes/index.js";
 import { extractImports } from "../../imports-exports/index.js";
 import { extractTopLevelCalls } from "../../shared/call-graph.js";
 import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
-import type { FileAnalysis } from "../../../types/analysis.js";
+import type { FileAnalysis, SymbolLink } from "../../../types/analysis.js";
+import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { analyzeFile } from "../../../core/file-analyzer.js";
 
 async function project(files: Record<string, string>): Promise<FileAnalysis[]> {
   const out: FileAnalysis[] = [];
@@ -76,6 +80,130 @@ export default {
     expect(links.filter((l) => l.sourceFile.startsWith("components/")).map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol}`)).toEqual([
       "save -dispatch:contacts/get-> actions.get",
       "save -dispatch:articles/index-> actions.index",
+    ]);
+  });
+});
+
+/** Every file through the real per-file pipeline, so each hook's facts are there. */
+async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]> {
+  const root = await mkdtemp(join(tmpdir(), "vuex-"));
+  const out = await mkdtemp(join(tmpdir(), "vuex-out-"));
+  for (const [rel, src] of Object.entries(files)) {
+    await mkdir(join(root, dirname(rel)), { recursive: true });
+    await writeFile(join(root, rel), src);
+  }
+  const analyses: FileAnalysis[] = [];
+  for (const rel of Object.keys(files)) {
+    const result = await analyzeFile({
+      file: { absolutePath: join(root, rel), relativePath: rel, language: "javascript" },
+      frameworkIds: [],
+      projectId: "root",
+      outputOpts: { outputDir: out, pretty: false },
+      verbose: false,
+      projectRoot: root,
+      tsconfigAliases: new Map(),
+    } as never);
+    analyses.push(result!.analysis);
+  }
+  return analyses;
+}
+
+const show = (links: SymbolLink[], from: string) =>
+  links.filter((l) => l.sourceFile === from).map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}#${l.targetSymbol}${l.viaType ? ` (on ${l.viaType})` : ""}`);
+
+const FACTORY = {
+  "src/api/ApiClient.js": `class ApiClient {
+  constructor(resource) { this.resource = resource; }
+  get url() { return '/api/v2/' + this.resource; }
+  get() { return axios.get(this.url); }
+  update(id, data) { return axios.patch(this.url + '/' + id, data); }
+}
+export default ApiClient;`,
+  "src/api/clubs.js": `import ApiClient from './ApiClient';
+class Clubs extends ApiClient {
+  constructor() { super('clubs'); }
+  transfer(id) { return axios.post(this.url + '/' + id + '/transfer'); }
+}
+export default new Clubs();`,
+  "src/store/factoryHelpers.js": `export const getRecords = (types, API) => async ({ commit }) => {
+  const response = await API.get();
+  commit(types.SET, response.data);
+};
+export const updateRecord = (types, API) => async ({ commit }, { id, ...data }) => {
+  const response = await API.update(id, data);
+  commit(types.EDIT, response.data);
+};`,
+  "src/store/factory.js": `import { defineStore } from 'pinia';
+import { getRecords, updateRecord } from './factoryHelpers';
+const makeTypes = name => ({ SET: 'SET_' + name, EDIT: 'EDIT_' + name });
+export const crudActions = (API, types) => ({
+  get: getRecords(types, API),
+  update: updateRecord(types, API),
+});
+export const createVuexModule = options => {
+  const { name, API, actions } = options;
+  const types = makeTypes(name);
+  const extra = actions ? actions(types) : {};
+  return {
+    namespaced: true,
+    state: {},
+    actions: { ...crudActions(API, types), ...extra },
+  };
+};
+export const createPiniaModule = options => defineStore(options.name, { actions: {} });
+export const createStore = options => {
+  const { type = 'vuex' } = options;
+  if (type === 'pinia') return createPiniaModule(options);
+  return createVuexModule(options);
+};`,
+  "src/store/modules/clubs.js": `import ClubsAPI from '../../api/clubs';
+import { createStore } from '../factory';
+export default createStore({ name: 'Club', API: ClubsAPI });`,
+  "src/store/modules/players.js": `import ClubsAPI from '../../api/clubs';
+import { createStore } from '../factory';
+export default createStore({
+  name: 'Player',
+  API: ClubsAPI,
+  actions: types => ({
+    get: async ({ commit }) => { commit(types.SET, []); },
+    transfer: async ({ commit }, id) => {
+      await ClubsAPI.transfer(id);
+    },
+  }),
+});`,
+  "src/store/index.js": `import { createStore } from 'vuex';
+import clubs from './modules/clubs';
+import players from './modules/players';
+export default createStore({ modules: { clubs, players } });`,
+  "src/pages/ClubPage.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const save = club => store.dispatch('clubs/update', club);
+export const load = () => store.dispatch('clubs/get');
+export const loadPlayers = () => store.dispatch('players/get');
+export const editPlayer = p => store.dispatch('players/update', p);
+export const transferPlayer = id => store.dispatch('players/transfer', id);`,
+};
+
+describe("vuex-action dispatch into a module a project factory builds", () => {
+  it("reads the module's factory call and the factory functions' returns", async () => {
+    const analyses = await analyzeAll(FACTORY);
+    const at = (p: string) => analyses.find((a) => a.filePath === p)!;
+    expect(at("src/store/modules/clubs.js").storeShapes?.values?.default).toBeDefined();
+    expect(Object.keys(at("src/store/factory.js").storeShapes?.functions ?? {}).sort()).toEqual(["createPiniaModule", "createStore", "createVuexModule", "crudActions", "makeTypes"]);
+  });
+
+  it("runs the helper the factory's action calls, on the API class the module passes", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll(FACTORY));
+    expect(show(links, "src/pages/ClubPage.js")).toEqual([
+      "save -dispatch:clubs/update-> src/store/factoryHelpers.js#updateRecord",
+      "save -dispatch:clubs/update-> src/api/ApiClient.js#ApiClient.update (on Clubs)",
+      "load -dispatch:clubs/get-> src/store/factoryHelpers.js#getRecords",
+      "load -dispatch:clubs/get-> src/api/ApiClient.js#ApiClient.get (on Clubs)",
+      // `players` overrides `get` with its own action: never the factory's.
+      "editPlayer -dispatch:players/update-> src/store/factoryHelpers.js#updateRecord",
+      "editPlayer -dispatch:players/update-> src/api/ApiClient.js#ApiClient.update (on Clubs)",
+      // An action written in place in the factory call is no function of its own: the methods it calls.
+      "transferPlayer -dispatch:players/transfer-> src/api/clubs.js#Clubs.transfer",
     ]);
   });
 });

@@ -676,6 +676,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (clientBases && Object.keys(clientBases).length > 0) analysis.httpClientBases = clientBases;
     const storeModules = hooks?.storeModules?.(tree, sourceText);
     if (storeModules && storeModules.length > 0) analysis.storeModules = storeModules;
+    const storeShapes = hooks?.storeShapes?.(tree, sourceText, analysis.filePath);
+    if (storeShapes) analysis.storeShapes = storeShapes;
     const entryPoints = hooks?.entryPoints?.(tree, sourceText);
     if (entryPoints && entryPoints.length > 0) analysis.entryPoints = entryPoints;
     const deployed = hooks?.deployedResources?.(tree, sourceText);
