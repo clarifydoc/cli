@@ -25,6 +25,7 @@ export function extractPythonRoutes(root: Node, routes: RouteInfo[], facts?: Rou
   const receiverLines = new Map<string, number[]>();
   walkForPythonRoutes(root, routes, routers, receiverLines);
   walkForRouterMounts(root, routes, routers, consts, receiverLines);
+  walkForRegistrationCalls(root, root, routes, routers, consts, receiverLines);
   if (facts) collectGuardFacts(root, routers, receiverLines, facts);
 }
 
@@ -98,6 +99,29 @@ function walkForRouterMounts(
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
     const leaf = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : null;
+    // Starlette/FastAPI `app.mount("/api", sub_app)`: a sub-application under a prefix (not `StaticFiles(…)`, not an adapter).
+    const mountArgs = leaf === "mount" ? node.childForFieldName("arguments") : null;
+    const mountPositional = mountArgs ? mountArgs.namedChildren.filter((c) => c.type !== "keyword_argument" && c.type !== "comment") : [];
+    const mountPath = mountPositional[0]?.type === "string" ? stringValue(mountPositional[0].text, consts) : null;
+    if (leaf === "mount" && mountPath?.startsWith("/") && mountPositional[1] && (mountPositional[1].type === "identifier" || mountPositional[1].type === "attribute") && /\b(?:fastapi|starlette)\b/i.test(sourceOf(node))) {
+      const receiverNode = fn!.childForFieldName("object");
+      const receiver = receiverNode?.type === "identifier" ? routers.get(receiverNode.text) : undefined;
+      const handler = rootIdentifier(mountPositional[1]);
+      if (handler) {
+        const mount: RouteInfo = {
+          path: joinPrefix(receiver?.prefix ?? "", mountPath),
+          httpMethod: null,
+          kind: "api",
+          handler,
+          calls: [],
+          middleware: [],
+          line: node.startPosition.row + 1,
+          mount: true,
+        };
+        if (receiverNode?.type === "identifier") pushLine(receiverLines, receiverNode.text, mount.line);
+        routes.push(mount);
+      }
+    }
     if (leaf === "include_router" || leaf === "register_blueprint") {
       const args = node.childForFieldName("arguments");
       const router = args ? firstPositionalArg(args) : null;
@@ -128,6 +152,14 @@ function walkForRouterMounts(
     }
   }
   for (const child of node.children) walkForRouterMounts(child, routes, routers, consts, receiverLines);
+}
+
+const sourceTexts = new WeakMap<object, string>();
+/** The whole file's text, read once per tree. */
+function sourceOf(node: Node): string {
+  let text = sourceTexts.get(node.tree);
+  if (text === undefined) sourceTexts.set(node.tree, (text = node.tree.rootNode.text));
+  return text;
 }
 
 function pushLine(lines: Map<string, number[]>, key: string, line: number): void {
@@ -394,6 +426,9 @@ function routeDecorator(dec: Node): RouteDecorator | null {
   let methods: string[];
   if (HTTP_METHODS.has(verb.toLowerCase())) {
     methods = [verb.toUpperCase()];
+  } else if (verb === "websocket" || verb === "websocket_route") {
+    // A WebSocket endpoint is opened by a GET carrying the upgrade.
+    methods = ["GET"];
   } else if (verb === "route" || verb === "api_route") {
     const listed = args ? stringArgs(keywordArg(args, "methods")) : [];
     methods = listed.length > 0 ? listed.map((m) => m.toUpperCase()) : ["GET"];
@@ -441,6 +476,78 @@ function azureFunctionName(dec: Node): string | null {
   const args = call!.childForFieldName("arguments");
   const first = args ? firstPositionalArg(args) : null;
   return (args ? literalKeywordArg(args, "name") : null) ?? (first?.type === "string" ? stripQuotes(first.text) : null);
+}
+
+/**
+ * Routes registered by a call instead of a decorator:
+ *   Flask    `app.add_url_rule("/cars", view_func=handlers.list_cars)` or `("/cars", "list", list_cars)`
+ *   FastAPI  `router.add_api_route("/cars", endpoint=list_cars, methods=["POST"])`, `add_api_websocket_route`
+ *   Starlette `app.add_websocket_route("/ws", endpoint)`
+ * The handler is the function as written (`handlers.list_cars` when another module's), which
+ * the linker resolves through the file's imports; a function declared in this file also gives
+ * its parameters.
+ */
+const REGISTRATION_CALLS = new Set(["add_url_rule", "add_api_route", "add_api_websocket_route", "add_websocket_route"]);
+
+function walkForRegistrationCalls(
+  root: Node,
+  node: Node,
+  routes: RouteInfo[],
+  routers: ReadonlyMap<string, RouterDecl>,
+  consts: ReadonlyMap<string, string>,
+  receiverLines: Map<string, number[]>,
+): void {
+  if (node.type === "call") {
+    const fn = node.childForFieldName("function");
+    const leaf = fn?.type === "attribute" ? fn.childForFieldName("attribute")?.text : null;
+    const args = leaf && REGISTRATION_CALLS.has(leaf) ? node.childForFieldName("arguments") : null;
+    if (args && leaf) {
+      const positional = args.namedChildren.filter((c) => c.type !== "keyword_argument" && c.type !== "comment");
+      const pathNode = positional[0]?.type === "string" ? positional[0] : keywordArg(args, leaf === "add_url_rule" ? "rule" : "path");
+      const path = pathNode?.type === "string" ? stringValue(pathNode.text, consts) : null;
+      // `add_url_rule(rule, endpoint, view_func)`; the others take `(path, endpoint)`.
+      const viewNode = keywordArg(args, leaf === "add_url_rule" ? "view_func" : "endpoint") ?? positional[leaf === "add_url_rule" ? 2 : 1] ?? null;
+      const handlerNode = viewNode?.type === "call" && viewNode.childForFieldName("function")?.text.endsWith(".as_view") ? viewNode.childForFieldName("function")!.childForFieldName("object") : viewNode;
+      const handler = handlerNode && (handlerNode.type === "identifier" || handlerNode.type === "attribute") ? handlerNode.text : null;
+      if (path !== null && handler) {
+        const receiverNode = fn!.childForFieldName("object");
+        const router = receiverNode?.type === "identifier" ? routers.get(receiverNode.text) : undefined;
+        if (receiverNode?.type === "identifier") pushLine(receiverLines, receiverNode.text, node.startPosition.row + 1);
+        const listed = stringArgs(keywordArg(args, "methods")).map((m) => m.toUpperCase());
+        const methods = leaf.includes("websocket") ? ["GET"] : listed.length > 0 ? listed : ["GET"];
+        const fullPath = joinPrefix(router?.prefix ?? "", path);
+        const def = handlerNode!.type === "identifier" ? functionDefinition(root, handlerNode!.text) : null;
+        const signature = def ? signatureParams(def, fullPath) : { params: [], guards: [], dependencies: [] };
+        const params = def ? [...signature.params, ...bodyAccessParams(def, fullPath, signature.params)] : [];
+        const deps = keywordArg(args, "dependencies");
+        const endpoint = leaf === "add_url_rule" ? (stringKeyword(args, "endpoint", consts) ?? (positional[1]?.type === "string" ? stripQuotes(positional[1].text) : null)) : null;
+        for (const method of methods) {
+          const route: RouteInfo = {
+            path: fullPath,
+            httpMethod: method,
+            kind: "api",
+            handler,
+            calls: signature.dependencies.map((c) => ({ ...c })),
+            middleware: [],
+            line: node.startPosition.row + 1,
+            ...(router && (endpoint ?? handler) ? { name: router.endpointPrefix + (endpoint ?? handler.split(".").pop()!) } : {}),
+          };
+          applyRouteMeta(route, { inheritedGuards: router?.guards, guards: [...(deps ? guardsFromDependencies(deps) : []), ...signature.guards], params });
+          routes.push(route);
+        }
+      }
+    }
+  }
+  for (const child of node.namedChildren) walkForRegistrationCalls(root, child, routes, routers, consts, receiverLines);
+}
+
+/** The module-level `def name(…)` of this file (decorated or not). */
+function functionDefinition(root: Node, name: string): Node | null {
+  for (const stmt of root.namedChildren) {
+    const def = stmt.type === "decorated_definition" ? stmt.childForFieldName("definition") : stmt;
+    if (def?.type === "function_definition" && def.childForFieldName("name")?.text === name) return def;
+  }
+  return null;
 }
 
 function joinPrefix(prefix: string, path: string): string {

@@ -388,3 +388,59 @@ async def fixtures():
     ]);
   });
 });
+
+describe("Python route registration calls", () => {
+  const sig = (rs: RouteInfo[]) => rs.map((r) => `${r.httpMethod} ${r.path} ${r.handler}${r.mount ? " mount" : ""}`);
+
+  it("reads Flask add_url_rule, keyword and positional, with methods and the blueprint prefix", async () => {
+    const routes = await routesOf(`
+from flask import Flask, Blueprint
+import handlers
+app = Flask(__name__)
+garage = Blueprint("garage", __name__, url_prefix="/garage")
+app.add_url_rule("/cars", view_func=handlers.list_cars)
+app.add_url_rule("/cars/add", "add", add_car, methods=["POST", "PUT"])
+garage.add_url_rule("/parts", view_func=PartView.as_view("parts"))
+`);
+    expect(sig(routes)).toEqual([
+      "GET /cars handlers.list_cars",
+      "POST /cars/add add_car",
+      "PUT /cars/add add_car",
+      "GET /garage/parts PartView",
+    ]);
+  });
+
+  it("reads FastAPI add_api_route and websocket registrations, a local handler giving its parameters", async () => {
+    const routes = await routesOf(`
+from fastapi import APIRouter
+router = APIRouter(prefix="/garage")
+def list_cars(limit: int = 10): return []
+router.add_api_route("/cars", endpoint=list_cars, methods=["GET"])
+router.add_api_route("/cars2", add_car, methods=["POST"])
+router.add_api_websocket_route("/live", live)
+@router.websocket("/feed")
+async def feed(ws): pass
+@app.websocket_route("/ws")
+async def ws2(ws): pass
+`);
+    expect(sig(routes).sort()).toEqual([
+      "GET /garage/cars list_cars",
+      "GET /garage/feed feed",
+      "GET /garage/live live",
+      "GET /ws ws2",
+      "POST /garage/cars2 add_car",
+    ]);
+    expect(routes.find((r) => r.handler === "list_cars")!.params?.map((p) => p.name)).toEqual(["limit"]);
+  });
+
+  it("mounts a sub-application of a FastAPI/Starlette file, and nothing else called mount", async () => {
+    const routes = await routesOf(`
+from fastapi import FastAPI
+app = FastAPI()
+app.mount("/api", sub_app)
+app.mount("/static", StaticFiles(directory="static"))
+session.mount("https://", adapter)
+`);
+    expect(sig(routes)).toEqual(["null /api sub_app mount"]);
+  });
+});
