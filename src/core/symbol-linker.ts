@@ -4157,7 +4157,10 @@ function resolveCallToDefinition(
   const onSelf = (!isQualified && !bareIsFunction) || (parts.length === 2 && (SELF_HEADS.has(parts[0]!) || SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, ""))));
   if (!def && call.kind === "internal" && onSelf) {
     // A bare call walks the caller's own class only; a free function has none.
-    const currentClasses = ownerClass === undefined ? analysis.classes : analysis.classes.filter((c) => c.name === ownerClass);
+    // So does `self.x()` / `super().x()` in a method: its class's bases, never another class's of the file
+    // (a `super().partial_update()` reached a sibling class's override through an unrelated mixin's base).
+    const walked = ownerClass ?? (isQualified ? callerClass(ctx, analysis, sourceSymbol, call.line) || undefined : undefined);
+    const currentClasses = walked === undefined ? analysis.classes : analysis.classes.filter((c) => c.name === walked);
     for (const cls of currentClasses) {
       let parentInfo = parentClassOf(ctx, cls.name, sourceFile);
       const visited = new Set<string>();

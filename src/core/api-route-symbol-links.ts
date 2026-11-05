@@ -163,12 +163,14 @@ export function synthesizeApiRouteSymbolLinks(
     // Target: enclosing span at the route line, else handler-name resolution.
     let targetFile = link.target;
     let tgt = innermostAt(spansFor(link.target), link.targetLine);
-    // The route the link landed on: by line and path, else the one route at
+    // The route the link landed on: by line, path and method (a CRUD set anchored on
+    // its class's line shares one path), else by line and path, else the one route at
     // that line serving the call's method (the link's path can be the one the
     // call reached it by — a version alias, a forwarded prefix).
     const routeRow = () => {
       const atLine = (fileOf.get(link.target)?.routes ?? []).filter((r) => r.kind === "api" && r.line === link.targetLine);
-      const byPath = atLine.find((r) => r.path === link.routePath);
+      const onPath = atLine.filter((r) => r.path === link.routePath);
+      const byPath = onPath.find((r) => link.method && r.httpMethod === link.method) ?? onPath.find((r) => r.httpMethod === null) ?? onPath[0];
       if (byPath) return byPath;
       const byMethod = atLine.filter((r) => !link.method || r.httpMethod === link.method);
       return byMethod.length === 1 ? byMethod[0] : undefined;

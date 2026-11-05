@@ -9,7 +9,7 @@ import { HTTP_METHODS } from "../../routes/base.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { scanRequestAccess } from "./request-access.js";
 import { splitGeneric, unwrapNullable } from "./request-schema.js";
-import { DJANGO_GATE, collectDjangoFacts } from "./django/facts.js";
+import { DJANGO_GATE, collectDjangoFacts, collectDjangoTextFacts } from "./django/facts.js";
 import { PY_GRAPHQL_GATE, extractPythonGraphqlRoutes } from "./graphql.js";
 import { PY_ROUTER_CLASS, PY_ROUTER_CTOR, PY_VIEW_CLASS, type PyRouterClassFact, type PyRouterCtorFact, type PyViewClassFact } from "./fastapi-guards.js";
 
@@ -731,6 +731,7 @@ export const pythonRouteExtractor: RouteExtractor = {
     if (PY_GRAPHQL_GATE.test(sourceText)) extractPythonGraphqlRoutes(tree.rootNode, routes);
     // Django / DRF routing is only facts per file; `django-urlconf` joins them.
     if (facts && DJANGO_GATE.test(sourceText)) collectDjangoFacts(tree.rootNode, facts);
+    if (facts && sourceText.includes("MIGRATION_MODULES")) collectDjangoTextFacts(sourceText, facts);
     return routes;
   },
 };

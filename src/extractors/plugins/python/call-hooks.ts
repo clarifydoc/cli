@@ -4,6 +4,7 @@ import { genericResolveCallName } from "../../shared/call-graph.js";
 import { pythonReceiverTypeOf } from "./di.js";
 import { pythonArgOriginsOf } from "./arg-origins.js";
 import { djangoCommandKey } from "./django/commands.js";
+import { drfSerializerKey } from "./django/drf.js";
 
 export const pythonCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call"]),
@@ -94,7 +95,8 @@ export const pythonCallHooks: CallExtractionHooks = {
   },
   noOverloads: true,
   // `call_command("close_season")` runs a Django management command by name: `DjangoCommandResolver` joins the key.
-  keyOf: djangoCommandKey,
+  // `ClubSerializer(club, data=…)` states what its `save()` calls: `DrfSerializerResolver` reads the key.
+  keyOf: (node, name) => djangoCommandKey(node, name) ?? drfSerializerKey(node, name),
   argsOf: pythonClassArgs,
   // Where each argument comes from: a parameter, a request value, a literal (keyword arguments by name).
   argOriginsOf: pythonArgOriginsOf,

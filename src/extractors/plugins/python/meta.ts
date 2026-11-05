@@ -1,5 +1,7 @@
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { DjangoCommandResolver } from "./django/commands.js";
+import { DrfViewSetActionResolver } from "./django/viewset-actions.js";
+import { DrfSerializerResolver } from "./django/serializer-dispatch.js";
 import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-aliases.js";
 import { extractPythonModuleValues } from "./module-values.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
@@ -152,7 +154,7 @@ export const pythonMeta: LanguagePluginMeta = {
   routes: pythonRouteExtractor,
   routeResolvers: [djangoUrlconfResolver, fastapiInheritedGuards],
   // A test's parameter is the fixture of that name (module, then conftest.py).
-  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver(), new DjangoCommandResolver()],
+  dispatchResolvers: [new PytestFixtureResolver(), new AiosqlQueryResolver(), new DjangoTemplateUrlResolver(), new DjangoCommandResolver(), new DrfViewSetActionResolver(), new DrfSerializerResolver()],
   functionsClasses: new PythonExtractor(),
   importsExports: new PythonImportExportExtractor(),
   dataSources: new PythonDataSourceExtractor(),

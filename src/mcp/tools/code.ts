@@ -726,6 +726,7 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     }
     return lines;
   }
+  if (verdict.testSetup) lines.push(`run while the tests are set up: ${verdict.testSetup}`);
   const importers = verdict.importers;
   if (importers.length) {
     lines.push(`test files depending on it (${importers.length}):`);

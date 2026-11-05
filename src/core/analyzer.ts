@@ -90,7 +90,7 @@ import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { openLoopShapeCache } from "./loop-shape-cache.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
-import { collectProjectCommands } from "./project-commands.js";
+import { collectProjectCommands, collectTestSetupRuns } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -1363,6 +1363,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // MCP tools, editor and CLI commands: entry points that are not routes.
   // How each sub-project is built, tested and started, as its own files say.
   const projectCommands = collectProjectCommands(projectRoot, subProjects);
+  // Files the test framework runs while it sets a test run up (migrations, start-up hooks).
+  const testSetupRuns = collectTestSetupRuns(projectRoot, subProjects, allAnalyses);
   const allEntryPoints = allAnalyses.flatMap((a) => (a.entryPoints ?? []).map((e) => ({ ...e, filePath: a.filePath, ...(a.projectId ? { projectId: a.projectId } : {}) })));
   if (allEntryPoints.length > 0) progress.detail(`  Entry points: ${allEntryPoints.length} (${[...new Set(allEntryPoints.map((e) => e.kind))].join(", ")})`);
   if (thirdParty.length > 0) progress.detail(`  External services: ${thirdParty.map((s) => `${s.name} (${s.calls})`).join(", ")}`);
@@ -2327,6 +2329,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(thirdParty.length ? { externalServices: thirdParty } : {}),
     ...(allEntryPoints.length ? { entryPoints: allEntryPoints } : {}),
     ...(projectCommands.length ? { projectCommands } : {}),
+    ...(testSetupRuns.length ? { testSetupRuns } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,

@@ -352,6 +352,33 @@ describe("Python api-call — a base the file states", () => {
     ].join("\n"))).toEqual(["patch /api/config/1/"]);
   });
 
+  it("reads an app path a test class holds in a constant, its own or a base's in the file (real-repo FP)", async () => {
+    expect(await rows([
+      "class LeagueApiBase(APITestCase):",
+      '    ENDPOINT = "/api/clubs/"',
+      "class TestClubs(LeagueApiBase):",
+      "    def test_list(self):",
+      "        self.client.get(self.ENDPOINT)",
+      "    def test_create(self):",
+      "        self.client.post(",
+      "            self.ENDPOINT,",
+      '            data={"name": "x"},',
+      "        )",
+      "class TestPlayers(APITestCase):",
+      '    ENDPOINT = "/api/players/"',
+      '    ENDPOINT_TRANSFERS = "/api/transfers/"',
+      "    def test_detail(self):",
+      '        self.client.get(f"{self.ENDPOINT}{self.player.pk}/")',
+      "        self.client.delete(self.ENDPOINT_TRANSFERS)",
+      "class TestSquads(APITestCase):",
+      '    ENDPOINT = "/api/squads/"',
+      "    def setUp(self):",
+      '        self.ENDPOINT = "/api/v2/squads/"',
+      "    def test_list(self):",
+      "        self.client.get(self.ENDPOINT)",
+    ].join("\n"))).toEqual(["get /api/clubs/", "post /api/clubs/", "get /api/players/{self.player.pk}/", "delete /api/transfers/"]);
+  });
+
   it("keeps the host of a module constant, unless it is assigned twice or rebound locally", async () => {
     expect(await rows([
       "import requests",

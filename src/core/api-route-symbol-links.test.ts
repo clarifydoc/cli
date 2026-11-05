@@ -115,6 +115,19 @@ describe("synthesizeApiRouteSymbolLinks", () => {
     expect(out.map((l) => l.targetSymbol)).toEqual(["route:GET /tasks/{task}"]);
   });
 
+  it("targets the route serving the call's method among routes sharing the line and the path", () => {
+    // A framework-supplied CRUD set anchored on its class's line: one path, four methods.
+    const backend = fa("league/views.py", {
+      classes: [{ name: "ClubViewSet", line: 8, endLine: 20, methods: [] }],
+      routes: ["GET", "PUT", "PATCH", "DELETE"].map((m) => ({ path: "/api/clubs/{pk}/", httpMethod: m, kind: "api", handler: `ClubViewSet.${m.toLowerCase()}`, calls: [], middleware: [], line: 8 })),
+    } as any);
+    const out = synthesizeApiRouteSymbolLinks(
+      [link({ method: "PATCH", target: "league/views.py", targetLine: 8, handler: "ClubViewSet.partial_update", routePath: "/api/clubs/{pk}/" })],
+      [frontend, backend],
+    );
+    expect(out.map((l) => l.targetSymbol)).toEqual(["route:PATCH /api/clubs/{pk}/"]);
+  });
+
   it("starts a base-class request resolved for a subclass at that subclass's member, and moves inherited calls onto it", () => {
     // `this.requests.post(this.baseRoute)` in BaseCRUDAPI.createOne, fanned out
     // per subclass: each URL is its subclass's, so its edge starts there.

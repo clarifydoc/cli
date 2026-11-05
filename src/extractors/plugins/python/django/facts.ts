@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteFact } from "../../../../types/analysis.js";
+import { DJ_MIGRATION_MODULES } from "./test-setup.js";
 /** A Python string literal's content: `r"^api/"`, `'x'`, `"""doc"""` → what is between the quotes. */
 function pyString(text: string): string {
   const m = /^[a-zA-Z]*("""|'''|"|')([\s\S]*)\1$/.exec(text);
@@ -101,10 +102,34 @@ export interface DjViewClassFact {
   lookupUrlKwarg?: string;
   httpMethodNames?: string[];
   permissionClasses?: string[];
+  /** `serializer_class = ClubSerializer`: the class name, as written (dotted names keep their last part). */
+  serializerClass?: string;
+}
+
+/**
+ * A serializer-shaped class body: the fields it declares (`nickname = serializers.CharField(…)` —
+ * an attribute given a `…Field(…)` or `…Serializer(…)`), its `Meta.fields` (`"__all__"` for all
+ * the model's, also for `exclude`; absent when not a literal), and the functions its fields run on
+ * their value (`validators=[no_reserved_name]`), as written. What `is_valid()` runs
+ * (`DrfSerializerResolver`): `validate_<field>` for a declared field, and those validators.
+ */
+export const DRF_SERIALIZER_FIELDS = "drf:serializer-fields";
+export interface DrfSerializerFieldsFact {
+  fields?: string[];
+  metaFields?: string[] | "__all__";
+  validators?: string[];
+}
+
+const MIGRATION_MODULES = /^[ \t]*MIGRATION_MODULES\s*=/m;
+
+/** Facts read off the file's text before its tree: what no statement position decides. */
+export function collectDjangoTextFacts(sourceText: string, facts: RouteFact[]): void {
+  const m = MIGRATION_MODULES.exec(sourceText);
+  if (m) facts.push({ kind: DJ_MIGRATION_MODULES, line: sourceText.slice(0, m.index).split("\n").length, data: {} });
 }
 
 /** Cheap text gate: only files mentioning one of these get walked. */
-export const DJANGO_GATE = /urlpatterns|register_model_view|routes\[0\]\.mapping|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK/;
+export const DJANGO_GATE = /urlpatterns|register_model_view|routes\[0\]\.mapping|\.register\(|ROOT_URLCONF|lookup_field|lookup_url_kwarg|http_method_names|permission_classes|REST_FRAMEWORK|serializer_class|Serializer\b|validators\s*=/;
 
 const URL_FUNCS = new Set(["path", "re_path", "url"]);
 
@@ -410,7 +435,14 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   const body = cls.childForFieldName("body");
   if (!name || !body) return;
   const data: DjViewClassFact = {};
+  const validators = new Set<string>();
+  const fields = new Set<string>();
+  let metaFields: DrfSerializerFieldsFact["metaFields"];
   for (const stmt of body.namedChildren) {
+    if (stmt.type === "class_definition" && stmt.childForFieldName("name")?.text === "Meta") {
+      metaFields = metaFieldsOf(stmt) ?? metaFields;
+      continue;
+    }
     const expr = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
     if (expr?.type !== "assignment") continue;
     const left = expr.childForFieldName("left")?.text;
@@ -422,10 +454,28 @@ function classFact(cls: Node, facts: RouteFact[]): void {
       data.httpMethodNames = right.namedChildren.filter((c) => c.type === "string").map((c) => pyString(c.text).toLowerCase());
     } else if (left === "permission_classes" && (right.type === "list" || right.type === "tuple")) {
       data.permissionClasses = right.namedChildren.map((c) => c.text);
+    } else if (left === "serializer_class" && (right.type === "identifier" || right.type === "attribute")) {
+      data.serializerClass = right.text.split(".").pop()!;
+    } else if (right.type === "call") {
+      const callee = right.childForFieldName("function")?.text ?? "";
+      if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:Field|Serializer)$/.test(callee)) fields.add(left);
+      for (const arg of right.childForFieldName("arguments")?.namedChildren ?? []) {
+        const list = arg.type === "keyword_argument" && arg.childForFieldName("name")?.text === "validators" ? arg.childForFieldName("value") : null;
+        if (list?.type !== "list" && list?.type !== "tuple") continue;
+        for (const v of list.namedChildren) if (v.type === "identifier" || v.type === "attribute") validators.add(v.text);
+      }
     }
   }
   if (Object.keys(data).length > 0) {
     facts.push({ kind: DJ_VIEW_CLASS, line: cls.startPosition.row + 1, owner: name, data });
+  }
+  if (validators.size > 0 || fields.size > 0 || metaFields) {
+    const data: DrfSerializerFieldsFact = {
+      ...(fields.size > 0 ? { fields: [...fields] } : {}),
+      ...(metaFields ? { metaFields } : {}),
+      ...(validators.size > 0 ? { validators: [...validators] } : {}),
+    };
+    facts.push({ kind: DRF_SERIALIZER_FIELDS, line: cls.startPosition.row + 1, owner: name, data });
   }
   // `self.routes[0].mapping.update({"put": "bulk_update", …})` in a router's methods.
   const mapping = /\bself\.routes\[0\]\.mapping\.update\(\s*\{([^}]*)\}/.exec(body.text);
@@ -434,6 +484,24 @@ function classFact(cls: Node, facts: RouteFact[]): void {
     for (const m of mapping[1]!.matchAll(/["'](get|post|put|patch|delete)["']\s*:\s*["'](\w+)["']/gi)) listActions[m[1]!.toUpperCase()] = m[2]!;
     if (Object.keys(listActions).length > 0) facts.push({ kind: DRF_ROUTER_CLASS, line: cls.startPosition.row + 1, owner: name, data: { listActions } satisfies DrfRouterClassFact });
   }
+}
+
+/** `class Meta: fields = ["name", "nickname"]` → those names; `"__all__"` / `exclude = …` → every field; else null. */
+function metaFieldsOf(meta: Node): DrfSerializerFieldsFact["metaFields"] | null {
+  for (const stmt of meta.childForFieldName("body")?.namedChildren ?? []) {
+    const expr = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (expr?.type !== "assignment") continue;
+    const left = expr.childForFieldName("left")?.text;
+    const right = expr.childForFieldName("right");
+    if (!right) continue;
+    if (left === "exclude") return "__all__";
+    if (left !== "fields") continue;
+    if (right.type === "string") return pyString(right.text) === "__all__" ? "__all__" : null;
+    if (right.type !== "list" && right.type !== "tuple") return null;
+    const names = right.namedChildren.filter((c) => c.type === "string").map((c) => pyString(c.text));
+    return names.length === right.namedChildren.length ? names : null;
+  }
+  return null;
 }
 
 /** A dictionary's list of dotted class paths under `key`, as class names (`rest_framework.permissions.IsAuthenticated` → `IsAuthenticated`). */

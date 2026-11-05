@@ -1,5 +1,6 @@
 import { pythonMigrationFiles } from "./migration-files.js";
 import { pythonProjectCommands } from "./project-commands.js";
+import { djangoTestSetupRuns } from "./django/test-setup.js";
 import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
@@ -21,6 +22,7 @@ export const pythonManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|urllib\.request\.urlopen|urlopen|subprocess\.(?:run|call|check_call|check_output))$/,
   testCommand: pythonTestCommand,
   projectCommands: pythonProjectCommands,
+  testSetupRuns: djangoTestSetupRuns,
   language: "python",
   // An Azure Functions app serves its HTTP triggers under host.json's route prefix.
   serviceConfig: { sources: [azureHostJson], routeBaseOf: azureRouteBase },

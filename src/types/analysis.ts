@@ -3942,6 +3942,13 @@ export interface ProjectAnalysis {
    * go.mod, Cargo.toml, …) — per language plugin, the first plugin to name a kind for a root wins.
    */
   projectCommands?: Array<{ projectId: string; root: string; kind: "build" | "test" | "start" | "dev" | "lint"; command: string; source: string }>;
+  /**
+   * Files a test framework runs while it sets a test run up, before any test calls them — a
+   * migration applied to the test database, an application's start-up hook — each with why, as
+   * the language plugin reads its project's test configuration (`LanguagePluginManifest.testSetupRuns`).
+   * The test verdict counts them tested (`test-setup`).
+   */
+  testSetupRuns?: Array<{ file: string; reason: string }>;
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the

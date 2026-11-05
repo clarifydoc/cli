@@ -193,8 +193,11 @@ export function testReachWalker(
   };
 }
 
-/** What a file's test verdict rests on: a test file depending on it, a test reaching one of its functions, a coverage report that ran its lines. */
-export type TestVerdictBasis = "importer" | "reached-function" | "coverage";
+/**
+ * What a file's test verdict rests on: a test file depending on it, a test reaching one of its functions, a coverage
+ * report that ran its lines, the test framework running it while it sets a test run up (`testSetupRuns`).
+ */
+export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "test-setup";
 
 /**
  * Whether a file is tested, by the one rule every reader shares:
@@ -204,7 +207,8 @@ export type TestVerdictBasis = "importer" | "reached-function" | "coverage";
  *   them from; the bases below are still reported;
  * - `tested` — a test file depends on it (component graph), a test reaches one of its functions
  *   through the call graph (`testsReachingEach`, six calls at most — a route counting as one, crossed
- *   only from a test's own in-process request), or a coverage report ran some of its lines;
+ *   only from a test's own in-process request), a coverage report ran some of its lines, or the test
+ *   framework runs it while setting a test run up (a migration applied to the test database);
  * - `untested` — none of those.
  */
 export interface FileTestVerdict {
@@ -222,6 +226,8 @@ export interface FileTestVerdict {
   reach: Map<string, TestReach>;
   /** Its row in the coverage report, when one names it with lines. */
   coverage?: FileTestCoverage;
+  /** Why the test framework runs it while setting a test run up, when it does. */
+  testSetup?: string;
 }
 
 /** The parts of an analysis `fileTestVerdict` reads, built once for many files. */
@@ -231,15 +237,18 @@ export interface TestVerdictContext {
   reach(targets: ReadonlyArray<{ file: string; symbol: string }>): Map<string, TestReach>;
   /** The file's row in the coverage report, if it names the file. */
   coverageRow(path: string): FileTestCoverage | undefined;
+  /** Why the test framework runs the file while setting a test run up, if it does. */
+  testSetupOf(path: string): string | undefined;
 }
 
-type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage">;
+type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns">;
 
 export function testVerdictContext(summary: VerdictSummary): TestVerdictContext {
   const testCode = testCodeIndex(summary);
   let importers: Map<string, string[]> | undefined;
   let walker: ReturnType<typeof testReachWalker> | undefined;
   let coverage: Map<string, FileTestCoverage> | undefined;
+  let setup: Map<string, string> | undefined;
   return {
     testCode,
     testImportersOf(path) {
@@ -260,6 +269,10 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
     coverageRow(path) {
       coverage ??= new Map((summary.testCoverage?.files ?? []).map((f) => [f.file, f]));
       return coverage.get(path);
+    },
+    testSetupOf(path) {
+      setup ??= new Map((summary.testSetupRuns ?? []).map((r) => [r.file, r.reason]));
+      return setup.get(path);
     },
   };
 }
@@ -289,6 +302,8 @@ export function fileTestVerdict(
   const row = ctx.coverageRow(path);
   const coverage = row && row.total > 0 ? row : undefined;
   if (coverage && coverage.covered > 0) basis.push("coverage");
+  const testSetup = ctx.testSetupOf(path);
+  if (testSetup) basis.push("test-setup");
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
-  return { state, basis, declared, importers, functions, reach, ...(coverage ? { coverage } : {}) };
+  return { state, basis, declared, importers, functions, reach, ...(coverage ? { coverage } : {}), ...(testSetup ? { testSetup } : {}) };
 }
