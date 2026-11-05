@@ -131,3 +131,21 @@ describe("PEP 508 requirements", () => {
     expect(deps).toEqual(["gearbox@prod ==1.4.2", "pitstop@prod >=3.1", "paddock@prod"]);
   });
 });
+
+describe("import ↔ distribution names", () => {
+  const spec = pypiPackageManager;
+  it("maps a module that is not its distribution's name to the distribution", () => {
+    const pairs: [string, string][] = [
+      ["yaml", "PyYAML"], ["PIL.Image", "Pillow"], ["sklearn.tree", "scikit-learn"], ["bs4", "beautifulsoup4"],
+      ["cv2", "opencv-python-headless"], ["cv2", "opencv-python"], ["dateutil.parser", "python-dateutil"],
+      ["jwt", "PyJWT"], ["dotenv", "python-dotenv"], ["google.protobuf.message", "protobuf"], ["attr", "attrs"],
+      ["google.cloud.storage", "google-cloud-storage"], ["django.db.models", "Django"], ["typing_extensions", "typing-extensions"],
+    ];
+    for (const [imported, dist] of pairs) expect(spec.importKey!(imported)).toBe(spec.packageKey!(dist));
+  });
+  it("keeps a namesake apart and a relative import out", () => {
+    expect(spec.importKey!("yaml_tools")).not.toBe(spec.packageKey!("PyYAML"));
+    expect(spec.importKey!("google.protobuf")).not.toBe(spec.packageKey!("google-cloud-storage"));
+    expect(spec.importKey!(".yaml")).toBeNull();
+  });
+});

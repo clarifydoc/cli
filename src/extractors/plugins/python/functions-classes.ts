@@ -7,6 +7,8 @@ import { scanRequestAccess } from "./request-access.js";
 import { pyStringValue } from "./data-sources.js";
 import {
   annotatedAliases,
+  typeVarBounds,
+  typeParameterBounds,
   annotationToken,
   collectInstanceAttributes,
   collectLocalTypes,
@@ -65,7 +67,7 @@ export class PythonExtractor extends FunctionClassExtractor {
   private aliases: ReadonlyMap<string, string> = new Map();
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
-    this.aliases = annotatedAliases(tree.rootNode, sourceText);
+    this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
     try {
       return super.extractFunctions(tree, sourceText);
     } finally {
@@ -74,7 +76,7 @@ export class PythonExtractor extends FunctionClassExtractor {
   }
 
   override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
-    this.aliases = annotatedAliases(tree.rootNode, sourceText);
+    this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
     try {
       const classes = super.extractClasses(tree, sourceText);
       if (sourceText.includes(".register(")) applyVirtualSubclasses(tree.rootNode, classes);
@@ -186,7 +188,8 @@ export class PythonExtractor extends FunctionClassExtractor {
   private parsePythonFunction(node: Node): ParsedFunction {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
     const paramsNode = node.childForFieldName("parameters");
-    const params: ParamInfo[] = paramsNode ? pythonParams(paramsNode, this.aliases) : [];
+    const bounds = typeParameterBounds(node);
+    const params: ParamInfo[] = paramsNode ? pythonParams(paramsNode, bounds?.size ? new Map([...this.aliases, ...bounds]) : this.aliases) : [];
 
     const body0 = node.childForFieldName("body");
     // Unannotated: the one class every `return` constructs (`return AllRepositories(session)`).

@@ -187,6 +187,52 @@ export function annotatedAliases(root: Node, sourceText: string): Map<string, st
   return out;
 }
 
+/**
+ * Module-level `T = TypeVar("T", bound=Club)` (a quoted `bound="Club"` too): name → the bound's text, so a
+ * parameter annotated `x: T` is typed as the bound a member read on it can name. A constrained
+ * `TypeVar("T", A, B)` names no one type and is left out.
+ */
+export function typeVarBounds(root: Node, sourceText: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!sourceText.includes("TypeVar")) return out;
+  for (const stmt of root.namedChildren) {
+    const a = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (a?.type !== "assignment") continue;
+    const name = a.childForFieldName("left");
+    const call = a.childForFieldName("right");
+    if (name?.type !== "identifier" || call?.type !== "call") continue;
+    const callee = call.childForFieldName("function")?.text ?? "";
+    if (callee !== "TypeVar" && !callee.endsWith(".TypeVar")) continue;
+    for (const arg of call.childForFieldName("arguments")?.namedChildren ?? []) {
+      if (arg.type !== "keyword_argument" || arg.childForFieldName("name")?.text !== "bound") continue;
+      const value = arg.childForFieldName("value");
+      const text = value?.type === "string" ? value.text.replace(/^[rRbBuUfF]*["']+|["']+$/g, "") : value?.text;
+      if (text && /^[A-Za-z_][\w.]*$/.test(text.trim())) out.set(name.text, text.trim());
+    }
+  }
+  return out;
+}
+
+/** PEP 695 `def f[T: Club]` / `class Box[T: Club]`: the bounds a definition and its enclosing classes declare, innermost winning. */
+export function typeParameterBounds(def: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  for (let n: Node | null = def; n; n = n.parent) {
+    if (n.type !== "function_definition" && n.type !== "class_definition") continue;
+    const list = n.childForFieldName("type_parameters");
+    if (!list) continue;
+    for (const t of list.namedChildren) {
+      const constrained = t.namedChild(0);
+      if (constrained?.type !== "constrained_type") continue;
+      const name = constrained.namedChild(0)?.text;
+      const bound = constrained.namedChild(1);
+      if (!name || !bound || out.has(name)) continue;
+      const text = bound.text.trim();
+      if (bound.namedChild(0)?.type === "identifier" || bound.namedChild(0)?.type === "attribute") out.set(name, text);
+    }
+  }
+  return out;
+}
+
 // ─── What a value is ─────────────────────────────────────────────────────────
 
 /** Receivers whose `.get(T)` / `.resolve(T)` is a container lookup. */
