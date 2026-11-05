@@ -16,14 +16,15 @@ export interface LaravelRoutingFact {
   apiPrefix: string;
 }
 
-/** `withRouting(api: …, apiPrefix: '…')` as the prefix it states; null when it states none. */
+/** `withRouting(api: …, apiPrefix: '…')`: the API file and the prefix (default `api`); null when it states neither. */
 export function laravelRoutingFact(source: string): LaravelRoutingFact | null {
   const start = source.indexOf("withRouting(");
   if (start < 0) return null;
   const prefix = /\bapiPrefix\s*:\s*(['"])([^'"]*)\1/.exec(source.slice(start));
-  if (!prefix) return null;
   const file = /\bapi\s*:\s*__DIR__\s*\.\s*(['"])([^'"]+)\1/.exec(source.slice(start));
-  return { apiFile: file ? file[2]!.replace(/^\//, "") : null, apiPrefix: prefix[2]!.replace(/^\/+|\/+$/g, "") };
+  if (!prefix && !file) return null;
+  // No `apiPrefix` is Laravel's default, `api`: it matters for an API file the extractor does not know by name.
+  return { apiFile: file ? file[2]!.replace(/^\//, "") : null, apiPrefix: prefix ? prefix[2]!.replace(/^\/+|\/+$/g, "") : "api" };
 }
 
 export const laravelRoutingResolver: RouteResolver = {
@@ -37,8 +38,15 @@ export const laravelRoutingResolver: RouteResolver = {
       const apiFile = path.normalize(path.join(path.dirname(bootstrap.filePath), fact.apiFile ?? "../routes/api.php"));
       for (const a of analyses) {
         if (a.filePath !== apiFile) continue;
+        // `routes/api.php` has the default prefix baked in by the extractor; any other file named as the API has none.
+        const baked = /(^|\/)routes\/api\.php$/i.test(a.filePath);
         a.routes = a.routes.map((r) => {
-          if (r.kind !== "api" || !/^\/api(?:\/|$)/.test(r.path)) return r;
+          if (r.kind !== "api") return r;
+          if (!baked) {
+            const joined = `/${fact.apiPrefix}/${r.path}`.replace(/\/{2,}/g, "/");
+            return { ...r, path: joined.length > 1 ? joined.replace(/\/$/, "") : "/" };
+          }
+          if (!/^\/api(?:\/|$)/.test(r.path)) return r;
           const rest = r.path.slice("/api".length);
           const joined = `/${fact.apiPrefix}${rest}`.replace(/\/{2,}/g, "/");
           return { ...r, path: joined.length > 1 ? joined.replace(/\/$/, "") : "/" };
