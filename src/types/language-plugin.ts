@@ -1067,6 +1067,32 @@ export interface TestCommandContext {
   manifests: ReadonlySet<string>;
 }
 
+/** One translation unit of a compilation database: what its compiler command line states, paths as written. */
+export interface CompileUnit {
+  /** The source file, as written (absolute, or relative to `directory`). */
+  file: string;
+  /** The directory the command ran in; relative paths of the entry are from here. */
+  directory: string;
+  /** `-iquote` directories: searched for `#include "x"` only. */
+  quoteDirs: string[];
+  /** `-I` directories, in order. */
+  includeDirs: string[];
+  /** `-isystem` / `-idirafter` directories, searched after `-I`. */
+  systemDirs: string[];
+  /** `-D` and `-U` in command-line order. */
+  macros: Array<{ name: string; value?: string; undefined?: boolean }>;
+}
+
+/** A compilation database a language's toolchain writes: where it sits and how its entries read. */
+export interface CompilationDatabaseSpec {
+  /** Files looked for at each sub-project root (`compile_commands.json`, `build/compile_commands.json`). */
+  files: readonly string[];
+  parse(text: string): CompileUnit[];
+}
+
+/** The macros a translation unit's command line sets, in order: what a parser front end judges `#ifdef` by. */
+export type BuildMacros = ReadonlyArray<{ name: string; value?: string; undefined?: boolean }>;
+
 /** What a plugin's import resolver may ask of the project (`LanguagePluginManifest.resolveImport`). */
 export interface ImportResolveContext {
   /** Every analyzed file, posix paths from the project root. */
@@ -1113,6 +1139,13 @@ export interface LanguagePluginManifest {
    * (`core/module-search-paths.ts`). Unset: the generic path rules decide.
    */
   moduleSearchPaths?: ModuleSearchPathSpec;
+  /**
+   * The compilation database the project's build writes (`compile_commands.json`): per translation unit its
+   * include directories — an `#include` searches them in the compiler's order before core's suffix fallback — and
+   * its macros, which pick the live arm of `#ifdef`/`#if defined()` where the macro's state is known
+   * (`core/compilation-database.ts`). Headers are never entries of it.
+   */
+  compilationDatabase?: CompilationDatabaseSpec;
   /**
    * The project file an import names, for a language whose imports name
    * modules by a path of its own (`crate::util`, `other_crate::persistence`):
@@ -1719,7 +1752,7 @@ export interface ParserFrontEnd {
   /** The grammar's name, as the feature names it (`antlr:go`, `tree-sitter:swift`). */
   grammar: string;
   /** Loaded on first use: the parsers are large and most runs never need them. */
-  load(): Promise<(source: string) => ParsedStructure>;
+  load(): Promise<(source: string, macros?: BuildMacros) => ParsedStructure>;
   /**
    * The extensions the grammar reads, when the language claims files it does not (Play's `conf/routes` is Scala's):
    * any other file keeps the regex reading without a parse. Absent: every file of the language.

@@ -4,17 +4,85 @@
  * function header written once per platform before one body) is read again with one branch of each. Lines and
  * columns are kept: a blanked line is spaces.
  */
-import type { ParsedStructure } from "../../../types/language-plugin.js";
+import type { BuildMacros, ParsedStructure } from "../../../types/language-plugin.js";
 import type { ConditionalBlock } from "./regex-base.js";
 
 /** The directive a line holds, its continuation lines (`\` at the end) joined. */
 const DIRECTIVE = /^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$/;
 
-/** A conditional the text is in: which of its `count` branches, and whether its first is `dead`. */
+/** A conditional the text is in: which of its `count` branches, and which branches no compiler takes (`dead`). */
 export interface Frame {
   branch: number;
   count: number;
-  dead: boolean;
+  dead: readonly boolean[];
+}
+
+/** A macro's state: its value (`""` for one defined with none), or null when it is known undefined. Absent: unknown. */
+type MacroState = Map<string, string | null>;
+
+const DEFINE = /^\s*#\s*(define|undef)\s+([A-Za-z_]\w*)(?:\s+(.*))?/;
+
+/** A condition's value in three-valued logic: undefined when a macro it reads is not known. */
+function evaluate(cond: string, macros: MacroState): boolean | undefined {
+  const tokens = cond.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/g, " ").match(/defined|&&|\|\||==|!=|<=|>=|[()!<>]|\d+|[A-Za-z_]\w*|\S/g) ?? [];
+  let at = 0;
+  let bad = false;
+  const number = (v: string | null | undefined): number | undefined => (v === null ? 0 : v !== undefined && /^\d+$/.test(v) ? Number(v) : undefined);
+  const primary = (): number | undefined => {
+    const t = tokens[at++];
+    if (t === undefined) { bad = true; return undefined; }
+    if (t === "(") {
+      const v = or();
+      if (tokens[at++] !== ")") bad = true;
+      return v;
+    }
+    if (t === "!") {
+      const v = primary();
+      return v === undefined ? undefined : v === 0 ? 1 : 0;
+    }
+    if (t === "defined") {
+      const paren = tokens[at] === "(";
+      if (paren) at++;
+      const name = tokens[at++];
+      if (paren && tokens[at++] !== ")") bad = true;
+      if (name === undefined || !/^[A-Za-z_]\w*$/.test(name)) { bad = true; return undefined; }
+      return macros.has(name) ? (macros.get(name) === null ? 0 : 1) : undefined;
+    }
+    if (/^\d+$/.test(t)) return Number(t);
+    if (/^[A-Za-z_]\w*$/.test(t)) return macros.has(t) ? number(macros.get(t)) : undefined;
+    bad = true;
+    return undefined;
+  };
+  const compare = (): number | undefined => {
+    let left = primary();
+    while (tokens[at] && /^(==|!=|<=|>=|<|>)$/.test(tokens[at]!)) {
+      const op = tokens[at++]!;
+      const right = primary();
+      if (left === undefined || right === undefined) left = undefined;
+      else left = (op === "==" ? left === right : op === "!=" ? left !== right : op === "<" ? left < right : op === ">" ? left > right : op === "<=" ? left <= right : left >= right) ? 1 : 0;
+    }
+    return left;
+  };
+  const and = (): number | undefined => {
+    let left = compare();
+    while (tokens[at] === "&&") {
+      at++;
+      const right = compare();
+      left = left === 0 || right === 0 ? 0 : left === undefined || right === undefined ? undefined : 1;
+    }
+    return left;
+  };
+  const or = (): number | undefined => {
+    let left = and();
+    while (tokens[at] === "||") {
+      at++;
+      const right = and();
+      left = (left !== undefined && left !== 0) || (right !== undefined && right !== 0) ? 1 : left === undefined || right === undefined ? undefined : 0;
+    }
+    return left;
+  };
+  const v = or();
+  return bad || at < tokens.length || v === undefined ? undefined : v !== 0;
 }
 
 /**
@@ -30,20 +98,75 @@ function deadCondition(kind: string, rest: string, cplusplus: boolean): boolean 
 }
 
 /**
- * The text with conditional branches blanked out, lines and columns kept. A frame's first branch is `dead` when no
- * compiler takes it; `keep(frame)` says whether the branch a line is in stays.
+ * Which branches of each conditional no compiler takes, in the order the conditionals open. A branch is dead when its
+ * condition is false (`#if 0`, `__cplusplus` as the language says, a macro known to the build or the file) or an
+ * earlier branch certainly runs. With `buildMacros` (a compilation database's `-D`/`-U`) the file's own `#define`/`#undef`
+ * lines count too, where every conditional around them is known taken; one inside a conditional whose outcome is not
+ * known leaves the macro unknown. Without `buildMacros` only the language's own dead conditions are judged.
  */
-function blankBranches(text: string, cplusplus: boolean, keep: (frame: Frame) => boolean): string {
-  const lines = text.split("\n");
-  // How many branches each conditional has, in the order they open.
-  const counts: number[] = [];
-  const open: number[] = [];
-  for (const line of lines) {
-    const kind = DIRECTIVE.exec(line)?.[1];
-    if (kind === "if" || kind === "ifdef" || kind === "ifndef") open.push(counts.push(1) - 1);
-    else if (kind === "endif") open.pop();
-    else if (kind && open.length > 0) counts[open.at(-1)!]!++;
+function deadBranches(lines: readonly string[], cplusplus: boolean, buildMacros: BuildMacros | undefined): boolean[][] {
+  const macros: MacroState = new Map();
+  for (const m of buildMacros ?? []) macros.set(m.name, m.undefined ? null : (m.value ?? "1"));
+  const judge = buildMacros !== undefined;
+  const condition = (kind: string, rest: string): boolean | undefined => {
+    if (deadCondition(kind, rest, cplusplus)) return false;
+    if (!judge) return undefined;
+    const name = /^[A-Za-z_]\w*/.exec(rest.trim())?.[0];
+    if (kind === "ifdef" || kind === "elifdef") return name && macros.has(name) ? macros.get(name) !== null : undefined;
+    if (kind === "ifndef" || kind === "elifndef") return name && macros.has(name) ? macros.get(name) === null : undefined;
+    return evaluate(rest, macros);
+  };
+  const out: boolean[][] = [];
+  // Per open conditional: its row, whether every earlier branch is known false, whether one certainly ran, and
+  // whether the branch the text is in is known taken / known dead.
+  const stack: Array<{ row: boolean[]; allFalse: boolean; ran: boolean; certain: boolean; dead: boolean }> = [];
+  const branch = (frame: (typeof stack)[number], cond: boolean | undefined, parent: { certain: boolean; dead: boolean }): void => {
+    const dead = cond === false || frame.ran;
+    frame.row.push(dead);
+    frame.dead = parent.dead || dead;
+    frame.certain = parent.certain && cond === true && frame.allFalse;
+    if (cond === true && frame.allFalse) frame.ran = true;
+    frame.allFalse = frame.allFalse && cond === false;
+  };
+  const top = { certain: true, dead: false };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.includes("#")) continue;
+    const m = DIRECTIVE.exec(line);
+    if (m) {
+      const kind = m[1]!;
+      if (kind === "if" || kind === "ifdef" || kind === "ifndef") {
+        const frame = { row: [] as boolean[], allFalse: true, ran: false, certain: false, dead: false };
+        out.push(frame.row);
+        stack.push(frame);
+        branch(frame, condition(kind, m[2]!), stack.length > 1 ? stack.at(-2)! : top);
+      } else if (kind === "endif") {
+        stack.pop();
+      } else if (stack.length > 0) {
+        branch(stack.at(-1)!, kind === "else" ? true : condition(kind, m[2]!), stack.length > 1 ? stack.at(-2)! : top);
+      }
+      while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
+      continue;
+    }
+    if (!judge) continue;
+    const d = DEFINE.exec(line);
+    if (!d) continue;
+    const here = stack.at(-1) ?? top;
+    if (here.dead) continue;
+    if (!here.certain) macros.delete(d[2]!);
+    else if (d[1] === "undef") macros.set(d[2]!, null);
+    else macros.set(d[2]!, (d[3] ?? "").trim());
   }
+  return out;
+}
+
+/**
+ * The text with conditional branches blanked out, lines and columns kept. A frame's `dead` says which of its
+ * branches no compiler takes; `keep(frame)` says whether the branch a line is in stays.
+ */
+function blankBranches(text: string, cplusplus: boolean, keep: (frame: Frame) => boolean, macros?: BuildMacros): string {
+  const lines = text.split("\n");
+  const rows = deadBranches(lines, cplusplus, macros);
   const frames: Frame[] = [];
   let opened = 0;
   let changed = false;
@@ -51,8 +174,10 @@ function blankBranches(text: string, cplusplus: boolean, keep: (frame: Frame) =>
     const m = DIRECTIVE.exec(lines[i]!);
     if (m) {
       const kind = m[1]!;
-      if (kind === "if" || kind === "ifdef" || kind === "ifndef") frames.push({ branch: 0, count: counts[opened++]!, dead: deadCondition(kind, m[2]!, cplusplus) });
-      else if (kind === "endif") frames.pop();
+      if (kind === "if" || kind === "ifdef" || kind === "ifndef") {
+        const dead = rows[opened++]!;
+        frames.push({ branch: 0, count: dead.length, dead });
+      } else if (kind === "endif") frames.pop();
       else if (frames.length > 0) frames.at(-1)!.branch++;
       while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
       continue;
@@ -65,22 +190,25 @@ function blankBranches(text: string, cplusplus: boolean, keep: (frame: Frame) =>
   return changed ? lines.join("\n") : text;
 }
 
-/** Dead blocks (`#if 0`) blanked, their `#else` kept. */
-function withoutDeadCode(text: string, cplusplus: boolean): string {
+/** Dead blocks (`#if 0`, a branch the build's macros rule out) blanked, their live branches kept. */
+function withoutDeadCode(text: string, cplusplus: boolean, macros?: BuildMacros): string {
   if (!text.includes("#")) return text;
-  return blankBranches(text, cplusplus, (f) => !(f.dead && f.branch === 0));
+  return blankBranches(text, cplusplus, (f) => !f.dead[f.branch], macros);
 }
 
-/** Only the first branch of every conditional kept (the live one after a dead `#if 0`). */
-function firstBranches(text: string, cplusplus: boolean): string {
+/** The branch a conditional reads as its first: the first no compiler rules out. */
+const firstLive = (f: Frame): number => Math.max(0, f.dead.indexOf(false));
+
+/** Only the first live branch of every conditional kept (the live one after a dead `#if 0`). */
+function firstBranches(text: string, cplusplus: boolean, macros?: BuildMacros): string {
   if (!text.includes("#")) return text;
-  return blankBranches(text, cplusplus, (f) => f.branch === (f.dead ? 1 : 0));
+  return blankBranches(text, cplusplus, (f) => f.branch === firstLive(f), macros);
 }
 
 /** Only the second branch of every conditional kept, or its only one: what an `#else` defines for another platform. */
-function secondBranches(text: string, cplusplus: boolean): string {
+function secondBranches(text: string, cplusplus: boolean, macros?: BuildMacros): string {
   if (!text.includes("#")) return text;
-  return blankBranches(text, cplusplus, (f) => f.branch === (f.dead ? 1 : Math.min(1, f.count - 1)));
+  return blankBranches(text, cplusplus, (f) => f.branch === (f.dead[0] ? firstLive(f) : Math.min(1, f.count - 1)), macros);
 }
 
 /**
@@ -135,15 +263,15 @@ type Read = (text: string, also?: string) => ParsedStructure;
  * parse, with only the first branch of every conditional (the other branches' calls counted where they fall), plus
  * the functions a second-branch reading defines where the first branches left nothing — another platform's `#else`.
  */
-export function readWithBranches(text: string, cplusplus: boolean, read: Read): ParsedStructure {
-  const compiled = withoutDeadCode(text, cplusplus);
+export function readWithBranches(text: string, cplusplus: boolean, read: Read, macros?: BuildMacros): ParsedStructure {
+  const compiled = withoutDeadCode(text, cplusplus, macros);
   const first = read(compiled);
   if (first.syntaxErrors === 0) return first;
-  const branches = firstBranches(compiled, cplusplus);
+  const branches = firstBranches(compiled, cplusplus, macros);
   if (branches === compiled) return first;
   const second = read(branches, leftOut(compiled, branches));
   if (second.syntaxErrors > 0) return first;
-  const others = secondBranches(compiled, cplusplus);
+  const others = secondBranches(compiled, cplusplus, macros);
   if (others === branches) return second;
   const third = read(others);
   if (third.syntaxErrors > 0) return second;

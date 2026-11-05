@@ -1,5 +1,5 @@
 import { Token, TerminalNode, type ParserRuleContext, type ParseTree } from "antlr4ng";
-import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
+import type { BuildMacros, ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { CPP14Lexer } from "../../../parsers/antlr/cpp/CPP14Lexer.js";
 import {
   CompoundStatementContext,
@@ -72,12 +72,12 @@ const CPP_TOKENS: TokenKinds = {
  * `new Club(` as `Club`, a method on a call's result as the chain from its first call; a statement macro by its name,
  * its arguments read off the tokens, as are a `#define` inside a function's.
  */
-export function readCpp(source: string): ParsedStructure {
-  const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read);
+export function readCpp(source: string, macros?: BuildMacros): ParsedStructure {
+  const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
   if (parsed.syntaxErrors === 0 || CPP_ONLY.test(codeOnly(source))) return parsed;
   // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
   // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
-  const asC = readC(source);
+  const asC = readC(source, macros);
   return asC.syntaxErrors === 0 ? asC : parsed;
 }
 

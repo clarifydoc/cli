@@ -2,6 +2,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 import { cppFrameworkRules } from "./frameworks.js";
 import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js";
+import { parseCompileCommands } from "../shared/compile-commands.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -21,6 +22,8 @@ export const cppManifest: LanguagePluginManifest = {
   extensions: [".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh"],
   vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
   // `#include "helpers.h"` puts what the header declares in scope; `helpers.cc` holds the bodies.
+  // `compile_commands.json`: per file the include directories an `#include` searches and the `-D` macros.
+  compilationDatabase: { files: ["compile_commands.json", "build/compile_commands.json"], parse: parseCompileCommands },
   importsShareScope: true,
   declarationExtensions: [".h", ".hpp", ".hxx", ".hh", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.

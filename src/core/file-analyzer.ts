@@ -26,7 +26,7 @@ import { isSuppressed } from "./security-rules.js";
 import { isGeneratedSource, vendoredLibraryOf } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
-import type { ParsedStructure, VariableAliasBinding } from "../types/language-plugin.js";
+import type { BuildMacros, ParsedStructure, VariableAliasBinding } from "../types/language-plugin.js";
 import { featureEnabled } from "./feature-flags.js";
 import type { CallInfo, ClassInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -106,6 +106,8 @@ export interface FileTask {
    * `{ skip }`), so an incremental run can remember the refusal by content hash.
    */
   reportSkips?: boolean;
+  /** The macros the file's translation unit sets on its command line (compilation database): `#ifdef` is judged by them. */
+  buildMacros?: BuildMacros;
 }
 
 /** A file its plugin refused by content: what `analyzeFile` returns for it when the task sets `reportSkips`. */
@@ -164,6 +166,7 @@ export async function readWithParser(
   source: string,
   filePath: string,
   generated = false,
+  buildMacros?: BuildMacros,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
@@ -179,7 +182,7 @@ export async function readWithParser(
   if (source.length > FRONT_END_MAX_CHARS) return { frontEnd: { parser, grammar, fallback: "too-large" } };
   try {
     const read = await frontEnd.load();
-    const parsed = read(source);
+    const parsed = read(source, buildMacros);
     if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors } };
     return { parsed, frontEnd: { parser, grammar } };
   } catch {
@@ -409,7 +412,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated);
+      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated, task.buildMacros);
       const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
       if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;

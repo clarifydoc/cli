@@ -1,5 +1,5 @@
 import { Token, TerminalNode, type ParserRuleContext, type ParseTree } from "antlr4ng";
-import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
+import type { BuildMacros, ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { CLexer } from "../../../parsers/antlr/c/CLexer.js";
 import {
   CompoundStatementContext,
@@ -59,8 +59,8 @@ const C_TOKENS: TokenKinds = {
  * its tokens the same way (`tokenCalls`): a macro's arguments (`expect_cond("x", cmp(a, b) > 0)`) and a `#define`
  * inside a function, whose calls the function makes where it uses the macro.
  */
-export function readC(source: string): ParsedStructure {
-  return readWithBranches(normalizeSource(source), false, read);
+export function readC(source: string, macros?: BuildMacros): ParsedStructure {
+  return readWithBranches(normalizeSource(source), false, read, macros);
 }
 
 /** A function the walk found: its span, the calls it makes so far, and the lines its definition covers. */

@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
+import { parseCompileCommands } from "../shared/compile-commands.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -17,6 +18,8 @@ export const cManifest: LanguagePluginManifest = {
   extensions: [".c"],
   vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
   // `#include "helpers.h"` puts what `helpers.h` declares in scope; `helpers.c` holds the bodies.
+  // `compile_commands.json`: per file the include directories an `#include` searches and the `-D` macros.
+  compilationDatabase: { files: ["compile_commands.json", "build/compile_commands.json"], parse: parseCompileCommands },
   importsShareScope: true,
   declarationExtensions: [".h"],
 };
