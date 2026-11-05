@@ -4,7 +4,7 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { updateLsp } from "../core/lsp-updater.js";
-import { decodeScip, mergeScip, scipAnswers, scipPathMapper } from "./scip.js";
+import { decodeScip, mergeScip, scipAnswers, scipFileAnswers, scipPathMapper } from "./scip.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 
 // A protobuf writer for the handful of fields an index needs.
@@ -103,6 +103,45 @@ describe("mergeScip", () => {
     const a = decodeScip(index([["src/a.ts", [{ range: [0, 0, 4], symbol: SHARED }]]]));
     const b = decodeScip(index([["src/b.ts", [{ range: [6, 0, 4], symbol: SHARED, def: true }]]], "file:///repo", "scip-other"));
     expect(scipAnswers(mergeScip([a, b]), [{ file: "src/a.ts", line: 1, column: 1, callName: "Club", language: "typescript" }]).answers[0]!.targets).toEqual([{ file: "src/b.ts", line: 7 }]);
+  });
+});
+
+describe("scipFileAnswers", () => {
+  it("answers as the in-memory reader does, reading one document at a time", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-scip-stream-"));
+    try {
+      const RUN = "scip-typescript npm app 1.0 src/`b.ts`/run().";
+      const club = "scip-other npm app 1.0 api/`club.py`/Club#";
+      docExtras.clear();
+      docExtras.set("web/src/a.ts", { enc: 1 });
+      const ts = index([
+        ["web/src/a.ts", [{ range: [], typed: [0, 15, 18], symbol: RUN }, { range: [], typed: [2, 1, 4], symbol: "local 1" }, { range: [], typed: [1, 1, 4], symbol: "local 1", def: true }]],
+        ["web/src/b.ts", [{ range: [], typed: [9, 16, 19], symbol: RUN, def: true }, { range: [], typed: [3, 0, 4], symbol: club, roles: 0x21 }]],
+      ], "file:///repo/web");
+      docExtras.clear();
+      const py = index([["api/club.py", [{ range: [4, 6, 10], symbol: club, def: true }]], ["api/other.py", [{ range: [0, 0, 4], symbol: club }]]], "file:///repo", "scip-python");
+      await writeFile(join(dir, "ts.scip"), ts);
+      await writeFile(join(dir, "py.scip"), py);
+      const files = new Set(["web/src/a.ts", "web/src/b.ts", "api/club.py", "api/other.py"]);
+      const line = 'const \u26bd = 1; run()';
+      const queries: DefinitionQuery[] = [
+        { file: "web/src/a.ts", line: 1, column: line.indexOf("run"), callName: "run", language: "typescript" },
+        { file: "web/src/a.ts", line: 3, column: 2, callName: "x", language: "typescript" },
+        { file: "api/other.py", line: 1, column: 1, callName: "Club", language: "python" },
+      ];
+      const lineText = (p: string, l: number) => (p === "web/src/a.ts" && l === 0 ? line : undefined);
+      const streamed = scipFileAnswers([join(dir, "ts.scip"), join(dir, "py.scip")], queries, files, lineText);
+      const memory = scipAnswers(mergeScip([decodeScip(ts), decodeScip(py)], files), queries, undefined, lineText);
+      expect(streamed.answers).toEqual(memory.answers);
+      expect(streamed.servers).toEqual(["scip-typescript", "scip-python"]);
+      expect(streamed.documents).toBe(4);
+      expect(streamed.answers.map((a) => a.targets)).toEqual([[{ file: "web/src/b.ts", line: 10 }], [{ file: "web/src/a.ts", line: 2 }], [{ file: "api/club.py", line: 5 }]]);
+      await writeFile(join(dir, "cut.scip"), ts.subarray(0, ts.length - 14));
+      expect(() => scipFileAnswers([join(dir, "cut.scip")], queries, files)).toThrow();
+    } finally {
+      docExtras.clear();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

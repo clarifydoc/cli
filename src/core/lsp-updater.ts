@@ -132,9 +132,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     }
     let file: import("../lsp/answers-source.js").DefinitionAnswerFile;
     if (options.scip) {
-      const { decodeScip, mergeScip, scipAnswers } = await import("../lsp/scip.js");
-      const decoded = await Promise.all([options.scip].flat().map(async (f) => decodeScip(await readFile(resolve(f)))));
-      const index = mergeScip(decoded, new Set(perFileAnalyses.map((a) => a.filePath)));
+      const { scipFileAnswers } = await import("../lsp/scip.js");
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
       // A document that counts UTF-8 bytes or code points and embeds no text: its lines come from the project's own files.
       const lines = new Map<string, string[] | null>();
@@ -148,8 +146,10 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
         }
         return lines.get(rel)?.[line0];
       };
-      file = scipAnswers(index, queries, undefined, lineText);
-      if (verbose) console.log(`  SCIP: ${decoded.length} index(es), ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
+      const scipFiles = [options.scip].flat().map((f) => resolve(f));
+      const scip = scipFileAnswers(scipFiles, queries, new Set(perFileAnalyses.map((a) => a.filePath)), lineText);
+      file = scip;
+      if (verbose) console.log(`  SCIP: ${scipFiles.length} index(es), ${scip.documents} documents, ${file.answers.length}/${queries.length} questions answered`);
     } else if (options.lsif) {
       const { decodeLsif, lsifAnswers } = await import("../lsp/lsif.js");
       const dump = decodeLsif(await readFile(resolve(options.lsif), "utf8"));

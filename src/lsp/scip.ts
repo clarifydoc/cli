@@ -1,3 +1,4 @@
+import { closeSync, fstatSync, openSync, readSync } from "fs";
 import type { DefinitionAnswerFile } from "./answers-source.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 
@@ -260,6 +261,67 @@ function targetsOf(defs: ReadonlyArray<{ file: string; line: number; roles: numb
   return kept.map(({ file, line }) => ({ file, line }));
 }
 
+/** The documents of an index, paths already the analysis's; `wanted` lets a streaming source skip a document's occurrences. */
+type DocumentSource = (wanted?: (path: string) => boolean) => Iterable<ScipDocument>;
+
+/**
+ * The shared engine, two passes over the documents: the first finds the
+ * occurrence at each question's position (only documents that have a question
+ * are looked at) and answers a `local N` symbol from its own document; the
+ * second collects the definitions of the symbols those occurrences named,
+ * and nothing else — so a source that streams its documents never holds more
+ * than one.
+ */
+function answerFrom(
+  documents: DocumentSource,
+  queries: readonly DefinitionQuery[],
+  lineText?: (path: string, line0: number) => string | undefined,
+): DefinitionAnswerFile["answers"] {
+  const byPath = new Map<string, number[]>();
+  queries.forEach((q, i) => (byPath.get(q.file) ?? byPath.set(q.file, []).get(q.file)!).push(i));
+  const hits = new Map<number, { symbol: string; roles: number; targets?: Array<{ file: string; line: number }> }>();
+  const needed = new Set<string>();
+  for (const doc of documents((p) => byPath.has(p))) {
+    for (const qi of byPath.get(doc.path) ?? []) {
+      if (hits.has(qi)) continue;
+      const q = queries[qi]!;
+      const line0 = q.line - 1;
+      // Queries count UTF-16 code units (a column in the source string); the index counts what its document says.
+      const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
+      const at = doc.occurrences.find((o) => {
+        if (o.range.length < 3 || o.roles & DECLARES) return false;
+        const [sl, sc] = o.range as [number, number];
+        const el = o.range.length === 3 ? sl : o.range[2]!;
+        const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
+        return line0 >= sl && line0 <= el && (line0 > sl || q.column >= col(sl, sc)) && (line0 < el || q.column < col(el, ec));
+      });
+      if (!at) continue;
+      if (at.symbol.startsWith("local ")) {
+        const defs = doc.occurrences.filter((o) => o.symbol === at.symbol && o.roles & DECLARES && o.range.length >= 3);
+        hits.set(qi, { symbol: at.symbol, roles: at.roles, targets: targetsOf(defs.map((o) => ({ file: doc.path, line: o.range[0]! + 1, roles: o.roles })), at.roles) });
+      } else {
+        hits.set(qi, { symbol: at.symbol, roles: at.roles });
+        needed.add(at.symbol);
+      }
+    }
+  }
+  const definitions = new Map<string, Array<{ file: string; line: number; roles: number }>>();
+  if (needed.size) {
+    for (const doc of documents()) {
+      for (const o of doc.occurrences) {
+        if (!(o.roles & DECLARES) || !needed.has(o.symbol) || o.range.length < 3) continue;
+        (definitions.get(o.symbol) ?? definitions.set(o.symbol, []).get(o.symbol)!).push({ file: doc.path, line: o.range[0]! + 1, roles: o.roles });
+      }
+    }
+  }
+  const answers: DefinitionAnswerFile["answers"] = [];
+  queries.forEach((q, qi) => {
+    const hit = hits.get(qi);
+    if (hit) answers.push({ file: q.file, line: q.line, column: q.column, targets: hit.targets ?? targetsOf(definitions.get(hit.symbol) ?? [], hit.roles) });
+  });
+  return answers;
+}
+
 /**
  * Answers to the layer-2 questions from a SCIP index. Local symbols
  * (`local N`) resolve within their document; a definition outside the
@@ -272,43 +334,91 @@ export function scipAnswers(
   /** The text of a 0-based line of an analysis file, for a document whose offsets are not UTF-16 and which carries no text. */
   lineText?: (path: string, line0: number) => string | undefined,
 ): DefinitionAnswerFile {
-  const definitions = new Map<string, Array<{ file: string; line: number; roles: number }>>();
-  const byPath = new Map<string, ScipDocument[]>();
-  // `local N` is scoped to its document; two documents may share a path (two indexers).
-  const docIds = new Map<ScipDocument, number>();
-  const keyOf = (d: ScipDocument, symbol: string) => (symbol.startsWith("local ") ? `${docIds.get(d)}\u0000${symbol}` : symbol);
-  for (const d of index.documents) {
-    const path = mapPath(normalize(d.path));
-    if (!path) continue;
-    docIds.set(d, docIds.size);
-    (byPath.get(path) ?? byPath.set(path, []).get(path)!).push(d);
-    for (const o of d.occurrences) {
-      if (!(o.roles & DECLARES) || !o.symbol || o.range.length < 3) continue;
-      const key = keyOf(d, o.symbol);
-      (definitions.get(key) ?? definitions.set(key, []).get(key)!).push({ file: path, line: o.range[0]! + 1, roles: o.roles });
+  const documents: DocumentSource = function* () {
+    for (const d of index.documents) {
+      const path = mapPath(normalize(d.path));
+      if (path) yield path === d.path ? d : { ...d, path };
     }
-  }
-  const answers: DefinitionAnswerFile["answers"] = [];
-  for (const q of queries) {
-    const line0 = q.line - 1;
-    // Queries count UTF-16 code units (a column in the source string); the index counts what its document says.
-    let found: { doc: ScipDocument; at: ScipOccurrence } | undefined;
-    for (const doc of byPath.get(q.file) ?? []) {
-      const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
-      const at = doc.occurrences.find((o) => {
-        if (o.range.length < 3 || o.roles & DECLARES) return false;
-        const [sl, sc] = o.range as [number, number];
-        const el = o.range.length === 3 ? sl : o.range[2]!;
-        const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
-        return line0 >= sl && line0 <= el && (line0 > sl || q.column >= col(sl, sc)) && (line0 < el || q.column < col(el, ec));
-      });
-      if (at) {
-        found = { doc, at };
-        break;
+  };
+  return { source: "scip", servers: index.tools ?? [index.tool ?? "scip"], answers: answerFrom(documents, queries, lineText) };
+}
+
+/** Reads a SCIP file one top-level field at a time, so no more than one document is in memory. */
+function* fileFields(path: string): Generator<{ field: number; wire: number; payload: Buffer }> {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const head = Buffer.alloc(24);
+    let pos = 0;
+    while (pos < size) {
+      const n = readSync(fd, head, 0, head.length, pos);
+      const r = new Reader(head, n);
+      const tag = r.varint();
+      const field = Math.floor(tag / 8);
+      const wire = tag & 7;
+      if (wire === 2) {
+        const len = r.varint();
+        const payload = Buffer.alloc(len);
+        if (len && readSync(fd, payload, 0, len, pos + r.pos) !== len) throw new Error("truncated field");
+        pos += r.pos + len;
+        yield { field, wire, payload };
+      } else {
+        // A varint or fixed-width field at the top level: nothing this reader wants.
+        if (wire === 0) r.varint();
+        else if (wire === 1) r.pos += 8;
+        else if (wire === 5) r.pos += 4;
+        else throw new Error(`unsupported wire type ${wire}`);
+        pos += r.pos;
       }
     }
-    if (!found) continue;
-    answers.push({ file: q.file, line: q.line, column: q.column, targets: targetsOf(definitions.get(keyOf(found.doc, found.at.symbol)) ?? [], found.at.roles) });
+  } finally {
+    closeSync(fd);
   }
-  return { source: "scip", servers: index.tools ?? [index.tool ?? "scip"], answers };
+}
+
+/** A document's path without decoding its occurrences. */
+function documentPath(payload: Buffer): string {
+  const r = new Reader(payload);
+  for (const [field, wire] of r.fields()) {
+    if (field === 1 && wire === 2) return r.string();
+    r.skip(wire);
+  }
+  return "";
+}
+
+/**
+ * Answers from SCIP files without loading them: a first read takes each
+ * file's metadata and document paths (to map them to the analysis's), the
+ * questions are answered over two reads that decode only what they need.
+ * Memory is one document, not the index — a monorepo's index runs to
+ * gigabytes. Several files are several indexers' (see `mergeScip`).
+ */
+export function scipFileAnswers(
+  files: readonly string[],
+  queries: readonly DefinitionQuery[],
+  analysisFiles: ReadonlySet<string>,
+  lineText?: (path: string, line0: number) => string | undefined,
+): DefinitionAnswerFile & { documents: number } {
+  const tools: string[] = [];
+  const maps = files.map((file) => {
+    const paths: ScipDocument[] = [];
+    const meta: ScipIndex = { documents: paths };
+    for (const { field, wire, payload } of fileFields(file)) {
+      if (field === 1 && wire === 2) metadata(new Reader(payload), meta);
+      else if (field === 2 && wire === 2) paths.push({ path: documentPath(payload), occurrences: [] });
+    }
+    if (meta.tool && !tools.includes(meta.tool)) tools.push(meta.tool);
+    return { map: scipPathMapper(paths, analysisFiles), count: paths.length };
+  });
+  const documents: DocumentSource = function* (wanted) {
+    for (const [i, file] of files.entries()) {
+      for (const { field, wire, payload } of fileFields(file)) {
+        if (field !== 2 || wire !== 2) continue;
+        const path = maps[i]!.map(normalize(documentPath(payload)));
+        if (!path || (wanted && !wanted(path))) continue;
+        yield { ...document(new Reader(payload)), path };
+      }
+    }
+  };
+  return { source: "scip", servers: tools.length ? tools : ["scip"], answers: answerFrom(documents, queries, lineText), documents: maps.reduce((n, m) => n + m.count, 0) };
 }
