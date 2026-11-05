@@ -306,30 +306,35 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
 
   const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
     if (a.imports.length === 0) return; // nothing to rewrite — skip the tsconfig lookup
+    rewriteModuleSources(a.imports, a.language);
+  };
+
+  /** Module specifiers as the importing file writes them → as the project's aliases and packages name them. */
+  const rewriteModuleSources = (items: Array<{ source: string; commonJs?: boolean }>, language: string): void => {
     // Nearest tsconfig wins (the compiler's own rule): monorepo sub-projects
     // define their own `paths` and the repo root often has NO tsconfig, so
     // the task-level root map alone left whole SPAs' aliased imports — and
     // with them every cross-file link in those SPAs — unresolved.
     // `import { findClub } from "#db/clubs"`: the package's own `imports` map.
     if (extensionFamily(file.relativePath) === "script") {
-      for (const imp of a.imports) imp.source = applyPackageImports(imp.source, file.absolutePath, projectRoot);
+      for (const imp of items) imp.source = applyPackageImports(imp.source, file.absolutePath, projectRoot);
     }
     const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
     const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
     if (aliases.size > 0) {
-      for (const imp of a.imports) imp.source = applyAliases(imp.source, aliases, projectRoot);
+      for (const imp of items) imp.source = applyAliases(imp.source, aliases, projectRoot);
     }
     // A package of this repository imported by its name (`@league/sdk`) is a
     // project file, not a dependency (workspace-packages.ts).
-    if (a.language === "typescript" || a.language === "javascript") {
+    if (language === "typescript" || language === "javascript") {
       const packages = loadWorkspacePackages(projectRoot);
       if (packages.size > 0) {
-        for (const imp of a.imports) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot, imp.commonJs === true);
+        for (const imp of items) imp.source = applyWorkspacePackages(imp.source, file.absolutePath, packages, projectRoot, imp.commonJs === true);
       }
     }
     // `import { Rest } from "model/rest"`: a module under the package's `src/` its bundler resolves.
     if (extensionFamily(file.relativePath) === "script") {
-      for (const imp of a.imports) imp.source = applySourceRoot(imp.source, file.absolutePath, projectRoot);
+      for (const imp of items) imp.source = applySourceRoot(imp.source, file.absolutePath, projectRoot);
     }
   };
 
@@ -681,6 +686,12 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (proxyRules && proxyRules.length > 0) analysis.proxyRules = proxyRules;
     const generatedClients = hooks?.generatedClients?.(tree, sourceText, file.relativePath);
     if (generatedClients && generatedClients.length > 0) analysis.generatedClients = generatedClients;
+    const mocked = hooks?.mockedModules?.(tree, sourceText);
+    if (mocked && mocked.length > 0) {
+      const items = mocked.map((source) => ({ source }));
+      rewriteModuleSources(items, analysis.language);
+      analysis.mockedModules = items.map((m) => m.source);
+    }
     const pathArgCalls = hooks?.pathArgCalls?.(tree, sourceText);
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
     const domBindings = hooks?.domBindings?.(tree, sourceText);

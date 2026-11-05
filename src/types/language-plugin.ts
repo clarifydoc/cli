@@ -707,6 +707,8 @@ export interface AstExtractorHooks {
   proxyRules?(tree: Tree, sourceText: string, filePath: string): ProxyRule[];
   /** API-client generators a config file sets up (`kubb.config.ts`) → `FileAnalysis.generatedClients`. */
   generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
+  /** Modules a test file replaces with a test double (`vi.mock("./api")`) → `FileAnalysis.mockedModules`. */
+  mockedModules?(tree: Tree, sourceText: string): string[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** Listeners bound to page elements by selector → `FileAnalysis.domBindings`. */
@@ -1129,8 +1131,11 @@ export interface LanguagePluginManifest {
    * `Club.where(…).first.name` on the subclass when no class of its chain
    * declares the member. `bases` are the framework classes as an `extends`
    * writes them; a project class reaching one through its own bases counts.
+   * `members` return an instance; `queries` a query of the subclass that
+   * answers the subclass's class-level methods (an ActiveRecord relation:
+   * `Club.where(…).by_rank` calls the class method `by_rank`).
    */
-  selfTypedMembers?: { bases: readonly string[]; members: readonly string[] };
+  selfTypedMembers?: { bases: readonly string[]; members: readonly string[]; queries?: readonly string[] };
   /**
    * A method's name may end in `?` or `!` (Ruby `valid?`, `save!`): a call's
    * trailing mark is part of the name it calls (`disabled?` is not

@@ -8,6 +8,7 @@
 import type { FileAnalysis, ProjectAnalysis, SymbolLink, TestFunctionRow } from "../types/analysis.js";
 import type { FileTestCoverage } from "./test-coverage.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
+import { resolveImportSource } from "./import-index.js";
 import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
 
@@ -23,6 +24,27 @@ export function collectTestFunctions(analyses: readonly FileAnalysis[]): Record<
     for (const fn of a.functions) add(fn.name, fn);
     for (const c of a.classes) for (const m of c.methods) add(`${c.name}.${m.name}`, m);
     if (rows.length) out[a.filePath] = rows.sort((x, y) => x.line - y.line);
+  }
+  return out;
+}
+
+/**
+ * Test file → the project files it replaces with a test double (`ProjectAnalysis.mockedModules`):
+ * each `FileAnalysis.mockedModules` specifier resolved to the one project file it names, as a
+ * module path resolves (relative, or a project path an alias was rewritten to). A package, or a
+ * specifier naming no file, is left out.
+ */
+export function collectMockedModules(analyses: readonly FileAnalysis[]): Record<string, string[]> {
+  const known = new Set(analyses.map((a) => a.filePath));
+  const out: Record<string, string[]> = {};
+  for (const a of analyses) {
+    if (!a.mockedModules?.length) continue;
+    const files = new Set<string>();
+    for (const source of a.mockedModules) {
+      const hit = resolveImportSource(a.filePath, source, known);
+      if (hit && hit !== a.filePath) files.add(hit);
+    }
+    if (files.size) out[a.filePath] = [...files].sort(byOrdinal);
   }
   return out;
 }
@@ -78,7 +100,7 @@ export function hubFollow(links: readonly SymbolLink[], testCode: TestCodeIndex)
 }
 
 /** What the reach walk reads: the call graph, what is test code, and each file's sub-project. */
-export type ReachSummary = Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions"> & Partial<Pick<ProjectAnalysis, "fileProjects" | "routeMap">>;
+export type ReachSummary = Pick<ProjectAnalysis, "symbolLinks" | "fileLayerMap" | "testFunctions"> & Partial<Pick<ProjectAnalysis, "fileProjects" | "routeMap" | "mockedModules">>;
 
 /** A test's title saying its caller is turned away: an anonymous or rejected caller, a bad credential. */
 const REFUSED_CALLER =
@@ -122,7 +144,8 @@ export interface TestReach {
  * For each target function, the tests that reach it through the call graph (up to `maxDepth`
  * calls, never on through a hub to its other callers), nearest first — one walk per target over
  * one index of the links. Navigational links and import references are not calls. A route is
- * crossed to its handler only from a test's own in-process request (`inProcessRequest`).
+ * crossed to its handler only from a test's own in-process request (`inProcessRequest`). A test
+ * whose file replaces the target's module with a double (`mockedModules`) runs none of it.
  */
 export function testsReachingEach(
   summary: ReachSummary,
@@ -144,6 +167,7 @@ export function testReachWalker(
   const links = summary.symbolLinks ?? [];
   const follow = hubFollow(links, testCode);
   const requests = inProcessRequest(summary, testCode);
+  const mocks = new Map(Object.entries(summary.mockedModules ?? {}).map(([test, files]) => [test, new Set(files)]));
   const callersOf = new Map<string, SymbolLink[]>();
   for (const l of links) {
     if (l.navigational || l.sourceSymbol.startsWith("(")) continue;
@@ -168,6 +192,10 @@ export function testReachWalker(
             if (depth > 1 && !follow(key, l)) continue;
             const caller = `${l.sourceFile}::${l.sourceSymbol}`;
             if (seen.has(caller)) continue;
+            // The test file replaced the target's module, or the one it calls into, with a double:
+            // the call reaches the double.
+            const mocked = mocks.get(l.sourceFile);
+            if (mocked && (mocked.has(t.file) || mocked.has(l.targetFile)) && testCode.isTest(l.sourceFile, l.sourceSymbol)) continue;
             seen.add(caller);
             parent.set(caller, { from: key, link: l });
             if (testCode.isTest(l.sourceFile, l.sourceSymbol)) {
@@ -222,6 +250,10 @@ export interface TestNavigationReach {
  *   browser test opens a page it is part of (the page, what the page uses — bounded, never through a
  *   shared component — and the app start every page runs);
  * - `untested` — none of those.
+ * What a test run does not run is no basis: a test file's dependency on a module it replaces with a
+ * double, or its calls into it (`mockedModules`), and any test's dependency on or reach into a file
+ * the default build leaves out (`FileAnalysis.excludedFromDefaultBuild` — a Go `//go:build windows`
+ * file; tests are taken to run on Linux, as CI usually does).
  */
 export interface FileTestVerdict {
   state: "tested" | "untested" | "nothing_to_test" | "test_file";
@@ -242,6 +274,10 @@ export interface FileTestVerdict {
   testSetup?: string;
   /** A browser test opening a page it is part of, when one does. */
   navigation?: TestNavigationReach;
+  /** Test files that replace it with a double: left out of `importers` and `reach`. */
+  mockedBy?: string[];
+  /** The build constraint that leaves it out of the default build: no importer or reach counts. */
+  excludedFromDefaultBuild?: string;
 }
 
 /** The parts of an analysis `fileTestVerdict` reads, built once for many files. */
@@ -255,6 +291,8 @@ export interface TestVerdictContext {
   testSetupOf(path: string): string | undefined;
   /** A browser test opening a page the file is part of, if one does. */
   navigationOf(path: string): TestNavigationReach | undefined;
+  /** The test files that replace the file with a double. */
+  mockedBy(path: string): string[];
 }
 
 type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns" | "testNavigations" | "pageParts">;
@@ -266,6 +304,7 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
   let coverage: Map<string, FileTestCoverage> | undefined;
   let setup: Map<string, string> | undefined;
   let navigated: Map<string, TestNavigationReach> | undefined;
+  let mockedBy: Map<string, string[]> | undefined;
   return {
     testCode,
     testImportersOf(path) {
@@ -305,13 +344,22 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
       }
       return navigated.get(path);
     },
+    mockedBy(path) {
+      if (!mockedBy) {
+        mockedBy = new Map();
+        for (const [test, files] of Object.entries(summary.mockedModules ?? {})) {
+          for (const f of files) (mockedBy.get(f) ?? mockedBy.set(f, []).get(f)!).push(test);
+        }
+      }
+      return mockedBy.get(path) ?? [];
+    },
   };
 }
 
 export function fileTestVerdict(
   summary: VerdictSummary,
   path: string,
-  file: Pick<FileAnalysis, "functions" | "classes"> | null | undefined,
+  file: (Pick<FileAnalysis, "functions" | "classes"> & Partial<Pick<FileAnalysis, "excludedFromDefaultBuild">>) | null | undefined,
   ctx: TestVerdictContext = testVerdictContext(summary),
 ): FileTestVerdict {
   const declared = summary.testFunctions?.[path] ?? [];
@@ -319,7 +367,10 @@ export function fileTestVerdict(
     return { state: "test_file", basis: [], testFileBy: summary.fileLayerMap?.[path] === "test" ? "layer" : "path", declared, importers: [], functions: [], reach: new Map() };
   }
   const basis: TestVerdictBasis[] = [];
-  const importers = ctx.testImportersOf(path);
+  // A file the default build leaves out is compiled into no test run: no importer, no reach counts.
+  const excluded = file?.excludedFromDefaultBuild;
+  const mockedBy = ctx.mockedBy(path);
+  const importers = excluded ? [] : ctx.testImportersOf(path).filter((f) => !mockedBy.includes(f));
   if (importers.length) basis.push("importer");
   const own = new Set(declared.map((d) => d.symbol));
   const functions = file
@@ -328,7 +379,7 @@ export function fileTestVerdict(
         ...file.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic).map((m) => ({ symbol: `${c.name}.${m.name}`, line: m.line }))),
       ].filter((fn) => !own.has(fn.symbol))
     : [];
-  const reach = functions.length ? ctx.reach(functions.map((fn) => ({ file: path, symbol: fn.symbol }))) : new Map<string, TestReach>();
+  const reach = functions.length && !excluded ? ctx.reach(functions.map((fn) => ({ file: path, symbol: fn.symbol }))) : new Map<string, TestReach>();
   if (reach.size) basis.push("reached-function");
   const row = ctx.coverageRow(path);
   const coverage = row && row.total > 0 ? row : undefined;
@@ -340,6 +391,10 @@ export function fileTestVerdict(
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
   return {
     state, basis, declared, importers, functions, reach,
-    ...(coverage ? { coverage } : {}), ...(testSetup ? { testSetup } : {}), ...(navigation ? { navigation } : {}),
+    ...(coverage ? { coverage } : {}),
+    ...(testSetup ? { testSetup } : {}),
+    ...(mockedBy.length ? { mockedBy } : {}),
+    ...(excluded ? { excludedFromDefaultBuild: excluded } : {}),
+    ...(navigation ? { navigation } : {}),
   };
 }

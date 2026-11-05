@@ -106,17 +106,20 @@ export const rubyLexicalConstants = { pathOf: constantPath, nesting: constantNes
 
 /**
  * What an ActiveRecord model inherits that returns the model: finders return
- * a record, query methods a relation of it, whose finders return a record
+ * a record, query methods a relation of it, whose finders return a record and
+ * which delegates to the model's class methods and scopes
  * (`LanguagePluginManifest.selfTypedMembers`).
  */
 export const rubyModelFinders = {
   bases: ["ActiveRecord::Base", "ApplicationRecord"],
+  // A record.
   members: [
-    // A record.
     "find", "find_by", "find_by!", "first", "first!", "last", "last!", "take", "take!", "sole", "find_sole_by",
     "create", "create!", "find_or_create_by", "find_or_create_by!", "find_or_initialize_by", "create_or_find_by",
     "create_or_find_by!", "first_or_create", "first_or_create!", "first_or_initialize",
-    // A relation of the model.
+  ],
+  // A relation of the model.
+  queries: [
     "all", "where", "not", "rewhere", "order", "reorder", "limit", "offset", "includes", "preload", "eager_load",
     "joins", "left_joins", "left_outer_joins", "select", "distinct", "group", "having", "unscoped", "none",
     "readonly", "lock", "references", "merge", "or", "and", "in_order_of", "strict_loading", "extending",

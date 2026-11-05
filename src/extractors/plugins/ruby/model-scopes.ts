@@ -87,8 +87,9 @@ export function addScopeMethods(lines: readonly string[], cls: ClassInfo): void 
   const have = new Set(cls.methods.map((m) => m.name));
   const add = (name: string, line: number, endLine: number) => {
     have.add(name);
-    // A scope returns a query of the model: `Club.active.first` is a Club.
-    cls.methods.push({ name, params: [], returnType: "self", isAsync: false, isExported: true, decorators: ["scope"], calls: [], line, endLine });
+    // A scope is a class method returning a query of the model: `Club.active.first` is a Club, and
+    // `Club.active.by_rank` calls another class method.
+    cls.methods.push({ name, params: [], returnType: "self", classLevel: true, isAsync: false, isExported: true, decorators: ["scope"], calls: [], line, endLine });
   };
   const last = Math.min(cls.endLine, lines.length) - 1;
   // What an instance answers to by the macros that declare it (`has_one_attached :kit`, `belongs_to :club`):

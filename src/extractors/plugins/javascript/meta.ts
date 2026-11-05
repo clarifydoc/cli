@@ -35,6 +35,7 @@ import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-c
 import { extractStoreModules, VuexDispatchResolver } from "./vuex.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractKubbConfigs } from "./kubb.js";
+import { extractMockedModules } from "./test-mocks.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractDomBindings } from "./dom-bindings.js";
 import { DomBindingResolver } from "./dom-binding-resolver.js";
@@ -258,6 +259,8 @@ function astHooks(language: Language): AstExtractorHooks {
     deployedResources: (tree, sourceText) => extractCdkResources(tree, sourceText),
     proxyRules: extractDevProxyRules,
     generatedClients: extractKubbConfigs,
+    // A test's `vi.mock("./api")`: the module it replaces with a double, which the test does not run.
+    mockedModules: extractMockedModules,
     pathArgCalls: extractPathArgCalls,
     domBindings: extractDomBindings,
     instantiations: extractInstantiations,
