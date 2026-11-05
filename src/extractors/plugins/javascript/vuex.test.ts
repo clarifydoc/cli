@@ -434,3 +434,30 @@ export const reschedule = id => store.dispatch('fixtures/reschedule', id);`,
     ]);
   });
 });
+
+describe("vuex-action dispatch of actions spread inline or passed through a helper", () => {
+  it("follows `actions: { ...clubActions }` in the module object and `const actions = defineActions({ load() {} })`", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import clubs from './modules/clubs';
+import cars from './modules/cars';
+export default createStore({ modules: { clubs, cars } });`,
+      "src/store/modules/clubs.js": `import clubActions from './clubActions';
+export default { namespaced: true, state: {}, actions: { ...clubActions } };`,
+      "src/store/modules/clubActions.js": `export default { async load({ commit }) { commit('SET', []); } };`,
+      "src/store/modules/cars.js": `const actions = defineActions({ async load({ commit }) { commit('SET', []); } });
+export default { namespaced: true, state: {}, actions };`,
+      // A namesake no store registers.
+      "src/lib/garage.js": `export default { async load({ commit }) { commit('SET', []); } };`,
+      "src/pages/Page.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const a = () => store.dispatch('clubs/load');
+export const b = () => store.dispatch('cars/load');
+export const c = () => store.dispatch('garages/load');`,
+    }));
+    expect(show(links, "src/pages/Page.js")).toEqual([
+      "a -dispatch:clubs/load-> src/store/modules/clubActions.js#load",
+      "b -dispatch:cars/load-> src/store/modules/cars.js#actions.load",
+    ]);
+  });
+});

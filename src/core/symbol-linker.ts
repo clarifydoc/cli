@@ -3912,7 +3912,8 @@ function dispatchMapCall(
   ctx: LinkContext,
 ): SymbolLink | null | undefined {
   const m = MAP_CALL.exec(call.name);
-  if (!m || !mapHoldersOf(analysis).has(m[1]!)) return undefined;
+  if (!m) return undefined;
+  if (!mapHoldersOf(analysis).has(m[1]!)) return importedDispatchMapCall(sourceFile, sourceSymbol, call, m[1]!, m[2], analysis, ctx);
   const [, holder, key] = m;
   const held = (calls: readonly CallInfo[] | undefined) => (calls ?? []).filter((c) => c.passed === "property" && c.returnedAs?.startsWith(`${holder}.`));
   const caller = findEnclosingCallable(analysis, sourceSymbol);
@@ -3931,6 +3932,51 @@ function dispatchMapCall(
     if (!link || out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
     out.push({
       ...link,
+      sourceSymbol,
+      sourceLine: call.line,
+      callName: call.name,
+      confidence: key !== undefined ? link.confidence : "INFERRED",
+      strategy: "dispatch:object-map",
+      relation: "dispatch",
+    });
+  }
+  if (out.length === 0) return null;
+  ctx.extraLinks.push(...out.slice(1));
+  return out[0]!;
+}
+
+/**
+ * A call through a dispatch map another file declares (`import { ACTIONS } from "./actions"`;
+ * `ACTIONS.save(club)`, `ACTIONS[kind](club)`): the import names the exporting file (followed through
+ * re-exports and renames), whose top level holds the map — read as `dispatchMapCall` reads a local one.
+ * Undefined unless the name is imported by the caller's file, is not shadowed by a parameter or local
+ * of the caller, and the exporting file holds a map under it.
+ */
+function importedDispatchMapCall(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  local: string,
+  key: string | undefined,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null | undefined {
+  const caller = findEnclosingCallable(analysis, sourceSymbol);
+  if (caller?.params.some((p) => p.name === local || (/^[{[]/.test(p.name) && bindsName(p.name, local))) || caller?.localTypes?.some((l) => l.name === local)) return undefined;
+  const found = importedDefinition(ctx, sourceFile, local, 0, new Set());
+  if (!found || found.namespace) return undefined;
+  const holder = found.def.name;
+  const owner = ctx.analysisAt?.get(found.file) ?? ctx.analyses.find((a) => a.filePath === found.file);
+  if (!owner || !mapHoldersOf(owner).has(holder)) return undefined;
+  let entries = (owner.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.passed === "property" && c.returnedAs?.startsWith(`${holder}.`));
+  if (key !== undefined) entries = entries.filter((e) => e.returnedAs === `${holder}.${key}`);
+  const out: SymbolLink[] = [];
+  for (const entry of entries) {
+    const link = resolvePassedName(owner.filePath, "<setup>", entry, owner, ctx);
+    if (!link || out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
+    out.push({
+      ...link,
+      sourceFile,
       sourceSymbol,
       sourceLine: call.line,
       callName: call.name,

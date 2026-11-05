@@ -191,6 +191,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argOrigins?: CallArgOrigin[] | null;
     argKinds?: string[] | null;
     withSubjects?: string[] | null;
+    stated?: boolean;
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
@@ -240,6 +241,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       if (name) {
         push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
         if (withSubjectsOf) candidates[candidates.length - 1]!.withSubjects = withSubjectsOf(node);
+        if (hooks?.statedMember?.(node, name)) candidates[candidates.length - 1]!.stated = true;
       }
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
@@ -334,7 +336,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       // up by) — a member call on a container lookup is never Array#find.
       if (c.receiver.type) call.receiverType = c.receiver.type;
       if (c.receiver.qualifier) call.receiverQualifier = c.receiver.qualifier;
-    } else if (isNoise(c.name) && !c.withSubjects) {
+    } else if (isNoise(c.name) && !c.withSubjects && !c.stated) {
       // A read is no call worth holding back for a typed receiver.
       if (c.read) continue;
       seen.add(c.name);
@@ -466,7 +468,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
           if (receiver.type) call.receiverType = receiver.type;
           if (receiver.qualifier) call.receiverQualifier = receiver.qualifier;
           results.push(call);
-        } else if (!isNoise(name)) {
+        } else if (!isNoise(name) || hooks?.statedMember?.(node, name)) {
           results.push(call);
         } else if (name.includes(".")) {
           holdNoiseCall(results, call);

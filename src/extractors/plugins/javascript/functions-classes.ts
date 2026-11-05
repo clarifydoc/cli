@@ -21,7 +21,7 @@ import {
   type InjectedType,
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
-import { FUNCTION_EXPRESSIONS, wrappedFunction } from "./wrapped-functions.js";
+import { FUNCTION_EXPRESSIONS, handlerOf, wrappedFunction } from "./wrapped-functions.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
@@ -104,22 +104,6 @@ const FUNCTION_OPTION_KEY = /^["']?\w*Fn["']?$/;
 
 /** A CommonJS export member, `exports.listClubs` / `module.exports.listClubs`: the member's name. */
 const CJS_EXPORT_MEMBER = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/;
-
-/**
- * An exported binding made by handing a function to a wrapper of the project or a
- * library — `export const main = handler(async (event) => {…})`, `export const
- * getClub = asyncHandler(async (req, res) => {…})`, `export const GET =
- * withAuth(async (req) => {…})`: what the export runs is that function, so the
- * binding names it. Only a handler-shaped argument — async, or a block body; a
- * factory returning an object (`create((set) => ({…}))`) is no handler.
- */
-function exportedHandlerOf(value: Node): Node | null {
-  if (value.type !== "call_expression" || value.childForFieldName("function")?.type !== "identifier") return null;
-  const first = value.childForFieldName("arguments")?.namedChildren[0];
-  if (!first || !FUNCTION_EXPRESSIONS.has(first.type)) return null;
-  const body = first.childForFieldName("body");
-  return first.text.startsWith("async") || body?.type === "statement_block" ? first : null;
-}
 
 /**
  * One walk over a function body for what `extractCalls` does not collect:
@@ -1531,7 +1515,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
             if (moduleLevel && (value?.type === "call_expression" || value?.type === "new_expression")) this.extractStoreCallActions(value, functions);
-            const wrapped = value ? wrappedFunction(value) ?? (moduleLevel && isExported ? exportedHandlerOf(value) : null) : null;
+            const wrapped = value ? wrappedFunction(value) ?? (moduleLevel ? handlerOf(value, isExported) : null) : null;
             const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
             if (store) {
               functions.push(this.piniaStoreFunction(store, decl, isExported));
@@ -1567,6 +1551,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // callers invoke (`agent.Profile.get`), and the api-calls inside
               // them need an enclosing symbol to belong to.
               this.extractObjectMembers(name, value, functions, isExported, 0);
+            } else if (name === "actions" && value?.type === "call_expression" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
+              // `const actions = defineActions({ async load({ commit }) {…} })` — a module's `actions`
+              // object handed through a helper: the object passed to the call holds the actions,
+              // named as `const actions = {…}` names them.
+              for (const arg of value.childForFieldName("arguments")?.namedChildren ?? []) {
+                if (arg.type === "object") this.extractObjectMembers(name, arg, functions, isExported, 0);
+              }
             }
             // Named bindings can hide anywhere below (an arrow's body, a
             // useEffect callback, a call argument) — keep walking the value.

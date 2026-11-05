@@ -64,16 +64,55 @@ function dispatchMapNames(node: Node): ReadonlySet<string> {
   return mapNames;
 }
 
+let importsTree: Node["tree"] | null = null;
+let importNames = new Set<string>();
+
+/** The names the file imports (`import { ACTIONS }`, `import ACTIONS`, `{ a as ACTIONS }`), read once per tree. */
+function importedNames(node: Node): ReadonlySet<string> {
+  if (node.tree === importsTree) return importNames;
+  importsTree = node.tree;
+  importNames = new Set();
+  for (const stmt of node.tree.rootNode.namedChildren) {
+    if (stmt.type !== "import_statement") continue;
+    for (const spec of stmt.descendantsOfType(["import_specifier", "identifier"])) {
+      if (!spec) continue;
+      if (spec.type === "import_specifier") {
+        const local = spec.childForFieldName("alias") ?? spec.childForFieldName("name");
+        if (local) importNames.add(local.text);
+      } else if (spec.parent?.type === "import_clause") importNames.add(spec.text);
+    }
+  }
+  return importNames;
+}
+
 /**
- * The call name of a function read out of a dispatch map the file declares: `ACTIONS["save"]()`
- * → `ACTIONS.save`, `ACTIONS[kind]()` → `ACTIONS[]` (any of its values). Null for any other
- * subscript callee — an array element, a map of another file.
+ * The call name of a function read out of a dispatch map: `ACTIONS["save"]()` → `ACTIONS.save`,
+ * `ACTIONS[kind]()` → `ACTIONS[]` (any of its values). The map is one the file declares, or a name
+ * it imports — whether that is a map is the linker's to say, from the exporting file. Null for any
+ * other subscript callee — an array element.
  */
 export function dispatchMapCallee(callee: Node): string | null {
   if (callee.type !== "subscript_expression") return null;
   const object = callee.childForFieldName("object");
-  if (object?.type !== "identifier" || !dispatchMapNames(callee).has(object.text)) return null;
+  if (object?.type !== "identifier" || !(dispatchMapNames(callee).has(object.text) || importedNames(callee).has(object.text))) return null;
   const index = callee.childForFieldName("index");
   if (index?.type === "string" && /^["'][A-Za-z_$][\w$]*["']$/.test(index.text)) return `${object.text}.${index.text.slice(1, -1)}`;
   return `${object.text}[]`;
+}
+
+/**
+ * Whether a call `ACTIONS.send(…)` names a key the file's own dispatch map holds (`const ACTIONS = { send: sendClub }`):
+ * the key is the map's, however much its leaf looks like a promise or array method.
+ */
+export function dispatchMapMember(callName: string, node: Node): boolean {
+  const dot = callName.indexOf(".");
+  if (dot <= 0 || callName.indexOf(".", dot + 1) >= 0) return false;
+  const holder = callName.slice(0, dot);
+  if (!dispatchMapNames(node).has(holder)) return false;
+  const key = callName.slice(dot + 1);
+  for (const d of node.tree.rootNode.descendantsOfType("variable_declarator")) {
+    const map = d ? dispatchMapEntries(d) : null;
+    if (map?.holder === holder && map.entries.some((e) => e.key === key)) return true;
+  }
+  return false;
 }

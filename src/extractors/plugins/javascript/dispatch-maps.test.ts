@@ -85,4 +85,37 @@ export function runSave() { ACTIONS.save(); ACTIONS.create(); return http.get("/
     // A map of a library's members (\`http.get\`) keeps what its name says.
     expect(kinds).toEqual(["ACTIONS.save:internal", "ACTIONS.create:internal", "http.get:api-call"]);
   });
+
+  it("names a call through an imported name as a map call, and an array of the file as none", async () => {
+    const code = `import { ACTIONS, type Kind as Shape } from "./actions";
+import Registry from "./registry";
+import * as Garage from "./garage";
+export function run(kind, club) { return ACTIONS[kind](club); }
+export function runList(club) { return ACTIONS["list"](club); }
+export function runDefault(kind) { return Registry[kind](); }
+export function runSpace(kind) { return Garage[kind](); }
+export function runLocal(i) { return LOCAL[i](); }`;
+    const tree = await parseSource(code, "typescript" as never, "run.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, code);
+    const calls = (name: string) => shown(fns.find((f) => f.name === name)!.calls);
+    expect(calls("run")).toEqual(["ACTIONS[]"]);
+    expect(calls("runList")).toEqual(["ACTIONS.list"]);
+    expect(calls("runDefault")).toEqual(["Registry[]"]);
+    expect(calls("runSpace")).toEqual([]);
+    expect(calls("runLocal")).toEqual([]);
+  });
+
+  it("keeps a call of a key the map holds though the key is a noise word, and drops it on any other receiver", async () => {
+    const code = `function sendClub(c) { return c; }
+const ACTIONS = { send: sendClub, find: sendClub };
+export function run(club, list) {
+  list.find(club);
+  ACTIONS.other(club);
+  ACTIONS.find(club);
+  return ACTIONS.send(club);
+}`;
+    const tree = await parseSource(code, "typescript" as never, "run.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, code);
+    expect(shown(fns.find((f) => f.name === "run")!.calls)).toEqual(["ACTIONS.other", "ACTIONS.find", "ACTIONS.send"]);
+  });
 });

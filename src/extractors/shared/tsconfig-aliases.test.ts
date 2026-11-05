@@ -196,11 +196,25 @@ describe("tsconfig `paths` read as TypeScript reads them", () => {
     await file("installed/node_modules/@garage/tsconfig/base.json", JSON.stringify({ compilerOptions: { paths: { "#/*": ["${configDir}/src/*"] } } }));
     await file("installed/tsconfig.json", JSON.stringify({ extends: "@garage/tsconfig/base" }));
     await file("installed/src/pit.ts", "export function pitStop() {}");
+    // A config declaring `paths` replaces the base's table wholesale; one declaring none inherits it.
+    await file("replace/tsconfig.base.json", JSON.stringify({ compilerOptions: { paths: { "@/*": ["src/*"], "@shared/*": ["shared/*"] } } }));
+    await file("replace/app/tsconfig.json", JSON.stringify({ extends: "../tsconfig.base.json", compilerOptions: { paths: { "~/*": ["lib/*"] } } }));
+    await file("replace/app/lib/pit.ts", "export function pitStop() {}");
+    await file("replace/shared/tyre.ts", "export function fitTyre() {}");
+    await file("replace/inherit/tsconfig.json", JSON.stringify({ extends: "../tsconfig.base.json" }));
     clearTsconfigAliasCache();
     clearWorkspacePackageCache();
   });
   afterAll(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("replaces a base config's `paths` wholesale when the extending config declares its own", () => {
+    const own = loadTsconfigAliasesForDir(join(root, "replace/app"));
+    expect(applyAliases("~/pit", own, root)).toBe("replace/app/lib/pit");
+    expect(applyAliases("@shared/tyre", own, root)).toBe("@shared/tyre");
+    const inherited = loadTsconfigAliasesForDir(join(root, "replace/inherit"));
+    expect(applyAliases("@shared/tyre", inherited, root)).toBe("replace/shared/tyre");
   });
 
   it("takes the pattern with the longest prefix, not the first declared", () => {

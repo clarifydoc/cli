@@ -63,7 +63,16 @@ export function extractModuleValues(tree: Tree, sourceText: string): Record<stri
     if (rendered !== null && rendered.length <= 300) raw.set(key, rendered);
   };
 
+  let defaultOf: string | null = null;
   for (const stmt of tree.rootNode.namedChildren) {
+    // `export default { garages: '/api/garages' }`: what `import urls from "./urls"; urls.garages` reads is `default.garages`;
+    // `export default urls` hands the module's own `urls` on.
+    if (stmt.type === "export_statement" && !stmt.childForFieldName("declaration")) {
+      const exported = stmt.childForFieldName("value");
+      if (exported?.type === "object") collect("default", exported, 0);
+      else if (exported?.type === "identifier") defaultOf = exported.text;
+      continue;
+    }
     const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
     if (!decl || (decl.type !== "lexical_declaration" && decl.type !== "variable_declaration")) continue;
     for (const d of decl.namedChildren) {
@@ -72,6 +81,8 @@ export function extractModuleValues(tree: Tree, sourceText: string): Record<stri
       if (name?.type === "identifier") collect(name.text, d.childForFieldName("value"), 0);
     }
   }
+
+  if (defaultOf) for (const [key, value] of [...raw]) if (key.startsWith(`${defaultOf}.`)) raw.set(`default${key.slice(defaultOf.length)}`, value);
 
   const resolve = (value: string, depth: number): string =>
     value.replace(/\$\{([\w$.]+)\}/g, (hole, ref: string) => {
