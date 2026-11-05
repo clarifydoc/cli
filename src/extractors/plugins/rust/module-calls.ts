@@ -16,6 +16,11 @@ import { rustSpec } from "./index.js";
 export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): void {
   const inline = inlineModuleSpans(lines);
   const imported = new Map<string, string>();
+  // `#[path = "export.rs"] mod export_;` — a module whose file the attribute names: a call through it targets that file.
+  const pathModules = new Map<string, string>();
+  for (const imp of analysis.imports) {
+    if (imp.source.startsWith(".")) for (const s of imp.specifiers) pathModules.set(s, imp.source);
+  }
   for (const imp of analysis.imports) {
     for (const s of imp.specifiers) {
       if (imported.has(s)) continue;
@@ -39,6 +44,15 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
         segs = ups <= depth ? ["self", ...segs.slice(ups)] : [...segs.slice(depth)];
       }
       const head = segs[0]!;
+      const file = segs.length === 1 ? pathModules.get(head) : undefined;
+      if (file) {
+        c.kind = "cross-file";
+        c.target = file;
+        c.member = member;
+        c.moduleMember = true;
+        c.confidence = "EXTRACTED";
+        continue;
+      }
       const through = head === "crate" || head === "super" || head === "self" ? undefined : imported.get(head);
       c.kind = "cross-file";
       c.target = through ? [through, ...segs.slice(1)].join("::") : segs.join("::");

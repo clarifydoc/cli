@@ -18,8 +18,14 @@ export function extractRustImports(lines: string[]): ImportInfo[] {
   // `mod tools;` loads the child module `tools.rs` / `tools/mod.rs` and binds its name:
   // an import of `tools` from the module itself (`self`).
   if (text.includes("mod ")) {
-    for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*;/gm)) {
-      out.push({ source: "self", specifiers: [m[1]!], isDefault: false, isNamespace: false, isType: false, line: text.slice(0, m.index).split("\n").length });
+    for (const m of text.matchAll(/^[ \t]*((?:#\[[^\]\n]*\][ \t]*)*)(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*;/gm)) {
+      const line = text.slice(0, m.index).split("\n").length;
+      // `#[path = "export.rs"] mod export_;` loads that file, relative to the declaring file's directory — on this
+      // line or the attribute lines above it.
+      const above = text.slice(0, m.index).split("\n").slice(-4).join("\n");
+      const attr = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/.exec(m[1]!) ?? [...above.matchAll(/#\[\s*path\s*=\s*"([^"]+)"\s*\]\s*(?:\n\s*(?:#\[[^\]\n]*\]|\/\/[^\n]*)\s*)*$/g)].at(-1);
+      const file = attr?.[1];
+      out.push({ source: file ? (file.startsWith(".") ? file : `./${file}`) : "self", specifiers: [m[2]!], isDefault: false, isNamespace: false, isType: false, line });
     }
   }
   if (!text.includes("use ")) return out;
