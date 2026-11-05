@@ -36,6 +36,8 @@ import {
   separateSingletonMethods,
   typeBareConstructions,
 } from "./di.js";
+import { addAnonymousClassCalls } from "./anonymous-classes.js";
+import { blockParamsOf } from "./block-params.js";
 import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
@@ -359,9 +361,9 @@ const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.mem
  * a paren-less call the call patterns cannot tell from an attribute read, but
  * the local's stated type makes it a member of that class.
  */
-function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
-  // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`).
-  const typed = (fn.localTypes ?? []).filter((l) => l.type || MODEL_FINDER_CHAIN.test(l.from ?? ""));
+function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo, elementHeads: ReadonlySet<string> = new Set()): void {
+  // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`), or the element of a typed collection a block iterates.
+  const typed = (fn.localTypes ?? []).filter((l) => l.type || MODEL_FINDER_CHAIN.test(l.from ?? "") || elementHeads.has(l.name));
   if (typed.length === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
@@ -374,6 +376,28 @@ function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
     }
   }
+}
+
+/**
+ * The parameters of the method's blocks (`team.players.each { |player| … }`): each is a local of unknown
+ * type (`untypedLocals`, so the linker never guesses its calls by name), or — where the iterated
+ * collection is a typed association or model query — the first element of it (`localTypes[].from`).
+ * Returns the names so typed.
+ */
+function addBlockParamTypes(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>, bound: ReadonlySet<string>): Set<string> {
+  const heads = new Set<string>([...associations].filter((n) => !bound.has(n)));
+  for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
+  const elements = new Set<string>();
+  for (const p of blockParamsOf(bodyLines(lines, fn), heads, (chain) => MODEL_FINDER_CHAIN.test(chain))) {
+    // A name the method states otherwise (a parameter, an assigned local) is that, not the block's.
+    if (fn.params.some((x) => x.name === p.name) || fn.localTypes?.some((l) => l.name === p.name)) continue;
+    if (p.from) {
+      (fn.localTypes ??= []).push({ name: p.name, type: "", from: p.from });
+      elements.add(p.name);
+    }
+    (fn.untypedLocals ??= []).push(p.name);
+  }
+  return elements;
 }
 
 /** The association readers a model class declares: `has_many :players` → `players` (a chain off it is typed by the reader). */
@@ -428,7 +452,7 @@ function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associa
  * `described_class` spelled as the constant the block types it as.
  */
 function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly FunctionInfo[]): void {
-  const typed = fns.filter((fn) => fn.localTypes?.length || lines.slice(fn.line - 1, fn.endLine).some((l) => l.includes(".perform_") || l.includes(".deliver_")));
+  const typed = fns.filter((fn) => fn.localTypes?.length || lines.slice(fn.line - 1, fn.endLine).some((l) => l.includes(".perform_") || l.includes(".deliver_") || l.includes("Class.new(")));
   if (typed.length === 0) return;
   const code = rubyCodeLinesOf(lines);
   // One scratch view per source, filled over a function's span and cleared after it.
@@ -445,6 +469,7 @@ function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly Func
       if (inner === fn || inner.line <= fn.line || inner.endLine > fn.endLine) continue;
       for (let i = inner.line - 1; i < Math.min(inner.endLine, to); i++) ownCode[i] = ownRaw[i] = "";
     }
+    addAnonymousClassCalls(ownCode, fn, code);
     addTypedLocalCalls(ownCode, fn);
     addJobDispatchCalls(ownRaw, fn);
     for (let i = from; i < to; i++) ownCode[i] = ownRaw[i] = "";
@@ -1017,7 +1042,9 @@ export const rubySpec: RegexLangSpec = {
         // The method's locals, read once for the passes that tell a local from a call.
         const bound = boundLocals(code, m);
         addImplicitReceiverCalls(code, m, bound);
-        addTypedLocalCalls(code, m);
+        addAnonymousClassCalls(code, m);
+        const elements = addBlockParamTypes(code, m, associations, bound);
+        addTypedLocalCalls(code, m, elements);
         addMemberChainCalls(code, m, associations, bound);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m, bound);
