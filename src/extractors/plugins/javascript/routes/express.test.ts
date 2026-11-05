@@ -284,6 +284,26 @@ v2.get('/cars', (c) => c.json([]))`,
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`).sort()).toEqual(["GET /api/clubs", "GET /api/health", "GET /api/v2/cars", "POST /api/clubs/:id/sign"]);
   });
 
+  it("composes registrations chained on one expression: `new Hono().basePath(…).get(…)`, `.route(…)`, `app.basePath(…).get(…)`", async () => {
+    const via = async (src: string) => {
+      const tree = await parseSource(src, "typescript" as any, "C.ts");
+      const routes: RouteInfo[] = [];
+      extractExpressRoutes(tree.rootNode, routes);
+      applyRouterLevelGuards(tree.rootNode, routes);
+      return routes.map((r) => `${r.httpMethod} ${r.path}`).sort();
+    };
+    expect(await via(`import { Hono } from 'hono'
+const app = new Hono().basePath('/api').get('/x', (c) => c.text('')).post('/y', (c) => c.text(''))`)).toEqual(["GET /api/x", "POST /api/y"]);
+    expect(await via(`import { Hono } from 'hono'
+export default new Hono().basePath('/api').get('/x', (c) => c.text(''))`)).toEqual(["GET /api/x"]);
+    expect(await via(`import { Hono } from 'hono'
+const clubs = new Hono().get('/', (c) => c.json([])).post('/', (c) => c.json([]))
+const app = new Hono().route('/clubs', clubs).get('/health', (c) => c.text(''))`)).toEqual(["GET /clubs", "GET /health", "POST /clubs"]);
+    expect(await via(`import { Hono } from 'hono'
+const app = new Hono()
+app.basePath('/v1').get('/cars', (c) => c.text(''))`)).toEqual(["GET /v1/cars"]);
+  });
+
   it("leaves Express's chained `router.route(path)` alone", async () => {
     expect(await routesOf(`const router = express.Router();
 router.route('/clubs', clubs)

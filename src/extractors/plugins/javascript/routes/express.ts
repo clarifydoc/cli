@@ -256,6 +256,37 @@ function isHonoFile(node: Node): boolean {
   return known;
 }
 
+/**
+ * The receiver a chained Hono registration stands on: the variable the whole chain is declared into
+ * (`const clubs = new Hono().get(…).post(…)`), else the identifier it starts from (`app.basePath('/v1').get(…)`), else none —
+ * and the `basePath` steps below this call that no declared instance carries (those reach `applyHonoBasePaths`).
+ */
+function honoChain(call: Node): { receiver: string | null; prefix: string } | null {
+  const steps: string[] = [];
+  let obj: Node | null = call.childForFieldName("function")?.childForFieldName("object") ?? null;
+  while (obj?.type === "call_expression") {
+    const f = obj.childForFieldName("function");
+    if (f?.type !== "member_expression") return null;
+    if (f.childForFieldName("property")?.text === "basePath") {
+      const arg = obj.childForFieldName("arguments")?.namedChildren[0];
+      if (arg?.type === "string") steps.unshift(stripQuotes(arg.text));
+    }
+    obj = f.childForFieldName("object");
+  }
+  if (!obj) return null;
+  let top = call;
+  for (;;) {
+    const member = top.parent;
+    const outer = member?.parent;
+    if (member?.type === "member_expression" && member.childForFieldName("object")?.id === top.id && outer?.type === "call_expression" && outer.childForFieldName("function")?.id === member.id) top = outer;
+    else break;
+  }
+  const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
+  if (declared?.type === "identifier") return { receiver: declared.text.toLowerCase(), prefix: "" };
+  const prefix = steps.reduce((acc, step) => joinPrefix(acc, step), "");
+  return { receiver: obj.type === "identifier" ? obj.text.toLowerCase() : null, prefix };
+}
+
 function walkForRoutes(node: Node, routes: RouteInfo[]) {
   visitExpressRoute(node, routes);
   for (const child of node.children) {
@@ -275,7 +306,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
     if (fn?.type === "member_expression") {
       const prop = fn.childForFieldName("property");
       let method = prop?.text?.toLowerCase();
-      const receiver = receiverName(fn);
+      let receiver = receiverName(fn);
+      // Hono chains its registrations on one expression: `new Hono().basePath('/api').get('/x', h).route('/clubs', clubs)`.
+      const chain = /^(?:call|new)_expression$/.test(fn.childForFieldName("object")?.type ?? "") && isHonoFile(node) ? honoChain(node) : null;
+      if (chain) receiver = chain.receiver;
       // Hono mounts a sub-app with `app.route("/clubs", clubs)`, which Express spells `app.use`.
       if (method === "route" && isHonoFile(node)) method = "use";
 
@@ -298,7 +332,8 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               ? [stripQuotes(firstArg.text)]
               // `app.get(/^\/(clubs|leagues)\/([^/]+)$/, …)`: the paths the pattern describes.
               : firstArg?.type === "regex" && method !== "use" ? regexRoutePaths(firstArg.childForFieldName("pattern")?.text ?? "") : [];
-          for (const path of paths) {
+          for (let path of paths) {
+            if (chain?.prefix) path = joinPrefix(chain.prefix, path);
             // Everything after the path, with `[a, b]` middleware arrays flattened.
             const rest: Node[] = [];
             for (const arg of args.namedChildren.slice(1)) {
@@ -667,6 +702,21 @@ function applyHonoBasePaths(root: Node, routes: RouteInfo[]): void {
       const name = node.childForFieldName("name");
       const value = node.childForFieldName("value");
       const fn = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+      if (name?.type === "identifier" && value?.type === "call_expression" && fn?.type === "member_expression" && fn.childForFieldName("property")?.text !== "basePath") {
+        // `const app = new Hono().basePath('/api').get(…)`: the instance is based, whatever follows the `basePath`.
+        let base: Node | null = fn.childForFieldName("object");
+        while (base?.type === "call_expression") {
+          const f = base.childForFieldName("function");
+          if (f?.type !== "member_expression") break;
+          if (f.childForFieldName("property")?.text === "basePath") {
+            const object = f.childForFieldName("object");
+            const arg = base.childForFieldName("arguments")?.namedChildren[0];
+            if (arg?.type === "string" && object?.type === "new_expression") bases.set(name.text.toLowerCase(), { prefix: stripQuotes(arg.text), parent: null });
+            break;
+          }
+          base = f.childForFieldName("object");
+        }
+      }
       if (name?.type === "identifier" && fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "basePath") {
         const object = fn.childForFieldName("object");
         const arg = value!.childForFieldName("arguments")?.namedChildren[0];
