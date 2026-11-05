@@ -4,7 +4,7 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { updateLsp } from "../core/lsp-updater.js";
-import { decodeScip, scipAnswers, scipPathMapper } from "./scip.js";
+import { decodeScip, mergeScip, scipAnswers, scipPathMapper } from "./scip.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 
 // A protobuf writer for the handful of fields an index needs.
@@ -42,9 +42,9 @@ const doc = (path: string, occs: Occ[]) => {
   const x = docExtras.get(path);
   return [...str(1, path), ...occs.flatMap((o) => bytes(2, occurrence(o))), ...(x?.text !== undefined ? str(5, x.text) : []), ...(x?.enc ? int(6, x.enc) : [])];
 };
-const index = (docs: Array<[string, Occ[]]>, root = "file:///repo") =>
+const index = (docs: Array<[string, Occ[]]>, root = "file:///repo", tool = "scip-typescript") =>
   new Uint8Array([
-    ...bytes(1, [...bytes(2, str(1, "scip-typescript")), ...str(3, root)]),
+    ...bytes(1, [...bytes(2, str(1, tool)), ...str(3, root)]),
     ...docs.flatMap(([p, o]) => bytes(2, doc(p, o))),
     // An unknown field is skipped.
     ...str(9, "ignored"),
@@ -72,6 +72,35 @@ describe("decodeScip", () => {
   it("refuses a truncated index rather than guessing", () => {
     const whole = index([["src/a.ts", [{ range: [1, 2, 3], symbol: "x" }]]]);
     expect(() => decodeScip(whole.subarray(0, whole.length - 12))).toThrow();
+  });
+});
+
+describe("mergeScip", () => {
+  const files = new Set(["web/src/a.ts", "api/club.py", "api/b.py"]);
+  it("joins the indexes of a polyglot repository, each mapped from its own root", () => {
+    const ts = decodeScip(index([["src/a.ts", []]], "file:///repo/web"));
+    const py = decodeScip(index([["api/club.py", []], ["api/b.py", []]], "file:///repo", "scip-python"));
+    const merged = mergeScip([ts, py], files);
+    expect(merged.tools).toEqual(["scip-typescript", "scip-python"]);
+    expect(merged.documents.map((d) => d.path)).toEqual(["web/src/a.ts", "api/club.py", "api/b.py"]);
+  });
+
+  it("keeps `local N` per document when two indexers cover one file", () => {
+    const a = decodeScip(index([["src/a.ts", [{ range: [5, 0, 3], symbol: "local 0" }, { range: [1, 0, 3], symbol: "local 0", def: true }]]]));
+    const b = decodeScip(index([["src/a.ts", [{ range: [8, 0, 3], symbol: "local 0" }, { range: [2, 0, 3], symbol: "local 0", def: true }]]], "file:///repo", "scip-other"));
+    const out = scipAnswers(mergeScip([a, b]), [
+      { file: "src/a.ts", line: 6, column: 1, callName: "x", language: "typescript" },
+      { file: "src/a.ts", line: 9, column: 1, callName: "x", language: "typescript" },
+    ]);
+    expect(out.servers).toEqual(["scip-typescript", "scip-other"]);
+    expect(out.answers.map((x) => x.targets)).toEqual([[{ file: "src/a.ts", line: 2 }], [{ file: "src/a.ts", line: 3 }]]);
+  });
+
+  it("answers across indexes: a call in one language's index to a definition in another's", () => {
+    const SHARED = "scip-x npm app 1.0 shared/Club#";
+    const a = decodeScip(index([["src/a.ts", [{ range: [0, 0, 4], symbol: SHARED }]]]));
+    const b = decodeScip(index([["src/b.ts", [{ range: [6, 0, 4], symbol: SHARED, def: true }]]], "file:///repo", "scip-other"));
+    expect(scipAnswers(mergeScip([a, b]), [{ file: "src/a.ts", line: 1, column: 1, callName: "Club", language: "typescript" }]).answers[0]!.targets).toEqual([{ file: "src/b.ts", line: 7 }]);
   });
 });
 
@@ -197,5 +226,14 @@ describe.skipIf(!existsSync(join(analysis, "project-summary.json")))("lsp-update
     const added = enh.symbolLinks.filter((l: { resolvedBy?: string }) => l.resolvedBy === "lsp");
     expect(added).toEqual([expect.objectContaining({ sourceFile: one!.file, sourceLine: one!.line, targetFile: "routes/players.ts", targetLine: 14 })]);
     expect(existsSync(join(dir, "an", "lsp-ground-truth.json"))).toBe(false);
+  });
+
+  it("takes several indexes, one per indexer", async () => {
+    const [one] = queries;
+    const sym = "scip-typescript npm sample 1.0 players";
+    await writeFile(join(dir, "calls.scip"), index([[`sample-backend/${one!.file}`, [{ range: [one!.line - 1, one!.column, one!.column + 1], symbol: sym }]]]));
+    await writeFile(join(dir, "defs.scip"), index([["routes/players.ts", [{ range: [13, 9, 13], symbol: sym, def: true }]]], "file:///repo", "scip-other"));
+    const r = await updateLsp({ analysisDir: join(dir, "an"), projectRoot: fixture, scip: [join(dir, "calls.scip"), join(dir, "defs.scip")] });
+    expect(r).toMatchObject({ source: "scip", serversUsed: ["scip-typescript", "scip-other"], lspResolvedCount: 1 });
   });
 });

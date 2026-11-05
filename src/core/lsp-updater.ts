@@ -40,8 +40,8 @@ export interface UpdateLspOptions {
   emitQueries?: string;
   /** Answer from this file (`DefinitionAnswerFile`) instead of starting the Docker servers. */
   answers?: string;
-  /** Take definitions from a SCIP index (`index.scip`) instead of the Docker servers. */
-  scip?: string;
+  /** Take definitions from SCIP indexes (`index.scip`, one per indexer in a polyglot repository) instead of the Docker servers. */
+  scip?: string | string[];
   /** Take definitions from an LSIF dump (`dump.lsif`) instead of the Docker servers. */
   lsif?: string;
 }
@@ -132,8 +132,9 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
     }
     let file: import("../lsp/answers-source.js").DefinitionAnswerFile;
     if (options.scip) {
-      const { decodeScip, scipAnswers, scipPathMapper } = await import("../lsp/scip.js");
-      const index = decodeScip(await readFile(resolve(options.scip)));
+      const { decodeScip, mergeScip, scipAnswers } = await import("../lsp/scip.js");
+      const decoded = await Promise.all([options.scip].flat().map(async (f) => decodeScip(await readFile(resolve(f)))));
+      const index = mergeScip(decoded, new Set(perFileAnalyses.map((a) => a.filePath)));
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
       // A document that counts UTF-8 bytes or code points and embeds no text: its lines come from the project's own files.
       const lines = new Map<string, string[] | null>();
@@ -147,8 +148,8 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
         }
         return lines.get(rel)?.[line0];
       };
-      file = scipAnswers(index, queries, scipPathMapper(index.documents, new Set(perFileAnalyses.map((a) => a.filePath))), lineText);
-      if (verbose) console.log(`  SCIP: ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
+      file = scipAnswers(index, queries, undefined, lineText);
+      if (verbose) console.log(`  SCIP: ${decoded.length} index(es), ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
     } else if (options.lsif) {
       const { decodeLsif, lsifAnswers } = await import("../lsp/lsif.js");
       const dump = decodeLsif(await readFile(resolve(options.lsif), "utf8"));

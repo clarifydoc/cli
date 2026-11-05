@@ -221,7 +221,7 @@ program
   .option("--project-root <path>", "Override projectRoot (otherwise read from summary)")
   .option("--emit-queries <file>", "Write the definition questions to <file> and stop (no server starts) — for an editor to answer")
   .option("--answers <file>", "Take definitions from <file> (answers to --emit-queries) instead of the Docker servers")
-  .option("--scip <file>", "Take definitions from a SCIP index (index.scip from scip-typescript, scip-java, …) instead of the Docker servers")
+  .option("--scip <file>", "Take definitions from a SCIP index (index.scip from scip-typescript, scip-java, …) instead of the Docker servers; repeat for a polyglot repository's several indexes", (v: string, prev: string[] = []) => [...prev, v])
   .option("--lsif <file>", "Take definitions from an LSIF dump (dump.lsif) instead of the Docker servers")
   .action(async (analysisDir: string, options) => {
     try {

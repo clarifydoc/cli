@@ -43,6 +43,8 @@ export interface ScipIndex {
   /** Metadata.tool_info.name: the indexer (`scip-typescript`, …). */
   tool?: string;
   documents: ScipDocument[];
+  /** A merged index: every indexer that contributed. */
+  tools?: string[];
 }
 
 const DEFINITION = 0x1;
@@ -221,6 +223,27 @@ function toUtf16(doc: ScipDocument, line0: number, offset: number, fileLine: (li
 }
 
 /**
+ * Several indexes as one: a polyglot repository has one per indexer, and
+ * SCIP merges by concatenating documents. Each index's paths are mapped to
+ * the analysis's on their own (they may have been built at different roots);
+ * a document the analysis does not have is left out. A path two indexers
+ * both cover stays two documents — each keeps its own encoding and its own
+ * `local N` symbols.
+ */
+export function mergeScip(indexes: readonly ScipIndex[], analysisFiles?: ReadonlySet<string>): ScipIndex {
+  const documents: ScipDocument[] = [];
+  for (const index of indexes) {
+    const map = analysisFiles ? scipPathMapper(index.documents, analysisFiles) : normalize;
+    for (const d of index.documents) {
+      const path = map(normalize(d.path));
+      if (path) documents.push({ ...d, path });
+    }
+  }
+  const tools = [...new Set(indexes.map((i) => i.tool).filter((t): t is string => !!t))];
+  return { ...(indexes[0]?.projectRoot ? { projectRoot: indexes[0].projectRoot } : {}), ...(tools.length ? { tool: tools[0]!, tools } : {}), documents };
+}
+
+/**
  * Answers to the layer-2 questions from a SCIP index. Local symbols
  * (`local N`) resolve within their document; a definition outside the
  * analysis (a dependency's sources) is not a target.
@@ -233,34 +256,42 @@ export function scipAnswers(
   lineText?: (path: string, line0: number) => string | undefined,
 ): DefinitionAnswerFile {
   const definitions = new Map<string, Array<{ file: string; line: number }>>();
-  const byPath = new Map<string, ScipDocument>();
+  const byPath = new Map<string, ScipDocument[]>();
+  // `local N` is scoped to its document; two documents may share a path (two indexers).
+  const docIds = new Map<ScipDocument, number>();
+  const keyOf = (d: ScipDocument, symbol: string) => (symbol.startsWith("local ") ? `${docIds.get(d)}\u0000${symbol}` : symbol);
   for (const d of index.documents) {
     const path = mapPath(normalize(d.path));
     if (!path) continue;
-    byPath.set(path, d);
+    docIds.set(d, docIds.size);
+    (byPath.get(path) ?? byPath.set(path, []).get(path)!).push(d);
     for (const o of d.occurrences) {
       if (!(o.roles & DEFINITION) || !o.symbol || o.range.length < 3) continue;
-      const key = o.symbol.startsWith("local ") ? `${path}\u0000${o.symbol}` : o.symbol;
+      const key = keyOf(d, o.symbol);
       (definitions.get(key) ?? definitions.set(key, []).get(key)!).push({ file: path, line: o.range[0]! + 1 });
     }
   }
   const answers: DefinitionAnswerFile["answers"] = [];
   for (const q of queries) {
-    const doc = byPath.get(q.file);
-    if (!doc) continue;
     const line0 = q.line - 1;
     // Queries count UTF-16 code units (a column in the source string); the index counts what its document says.
-    const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
-    const at = doc.occurrences.find((o) => {
-      if (o.range.length < 3 || o.roles & DEFINITION) return false;
-      const [sl, sc] = o.range as [number, number];
-      const el = o.range.length === 3 ? sl : o.range[2]!;
-      const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
-      return line0 >= sl && line0 <= el && (line0 > sl || q.column >= col(sl, sc)) && (line0 < el || q.column < col(el, ec));
-    });
-    if (!at) continue;
-    const key = at.symbol.startsWith("local ") ? `${q.file}\u0000${at.symbol}` : at.symbol;
-    answers.push({ file: q.file, line: q.line, column: q.column, targets: definitions.get(key) ?? [] });
+    let found: { doc: ScipDocument; at: ScipOccurrence } | undefined;
+    for (const doc of byPath.get(q.file) ?? []) {
+      const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
+      const at = doc.occurrences.find((o) => {
+        if (o.range.length < 3 || o.roles & DEFINITION) return false;
+        const [sl, sc] = o.range as [number, number];
+        const el = o.range.length === 3 ? sl : o.range[2]!;
+        const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
+        return line0 >= sl && line0 <= el && (line0 > sl || q.column >= col(sl, sc)) && (line0 < el || q.column < col(el, ec));
+      });
+      if (at) {
+        found = { doc, at };
+        break;
+      }
+    }
+    if (!found) continue;
+    answers.push({ file: q.file, line: q.line, column: q.column, targets: definitions.get(keyOf(found.doc, found.at.symbol)) ?? [] });
   }
-  return { source: "scip", servers: [index.tool ?? "scip"], answers };
+  return { source: "scip", servers: index.tools ?? [index.tool ?? "scip"], answers };
 }
