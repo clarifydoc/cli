@@ -45,12 +45,14 @@ const AFTER_TEMPLATE: ReadonlySet<number> = new Set([
   CPP14Lexer.Dot, CPP14Lexer.LeftBracket,
   // `size_v<T> / 2`, `{v.data, extent_v<V>}`, `view<Opts> operator[](…)`: no comparison goes on with these either.
   CPP14Lexer.Div, CPP14Lexer.Mod, CPP14Lexer.RightBrace, CPP14Lexer.Operator, CPP14Lexer.Or, CPP14Lexer.Caret,
+  // `tuple_size_v<invocable_args_t<F>> >= 2`: nothing is left of a `>=` for a comparison to compare.
+  CPP14Lexer.GreaterEqual,
 ]);
 
 /** A declaration's keywords, which follow a template only: `requires Kickable<T> void play(`. */
 const AFTER_TEMPLATE_KEYWORDS = typesOf([
   "void", "char", "char8_t", "char16_t", "char32_t", "wchar_t", "bool", "short", "int", "long", "float", "double",
-  "signed", "unsigned", "auto", "const", "volatile", "static", "extern", "inline", "virtual", "explicit", "friend",
+  "signed", "unsigned", "auto", "decltype", "const", "volatile", "static", "extern", "inline", "virtual", "explicit", "friend",
   "constexpr", "consteval", "constinit", "typename", "class", "struct", "union", "enum", "template", "requires",
 ]);
 
@@ -160,6 +162,9 @@ const POINTER: ReadonlySet<number> = new Set([CPP14Lexer.Star, CPP14Lexer.And, C
 /** An all-caps macro name: `UNUSED`, `NO_CHECKS`; a name starting with `__` (`__attribute__`) is a compiler's. */
 export const MACRO_NAME = /^[A-Z_][A-Z0-9_]*[A-Z][A-Z0-9_]*$/;
 
+/** The standard library's integer typedefs, the types non-type template parameters have. */
+const INTEGER_TYPE = /^(?:u?int(?:8|16|32|64)_t|size_t|ssize_t|ptrdiff_t|u?intptr_t)$/;
+
 /** What a virt-specifier follows: a declarator's `)`, qualifiers, another virt-specifier. */
 const BEFORE_VIRT_SPECIFIER: ReadonlySet<number> = new Set([
   CPP14Lexer.RightParen, CPP14Lexer.Const, CPP14Lexer.Volatile, CPP14Lexer.Noexcept, CPP14Lexer.Override, CPP14Lexer.Final,
@@ -246,6 +251,34 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     }
   }
 
+  // Non-type template parameters (`template <size_t N>`): `N < 256` compares, whatever its `>` finds.
+  const values = new Set<string>();
+  for (let i = 0; i + 1 < n; i++) {
+    if (type(i) !== CPP14Lexer.Template || type(i + 1) !== CPP14Lexer.Less) continue;
+    let depth = 0;
+    let start = i + 2;
+    const addParameter = (end: number) => {
+      const first = type(start);
+      if (first === CPP14Lexer.Class || first === CPP14Lexer.Typename_ || first === CPP14Lexer.Template) return;
+      let name = -1;
+      for (let k = start; k < end && type(k) !== CPP14Lexer.Assign; k++) if (isId(k)) name = k;
+      // A built-in type or a standard integer one (`size_t N`, `std::int64_t N`); a concept's (`Span T`) names a type.
+      const typed = TYPE_KEYWORDS.has(first) || (name > start && type(name - 1) === CPP14Lexer.Identifier && INTEGER_TYPE.test(names[name - 1]!));
+      if (name > start && typed) values.add(names[name]!);
+    };
+    for (let j = i + 1; j < n; j++) {
+      const t = type(j);
+      if (OPENS.has(t) && close[j]! >= 0) j = close[j]!;
+      else if (t === CPP14Lexer.Less) depth++;
+      else if (t === CPP14Lexer.Greater && --depth === 0) {
+        addParameter(j);
+        break;
+      } else if (t === CPP14Lexer.Comma && depth === 1) {
+        addParameter(j);
+        start = j + 1;
+      } else if (t === CPP14Lexer.Semi || t === CPP14Lexer.LeftBrace) break;
+    }
+  }
   // Template arguments: a `<` after a name whose `>` comes before the statement ends, followed by what may follow one.
   const angle = new Int32Array(n).fill(-1);
   // 1 inside the arguments of a template whose arguments may hold logical operators: so may the templates' there.
@@ -258,7 +291,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const lambda = type(i - 1) === CPP14Lexer.RightBracket && TEMPLATE_PARAMETER_START.has(type(i + 1));
     // `f.template operator()<I>()`: a call operator's template arguments.
     const callOperator = type(i - 1) === CPP14Lexer.RightParen && type(i - 2) === CPP14Lexer.LeftParen && type(i - 3) === CPP14Lexer.Operator;
-    if (type(i) !== CPP14Lexer.Less || shift(i) || !(isId(i - 1) || type(i - 1) === CPP14Lexer.Template || type(i - 1) === CPP14Lexer.Operator || lambda || callOperator)) continue;
+    if (type(i) !== CPP14Lexer.Less || shift(i) || (isId(i - 1) && values.has(names[i - 1]!)) || !(isId(i - 1) || type(i - 1) === CPP14Lexer.Template || type(i - 1) === CPP14Lexer.Operator || lambda || callOperator)) continue;
     let depth = 1;
     // `std::enable_if<!A::value && B>`: after a qualified name the `<` is a template's, whose constant arguments may
     // hold logical operators; elsewhere `&&` ends the scan (`if (a < b && c > d)`).
@@ -280,7 +313,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       if (OPENS.has(t) && (t !== CPP14Lexer.LeftBrace || isId(j - 1) || type(j - 1) === CPP14Lexer.Greater)) {
         if (close[j] < 0) break;
         j = close[j]!;
-      } else if (t === CPP14Lexer.Less && !shift(j) && (isId(j - 1) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;
+      } else if (t === CPP14Lexer.Less && !shift(j) && ((isId(j - 1) && !values.has(names[j - 1]!)) || CASTS.has(type(j - 1)) || type(j - 1) === CPP14Lexer.Template)) depth++;
       else if (t === CPP14Lexer.Greater && --depth > 0) nested = j;
       else if (t === CPP14Lexer.Comma && depth === 1 && (comma = true)) continue;
       else if (t === CPP14Lexer.Greater) {

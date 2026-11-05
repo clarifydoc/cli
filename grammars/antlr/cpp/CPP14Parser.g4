@@ -453,7 +453,7 @@ declarationTail
     ;
 
 staticAssertDeclaration
-    : Static_assert LeftParen constantExpression (Comma StringLiteral+)? RightParen Semi // [ClarifyDoc] C++17: no message
+    : Static_assert LeftParen constantExpression (Comma constantExpression)? RightParen Semi // [ClarifyDoc] C++17: no message; C++26: a message is any constant expression (strings joined included)
     ;
 
 emptyDeclaration_
