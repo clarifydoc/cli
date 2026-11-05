@@ -93,3 +93,20 @@ describe("C++ locals and parameters a body calls", () => {
     ]);
   });
 });
+
+describe("C++ locals and parameters a body calls, on the line-scan reading (no-antlr)", () => {
+  const plain = (src: string, rel: string): FileAnalysis => ({ ...extractWithRegex(src, rel, "cpp"), projectId: "root" });
+  const scanned = buildSymbolLinks([plain(boxH, "src/box.h"), plain(boxCpp, "src/box.cpp"), plain(pitCpp, "src/pit.cpp")])
+    .filter((l) => l.sourceFile === "src/pit.cpp")
+    .map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
+    .sort();
+
+  it("marks a name every call of which sits in its binding's scope, and links the rest", () => {
+    expect(scanned).toEqual([
+      "blockLocal kick -> src/box.cpp::kick",
+      "declaredHere kick -> src/box.cpp::kick",
+      "globalCall box -> src/box.cpp::box",
+      "globalCall kick -> src/box.cpp::kick",
+    ]);
+  });
+});

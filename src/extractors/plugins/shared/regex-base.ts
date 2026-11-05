@@ -173,8 +173,11 @@ export interface RegexLangSpec {
    * function and class become the `<setup>` pseudo-function, as module-level
    * calls do on the tree-sitter path. `true` for every file of the language,
    * a RegExp for the files whose path matches (VB: only `.vbs` scripts).
+   * `"parsed"`: only what a parser front end reports as `topLevelCalls` (never the
+   * line scan, never data access) — C's function tables, whose entries are
+   * references the file's `<setup>` hands on.
    */
-  topLevelCalls?: boolean | RegExp;
+  topLevelCalls?: boolean | RegExp | "parsed";
   /**
    * Top-level blocks that run LATER, not when the script loads — a route's
    * `do` block, a registered callback (1-based, inclusive line spans).
@@ -296,6 +299,11 @@ export interface RegexLangSpec {
    * function/method with its body lines (the declaration line's own body text
    * first, for one-line bodies).
    */
+  /**
+   * Marks `CallInfo.boundLocally` on the calls of a value the function binds itself, as a parser front end does.
+   * Runs only for the line-scan reading (no parse); `code` is the file's lines with comments and strings blanked.
+   */
+  markLocalCalls?: (code: readonly string[], fns: readonly FunctionInfo[]) => void;
   extractLocalTypes?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => NonNullable<FunctionInfo["localTypes"]>;
 }
 

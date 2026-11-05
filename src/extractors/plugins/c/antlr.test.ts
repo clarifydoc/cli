@@ -160,6 +160,34 @@ static int test_garage(void) {
   });
 });
 
+describe("C function tables", () => {
+  const source = `static void on_kickoff(int t) { start(t); }
+static void on_goal(int t) { score(t); }
+struct handler { const char *name; void (*fn)(int); };
+struct hooks { void (*on_goal)(int); void (*on_whistle)(int); };
+static const struct handler handlers[] = {
+  { "kickoff", on_kickoff },
+  { "goal", &on_goal },
+};
+static struct hooks hooks = { .on_goal = on_goal, .on_whistle = whistle_all };
+int limit = max_goals;
+`;
+  it("hands the entries of a file-scope table and its designated members to the file's <setup> as passed names", () => {
+    const parsed = readC(source);
+    expect(parsed.topLevelCalls.map((c) => [c.name, c.passed])).toEqual([
+      ["on_kickoff", "argument"], ["on_goal", "argument"], ["on_goal", "argument"], ["whistle_all", "argument"],
+    ]);
+    const setup = extractWithRegex(source, "match.c", "c", undefined, parsed).functions.find((f) => f.name === "<setup>");
+    expect(setup?.calls.map((c) => c.name)).toEqual(["on_kickoff", "on_goal", "on_goal", "whistle_all"]);
+  });
+
+  it("makes no <setup> without a parsed reading, and none for a file with no table", () => {
+    expect(extractWithRegex(source, "match.c", "c").functions.some((f) => f.name === "<setup>")).toBe(false);
+    const plain = "int total(int a) { return add(a, 1); }\n";
+    expect(extractWithRegex(plain, "t.c", "c", undefined, readC(plain)).functions.some((f) => f.name === "<setup>")).toBe(false);
+  });
+});
+
 describe("C: ANTLR and the patterns agree on the fixtures", () => {
   const root = resolve(__dirname, "../../../..");
   // Headers are the C++ plugin's.

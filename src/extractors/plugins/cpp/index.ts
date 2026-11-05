@@ -5,6 +5,7 @@ import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
 import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.js";
+import { markLocalCallables } from "../shared/c-family-callables.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
@@ -145,8 +146,13 @@ export const cppSpec: RegexLangSpec = {
     // same-named function would capture).
     {
       // A one-letter head is a template parameter (`T::create()`), whose type only the instantiation says.
-      pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*([A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
-      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
+      // A class path (`Away::Club::create()`, `Table::Iterator::next()`) keeps its capitalized segments: the namespace
+      // a capitalized project writes is part of which `Club` is meant, and two of them in one function stay two calls.
+      pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*((?:[A-Z]\w+\s*::\s*)*[A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
+      buildName: (m) => {
+        const path = m[1]!.replace(/\s+/g, "");
+        return { name: `${path.includes("::") ? path : m[1]}.${m[2]}`, leafName: m[2]!, receiverType: path };
+      },
     },
     // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`,
     // `Router::instance()->addPath(p)` too (`?.` is how the call scan's lines spell `->`, see c-family-code.ts).
@@ -257,6 +263,7 @@ export const cppSpec: RegexLangSpec = {
     return classes;
   },
   postProcessClasses: tagQmlElementClasses,
+  markLocalCalls: markLocalCallables,
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,

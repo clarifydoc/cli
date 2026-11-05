@@ -27,6 +27,8 @@ export interface PatternCallName {
   receiverQualifier?: string;
   /** A bare name the function binds itself — a parameter or a local it calls (`CallInfo.boundLocally`). */
   boundLocally?: true;
+  /** The name is handed on, not called here (`CallInfo.passed`): Qt's `&ClubWindow::saveClub` slot argument. */
+  passed?: "argument";
 }
 
 /**
@@ -114,7 +116,12 @@ export function recordPatternCalls(
   // calls: each recorded once, the local's marked.
   const bound: CallInfo[] = [];
   const addBound = callRecorder(bound);
+  const handed: PatternCallName[] = [];
   for (const c of found) {
+    if (c.passed) {
+      handed.push(c);
+      continue;
+    }
     if (c.boundLocally) {
       const at = bound.length;
       addBound(c.name, c.leafName, c.line, c.column);
@@ -125,6 +132,16 @@ export function recordPatternCalls(
       ? { ...(c.receiverType ? { receiverType: c.receiverType } : {}), ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}) }
       : undefined;
     add(c.name, c.leafName, c.line, c.column, receiver);
+  }
+  // A name handed on is a reference of its own; a name the function also calls is a call already.
+  const invoked = new Set(calls.map((c) => c.name));
+  for (const c of handed) {
+    if (invoked.has(c.name)) continue;
+    invoked.add(c.name);
+    calls.push({
+      name: c.name, kind: "internal", target: null, line: c.line, column: c.column, passed: c.passed!,
+      ...(c.receiverType ? { receiverType: c.receiverType } : {}),
+    });
   }
   return calls;
 }

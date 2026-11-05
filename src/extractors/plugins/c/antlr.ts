@@ -9,6 +9,7 @@ import {
   DirectDeclaratorContext,
   FunctionDefinitionContext,
   InitDeclaratorContext,
+  InitializerContext,
   IterationStatementContext,
   ParameterDeclarationContext,
   SelectionStatementContext,
@@ -21,6 +22,7 @@ import {
   PrimaryExpressionContext,
 } from "../../../parsers/antlr/c/CParser.js";
 import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
+import type { CallInfo } from "../../../types/analysis.js";
 import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
 import { SPECIFIER_KEYWORDS } from "../../../parsers/antlr/c/CKeywords.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
@@ -87,16 +89,42 @@ function read(text: string, also?: string): ParsedStructure {
   );
   if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors };
   const bindings = new Map<PatternCallName[], LocalBinding[]>();
-  const found = walk(tree, stream, bindings);
+  const tables: CallInfo[] = [];
+  const found = walk(tree, stream, bindings, tables);
   defineCalls(stream, C_TOKENS, found);
   if (also) leftOutCalls(also, C_TOKENS, found);
   for (const f of found) markLocalCalls(f.calls, bindings.get(f.calls) ?? []);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
   functions.sort((a, b) => a.line - b.line);
-  return { functions, topLevelCalls: [], syntaxErrors: errors };
+  return { functions, topLevelCalls: tables, syntaxErrors: errors };
 }
 
-function walk(root: ParseTree, stream: readonly Token[], bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
+/**
+ * The names a file-scope initializer list hands on: `{ "kickoff", on_kickoff }` rows of a handler table and
+ * `.on_goal = handle_goal` designated members, nested braces included — each a `passed: "argument"` name. Only a bare
+ * identifier (or `&name`) counts; whether it names a function is the linker's to say, a variable or enum constant
+ * resolves to none.
+ */
+function tableReferences(init: InitializerContext, out: CallInfo[]): void {
+  const stack: InitializerContext[] = [init];
+  while (stack.length > 0) {
+    const ctx = stack.pop()!;
+    const list = ctx.initializerList();
+    if (list) {
+      for (const inner of [...list.initializer()].reverse()) stack.push(inner);
+      continue;
+    }
+    const value = ctx.assignmentExpression();
+    if (!value?.start) continue;
+    const text = value.getText();
+    const m = /^&?([A-Za-z_]\w*)$/.exec(text);
+    if (!m) continue;
+    const token = value.stop && value.stop !== value.start ? value.stop : value.start;
+    out.push({ name: m[1]!, kind: "internal", target: null, line: token.line, column: token.column, passed: "argument" });
+  }
+}
+
+function walk(root: ParseTree, stream: readonly Token[], bindings: Map<PatternCallName[], LocalBinding[]>, tables: CallInfo[]): Found[] {
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const pending: Found[] = [];
   while (stack.length > 0) {
@@ -104,6 +132,11 @@ function walk(root: ParseTree, stream: readonly Token[], bindings: Map<PatternCa
     if (node instanceof TerminalNode) continue;
     const ctx = node as ParserRuleContext;
     let into = calls;
+    if (!calls && ctx instanceof InitializerContext && ctx.LeftBrace()) {
+      // A table at file scope: `static const struct handler handlers[] = { { "kickoff", on_kickoff } };`.
+      tableReferences(ctx, tables);
+      continue;
+    }
     if (ctx instanceof FunctionDefinitionContext) {
       const name = declaredName(ctx.declarator());
       into = [];

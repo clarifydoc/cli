@@ -282,6 +282,14 @@ function qualifyNestedClasses(
     }
     if (holder) cls.name = `${holder.name}::${cls.name}`;
   }
+  // One file, two classes of one name in different namespaces (`namespace Home { class Club … } namespace Away { class
+  // Club … }`): the linker keys a class by file and name, so each is named by its path, `Home::Club`.
+  const byName = new Map<string, ClassInfo[]>();
+  for (const cls of classes) (byName.get(cls.name) ?? byName.set(cls.name, []).get(cls.name)!).push(cls);
+  for (const same of byName.values()) {
+    if (same.length < 2 || new Set(same.map((c) => c.namespace ?? "")).size < 2) continue;
+    for (const cls of same) if (cls.namespace) cls.name = `${cls.namespace}::${cls.name}`;
+  }
 }
 
 /** `class Slice;`, `struct CLUB_API Car;`, `template <typename T> class Box;` — a declaration with no body. */
