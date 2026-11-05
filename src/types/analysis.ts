@@ -2203,6 +2203,12 @@ export interface DataSourceInfo {
    */
   receiverIsInstance?: boolean;
   /**
+   * For `database`: the row is the signed-in user (Django `request.user.save()`),
+   * an instance of the project's user model — `entity` names the framework's
+   * default until the plugin's project pass finds the model the project declares.
+   */
+  authUser?: true;
+  /**
    * For `database`: a related manager queried (`club.players.all()`,
    * `self.tags.filter(…)`), named after the relation field it reads through.
    * The field names no table, so `enrichFileDataSources` leaves `entity`

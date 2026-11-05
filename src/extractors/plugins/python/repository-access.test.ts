@@ -251,3 +251,31 @@ describe("Python model held by an instance attribute", () => {
   });
 });
 
+describe("Django's signed-in user saved", () => {
+  const saved = (filePath: string): FileAnalysis => {
+    const f = file(filePath, []);
+    f.dataSources = [{ kind: "database", name: "request.user.save", target: "User", entity: "User", authUser: true, access: "write", calls: [], line: 3 }];
+    return f;
+  };
+  it("is a row of the user model the project declares, else of Django's own", () => {
+    const views = saved("league/views.py");
+    const accounts = file("accounts/models.py", [cls("Manager", { extends: "AbstractUser", decorators: ["entity", "django"] })]);
+    new PythonEntityExtractor().reconcileProject([accounts, views]);
+    expect(views.dataSources[0]!.entity).toBe("Manager");
+
+    const plain = saved("league/views.py");
+    new PythonEntityExtractor().reconcileProject([plain]);
+    expect(plain.dataSources[0]!.entity).toBe("User");
+  });
+
+  it("names none when the project declares two user models", () => {
+    const views = saved("league/views.py");
+    const models = file("accounts/models.py", [
+      cls("Manager", { extends: "AbstractUser", decorators: ["entity", "django"] }),
+      cls("Scout", { extends: "models.AbstractBaseUser", decorators: ["entity", "django"] }),
+    ]);
+    new PythonEntityExtractor().reconcileProject([models, views]);
+    expect(views.dataSources[0]!.entity).toBeUndefined();
+  });
+});
+

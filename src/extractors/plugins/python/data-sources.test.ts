@@ -146,6 +146,42 @@ describe("Python database calls", () => {
     expect(rows).toEqual(["Club read", "ContentType read", "Club read", "Fixture write", "Player write", "Player read", "Referee write"]);
   });
 
+  it("reads a custom manager, a manager held in a local and the signed-in user saved (real-repo FP)", async () => {
+    const src = [
+      "from django.db import models",
+      "",
+      "def root(pk):",
+      '    return Match.global_objects.select_related("home").get(id=pk)',
+      "",
+      "def resolve(pk, include_deleted):",
+      "    manager = Match.global_objects if include_deleted else Match.objects",
+      '    return manager.select_related("home").get(id=pk)',
+      "",
+      "def patch(self, request):",
+      "    user = self.request.user",
+      "    user.save()",
+      "    request.user.save()",
+      "",
+      "def mixed(kind):",
+      "    store = Club.objects",
+      "    store = Player.objects",
+      "    return store.filter(kind=kind)",
+      "",
+      "def settings():",
+      '    return Config.json_cache.get("x")',
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name} → ${d.entity ?? "-"} ${d.access ?? ""}`.trim());
+    expect(rows).toEqual([
+      'Match.global_objects.select_related("home").get → Match read',
+      "Match.global_objects.select_related → Match read",
+      'manager.select_related("home").get → Match read',
+      "manager.select_related → Match read",
+      "user.save → User write",
+      "request.user.save → User write",
+    ]);
+  });
+
   it("leaves interpreters, strings, XML trees and arrays alone", async () => {
     // Real-repo FP: every one of these was a "database" access.
     expect(await dbCallsOf([
