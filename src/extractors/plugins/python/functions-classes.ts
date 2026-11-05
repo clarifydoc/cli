@@ -33,7 +33,7 @@ const ORM_FIELD_CALLS = new Set(["mapped_column", "Column", "relationship"]);
  * container lookup assigned, a type comment, a `cast(...)`. Gates the
  * statement walk of `collectLocalTypes`.
  */
-const LOCAL_TYPE_GATE = /^\s*[A-Za-z_]\w*\s*:\s*[^\s#]|^\s*[A-Za-z_]\w*\s*=\s*(?:await\s+)?[\w.]+\s*[([]|#\s*type:|\.(?:get|resolve)\s*\(\s*(?:[\w.]+\.)?[A-Z]|ontainer|\bcast\s*\(/m;
+const LOCAL_TYPE_GATE = /^\s*[A-Za-z_]\w*\s*:\s*[^\s#]|^\s*[A-Za-z_]\w*\s*=\s*(?:await\s+)?[\w.]+\s*[([]|#\s*type:|\.(?:get|resolve)\s*\(\s*(?:[\w.]+\.)?[A-Z]|ontainer|\bcast\s*\(|\bwith\s[^\n]*\sas\s|\bexcept\s[^\n]*\sas\s|^\s*[A-Za-z_]\w*\s*(?:,\s*[A-Za-z_]\w*\s*)+=\s*(?:await\s+)?[\w.]+\s*\(/m;
 
 /** A body with a `for` loop or comprehension: over a typed collection parameter it types the target. */
 const LOOP_GATE = /\bfor\s+(?:[\w,()]+\s+)+?in\s/;

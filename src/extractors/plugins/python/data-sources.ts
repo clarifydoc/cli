@@ -95,6 +95,11 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    // A Databricks notebook exported as `.py`: its `# MAGIC %sql` cells are SQL, read like a `spark.sql` string.
+    if (node.type === "module") {
+      if (this.sourceText.includes("# MAGIC %sql")) sources.push(...magicSqlSources(this.sourceText, (info) => this.ds(info)));
+      return;
+    }
     // `os.environ["DATABASE_URL"]`: an environment read written as a subscript.
     if (node.type === "subscript" && node.childForFieldName("value")?.text === "os.environ") {
       const key = node.childForFieldName("subscript");
@@ -268,7 +273,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // Raw SQL a migration or an ORM annotation states: Django `migrations.RunSQL("…")` (a statement
         // or a list of them), `RawSQL("SELECT … FROM x")` in an annotation, Alembic `op.execute("UPDATE …")`
         // (also through `sa.text`). One row per data statement whose table resolves; DDL is the schema.
-        const rawSql = leaf === "RunSQL" || leaf === "RawSQL" ? `Django: ${leaf}` : fnName === "op.execute" && /\balembic\b/.test(this.sourceText) ? "Alembic: execute" : null;
+        // Spark SQL: `spark.sql("SELECT … FROM league.matches")`, read through the same statement reader.
+        const rawSql = leaf === "RunSQL" || leaf === "RawSQL" ? `Django: ${leaf}` : fnName === "op.execute" && /\balembic\b/.test(this.sourceText) ? "Alembic: execute"
+          : leaf === "sql" && SPARK_SESSION_RE.test(fnName) && SPARK_GATE_RE.test(this.sourceText) ? "Spark: sql" : null;
         if (rawSql) {
           let arg = positional(node)[0] ?? (node.childForFieldName("arguments")?.namedChildren ?? []).find((a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "sql")?.childForFieldName("value") ?? undefined;
           if (arg?.type === "call" && /(?:^|\.)text$/.test(arg.childForFieldName("function")?.text ?? "")) arg = positional(arg)[0];
@@ -286,6 +293,17 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             }
           }
           return;
+        }
+
+        // Spark's table readers and writers: `spark.table("league.cars")`, `spark.read.table(…)`, `df.write.saveAsTable(…)`, `insertInto(…)`.
+        const sparkTable = SPARK_TABLE_CALLS.exec(fnName);
+        if (sparkTable && SPARK_GATE_RE.test(this.sourceText)) {
+          const arg = positional(node)[0];
+          const table = arg?.type === "string" ? pyStringValue(arg, node) : null;
+          if (table && /^[A-Za-z_][\w.`-]*$/.test(table)) {
+            sources.push(this.ds({ kind: "database", name: fnName, target: table.replace(/`/g, ""), entity: table.replace(/`/g, ""), access: sparkTable[2] ? "write" : "read", line: node.startPosition.row + 1 }));
+            return;
+          }
         }
 
         // Database patterns — matched on the exact method LEAF, not substring:
@@ -310,12 +328,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         const heldManager = parts.length >= 2 && /^[a-z_]\w*$/.test(parts[0]!) && parts[0] !== "self" && MANAGER_ASSIGNED.test(this.sourceText)
           ? heldManagerModel(parts[0]!, node) : null;
         const djangoManager = (/\.\w*objects\./.test(fnName) && managerModel(fnName) !== null) || heldManager !== null;
+        // `db.session.get(Club, id)`: a session read of the model it is handed (a string or `url` first argument is no model).
+        const sessionGet = leaf === "get" && PY_DB_RECEIVER_RE.test(receiver) && sessionModelArg(node, leaf) !== null;
         const isQuery =
-          PY_DB_LEAVES.has(leaf) || djangoManager ||
+          PY_DB_LEAVES.has(leaf) || djangoManager || sessionGet ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && datastoreChain(fnName)) || (relatedManager(fnName, leaf) && (PY_GENERIC_DB_LEAVES.has(leaf) || !datastoreChain(fnName))) ||
           (PY_SESSION_STATEMENT_LEAVES.has(leaf) && !fnName.includes("(") && PY_DB_RECEIVER_RE.test(receiver));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
-          let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS) ?? (djangoManager ? (DJANGO_WRITE_LEAVES.has(leaf) ? "write" : "read") : undefined);
+          let access = isSessionWrite ? "write" : sessionGet ? "read" : dbAccessFor(leaf, PY_DB_ACCESS) ?? (djangoManager ? (DJANGO_WRITE_LEAVES.has(leaf) ? "write" : "read") : undefined);
           // Raw SQL (`cursor.execute(sql)`, `session.execute(text(q))`): the
           // statement names the table and says whether it reads or writes —
           // read from a literal or a local assigned one.
@@ -348,7 +368,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           }
           // A model's manager or query attribute (`Order.objects.filter`, `User.query.filter_by`)
           // names the model before it, not after: the segment ahead of the leaf is the manager.
-          table ??= managerModel(fnName) ?? heldManager;
+          table ??= managerModel(fnName) ?? heldManager ?? clsManagerModel(fnName, node);
+          // The row a session is handed (`session.add(Club(…))`, `session.delete(club)`, `session.get(Club, id)`): its model.
+          if (!table && (isSessionWrite || sessionGet)) table = sessionModelArg(node, leaf, this.sourceText);
           // A row saved or deleted through the variable holding it (`self.club1.save()`,
           // `match.delete()`): its model is what the variable was built from, else
           // unknown — never the variable's name.
@@ -573,6 +595,48 @@ function relatedManager(fnName: string, leaf: string): boolean {
 function managerModel(fnName: string): string | null {
   const m = /(?:^|\.)([A-Z]\w*)\.(?:\w*objects|query)\./.exec(fnName.replace(/\([^()]*\)/g, "()"));
   return m ? m[1]! : null;
+}
+
+/** `cls.query.filter_by(…)` / `cls.objects.filter(…)` inside a method: the class the method is declared in. */
+function clsManagerModel(fnName: string, at: Node): string | null {
+  if (!/^cls\.(?:\w*objects|query)\./.test(fnName.replace(/\([^()]*\)/g, "()"))) return null;
+  let cur: Node | null = at.parent;
+  while (cur && cur.type !== "class_definition") cur = cur.parent;
+  return cur?.childForFieldName("name")?.text ?? null;
+}
+
+/** Session verbs that take the row (or, for `get`, the model) as their first argument. */
+const PY_SESSION_ROW_LEAVES = new Set(["add", "delete", "merge", "refresh", "expunge", "get"]);
+
+/**
+ * The model a session verb is handed: `Club` (`get(Club, id)`), `Club(…)` (`add(Club(name=n))`) or a local /
+ * parameter that is one — annotated (`club: Club`) or assigned a construction. Anything else: null.
+ */
+function sessionModelArg(call: Node, leaf: string, sourceText?: string): string | null {
+  if (!PY_SESSION_ROW_LEAVES.has(leaf)) return null;
+  const arg = positional(call)[0];
+  if (!arg) return null;
+  if (leaf === "get") return /^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(arg.text) ? arg.text.split(".").pop()! : null;
+  if (sourceText === undefined) return null;
+  if (arg.type === "call") {
+    const fn = arg.childForFieldName("function");
+    return fn && /^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(fn.text) ? fn.text.split(".").pop()! : null;
+  }
+  if (arg.type !== "identifier") return null;
+  const annotated = annotatedParam(arg.text, call)?.replace(/^['"]|['"]$/g, "");
+  if (annotated && /^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(annotated)) return annotated.split(".").pop()!;
+  const held = heldModel(arg.text, sourceText);
+  if (held) return held;
+  // A row read into the local: `c = session.get(Club, id)`, `c = Club.query.filter_by(…).first()`, `session.query(Club).one()`.
+  const models = new Set<string>();
+  for (const v of assignedValues(arg.text, call)) {
+    const text = v.text.replace(/^await\s+/, "");
+    const m = managerModel(text) ?? /^(?:[a-z_]\w*\.)+(?:get|get_or_404|one|scalar_one)\(\s*(?:[a-z_]\w*\.)*([A-Z]\w*)\s*[,)]/.exec(text)?.[1]
+      ?? /(?:^|\.)query\(\s*(?:[a-z_]\w*\.)*([A-Z]\w*)\s*\)\.(?:first|one|get|one_or_none)\(/.exec(text)?.[1];
+    if (!m) return null;
+    models.add(m);
+  }
+  return models.size === 1 ? [...models][0]! : null;
 }
 
 /** `Doc.objects`, or a choice of two of one model's managers: `Doc.global_objects if deleted else Doc.objects`. */
@@ -1109,6 +1173,12 @@ function pyStringLiteral(node: Node | undefined): string | null {
 }
 
 /** DB-API / SQLAlchemy calls whose first argument is the SQL text. */
+/** A SparkSession by its usual names: `spark`, `self.spark`, `spark_session`, `sqlContext`. */
+const SPARK_SESSION_RE = /(?:^|\.)(?:spark|spark_session|sparkSession|sqlContext|sql_context)\.sql$/;
+/** A file that is Spark's at all: the gate before reading `.sql(` or `.table(` as a table access. */
+const SPARK_GATE_RE = /\bpyspark\b|\bSparkSession\b|\bdatabricks\b/;
+/** `spark.table(x)` / `spark.read.table(x)` (reads); `….saveAsTable(x)` / `….insertInto(x)` (writes). */
+const SPARK_TABLE_CALLS = /^(?:(spark|spark_session|sparkSession|self\.spark)\.(?:read\.)?table|[\w.]+\.(?:write\.|writeTo\.)?(?:(saveAsTable|insertInto)))$/;
 const SQL_TEXT_LEAVES = new Set(["execute", "executemany", "executescript", "raw", "exec"]);
 
 /** A call's positional arguments, in order. */
@@ -1251,4 +1321,28 @@ function singleAssignment(name: string, at: Node): Node | null {
   };
   visit(scope);
   return count === 1 ? found : null;
+}
+
+/**
+ * The SQL cells of a Databricks notebook source file: a `# MAGIC %sql` line and the `# MAGIC …` lines after it.
+ * One row per table each statement of the cell names, at the cell's first line.
+ */
+function magicSqlSources(sourceText: string, make: (info: Omit<DataSourceInfo, "calls">) => DataSourceInfo): DataSourceInfo[] {
+  const lines = sourceText.split("\n");
+  const out: DataSourceInfo[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^#\s*MAGIC\s+%sql\b/.test(lines[i]!)) continue;
+    const body: string[] = [lines[i]!.replace(/^#\s*MAGIC\s+%sql\b/, "")];
+    let j = i + 1;
+    for (; j < lines.length && /^#\s*MAGIC\b/.test(lines[j]!); j++) body.push(lines[j]!.replace(/^#\s*MAGIC ?/, ""));
+    for (const stmt of body.join("\n").split(";")) {
+      const hit = tableFrom(stmt);
+      if (!hit) continue;
+      const access = sqlVerbAccess(hit.verb);
+      out.push(make({ kind: "database", name: "Databricks: %sql", target: hit.table, entity: hit.table, line: i + 1, ...(access ? { access } : {}) }));
+      for (const extra of joinedTableRows(stmt, hit.table, "Databricks: %sql", i + 1)) out.push(make(extra));
+    }
+    i = j - 1;
+  }
+  return out;
 }

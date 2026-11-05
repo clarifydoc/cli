@@ -24,6 +24,24 @@ export const pythonManifest: LanguagePluginManifest = {
   projectCommands: pythonProjectCommands,
   testSetupRuns: djangoTestSetupRuns,
   language: "python",
+  tupleElementsOf(returnType) {
+    const m = /^(?:typing\.)?(?:tuple|Tuple)\[([\s\S]+)\]$/.exec(returnType.trim());
+    if (!m) return null;
+    const out: string[] = [];
+    let depth = 0;
+    let start = 0;
+    const body = m[1]!;
+    for (let i = 0; i <= body.length; i++) {
+      const ch = body[i];
+      if (ch === "[" || ch === "(") depth++;
+      else if (ch === "]" || ch === ")") depth--;
+      else if ((ch === "," && depth === 0) || i === body.length) {
+        out.push(body.slice(start, i).trim().replace(/^(['"])(.*)\1$/, "$2"));
+        start = i + 1;
+      }
+    }
+    return out.length > 0 && !out.includes("...") ? out : null;
+  },
   // An Azure Functions app serves its HTTP triggers under host.json's route prefix.
   serviceConfig: { sources: [azureHostJson], routeBaseOf: azureRouteBase },
   family: "python",

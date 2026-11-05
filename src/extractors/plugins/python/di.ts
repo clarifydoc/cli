@@ -374,6 +374,10 @@ interface StatementVisitor {
   rebind?(name: string): void;
   /** A `for` statement; true when it bound its targets itself (typed by what it loops over). */
   loop?(stmt: Node): boolean;
+  /** A `with` item (`Club() as c`); true when it bound its alias itself. */
+  withItem?(item: Node): boolean;
+  /** An `except` clause (`except LeagueError as e`). */
+  except?(clause: Node): void;
 }
 
 /**
@@ -397,7 +401,8 @@ function walkStatements(node: Node, v: StatementVisitor): void {
     if (v.rebind) {
       // `for x in …` / `with … as x` bind names to values no annotation types.
       if (t === "for_statement" && !v.loop?.(child)) boundNames(child.childForFieldName("left"), v.rebind);
-      else if (t === "with_statement") withAliases(child, v.rebind);
+      else if (t === "with_statement") withAliases(child, v.rebind, v.withItem);
+      else if (t === "except_clause" || t === "except_group_clause") v.except?.(child);
     }
     if (STATEMENT_HOLDERS.has(t)) walkStatements(child, v);
   }
@@ -413,12 +418,12 @@ function boundNames(node: Node | null, out: (name: string) => void): void {
 }
 
 /** The `as` targets of a `with` statement's items. */
-function withAliases(withStmt: Node, out: (name: string) => void): void {
+function withAliases(withStmt: Node, out: (name: string) => void, typed?: (item: Node) => boolean): void {
   for (const clause of withStmt.namedChildren) {
     if (clause.type !== "with_clause") continue;
     for (const item of clause.namedChildren) {
       const value = item.type === "with_item" ? item.childForFieldName("value") : null;
-      if (value?.type === "as_pattern") boundNames(value.childForFieldName("alias"), out);
+      if (value?.type === "as_pattern" && !typed?.(item)) boundNames(value.childForFieldName("alias"), out);
     }
   }
 }
@@ -474,7 +479,7 @@ export function collectLocalTypes(
 ): LocalType[] {
   const table = new FactTable();
   const paramNames = new Set(params.map((p) => p.name));
-  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean }>>();
+  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number }>>();
   // Also assigned something other than a call (or `None`): hides its `from` calls.
   const untyped = new Set<string>();
   const scope = (name: string): Fact => {
@@ -524,6 +529,17 @@ export function collectLocalTypes(
       if (!left) return;
       if (left.type !== "identifier") {
         if (left.type === "pattern_list" || left.type === "tuple_pattern" || left.type === "list_pattern") {
+          // `a, b = load()`: each name is the element of the call's tuple result (the linker reads the declared `-> tuple[X, Y]`).
+          const right = a.childForFieldName("right");
+          const call = right && left.namedChildren.every((c) => c.type === "identifier") ? initializerCall(right) : null;
+          if (call && !call.awaited) {
+            left.namedChildren.forEach((n, index) => {
+              table.assign(n.text, UNKNOWN);
+              const calls = fromCalls.get(n.text) ?? fromCalls.set(n.text, new Map()).get(n.text)!;
+              calls.set(`${call.from}#${index}`, { ...call, index });
+            });
+            return;
+          }
           boundNames(left, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
         }
         return;
@@ -554,6 +570,27 @@ export function collectLocalTypes(
       const calls = fromCalls.get(name) ?? fromCalls.set(name, new Map()).get(name)!;
       calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
     },
+    // `with Club() as c:` — the context manager's own type (`__enter__` returns the manager).
+    withItem(item) {
+      const value = item.childForFieldName("value");
+      const expr = value?.namedChild(0);
+      const alias = value?.childForFieldName("alias")?.namedChild(0);
+      if (!expr || alias?.type !== "identifier") return false;
+      const fact = valueFact(expr, scope);
+      table.assign(alias.text, fact === NONE ? UNKNOWN : fact);
+      untyped.add(alias.text);
+      return true;
+    },
+    // `except LeagueError as e:` — the caught class.
+    except(clause) {
+      const value = clause.childForFieldName("value") ?? clause.namedChild(0);
+      if (value?.type !== "as_pattern") return;
+      const caught = value.namedChild(0);
+      const alias = value.childForFieldName("alias")?.namedChild(0);
+      if (alias?.type !== "identifier") return;
+      table.assign(alias.text, caught && (caught.type === "identifier" || caught.type === "attribute") && isClassName(caught.text) ? { type: caught.text } : UNKNOWN);
+      untyped.add(alias.text);
+    },
     rebind(name) {
       table.assign(name, UNKNOWN);
       untyped.add(name);
@@ -567,7 +604,9 @@ export function collectLocalTypes(
       // A stated type wins (handled above); only calls, or calls and `None`, remain.
       const calls = fromCalls.get(name);
       if (!calls || untyped.has(name)) continue;
-      for (const c of calls.values()) out.push(c.awaited ? { name, type: "", from: c.from, awaited: true } : { name, type: "", from: c.from });
+      for (const c of calls.values()) {
+        out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}) });
+      }
       continue;
     }
     const local: LocalType = { name, type: fact.type };
@@ -1138,10 +1177,53 @@ function overrideBinding(assignment: Node, out: DiBinding[]): void {
  * lookup, so the call carries the type (or token) it returns. Called for
  * every call node: bails on the receiver's node type first.
  */
+/** Trees that mention `isinstance` at all: the gate before any call climbs its parents. */
+const mentionsIsinstance = new WeakMap<object, boolean>();
+
+/**
+ * `if isinstance(x, Club): x.rank()` — the receiver `x` of a call in the branch is a `Club`. Only the
+ * condition's `and` conjuncts narrow, and only the branch the condition guards (never an `else`, never a
+ * tuple of classes); the nearest enclosing narrowing wins. A name the branch rebinds before the call is not narrowed.
+ */
+function narrowedType(call: Node, name: string): { type: string } | null {
+  let seen = mentionsIsinstance.get(call.tree);
+  if (seen === undefined) {
+    seen = call.tree.rootNode.text.includes("isinstance");
+    mentionsIsinstance.set(call.tree, seen);
+  }
+  if (!seen) return null;
+  let child: Node = call;
+  for (let cur = call.parent; cur; child = cur, cur = cur.parent) {
+    const t = cur.type;
+    if (t === "function_definition" || t === "lambda" || t === "class_definition" || t === "module") return null;
+    if ((t === "if_statement" || t === "elif_clause") && cur.childForFieldName("consequence")?.id === child.id) {
+      const found = isinstanceOf(cur.childForFieldName("condition"), name);
+      if (found) return { type: found };
+    }
+  }
+  return null;
+}
+
+/** The class `isinstance(name, Class)` narrows `name` to, through `and`; null otherwise. */
+function isinstanceOf(cond: Node | null | undefined, name: string): string | null {
+  if (!cond) return null;
+  if (cond.type === "parenthesized_expression") return isinstanceOf(cond.namedChild(0), name);
+  if (cond.type === "boolean_operator") {
+    if (cond.childForFieldName("operator")?.text !== "and") return null;
+    return isinstanceOf(cond.childForFieldName("left"), name) ?? isinstanceOf(cond.childForFieldName("right"), name);
+  }
+  if (cond.type !== "call" || cond.childForFieldName("function")?.text !== "isinstance") return null;
+  const args = cond.childForFieldName("arguments")?.namedChildren ?? [];
+  if (args.length !== 2 || args[0]!.text !== name) return null;
+  const cls = args[1]!;
+  return (cls.type === "identifier" || cls.type === "attribute") && isClassName(cls.text) ? cls.text : null;
+}
+
 export function pythonReceiverTypeOf(node: Node): { type: string; qualifier?: string } | null {
   const fn = node.childForFieldName("function");
   if (fn?.type !== "attribute") return null;
   const recv = fn.childForFieldName("object");
+  if (recv?.type === "identifier") return narrowedType(node, recv.text);
   if (!recv || (recv.type !== "call" && recv.type !== "subscript")) return null;
   const fact = lookupFact(recv);
   if (!fact) return null;

@@ -1296,8 +1296,11 @@ export interface FunctionInfo {
    * type (and the member's declared type) — the plugin never infers it.
    * `awaited`: the initializer was awaited (`var s = await repo.FindAsync(id)`),
    * so the local holds what the returned task/promise resolves to.
+   * `fromIndex`: the name is one target of a tuple unpacking of that call
+   * (`a, b = load()`): the local holds the element at that position of the
+   * call's declared tuple return type (the manifest's `tupleElementsOf`).
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort
