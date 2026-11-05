@@ -662,3 +662,18 @@ describe("Dart raw SQL", () => {
     ]);
   });
 });
+
+describe("dartSpec — `$` in identifiers and barrel exports", () => {
+  it("reads a function and a call whose name holds a `$`", () => {
+    const src = `void make$Club() {}\nvoid go() {\n  make$Club();\n  repo.load$All();\n  print('$name(x)');\n}\n`;
+    expect(fnNames(src)).toEqual(["make$Club", "go"]);
+    const go = fns(src).find((f) => f.name === "go")!;
+    expect(go.calls.map((c) => c.name)).toEqual(["make$Club", "repo.load$All"]);
+  });
+
+  it("records a barrel's `export` as a re-export, the `show` names one by one", () => {
+    const rows = (src: string) => dartSpec.extractReExports!(src.split("\n")).map((e) => `${e.name} ${e.source}`);
+    expect(rows(`export 'src/club.dart';\nimport 'src/other.dart';\n`)).toEqual(["* src/club.dart"]);
+    expect(rows(`export 'src/club.dart' show Club, Match;\n`)).toEqual(["Club src/club.dart", "Match src/club.dart"]);
+  });
+});

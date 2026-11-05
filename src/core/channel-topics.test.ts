@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { DataSourceInfo, FileAnalysis } from "../types/analysis.js";
-import { scopeChannelTopics } from "./channel-topics.js";
+import { joinMqttTopicFilters, mqttFilterMatches, scopeChannelTopics } from "./channel-topics.js";
 
 const row = (kind: "queue-publish" | "queue-consume", target: string, line: number, topic?: string): DataSourceInfo =>
   ({ kind, name: "Phoenix.Channel", target, calls: [], line, ...(topic ? { topic } : {}) });
@@ -75,5 +75,38 @@ describe("scopeChannelTopics — a socket's channel binding", () => {
     ];
     expect(scopeChannelTopics(files)).toBe(0);
     expect(files[1]!.dataSources.map((d) => d.topic)).toEqual([undefined, "lobby"]);
+  });
+});
+
+describe("MQTT topic filters", () => {
+  const mqtt = (kind: "queue-publish" | "queue-consume", target: string, line: number): DataSourceInfo =>
+    ({ kind, name: "MQTT", target, calls: [], line, topicSyntax: "mqtt" });
+
+  it("matches `+` as one level and `#` as the rest, a shared subscription by its filter", () => {
+    expect(mqttFilterMatches("league/+/score", "league/premier/score")).toBe(true);
+    expect(mqttFilterMatches("league/+/score", "league/premier/cards")).toBe(false);
+    expect(mqttFilterMatches("league/+/score", "league/premier/east/score")).toBe(false);
+    expect(mqttFilterMatches("league/#", "league/premier/east/score")).toBe(true);
+    expect(mqttFilterMatches("league/#", "league")).toBe(true);
+    expect(mqttFilterMatches("league/#", "garage/premier")).toBe(false);
+    expect(mqttFilterMatches("$share/pit/league/+", "league/premier")).toBe(true);
+    expect(mqttFilterMatches("#", "$SYS/uptime")).toBe(false);
+  });
+
+  it("repeats a publish at the filters covering it, and only for rows marked mqtt", () => {
+    const decoy: DataSourceInfo = { kind: "queue-publish", name: "Redis: publish", target: "league/premier/score", calls: [], line: 9 };
+    const files = [
+      file("send.js", [mqtt("queue-publish", "league/premier/score", 3), decoy, mqtt("queue-publish", "garage/bay", 5)]),
+      file("listen.js", [mqtt("queue-consume", "league/+/score", 4)]),
+    ];
+    expect(joinMqttTopicFilters(files)).toBe(1);
+    expect(targets(files)).toEqual([
+      "send.js:3 league/premier/score",
+      "send.js:9 league/premier/score",
+      "send.js:5 garage/bay",
+      "send.js:3 league/+/score",
+      "listen.js:4 league/+/score",
+    ]);
+    expect(joinMqttTopicFilters(files)).toBe(0);
   });
 });

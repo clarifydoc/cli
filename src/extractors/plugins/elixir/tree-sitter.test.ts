@@ -177,6 +177,20 @@ end
     ]);
   });
 
+  it("reads the list form `defdelegate [a: 1, b: 2], to: X` as one function per name", () => {
+    const list = `defmodule League.Api do
+  defdelegate [promote: 1, drop: 1], to: League.Club
+  defdelegate [size: 1], to: @store
+end
+`;
+    const a = extractWithRegex(list, "lib/api.ex", "elixir", undefined, readElixir(list));
+    const fns = a.classes.flatMap((c) => c.methods).concat(a.functions);
+    expect(fns.filter((f) => f.name !== "<setup>").map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([
+      ["promote", ["Club.promote"]],
+      ["drop", ["Club.drop"]],
+    ]);
+  });
+
   it("records the calls of a script outside any module as its <setup>", () => {
     const seeds = `League.Club.promote(1)\nLeague.Api.promote(2)\n`;
     const a = extractWithRegex(seeds, "priv/repo/seeds.exs", "elixir", undefined, readElixir(seeds));

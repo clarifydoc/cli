@@ -148,15 +148,31 @@ function keywordValue(keywords: TSNode | undefined, key: string): TSNode | null 
 /**
  * `defdelegate drop(c), to: League.Club, as: :relegate`: a function of its own whose one call is the function
  * it delegates to (`Club.relegate`, as a remote call is named — its module's last name and the function, the
- * `as:` name when one is given). A delegate to something no module names (`to: @store`) or a list of heads
- * is no function this reads.
+ * `as:` name when one is given). A delegate to something no module names (`to: @store`) is no function this reads;
+ * a list of `name: arity` pairs is one function per name.
  */
 function delegation(call: TSNode, walk: Walk): boolean {
   const args = namedChildren(call).find((c) => c.type === "arguments");
   const parts = args ? namedChildren(args) : [];
-  const name = definitionName(parts[0]);
   const to = keywordValue(parts[1], "to");
-  if (!name || !to || (to.type !== "alias" && to.type !== "atom")) return false;
+  if (!to || (to.type !== "alias" && to.type !== "atom")) return false;
+  const module0 = to.text.replace(/^:/, "").split(".").pop()!;
+  // `defdelegate [promote: 1, drop: 1], to: League.Club` — one function per listed name, each calling its namesake.
+  if (parts[0]?.type === "list") {
+    const keywords = namedChildren(parts[0]).find((c) => c.type === "keywords");
+    const pairs = keywords ? namedChildren(keywords).filter((p) => p.type === "pair") : [];
+    walk.last = null;
+    for (const pair of pairs) {
+      const key = pair.childForFieldName("key");
+      const fname = key?.text.replace(/:\s*$/, "");
+      if (!key || !fname || !/^[a-z_]\w*[?!]?$/.test(fname)) continue;
+      const calls: PatternCallName[] = [{ name: `${module0}.${fname}`, leafName: fname, line: key.startPosition.row + 1, column: key.startPosition.column }];
+      walk.functions.push({ span: { name: fname, line: key.startPosition.row + 1, endLine: key.endPosition.row + 1 }, calls });
+    }
+    return pairs.length > 0;
+  }
+  const name = definitionName(parts[0]);
+  if (!name) return false;
   const as = keywordValue(parts[1], "as");
   const target = as?.type === "atom" ? as.text.replace(/^:/, "") : name.text;
   const module = to.text.replace(/^:/, "").split(".").pop()!;

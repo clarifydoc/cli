@@ -59,6 +59,8 @@ function importScope(mod: string, lines: string[], i: number): NonNullable<Impor
   let text = line(i);
   // The options go on after a trailing comma, the list until its `]`.
   for (let j = i; j + 1 < lines.length && j - i < 20 && (/,\s*$/.test(text) || /\[[^\]]*$/.test(text)); ) text += " " + line(++j);
+  const excepted = /except:\s*\[([^\]]*)\]/.exec(text);
+  if (excepted && !text.includes("only:")) return { module: mod, except: [...excepted[1]!.matchAll(/([a-z_]\w*[?!]?)\s*:/g)].map((m) => m[1]!) };
   if (!text.includes("only:")) return { module: mod };
   const list = /only:\s*\[([^\]]*)\]/.exec(text);
   // `only: :functions` / `:macros` narrows by kind, not by name.

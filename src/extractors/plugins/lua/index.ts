@@ -66,6 +66,24 @@ const REQUIRE_CALL: CallPattern = {
   },
 };
 
+/**
+ * Where a one-line function's body starts on its declaration line (`function M.kick() return M.tally() end`):
+ * after the parameter list. -1 when the line ends with it (the body follows) or only a comment does.
+ */
+export function luaInlineBodyColumn(line: string, from: number): number {
+  let k = from;
+  while (line[k] === " " || line[k] === "\t") k++;
+  if (line[k] !== "(") return -1;
+  let depth = 0;
+  for (; k < line.length; k++) {
+    if (line[k] === "(") depth++;
+    else if (line[k] === ")" && --depth === 0) break;
+  }
+  if (depth !== 0) return -1;
+  const rest = line.slice(k + 1);
+  return rest.trim() === "" || rest.trimStart().startsWith("--") ? -1 : k + 1;
+}
+
 export const luaSpec: RegexLangSpec = {
   language: "lua",
   extensions: [".lua"],
@@ -74,6 +92,7 @@ export const luaSpec: RegexLangSpec = {
   // A script's own statements run when it loads (an OpenResty access-phase script is mostly top-level code).
   topLevelCalls: true,
   callSourceLines: luaCodeLines,
+  inlineBodyColumn: luaInlineBodyColumn,
   callPatterns: [REQUIRE_CALL],
 
   functionPatterns: [

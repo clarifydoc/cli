@@ -1488,6 +1488,25 @@ describe("JS MQTT topics", () => {
   });
 });
 
+describe("JS MQTT message handlers", () => {
+  it("gives `client.on('message', …)` a consume row on each topic the client subscribes to, with a named handler", async () => {
+    const src = `
+      const mqtt = require('mqtt');
+      const client = mqtt.connect('mqtt://broker');
+      client.on('message', onScore);
+      client.on('connect', () => client.subscribe(['league/+/score', 'league/cards']));
+      other.on('message', () => {});`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const rows = new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind !== "env");
+    expect(rows.map((d) => `${d.kind} ${d.name} ${d.target} ${d.handler ?? ""} ${d.topicSyntax}`)).toEqual([
+      "queue-consume MQTT: message league/+/score onScore mqtt",
+      "queue-consume MQTT: message league/cards onScore mqtt",
+      "queue-consume MQTT: subscribe league/+/score  mqtt",
+      "queue-consume MQTT: subscribe league/cards  mqtt",
+    ]);
+  });
+});
+
 describe("Nuxt $fetch and useFetch", () => {
   it("request with GET unless the options state another method", async () => {
     const calls = await apiCallsOf(`

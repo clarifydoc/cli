@@ -131,6 +131,11 @@ export interface RegexLangSpec {
    * or aliased string lines that look like any other string line.
    */
   extractImports?: (lines: string[]) => ImportInfo[];
+  /**
+   * Re-exports a file's directives declare (Dart `export 'src/club.dart';` — a barrel): rows of kind `re-export`
+   * (`name` `*` or a shown name, with the `source`), appended to the exports derived from the file's own declarations.
+   */
+  extractReExports?: (lines: string[]) => ExportInfo[];
   /** @deprecated prefer `blockStyle` */
   indentBased?: boolean;
   /** How to find the end of a block. Default is "brace". */
@@ -1120,9 +1125,9 @@ export function extractCallsFromBody(
       // the receiver records it instead.)
       if (m.index >= 2 && line[m.index - 1] === "." && /[)\]]/.test(line[m.index - 2]!)) continue;
       // The member half of a path a language pattern recorded whole
-      // (`read` of `CommentView::read(`): a bare `read` would let any
+      // (`read` of `CommentView::read(`, `Club` of Dart's `make$Club(`): a bare `read` would let any
       // same-named function capture it.
-      if (m.index > 0 && /[.:]/.test(line[m.index - 1]!) && matched.some(([a, b]) => m!.index > a && m!.index < b)) continue;
+      if (m.index > 0 && /[.:$]/.test(line[m.index - 1]!) && matched.some(([a, b]) => m!.index > a && m!.index < b)) continue;
       const name = m[1].replace(/[?!]\./, ".");
       const shortName = name.includes(".") ? name.split(".").pop()! : name;
       add(name, shortName, i + 1, m.index + offset);

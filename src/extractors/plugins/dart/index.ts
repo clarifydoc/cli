@@ -26,7 +26,7 @@ import { addBodyLevelMembers, isDartInterface } from "./members.js";
 import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
 import { goRoutes, materialRoutes } from "./go-router.js";
-import { extractDartImports } from "./imports.js";
+import { extractDartImports, extractDartReExports } from "./imports.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
@@ -66,7 +66,7 @@ const DART_FUNCTION = new RegExp(
     String.raw`(?!(?:${STMT_KEYWORDS})\b)` + // not a statement keyword
     String.raw`(?:(?:external|static|abstract|factory)\s+)*` + // leading modifiers
     String.raw`(?:${TYPE_TOKEN}\s+)` + // REQUIRED return type
-    String.raw`([A-Za-z_$]\w*)` + // (1) method name
+    String.raw`([A-Za-z_$][\w$]*)` + // (1) method name
     String.raw`\s*(?:<[^;{(]*>)?\s*` + // optional method type params
     String.raw`\([^)]*\)` + // parameter list (first `)` wins)
     String.raw`\s*(?:async\*?|sync\*?)?\s*(?:=>|\{)`, // async marker + body opener
@@ -82,7 +82,7 @@ const DART_FUNCTION_WRAPPED = new RegExp(
     String.raw`(?!(?:${STMT_KEYWORDS})\b)` +
     String.raw`(?:(?:external|static|abstract|factory)\s+)*` +
     String.raw`(?:${TYPE_TOKEN}\s+)` +
-    String.raw`([A-Za-z_$]\w*)` +
+    String.raw`([A-Za-z_$][\w$]*)` +
     String.raw`\s*(?:<[^;{(]*>)?\s*\([^)]*$`,
 );
 
@@ -203,6 +203,15 @@ function parseDartParamText(text: string): ParamInfo | null {
 const STATIC_CHAIN_CALL: CallPattern = {
   pattern: /(?<![\w$.])([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\([^()]*\)\s*[!?]?\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/,
   buildName: (m) => ({ name: `${m[1]}.${m[2]}().${m[3]}`, leafName: m[3]! }),
+};
+
+/**
+ * A call of a name with a `$` in it (`make$Club()`, `repo.load$All()`): the baseline matcher's `\w` stops at the
+ * `$` and would read the tail (`Club(`) as the callee.
+ */
+const DOLLAR_NAME_CALL: CallPattern = {
+  pattern: /(?<![\w$])((?:[A-Za-z_$][\w$]*\s*\.\s*)*(?=[A-Za-z_$][\w$]*\s*\()[A-Za-z_$]*\$[\w$]*)\s*\(/,
+  buildName: (m) => ({ name: m[1]!.replace(/\s+/g, ""), leafName: m[1]!.replace(/\s+/g, "").split(".").pop()! }),
 };
 
 // ─── Data sources (the screen → API → DB half) ──────────────────────────────
@@ -1229,12 +1238,13 @@ export const dartSpec: RegexLangSpec = {
 
   extractClasses: (lines, fns) => extractDartClasses(lines, fns),
 
-  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL],
+  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL, DOLLAR_NAME_CALL],
   extractLocalTypes: extractDartLocalTypes,
   extractDiBindings: (lines) => extractDartDiBindings(lines),
 
   // Directives over several lines, conditional imports and `part`s need more than one line each.
   extractImports: (lines) => extractDartImports(lines),
+  extractReExports: (lines) => extractDartReExports(lines),
   importPatterns: [],
 
   extractDataSources: (lines) => extractDartDataSources(lines),
