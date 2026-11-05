@@ -1122,3 +1122,25 @@ interface CarClient {
 }`.replace("fun all(): List<String>", "List<String> all();"))).toEqual(["GET /api/cars"]);
   });
 });
+
+describe("Listener annotations naming several destinations", () => {
+  const consumes = async (src: string, lang: "java" | "kotlin"): Promise<Array<string | null | undefined>> => {
+    const tree = await parseSource(src, lang as any, lang === "java" ? "Bus.java" : "Bus.kt");
+    return new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "queue-consume").map((d) => d.target);
+  };
+
+  it("keeps every topic of a Java array and of a Kotlin array", async () => {
+    expect(await consumes(`package x;
+class Bus {
+  @KafkaListener(topics = {"club.signed", "club.sold"}, groupId = "league")
+  public void onClub(String m) {}
+  @RabbitListener(queues = "car.queue")
+  public void onCar(String m) {}
+}`, "java")).toEqual(["club.signed", "club.sold", "car.queue"]);
+    expect(await consumes(`package x
+class Bus {
+  @KafkaListener(topics = ["club.signed", "club.sold"])
+  fun onClub(m: String) {}
+}`, "kotlin")).toEqual(["club.signed", "club.sold"]);
+  });
+});

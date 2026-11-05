@@ -5,6 +5,7 @@ import { stripQuotes, findChildByType, getNameFromNode } from "../../../shared/n
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
+import { methodRefHandler, staticRoute } from "./functional-routes.js";
 import { customEndpointPrefix, customEndpointUnresolvedPrefix } from "./halo.js";
 
 /** Spring Boot mapping annotations */
@@ -364,7 +365,7 @@ function walkForJavaKotlinRoutes(
       const path = pathless ? "" : args[0] ? firstStringLiteral(args[0]) ?? (args[0].type === "identifier" ? fileStringConstant(node, args[0].text) : null) : null;
       if (path !== null) {
         const handlerArg = pathless ? args[0] : args[1];
-        const ref = handlerArg?.type === "method_reference" ? handlerArg.text.split("::").pop() ?? null : null;
+        const ref = handlerArg?.type === "method_reference" ? methodRefHandler(handlerArg) : null;
         const calls = handlerArg?.type === "lambda_expression" ? extractCalls(handlerArg, "java") : [];
         const unresolved = classPrefix ? null : functionalClassUnresolved(node);
         const route: RouteInfo = {
@@ -384,6 +385,24 @@ function walkForJavaKotlinRoutes(
     }
   }
 
+  // Static predicate routes: `RouterFunctions.route(GET("/x"), handler::all)` and `.andRoute(POST("/y"), …)`.
+  if (!suppress && node.type === "method_invocation") {
+    const r = staticRoute(node);
+    if (r) {
+      const route: RouteInfo = {
+        path: mergePrefix(classPrefix || functionalClassPrefix(node), functionalNestPrefix(node) + (r.path === "" ? "" : r.path.startsWith("/") ? r.path : "/" + r.path)),
+        httpMethod: r.verb,
+        kind: "api",
+        handler: r.handler,
+        calls: r.calls,
+        middleware: [],
+        line: r.line,
+      };
+      applyRouteMeta(route, { inheritedGuards: classGuards });
+      routes.push(route);
+    }
+  }
+
   for (const child of node.children) {
     walkForJavaKotlinRoutes(child, routes, classPrefix, suppress, classGuards, classTemplate);
   }
@@ -391,7 +410,7 @@ function walkForJavaKotlinRoutes(
 
 const FUNCTIONAL_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** A file that builds functional endpoints: the gate the route index applies before walking. */
-export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/;
+export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\broute\s*\(\s*(?:RequestPredicates\.)?(?:GET|POST|PUT|PATCH|DELETE)\b|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/;
 /** A receiver chain rooted at a router builder, or a nest lambda's builder parameter. */
 const FUNCTIONAL_ROUTER_RE = new RegExp(`${FUNCTIONAL_ROUTER_GATE_RE.source}|\\b(?:builder|b|r|router|routes)$`);
 
@@ -427,7 +446,7 @@ function functionalNestPrefix(node: Node, depth = 0): string {
     // Only a nest whose arguments hold the route: `.nest(a, …).nest(b, …)` — the first is the second's receiver.
     if (cur.type === "method_invocation" && from.type === "argument_list") {
       const name = cur.childForFieldName("name")?.text;
-      if (name === "nest" || name === "path") {
+      if (name === "nest" || name === "andNest" || name === "path") {
         const first = cur.childForFieldName("arguments")?.namedChildren[0];
         const prefix = first && first.type !== "lambda_expression" ? firstStringLiteral(first) : null;
         if (prefix) parts.unshift(prefix.startsWith("/") ? prefix : "/" + prefix);
@@ -451,7 +470,7 @@ function nestCallerOf(method: Node): Node | null {
     if (c?.childForFieldName("name")?.text !== name || c.childForFieldName("object")) return false;
     const outer = c.parent?.type === "argument_list" ? c.parent.parent : null;
     const outerName = outer?.type === "method_invocation" ? outer.childForFieldName("name")?.text : null;
-    return outerName === "nest" || outerName === "path";
+    return outerName === "nest" || outerName === "andNest" || outerName === "path";
   });
   return calls.length === 1 ? calls[0]! : null;
 }

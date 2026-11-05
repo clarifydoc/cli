@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
 import { extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
+import { extractKotlinRouterDsl } from "./functional-routes.js";
 import type { RouteInfo } from "../../../../types/analysis.js";
 
 /**
@@ -493,6 +494,56 @@ public class ClubTypesController {
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.prefixUnresolved}`)).toEqual([
       "GET /public/club-types property:\${service.prefix}",
       "GET / property:\${service.prefix}",
+    ]);
+  });
+});
+
+describe("WebFlux functional routes by predicate and Kotlin router DSL", () => {
+  it("reads RouterFunctions.route(GET(…), h::m).andRoute(…) with the handler's class from its typed parameter", async () => {
+    const src = `package x;
+class Routes {
+  RouterFunction<ServerResponse> clubs(ClubHandler handler) {
+    return RouterFunctions.route(GET("/clubs").and(accept(JSON)), handler::all)
+        .andRoute(POST("/clubs/{id}"), handler::one)
+        .andNest(path("/cars"), route(GET("/{id}"), carHandler::show));
+  }
+  private final CarHandler carHandler;
+  RouterFunction<ServerResponse> cars(CarHandler handler) {
+    return RouterFunctions.route().GET("/garage", handler::all).build();
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "Routes.java");
+    const routes: RouteInfo[] = [];
+    extractSpringRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`).sort()).toEqual([
+      "GET /cars/{id} -> CarHandler#show",
+      "GET /clubs -> ClubHandler#all",
+      "GET /garage -> CarHandler#all",
+      "POST /clubs/{id} -> ClubHandler#one",
+    ]);
+  });
+
+  it("reads coRouter { \"/x\".nest { GET(…, h::m) } } with typed handlers", async () => {
+    const src = `package x
+import org.springframework.web.reactive.function.server.coRouter
+class KRoutes(private val staff: StaffHandler) {
+  fun routes(handler: PlayerHandler) = coRouter {
+    "/api/players".nest {
+      ("/staff" and accept(APPLICATION_JSON)).nest { GET("/all", staff::list) }
+      GET("", handler::list)
+      POST("/{id}", handler::create)
+    }
+    GET("/health") { ok().build() }
+  }
+}`;
+    const tree = await parseSource(src, "kotlin" as any, "KRoutes.kt");
+    const routes: RouteInfo[] = [];
+    extractKotlinRouterDsl(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
+      "GET /api/players/staff/all -> StaffHandler#list",
+      "GET /api/players -> PlayerHandler#list",
+      "POST /api/players/{id} -> PlayerHandler#create",
+      "GET /health -> null",
     ]);
   });
 });

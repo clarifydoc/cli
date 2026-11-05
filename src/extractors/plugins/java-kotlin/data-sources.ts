@@ -540,6 +540,13 @@ const MQ_TEMPLATE_TYPE_RE = /^(?:[\w.]+\.)?(?:RabbitTemplate|AmqpTemplate|Rabbit
 // @JmsListener(destination = "d"). Kotlin writes arrays as ["t"].
 const MQ_LISTENER_RE = /@(RabbitListener|KafkaListener|JmsListener)\b/;
 const MQ_LISTENER_DEST_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*"([^"]+)"/;
+/** The whole value of a destination attribute: one string or an array of them (`topics = {"a", "b"}`, Kotlin `["a"]`). */
+const MQ_LISTENER_VALUE_RE = /(?:queues|topics|destination|queueNames)\s*=\s*([[{][^\]}]*[\]}]|"[^"]*")/;
+/** Every literal destination a listener annotation names, in order. */
+export function listenerDestinations(text: string): string[] {
+  const value = MQ_LISTENER_VALUE_RE.exec(text)?.[1];
+  return value ? [...value.matchAll(/"([^"]+)"/g)].map((m) => m[1]!) : [];
+}
 const MQ_LISTENER_REF_RE = /(?:queues|topics|destination|queueNames)\s*=\s*[[{]?\s*([A-Z]\w*(?:\.[A-Za-z_]\w*)*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)\s*[,)\]}]/;
 
 // ─── Typed application/domain events ─────────────────────────────────────────
@@ -832,14 +839,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const listener = text.match(MQ_LISTENER_RE);
       if (listener) {
         // `topics = Topics.CLUB_EVENTS`: another class's constant, which the project pass reads.
+        const literals = listenerDestinations(text);
         const ref = text.match(MQ_LISTENER_DEST_RE) ? undefined : MQ_LISTENER_REF_RE.exec(text)?.[1];
-        sources.push(this.ds({
-          kind: "queue-consume",
-          name: `@${listener[1]}`,
-          target: text.match(MQ_LISTENER_DEST_RE)?.[1] ?? ref ?? null,
-          ...(ref ? { targetRef: ref } : {}),
-          line: node.startPosition.row + 1,
-        }));
+        // One consume per destination: `topics = {"a", "b"}` listens on both.
+        for (const target of literals.length > 0 ? literals : [ref ?? null]) {
+          sources.push(this.ds({
+            kind: "queue-consume",
+            name: `@${listener[1]}`,
+            target,
+            ...(ref && literals.length === 0 ? { targetRef: ref } : {}),
+            line: node.startPosition.row + 1,
+          }));
+        }
       }
 
       // Typed-event handlers: the subscribed event type is the destination —

@@ -4,6 +4,7 @@ import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
+import { extractKotlinRouterDsl } from "./functional-routes.js";
 import { extractKtorRoutes } from "./ktor.js";
 import { extractJavalinSparkRoutes } from "./javalin-spark.js";
 import { GRAPHQL_GATE_RE, extractJvmGraphqlRoutes } from "./graphql.js";
@@ -44,6 +45,11 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
     // A sub-resource may carry verb markers only (`@POST void report(…)`), mounted by a locator elsewhere.
     if (!isClientFile && (/@(Path|Controller)\b/.test(sourceText) || (/\b(?:javax|jakarta)\.ws\.rs\b/.test(sourceText) && /@(?:GET|POST|PUT|DELETE|PATCH)\b/.test(sourceText)))) {
       extractJaxrsMicronautRoutes(tree.rootNode, routes, facts);
+    }
+
+    // Kotlin's `router { }` / `coRouter { }` DSL (WebFlux and MVC functional endpoints).
+    if (/\b(?:coRouter|router)\s*\{/.test(sourceText) && /springframework\.web\.(?:reactive|servlet)\.function\.server/.test(sourceText)) {
+      extractKotlinRouterDsl(tree.rootNode, routes);
     }
 
     // Halo extensions: CRUD routes generated from `@GVK` (see halo.ts).
