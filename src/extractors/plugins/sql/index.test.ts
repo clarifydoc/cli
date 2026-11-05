@@ -261,3 +261,52 @@ END fee_pkg;
     expect(sqlManifest.extensions).toEqual(expect.arrayContaining([".pkb", ".pks"]));
   });
 });
+
+describe("PL/SQL routine ends", () => {
+  const fnAt = (line: number) => ({ name: "x", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], calls: [], line, endLine: line });
+
+  it("counts a statement CASE once: END CASE closes the CASE it ends, not a new one", () => {
+    const src = `CREATE OR REPLACE PROCEDURE sign_player(p_id NUMBER) IS
+BEGIN
+  CASE p_id
+    WHEN 1 THEN NULL;
+    ELSE NULL;
+  END CASE;
+  UPDATE players SET signed = 1 WHERE id = p_id;
+END sign_player;
+/
+CREATE OR REPLACE PROCEDURE sell_player(p_id NUMBER) IS
+BEGIN
+  DELETE FROM players WHERE id = p_id;
+END;
+/`;
+    const fns = sqlSpec.postProcessFunctions!(src.split("\n"), [1, 10].map(fnAt));
+    expect(fns.map((f) => [f.name, f.line, f.endLine])).toEqual([["sign_player", 1, 8], ["sell_player", 10, 13]]);
+  });
+
+  it("keeps an expression CASE ... END balanced", () => {
+    const src = `CREATE PROCEDURE a() AS
+BEGIN
+  SELECT CASE WHEN 1 = 1 THEN 1 ELSE 0 END FROM dual;
+END;`;
+    expect(sqlSpec.postProcessFunctions!(src.split("\n"), [fnAt(1)])[0]!.endLine).toBe(4);
+  });
+});
+
+describe("CTE names are never tables", () => {
+  const read = (sql: string) => rows(sql).map((r) => r.entity).filter(Boolean);
+
+  it("reads the table a CTE selects from, never the CTE", () => {
+    expect(read("WITH recent AS (SELECT * FROM matches) SELECT * FROM recent")).toEqual(["matches"]);
+  });
+  it("handles several CTEs, one reading another, and a recursive one", () => {
+    expect(read("WITH a AS (SELECT * FROM matches), b AS (SELECT * FROM a JOIN players p ON 1=1) SELECT * FROM b JOIN a ON 1=1").sort()).toEqual(["matches", "players"]);
+    expect(read("WITH RECURSIVE tree AS (SELECT id FROM clubs UNION ALL SELECT c.id FROM clubs c JOIN tree t ON t.id = c.parent) SELECT * FROM tree")).toEqual(["clubs"]);
+  });
+  it("reads a CTE list split over lines", () => {
+    expect(read("with\n recent as (\n select * from matches\n),\n top as (select * from recent)\nselect * from top")).toEqual(["matches"]);
+  });
+  it("names no table for a WITH in plain prose", () => {
+    expect(read("'Play with fans as one'")).toEqual([]);
+  });
+});

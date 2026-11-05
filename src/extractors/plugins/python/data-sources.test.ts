@@ -22,6 +22,13 @@ describe("Python outbound HTTP calls", () => {
     ]);
   });
 
+  it("reads grequests verbs, never grequests.map", async () => {
+    const calls = await apiCallsOf(
+      ["import grequests", 'rs = [grequests.get("https://api.example.com/api/clubs")]', 'grequests.post("https://api.example.com/api/players", json={})', "grequests.map(rs)", 'other.get("/api/decoy")'].join("\n"),
+    );
+    expect(calls.map((c) => [c.name, c.target])).toEqual([["get", "https://api.example.com/api/clubs"], ["post", "https://api.example.com/api/players"]]);
+  });
+
   it("reads a client's call whose URL the function builds in a local (real-repo FP)", async () => {
     const calls = await apiCallsOf([
       "import httpx",

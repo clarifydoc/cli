@@ -89,6 +89,14 @@ def touch_decoy():
 
 def typed(session, club: Club):
     session.delete(club)
+
+
+def seed(session):
+    session.add_all([Club(name="a"), MatchReport(club_id=1), Club(name="b")])
+
+
+def seed_decoy(items):
+    items.add_all([Club(name="a"), MatchReport(club_id=1)])
 `,
   };
   beforeAll(async () => {
@@ -108,6 +116,10 @@ def typed(session, club: Club):
   });
   it("types a parameter by its annotation", () => {
     expect(access("typed")).toEqual(["Club"]);
+  });
+  it("writes every model session.add_all([...]) is handed, once each, and none through a namesake receiver", () => {
+    expect(access("seed")).toEqual(["Club", "MatchReport"]);
+    expect(access("seed_decoy")).toEqual([]);
   });
   it("reaches no table through a namesake add()", () => {
     expect(access("touch_decoy")).toEqual([]);

@@ -268,7 +268,7 @@ export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "
   const isScript = extensionFamily(file.relativePath) === "script";
   let byDir = stampMemo.get(tsconfigAliases);
   if (!byDir) stampMemo.set(tsconfigAliases, (byDir = new Map()));
-  const key = `${dirname(file.absolutePath)}\0${isJs ? 1 : 0}${isScript ? 1 : 0}\0${projectRoot}`;
+  const key = `${dirname(file.absolutePath)}\0${isJs ? 1 : 0}${isScript ? 1 : 0}\0${file.language}\0${projectRoot}`;
   if (byDir.has(key)) return byDir.get(key);
   const stamp = computeImportRewriteStamp(file, isJs, isScript, projectRoot, tsconfigAliases);
   byDir.set(key, stamp);
@@ -278,7 +278,7 @@ export function importRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "
 /** `importRewriteStamp` by directory, per root alias map (one per run: the analyzer clears the config caches first). */
 const stampMemo = new WeakMap<AliasMap, Map<string, string | undefined>>();
 
-function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, isJs: boolean, isScript: boolean, projectRoot: string, tsconfigAliases: AliasMap): string | undefined {
+function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "language">, isJs: boolean, isScript: boolean, projectRoot: string, tsconfigAliases: AliasMap): string | undefined {
   const nearest = loadTsconfigAliasesForDir(dirname(file.absolutePath));
   const aliases = nearest.size > 0 ? nearest : tsconfigAliases;
   const parts: string[] = [];
@@ -293,6 +293,9 @@ function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath">, i
     const imports = packageImportsStamp(file.absolutePath);
     if (imports) parts.push(`p${imports}`);
   }
+  // What the plugin's own preprocess reads beside the file (a dbt project's files).
+  const own = pluginFor(file.language)?.preprocessStamp?.(file.absolutePath, projectRoot);
+  if (own) parts.push(`x${own}`);
   return parts.length ? createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16) : undefined;
 }
 
@@ -398,7 +401,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       // Content-sniffing preprocess, mirroring the tree-sitter path below: a
       // plugin that claims a broad extension (springxml claims `.xml`) skips
       // the files that aren't its format instead of emitting empty analyses.
-      const pre = filePlugin.preprocess?.(rawSource, file.relativePath);
+      const pre = filePlugin.preprocess?.(rawSource, file.relativePath, { absolutePath: file.absolutePath, projectRoot: task.projectRoot });
       if (pre && "skip" in pre) {
         if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
         return task.reportSkips ? { skipped: pre.skip } : null;

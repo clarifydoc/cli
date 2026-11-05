@@ -955,6 +955,22 @@ public class H { public async Task M(RestClient c) {
 } }`);
     expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "clubs/{id}"], ["POST", "clubs"]]);
   });
+  it("counts a RestRequest once however it is sent, and not a namesake request() function", async () => {
+    const found = await calls(`using RestSharp;
+public class H { RestClient client;
+  public async Task M(int id) {
+    var request = new RestRequest("clubs/{id}", Method.Get);
+    var a = await client.GetAsync(request);
+    var q = new RestRequest("cars");
+    var b = await client.GetAsync<Car>(q);
+    var c = await client.PostAsync(new RestRequest("garages"));
+    var d = await client.ExecuteAsync(request);
+  }
+  void request(string path) {}
+  void Decoy() { request("/decoy"); }
+}`);
+    expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "clubs/{id}"], ["GET", "cars"], ["GET", "garages"]]);
+  });
   it("reads a Flurl chain from a URL string through its path segments to the send", async () => {
     const found = await calls(`using Flurl.Http;
 public class H { public async Task M() {

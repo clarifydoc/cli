@@ -212,6 +212,14 @@ function isKtorClient(receiver: string, text: string): boolean {
   return new RegExp(String.raw`\b${r}\s*:\s*HttpClient\b|\b(?:val|var)\s+${r}\s*(?::[^=\n]+)?=\s*HttpClient\s*[({]`).test(text);
 }
 
+/** A request path resolved against a Ktor client's default base: `clubs` extends the base's path, `/clubs` replaces it. */
+function ktorJoinBase(base: string, path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  const origin = /^https?:\/\/[^/]+/.exec(base)?.[0] ?? base;
+  if (path.startsWith("/")) return origin + path;
+  return base.replace(/\/?$/, "/") + path;
+}
+
 /** `exchange(url, HttpMethod.POST, …)`: the verb its second argument names. */
 function exchangeVerb(node: Node): string | null {
   const second = callArguments(node)[1]?.text ?? "";
@@ -694,6 +702,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isKeycloakHttpFile = false;
   /** The file's text, when it imports Ktor's client (`io.ktor.client`). */
   private ktorClientText: string | null = null;
+  /** The base a Ktor `defaultRequest { url("https://host/api/") }` gives every request of the file. */
+  private ktorDefaultBase: string | null = null;
+  /** The file imports AsyncHttpClient (`org.asynchttpclient`, or its old `com.ning.http.client`). */
+  private isAsyncHttpClientFile = false;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
   /**
@@ -737,6 +749,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
     this.ktorClientText = /\bio\.ktor\.client\b/.test(text) ? text : null;
+    this.ktorDefaultBase = this.ktorClientText ? /\bdefaultRequest\s*\{[^{}]*?\burl\s*\(\s*"(https?:\/\/[^"$]+)"\s*\)/.exec(text)?.[1] ?? null : null;
+    this.isAsyncHttpClientFile = /\b(?:org\.asynchttpclient|com\.ning\.http\.client)\b/.test(text);
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.httpExchange = /@(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text) && /\binterface\s+\w/.test(text) ? httpExchangeInterface(text) : null;
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
@@ -1053,13 +1067,33 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
 
     // 1b-ktor) Ktor client: `client.get("/clubs")`, `HttpClient(CIO).post("https://…") { setBody(x) }` — the
     // verb is the method, the URL the first argument (or `url("…")` in the request block).
-    if (this.ktorClientText && KTOR_VERBS.has(method) && isKtorClient(receiver, this.ktorClientText)) {
+    // `client.request("/clubs") { method = HttpMethod.Post }` is the same request with its verb in the block.
+    const ktorRequest = method === "request";
+    if (this.ktorClientText && (KTOR_VERBS.has(method) || ktorRequest) && isKtorClient(receiver, this.ktorClientText)) {
       const arg = call.firstArg;
-      const block = /\burl\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)/.exec(node.text)?.[1];
+      // Kotlin hangs a trailing lambda on the call expression around this one.
+      const withBlock = node.parent?.type === "call_expression" && node.parent.firstChild?.id === node.id ? node.parent.text : node.text;
+      const block = /\burl\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)/.exec(withBlock)?.[1];
       const fromArg = arg && /string_literal$/.test(arg.type) ? urlExpression(arg, node, 0) : null;
-      const target = fromArg ?? (arg ? null : block ? block.slice(1, -1) : null);
+      const stated = fromArg ?? (arg ? null : block ? block.slice(1, -1) : null);
+      const target = stated && this.ktorDefaultBase ? ktorJoinBase(this.ktorDefaultBase, stated) : stated;
+      const verb = ktorRequest ? /\bmethod\s*=\s*HttpMethod\.(\w+)/.exec(withBlock)?.[1]?.toUpperCase() ?? "GET" : method.toUpperCase();
       const client = /^[\w$]+$/.test(receiver.trim()) ? { client: receiver.trim() } : {};
-      sources.push(this.ds({ kind: "api-call", name: method.toUpperCase(), target, line, ...client }));
+      sources.push(this.ds({ kind: "api-call", name: verb, target, line, ...client }));
+      return;
+    }
+
+    // …and the `.execute()` ending such a chain sends the request prepareX already is.
+    if (this.isAsyncHttpClientFile && method === "execute" && /\.prepare(?:Get|Post|Put|Patch|Delete|Head|Options)\s*\(/.test(receiver)) return;
+    // AsyncHttpClient: `client.preparePost("https://…/api/clubs").setBody(x).execute()` — the verb is the method's name.
+    // The receiver is a client the file shows: declared an AsyncHttpClient, built by `asyncHttpClient()`, or named one.
+    const ahcLeaf = receiver.trim().replace(/^this\./, "");
+    const ahcClient = /\basyncHttpClient\s*\(|\bnew\s+DefaultAsyncHttpClient\b/.test(receiver) || /client|http/i.test(ahcLeaf) ||
+      (/^[\w$]+$/.test(ahcLeaf) && /AsyncHttpClient$/.test(localDeclaredType(node, ahcLeaf) ?? this.fieldTypes.get(ahcLeaf) ?? ""));
+    if (this.isAsyncHttpClientFile && ahcClient && /^prepare(?:Get|Post|Put|Patch|Delete|Head|Options)$/.test(method) && call.firstArg) {
+      const url = urlExpression(call.firstArg, node, 0);
+      const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
+      sources.push(this.ds({ kind: "api-call", name: target ? method.slice(7).toUpperCase() : method, target, line }));
       return;
     }
 

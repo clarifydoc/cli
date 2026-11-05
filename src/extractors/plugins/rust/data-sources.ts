@@ -133,8 +133,8 @@ function dieselWrite(lines: string[], i: number, at: number): string | undefined
   while (j >= 0 && !lines[j]!.trim()) j--;
   return j >= 0 ? DIESEL_WRITE_RE.exec(lines[j]!)?.[1] : undefined;
 }
-/** reqwest: `client.get("url")` / `reqwest::get("url")` / `context.client().get(url)`. */
-const REQWEST_RE = /\b(?:\w*client(?:\s*\(\s*\))?|reqwest)(?:::|\.)\s*(get|post|put|patch|delete|head)\s*\(\s*(?:"([^"]+)")?/i;
+/** reqwest, ureq, surf: `client.get("url")` / `reqwest::get("url")` / `context.client().get(url)`. */
+const REQWEST_RE = /\b(?:\w*client(?:\s*\(\s*\))?|reqwest|ureq|surf)(?:::|\.)\s*(get|post|put|patch|delete|head)\s*\(\s*(?:"([^"]+)")?/i;
 const ENV_RE = /\benv::var(?:_os)?\s*\(\s*"([^"]+)"/;
 /** lapin (AMQP): channel.basic_publish(exchange, routing_key, ...) / basic_consume(queue, ...). */
 const AMQP_PUB_RE = /\.\s*basic_publish\s*\(\s*(?:"([^"]*)")?/;

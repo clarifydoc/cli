@@ -1165,9 +1165,46 @@ class Api {
     ]);
   });
 
+  it("reads a request(url) { method = HttpMethod.X } block and joins a defaultRequest base", async () => {
+    const src = `package x
+${header}
+val client = HttpClient(CIO) {
+    defaultRequest { url("https://league.example.com/api/") }
+}
+suspend fun a() {
+    client.get("clubs")
+    client.get("/health")
+    client.request("https://garage.example.com/api/cars") { method = HttpMethod.Post }
+    client.request("players") { method = HttpMethod.Delete }
+    client.request("matches")
+}
+fun decoy(bus: EventBus) { bus.request("players") { method = HttpMethod.Post } }`;
+    const tree = await parseSource(src, "kotlin" as any, "Api.kt");
+    const calls = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["GET", "https://league.example.com/api/clubs"], ["GET", "https://league.example.com/health"],
+      ["POST", "https://garage.example.com/api/cars"], ["DELETE", "https://league.example.com/api/players"],
+      ["GET", "https://league.example.com/api/matches"],
+    ]);
+  });
+
   it("leaves a get on a receiver that is no HttpClient alone", async () => {
     const src = `package x\n${header}\nclass Api {\n  val cache = HashMap<String, String>()\n  fun a() { cache.get("/x") }\n}`;
     const tree = await parseSource(src, "kotlin" as any, "Api.kt");
     expect(new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call")).toEqual([]);
+  });
+});
+
+describe("Java AsyncHttpClient", () => {
+  it("reads prepareX(url) with its verb, only in a file that imports it", async () => {
+    const body = `    client.prepareGet("https://league.example.com/api/clubs").execute();
+    client.preparePost("https://league.example.com/api/players").setBody("x").execute();
+    Dsl.asyncHttpClient().prepareDelete("https://league.example.com/api/cars/1").execute();
+    foo.prepareGet("/api/decoy");`;
+    const found = (await sourcesOf(body, "java", "import org.asynchttpclient.*;")).filter((d) => d.kind === "api-call");
+    expect(found.map((d) => [d.name, d.target])).toEqual([
+      ["GET", "https://league.example.com/api/clubs"], ["POST", "https://league.example.com/api/players"], ["DELETE", "https://league.example.com/api/cars/1"],
+    ]);
+    expect((await sourcesOf(`    foo.prepareGet("/api/decoy");`, "java")).filter((d) => d.kind === "api-call")).toEqual([]);
   });
 });

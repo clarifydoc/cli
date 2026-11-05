@@ -17,6 +17,26 @@ func a() {
     expect(calls.map((c) => [c.name, c.target])).toEqual([["POST", "https://league.example.com/players"], ["GET", "/clubs"]]);
   });
 
+  it("reads a resty chain split over lines, at the line of its verb, and no chain without one", () => {
+    const src = `package main
+import "github.com/go-resty/resty/v2"
+func a() {
+  client := resty.New()
+  client.R().
+    SetBody(x).
+    Post("/api/clubs")
+  client.R().
+    SetHeader("a", "b").
+    SetResult(&r).
+    Get("/api/players")
+  other.R().
+    Foo("/api/decoy")
+  done := true
+}`;
+    const calls = extractGoDataSources(lines(src)).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => [c.name, c.target, c.line])).toEqual([["POST", "/api/clubs", 7], ["GET", "/api/players", 11]]);
+  });
+
   it("does not read .R().Get without resty in the file", () => {
     const calls = extractGoDataSources(lines(`package main\nfunc a() { r.R().Get("/x") }`)).filter((d) => d.kind === "api-call");
     expect(calls).toEqual([]);

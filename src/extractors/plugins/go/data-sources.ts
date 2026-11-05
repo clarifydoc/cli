@@ -202,7 +202,29 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
 
-    const resty = hasResty ? line.match(RESTY_RE) : null;
+    // A chain split over lines (`client.R().⏎ SetBody(x).⏎ Post("/x")`) is read as one statement, its call at the verb's line.
+    let restyText = line;
+    let restyEnd = i;
+    if (hasResty && /\.R\(\)/.test(line) && !RESTY_RE.test(line)) {
+      for (let j = i + 1; j < lines.length && j - i <= 12; j++) {
+        const next = lines[j]!;
+        if (/^\s*\/\//.test(next)) continue;
+        if (!restyText.trimEnd().endsWith(".") && !/^\s*\./.test(next)) break;
+        restyText += " " + next.trim();
+        restyEnd = j;
+      }
+    }
+    const resty = hasResty ? restyText.match(RESTY_RE) : null;
+    if (resty && restyEnd > i) {
+      let verbIdx = restyEnd;
+      while (verbIdx > i && !new RegExp(String.raw`\b${resty[1]}\s*\(`).test(lines[verbIdx]!)) verbIdx--;
+      const rest = restyText.slice(resty.index! + resty[0].length);
+      const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
+      const target = resty[2] ?? (urlArg ? localUrl(lines, verbIdx, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: verbIdx + 1 });
+      i = restyEnd;
+      continue;
+    }
     if (resty) {
       const rest = line.slice(resty.index! + resty[0].length);
       const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];

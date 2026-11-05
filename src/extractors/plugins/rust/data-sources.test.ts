@@ -155,3 +155,21 @@ impl MatchReportView {
     expect(rows.some((r) => r.entity === "ck" || r.entity === "c")).toBe(false);
   });
 });
+
+describe("Rust ureq and surf calls", () => {
+  it("reads their module verbs, and no namesake module", () => {
+    const src = `fn load() {
+    let r = ureq::get("https://api.example.com/api/clubs").call();
+    let p = ureq::post("https://api.example.com/api/players").send_json(1);
+    let s = surf::get("https://api.example.com/api/matches").await;
+    let x = request::get("/api/decoy");
+    let y = surfboard::get("/api/decoy2");
+}`;
+    const calls = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
+      "GET https://api.example.com/api/clubs",
+      "POST https://api.example.com/api/players",
+      "GET https://api.example.com/api/matches",
+    ]);
+  });
+});

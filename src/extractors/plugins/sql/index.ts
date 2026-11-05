@@ -127,7 +127,8 @@ function findRoutineEnd(lines: string[], startIdx: number): number {
     const begins = (code.match(/\bBEGIN\b(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)/gi) ?? []).length;
     if (begins > 0) sawBegin = true;
     if (!sawBegin) continue;
-    depth += begins + (code.match(/\bCASE\b/gi) ?? []).length;
+    // `END CASE` closes the statement CASE a line above: its own CASE word opens nothing.
+    depth += begins + (code.match(/(?<!\bEND\s+)\bCASE\b/gi) ?? []).length;
     const ends = (code.match(/\bEND\b(?!\s+(?:IF|LOOP|WHILE|REPEAT|FOR)\b)/gi) ?? []).length;
     if (ends > 0) {
       depth -= ends;
