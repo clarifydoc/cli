@@ -255,6 +255,37 @@ describe("keyword-delimited languages — what each spec reads", () => {
     return shape(cfg!);
   };
 
+  it("C and C++: an `#if 0` arm is left out, and platform headers before one body read as the first", () => {
+    for (const language of ["c", "cpp"] as const) {
+      // A dead arm holding a decision no compiler reads.
+      expect(draw(language, `int f(int x) {
+#if 0
+  if (x > 1) { return 2; }
+#endif
+  if (x) { return 1; }
+  return 0;
+}`)).toMatchObject({ decisions: 1, returns: 2 });
+      // One body under two headers: both arms together open two braces and close one.
+      expect(draw(language, `#ifdef _WIN32
+int f(int x) {
+#else
+int f(long x) {
+#endif
+  if (x) { return 1; }
+  return 0;
+}`)).toMatchObject({ decisions: 1, returns: 2 });
+      // Arms that pair up on their own stay drawn together.
+      expect(draw(language, `int f(int x) {
+#ifdef FAST
+  if (x) { return 1; }
+#else
+  if (x > 1) { return 2; }
+#endif
+  return 0;
+}`)).toMatchObject({ decisions: 2, returns: 3 });
+    }
+  });
+
   it("Ruby: modifiers, case arms with string labels, def-level rescue, closures skipped", () => {
     expect(draw("ruby", `def f(x)
   return if x.nil?

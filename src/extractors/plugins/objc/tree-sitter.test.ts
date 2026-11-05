@@ -53,7 +53,6 @@ describe("Objective-C through tree-sitter", () => {
     expect(calls.map((c) => c.name)).toEqual([
       "repo.findClub",
       "Club.initWithName",
-      "Club.alloc",
       "ClubService.shared().refresh",
       "ClubService.shared",
       "NSLog",

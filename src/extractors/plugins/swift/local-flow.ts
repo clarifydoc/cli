@@ -1,5 +1,6 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { elementType } from "./collection-types.js";
 
 /**
  * What a Swift body states about a binding without declaring its type: the declared return type of a function
@@ -9,6 +10,23 @@ import { blankStringLiterals } from "../shared/regex-base.js";
  */
 
 type Local = NonNullable<FunctionInfo["localTypes"]>[number];
+
+/**
+ * One entry per name; a name declared again with a different type or key
+ * (`let r = PgRepo()` in one branch, `let r = MemRepo()` in another) is
+ * dropped — which declaration a call sees is a scoping question a line scan
+ * cannot answer.
+ */
+export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): NonNullable<FunctionInfo["localTypes"]> {
+  type Entry = NonNullable<FunctionInfo["localTypes"]>[number];
+  const byName = new Map<string, Entry | null>();
+  for (const e of entries) {
+    const prev = byName.get(e.name);
+    if (prev === undefined) byName.set(e.name, e);
+    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from || prev.element !== e.element)) byName.set(e.name, null);
+  }
+  return [...byName.values()].filter((e): e is Entry => e !== null);
+}
 
 const codeOf = (line: string): string => {
   const code = blankStringLiterals(line);
@@ -59,11 +77,11 @@ export function parseSwiftReturnType(line: string, nameColumn?: number): string 
  * — as the `from` the linker types it by (`car.engine()`; `self.` and optional chaining dropped); null for
  * anything else (a literal, an operator, a closure, a construction, a bare function).
  */
-export function callFrom(rhs: string): { from: string; awaited?: boolean } | null {
+export function callFrom(rhs: string, bare = false): { from: string; awaited?: boolean } | null {
   let text = codeOf(rhs).trim();
   const awaited = /\bawait\s/.test(text.match(/^(?:try[?!]?\s+)?(?:await\s+)?/)![0]);
   text = text.replace(/^(?:try[?!]?\s+)?(?:await\s+)?(?:try[?!]?\s+)?/, "").replace(/^self\s*\./, "");
-  const m = /^([A-Za-z_]\w*(?:\s*[?!]?\s*\.\s*[A-Za-z_]\w*)+)\s*\(/.exec(text);
+  const m = new RegExp(String.raw`^([A-Za-z_]\w*(?:\s*[?!]?\s*\.\s*[A-Za-z_]\w*)${bare ? "*" : "+"})\s*\(`).exec(text);
   if (!m) return null;
   const open = m[0].length - 1;
   const close = closeOf(text, open);
@@ -77,11 +95,7 @@ export function callFrom(rhs: string): { from: string; awaited?: boolean } | nul
   return { from: `${path}()`, ...(awaited ? { awaited: true } : {}) };
 }
 
-/** `[Club]`, `Array<Club>`, `Set<League.Club>`, `[Club]?`: the element type of a plain typed collection. */
-export function elementType(type: string | null | undefined): string | null {
-  const m = /^\s*(?:\[\s*([A-Z][\w.]*)\s*\]|(?:Array|Set|ContiguousArray|ArraySlice)\s*<\s*([A-Z][\w.]*)\s*>)\s*[?!]?\s*$/.exec(type ?? "");
-  return m?.[1] ?? m?.[2] ?? null;
-}
+export { elementType } from "./collection-types.js";
 
 /** The type an optional declares (`Club?`, `Optional<Club>`), or the type itself when it is plainly one name. */
 function plainType(type: string | null | undefined): string | null {
@@ -126,6 +140,11 @@ export function swiftFlowLocals(code: string, known: Known): Local[] {
   }
   // `case let c as Club:`, `case .a(let c as Club)`: the pattern states the type.
   for (const m of code.matchAll(/\b(?:let|var)\s+([a-z_]\w*)\s+as\s+([A-Z][\w.]*)/g)) out.push({ name: m[1]!, type: m[2]! });
+  // `for p in squad.list()`, `for p in self.repo.players()`: the element of the collection the call is declared to return.
+  for (const f of code.matchAll(/\bfor\s+(?:case\s+)?(?:let\s+)?([a-z_]\w*)\s+in\s+([^{\n]+?)\s*(?:\{|$|\bwhere\b)/gm)) {
+    const call = callFrom(f[2]!, true);
+    if (call) out.push({ name: f[1]!, type: "", ...call, element: true as const });
+  }
   // `for c in clubs`, `for (i, c) in clubs.enumerated()`, `for c in clubs.filter { … }`.
   for (const [name, element] of elementsOf(known)) {
     const base = String.raw`(?<![\w$.])(?:self\s*\.\s*)?${name}\b`;
@@ -183,3 +202,24 @@ export function settleAnonymousReceivers(calls: CallInfo[] | undefined, locals: 
     if (m && !typed.has(m[1]!)) call.name = m[2]!;
   }
 }
+
+/**
+ * The loops, narrowings and closures of a method over the typed members of its own class (`for p in self.players`,
+ * `if let c = captain`): `swiftFlowLocals` with the class's properties as the declared names — those the method
+ * does not declare again — merged into the method's own locals.
+ */
+export function addMemberFlowLocals(lines: readonly string[], properties: ReadonlyArray<{ name: string; type: string | null }>, method: FunctionInfo): void {
+  if (method.endLine < method.line || !properties.some((p) => p.type && elementOrPlain(p.type))) return;
+  const code = lines.slice(method.line - 1, method.endLine).map(codeOf).join("\n");
+  const declared = new Set<string>(method.params.map((p) => p.name));
+  for (const m of code.matchAll(/\b(?:let|var)\s+([a-z_]\w*)/g)) declared.add(m[1]!);
+  for (const m of code.matchAll(/\bfor\s+(?:case\s+)?(?:let\s+)?([a-z_]\w*)\b/g)) declared.add(m[1]!);
+  const types = new Map<string, string>();
+  for (const p of properties) if (p.type && !declared.has(p.name)) types.set(p.name, p.type);
+  if (types.size === 0) return;
+  const found = swiftFlowLocals(code, { types }).filter((l) => !(method.localTypes ?? []).some((e) => e.name === l.name && e.type === l.type && e.from === l.from));
+  if (found.length === 0) return;
+  method.localTypes = uniqueLocals([...(method.localTypes ?? []), ...found]);
+}
+
+const elementOrPlain = (type: string): boolean => elementType(type) !== null || plainType(type) !== null;

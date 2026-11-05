@@ -83,7 +83,12 @@ function readTsconfigUnsafe(tsconfigPath: string, seen: Set<string>, configDir: 
     if (typeof base !== "string") continue;
     const extendsPath = extendsTarget(base, baseDir);
     if (extendsPath) {
-      for (const [k, v] of readTsconfig(extendsPath, seen, configDir)) aliases.set(k, v);
+      // Each base reads on its own chain (two bases may share a parent); only a cycle stops one.
+      const inherited = readTsconfig(extendsPath, new Set(seen), configDir);
+      // Later bases override earlier ones option by option, and `paths` is one option: a base that declares any
+      // replaces the table the earlier bases built (`baseUrl` is its own option and stays).
+      if ([...inherited.keys()].some((k) => k !== BASE_URL_KEY)) for (const key of [...aliases.keys()]) if (key !== BASE_URL_KEY) aliases.delete(key);
+      for (const [k, v] of inherited) aliases.set(k, v);
     }
   }
 

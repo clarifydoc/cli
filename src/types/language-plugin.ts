@@ -635,6 +635,12 @@ export interface LanguageRegexControlFlowSpec {
    * `negated` when the statement runs on a false condition (`stmt unless cond`).
    */
   inlineGuard?: InlineGuard;
+  /**
+   * A function's text as the language's compiler sees it, lines kept (blanked, never removed): a C-family
+   * conditional-compilation arm no compiler takes (`#if 0`) is left out, and where the arms together are no
+   * valid body, only the first of each. The scan reads this text instead of the raw one.
+   */
+  sourceView?(text: string): string;
 }
 
 /** See `LanguageRegexControlFlowSpec.blockDelta`. */
@@ -1879,6 +1885,19 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * constant path (`League::Club` is the `Club` declared in `module League`).
    */
   nestedTypePaths?: boolean;
+  /**
+   * How the language WRITES a nested type's path where `nestedTypePaths` is on: `::` (the default, C++/Ruby) or
+   * `.` (Swift `League.Table`). A class is named by its path joined with `::` whichever the source writes, and
+   * a type text spelled with the separator is read as that path (`receiverTypeName`).
+   */
+  nestedTypeSeparator?: "." | "::";
+  /**
+   * A bare type name inside a class means that class's own nested type of the name, wherever the nested class
+   * is declared (Swift looks the member type up first) — the plugin rewrites no type text to say so, as C++'s
+   * does where the text means it. Without it a declared type naming a nested class of the same file is left
+   * as the plugin wrote it.
+   */
+  nestedTypesScopeBare?: boolean;
 
   /** Cyclomatic-complexity counting tables. */
   complexity?: LanguageComplexitySpec;

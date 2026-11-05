@@ -39,6 +39,10 @@ export const swiftMeta: LanguagePluginMeta = {
   ], { quotes: ['"'] }),
   ...swiftManifest,
   regexSpec: swiftSpec,
+  // `struct League { class Table … }` is `League::Table`, written `League.Table` (see nestedTypeNames in index.ts).
+  nestedTypePaths: true,
+  nestedTypeSeparator: ".",
+  nestedTypesScopeBare: true,
   // Functions and calls read by tree-sitter-swift while the `tree-sitter:swift` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "swift", load: () => import("./tree-sitter.js").then((m) => m.loadSwiftReader()) },
   knownPackages: swiftPackages,

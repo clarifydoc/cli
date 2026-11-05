@@ -202,6 +202,13 @@ describe("tsconfig `paths` read as TypeScript reads them", () => {
     await file("replace/app/lib/pit.ts", "export function pitStop() {}");
     await file("replace/shared/tyre.ts", "export function fitTyre() {}");
     await file("replace/inherit/tsconfig.json", JSON.stringify({ extends: "../tsconfig.base.json" }));
+    // An array `extends`: the later base's `paths` replace the earlier one's, `baseUrl` of the earlier stays; two bases share a parent.
+    await file("bases/tsconfig.root.json", JSON.stringify({ compilerOptions: { baseUrl: "./" } }));
+    await file("bases/tsconfig.first.json", JSON.stringify({ extends: "./tsconfig.root.json", compilerOptions: { paths: { "@club/*": ["club/*"] } } }));
+    await file("bases/tsconfig.second.json", JSON.stringify({ extends: "./tsconfig.root.json", compilerOptions: { paths: { "@car/*": ["car/*"] } } }));
+    await file("bases/app/tsconfig.json", JSON.stringify({ extends: ["../tsconfig.first.json", "../tsconfig.second.json"] }));
+    await file("bases/car/garage.ts", "export function park() {}");
+    await file("bases/club/match.ts", "export function kickOff() {}");
     clearTsconfigAliasCache();
     clearWorkspacePackageCache();
   });
@@ -215,6 +222,12 @@ describe("tsconfig `paths` read as TypeScript reads them", () => {
     expect(applyAliases("@shared/tyre", own, root)).toBe("@shared/tyre");
     const inherited = loadTsconfigAliasesForDir(join(root, "replace/inherit"));
     expect(applyAliases("@shared/tyre", inherited, root)).toBe("replace/shared/tyre");
+  });
+
+  it("lets the later base of an array `extends` replace the earlier one's `paths`", () => {
+    const aliases = loadTsconfigAliasesForDir(join(root, "bases/app"));
+    expect(applyAliases("@car/garage", aliases, root)).toBe("bases/car/garage");
+    expect(applyAliases("@club/match", aliases, root)).toBe("@club/match");
   });
 
   it("takes the pattern with the longest prefix, not the first declared", () => {

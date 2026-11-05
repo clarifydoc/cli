@@ -1005,7 +1005,8 @@ function buildRegexBody(all: readonly string[], spec: ScanSpec, fn: FunctionRef)
   const last = Math.min(all.length, fn.endLine);
   if (last <= first) return null;
 
-  const body = all.slice(first, last).join("\n");
+  const raw = all.slice(first, last).join("\n");
+  const body = spec.sourceView ? spec.sourceView(raw) : raw;
   const lines = scanLines(body, first, spec);
   if (lines.length === 0) return null;
 

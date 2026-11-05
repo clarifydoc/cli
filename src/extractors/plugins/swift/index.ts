@@ -4,7 +4,7 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
-import { parseSwiftReturnType } from "./local-flow.js";
+import { addMemberFlowLocals, parseSwiftReturnType } from "./local-flow.js";
 import { SWIFT_CODE, TRAILING_CLOSURE_CALL } from "./code.js";
 import { extractSwiftDataSources } from "./data-sources.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
@@ -101,6 +101,58 @@ function parseSwiftParam(paramText: string): ParamInfo | null {
   return { name: m[1]!, type: m[2]!.trim(), defaultValue: m[3]?.trim() ?? null };
 }
 
+/**
+ * A type declared inside another is named by its path, `League::Table` (the separator the linker joins with
+ * whichever the source writes): a bare `Table` would be every other type's `Table` too. The path comes from the
+ * declaration's own head (`extension League.Table`) or from the innermost type whose body holds it — an
+ * extension's body included (`extension League { struct Round {} }`).
+ */
+function nestedTypeNames(lines: readonly string[], classes: ClassInfo[]): void {
+  const byLine = [...classes].sort((a, b) => a.line - b.line || b.endLine - a.endLine);
+  for (const cls of byLine) {
+    const head = /^\s*(?:(?:public|package|internal|private|fileprivate)\s+)?extension\s+((?:[A-Z]\w*\s*\.\s*)+[A-Z]\w*)/.exec(lines[cls.line - 1] ?? "");
+    if (head) {
+      cls.name = head[1]!.replace(/\s+/g, "").split(".").join("::");
+      continue;
+    }
+    let holder: ClassInfo | null = null;
+    for (const o of byLine) {
+      if (o === cls || o.line >= cls.line || o.endLine < cls.endLine) continue;
+      if (!holder || o.line > holder.line) holder = o;
+    }
+    if (holder) cls.name = `${holder.name}::${cls.name}`;
+  }
+}
+
+/** The properties of a class written on one line (`class A { var car: Car = Car(); func f() {} }`), one statement per `;`. */
+function oneLineProperties(line: string): PropertyInfo[] {
+  const open = line.indexOf("{");
+  const close = line.lastIndexOf("}");
+  if (open < 0 || close <= open) return [];
+  const pieces: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let k = open + 1; k < close; k++) {
+    const ch = line[k]!;
+    if (ch === "{" || ch === "(" || ch === "[") depth++;
+    else if (ch === "}" || ch === ")" || ch === "]") depth--;
+    else if (ch === ";" && depth === 0) {
+      pieces.push(line.slice(start, k));
+      start = k + 1;
+    }
+  }
+  pieces.push(line.slice(start, close));
+  const out: PropertyInfo[] = [];
+  for (const piece of pieces) {
+    for (const pp of swiftSpec.propertyPatterns ?? []) {
+      const m = piece.match(pp.pattern);
+      const prop = m ? pp.build(m, piece) : null;
+      if (prop) out.push(prop);
+    }
+  }
+  return out;
+}
+
 export const swiftSpec: RegexLangSpec = {
   language: "swift",
   extensions: [".swift"],
@@ -128,6 +180,16 @@ export const swiftSpec: RegexLangSpec = {
       isExported: (line) => !line.trimStart().startsWith("private") && !line.trimStart().startsWith("fileprivate"),
       isAsync: (line) => line.includes("async "),
       // Not one in a comment or a string template.
+      accept: SWIFT_CODE.startsInCode,
+    },
+    {
+      // A computed or observed property runs code on access: one function named for the property, as the
+      // tree-sitter reader makes it (`var ready: Bool { … }`, `var mode: Int { get { … } set { … } }`,
+      // `var level = 0 { didSet { … } }`). A protocol requirement (`{ get set }`) has no body, and a closure
+      // initializer (`= {`) is no accessor.
+      pattern: /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|internal|fileprivate|open|package|static|class|final|override|nonisolated)(?:\([^)]*\))?\s+)*var\s+([a-zA-Z_]\w*)\s*(?::\s*[^={]+?)?\s*(?:=\s*[^{=]+?)?\s*\{(?!\s*(?:(?:get|set)(?:\s+(?:async|throws))*\s*)+\}\s*$)/,
+      isExported: (line) => !/^\s*(?:private|fileprivate)\b/.test(line),
+      isAsync: () => false,
       accept: SWIFT_CODE.startsInCode,
     },
   ],
@@ -234,9 +296,17 @@ export const swiftSpec: RegexLangSpec = {
           delete m.requestAccess;
         }
       }
+      if (cls.endLine === cls.line && cls.properties.length === 0) cls.properties = oneLineProperties(lines[cls.line - 1] ?? "");
       cls.properties = applyInjectionKeys(cls.properties);
       dropWrappedInitializers(lines, cls);
     }
+    nestedTypeNames(lines, classes);
+    return classes;
+  },
+
+  // A method's loops and narrowings over the typed members of its own class (`for p in self.players`).
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) for (const m of cls.methods) addMemberFlowLocals(lines, cls.properties, m);
     return classes;
   },
 

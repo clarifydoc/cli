@@ -221,15 +221,15 @@ function callName(node: TSNode, text: string): PatternCallName | null {
 
 /**
  * `League.Table(…)`, `Vapor.Application(…)`: a construction through the type that nests it (or the module that
- * declares it) is the nested type's, named by its own name as a Java `new Outer.Inner()` is — the path says where
- * the type lives, and the class it names is recorded under its own name (an `extension League.Table` too).
+ * declares it) keeps its path: the nested class is recorded under its path (`League::Table`, an `extension
+ * League.Table` too), and the linker takes the longest tail of the path some class is declared at.
  */
 function nestedConstruction(steps: readonly CalleeStep[]): PatternCallName | null {
   if (steps.length < 2 || !steps.every((s) => s.kind === "id")) return null;
   const ids = steps as Array<Extract<CalleeStep, { kind: "id" }>>;
   const leaf = ids.at(-1)!;
   if (!/^[A-Z]/.test(leaf.name) || !/^[A-Z]/.test(ids.at(-2)!.name)) return null;
-  return { name: leaf.name, leafName: leaf.name, line: leaf.line, column: leaf.column };
+  return { name: ids.map((s) => s.name).join("."), leafName: leaf.name, line: ids[0]!.line, column: ids[0]!.column };
 }
 
 /**

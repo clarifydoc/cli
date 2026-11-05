@@ -4248,7 +4248,7 @@ function resolveCallToDefinition(
     }
     // `def build(Club): return Club()` — the parameter, unless it is handed an inner helper of its name
     // or the function the framework injects under that name (a pytest fixture).
-    if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name)) {
+    if (call.kind === "internal" && caller?.params.some((p) => p.name === call.name || (/^[{[]/.test(p.name) && bindsName(p.name, call.name)))) {
       if (nested && nested.confidence === "INFERRED") return mkLink(sourceFile, nested.node.name, nested.node.line, nested.confidence, "direct");
       const injected = injectedFunction(ctx, analysis, call.name);
       return injected ? mkLink(injected.file, injected.name, injected.line, injected.file === sourceFile ? "EXTRACTED" : "INFERRED", "direct") : null;
@@ -4640,7 +4640,11 @@ function resolveCallToDefinition(
   // import at the call site, so resolve via the (unique) global class name.
   if (!def && isQualified && !call.name.includes("(") && pluginFor(analysis.language as Language)?.nestedTypePaths) {
     // `new Table::Iterator(3)`, read as `Table.Iterator`: the class nested in `Table`, constructed.
-    const path = dealias(ctx, parts.join("::"), sourceFile);
+    let path = dealias(ctx, parts.join("::"), sourceFile);
+    // Where the path is written with a dot a module may lead it (`Club.League.Table`): the longest tail some class is declared at.
+    if (pluginFor(analysis.language as Language)?.nestedTypeSeparator === ".") {
+      while (!ctx.classFiles.has(path) && path.includes("::")) path = path.slice(path.indexOf("::") + 2);
+    }
     const ref = ctx.classFiles.has(path) ? typeRefFor(ctx, path, sourceFile, analysis.projectId) : null;
     const cls = ref ? ctx.classAt.get(memberKey(ref.typeFile, ref.typeName)) : undefined;
     if (ref && cls) {
@@ -6622,7 +6626,8 @@ function typeRefFor(
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   if (typeFile) return { typeName, typeFile };
   // A path no nested class is named by (`Engine::Car` where `Engine` is a namespace): its last name.
-  const dc = typeName.lastIndexOf("::");
+  // A longer path (`Club::League::Table`, a module in front of the type's own path) loses its first name at a time.
+  const dc = typeName.indexOf("::");
   return dc > 0 && !ctx.classFiles.has(typeName) ? typeRefFor(ctx, typeName.slice(dc + 2), sourceFile, projectId) : null;
 }
 
@@ -6706,9 +6711,10 @@ function nestedTypeRef(
   declared = true,
 ): { typeName: string; typeFile: string } | null {
   if (!consumer || typeName.includes("::") || !/^[A-Z]/.test(typeName)) return null;
+  const bare = !!pluginFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.nestedTypesScopeBare;
   for (let scope = consumer; scope; scope = scope.includes("::") ? scope.slice(0, scope.lastIndexOf("::")) : "") {
     const name = `${scope}::${typeName}`;
-    if (!ctx.classFiles.has(name) || (declared && ctx.classAt.has(memberKey(sourceFile, name)))) continue;
+    if (!ctx.classFiles.has(name) || (declared && !bare && ctx.classAt.has(memberKey(sourceFile, name)))) continue;
     const typeFile = typeFileFor(ctx, name, sourceFile, ctx.projectOf.get(sourceFile) ?? "root");
     if (typeFile) return { typeName: name, typeFile };
   }
