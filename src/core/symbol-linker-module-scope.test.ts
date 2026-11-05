@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { dedupSymbolLinks } from "./symbol-dedup.js";
 import type { CallInfo, FileAnalysis } from "../types/analysis.js";
 
 /**
@@ -67,5 +68,45 @@ describe("module-scope receivers typed through an imported factory", () => {
     });
     const link = buildSymbolLinks(project(dialog)).find((l) => l.sourceSymbol === "addRecipeToPlan");
     expect(link?.targetSymbol).not.toBe("BaseCRUDAPI.createOne");
+  });
+});
+
+describe("a local typed by one initializer per branch", () => {
+  // `const api = slug ? useGuestApi(slug).explore : usePlayerApi()`, read by a function the composable returns.
+  const clients = file("app/lib/api/clients.ts", {
+    classes: [
+      klass("BaseCRUDAPI", { methods: [fn("getAll", 3)], line: 1, endLine: 6 }),
+      klass("ClubAPI", { extends: "BaseCRUDAPI", line: 7, endLine: 8 }),
+      klass("GuestClubApi", { extends: "BaseCRUDAPI", line: 9, endLine: 10 }),
+      klass("PlayerApi", { properties: [prop("clubs", "ClubAPI")], line: 11, endLine: 12 }),
+      klass("ExploreApi", { properties: [prop("clubs", "GuestClubApi")], line: 13, endLine: 14 }),
+      klass("GuestApi", { properties: [prop("explore", "ExploreApi")], line: 15, endLine: 16 }),
+    ],
+  });
+  const factories = file("app/composables/api-client.ts", {
+    imports: [imp("app/lib/api/clients", ["PlayerApi", "GuestApi"])],
+    functions: [fn("usePlayerApi", 3, [], { returnType: "PlayerApi" }), fn("useGuestApi", 8, [], { returnType: "GuestApi" })],
+    exports: [{ name: "usePlayerApi", kind: "variable", line: 3 }, { name: "useGuestApi", kind: "variable", line: 8 }],
+  });
+  const composable = (guest: string) =>
+    file("app/composables/use-clubs.ts", {
+      imports: [imp("app/composables/api-client", ["usePlayerApi", guest])],
+      functions: [
+        fn("useLazyClubs", 5, [call(guest, 6, "cross-file", "app/composables/api-client"), call("usePlayerApi", 6, "cross-file", "app/composables/api-client")], {
+          endLine: 30,
+          localTypes: [{ name: "api", type: "", from: `${guest}().explore` }, { name: "api", type: "", from: "usePlayerApi()" }],
+        }),
+        fn("fetchMore", 10, [call("api.clubs.getAll", 11, "internal", null)]),
+      ],
+    });
+
+  it("links the call on each branch's type, through the analyzer's dedupe", () => {
+    const links = dedupSymbolLinks(buildSymbolLinks([composable("useGuestApi"), factories, clients])).filter((l) => l.sourceSymbol === "fetchMore");
+    expect(links.map((l) => `${l.targetSymbol} via ${l.viaType}`).sort()).toEqual(["BaseCRUDAPI.getAll via ClubAPI", "BaseCRUDAPI.getAll via GuestClubApi"]);
+  });
+
+  it("links nothing when one branch cannot be typed", () => {
+    const links = buildSymbolLinks([composable("useStrangerApi"), factories, clients]).filter((l) => l.sourceSymbol === "fetchMore");
+    expect(links.map((l) => l.targetSymbol)).not.toContain("BaseCRUDAPI.getAll");
   });
 });

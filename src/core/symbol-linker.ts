@@ -481,7 +481,9 @@ export function buildSymbolLinks(
   const seen = new Map<string, number>();
   const deduped: SymbolLink[] = [];
   for (const link of links) {
-    const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}${overloaded.has(link) ? `@${link.targetLine}` : ""}`;
+    // An inherited method reached on two classes (a local typed per branch) is two calls: each moves onto its class's member.
+    const via = link.viaType ? `~${link.viaTypeFile ?? ""}:${link.viaType}` : "";
+    const key = `${link.sourceFile}::${link.sourceSymbol}::${link.targetFile}::${link.targetSymbol}::${link.callName}${overloaded.has(link) ? `@${link.targetLine}` : ""}${via}`;
     const existingIdx = seen.get(key);
     if (existingIdx === undefined) {
       seen.set(key, deduped.length);
@@ -5419,9 +5421,23 @@ function resolveThroughDeclaredType(
 
   const receiver = receiverChain(call.name);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
-  const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
-  if (!point) return null;
-  return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
+  const branches: InjectionPoint[] = [];
+  const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false, branches);
+  if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
+  if (branches.length < 2) return null;
+  // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`)
+  // whose every branch reaches ONE method — a base both classes inherit it from: that body runs
+  // whichever the branch gave, on that branch's class, so the call links once per class. Branches
+  // reaching different methods leave the local untyped: neither class is the local's.
+  const out: SymbolLink[] = [];
+  for (const b of branches) {
+    const p = walkChain(ctx, b, receiver.slice(1), false);
+    const link = p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
+    if (!link || (out[0] && (out[0].targetFile !== link.targetFile || out[0].targetSymbol !== link.targetSymbol))) return null;
+    if (!out.some((o) => o.viaType === link.viaType && o.viaTypeFile === link.viaTypeFile)) out.push(link);
+  }
+  ctx.extraLinks.push(...out.slice(1));
+  return out[0]!;
 }
 
 /**
@@ -5442,6 +5458,8 @@ function chainPoint(
   receiver: ChainSegment[],
   depth: number,
   awaited: boolean,
+  /** Receives the head's per-branch types when its local is typed differently per branch (see {@link scopedName}). */
+  branches?: InjectionPoint[],
 ): InjectionPoint | null {
   const head = receiver[0]!;
   let point: InjectionPoint | null;
@@ -5468,7 +5486,7 @@ function chainPoint(
       ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1);
     rest = receiver.slice(1);
   } else {
-    point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth);
+    point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
     rest = receiver.slice(1);
     // `League::Club.find(id)` where constants are looked up lexically: the class at that path heads the chain.
     let names = 1;
@@ -5508,6 +5526,12 @@ function chainPoint(
       }
     }
   }
+  return walkChain(ctx, point, rest, awaited);
+}
+
+/** Each further segment of a receiver chain, from the point its head is typed as. */
+function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonly ChainSegment[], awaited: boolean): InjectionPoint | null {
+  let point = start;
   for (let i = 0; i < rest.length; i++) {
     const seg = rest[i]!;
     if (!point?.typeFile) return null;
@@ -5841,6 +5865,8 @@ function scopedName(
   consumer: string,
   name: string,
   depth = 0,
+  /** Receives one point per branch when the local's initializers type it differently, each typed. */
+  branches?: InjectionPoint[],
 ): InjectionPoint | null {
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   const key = nameKey(analysis.language, name);
@@ -5849,15 +5875,21 @@ function scopedName(
     // Every call the local is initialized from (one per branch) must agree.
     const inits = callable!.localTypes!.filter((l) => nameKey(analysis.language, l.name) === key && l.from);
     let typed: InjectionPoint | null = null;
+    const each: InjectionPoint[] = [];
     for (const init of inits) {
       const p = initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, init, depth);
-      if (!p || (typed && (typed.typeFile !== p.typeFile || typed.typeName !== p.typeName))) {
+      if (!p) {
+        each.length = 0;
         typed = null;
         break;
       }
-      typed = p;
+      if (!each.some((q) => q.typeFile === p.typeFile && q.typeName === p.typeName)) each.push(p);
+      typed = each.length === 1 ? p : null;
     }
     if (typed) return typed;
+    // Typed differently per branch (`slug ? useGuestApi(slug).explore : usePlayerApi()`): each
+    // branch's type, for a caller that follows the chain on each.
+    if (each.length > 1 && branches) branches.push(...each);
     // A local that reassigns a parameter (`$repo = $this->fallback()`) keeps
     // the parameter's declared type when the call states none.
     local = undefined;
@@ -5894,14 +5926,14 @@ function scopedName(
       if (!f.localTypes?.some((l) => nameKey(analysis.language, l.name) === key)) continue;
       if (!outer || f.endLine - f.line < outer.endLine - outer.line) outer = f;
     }
-    if (outer && analysis.functions.filter((f) => f.name === outer!.name).length === 1) return scopedName(ctx, analysis, sourceFile, outer.name, consumer, name, depth + 1);
+    if (outer && analysis.functions.filter((f) => f.name === outer!.name).length === 1) return scopedName(ctx, analysis, sourceFile, outer.name, consumer, name, depth + 1, branches);
   }
   // A module-scope binding the callable does not shadow with a typed local
   // or a parameter (`const api = useUserApi()` above `function save() { api.x.y() }`).
   if (sourceSymbol !== "<setup>" && pluginFor(analysis.language)?.moduleLocalsInScope) {
     const setup = analysis.functions.find((f) => f.name === "<setup>");
     if (setup?.localTypes?.some((l) => nameKey(analysis.language, l.name) === key)) {
-      return scopedName(ctx, analysis, sourceFile, "<setup>", consumer, name, depth);
+      return scopedName(ctx, analysis, sourceFile, "<setup>", consumer, name, depth, branches);
     }
   }
   // Where fields need `this.`/`self.`, a bare name is a local or global the
