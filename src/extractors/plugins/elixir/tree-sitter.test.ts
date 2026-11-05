@@ -120,3 +120,42 @@ describe("Elixir: tree-sitter and the patterns agree on the fixtures", () => {
     });
   }
 });
+
+describe("Elixir clauses of one function", () => {
+  const SCORING = `defmodule League.Scoring do
+  def score(%Match{} = match) do
+    Goals.count(match)
+  end
+
+  def score(nil), do: 0
+
+  def score(match, bonus) when is_integer(bonus) do
+    Bonus.apply(match, bonus)
+  end
+
+  defp score(%Car{} = car), do: Garage.lookup(car)
+
+  def table(%Match{}), do: Standings.build()
+  def table(nil), do: Standings.empty()
+end
+
+defmodule League.Other do
+  def table(nil), do: Other.rows()
+end
+`;
+
+  it("reads the consecutive clauses of a name and arity as one function spanning them all", () => {
+    const fns = readElixir(SCORING).functions;
+    const score1 = fns.filter((f) => f.name === "score" && f.line === 2);
+    expect(score1).toHaveLength(1);
+    expect(score1[0]!.endLine).toBe(6);
+    expect(score1[0]!.calls.map((c) => c.name)).toEqual(["Goals.count"]);
+    expect(fns.filter((f) => f.name === "table" && f.line === 14)[0]!.endLine).toBe(15);
+  });
+
+  it("keeps another arity, another macro and another module apart", () => {
+    const fns = readElixir(SCORING).functions;
+    expect(fns.filter((f) => f.name === "score").map((f) => f.line)).toEqual([2, 8, 12]);
+    expect(fns.filter((f) => f.name === "table").map((f) => f.line)).toEqual([14, 19]);
+  });
+});
