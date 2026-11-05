@@ -110,3 +110,42 @@ describe("symbol links through a dispatch map", () => {
       .filter((l) => l.startsWith("ACTIONS"))).toEqual([]);
   });
 });
+
+describe("symbol links through a dispatch map of another file", () => {
+  const held = (name: string, key: string, line: number): CallInfo =>
+    ({ name, kind: "internal", target: null, line, passed: "property", returnedAs: `ACTIONS.${key}` });
+  const actions = file("src/lib/actions.ts", {
+    functions: [fn("<setup>", 1, [held("saveClub", "save", 5), held("loadMatches", "list", 5)]), fn("saveClub", 2), fn("loadMatches", 3)],
+    exports: [{ name: "ACTIONS", kind: "named", line: 5 }],
+  });
+  const decoy = file("src/lib/decoy.ts", {
+    functions: [fn("<setup>", 1, [{ ...held("saveCar", "save", 5) }]), fn("saveCar", 2)],
+    exports: [{ name: "ACTIONS", kind: "named", line: 5 }],
+  });
+  const runner = (calls: CallInfo[], params: string[] = [], specifier = "ACTIONS") => file("src/run.ts", {
+    imports: [{ ...imp("./lib/actions", [specifier]), ...(specifier === "ACTIONS" ? {} : { aliases: { [specifier]: "ACTIONS" } }) }],
+    functions: [{ ...fn("run", 1, calls), params: params.map((name) => ({ name, type: null })) }],
+  });
+  const dispatch = (analyses: FileAnalysis[]) => buildSymbolLinks(analyses)
+    .filter((l) => l.strategy === "dispatch:object-map").map((l) => `${l.callName} ${l.targetFile}::${l.targetSymbol} ${l.confidence}`).sort();
+
+  it("joins a key to its function and a computed key to every function the imported map holds", () => {
+    const calls: CallInfo[] = [
+      { name: "ACTIONS.save", kind: "cross-file", target: "./lib/actions", line: 2 },
+      { name: "ACTIONS[]", kind: "cross-file", target: "./lib/actions", line: 3 },
+    ];
+    expect(dispatch([actions, decoy, runner(calls)])).toEqual([
+      "ACTIONS.save src/lib/actions.ts::saveClub EXTRACTED",
+      "ACTIONS[] src/lib/actions.ts::loadMatches INFERRED",
+      "ACTIONS[] src/lib/actions.ts::saveClub INFERRED",
+    ]);
+  });
+
+  it("follows a renamed import and refuses a parameter of the name, a key the map lacks, and a name never imported", () => {
+    expect(dispatch([actions, decoy, runner([{ name: "Registry.list", kind: "cross-file", target: null, line: 2 }], [], "Registry")]))
+      .toEqual(["Registry.list src/lib/actions.ts::loadMatches EXTRACTED"]);
+    expect(dispatch([actions, decoy, runner([{ name: "Other.list", kind: "cross-file", target: null, line: 2 }])])).toEqual([]);
+    expect(dispatch([actions, decoy, runner([{ name: "ACTIONS.save", kind: "cross-file", target: null, line: 2 }], ["ACTIONS"])])).toEqual([]);
+    expect(dispatch([actions, decoy, runner([{ name: "ACTIONS.remove", kind: "cross-file", target: null, line: 2 }])])).toEqual([]);
+  });
+});
