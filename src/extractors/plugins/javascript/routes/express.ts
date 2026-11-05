@@ -376,7 +376,8 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
 export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string): void {
   if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
   composeLocalMounts(routes);
-  const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr }> = [];
+  /** `scope`: the plugin function a Fastify hook sits in — it guards the routes written inside it, nothing outside. */
+  const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
   for (const stmt of root.namedChildren) {
     const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
@@ -387,19 +388,20 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     if (!receiver || NON_ROUTER_RECEIVERS.has(receiver)) continue;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
     if (args.length === 0 || args[0]!.type === "string" || args[0]!.type === "template_string") continue;
-    for (const arg of args) {
+    for (const arg of args.flatMap(composedMiddleware)) {
       const guard = guardFromMiddleware(arg);
       if (guard) routerGuards.push({ receiver, line: call.startPosition.row + 1, guard });
       else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line: call.startPosition.row + 1, text: collapse(arg.text) });
     }
   }
+  if (sourceText === undefined || sourceText.includes("addHook")) collectFastifyHooks(root, routerGuards);
 
   for (const route of routes) {
     const meta = routeMeta.get(route);
     if (!meta) continue;
     routeMeta.delete(route);
     const inherited = routerGuards
-      .filter((g) => g.receiver === meta.receiver && g.line < route.line)
+      .filter((g) => g.receiver === meta.receiver && g.line < route.line && (!g.scope || (route.line >= g.scope.from && route.line <= g.scope.to)))
       .map((g) => g.guard);
     // Middleware keeps source order (router-level first, then the route's own
     // arguments as written), so `applyRouteMeta` is used only for params; the
@@ -413,6 +415,50 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
   }
+}
+
+/**
+ * What one `use(…)` argument stands for: koa-compose's `compose([authenticate, rateLimit])`
+ * is its middleware, one by one; anything else is itself.
+ */
+function composedMiddleware(arg: Node): Node[] {
+  if (arg.type !== "call_expression") return [arg];
+  const callee = arg.childForFieldName("function")?.text ?? "";
+  if (!/^(?:[\w$]+\.)?compose$/.test(callee)) return [arg];
+  const args = arg.childForFieldName("arguments")?.namedChildren ?? [];
+  return (args.length === 1 && args[0]!.type === "array" ? args[0]!.namedChildren : args).flatMap(composedMiddleware);
+}
+
+const FASTIFY_GUARD_HOOKS = new Set(["onRequest", "preParsing", "preValidation", "preHandler"]);
+
+/**
+ * Fastify's `instance.addHook('preHandler', guard)` — in any plugin function, since that is
+ * where Fastify code writes it — guards the routes registered on that instance after it, inside
+ * the function it sits in. Only a hook named for checking the caller counts (`guardFromMiddleware`).
+ */
+function collectFastifyHooks(root: Node, out: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }>): void {
+  const walk = (node: Node): void => {
+    if (node.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "addHook") {
+        const [name, hook] = node.childForFieldName("arguments")?.namedChildren ?? [];
+        const receiver = receiverName(fn);
+        const guard = hook ? guardFromMiddleware(hook) : null;
+        if (receiver && name?.type === "string" && FASTIFY_GUARD_HOOKS.has(stripQuotes(name.text)) && guard) {
+          let scope: Node | null = node.parent;
+          while (scope && !/^(?:arrow_function|function_expression|function_declaration|function|method_definition|generator_function)$/.test(scope.type)) scope = scope.parent;
+          out.push({
+            receiver,
+            line: node.startPosition.row + 1,
+            guard,
+            ...(scope ? { scope: { from: scope.startPosition.row + 1, to: scope.endPosition.row + 1 } } : {}),
+          });
+        }
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
 }
 
 /** `clubs.routes()` / `clubs.middleware()` — the router a koa-router mount hands on. */
