@@ -115,3 +115,45 @@ describe("a route renders the template it names", () => {
     expect(screen("src/static/templates/admin/login.hbs")).toMatchObject({ routePath: "/login" });
   });
 });
+
+/** An Express app whose routes render a view from an inline arrow: the views must not all land on one route. */
+const EXPRESS_FILES: Record<string, string> = {
+  "package.json": `{"name":"league","dependencies":{"express":"4","hbs":"4","ejs":"3"}}`,
+  "app.js": `const express = require('express');
+const app = express();
+app.set('view engine', 'hbs');
+app.get('/clubs', (req, res) => res.render('clubs'));
+app.get('/players', (req, res) => {
+  res.render('players', { x: 1 });
+});
+app.get('/cars', (req, res) => res.render('cars.ejs', {}));
+app.listen(3000);
+`,
+  "views/clubs.hbs": `<h1>{{title}}</h1><button onclick="load()">Load</button>\n`,
+  "views/players.hbs": `<form action="/api/players" method="post"><button>Add</button></form>\n`,
+  "views/cars.ejs": `<h1><%= title %></h1><a href="/api/cars">All</a><button onclick="load()">Load</button>\n`,
+};
+
+describe("an inline-arrow Express route renders its view", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-rendered-express-"));
+    for (const [rel, text] of Object.entries(EXPRESS_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("links `.hbs` and `.ejs` views to the route whose arrow renders them, and no other", () => {
+    const screen = (f: string) => summary.screens.find((s) => s.filePath === f);
+    expect(screen("views/clubs.hbs")).toMatchObject({ routePath: "/clubs", renderedBy: [{ method: "GET", path: "/clubs" }] });
+    expect(screen("views/players.hbs")).toMatchObject({ routePath: "/players", renderedBy: [{ path: "/players" }] });
+    expect(screen("views/cars.ejs")).toMatchObject({ routePath: "/cars", renderedBy: [{ path: "/cars" }] });
+  });
+});

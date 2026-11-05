@@ -1820,6 +1820,8 @@ export interface RouteInfo {
    * row whose path is complete.
    */
   prefixUnresolved?: string;
+  /** The last line of an inline handler (`app.get("/x", (req, res) => …)`): its body spans `line`..`handlerEndLine`. */
+  handlerEndLine?: number;
   /** Id of the project-level resolver that created or rewrote this row. */
   resolvedBy?: string;
   /**

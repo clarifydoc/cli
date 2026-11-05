@@ -419,6 +419,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 calls,
                 middleware,
                 line: node.startPosition.row + 1,
+                ...(lastArgIsFn ? { handlerEndLine: last!.endPosition.row + 1 } : {}),
                 ...(responses ? { responses } : {}),
               };
               if (method === "use") route.mount = true;

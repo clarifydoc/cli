@@ -86,6 +86,18 @@ export function linkRenderedViews(
     let frontier = handlers.handlersOf(route);
     const seen = new Set<string>();
     let screen: ScreenInfo | null = null;
+    // A handler written inline (`app.get("/clubs", (req, res) => res.render("clubs"))`) is no function of its own:
+    // its lines are the route's, and the function enclosing them (the file's setup) would show every route's render.
+    if (route.handlerEndLine && route.handlerEndLine >= route.line) {
+      const owner = byPath.get(route.filePath)!;
+      const found = new Set<ScreenInfo>();
+      for (const v of viewsIn(route.filePath, { line: route.line, endLine: route.handlerEndLine })) {
+        const s = resolve(v, owner);
+        if (s) found.add(s);
+      }
+      if (found.size === 1) screen = [...found][0]!;
+      if (found.size > 0) frontier = [];
+    }
     for (let depth = 0; depth < 3 && frontier.length > 0 && !screen; depth++) {
       const found = new Set<ScreenInfo>();
       const next: HandlerRef[] = [];
