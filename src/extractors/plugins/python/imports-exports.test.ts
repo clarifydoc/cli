@@ -88,8 +88,19 @@ if typing.TYPE_CHECKING:
     expect(await imports(`
 def f():
     s = "from os import path"
-    return importlib.import_module("os")
+    return importlib.import_module(name)
 `)).toEqual([]);
+  });
+
+  it("reads a literal importlib.import_module / __import__ name as a dynamic import", async () => {
+    const found = await imports(`
+def f():
+    a = importlib.import_module("league.rules")
+    b = __import__("league.fees")
+    c = foo.import_module("league.other")
+    # importlib.import_module("league.commented")
+`);
+    expect(found.map((i) => i.source)).toEqual(["league.rules", "league.fees"]);
   });
 });
 

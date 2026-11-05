@@ -121,7 +121,7 @@ export class PythonEntityExtractor extends EntityExtractor {
             implementsList: [...targets],
             line: cls.line,
             endLine: cls.endLine,
-            tableName: pythonTableName(body.join("\n")),
+            tableName: pythonTableName(body.join("\n")) ?? (orm.id === "sqlalchemy" ? flaskImplicitTable(cls.name, declLine, members) : null),
           }),
         );
         for (const rel of classRelations) relations.push(rel);
@@ -334,6 +334,8 @@ export class PythonEntityExtractor extends EntityExtractor {
         if (uselistFalse) cardinality = "one-to-one";
         else if (annIsCollection || uselistTrue) cardinality = "one-to-many";
         else if (annotation) cardinality = "many-to-one";
+        // A classic relationship beside a foreign key to its target is the scalar, owning side.
+        else if (this.fkTargets(members).has(target)) cardinality = "many-to-one";
         else cardinality = "one-to-many"; // SQLAlchemy default is a collection
 
         // back_populates / backref name the inverse field; secondary is the
@@ -787,6 +789,18 @@ export class PythonEntityExtractor extends EntityExtractor {
     );
   }
 
+  /** The entities this class's `ForeignKey("clubs.id")` columns point at. */
+  private fkTargets(members: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const m of members) {
+      for (const fk of m.matchAll(/ForeignKey\s*\(\s*["']([^"']+)["']/g)) {
+        const t = this.tableToEntity((fk[1]!.split(".").slice(0, -1).pop() ?? fk[1]!));
+        if (t) out.add(t);
+      }
+    }
+    return out;
+  }
+
   /**
    * Derive an entity name from a SQLAlchemy table name ("user" / "users" →
    * "User"). Loose singularize (drop a trailing "s") + capitalize. INFERRED.
@@ -832,6 +846,15 @@ function pythonTableName(body: string): string | null {
   const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
   const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
   return inMeta?.[1] ?? null;
+}
+
+/**
+ * Flask-SQLAlchemy names the table of a `db.Model` subclass without `__tablename__` after the class,
+ * snake-cased (`MatchReport` → `match_report`). Only a direct `db.Model` base: a subclass of another model shares its table.
+ */
+function flaskImplicitTable(name: string, declLine: string, members: string[]): string | null {
+  if (!/\(\s*(?:db|sa)\.Model\s*[),]/.test(declLine) || members.some((m) => /^\s*__abstract__\s*=\s*True/.test(m))) return null;
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
 }
 
 /** A class named as written, module path and type arguments dropped (`models.Club`, `Generic[A, B]`). */

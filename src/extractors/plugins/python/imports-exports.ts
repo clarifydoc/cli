@@ -24,6 +24,31 @@ function isTypeCheckingGuard(ifStatement: Node): boolean {
   return condition === "TYPE_CHECKING" || condition === "typing.TYPE_CHECKING";
 }
 
+/**
+ * A module loaded by name at run time: `importlib.import_module("app.rules")`, a bare `import_module("app.rules")`
+ * (`from importlib import import_module`) and `__import__("app.rules")`. Only a literal, absolute dotted name —
+ * a computed one names no module. The module is loaded on demand (`dynamic`), nothing of it bound.
+ */
+function dynamicImports(sourceText: string): ImportInfo[] {
+  if (!sourceText.includes("import_module") && !sourceText.includes("__import__")) return [];
+  const out: ImportInfo[] = [];
+  const re = /(?<![\w.])(?:importlib\.)?(?:import_module|__import__)\(\s*(['"])([A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*)\1/g;
+  for (const m of sourceText.matchAll(re)) {
+    const lineStart = sourceText.lastIndexOf("\n", m.index!) + 1;
+    if (/^\s*#/.test(sourceText.slice(lineStart, m.index!))) continue;
+    out.push({
+      source: m[2]!,
+      specifiers: [],
+      isDefault: false,
+      isNamespace: true,
+      isType: false,
+      dynamic: true,
+      line: sourceText.slice(0, m.index!).split("\n").length,
+    });
+  }
+  return out;
+}
+
 export class PythonImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["python"];
 
@@ -40,6 +65,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     const imports = super.extractImports(tree, sourceText, opts);
     // Scripts it starts as processes (`subprocess.run([sys.executable, "tools/gen.py"])`): run, not loaded.
     imports.push(...spawnImports(sourceText, "python"));
+    imports.push(...dynamicImports(sourceText));
     return imports;
   }
 

@@ -4360,7 +4360,7 @@ function resolveCallToDefinition(
   // self-linking and dead-ending instead of reaching the service.
   if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile && parts.length === 2) {
     const head = parts[0]!;
-    if (head === "self" || head === "Self" || head === "this") {
+    if (head === "self" || head === "Self" || head === "this" || head === "cls") {
       // The ENCLOSING class's own member, else the one its bases provide —
       // not whichever class of the file happens to define the name first.
       const dot = sourceSymbol.indexOf(".");
@@ -5849,6 +5849,9 @@ function importedFunctionResult(
 /** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
 const MAX_INITIALIZER_DEPTH = 3;
 
+/** The tuple position `returnedPoint` takes from the declared return type while a tuple unpacking is typed. */
+let pendingTupleIndex: number | null = null;
+
 /** A local initialized by a call (`localTypes[].from`), typed by what that call is declared to return. */
 function initializerPoint(
   ctx: LinkContext,
@@ -5856,10 +5859,22 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean },
+  local: { from?: string; awaited?: boolean; fromIndex?: number },
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
+  if (local.fromIndex !== undefined) {
+    // A tuple unpacking (`a, b = load()`): the element of the one call's declared tuple type. Only a single
+    // call (no member chain) names its own declared return type here.
+    const only = receiverChain(`${local.from}.x`);
+    if (only?.length !== 1 || !only[0]!.call) return null;
+    pendingTupleIndex = local.fromIndex;
+    try {
+      return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, only, depth + 1, local.awaited === true);
+    } finally {
+      pendingTupleIndex = null;
+    }
+  }
   // The initializer is the receiver of an imagined member call on its result: a call, or a
   // member read off one (`usePublicApi(slug).explore`).
   const chain = receiverChain(`${local.from}.x`);
@@ -6010,6 +6025,13 @@ function returnedPoint(
 ): InjectionPoint | null {
   if (!returnType) return null;
   let written = returnType.trim();
+  if (pendingTupleIndex !== null) {
+    const index = pendingTupleIndex;
+    pendingTupleIndex = null;
+    const element = pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.tupleElementsOf?.(written)?.[index];
+    if (!element) return null;
+    written = element;
+  }
   if (awaited) written = awaitedType(written, pluginFor((ctx.languageOf.get(declFile) ?? "") as Language)?.asyncResultTypes);
   if (SELF_TYPES.has(written)) {
     return receiver.typeFile ? { typeName: receiver.typeName, typeFile: receiver.typeFile, member: "", consumer: receiver.consumer, container: false } : null;

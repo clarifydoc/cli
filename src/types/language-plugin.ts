@@ -1346,6 +1346,12 @@ export interface LanguagePluginManifest {
    */
   asyncResultTypes?: readonly string[];
   /**
+   * The element types of a declared tuple return type as the language writes it (`tuple[Club, Car]` →
+   * `["Club", "Car"]`), or null for any other type. Reads `FunctionInfo.returnType` for a local bound by
+   * tuple unpacking (`localTypes[].fromIndex`).
+   */
+  tupleElementsOf?(returnType: string): string[] | null;
+  /**
    * An import puts the imported file's top-level functions in scope without
    * naming them — PowerShell dot-sourcing / `Import-Module`, Bash `source`:
    * a bare call no definition in its own file answers is linked to the ONE
