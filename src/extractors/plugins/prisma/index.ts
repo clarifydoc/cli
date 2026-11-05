@@ -418,7 +418,7 @@ function parseModels(lines: string[]): PrismaModel[] {
               }
             }
           } else if (/^@@map\b/.test(text)) {
-            const mm = text.match(/@@map\(\s*["'`]([^"'`]*)["'`]/);
+            const mm = text.match(/@@map\(\s*(?:name\s*:\s*)?["'`]([^"'`]*)["'`]/);
             if (mm) dbTable = mm[1]!;
           }
           continue;
@@ -544,7 +544,9 @@ export function extractPrismaModels(lines: string[]): ClassInfo[] {
         if (f.isOptional) type += "?";
         if (annotations.length) type += " " + annotations.join(" ");
         // Enum-typed columns keep the enum name as their type (baseType).
-        properties.push(column(f.name, type));
+        const prop = column(f.name, type);
+        if (f.dbName && f.dbName !== f.name) prop.column = f.dbName;
+        properties.push(prop);
       }
     }
 

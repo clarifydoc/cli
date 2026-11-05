@@ -81,3 +81,56 @@ export class ClubTable {
     expect(res.relations).toEqual([expect.objectContaining({ fromEntity: "ClubTable", toEntity: "StadiumTable", cardinality: "many-to-one", foreignKey: "homeStadiumId" })]);
   });
 });
+
+describe("JS entities — database names and Supabase types", () => {
+  const cols = (a: FileAnalysis, cls: string) =>
+    Object.fromEntries((a.classes.find((c) => c.name === cls)?.properties ?? []).map((p) => [p.name, p.column ?? null]));
+
+  it("takes a TypeORM column's database name from its name option", async () => {
+    const a = await analyze(`import { Entity, Column, PrimaryGeneratedColumn } from "typeorm";
+@Entity("clubs")
+export class Club {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ name: "short_name" }) shortName: string;
+  @Column("varchar", { name: "home_city" }) homeCity: string;
+  @Column() slogan: string;
+}`, "src/club.entity.ts");
+    expect(cols(a, "Club")).toEqual({ id: null, shortName: "short_name", homeCity: "home_city", slogan: null });
+  });
+
+  it("takes a Drizzle column's database name from its builder's first argument", async () => {
+    const a = await analyze(`import { pgTable, text, serial, varchar } from "drizzle-orm/pg-core";
+export const cars = pgTable("cars", {
+  id: serial("id").primaryKey(),
+  shortName: text("short_name"),
+  plate: varchar({ length: 8 }),
+});`);
+    expect(cols(a, "cars")).toEqual({ id: null, shortName: "short_name", plate: null });
+  });
+
+  it("reads Supabase generated types as entities with columns and foreign keys", async () => {
+    const a = await analyze(`export type Database = {
+  public: {
+    Tables: {
+      clubs: {
+        Row: { id: number; short_name: string; league_id: number | null }
+        Insert: { id?: number; short_name: string }
+        Update: { id?: number }
+        Relationships: [
+          { foreignKeyName: "clubs_league_id_fkey"; columns: ["league_id"]; isOneToOne: false; referencedRelation: "leagues"; referencedColumns: ["id"] }
+        ]
+      }
+      leagues: {
+        Row: { id: number; name: string }
+        Insert: { id?: number }
+        Update: { id?: number }
+        Relationships: []
+      }
+    }
+  }
+}`, "types/supabase.ts");
+    expect(entities(a).sort()).toEqual(["clubs", "leagues"]);
+    expect(a.classes.find((c) => c.name === "clubs")!.properties.map((p) => p.name)).toEqual(["id", "short_name", "league_id"]);
+    expect(a.entityRelations?.map((r) => [r.fromEntity, r.toEntity, r.foreignKey])).toEqual([["clubs", "leagues", "league_id"]]);
+  });
+});
