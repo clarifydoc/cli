@@ -59,6 +59,14 @@ export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
         const keyword = keywordRow(node, type === "init_declaration" ? "init" : "func");
         functions.push({ span: { name, line: keyword + 1, endLine: node.endPosition.row + 1 }, calls });
       }
+    } else if (type === "property_declaration") {
+      // A computed property (`var body: some View { … }`, `get`/`set`) or observed one (`didSet`) runs code on access:
+      // one function named for the property, owning the calls of every accessor.
+      const property = accessorProperty(node);
+      if (property) {
+        calls = [];
+        functions.push({ span: { name: property.name, line: property.row + 1, endLine: node.endPosition.row + 1 }, calls });
+      }
     } else if (TYPES.has(type) && owner === topLevel) {
       calls = null;
     } else if (type === "call_expression" && owner) {
@@ -76,6 +84,31 @@ export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
     topLevelCalls: recordPatternCalls(topLevel),
     syntaxErrors: countSyntaxErrors(root),
   };
+}
+
+/**
+ * The name and keyword row of a property whose accessors have code — a computed body, `get`/`set`, `willSet`/`didSet`
+ * — or null for a stored property and a protocol requirement (`{ get set }`, no statements).
+ */
+function accessorProperty(node: TSNode): { name: string; row: number } | null {
+  let name = "";
+  let row = -1;
+  let hasBody = false;
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const child = node.namedChild(i)!;
+    if (child.type === "value_binding_pattern") row = child.startPosition.row;
+    else if (child.type === "pattern" && !name) name = child.namedChild(0)?.type === "simple_identifier" ? child.namedChild(0)!.text : "";
+    else if (child.type === "computed_property" || child.type === "willset_didset_block") hasBody = hasStatements(child);
+  }
+  return hasBody && name && row >= 0 ? { name, row } : null;
+}
+
+function hasStatements(node: TSNode): boolean {
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const child = node.namedChild(i)!;
+    if (child.type === "statements" || hasStatements(child)) return true;
+  }
+  return false;
 }
 
 /** `func name`'s name, `init` for an initializer; null for an operator (`func ==`), which no pattern reads. */
@@ -122,6 +155,8 @@ function stepsOf(node: TSNode): CalleeStep[] {
   switch (node.type) {
     case "simple_identifier":
       // A closure's `$0` or a wrapper's `$name` names no declared receiver: the patterns read the bare method.
+      // A positional closure argument (`$0`) is a receiver of its own: typed when a typed collection hands it over.
+      if (/^\$\d+$/.test(node.text)) return [idStep(node.text, node)];
       return node.text.startsWith("$") ? [{ kind: "other", bare: true }] : [idStep(node.text, node)];
     case "self_expression":
       return [idStep("self", node)];
@@ -181,10 +216,36 @@ function callName(node: TSNode, text: string): PatternCallName | null {
     if (NOT_A_CALL.has(ids[0]!.name) || /^[A-Z]/.test(leaf.name)) return null;
     return { name: ids.map((s) => s.name).join("."), leafName: leaf.name, line: ids[0]!.line, column: ids[0]!.column };
   }
-  return nameCall(steps, CHAIN_DEPTH);
+  return nestedConstruction(steps) ?? fieldPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH);
 }
 
-/** `Cache<String, Club>(…)`, `League.Table<Club>(…)`: the generic type constructed, by its last two names. */
+/**
+ * `League.Table(…)`, `Vapor.Application(…)`: a construction through the type that nests it (or the module that
+ * declares it) is the nested type's, named by its own name as a Java `new Outer.Inner()` is — the path says where
+ * the type lives, and the class it names is recorded under its own name (an `extension League.Table` too).
+ */
+function nestedConstruction(steps: readonly CalleeStep[]): PatternCallName | null {
+  if (steps.length < 2 || !steps.every((s) => s.kind === "id")) return null;
+  const ids = steps as Array<Extract<CalleeStep, { kind: "id" }>>;
+  const leaf = ids.at(-1)!;
+  if (!/^[A-Z]/.test(leaf.name) || !/^[A-Z]/.test(ids.at(-2)!.name)) return null;
+  return { name: leaf.name, leafName: leaf.name, line: leaf.line, column: leaf.column };
+}
+
+/**
+ * A call through a stored property of a lowercase receiver — `car.radio.start(`, `self.car.radio.start(` — keeps
+ * its whole path (`car.radio.start`), so the linker types it field by field: `car` by its declaration, `radio` by
+ * the property's. A type's static member (`URLSession.shared.dataTask(`) and `self.repo.find(` stay the last two names.
+ */
+function fieldPathCall(steps: readonly CalleeStep[]): PatternCallName | null {
+  if (!steps.every((s) => s.kind === "id")) return null;
+  const ids = (steps as Array<Extract<CalleeStep, { kind: "id" }>>).slice(steps[0]!.kind === "id" && (steps[0] as { name: string }).name === "self" ? 1 : 0);
+  if (ids.length < 3 || !/^[a-z_]/.test(ids[0]!.name) || ids.some((s) => s.name === "self" || s.name === "super")) return null;
+  const leaf = ids.at(-1)!;
+  return { name: ids.map((s) => s.name).join("."), leafName: leaf.name, line: ids[0]!.line, column: ids[0]!.column };
+}
+
+/** `Cache<String, Club>(…)`, `League.Table<Club>(…)`: the generic type constructed, by its own name. */
 function constructorName(node: TSNode): PatternCallName | null {
   const type = node.childForFieldName("constructed_type");
   if (type?.type !== "user_type") return null;
@@ -195,6 +256,5 @@ function constructorName(node: TSNode): PatternCallName | null {
   }
   const leaf = names.at(-1);
   if (!leaf) return null;
-  const prev = names.at(-2);
-  return prev ? call(`${prev.text}.${leaf.text}`, leaf.text, prev) : call(leaf.text, leaf.text, leaf);
+  return call(leaf.text, leaf.text, leaf);
 }

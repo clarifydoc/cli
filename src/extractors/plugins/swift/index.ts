@@ -4,6 +4,7 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
+import { parseSwiftReturnType } from "./local-flow.js";
 import { SWIFT_CODE, TRAILING_CLOSURE_CALL } from "./code.js";
 import { extractSwiftDataSources } from "./data-sources.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
@@ -106,6 +107,7 @@ export const swiftSpec: RegexLangSpec = {
   indentBased: false,
   lineCommentPrefixes: ["//"],
   parseParam: parseSwiftParam,
+  parseReturnType: parseSwiftReturnType,
   // `main.swift` is the one file whose top-level statements run (the
   // program's entry, as a script's are).
   topLevelCalls: /(?:^|\/)main\.swift$/,
@@ -146,7 +148,7 @@ export const swiftSpec: RegexLangSpec = {
     // `extension Foo: Codable` adds members and conformances to a type
     // declared elsewhere — in Swift that is where much of a type's behaviour
     // lives, so the members belong on the graph.
-    { pattern: /^\s*(?:public\s+)?extension\s+([A-Z]\w*)/, getExtends: () => null },
+    { pattern: /^\s*(?:(?:public|package|internal|private|fileprivate)\s+)?extension\s+(?:[A-Z]\w*\.)*([A-Z]\w*)/, getExtends: () => null },
   ],
 
   /**

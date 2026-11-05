@@ -309,6 +309,11 @@ export interface RegexLangSpec {
    */
   markLocalCalls?: (code: readonly string[], fns: readonly FunctionInfo[]) => void;
   extractLocalTypes?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => NonNullable<FunctionInfo["localTypes"]>;
+  /**
+   * The parameters of the function declared at `lines[i]`, for a language whose signature is not `name(a, b)`
+   * (Objective-C's `- (void)sign:(Player *)p fee:(int)f`). Undefined reads the parenthesised list as usual.
+   */
+  extractParams?: (lines: string[], i: number, name: string) => ParamInfo[] | undefined;
 }
 
 /**
@@ -486,7 +491,7 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
         const calls = extractCallsFromBody(callLines, i + 1, endLine, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: i, column: inline } : undefined);
         const fn: FunctionInfo = {
           name: rename ? rename(m[1], line) : m[1],
-          params: extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
+          params: spec.extractParams?.(lines, i, m[1]) ?? extractParamsFromDeclaration(lines, i, m[1], spec.parseParam),
           returnType: spec.parseReturnType?.(line, line.indexOf(m[1], m.index ?? 0)) ?? null,
           isAsync: asyncCheck?.(line, lines, i) ?? false,
           isExported: isExported?.(line, m[1]) ?? true,
@@ -521,7 +526,7 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
     const inline = at >= 0 ? (spec.inlineBodyColumn ?? inlineBodyColumn)(line, at + span.name.length) : -1;
     const fn: FunctionInfo = {
       name: span.name,
-      params: extractParamsFromDeclaration(lines, i, span.name, spec.parseParam),
+      params: spec.extractParams?.(lines, i, span.name) ?? extractParamsFromDeclaration(lines, i, span.name, spec.parseParam),
       returnType: spec.parseReturnType?.(line, at) ?? null,
       isAsync: pattern?.isAsync?.(line, lines, i) ?? false,
       isExported: span.isExported ?? pattern?.isExported?.(line, span.name) ?? true,
@@ -670,7 +675,7 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
               const calls = extractCallsFromBody(callLines, methodStart + 1, methodEnd, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: methodStart, column: inline } : undefined);
               const method: FunctionInfo = {
                 name: rename ? rename(fm[1], bodyLine) : fm[1],
-                params: extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
+                params: spec.extractParams?.(lines, methodStart, fm[1]) ?? extractParamsFromDeclaration(lines, methodStart, fm[1], spec.parseParam),
                 returnType: spec.parseReturnType?.(bodyLine, bodyLine.indexOf(fm[1], fm.index ?? 0)) ?? null,
                 isAsync: asyncCheck?.(bodyLine, lines, methodStart) ?? false,
                 isExported: isExported?.(bodyLine, fm[1]) ?? true,

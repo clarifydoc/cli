@@ -62,7 +62,7 @@ describe("Swift through tree-sitter", () => {
       "DispatchQueue.main.async",
       "self.notify",
       "washCar",
-      "plate.normalized",
+      "car.plate.normalized",
       "repo.find().first",
       "repo.find",
     ]);
@@ -78,8 +78,9 @@ describe("Swift through tree-sitter", () => {
     expect(calls("VStack { Text(title) }")).toEqual(["Text"]);
     expect(calls("switch result { case .success(let squad): show(squad) case .failure: break }")).toEqual(["show"]);
     expect(calls("let handler: @Sendable (Int) -> Void = { _ in }")).toEqual([]);
-    // A closure's `$0` states no receiver: its method is read bare, as the patterns read it.
-    expect(calls("monitors.forEach { $0.kickoff(match) }")).toEqual(["monitors.forEach", "kickoff"]);
+    // A closure's `$0` is a receiver of its own; the extraction settles it bare unless a typed collection hands it over.
+    expect(calls("monitors.forEach { $0.kickoff(match) }")).toEqual(["monitors.forEach", "$0.kickoff"]);
+    expect(extractWithRegex("func f() {\n    monitors.forEach { $0.kickoff(match) }\n}\n", "a.swift", "swift", undefined, readSwift("func f() {\n    monitors.forEach { $0.kickoff(match) }\n}\n")).functions[0]!.calls.map((c) => c.name)).toEqual(["monitors.forEach", "kickoff"]);
     // A generic type's construction, which the patterns miss at `<`.
     expect(calls("let cache = Cache<String, Club>(capacity: 8)")).toEqual(["Cache"]);
   });
@@ -110,9 +111,18 @@ describe("Swift through tree-sitter", () => {
  * patterns skip it, since a bare name after `)` would let any same-named function capture it.
  */
 const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
+  // A call through a property of a lowercase receiver keeps its whole path (`req.content.decode`), so the linker
+  // types it field by field; the patterns name its last two (`content.decode`).
+  "test-fixtures/sample-ios-swiftui/Notes/Legacy/ArchiveStore.swift": {
+    "ArchiveStore.archivedNotes": [["viewContext.fetch"], ["container.viewContext.fetch"]],
+    "ArchiveStore.makeFolder": [["viewContext.save"], ["container.viewContext.save"]],
+  },
   "test-fixtures/sample-swift-vapor/Sources/App/DrillController.swift": {
+    "DrillController.create": [["content.decode"], ["req.content.decode"]],
     "DrillController.index": [[], ["Drill.query().filter().all"]],
+    "DrillController.remove": [["parameters.get"], ["req.parameters.get"]],
     "DrillController.search": [[], ["Drill.query().filter().limit", "Drill.query().filter().limit().all"]],
+    "DrillController.show": [["parameters.get"], ["req.parameters.get"]],
   },
   "test-fixtures/sample-swift-vapor/Sources/App/routes.swift": {
     routes: [[], ["app.grouped().get"]],
@@ -135,7 +145,9 @@ describe("Swift: tree-sitter and the patterns agree on the fixtures", () => {
         ...a.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine, calls: m.calls.map((x) => x.name) }))),
       ];
       const regex = shape(extractWithRegex(src, rel, "swift"));
-      const tree = shape(extractWithRegex(src, rel, "swift", undefined, parsed));
+      // A computed or observed property's accessors are functions only on the parser's reading.
+      const srcLines = src.split("\n");
+      const tree = shape(extractWithRegex(src, rel, "swift", undefined, parsed)).filter((f) => !/^\s*(?:@\w+\s+)*(?:\w+\s+)*var\s/.test(srcLines[f.line - 1] ?? ""));
       expect(tree.map(({ calls: _, ...span }) => span)).toEqual(regex.map(({ calls: _, ...span }) => span));
       const differences: Record<string, [string[], string[]]> = {};
       regex.forEach((fn, i) => {
@@ -147,4 +159,56 @@ describe("Swift: tree-sitter and the patterns agree on the fixtures", () => {
       expect(differences).toEqual(KNOWN[rel] ?? {});
     });
   }
+});
+
+describe("Swift body bindings", () => {
+  const read = (src: string) => extractWithRegex(src, "Sources/App/a.swift", "swift", undefined, readSwift(src));
+
+  it("records return types, so a method's result types the next call", () => {
+    const a = read("class Car {\n    func engine() -> Engine { Engine() }\n    func clubs() async throws -> [Club] { [] }\n    func plain() {}\n}\n");
+    const [engine, clubs, plain] = a.classes[0]!.methods;
+    expect([engine!.returnType, clubs!.returnType, plain!.returnType]).toEqual(["Engine", "[Club]", null]);
+    const f = read("func drive(car: Car) {\n    let e = car.engine()\n    e.start()\n    car.engine().start()\n    car.radio.start()\n}\n").functions[0]!;
+    expect(f.localTypes).toEqual([{ name: "e", type: "", from: "car.engine()" }]);
+    expect(f.calls.map((c) => c.name)).toEqual(["car.engine", "e.start", "car.engine().start", "car.radio.start"]);
+  });
+
+  it("makes a computed or observed property a function that owns its calls", () => {
+    const a = read("struct ClubView: View {\n    let model: ClubModel\n    var body: some View {\n        Button(\"go\") { model.load() }\n    }\n    var title: String { model.name() }\n    var count: Int = 0 {\n        didSet { model.save() }\n    }\n    var plain: Int = 1\n}\n");
+    const methods = a.classes.find((c) => c.name === "ClubView")!.methods;
+    expect(methods.map((m) => [m.name, m.calls.map((c) => c.name).filter((n) => n !== "Button")])).toEqual([
+      ["body", ["model.load"]],
+      ["title", ["model.name"]],
+      ["count", ["model.save"]],
+    ]);
+  });
+
+  it("records an extension of a nested type on that type, and its construction by the nested name", () => {
+    const a = read("extension League.Table: Trainable {\n    func train() {}\n}\nfunc mk() {\n    let t = League.Table()\n}\n");
+    expect(a.classes.map((c) => c.name)).toEqual(["Table"]);
+    expect(a.functions.find((f) => f.name === "mk")!.calls.map((c) => c.name)).toEqual(["Table"]);
+  });
+
+  it("types loop, closure and narrowed bindings", () => {
+    const f = read(
+      [
+        "func f(clubs: [Club], maybe: Club?, thing: Any) {",
+        "    for c in clubs { c.promote() }",
+        "    clubs.forEach { $0.promote() }",
+        "    clubs.map { club in club.inspect() }",
+        "    if let m = maybe { m.promote() }",
+        "    guard let g = maybe else { return }",
+        "    if let k = thing as? Club { k.inspect() }",
+        "    if case let .some(s) = maybe { s.promote() }",
+        "    switch thing { case let w as Club: w.inspect() default: break }",
+        "}",
+        "",
+      ].join("\n"),
+    ).functions[0]!;
+    expect(f.localTypes).toEqual(
+      expect.arrayContaining(
+        ["m", "g", "k", "s", "w", "c", "club", "$0"].map((name) => ({ name, type: "Club" })),
+      ),
+    );
+  });
 });

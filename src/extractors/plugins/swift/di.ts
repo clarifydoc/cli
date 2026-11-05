@@ -1,6 +1,7 @@
-import type { DiBinding, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { CallInfo, DiBinding, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { callFrom, declaredTypes, settleAnonymousReceivers, swiftFlowLocals } from "./local-flow.js";
 
 /**
  * Dependency injection as Swift code spells it — Swinject, Resolver and
@@ -489,13 +490,14 @@ const LOCAL_RE = /^\s*(?:(?:if|guard|while)\s+)?(?:let|var)\s+([a-zA-Z_]\w*)\s*(
  * cannot answer.
  */
 export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): NonNullable<FunctionInfo["localTypes"]> {
-  const byName = new Map<string, { name: string; type: string; qualifier?: string } | null>();
+  type Entry = NonNullable<FunctionInfo["localTypes"]>[number];
+  const byName = new Map<string, Entry | null>();
   for (const e of entries) {
     const prev = byName.get(e.name);
     if (prev === undefined) byName.set(e.name, e);
-    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier)) byName.set(e.name, null);
+    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from)) byName.set(e.name, null);
   }
-  return [...byName.values()].filter((e): e is { name: string; type: string; qualifier?: string } => e !== null);
+  return [...byName.values()].filter((e): e is Entry => e !== null);
 }
 
 /**
@@ -503,7 +505,10 @@ export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): 
  * PgRepo()`, `let r = container.resolve(UserRepo.self)!`, `let r =
  * Container.shared.userRepo()` (keyed) → `FunctionInfo.localTypes`.
  */
-export function extractSwiftLocalTypes(bodyLines: string[], _fn: { name: string }): NonNullable<FunctionInfo["localTypes"]> {
+export function extractSwiftLocalTypes(
+  bodyLines: string[],
+  fn: { name: string; params?: ReadonlyArray<{ name: string; type: string | null }>; calls?: CallInfo[] },
+): NonNullable<FunctionInfo["localTypes"]> {
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
   for (const [i, statement, last] of statementsWithLine(bodyLines, ["let", "var"])) {
     const m = statement.match(LOCAL_RE);
@@ -520,8 +525,17 @@ export function extractSwiftLocalTypes(bodyLines: string[], _fn: { name: string 
     }
     const inferred = m[3] ? initializerType(m[3]) : null;
     if (inferred) out.push({ name, ...inferred });
+    else if (m[3]) {
+      // `let e = car.engine()`: typed through the method's declared return type.
+      const call = callFrom(m[3]);
+      if (call) out.push({ name, type: "", ...call });
+    }
   }
-  return uniqueLocals(out);
+  const code = bodyLines.map((l) => blankStringLiterals(l)).join("\n");
+  out.push(...swiftFlowLocals(code, declaredTypes(code, fn.params)));
+  const locals = uniqueLocals(out);
+  settleAnonymousReceivers(fn.calls, locals);
+  return locals;
 }
 
 /**
