@@ -304,6 +304,9 @@ export type ClosureCalls = (startRow: number, endRow: number, inline: { line: nu
 
 export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCalls?: ClosureCalls): RouteInfo[] {
   const routes: RouteInfo[] = [];
+  // Echo's `Group.Add` writes `g.prefix + path`: a path without a leading slash is glued to the group's
+  // last segment (`u.GET("s")` under `/users` is `/userss`), where gin and fiber insert the slash.
+  const echoFile = lines.some((l) => l.includes("labstack/echo"));
   /** Routes an inline closure handles, with the function that registers them. */
   const inlineRoutes: Array<{ route: RouteInfo; fn: string | null }> = [];
   let lastInline = false;
@@ -606,7 +609,8 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const inBlock = routeStack.length > 0 && (path === "" || /^\.\w+$/.test(path ?? "") || /^[A-Za-z][\w-]*$/.test(path ?? ""));
       if (args.length >= 2 && path !== null && (caps || path.startsWith("/") || inBlock)) {
         const { handler, guards } = splitHandler(args.slice(1));
-        push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+        const glued = echoFile && caps !== null && /^[A-Za-z][\w-]*$/.test(path) && prefixOf(recv) !== "";
+        push(glued ? joinPrefix(prefixOf(recv) + path, "") : joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }
     } else {
       const chiMethod = line.match(CHI_METHOD_RE);
@@ -624,7 +628,9 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         const recv = receiver(handle[1]!);
         const { args } = parseArgs(line, handle.index! + handle[0].length - 1);
         const first = args.length >= 2 ? literal(args[0]) : null;
-        const go122 = first?.match(/^([A-Z]+)\s+(\S+)$/);
+        // `[METHOD ][HOST]/[PATH]`: the host (`api.league.example/clubs`) restricts who is served and is not
+        // part of the URL a client calls, so it is dropped; a pattern without a method serves every verb.
+        const go122 = first?.match(/^(?:([A-Z]+)\s+)?(?:[A-Za-z0-9.-]+(?::\d+)?)?(\/\S*)$/);
         // gin `Handle(method, path, h…)`: `"GET"`, `http.MethodGet`, `header.MethodPost`.
         const ginVerb = args.length >= 3 ? (/^["'`]([A-Z]+)["'`]$/.exec(args[0]!)?.[1] ?? /^\w+\.Method([A-Z][a-z]+)$/.exec(args[0]!)?.[1]?.toUpperCase()) : undefined;
         const ginPath = ginVerb && VERBS.has(ginVerb) ? literal(args[1]) : null;
@@ -635,6 +641,10 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
           // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
           const { handler, guards } = splitHandler(args.slice(1));
           push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+        } else if (go122 && !go122[1] && !first!.startsWith("/") ) {
+          // `mux.HandleFunc("api.league.example/players", h)`: a host pattern, every verb.
+          const { handler, guards } = splitHandler(args.slice(1));
+          push(go122[2]!, null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         } else if (first !== null && first.startsWith("/")) {
           // gorilla / legacy net/http: path-first, verbs (if any) constrained
           // by a same-line `.Methods(...)`.

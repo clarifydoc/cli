@@ -563,3 +563,38 @@ func Register(apiClient *gin.RouterGroup) {
     expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /garages"]);
   });
 });
+
+describe("Go routes: a group's relative path and ServeMux host patterns", () => {
+  it("joins a path without a leading slash as its framework does: echo glues it, gin inserts the slash", () => {
+    const body = `
+func main() {
+	api := e.Group("/api")
+	u := api.Group("/users")
+	u.GET("s", h.list)
+	u.GET("/:id", h.one)
+	u.GET("", h.list)
+}
+`;
+    const paths = (imp: string) => extractGoRoutes(lines(`import "${imp}"\n${body}`)).map((r) => r.path);
+    expect(paths("github.com/labstack/echo/v4")).toEqual(["/api/userss", "/api/users/:id", "/api/users"]);
+    expect(paths("github.com/gin-gonic/gin")).toEqual(["/api/users/s", "/api/users/:id", "/api/users"]);
+  });
+
+  it("drops the host of a Go 1.22 pattern, keeps the method, and reads a host pattern without one as every verb", () => {
+    const routes = extractGoRoutes(lines(`
+func main() {
+	mux.HandleFunc("GET api.league.example/clubs/{id}", h.one)
+	mux.HandleFunc("api.league.example/players", h.list)
+	mux.HandleFunc("POST /matches", h.list)
+	mux.HandleFunc("DELETE   localhost:8080/matches/{id}", h.one)
+	mux.HandleFunc("not.a.route", h.list)
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod ?? "*"} ${r.path}`)).toEqual([
+      "GET /clubs/{id}",
+      "* /players",
+      "POST /matches",
+      "DELETE /matches/{id}",
+    ]);
+  });
+});

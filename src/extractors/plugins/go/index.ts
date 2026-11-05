@@ -7,6 +7,8 @@ import { addGoWhereFields, withGoArgOrigins, withGoArgOriginsInClasses } from ".
 import type { FunctionInfo, ParamInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { featureEnabled } from "../../../core/feature-flags.js";
+import { addRegexMethodValues } from "./method-values-regex.js";
 import { extractGoRoutes, type ClosureCalls } from "./routes.js";
 import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
@@ -170,7 +172,10 @@ export const goSpec: RegexLangSpec = {
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
     const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
-    dropRouteHandlerValues(routes, [...(fns ?? []), ...classes.flatMap((c) => c.methods)]);
+    const members = [...(fns ?? []), ...classes.flatMap((c) => c.methods)];
+    // The ANTLR front end reads method values handed on itself; the regex reading does it here.
+    if (!featureEnabled("antlr:go")) addRegexMethodValues(code, members);
+    dropRouteHandlerValues(routes, members);
     return routes;
   },
   extractDataSources: (lines) => {
