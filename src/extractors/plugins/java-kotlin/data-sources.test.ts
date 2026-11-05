@@ -1144,3 +1144,30 @@ class Bus {
 }`, "kotlin")).toEqual(["club.signed", "club.sold"]);
   });
 });
+
+describe("Kotlin Ktor client", () => {
+  const header = "import io.ktor.client.*\nimport io.ktor.client.request.*";
+  it("reads client.get / HttpClient().post as calls with verb and URL", async () => {
+    const src = `package x
+${header}
+class Api {
+  val client = HttpClient()
+  suspend fun a(id: Int) {
+    client.get("https://league.example.com/api/clubs")
+    client.post("/api/clubs") { setBody("x") }
+    HttpClient().get("/api/clubs/$id")
+  }
+}`;
+    const tree = await parseSource(src, "kotlin" as any, "Api.kt");
+    const calls = new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["GET", "https://league.example.com/api/clubs"], ["POST", "/api/clubs"], ["GET", "/api/clubs/${id}"],
+    ]);
+  });
+
+  it("leaves a get on a receiver that is no HttpClient alone", async () => {
+    const src = `package x\n${header}\nclass Api {\n  val cache = HashMap<String, String>()\n  fun a() { cache.get("/x") }\n}`;
+    const tree = await parseSource(src, "kotlin" as any, "Api.kt");
+    expect(new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "api-call")).toEqual([]);
+  });
+});

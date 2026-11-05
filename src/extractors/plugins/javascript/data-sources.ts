@@ -30,7 +30,7 @@ interface ResolvedUrl {
 }
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
-const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax", "needle"]);
+const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax", "needle", "got"]);
 
 /**
  * HTTP "verb" methods. These collide with non-HTTP APIs (`Map.get`,

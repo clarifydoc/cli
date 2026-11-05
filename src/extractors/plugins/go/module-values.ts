@@ -16,8 +16,8 @@
  * format verbs, at most 200 characters.
  */
 
-const SINGLE = /^(?:const|var)\s+([A-Za-z_]\w*)(?:\s+string)?\s*=\s*(.+?)\s*(?:\/\/.*)?$/;
-const IN_BLOCK = /^\s*([A-Za-z_]\w*)(?:\s+string)?\s*=\s*(.+?)\s*(?:\/\/.*)?$/;
+const SINGLE = /^(?:const|var)\s+([A-Za-z_]\w*)(?:\s+string)?\s*=\s*(.+?)\s*(?:\s\/\/.*)?$/;
+const IN_BLOCK = /^\s*([A-Za-z_]\w*)(?:\s+string)?\s*=\s*(.+?)\s*(?:\s\/\/.*)?$/;
 const BLOCK_OPEN = /^(?:const|var)\s*\(\s*(?:\/\/.*)?$/;
 const FUNC_DECL = /^func\s+([A-Za-z_]\w*)\s*\(\s*\)\s*string\s*\{\s*$/;
 const STRING_TERM = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/;

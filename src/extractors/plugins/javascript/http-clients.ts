@@ -123,7 +123,10 @@ export function extractHttpClientRegistrations(tree: Tree, sourceText: string): 
       const constant = written?.type === "identifier"
         ? new RegExp(`\\bconst\\s+${written.text}\\s*(?::[^=]+)?=\\s*(["'\`])([^"'\`$]*)\\1`).exec(sourceText)?.[2]
         : undefined;
-      const base = jsBaseRefOf(constant !== undefined ? JSON.stringify(constant) : written?.text ?? "");
+      // `process.env.API_URL + "/api"`: the base is the origin the left side names, the path is `httpClientBases`'.
+      const origin = written?.type === "binary_expression" && written.childForFieldName("operator")?.text === "+" &&
+        /^['"`]\//.test(written.childForFieldName("right")?.text ?? "") ? written.childForFieldName("left") : written;
+      const base = jsBaseRefOf(constant !== undefined ? JSON.stringify(constant) : origin?.text ?? "");
       if (base) out.push({ client: name.text, scope: "file", base, line: pair.startPosition.row + 1 });
     }
   }
@@ -137,6 +140,16 @@ function basePath(node: Node | null | undefined): string | null {
   if (node.type === "binary_expression") {
     const op = node.childForFieldName("operator")?.text;
     if (op === "||" || op === "??") return basePath(node.childForFieldName("right"));
+    if (op === "+") {
+      // `process.env.API_URL + "/api"`, `"https://host" + "/api"`: the path the right side adds.
+      const right = node.childForFieldName("right");
+      const left = node.childForFieldName("left");
+      const tail = right && (right.type === "string" || right.type === "template_string") && !right.text.includes("${")
+        ? right.text.slice(1, -1) : null;
+      if (tail === null || !tail.startsWith("/")) return null;
+      const head = left && (left.type === "string" || left.type === "binary_expression") ? basePath(left) : "";
+      return head === null ? null : (head + tail).replace(/\/+$/, "");
+    }
     return null;
   }
   let text: string | null = null;

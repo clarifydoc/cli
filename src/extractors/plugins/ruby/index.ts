@@ -8,7 +8,7 @@ import { ACTIVE_RECORD_ASSOCIATION_MACROS } from "./entities.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
-import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourceInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourceInfo, HttpClientRegistration, CallBaseRef } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
@@ -701,6 +701,9 @@ function firstArgUrl(line: string, from: number): string | null {
  */
 function urlOfArg(arg: string | null, varLiterals: ReadonlyMap<string, string>): string | null {
   if (!arg) return null;
+  // `Net::HTTP.get(URI("https://…"))`, `URI.parse("…")`: the URL the wrapper is built from.
+  const wrapped = /^(?:URI|URI\.parse|Addressable::URI\.parse)\(\s*(['"][^'"]*['"])\s*\)$/.exec(arg);
+  if (wrapped) arg = wrapped[1]!;
   const lit = arg.match(/^(['"])([\s\S]*)\1$/);
   if (lit) return lit[2]!;
   if (BARE_VAR_RE.test(arg) && varLiterals.has(arg)) return varLiterals.get(arg)!;
@@ -756,17 +759,43 @@ function faradayConnectionNames(lines: string[]): RegExp | null {
   return new RegExp(`(?<![\\w.@:])(${[...names].join("|")})\\s*\\.\\s*(get|post|put|patch|delete|head)\\b`, "g");
 }
 
+/** The base a `Faraday.new` is given: `url: "https://host"`, `"https://host"`, `ENV["X"]`, `ENV.fetch("X", "http://localhost:3000")`. */
+function faradayBaseRef(args: string): CallBaseRef | null {
+  const written = /^\(?\s*(?:url:\s*|:url\s*=>\s*)?(.+?)\s*(?:,\s*\w+:.*)?$/.exec(args)?.[1] ?? "";
+  const lit = /^(['"])(https?:\/\/[^'"#]*)\1/.exec(written);
+  if (lit) return { kind: "literal", key: lit[2]! };
+  const env = /^ENV(?:\[\s*['"](\w+)['"]\s*\]|\.fetch\(\s*['"](\w+)['"]\s*(?:,\s*(['"])([^'"]*)\3)?\s*\))(?:\s*\|\|\s*(['"])([^'"]*)\5)?/.exec(written);
+  if (!env) return null;
+  const fallback = env[4] ?? env[6];
+  return { kind: "env", key: (env[1] ?? env[2])!, ...(fallback && /^https?:\/\//.test(fallback) ? { fallback } : {}) };
+}
+
+/**
+ * Faraday connections with a base: `conn = Faraday.new(url: "https://host")`, keyed by the name
+ * the connection is bound to, which each `conn.get("/clubs")` row carries as its `client`.
+ */
+export function extractRubyHttpClientRegistrations(lines: string[]): HttpClientRegistration[] {
+  const out: HttpClientRegistration[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*(@?[a-z_]\w*)\s*(?:\|\|)?=\s*Faraday(?:::Connection)?\s*\.\s*new\s*\(?\s*(.*)$/.exec(lines[i] ?? "");
+    if (!m) continue;
+    const base = faradayBaseRef(m[2]!);
+    if (base) out.push({ client: m[1]!, scope: "file", base, line: i + 1 });
+  }
+  return out;
+}
+
 function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const connectionCall = faradayConnectionNames(lines);
   const seen = new Set<string>();
   const varLiterals = new Map<string, string>();
-  const push = (verb: string, rawArg: string | null, line: number, col: number): void => {
+  const push = (verb: string, rawArg: string | null, line: number, col: number, client?: string): void => {
     const target = urlOfArg(rawArg, varLiterals);
     const key = `${verb}:${target ?? ""}@${line}:${col}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ kind: "api-call", name: verb, target, calls: [], line });
+    out.push({ kind: "api-call", name: verb, target, calls: [], line, ...(client ? { client } : {}) });
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -788,7 +817,7 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
     }
     if (connectionCall) {
       for (const m of line.matchAll(connectionCall)) {
-        push(m[2]!, firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!);
+        push(m[2]!, firstArgUrl(line, m.index! + m[0]!.length), i + 1, m.index!, m[1]!);
       }
     }
   }
@@ -1112,6 +1141,7 @@ export const rubySpec: RegexLangSpec = {
 
   // dry-container `register(:user_repo) { SqlUserRepo.new }`.
   extractDiBindings: (lines) => extractRubyDiBindings(lines),
+  extractHttpClientRegistrations: (lines) => extractRubyHttpClientRegistrations(lines),
   // Scheduled jobs: entry points a clock runs.
   extractEntryPoints: (lines) => extractRubyScheduledJobs(lines),
 

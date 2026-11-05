@@ -199,6 +199,19 @@ const HTTP_HINT_RE = /RestTemplate|WebClient|HttpClient|OkHttpClient|Retrofit/;
 /** RestTemplate methods whose first argument is the URL. */
 const REST_TEMPLATE_URL_FIRST = new Set(["exchange", "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation", "put", "delete", "patchForObject"]);
 
+const KTOR_VERBS = new Set(["get", "post", "put", "delete", "patch", "head", "options"]);
+
+/**
+ * Whether a call's receiver is a Ktor `HttpClient`: built where it is used (`HttpClient(CIO).get(…)`), or a
+ * name the file declares so (`val client = HttpClient()`, `private val http: HttpClient`, a parameter).
+ */
+function isKtorClient(receiver: string, text: string): boolean {
+  const r = receiver.trim().replace(/^this\./, "");
+  if (/^HttpClient\s*[({]/.test(r)) return true;
+  if (!/^[\w$]+$/.test(r)) return false;
+  return new RegExp(String.raw`\b${r}\s*:\s*HttpClient\b|\b(?:val|var)\s+${r}\s*(?::[^=\n]+)?=\s*HttpClient\s*[({]`).test(text);
+}
+
 /** `exchange(url, HttpMethod.POST, …)`: the verb its second argument names. */
 function exchangeVerb(node: Node): string | null {
   const second = callArguments(node)[1]?.text ?? "";
@@ -679,6 +692,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isHibernateSearchFile = false;
   /** The file imports Keycloak's `SimpleHttp`. */
   private isKeycloakHttpFile = false;
+  /** The file's text, when it imports Ktor's client (`io.ktor.client`). */
+  private ktorClientText: string | null = null;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
   /**
@@ -721,6 +736,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
+    this.ktorClientText = /\bio\.ktor\.client\b/.test(text) ? text : null;
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.httpExchange = /@(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text) && /\binterface\s+\w/.test(text) ? httpExchangeInterface(text) : null;
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
@@ -1033,6 +1049,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         sources.push(this.ds({ kind: "api-call", name: method.slice(2).toUpperCase(), target: url, line }));
         return;
       }
+    }
+
+    // 1b-ktor) Ktor client: `client.get("/clubs")`, `HttpClient(CIO).post("https://…") { setBody(x) }` — the
+    // verb is the method, the URL the first argument (or `url("…")` in the request block).
+    if (this.ktorClientText && KTOR_VERBS.has(method) && isKtorClient(receiver, this.ktorClientText)) {
+      const arg = call.firstArg;
+      const block = /\burl\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)/.exec(node.text)?.[1];
+      const fromArg = arg && /string_literal$/.test(arg.type) ? urlExpression(arg, node, 0) : null;
+      const target = fromArg ?? (arg ? null : block ? block.slice(1, -1) : null);
+      const client = /^[\w$]+$/.test(receiver.trim()) ? { client: receiver.trim() } : {};
+      sources.push(this.ds({ kind: "api-call", name: method.toUpperCase(), target, line, ...client }));
+      return;
     }
 
     // 1c) CXF `WebClient`: `client.path("clubs/" + id); client.query("season", s); client.get(Club.class)`
