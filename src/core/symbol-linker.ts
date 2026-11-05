@@ -2550,8 +2550,9 @@ function classNameMember(
       // function beside the class (or another class's member) is not its member.
       const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
       const bare = cls ? syms.get(methodName) : undefined;
+      // A class nested in its body (a Ruby concern's `ClassMethods`) has members of its own.
       const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
-        (bare && bare.line >= cls!.line && bare.line <= cls!.endLine ? bare : undefined);
+        (bare && bare.line >= cls!.line && bare.line <= cls!.endLine && (memberClassOf(ctx, filePath, bare) ?? cls!.name) === cls!.name ? bare : undefined);
       if (classDef) {
         return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
       }
@@ -7053,6 +7054,20 @@ function methodAlongAncestors(
     if (promoted !== undefined) return promoted;
     const mixedIn = mixins ? viaMixins(side === "instance" ? "include" : "extend") : null;
     if (mixedIn) return mixedIn;
+    // An included module may extend its includers with another (a Rails concern's `ClassMethods`):
+    // that one adds to the class object.
+    if (mixins && side === "class") {
+      for (const m of [...mixins].reverse()) {
+        if (m.kind !== "include") continue;
+        const mixinFile = locateClass(ctx, m.name, file, ctx.projectOf.get(file) ?? "root");
+        const extended = mixinFile ? ctx.classAt.get(memberKey(mixinFile, declaredTypeName(ctx, mixinFile, m.name)))?.includerExtends : undefined;
+        for (const written of extended ?? []) {
+          const extendedFile = locateClass(ctx, written, mixinFile!, ctx.projectOf.get(mixinFile!) ?? "root");
+          const hit = extendedFile ? methodAlongAncestors(ctx, written, extendedFile, method, undefined, seen) : null;
+          if (hit) return hit;
+        }
+      }
+    }
     const written = bareClassName(ctx.classAt.get(key)?.extends ?? baseOfSplitType(ctx, name, file));
     if (!written) return null;
     // `class Turbo extends Motor` for `import { Engine as Motor }`: the module's `Engine`.

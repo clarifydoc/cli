@@ -1,7 +1,8 @@
-import { rspecFunctions } from "./rspec.js";
+import { rspecFunctions, withDescribedClass } from "./rspec.js";
 import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
+import { addConcernClassMethods } from "./concerns.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
@@ -134,6 +135,8 @@ function bodyLines(lines: readonly string[], fn: FunctionInfo): Array<[number, s
     return out;
   }
   const decl = lines[fn.line - 1] ?? "";
+  // A one-line spec block (`it { expect(club.total).to eq(3) }`) is all body.
+  if (fn.testCase) return [[fn.line - 1, decl]];
   const def = decl.search(/\bdef\b/);
   const name = fn.name.replace(/^self\./, "");
   const at = def < 0 ? -1 : decl.indexOf(name, def + 3);
@@ -313,6 +316,36 @@ function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
       have.add(`${name}@${i + 1}`);
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
     }
+  }
+}
+
+/**
+ * The typed-call passes a class's methods get (`addTypedLocalCalls`, `addJobDispatchCalls`), over
+ * functions outside a class: top-level `def`s and spec blocks. Each reads only its own lines — a
+ * spec group's examples, or a `def` written inside a block, are functions of their own — with
+ * `described_class` spelled as the constant the block types it as.
+ */
+function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly FunctionInfo[]): void {
+  const typed = fns.filter((fn) => fn.localTypes?.length || lines.slice(fn.line - 1, fn.endLine).some((l) => l.includes(".perform_") || l.includes(".deliver_")));
+  if (typed.length === 0) return;
+  const code = rubyCodeLinesOf(lines);
+  // One scratch view per source, filled over a function's span and cleared after it.
+  const ownCode: string[] = new Array<string>(lines.length).fill("");
+  const ownRaw: string[] = new Array<string>(lines.length).fill("");
+  for (const fn of typed) {
+    const from = fn.line - 1;
+    const to = Math.min(fn.endLine, lines.length);
+    for (let i = from; i < to; i++) {
+      ownCode[i] = withDescribedClass(code[i] ?? "", fn);
+      ownRaw[i] = withDescribedClass(lines[i] ?? "", fn);
+    }
+    for (const inner of fns) {
+      if (inner === fn || inner.line <= fn.line || inner.endLine > fn.endLine) continue;
+      for (let i = inner.line - 1; i < Math.min(inner.endLine, to); i++) ownCode[i] = ownRaw[i] = "";
+    }
+    addTypedLocalCalls(ownCode, fn);
+    addJobDispatchCalls(ownRaw, fn);
+    for (let i = from; i < to; i++) ownCode[i] = ownRaw[i] = "";
   }
 }
 
@@ -855,6 +888,8 @@ export const rubySpec: RegexLangSpec = {
   extractClasses: (lines: string[], fns: FunctionInfo[]) => {
     const classes = extractClassesWithSpec(lines, rubySpec);
     if (classes.length === 0) return classes;
+    // A concern's `class_methods do` block is the `ClassMethods` module its includers are extended with.
+    addConcernClassMethods(lines, classes);
 
     for (const cls of classes) {
       addScopeMethods(lines, cls);
@@ -955,6 +990,7 @@ export const rubySpec: RegexLangSpec = {
       applyDeclaredParamTypes(lines, fn);
       dropDetachedMemberCalls(lines, fn);
     }
+    addTypedCallsOverFunctions(lines, fns);
     withRubyArgOrigins(lines, fns);
     return fns;
   },

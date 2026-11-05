@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { extractWithRegex } from "../../../core/regex-extractor.js";
 import { rubySpec } from "./index.js";
 
 const analyze = (src: string) => {
@@ -74,5 +75,21 @@ end
       ["ClubMailer.welcome", "ClubMailer"],
       ["Staff::RefereeMailer.assignment", "Staff::RefereeMailer"],
     ]);
+  });
+
+  it("runs the same passes over a top-level def", () => {
+    const a = extractWithRegex(`require "league"
+
+def close_window(league)
+  ::ScoreJob.perform_later(league)
+  builder = League::TableBuilder.new(league)
+  builder.rebuild
+end
+`, "lib/league/window.rb", "ruby");
+    const fn = a.functions.find((f) => f.name === "close_window")!;
+    expect(fn.calls.map((c) => [c.name, c.receiverType ?? null])).toEqual(expect.arrayContaining([
+      ["ScoreJob.perform", "ScoreJob"],
+      ["builder.rebuild", null],
+    ]));
   });
 });

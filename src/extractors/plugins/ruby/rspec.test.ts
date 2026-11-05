@@ -63,6 +63,45 @@ end
     expect(extractTypeReferences(a, "ruby").filter((r) => r.sourceSymbol === "Club")).toMatchObject([{ typeName: "Club", sourceLine: 3 }]);
   });
 
+  it("reads an enqueue of the described job however it is written, and member calls on a typed let, per block", () => {
+    const a = analyze(`
+RSpec.describe League::CloseWindowJob do
+  let(:service) { League::TransferService.new }
+
+  it "enqueues later" do
+    described_class.set(wait: 5.minutes).perform_later(league)
+  end
+
+  it "enqueues in bulk" do
+    described_class.perform_bulk([[1], [2]])
+  end
+
+  describe "the service" do
+    it "settles" do
+      service.settle
+    end
+    it { expect(service.total).to eq(3) }
+  end
+
+  def enqueue_now
+    described_class.perform_now(service.league)
+  end
+end
+`, "spec/jobs/league/close_window_job_spec.rb");
+    const calls = (n: string) => a.functions.find((f) => f.name === n)!.calls.filter((c) => c.receiverType || /^service\./.test(c.name)).map((c) => [c.name, c.receiverType ?? null]);
+    expect(calls("League:CloseWindowJob › enqueues later")).toEqual([["League::CloseWindowJob.perform", "League::CloseWindowJob"]]);
+    expect(calls("League:CloseWindowJob › enqueues in bulk")).toEqual([["League::CloseWindowJob.perform", "League::CloseWindowJob"]]);
+    expect(calls("League:CloseWindowJob › the service › settles")).toEqual([["service.settle", null]]);
+    expect(calls("League:CloseWindowJob › the service › example at line 16")).toEqual([["service.total", null]]);
+    // A helper `def` in a group types what the group does.
+    const helper = a.functions.find((f) => f.name === "enqueue_now")!;
+    expect(helper.localTypes).toEqual(expect.arrayContaining([{ name: "described_class", type: "League::CloseWindowJob" }, { name: "service", type: "League::TransferService" }]));
+    expect(helper.calls.filter((c) => c.receiverType).map((c) => c.name)).toEqual(["League::CloseWindowJob.perform"]);
+    // A group's typed passes never read its nested blocks' lines.
+    expect(calls("League:CloseWindowJob › the service")).toEqual([]);
+    expect(calls("League:CloseWindowJob")).toEqual([]);
+  });
+
   it("leaves a file with no RSpec group alone", () => {
     const a = analyze(`
 class Garage
