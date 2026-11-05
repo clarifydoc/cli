@@ -6,6 +6,7 @@
  */
 import type { BuildMacros, ParsedStructure } from "../../../types/language-plugin.js";
 import type { ConditionalBlock } from "./regex-base.js";
+import { codeMask } from "./code-mask.js";
 
 /** The directive a line holds, its continuation lines (`\` at the end) joined. */
 const DIRECTIVE = /^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$/;
@@ -283,6 +284,24 @@ export function compilerView(text: string, cplusplus: boolean): string {
   return bracesPair(compiled) ? compiled : firstBranches(compiled, cplusplus);
 }
 
+/**
+ * A backslash-newline outside a directive, a string, a character and a `//` comment (`extern int yylex \`, a macro
+ * call's arguments split with `\`, a `||\` condition) is whitespace to the C preprocessor but a lexer error to the
+ * grammars, and so is a form feed between tokens. Both are blanked to a space, so lines and columns stay. A directive
+ * keeps its continuations (the lexer reads them as one token), a string its own (a literal may span them) and a line
+ * comment its own (the next line is part of it).
+ */
+export function blankSplices(text: string): string {
+  if (!text.includes("\\\n") && !text.includes("\f")) return text;
+  const mask = codeMask(text);
+  const out = text.split("");
+  for (let i = 0; i < text.length; i++) {
+    if (!mask[i]) continue;
+    if (text[i] === "\f" || (text[i] === "\\" && text[i + 1] === "\n")) out[i] = " ";
+  }
+  return out.join("");
+}
+
 /** A front end's reading of a text; `also` is code the reading leaves out, lines in place, whose calls it counts. */
 type Read = (text: string, also?: string) => ParsedStructure;
 
@@ -291,7 +310,8 @@ type Read = (text: string, also?: string) => ParsedStructure;
  * parse, with only the first branch of every conditional (the other branches' calls counted where they fall), plus
  * the functions a second-branch reading defines where the first branches left nothing — another platform's `#else`.
  */
-export function readWithBranches(text: string, cplusplus: boolean, read: Read, macros?: BuildMacros): ParsedStructure {
+export function readWithBranches(source: string, cplusplus: boolean, read: Read, macros?: BuildMacros): ParsedStructure {
+  const text = blankSplices(source);
   const compiled = withoutDeadCode(text, cplusplus, macros);
   const first = read(compiled);
   if (first.syntaxErrors === 0) return first;
