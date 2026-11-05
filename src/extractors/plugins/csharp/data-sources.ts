@@ -163,6 +163,9 @@ const ROUTING_KEY_RE = /^_?routing_?key$/i;
 const DAPR_PUBLISH_METHODS = new Set(["PublishEventAsync", "PublishByteEventAsync", "BulkPublishEventAsync"]);
 /** Dapr's subscription attribute on an action (`[Topic("pubsub", "club-created")]`). */
 const DAPR_TOPIC_ATTRIBUTE_RE = /^(?:Dapr\.)?Topic(?:Attribute)?$/;
+/** NServiceBus's send verbs and the receivers that carry them (`IMessageSession session`, `IMessageHandlerContext context`, `IEndpointInstance endpoint`). */
+const NSB_SEND_RE = /^(?:Send|Publish|SendLocal)(?:Async)?$/;
+const NSB_RECEIVER_RE = /^_?(?:\w*[sS]ession|\w*[cC]ontext|\w*[eE]ndpoint\w*|[mM]essageSession)$/;
 /** In-process dispatchers that must never count as broker publishes. */
 const MQ_RECEIVER_DENY_RE = /mediator|dispatcher/i;
 
@@ -262,6 +265,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private usesKafka = false;
   /** The file uses Dapr (`Dapr.Client`, `Dapr.AspNetCore`). */
   private usesDapr = false;
+  private usesNServiceBus = false;
   /** Fields and parameters declared `IDistributedCache` (`_cache`, `cache`). */
   private cacheNames = new Set<string>();
   /**
@@ -293,6 +297,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     this.refitFile = REFIT_GATE.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.usesDapr = /\bDapr\b|\bDaprClient\b/.test(sourceText);
+    this.usesNServiceBus = /\bNServiceBus\b/.test(sourceText);
     this.cacheNames = new Set([...sourceText.matchAll(/\bIDistributedCache\s+(\w+)/g)].map((m) => m[1]!));
     this.constStrings = new Map();
     // A method's own `const string url = "…";` is a local of that method (read
@@ -1050,6 +1055,21 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
           entity: entity ?? topic,
           line: node.startPosition.row + 1,
         }));
+        return;
+      }
+    }
+
+    // NServiceBus: `session.Send(new FixturePlayed())`, `context.Publish(new X())`,
+    // `endpoint.Publish<X>()` route by the message type, which the
+    // `IHandleMessages<X>` handlers consume. Gated on the file using NServiceBus,
+    // on a session/context/endpoint-shaped receiver.
+    if (this.usesNServiceBus && NSB_SEND_RE.test(method) && NSB_RECEIVER_RE.test(receiver || root) && !MQ_RECEIVER_DENY_RE.test(root)) {
+      const generic = /<\s*([\w.]+)\s*>$/.exec(parts[parts.length - 1]!)?.[1];
+      const types = generic ? [generic.slice(generic.lastIndexOf(".") + 1)] : messageTypes(argumentNodes(node)[0] ?? null);
+      if (types.length > 0) {
+        for (const type of new Set(types)) {
+          sources.push(this.ds({ kind: "queue-publish", name: `NServiceBus: ${method}`, target: type, entity: type, line: node.startPosition.row + 1 }));
+        }
         return;
       }
     }

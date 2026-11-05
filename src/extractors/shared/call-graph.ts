@@ -689,7 +689,7 @@ export function classifyCalls(
     }
 
     // 3. Check API call patterns
-    if (isApiCall(call.name, language)) {
+    if (isApiCall(call.name, language) || (hooks?.isApiCallShape?.(call.name, imports) && !isDatabaseCall(call.name, language, false))) {
       call.kind = "api-call";
       call.confidence = "EXTRACTED";
       continue;

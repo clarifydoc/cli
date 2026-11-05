@@ -259,3 +259,26 @@ end`;
     ]);
   });
 });
+
+describe("Phoenix socket channel declarations", () => {
+  it("binds each channel module to its topic pattern and marks a channel event whose own topic is unstated", async () => {
+    const { phoenixChannelBindings, phoenixChannelEvents } = await import("./channels.js");
+    const socket = `defmodule LeagueWeb.UserSocket do
+  use Phoenix.Socket
+  channel "match:*", LeagueWeb.MatchChannel
+  channel("lobby", LobbyChannel)
+  channel unknown_topic(), OtherChannel
+end`.split("\n");
+    expect(phoenixChannelBindings(socket)).toEqual([
+      { module: "LeagueWeb.MatchChannel", topic: "match:*", line: 3 },
+      { module: "LobbyChannel", topic: "lobby", line: 4 },
+    ]);
+    expect(phoenixChannelBindings(["defmodule X do", '  channel "a", B', "end"])).toEqual([]);
+    const channel = `defmodule LeagueWeb.MatchChannel do
+  use Phoenix.Channel
+  def join(topic, _p, socket), do: {:ok, socket}
+  def handle_in("new_goal", p, socket), do: {:noreply, socket}
+end`.split("\n");
+    expect(phoenixChannelEvents(channel).map((r) => [r.target, r.topic, r.topicFromBinding])).toEqual([["new_goal", undefined, true]]);
+  });
+});

@@ -46,3 +46,34 @@ describe("scopeChannelTopics", () => {
     expect(targets(files)).toEqual(["match_channel.ex:4 new_goal", "match_channel.ex:5 kickoff", "match.js:6 new_goal", "match.js:7 kickoff"]);
   });
 });
+
+describe("scopeChannelTopics — a socket's channel binding", () => {
+  const bound = (filePath: string, className: string, rows: DataSourceInfo[], bindings?: FileAnalysis["channelBindings"]): FileAnalysis =>
+    ({ filePath, dataSources: rows, classes: [{ name: className, methods: [] }], ...(bindings ? { channelBindings: bindings } : {}) } as unknown as FileAnalysis);
+  const topicless = (kind: "queue-publish" | "queue-consume", target: string, line: number): DataSourceInfo => ({ ...row(kind, target, line), topicFromBinding: true });
+
+  it("gives a channel module's events the topic its socket binds it to, so another channel's namesake event stays apart", () => {
+    const files = [
+      bound("user_socket.ex", "LeagueWeb.UserSocket", [], [{ module: "LeagueWeb.MatchChannel", topic: "match:*", line: 3 }, { module: "LeagueWeb.LobbyChannel", topic: "lobby", line: 4 }]),
+      bound("match_channel.ex", "LeagueWeb.MatchChannel", [topicless("queue-consume", "new_goal", 5)]),
+      bound("lobby_channel.ex", "LeagueWeb.LobbyChannel", [topicless("queue-consume", "new_goal", 5)]),
+      file("match.js", [row("queue-publish", "new_goal", 6, "match:1")]),
+    ];
+    scopeChannelTopics(files);
+    expect(targets(files)).toEqual([
+      "match_channel.ex:5 new_goal@match:*",
+      "lobby_channel.ex:5 new_goal@lobby",
+      "match.js:6 new_goal@match:*",
+    ]);
+  });
+
+  it("resolves an alias by its last segment only when one class has it, and never overrides a stated topic", () => {
+    const files = [
+      bound("user_socket.ex", "UserSocket", [], [{ module: "MatchChannel", topic: "match:*", line: 3 }]),
+      bound("a.ex", "LeagueWeb.MatchChannel", [topicless("queue-consume", "x", 1), { ...row("queue-consume", "y", 2, "lobby"), topicFromBinding: true }]),
+      bound("b.ex", "Other.MatchChannel", [topicless("queue-consume", "z", 1)]),
+    ];
+    expect(scopeChannelTopics(files)).toBe(0);
+    expect(files[1]!.dataSources.map((d) => d.topic)).toEqual([undefined, "lobby"]);
+  });
+});

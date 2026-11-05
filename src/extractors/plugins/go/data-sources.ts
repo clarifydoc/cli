@@ -1,5 +1,5 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
-import { argValue, callArgs, consumeDestination, publishDestination } from "./mq-destinations.js";
+import { argValue, awsMessagingCall, callArgs, consumeDestination, publishDestination } from "./mq-destinations.js";
 import { stringConstants } from "./routes.js";
 import { goFunctions, goRequestFactoryRows, servedInProcess } from "./path-arg-calls.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
@@ -168,6 +168,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
   let constants: Map<string, string> | undefined;
   let kvClient: boolean | undefined;
+  const awsMessaging = lines.some((l) => /"github\.com\/aws\/aws-sdk-go-v2\/service\/(?:sqs|sns)"/.test(l));
   let functions: ReturnType<typeof goFunctions> | undefined;
 
   for (let i = 0; i < lines.length; i++) {
@@ -287,6 +288,21 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       if (v === null && a !== undefined && NAME_REF_RE.test(a.trim())) ref = a.trim();
       return v;
     };
+    // AWS SDK v2: the queue or topic the call's `sqs.`/`sns.` input struct names, whatever the client is called.
+    if (awsMessaging) {
+      const aws = awsMessagingCall(lines, i, value);
+      if (aws) {
+        sources.push({
+          kind: aws.publish ? "queue-publish" : "queue-consume",
+          name: `AWS: ${aws.method}`,
+          target: aws.target,
+          ...(aws.target === null && aws.ref ? { targetRef: aws.ref } : {}),
+          calls: [],
+          line: lineNo,
+        });
+        continue;
+      }
+    }
     const pub = line.match(MQ_PUBLISH_RE);
     if (pub && MQ_RECEIVER_RE.test(pub[1]!)) {
       const stated = publishDestination(pub[2]!, callArgs(lines, i, pub.index! + pub[0].length - 1), value);

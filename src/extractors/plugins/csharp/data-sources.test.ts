@@ -911,3 +911,24 @@ public class Garage {
 }`)).toEqual([]);
   });
 });
+
+describe("C# NServiceBus publishes by message type", () => {
+  async function queueRows(src: string) {
+    const tree = await parseSource(src, "csharp" as any, "P.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "queue-publish").map((d) => `${d.name} ${d.target}`);
+  }
+  it("reads session.Send, context.Publish and endpoint.Publish<T>", async () => {
+    const rows = await queueRows(`using NServiceBus;
+public class S { public async Task Run(IMessageSession session, IMessageHandlerContext context, IEndpointInstance endpoint) {
+  await session.Send(new FixturePlayed(1));
+  await context.Publish(new MatchAbandoned());
+  await endpoint.Publish<GoalScored>();
+} }`);
+    expect(rows).toEqual(["NServiceBus: Send FixturePlayed", "NServiceBus: Publish MatchAbandoned", "NServiceBus: Publish GoalScored"]);
+  });
+  it("ignores a namesake receiver and a file that does not use NServiceBus", async () => {
+    expect(await queueRows(`using NServiceBus;
+public class D { public void X(Foo foo) { foo.Send(new Other()); } }`)).toEqual([]);
+    expect(await queueRows(`public class D { public void X(ISession session) { session.Send(new Other()); } }`)).toEqual([]);
+  });
+});

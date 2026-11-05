@@ -14,6 +14,7 @@ import type { DataSourceInfo, FileAnalysis } from "../types/analysis.js";
  * Returns the number of rows retargeted or added.
  */
 export function scopeChannelTopics(analyses: readonly FileAnalysis[]): number {
+  let changed = bindChannelTopics(analyses);
   const byEvent = new Map<string, Array<{ a: FileAnalysis; row: DataSourceInfo }>>();
   for (const a of analyses) {
     for (const row of a.dataSources ?? []) {
@@ -21,7 +22,6 @@ export function scopeChannelTopics(analyses: readonly FileAnalysis[]): number {
       (byEvent.get(row.target) ?? byEvent.set(row.target, []).get(row.target)!).push({ a, row });
     }
   }
-  let changed = 0;
   for (const [event, rows] of byEvent) {
     if (!rows.some((r) => r.row.topic)) continue;
     const patterns = [...new Set(rows.map((r) => r.row.topic).filter((t): t is string => !!t && t.endsWith("*")))];
@@ -43,6 +43,45 @@ export function scopeChannelTopics(analyses: readonly FileAnalysis[]): number {
         a.dataSources.push({ ...row, target: `${event}@${key}` });
         changed++;
       }
+    }
+  }
+  return changed;
+}
+
+/**
+ * A channel module whose code states no topic takes the one a socket binds it
+ * to (`FileAnalysis.channelBindings`): the module is the class the binding
+ * names — by its full name, or by its last segment when one class has it.
+ * Only the rows the plugin marked (`topicFromBinding`) are given the topic, and
+ * only when the module is bound to exactly one.
+ */
+function bindChannelTopics(analyses: readonly FileAnalysis[]): number {
+  const bindings = analyses.flatMap((a) => a.channelBindings ?? []);
+  if (bindings.length === 0) return 0;
+  const owners = new Map<string, FileAnalysis[]>();
+  for (const a of analyses) {
+    if (!a.dataSources?.some((d) => d.topicFromBinding)) continue;
+    for (const c of a.classes ?? []) {
+      for (const key of [c.name, c.name.slice(c.name.lastIndexOf(".") + 1)]) {
+        const list = owners.get(key) ?? owners.set(key, []).get(key)!;
+        if (!list.includes(a)) list.push(a);
+      }
+    }
+  }
+  const topicsOf = new Map<FileAnalysis, Set<string>>();
+  for (const b of bindings) {
+    const files = owners.get(b.module) ?? (b.module.includes(".") ? owners.get(b.module.slice(b.module.lastIndexOf(".") + 1)) : undefined);
+    if (files?.length !== 1) continue;
+    (topicsOf.get(files[0]!) ?? topicsOf.set(files[0]!, new Set()).get(files[0]!)!).add(b.topic);
+  }
+  let changed = 0;
+  for (const [a, topics] of topicsOf) {
+    if (topics.size !== 1) continue;
+    const topic = [...topics][0]!;
+    for (const row of a.dataSources) {
+      if (!row.topicFromBinding || row.topic) continue;
+      row.topic = topic;
+      changed++;
     }
   }
   return changed;
