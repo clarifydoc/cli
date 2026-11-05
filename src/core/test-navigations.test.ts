@@ -83,6 +83,7 @@ describe("what a page a browser test opens is made of", () => {
     "web/src/components/Button.vue",
     "web/src/components/Icon.vue",
     "web/src/components/TransferList.vue",
+    "web/src/components/editor/NotesEditor.vue",
   ];
   // Twenty-one pages render the button: a shared component.
   const many = Array.from({ length: 21 }, (_, i) => `web/src/views/Page${i}.vue`);
@@ -93,11 +94,15 @@ describe("what a page a browser test opens is made of", () => {
     ...ui.map((f) => screen(f)),
   ];
   const uses: Record<string, string[]> = {
-    "web/src/main.ts": ["web/src/router.ts", "web/src/App.vue", "web/src/stores/session.ts"],
+    "web/src/main.ts": ["web/src/router.ts", "web/src/App.vue", "web/src/stores/session.ts", "web/src/components/index.ts"],
+    // Registers components for every page to use by name: none this page shows.
+    "web/src/components/index.ts": ["web/src/components/TransferList.vue"],
     "web/src/router.ts": ["web/src/views/Squad.vue", "web/src/views/Login.vue"],
     "web/src/App.vue": ["web/src/components/AppSidebar.vue", "web/src/composables/useTheme.ts"],
     "web/src/components/AppSidebar.vue": ["web/src/components/SidebarClub.vue"],
-    "web/src/views/Squad.vue": ["web/src/components/PlayerCard.vue", "web/src/composables/useSquad.ts", "web/src/components/Button.vue", "web/src/views/Login.vue"],
+    "web/src/views/Squad.vue": ["web/src/components/PlayerCard.vue", "web/src/composables/useSquad.ts", "web/src/components/Button.vue", "web/src/views/Login.vue", "web/src/components/AsyncNotes.ts"],
+    // Loads the notes editor on demand: the way on to it.
+    "web/src/components/AsyncNotes.ts": ["web/src/helpers/lazy.ts", "web/src/components/editor/NotesEditor.vue"],
     "web/src/composables/useSquad.ts": ["web/src/api/squad.ts"],
     "web/src/components/PlayerCard.vue": ["web/src/components/DatePicker.vue", "web/tests/fixtures/players.ts"],
     "web/src/components/DatePicker.vue": ["web/src/components/datepicker/CalendarMonth.vue"],
@@ -116,6 +121,7 @@ describe("what a page a browser test opens is made of", () => {
       rows,
       uses,
       imports: uses,
+      lazy: { "web/src/components/AsyncNotes.ts": ["web/src/components/editor/NotesEditor.vue"] },
       screens,
       routeFiles: new Set(["web/src/router.ts"]),
       mounts,
@@ -132,17 +138,21 @@ describe("what a page a browser test opens is made of", () => {
       // Another page is no part; a shared component is, what lies below it is not; a module's own
       // imports (the api client below a composable) are code depending on code; test fixtures never.
       "web/src/views/Squad.vue": [
+        "web/src/components/AsyncNotes.ts",
         "web/src/components/Button.vue",
         "web/src/components/DatePicker.vue",
         "web/src/components/PlayerCard.vue",
         "web/src/components/datepicker/CalendarMonth.vue",
+        "web/src/components/editor/NotesEditor.vue",
         "web/src/composables/useSquad.ts",
       ],
-      // The route table runs, the pages it lists are not opened by it.
+      // The route table runs, the pages it lists are not opened by it; a registration module runs,
+      // the components it lists are not shown by it.
       "web/src/main.ts": [
         "web/src/App.vue",
         "web/src/components/AppSidebar.vue",
         "web/src/components/SidebarClub.vue",
+        "web/src/components/index.ts",
         "web/src/composables/useTheme.ts",
         "web/src/router.ts",
         "web/src/stores/session.ts",
@@ -159,7 +169,7 @@ describe("what a page a browser test opens is made of", () => {
       projectOf: () => "web",
       isTest: (f) => f.includes("/tests/"),
     });
-    pagePartsOf({ rows, uses: two, imports: two, screens, routeFiles: new Set(["web/src/router.ts"]), mounts: ["web/src/main.ts", "web/src/admin.ts"], projectOf: () => "web", isTest: (f) => f.includes("/tests/") });
+    pagePartsOf({ rows, uses: two, imports: two, lazy: {}, screens, routeFiles: new Set(["web/src/router.ts"]), mounts: ["web/src/main.ts", "web/src/admin.ts"], projectOf: () => "web", isTest: (f) => f.includes("/tests/") });
     expect(rows[0]!.entry).toBeUndefined();
   });
 

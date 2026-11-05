@@ -66,8 +66,10 @@ const PART_DEPTH = 6;
  * the root component it mounts), the files it uses, `PART_DEPTH` uses deep over the screen map's
  * uses graph (what a UI file's markup renders and the modules it imports; a module's imports):
  * - never into another page (a screen with a route of its own), never on past the route table;
- * - one module that is no component in a row (a composable, a store, a helper), never two —
- *   a store's own imports are code depending on code, not the page showing it;
+ * - a module that is no component (a composable, a store, a helper) is a part, a way on only to
+ *   the component it loads on demand (`defineAsyncComponent(() => import("./Editor.vue"))`): a
+ *   store's own imports are code depending on code, and the components a registration module
+ *   lists (`app.component("DatePicker", …)` for every page) are none this page shows;
  * - never on below a shared component (more than `SHARED_COMPONENT_USERS` UI files use it): the
  *   component is part of the page, what lies below it is not credited through it.
  * Each row of a joined navigation gets its `entry`; the parts are keyed by screen and entry file.
@@ -78,6 +80,8 @@ export function pagePartsOf(input: {
   uses: Record<string, string[]>;
   /** File → what it imports, dynamic imports included: whether a start file reaches a page. */
   imports: Record<string, string[]>;
+  /** File → what it imports on demand only (`import("./x")`). */
+  lazy: Record<string, string[]>;
   screens: readonly ScreenInfo[];
   /** Files declaring the client router's routes. */
   routeFiles: ReadonlySet<string>;
@@ -86,7 +90,7 @@ export function pagePartsOf(input: {
   projectOf: (file: string) => string | undefined;
   isTest: (file: string) => boolean;
 }): Record<string, string[]> {
-  const { rows, uses, imports, screens, routeFiles, mounts, projectOf, isTest } = input;
+  const { rows, uses, imports, lazy, screens, routeFiles, mounts, projectOf, isTest } = input;
   const ui = new Set(screens.map((s) => s.filePath));
   const pages = new Set(screens.filter((s) => s.routePath || s.otherRoutes?.length || s.renderedBy?.length).map((s) => s.filePath));
   const users = new Map<string, number>();
@@ -115,16 +119,16 @@ export function pagePartsOf(input: {
 
   const partsOf = (start: string): string[] => {
     const parts = new Set([start]);
-    let frontier: Array<{ file: string; run: number }> = [{ file: start, run: 0 }];
+    let frontier = [start];
     for (let depth = 0; depth < PART_DEPTH && frontier.length; depth++) {
-      const next: typeof frontier = [];
-      for (const { file, run } of frontier) {
-        for (const d of uses[file] ?? []) {
+      const next: string[] = [];
+      for (const file of frontier) {
+        // A module that is no component leads on only to a component it loads on demand.
+        const onward = ui.has(file) || file === start ? uses[file] ?? [] : (lazy[file] ?? []).filter((d) => ui.has(d));
+        for (const d of onward) {
           if (parts.has(d) || pages.has(d) || isTest(d)) continue;
-          const r = ui.has(d) ? 0 : run + 1;
-          if (r > 1) continue;
           parts.add(d);
-          if (!routeFiles.has(d) && !shared(d)) next.push({ file: d, run: r });
+          if (!routeFiles.has(d) && !shared(d)) next.push(d);
         }
       }
       frontier = next;

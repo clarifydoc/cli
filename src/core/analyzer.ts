@@ -1736,6 +1736,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       rows: testNavigations,
       uses: usesGraph,
       imports: importsOnly,
+      lazy: dynamicImportEdges,
       screens: allScreens,
       routeFiles: new Set(allRoutes.filter((r) => r.kind === "frontend").map((r) => r.filePath)),
       mounts: allAnalyses.filter((a) => a.appMount && !isTestCode(a.filePath)).map((a) => a.filePath),
