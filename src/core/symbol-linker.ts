@@ -1706,6 +1706,8 @@ interface LinkContext {
    * the name each declares it under. Built on first use.
    */
   typePaths?: Map<string, Array<{ file: string; name: string }>>;
+  /** Every name a segment of a `typePaths` path spells (`League`, `Club`), built on first use. */
+  constantNames?: Set<string>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
   /** File → the files whose scope it is part of (`ImportInfo.inScope.shared`), built on first use. */
@@ -4581,6 +4583,11 @@ function resolveCallToDefinition(
         // method of the name is coincidence (a member the class has would have linked by class name).
         const headEntry = /^[A-Z]/.test(head) ? classEntryFor(classCatalog.get(head), sourceFile) : undefined;
         const classHead = !!headEntry && extensionFamily(headEntry.file) === extensionFamily(sourceFile) && !shadowedLocally(analysis, sourceSymbol, head);
+        // Where a capitalized name is a constant looked up lexically (`lexicalConstants`: Ruby `I18n.t`),
+        // one no class or module of the project spells is a library's: its methods are never a project
+        // method of the same name.
+        const foreignConstant = !headEntry && /^[A-Z]/.test(head) && !!manifestFor(analysis.language as Language)?.lexicalConstants &&
+          !projectConstantNames(ctx).has(head) && !shadowedLocally(analysis, sourceSymbol, head);
         const contradicted = (classHead && head !== tgtClass && !ctx.extensionMethods.has(`${entry.file}\0${entry.def.name}`)) ||
           declared !== null && declared !== tgtClass &&
           !(declEntry && declEntry.count === 1 && declEntry.file === entry.file) &&
@@ -4641,7 +4648,7 @@ function resolveCallToDefinition(
             return !!from && from.length > 1 &&
               ((from.length === 2 && headNamesForeignPackage(analysis, from[0]!, ctx)) || callsOutside(from, analysis, ctx));
           }));
-        if (!contradicted && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
+        if (!contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,
             entry.def.name,
@@ -6121,6 +6128,15 @@ function lexicalPathIn(env: LexicalPathEnv, written: string, sourceFile: string,
     return typeFile ? { typeName: name, typeFile } : null;
   }
   return null;
+}
+
+/** Every segment of a path a class or module of a `lexicalConstants` language is declared at. */
+function projectConstantNames(ctx: LinkContext): Set<string> {
+  if (ctx.constantNames) return ctx.constantNames;
+  ctx.typePaths ??= buildTypePaths(ctx.analyses);
+  const names = new Set<string>();
+  for (const path of ctx.typePaths.keys()) for (const seg of path.split("::")) if (seg) names.add(seg);
+  return (ctx.constantNames = names);
 }
 
 /** Every class of a `lexicalConstants` language by the full path it is declared at. */
