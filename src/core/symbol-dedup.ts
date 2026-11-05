@@ -164,6 +164,8 @@ function dedupInto(result: SymbolLink[], seen: Map<string, number>, links: reado
       link.targetSymbol,
       normalize(link.callName),
       OVERLOAD_LINKS.has(link) ? link.targetLine : "",
+      // An inherited method reached on two classes is two calls, each moved onto its class's member later.
+      link.viaType ? `${link.viaTypeFile ?? ""}:${link.viaType}` : "",
     ].join("::");
 
     const existingIdx = seen.get(key);

@@ -936,7 +936,15 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
     // `this.url`, `routes.tags`: a URL held in a field or a route table. Kept as
     // a hole a project pass may still fill; only a trusted client call emits it.
-    if (arg.type === "member_expression") return { url: `\${${arg.text}}`, confidence: "INFERRED" };
+    // A key of a request descriptor a local holds (`const urlData = endPoints('profile'); axios.get(urlData.url)`)
+    // is that call's key, written inline: the URL-builder pass reads it off the helper.
+    if (arg.type === "member_expression") {
+      // `const urlData = { url: `/api/v1/clubs${search}` }; API.post(urlData.url)`: the key's value.
+      const held = this.heldObjectKey(arg);
+      const inline = held && this.inlineDepth < 4 ? this.resolveHeld(held) : null;
+      if (inline) return inline;
+      return { url: `\${${this.inlineHeldCall(arg) ?? arg.text}}`, confidence: "INFERRED" };
+    }
     // An Angular signal read (`this.previewUrl()`): the value its `this.previewUrl.set(…)` calls store.
     const signalUrl = arg.type === "call_expression" ? this.signalValue(arg) : null;
     if (signalUrl) return signalUrl;
@@ -948,6 +956,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (arg.type === "call_expression") {
       // A bare-identifier argument bound to a literal path in scope (`apiPath(club,
       // SQUAD_ENDPOINT)`) is spelled as that literal, which the helper pass substitutes.
+      // `urlData.url(clubId)` with `urlData` held from a helper call: that call, inline.
+      const callee = arg.childForFieldName("function");
+      const heldHead = callee?.type === "member_expression" ? this.inlineHeldCall(callee) : null;
+      if (heldHead) return { url: `${heldHead}${arg.text.slice(callee!.endIndex - arg.startIndex)}`.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
       let text = arg.text;
       const args = arg.childForFieldName("arguments")?.namedChildren ?? [];
       for (const a of [...args].reverse()) {
@@ -960,6 +972,46 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       return { url: text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
     }
     return null;
+  }
+
+  /**
+   * The value `urlData.url` reads when a function's local `urlData` holds an object literal
+   * stating `url`; else null. A module's table of URLs (`const routes = { clubs: `${prefix}/clubs` }`)
+   * is left to the module-value pass, which follows its names into the modules that state them.
+   */
+  private heldObjectKey(member: Node): Node | null {
+    const object = member.childForFieldName("object");
+    const property = member.childForFieldName("property");
+    if (object?.type !== "identifier" || !property || member.text.includes("?.")) return null;
+    const value = this.bindings()?.valueOf(object.text, object);
+    if (value?.type !== "object") return null;
+    let scope: Node | null = value.parent;
+    while (scope && !FUNCTION_SCOPES.has(scope.type)) scope = scope.parent;
+    return scope ? objectPropValue(value, property.text) : null;
+  }
+
+  /** {@link resolveUrlArg} on a value a local holds, guarded against a local built on itself. */
+  private resolveHeld(value: Node): ResolvedUrl | null {
+    this.inlineDepth++;
+    try {
+      return this.resolveUrlArg(value);
+    } finally {
+      this.inlineDepth--;
+    }
+  }
+
+  /**
+   * `urlData.url` where the local `urlData` holds a call's result
+   * (`const urlData = endPoints.updateMessage(id)`): `endPoints.updateMessage(id).url`,
+   * the call written in place of the local. Null for any other member read.
+   */
+  private inlineHeldCall(member: Node): string | null {
+    const object = member.childForFieldName("object");
+    const property = member.childForFieldName("property");
+    if (object?.type !== "identifier" || !property || member.text.includes("?.")) return null;
+    const value = this.bindings()?.valueOf(object.text, object);
+    if (value?.type !== "call_expression") return null;
+    return `${value.text.replace(/\s+/g, " ")}.${property.text}`;
   }
 
   /**

@@ -5,6 +5,7 @@ import { stripQuotes } from "../../shared/node-helpers.js";
 import { spawnImports } from "../shared/process-spawns.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { wrappedDefaultName } from "./wrapped-functions.js";
+import { tableEntry } from "./functions-classes.js";
 
 /** Initializer node types that make a `const` export a function. */
 const FUNCTION_VALUE_TYPES: ReadonlySet<string> = new Set([
@@ -459,7 +460,14 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
           : value ? wrappedDefaultName(value) ?? undefined : undefined;
         // `export default new Agents()`: the module's default is an instance of its class.
         const instanceOf = value?.type === "new_expression" ? value.childForFieldName("constructor") : null;
-        exports.push({ name: "default", kind: "default", line, ...(local ? { sourceName: local } : {}), ...(instanceOf?.type === "identifier" ? { instanceOf: instanceOf.text } : {}) });
+        // `export default page => endPoints[page]`: an anonymous lookup into the module's table.
+        const entryOf = value && !local ? defaultTableEntry(value) : null;
+        exports.push({
+          name: "default", kind: "default", line,
+          ...(local ? { sourceName: local } : {}),
+          ...(instanceOf?.type === "identifier" ? { instanceOf: instanceOf.text } : {}),
+          ...(entryOf ? { returnsEntryOf: entryOf } : {}),
+        });
         continue;
       }
 
@@ -574,4 +582,15 @@ function lazyBinding(importCall: Node): string | null {
   const decl = call.parent;
   const name = decl?.type === "variable_declarator" ? decl.childForFieldName("name") : null;
   return name?.type === "identifier" ? name.text : null;
+}
+
+/** `page => endPoints[page]`, `function (page) { return endPoints[page]; }`: the table and parameter; else null. */
+function defaultTableEntry(fn: Node): { table: string; param: string } | null {
+  if (fn.type !== "arrow_function" && fn.type !== "function_expression") return null;
+  const params = fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter");
+  const names = new Set((params?.type === "identifier" ? [params] : params?.namedChildren ?? []).map((p) => (p.type === "identifier" ? p.text : p.childForFieldName("pattern")?.text ?? "")));
+  const body = fn.childForFieldName("body");
+  const stmts = body?.type === "statement_block" ? body.namedChildren.filter((c) => c.type !== "comment") : null;
+  const value = stmts ? (stmts.length === 1 && stmts[0]!.type === "return_statement" ? stmts[0]!.namedChild(0) : null) : body;
+  return value ? tableEntry(value, names) : null;
 }

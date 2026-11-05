@@ -164,6 +164,8 @@ interface HelperLookup {
   local: Map<string, Map<string, UrlBuilder>>;
   /** `this.m(…)`: the method of that name along the calling class's chain. */
   method?: (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null;
+  /** `endPoints('profile').url`, `messages.update(id).url`: the URL a helper's descriptor or table entry states under that key. */
+  descriptor?: (site: CallSite, receiver: string, name: string, args: string[], key: string, keyArgs: string[] | null) => string[] | null;
 }
 
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
@@ -237,8 +239,45 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
 // `${this.url}` — a read of a getter (or no-argument method body) the calling class defines.
 const GETTER_READ_RE = /\$\{\s*this\s*\.\s*([A-Za-z_$][\w$]*)\s*\}/g;
 
+// `endPoints('profile').url`, `messages.update(id).url`, `endPoints('pages').url(clubId)`: a key of
+// what a helper call hands back — read in place, or as the whole `${…}` hole it fills.
+const DESCRIPTOR_READ_RE = new RegExp(`${RECEIVER}([A-Za-z_$][\\w$]*)\\s*\\(${ARG}\\)\\s*\\.\\s*([A-Za-z_$][\\w$]*)(?:\\s*\\(${ARG}\\))?`, "g");
+
+/** Split a call's argument text into its arguments. */
+const argsOf = (text: string): string[] => splitTopLevel(text, ",").map((a) => a.trim()).filter((a) => a.length > 0);
+
+/** A descriptor read in `text` the lookup resolves, spanning the `${…}` around it when it fills one. */
+function descriptorRead(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {
+  if (!lookup.descriptor) return null;
+  for (const m of text.matchAll(DESCRIPTOR_READ_RE)) {
+    const rewrites = lookup.descriptor(site, m[1] ?? "", m[2]!, argsOf(m[3]!), m[4]!, m[5] === undefined ? null : argsOf(m[5]));
+    if (!rewrites) continue;
+    let start = m.index!;
+    let end = start + m[0].length;
+    const open = /\$\{\s*$/.exec(text.slice(0, start));
+    const close = /^\s*\}/.exec(text.slice(end));
+    if (open && close) {
+      start = open.index;
+      end += close[0].length;
+    }
+    return { start, end, rewrites };
+  }
+  return null;
+}
+
+/** A builder's templates with a call's arguments in; null when a bare-variable argument leaves one unresolved. */
+function rewriteWith(builder: UrlBuilder, args: string[]): string[] | null {
+  const named = builder.params.length === 0 && args.length === 1 ? objectArgument(args[0]!) : null;
+  const rewrites = named
+    ? builder.templates.map((tpl) => substituteNamed(tpl, named))
+    : chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
+  return rewrites.some((r) => r === null) ? null : (rewrites as string[]);
+}
+
 /** The first helper call in `text` that the index can resolve, or null. */
 function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {
+  const read = text.includes(").") ? descriptorRead(text, lookup, site) : null;
+  if (read) return read;
   if (lookup.method && text.includes("${this.")) {
     for (const m of text.matchAll(GETTER_READ_RE)) {
       const getter = lookup.method(site.file, site.line, m[1]!, true);
@@ -259,12 +298,8 @@ function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): He
       if (inner) return { start: argsStart + inner.start, end: argsStart + inner.end, rewrites: inner.rewrites };
       continue; // unknown or ambiguous — leave verbatim
     }
-    const args = splitTopLevel(argsText, ",").map((a) => a.trim()).filter((a) => a.length > 0);
-    const named = builder.params.length === 0 && args.length === 1 ? objectArgument(args[0]!) : null;
-    const rewrites = named
-      ? builder.templates.map((tpl) => substituteNamed(tpl, named))
-      : chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));
-    if (rewrites.some((r) => r === null)) continue; // a bare-variable arg — leave verbatim
+    const rewrites = rewriteWith(builder, argsOf(argsText));
+    if (!rewrites) continue; // a bare-variable arg — leave verbatim
     // Reached through a receiver (`this.matches.getReportUrl(id)`), the helper's own `this`
     // is that receiver: `${this.getResourceUrl(…)}` in its template is `${this.matches.getResourceUrl(…)}` here.
     const via = receiver.replace(/\s+/g, "").replace(/\.$/, "");
@@ -311,7 +346,10 @@ function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): s
 export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
   const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
   keepHelperBases(lookup, analyses);
-  if (ctx) lookup.method = methodResolver(ctx);
+  if (ctx) {
+    lookup.method = methodResolver(ctx);
+    lookup.descriptor = descriptorResolver(analyses, ctx, lookup);
+  }
   if (lookup.global.size === 0 && lookup.local.size === 0 && !lookup.method) return 0;
   let count = 0;
   for (const call of apiCalls) {
@@ -393,5 +431,69 @@ function methodResolver(ctx: ProjectContext): (file: string, line: number, name:
       return templates.length > 0 ? { templates, params: fn.params } : null;
     }
     return null;
+  };
+}
+
+/**
+ * `endPoints('profile').url` / `messages.update(id).url`: the helper the call names — a
+ * function of the module the name (or the object holding it) is imported from, that
+ * module's anonymous default, or one of the call's own file — and what it states under
+ * the key read:
+ *
+ *   - a request descriptor (`(id) => ({ url: `/api/v1/messages/${id}` })`): the
+ *     descriptor's templates with the call's arguments in, when the key read is its URL key;
+ *   - a table entry (`(page) => endPoints[page]`): the value the module states for
+ *     `endPoints.<the literal argument>.<key>` — or, for a key called
+ *     (`endPoints('pages').url(clubId)`), that entry's own URL helper with those arguments.
+ *
+ * A name the imports do not resolve falls back to the one descriptor helper of that name
+ * in the project. Anything else resolves nothing.
+ */
+function descriptorResolver(analyses: FileAnalysis[], ctx: ProjectContext, lookup: HelperLookup): NonNullable<HelperLookup["descriptor"]> {
+  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const unique = new Map<string, { a: FileAnalysis; fn: FunctionInfo } | null>();
+  for (const a of analyses) {
+    if (a.language !== "typescript" && a.language !== "javascript") continue;
+    for (const fn of a.functions) {
+      if (!fn.requestDescriptor || fn.name.includes(".")) continue;
+      unique.set(fn.name, unique.has(fn.name) ? null : { a, fn });
+    }
+  }
+  type Entry = { table: string; param: string };
+  const helperOf = (site: CallSite, receiver: string, name: string): { a: FileAnalysis; fn?: FunctionInfo; entryOf?: Entry; paramIndex: number } | null => {
+    const recv = receiver.replace(/\s+/g, "").replace(/\.$/, "");
+    if (recv.includes(".") || recv === "this") return null;
+    const own = byFile.get(site.file);
+    const source = ctx.importIndex.localFor(site.file, recv || name);
+    const holder = source ? byFile.get(source) : recv ? undefined : own;
+    if (holder) {
+      const fn = holder.functions.find((f) => f.name === name && (f.requestDescriptor || f.returnsEntryOf));
+      if (fn) return { a: holder, fn, entryOf: fn.returnsEntryOf, paramIndex: fn.returnsEntryOf ? fn.params.findIndex((p) => p.name === fn.returnsEntryOf!.param) : -1 };
+      // `import endPoints from './endPoints'`: the module's anonymous default.
+      const def = !recv && source ? holder.exports.find((e) => e.kind === "default") : undefined;
+      if (def?.returnsEntryOf) return { a: holder, entryOf: def.returnsEntryOf, paramIndex: 0 };
+      if (source) return null;
+    }
+    const only = unique.get(name);
+    return only ? { a: only.a, fn: only.fn, paramIndex: -1 } : null;
+  };
+  return (site, receiver, name, args, key, keyArgs) => {
+    const helper = helperOf(site, receiver, name);
+    if (!helper) return null;
+    if (helper.fn?.requestDescriptor) {
+      const d = helper.fn.requestDescriptor;
+      return d.key === key && keyArgs === null ? rewriteWith({ templates: d.urlTemplates, params: helper.fn.params }, args) : null;
+    }
+    if (!helper.entryOf || helper.paramIndex < 0) return null;
+    const lit = args[helper.paramIndex];
+    const entry = lit && /^(['"`])([A-Za-z_$][\w$]*)\1$/.exec(lit)?.[2];
+    if (!entry) return null;
+    const path = `${helper.entryOf.table}.${entry}.${key}`;
+    if (keyArgs === null) {
+      const value = helper.a.moduleValues?.[path];
+      return value !== undefined && !value.includes("${") ? [value] : null;
+    }
+    const inner = lookup.local.get(helper.a.filePath)?.get(path);
+    return inner ? rewriteWith(inner, keyArgs) : null;
   };
 }
