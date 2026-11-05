@@ -16,6 +16,12 @@ const receivers = (calls: CallInfo[]) =>
   calls.filter((c) => c.receiverType).map((c) => [c.name, c.receiverType, c.receiverQualifier]);
 
 describe("C# call hooks", () => {
+  it("drops the `global::` alias from a constructor or a call it anchors", async () => {
+    expect(names(await callsOf(`var m = new global::League.Match(); global::League.Table.Update();`))).toEqual([
+      "new League.Match", "League.Table.Update",
+    ]);
+  });
+
   it("names a null-conditional member call (`x?.M()`) instead of dropping it", async () => {
     expect(names(await callsOf(`_maybe?.Maybe(); this._x?.Run(); a.b?.C(); _y!.Go();`))).toEqual([
       "_maybe?.Maybe", "this._x?.Run", "a.b?.C", "_y!.Go",

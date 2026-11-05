@@ -34,6 +34,8 @@ function csharpMethodGroups(call: Node): Array<{ name: string; node: Node; ownMe
   return out;
 }
 
+const dropGlobalAlias = (name: string | null): string | null => (name?.includes("global::") ? name.replace(/\bglobal::/g, "") : name);
+
 export const csharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["invocation_expression", "object_creation_expression", "implicit_object_creation_expression"]),
   passedArguments: csharpMethodGroups,
@@ -44,7 +46,8 @@ export const csharpCallHooks: CallExtractionHooks = {
   // bound to a name (`Func<int> f = () => …`) stays a scope of its own.
   anonymousScopeTypes: ["lambda_expression", "anonymous_method_expression"],
 
-  resolveCallName: (node) => genericResolveCallName(node, {
+  // `new global::League.Match()` is `new League.Match()`: `global::` only anchors the namespace at the root.
+  resolveCallName: (node) => dropGlobalAlias(genericResolveCallName(node, {
     extraCallee(callee, call) {
       if (callee.type === "identifier_name") return callee.text;
       // member_access_expression is already covered generically; kept for parity
@@ -58,7 +61,7 @@ export const csharpCallHooks: CallExtractionHooks = {
       if (call.type === "implicit_object_creation_expression") return implicitCreationName(call);
       return null;
     },
-  }),
+  })),
 
   // `sp.GetRequiredService<IPricing>().Quote(o)` → receiver typed IPricing.
   receiverTypeOf: csharpReceiverTypeOf,

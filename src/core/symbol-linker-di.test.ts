@@ -944,8 +944,8 @@ describe("symbol-linker — explicit interface implementations", () => {
     const coach = file("src/Coach.cs", [cls("Coach", {
       implements: ["IScout", "IAnalyst"],
       methods: [
-        { ...method("Report", [], [], 5), explicitInterface: "IScout" },
-        { ...method("Report", [], [], 9), explicitInterface: "IAnalyst" },
+        { ...method("Report", [], [], 5), explicitInterface: "IScout" } as ReturnType<typeof method>,
+        { ...method("Report", [], [], 9), explicitInterface: "IAnalyst" } as ReturnType<typeof method>,
       ],
     })], { language: "csharp" });
     const runner = file("src/Runner.cs", [cls("Runner", { methods: [method("Go", [call("scout.Report"), call("analyst.Report")], [param("scout", "IScout"), param("analyst", "IAnalyst")], 3)] })], { language: "csharp" });
