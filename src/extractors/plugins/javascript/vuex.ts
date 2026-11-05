@@ -275,6 +275,19 @@ export class VuexDispatchResolver implements DispatchResolver {
         const fn = f.functions.find((x) => x.name === `actions.${act}` || x.name.endsWith(`.actions.${act}`));
         if (fn) return { file: f, fn };
       }
+      // `actions = { …, ...readActions }`: the object an import names (`export const readActions = {…}`,
+      // or the file's `export default {…}`), or one the file declares itself.
+      for (const f of filesOf(mod)) {
+        if (f !== mod && registered.has(f.filePath)) continue;
+        for (const name of f.storeShapes?.spreads?.actions ?? []) {
+          const from = importedName(f, name, ctx);
+          const file = from?.file ?? f;
+          const held = from ? localName(from.file, from.name) : name;
+          const fn = file.functions.find((x) => x.name === `${held}.${act}`)
+            ?? (from?.name === "default" && file.exports.some((e) => e.name === "default" && !e.sourceName && !e.source) ? file.functions.find((x) => x.name === act || x.name === `default.${act}`) : undefined);
+          if (fn) return { file, fn };
+        }
+      }
       return null;
     };
 

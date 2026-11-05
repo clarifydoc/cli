@@ -1826,6 +1826,8 @@ export interface StoreShapes {
   functions?: Record<string, ShapeFunction>;
   /** Module-level objects declaring `namespaced: true` (`export default { namespaced: true, … }` under `default`): their actions are never global. */
   namespaced?: string[];
+  /** The names a module-level `actions` object spreads in (`const actions = { load, ...readActions }` → `actions: ["readActions"]`). */
+  spreads?: Record<string, string[]>;
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */

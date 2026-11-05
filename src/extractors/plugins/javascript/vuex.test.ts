@@ -346,3 +346,91 @@ export const reset = () => store.dispatch('resetToken');`,
     expect(show(links, "src/pages/Profile.js")).toEqual(["reset -dispatch:resetToken-> src/store/modules/auth.js#actions.resetToken"]);
   });
 });
+
+describe("vuex-action dispatch of an action spread in from another file", () => {
+  it("follows `...readActions` / `...transferActions` in a module's actions to the object each import names", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import squads from './modules/squads';
+import clubs from './modules/clubs';
+export default createStore({ modules: { squads, clubs } });`,
+      "src/store/modules/squads/index.js": `import actions from './actions';
+export default { state: {}, actions };`,
+      "src/store/modules/squads/actions.js": `import readActions from './actions/readActions';
+const actions = {
+  load: async ({ commit }) => { commit('SET', []); },
+  ...readActions,
+};
+export default actions;`,
+      "src/store/modules/squads/actions/readActions.js": `import SquadApi from '../../../../api/squads';
+export default {
+  markSquadRead: async ({ commit }, id) => { await SquadApi.markRead(id); commit('READ', id); },
+};`,
+      "src/store/modules/clubs.js": `import { transferActions } from './clubs/transferActions';
+export const actions = {
+  ...transferActions,
+};
+export default { namespaced: true, state: {}, actions };`,
+      "src/store/modules/clubs/transferActions.js": `import ClubApi from '../../../api/clubs';
+export const transferActions = {
+  signPlayer: async ({ commit }, p) => { await ClubApi.sign(p); commit('SIGNED', p); },
+};`,
+      "src/pages/SquadPage.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const markRead = (id) => store.dispatch('markSquadRead', id);
+export const sign = (p) => store.dispatch('clubs/signPlayer', p);
+export const missing = () => store.dispatch('clubs/markSquadRead');`,
+    }));
+    expect(show(links, "src/pages/SquadPage.js")).toEqual([
+      "markRead -dispatch:markSquadRead-> src/store/modules/squads/actions/readActions.js#markSquadRead",
+      "sign -dispatch:clubs/signPlayer-> src/store/modules/clubs/transferActions.js#transferActions.signPlayer",
+    ]);
+  });
+});
+
+describe("vuex-action dispatch of an action written as a method in a factory call", () => {
+  it("records `actions: types => ({ async sync() {…} })` as the module's action, with its calls", async () => {
+    const analyses = await analyzeAll({
+      ...FACTORY,
+      "src/store/modules/fixtures.js": `import ClubsAPI from '../../api/clubs';
+import { createStore } from '../factory';
+export default createStore({
+  name: 'Fixture',
+  API: ClubsAPI,
+  actions: types => ({
+    setFetching({ commit }, flag) {
+      commit(types.SET, flag);
+    },
+    async reschedule({ dispatch }, id) {
+      await ClubsAPI.transfer(id);
+      dispatch('setFetching', false);
+    },
+  }),
+});`,
+      "src/store/index.js": `import { createStore } from 'vuex';
+import clubs from './modules/clubs';
+import players from './modules/players';
+import fixtures from './modules/fixtures';
+export default createStore({ modules: { clubs, players, fixtures } });`,
+      "src/stores/league.js": `import { defineStore } from 'pinia';
+export const useLeagueStore = defineStore('league', {
+  actions: {
+    async load() { await ClubsAPI.get(); },
+  },
+});`,
+      "src/pages/FixturePage.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const reschedule = id => store.dispatch('fixtures/reschedule', id);`,
+    });
+    const fixtures = analyses.find((a) => a.filePath === "src/store/modules/fixtures.js")!;
+    expect(fixtures.functions.filter((f) => f.name.startsWith("actions.")).map((f) => `${f.name}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "actions.setFetching: commit",
+      "actions.reschedule: ClubsAPI.transfer,dispatch",
+    ]);
+    // A Pinia store's actions are its class's methods, never functions of their own as well.
+    expect(analyses.find((a) => a.filePath === "src/stores/league.js")!.functions.some((f) => f.name.startsWith("actions."))).toBe(false);
+    expect(show(new VuexDispatchResolver().resolve(analyses), "src/pages/FixturePage.js")).toEqual([
+      "reschedule -dispatch:fixtures/reschedule-> src/store/modules/fixtures.js#actions.reschedule",
+    ]);
+  });
+});

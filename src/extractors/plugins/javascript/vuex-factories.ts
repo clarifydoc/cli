@@ -36,6 +36,7 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   const values: Record<string, ShapeExpr> = {};
   const functions: Record<string, ShapeFunction> = {};
   const namespaced: string[] = [];
+  const spreads: Record<string, string[]> = {};
   const factoryFile = /actions/i.test(sourceText);
   const declarator = (d: Node) => {
     const name = d.childForFieldName("name");
@@ -45,6 +46,9 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
       if (factoryFile) addFunction(functions, name.text, value);
     } else if (value.type === "object") {
       if (declaresNamespaced(value)) namespaced.push(name.text);
+      // `const actions = { load, ...readActions }`: actions another file defines.
+      const spread = name.text === "actions" ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
+      if (spread.length > 0) spreads[name.text] = spread;
     } else if (value.type === "call_expression" && hasObjectArg(value)) {
       const s = shape(value, 0);
       if (s) values[name.text] = s;
@@ -72,7 +76,8 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   if (Object.keys(values).length > 0) out.values = values;
   if (Object.keys(functions).length > 0) out.functions = functions;
   if (namespaced.length > 0) out.namespaced = namespaced;
-  if (!out.values && !out.functions && !out.namespaced) return undefined;
+  if (Object.keys(spreads).length > 0) out.spreads = spreads;
+  if (!out.values && !out.functions && !out.namespaced && !out.spreads) return undefined;
   return JSON.stringify(out).length > MAX_SHAPES_SIZE ? undefined : out;
 }
 

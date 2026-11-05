@@ -1325,6 +1325,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const wrapped = value.type === "call_expression" ? wrappedFunction(value) : null;
           const name = wrapped?.type === "function_expression" ? wrapped.childForFieldName("name")?.text : undefined;
           if (wrapped && name) functions.push(this.parseJsArrowOrExpr(name, wrapped, true));
+          if (value.type === "call_expression" || value.type === "new_expression") this.extractStoreCallActions(value, functions);
         }
         this.extractJsFunctions(child, functions, true);
         continue;
@@ -1417,6 +1418,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           if (decl.type === "variable_declarator") {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
+            if (moduleLevel && (value?.type === "call_expression" || value?.type === "new_expression")) this.extractStoreCallActions(value, functions);
             const wrapped = value ? wrappedFunction(value) ?? (moduleLevel && isExported ? exportedHandlerOf(value) : null) : null;
             const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
             if (store) {
@@ -1709,6 +1711,33 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: decl.endPosition.row + 1,
       ...knownFieldValues(fieldValues),
     };
+  }
+
+  /**
+   * A store built by a call (`createStore({ actions: types => ({ async sync() {…} }) })`,
+   * `new Vuex.Store({ actions: { reset() {…} } })`): each action written as a method is a
+   * function `actions.<key>`, the name a module's own `actions` object gives it. A method's
+   * body is a scope of its own, so its calls belonged to no function at all; an action
+   * written as an arrow is read in place by the dispatch resolver and is left as it is.
+   */
+  private extractStoreCallActions(call: Node, functions: FunctionInfo[]): void {
+    // A Pinia store's actions are the methods of the class its binding returns (`piniaStoreFunction`).
+    if (/(?:^|\.)defineStore$/.test((call.childForFieldName("function") ?? call.childForFieldName("constructor"))?.text ?? "")) return;
+    for (const arg of call.childForFieldName("arguments")?.namedChildren ?? []) {
+      if (arg.type !== "object") continue;
+      for (const pair of arg.namedChildren) {
+        if (pair.type !== "pair" || objectKeyName(pair.childForFieldName("key")) !== "actions") continue;
+        const value = pair.childForFieldName("value");
+        const actions = value?.type === "object" ? value : value ? returnedObject(value) : null;
+        for (const member of actions?.namedChildren ?? []) {
+          const key = member.type === "method_definition" ? objectKeyName(member.childForFieldName("name")) : null;
+          if (!key) continue;
+          const fn = this.parseJsFunction(member, false);
+          fn.name = `actions.${key}`;
+          functions.push(fn);
+        }
+      }
+    }
   }
 
   private extractObjectMembers(
