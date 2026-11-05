@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { analyze } from "../core/analyzer.js";
+import { allPluginMetas, manifestFor } from "../extractors/registry.js";
 
 /**
  * The MCP server loads language plugins lazily, but the test setup loads them
@@ -17,7 +18,10 @@ describe("MCP tools on a server that loaded no plugin yet", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-lazy-"));
     await mkdir(join(dir, "src"), { recursive: true });
     await writeFile(join(dir, "package.json"), '{"name":"garage","version":"1.0.0"}');
-    await writeFile(join(dir, "src/garage.ts"), ["/** Parks one car. */", "export function park(car: string): string {", "  return car;", "}", ""].join("\n"));
+    await writeFile(
+      join(dir, "src/garage.ts"),
+      ["/** Parks one car. */", "export function park(car: string): string {", "  // Kept as text because the garage reads number plates as text.", "  return car;", "}", ""].join("\n"),
+    );
     await analyze({ projectRoot: dir, outputDir: join(dir, ".clarifydoc"), lsp: false, gitHistory: false });
     vi.resetModules();
     const { buildMcpServer } = await import("./server.js");
@@ -42,5 +46,31 @@ describe("MCP tools on a server that loaded no plugin yet", () => {
     const { text, isError } = await call("clarifydoc_explain", { subject: "park" });
     expect(isError).toBeFalsy();
     expect(text).toContain("/** Parks one car. */");
+  });
+
+  it("context docs read a file's stated reasons in its language's comment syntax", async () => {
+    const { text, isError } = await call("clarifydoc_context_docs", { file: "src/garage.ts" });
+    expect(isError).toBeFalsy();
+    expect(text).toContain("because the garage reads number plates as text");
+  });
+});
+
+/**
+ * Static data a tool reads on demand lives on the always-loaded manifest, so
+ * reading it never depends on which plugin bodies a process happened to load.
+ */
+describe("doc-comment syntax on the manifest", () => {
+  it("every plugin's doc-comment syntax is the one its manifest declares", () => {
+    const declaring = allPluginMetas().filter((m) => m.docComments);
+    expect(declaring.length).toBeGreaterThan(20);
+    for (const meta of declaring) expect(manifestFor(meta.language)?.docComments, meta.language).toBe(meta.docComments);
+  });
+
+  it("is readable before any plugin body loads", async () => {
+    vi.resetModules();
+    const fresh = await import("../extractors/registry.js");
+    expect(() => fresh.pluginFor("python")).toThrow(/not loaded/);
+    expect(fresh.manifestFor("python")?.docComments?.docstring).toBe(true);
+    expect(fresh.manifestFor("typescript")?.docComments?.block?.[0]).toEqual(["/**", "*/"]);
   });
 });

@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { shardsPackageManager } from "./package-manifests.js";
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { shardsPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types and package-manifests.ts only.
  */
 export const crystalManifest: LanguagePluginManifest = {
+  docComments: HASH_DOCS,
   language: "crystal",
   family: "crystal",
   // `Foo.new(…)` runs `initialize`.

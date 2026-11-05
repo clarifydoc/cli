@@ -1,6 +1,7 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pascalFrameworkRules } from "./frameworks.js";
 import { pascalSearchPaths } from "./search-paths.js";
+import { PASCAL_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -9,6 +10,7 @@ import { pascalSearchPaths } from "./search-paths.js";
  * this module must stay a leaf: types, frameworks.ts, search-paths.ts and package-manifests.ts only.
  */
 export const pascalManifest: LanguagePluginManifest = {
+  docComments: PASCAL_DOCS,
   language: "pascal",
   family: "pascal",
   parsing: "tree-sitter",

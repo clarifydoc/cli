@@ -9,7 +9,7 @@ import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
 import { declarationHeadLine } from "../../core/doc-comments.js";
-import { ensureLanguagesLoaded, pluginFor } from "../../extractors/registry.js";
+import { manifestFor } from "../../extractors/registry.js";
 import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
 import { untrackedAmong } from "../../core/source-revision.js";
 
@@ -228,9 +228,7 @@ export function extractTool(ctx: ToolContext): McpTool {
         // No manifest to judge by: the line count is the only sign left.
         if (!moved.has(span.file) && lineCount !== undefined && Math.abs(lineCount - lines.length) > 1) stale.add(span.file);
         // The decorators, attributes and doc comment above the definition are part of what it says.
-        // Plugins load lazily: the server has read no source of this language yet.
-        if (span.head?.language) await ensureLanguagesLoaded([span.head.language]);
-        const from = span.head ? declarationHeadLine(lines, span.line, span.head.language ? pluginFor(span.head.language)?.docComments : undefined, span.head) : span.line;
+        const from = span.head ? declarationHeadLine(lines, span.line, span.head.language ? manifestFor(span.head.language)?.docComments : undefined, span.head) : span.line;
         const body = lines.slice(from - 1, span.endLine).join("\n");
         const tokens = Math.ceil(body.length / CHARS_PER_TOKEN);
         if (span.depth > 0 && used + tokens > maxTokens) {

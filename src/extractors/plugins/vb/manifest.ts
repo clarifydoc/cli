@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { VB_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -7,6 +8,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const vbManifest: LanguagePluginManifest = {
+  docComments: VB_DOCS,
   language: "vb",
   family: "dotnet",
   packageEcosystems: ["nuget"],

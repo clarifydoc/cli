@@ -6,6 +6,7 @@ import { goFrameworkRules } from "./frameworks.js";
 import { goPackageManager } from "./package-manifests.js";
 import { goPackageDirectory } from "./package-directory.js";
 import { goServiceConfig } from "./service-config.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -14,6 +15,7 @@ import { goServiceConfig } from "./service-config.js";
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and leaf rules only.
  */
 export const goManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: goMigrationFiles,
   testCommand: goTestCommand,
   projectCommands: goProjectCommands,

@@ -2,6 +2,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 import { cppFrameworkRules } from "./frameworks.js";
 import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -10,6 +11,7 @@ import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const cppManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "cpp",
   family: "cfam",
   packageManagers: [vcpkgPackageManager, conanPackageManager],

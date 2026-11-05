@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { scalaSpec } from "./index.js";
@@ -27,7 +26,6 @@ export const scalaMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: scalaReachability,
   ...scalaManifest,
-  docComments: C_STYLE_DOCS,
   preprocess: (rawSource, relativePath) =>
     relativePath.toLowerCase().endsWith(".sc") && !SCALA_DECLARATION_RE.test(rawSource)
       ? { skip: "not a Scala script (no Scala declaration — SuperCollider?)" }

@@ -1,4 +1,3 @@
-import { DASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { luaSpec } from "./index.js";
@@ -11,7 +10,6 @@ export const luaMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: luaReachability,
   ...luaManifest,
-  docComments: DASH_DOCS,
   regexSpec: luaSpec,
   // Functions and calls read by the grammars-v4 Lua grammar, while the `antlr:lua` feature is on (antlr.ts).
   antlr: { grammar: "lua", load: () => import("./antlr.js").then((m) => m.readLua) },

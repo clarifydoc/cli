@@ -70,7 +70,8 @@ the import index, a class index (`resolve`, `supertypes`, `ancestors`,
 (`LanguagePluginManifest`): extensions, `family`, parsing kind, grammar
 location, test-file patterns, external prefixes/roots, builtin members,
 framework import hints, `frameworks.ts` rules, `activationFiles`,
-`dispatchLanguages`, and the plugin's package managers (`packageManagers` —
+`dispatchLanguages`, `docComments` (from `shared/doc-comment-specs.ts`),
+and the plugin's package managers (`packageManagers` —
 manifest parsers + how an import names a package, from `package-manifests.ts`
 — and `packageEcosystems`, the ecosystems the language imports from).
 The registry imports every manifest EAGERLY and builds the module-scope
@@ -78,7 +79,9 @@ constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
 `ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
 `ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `PACKAGE_MANAGERS`,
 `testFilePatternsFor`, `inferFileFrameworks`). Manifests are leaf modules:
-types, the plugin's `frameworks.ts` and `package-manifests.ts` only. Each
+types, the plugin's `frameworks.ts` and `package-manifests.ts` and leaf
+rules only. Static data a tool reads on demand (the MCP server loads no
+plugin until it analyzes) belongs here, never on the meta. Each
 meta spreads its manifest so static fields have one source of truth.
 
 The metas (LAZY tier) sit behind a static thunk map (`LOADERS`) of dynamic

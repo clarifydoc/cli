@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { zigPackageManager } from "./package-manifests.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { zigPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types and package-manifests.ts only.
  */
 export const zigManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "zig",
   family: "zig",
   packageManagers: [zigPackageManager],

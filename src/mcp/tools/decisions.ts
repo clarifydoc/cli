@@ -8,7 +8,7 @@ import { noResults } from "../empty.js";
 import { findContextDocs, findDecisionMarkers, judgeStaleness, type ContextDoc, type DecisionMarker, type DocStaleness } from "../../core/context-docs.js";
 import { loadProjectConfig } from "../../core/project-config.js";
 import { commitReasons, findReasonComments, type CommitReason, type CommitReasons, type FunctionSpan, type ReasonComment } from "../../core/stated-reasons.js";
-import { ensureLanguagesLoaded, pluginFor } from "../../extractors/registry.js";
+import { manifestFor } from "../../extractors/registry.js";
 import type { FileAnalysis } from "../../types/analysis.js";
 
 const MAX_READ = 30_000;
@@ -138,10 +138,8 @@ export function contextDocsTool(ctx: ToolContext): McpTool {
         const analysis = await ctx.store.fileAnalysis(file);
         const fn = functionArg ? mustResolveFunction(analysis, file, functionArg) : undefined;
         const terms = query?.split(/\s+/).filter(Boolean) ?? [];
-        const [{ comments, unread }, commits] = await Promise.all([
-          reasonComments(source, file, analysis, fn),
-          commitReasons(root, file, fn ? { lines: [fn.line, fn.endLine] } : {}),
-        ]);
+        const { comments, unread } = reasonComments(source, file, analysis, fn);
+        const commits = await commitReasons(root, file, fn ? { lines: [fn.line, fn.endLine] } : {});
         const shownComments = rank(comments, terms, (c) => `${c.text} ${c.anchor?.name ?? ""}`);
         const shownCommits = rank(commits.reasons, terms, (c) => `${c.subject} ${c.excerpt}`);
         const of = fn ? `${fn.name}() in ${file}` : file;
@@ -252,11 +250,10 @@ function mustResolveFunction(analysis: FileAnalysis | null, file: string, name: 
 }
 
 /** The reason-stating comments of a file, narrowed to those in or directly above `fn`; `unread` says why none could be read. */
-async function reasonComments(source: string, file: string, analysis: FileAnalysis | null, fn: FunctionSpan | undefined): Promise<{ comments: ReasonComment[]; unread?: string }> {
+function reasonComments(source: string, file: string, analysis: FileAnalysis | null, fn: FunctionSpan | undefined): { comments: ReasonComment[]; unread?: string } {
   if (!analysis) return { comments: [], unread: "no per-file analysis" };
   if (analysis.generated || analysis.vendoredLibrary) return { comments: [], unread: "generated or vendored file" };
-  // Plugins load lazily; the comment syntax is on the language's meta.
-  const spec = await ensureLanguagesLoaded([analysis.language]).then(() => pluginFor(analysis.language)?.docComments, () => undefined);
+  const spec = manifestFor(analysis.language)?.docComments;
   if (!spec) return { comments: [], unread: `no comment syntax declared for ${analysis.language}` };
   const all = findReasonComments(source, file, spec, spansOf(analysis));
   return { comments: fn ? all.filter((c) => (c.anchor?.name === fn.name && c.anchor.line === fn.line) || (c.line >= fn.line && c.endLine <= fn.endLine)) : all };

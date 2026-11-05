@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const cManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "c",
   family: "cfam",
   packageEcosystems: ["vcpkg", "conan"],

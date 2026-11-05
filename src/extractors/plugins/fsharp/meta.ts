@@ -1,4 +1,3 @@
-import { ML_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { fsharpManifest } from "./manifest.js";
@@ -23,7 +22,6 @@ export const fsharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: fsharpReachability,
   ...fsharpManifest,
-  docComments: ML_DOCS,
   preprocess: (rawSource, relativePath) =>
     relativePath.toLowerCase().endsWith(".fs") && GLSL_RE.test(rawSource) ? { skip: "GLSL shader, not F#" } : null,
   functionsClasses: new FSharpExtractor(),

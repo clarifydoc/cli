@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { extractCsharpScheduledJobs } from "./scheduled-jobs.js";
 import { extractAspireResources } from "./aspire.js";
 import { extractCsharpTypeAliases } from "./type-aliases.js";
@@ -41,7 +40,6 @@ export const csharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: csharpReachability,
   ...csharpManifest,
-  docComments: C_STYLE_DOCS,
   // `.csx` scripts: blank `#r`/`#load`, restore them as imports; C# 14 `extension(T x) { … }` blocks.
   preprocess: preprocessCsharp,
   routes: csharpRouteExtractor,

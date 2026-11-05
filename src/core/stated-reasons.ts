@@ -12,7 +12,7 @@
  * "otherwise return the default"), and licence headers, commented-out code
  * and generated files are not read.
  *
- * Comment syntax is the language's own (`LanguagePluginMeta.docComments`);
+ * Comment syntax is the language's own (`LanguagePluginManifest.docComments`);
  * core knows none of its own.
  */
 

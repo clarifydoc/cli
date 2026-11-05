@@ -4,6 +4,7 @@ import { phpTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { phpFrameworkRules, phpMarkerCandidates } from "./frameworks.js";
 import { composerPackageManager } from "./package-manifests.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -12,6 +13,7 @@ import { composerPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const phpManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: phpMigrationFiles,
   testCommand: phpTestCommand,
   projectCommands: phpProjectCommands,

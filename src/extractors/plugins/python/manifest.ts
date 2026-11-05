@@ -7,6 +7,7 @@ import { pypiPackageManager } from "./package-manifests.js";
 import { pythonStandardImport } from "./standard-library.js";
 import { resolvePythonImport } from "./module-resolver.js";
 import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
+import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -15,6 +16,7 @@ import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const pythonManifest: LanguagePluginManifest = {
+  docComments: PYTHON_DOCS,
   migrationFiles: pythonMigrationFiles,
   blockingCalls: /^(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|urllib\.request\.urlopen|urlopen|subprocess\.(?:run|call|check_call|check_output))$/,
   testCommand: pythonTestCommand,

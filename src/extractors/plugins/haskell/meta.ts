@@ -1,4 +1,3 @@
-import { DASH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { haskellSpec } from "./index.js";
@@ -10,7 +9,6 @@ export const haskellMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: haskellReachability,
   ...haskellManifest,
-  docComments: DASH_DOCS,
   regexSpec: haskellSpec,
   // Functions and calls read by tree-sitter-haskell while the `tree-sitter:haskell` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "haskell", load: () => import("./tree-sitter.js").then((m) => m.loadHaskellReader()) },

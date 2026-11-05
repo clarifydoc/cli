@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -29,7 +28,6 @@ export const dartMeta: LanguagePluginMeta = {
   reachability: dartReachability,
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"', "'"] }),
   ...dartManifest,
-  docComments: C_STYLE_DOCS,
   regexSpec: dartSpec,
   // Functions and calls read by tree-sitter-dart while the `tree-sitter:dart` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "dart", load: () => import("./tree-sitter.js").then((m) => m.loadDartReader()) },

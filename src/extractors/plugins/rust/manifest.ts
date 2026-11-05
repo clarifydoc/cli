@@ -5,6 +5,7 @@ import { rustTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
 import { cargoPackageManager } from "./package-manifests.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -13,6 +14,7 @@ import { cargoPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rustManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: rustMigrationFiles,
   resolveImport: resolveRustImport,
   testCommand: rustTestCommand,

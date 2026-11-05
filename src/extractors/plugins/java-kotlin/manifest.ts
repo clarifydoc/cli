@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { javaKotlinFrameworkRules } from "./frameworks.js";
 import { mavenPackageManager, gradlePackageManager } from "./package-manifests.js";
 import { jvmServiceConfig } from "./service-config.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -86,6 +87,7 @@ const JVM_BUILTIN_MEMBERS = [
 ];
 
 export const javaManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: jvmMigrationFiles,
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
@@ -113,6 +115,7 @@ export const javaManifest: LanguagePluginManifest = {
 };
 
 export const kotlinManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   testCommand: jvmTestCommand,
   language: "kotlin",
   family: "jvm",

@@ -1,6 +1,7 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { swiftFrameworkRules } from "./frameworks.js";
 import { swiftpmPackageManager, cocoapodsPackageManager } from "./package-manifests.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -9,6 +10,7 @@ import { swiftpmPackageManager, cocoapodsPackageManager } from "./package-manife
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const swiftManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "swift",
   family: "swift",
   // One module's files share their top-level scope; a directory is the closest evidence.

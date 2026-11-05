@@ -1171,6 +1171,13 @@ export interface LanguagePluginManifest {
    */
   blockingCalls?: RegExp;
   /**
+   * How the language documents a function or class, so its first sentence
+   * becomes `FunctionInfo.doc` / `ClassInfo.doc` (core/doc-comments.ts). On
+   * the manifest because tools read it on demand, with no plugin body loaded.
+   * Shared shapes live in `extractors/shared/doc-comment-specs.ts`.
+   */
+  docComments?: DocCommentSpec;
+  /**
    * Where a client router renders its pages, as it reads in a UI file's source (`<RouterView`,
    * `<Outlet`, Blazor's `@Body`). A UI file rendering it that no page uses is the app's shell:
    * what its components link to is offered around every page (core/screen-flow.ts).
@@ -1719,13 +1726,6 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * `grammar`, which registers it with parser-manager without moving the language off the regex path.
    */
   treeSitter?: ParserFrontEnd;
-
-  /**
-   * How the language documents a function or class, so its first sentence
-   * becomes `FunctionInfo.doc` / `ClassInfo.doc` (core/doc-comments.ts).
-   * Shared shapes live in `extractors/shared/doc-comment-specs.ts`.
-   */
-  docComments?: DocCommentSpec;
 
   /** Language-specific security rules (see SecurityRule.priority). */
   securityRules?: readonly SecurityRule[];

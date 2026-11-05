@@ -7,6 +7,7 @@ import { javascriptFrameworkRules } from "./frameworks.js";
 import { npmPackageManager } from "./package-manifests.js";
 import { jsServiceConfig } from "./service-config.js";
 import { jsImportedFile } from "./node-builtins.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Prototype members of core JS builtins (Array/Set/Map/String/Object/Promise/
@@ -129,6 +130,7 @@ export function isTypesOnlyPackage(text: string): boolean {
 }
 
 export const typescriptManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   routerOutlet: JS_ROUTER_OUTLET,
   testCommand: jsTestCommand,
@@ -167,6 +169,7 @@ export const typescriptManifest: LanguagePluginManifest = {
 };
 
 export const javascriptManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: jsMigrationFiles,
   blockingCalls: /^(?:(?:fs|child_process)\.)?(?:readFileSync|writeFileSync|appendFileSync|readdirSync|statSync|existsSync|mkdirSync|copyFileSync|execSync|execFileSync|spawnSync)$/,
   routerOutlet: JS_ROUTER_OUTLET,

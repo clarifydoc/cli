@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { hackagePackageManager } from "./package-manifests.js";
+import { DASH_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { hackagePackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const haskellManifest: LanguagePluginManifest = {
+  docComments: DASH_DOCS,
   language: "haskell",
   family: "haskell",
   packageManagers: [hackagePackageManager],

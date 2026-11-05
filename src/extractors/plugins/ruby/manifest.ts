@@ -6,6 +6,7 @@ import { rubyFrameworkRules } from "./frameworks.js";
 import { rubygemsPackageManager } from "./package-manifests.js";
 import { rubyAutoloadedFiles, rubyLexicalConstants, rubyModelFinders, rubyTypeNamedByReceiver } from "./autoload.js";
 import { resolveRubyRequire } from "./require-paths.js";
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -14,6 +15,7 @@ import { resolveRubyRequire } from "./require-paths.js";
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and the other leaf rules it imports.
  */
 export const rubyManifest: LanguagePluginManifest = {
+  docComments: HASH_DOCS,
   migrationFiles: rubyMigrationFiles,
   testCommand: rubyTestCommand,
   projectCommands: rubyProjectCommands,

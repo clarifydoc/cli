@@ -1,4 +1,3 @@
-import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { DjangoCommandResolver } from "./django/commands.js";
 import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-aliases.js";
@@ -149,7 +148,6 @@ const SECURITY_RULES: readonly SecurityRule[] = [
 
 export const pythonMeta: LanguagePluginMeta = {
   ...pythonManifest,
-  docComments: PYTHON_DOCS,
   knownPackages: pypiPackages,
   routes: pythonRouteExtractor,
   routeResolvers: [djangoUrlconfResolver, fastapiInheritedGuards],

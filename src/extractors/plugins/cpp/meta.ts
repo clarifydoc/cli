@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { cppSpec } from "./index.js";
@@ -26,7 +25,6 @@ export const cppMeta: LanguagePluginMeta = {
   reachability: cFamilyReachability,
   regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cppManifest,
-  docComments: C_STYLE_DOCS,
   regexSpec: cppSpec,
   antlr: { grammar: "cpp", load: () => import("./antlr.js").then((m) => m.readCpp) },
   knownPackages: nativePackages,

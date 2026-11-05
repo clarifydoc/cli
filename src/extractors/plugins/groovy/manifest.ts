@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { groovyFrameworkRules } from "./frameworks.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { groovyFrameworkRules } from "./frameworks.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const groovyManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "groovy",
   family: "jvm",
   // Gradle declares Groovy's dependencies (read by java-kotlin's gradle manager).

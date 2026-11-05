@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -33,7 +32,6 @@ export const rustMeta: LanguagePluginMeta = {
   // adds is `?` as an exit and the lifetime tick, which is not a string quote.
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
-  docComments: C_STYLE_DOCS,
   regexSpec: rustSpec,
   // Functions and calls read by the grammars-v4 Rust grammar while the `antlr:rust` feature is on (antlr.ts).
   antlr: { grammar: "rust", load: () => import("./antlr.js").then((m) => m.readRust) },

@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { cranPackageManager } from "./package-manifests.js";
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { cranPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const rManifest: LanguagePluginManifest = {
+  docComments: HASH_DOCS,
   language: "r",
   family: "r",
   packageManagers: [cranPackageManager],

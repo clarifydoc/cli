@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -20,7 +19,6 @@ export const cMeta: LanguagePluginMeta = {
   // C: the brace defaults, plus `goto` drawn as the jump it is.
   regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
   ...cManifest,
-  docComments: C_STYLE_DOCS,
   regexSpec: cSpec,
   // Functions and calls read by the grammars-v4 C grammar, in two passes, while the `antlr:c` feature is on (antlr.ts).
   antlr: { grammar: "c", load: () => import("./antlr.js").then((m) => m.readC) },

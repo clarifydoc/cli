@@ -1,6 +1,5 @@
 import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
@@ -283,7 +282,6 @@ const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterRe
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,
-  docComments: C_STYLE_DOCS,
   routes: javascriptRouteExtractor,
   functionsClasses,
   importsExports,
@@ -317,7 +315,6 @@ export const typescriptMeta: LanguagePluginMeta = {
 
 export const javascriptMeta: LanguagePluginMeta = {
   ...javascriptManifest,
-  docComments: C_STYLE_DOCS,
   routes: javascriptRouteExtractor,
   functionsClasses,
   importsExports,

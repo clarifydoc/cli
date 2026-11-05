@@ -3,7 +3,7 @@
  * `FunctionInfo.doc` / `ClassInfo.doc`. Read from the source as written: the
  * comment block just above the declaration (decorators and attributes may sit
  * between) or, where the language says so, the docstring that opens its body.
- * The language's shape comes from its plugin (`docComments`); core knows no
+ * The language's shape comes from its plugin's manifest (`docComments`); core knows no
  * comment syntax of its own.
  *
  * Kept short on purpose: a first sentence, capped. It says what a function is

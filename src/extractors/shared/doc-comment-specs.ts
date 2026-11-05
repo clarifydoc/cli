@@ -1,6 +1,6 @@
 /**
- * The doc-comment shapes languages share (`LanguagePluginMeta.docComments`).
- * Leaf module: plugin metas import it, it imports nothing but types.
+ * The doc-comment shapes languages share (`LanguagePluginManifest.docComments`).
+ * Leaf module: plugin manifests import it, it imports nothing but types.
  */
 import type { DocCommentSpec } from "../../types/language-plugin.js";
 

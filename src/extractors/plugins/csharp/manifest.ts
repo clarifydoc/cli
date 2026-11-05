@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { csharpFrameworkRules } from "./frameworks.js";
 import { nugetPackageManager } from "./package-manifests.js";
 import { csharpServiceConfig } from "./service-config.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -13,6 +14,7 @@ import { csharpServiceConfig } from "./service-config.js";
  * this module must stay a leaf: types, frameworks.ts, package-manifests.ts and service-config.ts only.
  */
 export const csharpManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   migrationFiles: csharpMigrationFiles,
   testCommand: dotnetTestCommand,
   projectCommands: dotnetProjectCommands,

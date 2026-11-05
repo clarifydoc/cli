@@ -1,4 +1,3 @@
-import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -39,7 +38,6 @@ export const swiftMeta: LanguagePluginMeta = {
     { match: /^repeat\s*\{?\s*$/, type: "do_statement" },
   ], { quotes: ['"'] }),
   ...swiftManifest,
-  docComments: C_STYLE_DOCS,
   regexSpec: swiftSpec,
   // Functions and calls read by tree-sitter-swift while the `tree-sitter:swift` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "swift", load: () => import("./tree-sitter.js").then((m) => m.loadSwiftReader()) },
