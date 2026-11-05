@@ -10,7 +10,8 @@ import type { Tree } from "web-tree-sitter";
  * Each only where the file imports the framework's function, so a project's own `createApp`
  * (a store action of that name) is none. The line of the mounting call, or undefined.
  */
-export function extractAppMount(_tree: Tree, sourceText: string): { line: number } | undefined {
+export function extractAppMount(_tree: Tree, sourceText: string, filePath?: string): { line: number; routed?: true } | undefined {
+  if (filePath && NUXT_APP_FILE.test(filePath)) return { line: 1, routed: true };
   if (!GATE.test(sourceText)) return undefined;
   for (const { imports, call } of MOUNTS) {
     if (!imports.test(sourceText)) continue;
@@ -19,6 +20,9 @@ export function extractAppMount(_tree: Tree, sourceText: string): { line: number
   }
   return undefined;
 }
+
+/** Nuxt starts no app in a file of its own: `app.vue` (or `app/app.vue`) and the default layout are the root that shows every page. */
+const NUXT_APP_FILE = /^(?!(?:.*\/)?(?:pages|components)\/)(?:.*\/)?(?:(?:app\/)?app\.vue|layouts\/default\.vue)$/;
 
 const GATE = /\b(?:createApp|Vue|bootstrapApplication|bootstrapModule|createRoot|hydrateRoot|render|mount)\s*\(/;
 

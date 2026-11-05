@@ -711,7 +711,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (attributeReads && attributeReads.length > 0) analysis.attributeReads = attributeReads;
     const browserNavigations = hooks?.browserNavigations?.(tree, sourceText);
     if (browserNavigations && browserNavigations.length > 0) analysis.browserNavigations = browserNavigations;
-    const appMount = hooks?.appMount?.(tree, sourceText);
+    const appMount = hooks?.appMount?.(tree, sourceText, file.relativePath);
     if (appMount) analysis.appMount = appMount;
 
     // Paths named as string data the toolchain loads (glob imports, worker

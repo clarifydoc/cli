@@ -185,6 +185,13 @@ export function testReachWalker(
       let frontier = [start];
       let nearest: { key: string; link: SymbolLink; depth: number } | null = null;
       let count = 0;
+      /** Whether a file of the path from the target up to `key` is replaced by a double. */
+      const chainMocked = (mocked: ReadonlySet<string>, key: string): boolean => {
+        for (let at: string | undefined = key; at !== undefined; at = parent.get(at)?.from) {
+          if (mocked.has(at.slice(0, at.indexOf("::")))) return true;
+        }
+        return false;
+      };
       for (let depth = 1; depth <= maxDepth && frontier.length; depth++) {
         const next: string[] = [];
         for (const key of frontier) {
@@ -194,8 +201,9 @@ export function testReachWalker(
             if (seen.has(caller)) continue;
             // The test file replaced the target's module, or the one it calls into, with a double:
             // the call reaches the double.
+            // A module anywhere on the way down is replaced just as well: the test runs the double, never what lies below it.
             const mocked = mocks.get(l.sourceFile);
-            if (mocked && (mocked.has(t.file) || mocked.has(l.targetFile)) && testCode.isTest(l.sourceFile, l.sourceSymbol)) continue;
+            if (mocked && (mocked.has(l.targetFile) || chainMocked(mocked, key)) && testCode.isTest(l.sourceFile, l.sourceSymbol)) continue;
             seen.add(caller);
             parent.set(caller, { from: key, link: l });
             if (testCode.isTest(l.sourceFile, l.sourceSymbol)) {

@@ -20,20 +20,33 @@ export function joinTestNavigations(input: {
   projectOf: (file: string) => string | undefined;
   /** Whether a file is test code. */
   isTest: (file: string) => boolean;
+  /** UI files rendering their router's outlet: a screen of them at a parent path wraps the child routes below it. */
+  outlets?: ReadonlySet<string>;
 }): TestNavigationRow[] {
-  const { analyses, screens, projectOf, isTest } = input;
+  const { analyses, screens, projectOf, isTest, outlets } = input;
   const out: TestNavigationRow[] = [];
   let match: ReturnType<typeof screenPathMatcher> | undefined;
   for (const a of analyses) {
     if (!a.browserNavigations?.length || !isTest(a.filePath)) continue;
     match ??= screenPathMatcher(screens, projectOf);
     const enclosing = functionsByLine(a);
+    const layoutsAbove = (path: string, project: string | undefined): ScreenInfo[] => {
+      const segs = path.split("/").filter(Boolean);
+      const out: ScreenInfo[] = [];
+      for (let n = segs.length - 1; n >= 1; n--) {
+        for (const s of match!.screensAtPath(`/${segs.slice(0, n).join("/")}`, project)) {
+          if (outlets!.has(s.filePath) && projectOf(s.filePath) === project) out.push(s);
+        }
+      }
+      return out;
+    };
     for (const n of a.browserNavigations) {
       const hits = match.screensAtPath(n.path, a.projectId);
       // Every app has a home: `/` reached across sub-projects names no one app's.
-      const screens = hits.length && (n.path !== "/" || projectOf(hits[0]!.filePath) === a.projectId)
-        ? [...new Set(hits.map((s) => s.filePath))].sort(byOrdinal)
-        : [];
+      const found = hits.length && (n.path !== "/" || projectOf(hits[0]!.filePath) === a.projectId) ? [...hits] : [];
+      // A layout route wraps the page below it: `/clubs/7/players` renders `/clubs/:id`'s outlet screen too.
+      if (found.length && outlets?.size) found.push(...layoutsAbove(n.path, projectOf(found[0]!.filePath)));
+      const screens = [...new Set(found.map((s) => s.filePath))].sort(byOrdinal);
       const symbol = enclosing(n.line);
       out.push({ file: a.filePath, line: n.line, ...(symbol ? { symbol } : {}), path: n.path, ...(screens.length ? { screens } : {}) });
     }
@@ -87,10 +100,12 @@ export function pagePartsOf(input: {
   routeFiles: ReadonlySet<string>;
   /** Files starting a browser app (`FileAnalysis.appMount`). */
   mounts: readonly string[];
+  /** Of them, the file-routed frameworks' app files, which import no page and show every page of their sub-project. */
+  routedMounts?: readonly string[];
   projectOf: (file: string) => string | undefined;
   isTest: (file: string) => boolean;
 }): Record<string, string[]> {
-  const { rows, uses, imports, lazy, screens, routeFiles, mounts, projectOf, isTest } = input;
+  const { rows, uses, imports, lazy, screens, routeFiles, mounts, routedMounts = [], projectOf, isTest } = input;
   const ui = new Set(screens.map((s) => s.filePath));
   const pages = new Set(screens.filter((s) => s.routePath || s.otherRoutes?.length || s.renderedBy?.length).map((s) => s.filePath));
   const users = new Map<string, number>();
@@ -114,8 +129,11 @@ export function pagePartsOf(input: {
   const entryOf = (opened: readonly string[]): string | undefined => {
     const project = projectOf(opened[0]!);
     const found = mounts.filter((m) => projectOf(m) === project && opened.some((s) => closureOf(m).has(s)));
-    return found.length === 1 ? found[0] : undefined;
+    if (found.length) return found.length === 1 ? found[0] : undefined;
+    // A file-routed app: its app file and default layout show the page without importing it.
+    return routedMounts.filter((m) => projectOf(m) === project).sort(byOrdinal)[0];
   };
+  const routedOf = (entry: string): string[] => (routedMounts.includes(entry) ? routedMounts.filter((m) => projectOf(m) === projectOf(entry)) : [entry]);
 
   const partsOf = (start: string): string[] => {
     const parts = new Set([start]);
@@ -142,7 +160,11 @@ export function pagePartsOf(input: {
     if (!row.screens) continue;
     const entry = entryOf(row.screens);
     if (entry) row.entry = entry;
-    for (const f of [...row.screens, ...(entry ? [entry] : [])]) out[f] ??= partsOf(f);
+    for (const f of row.screens) out[f] ??= partsOf(f);
+    if (entry) {
+      // A file-routed app's parts are those of its app file and its default layout together.
+      out[entry] ??= [...new Set(routedOf(entry).flatMap((m) => [...(m === entry ? [] : [m]), ...partsOf(m)]))].sort(byOrdinal);
+    }
   }
   return out;
 }

@@ -381,7 +381,11 @@ export interface FileAnalysis {
    * `bootstrapApplication(AppComponent)`, `createRoot(el).render(…)`). A browser test opening any
    * page of the app runs it.
    */
-  appMount?: { line: number };
+  appMount?: {
+    line: number;
+    /** A file-routed framework's app file (Nuxt's `app.vue`, `layouts/default.vue`): it imports no page, yet shows every page of its sub-project. */
+    routed?: true;
+  };
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**

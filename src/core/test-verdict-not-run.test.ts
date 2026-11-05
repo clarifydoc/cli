@@ -64,6 +64,35 @@ const files: Record<string, string> = {
     "  });",
     "});",
   ].join("\n"),
+  // A module reached only through a module the test replaces: the double runs, never what lies below it.
+  "web/src/api/standings.ts": [
+    "export async function getStandings(league: string): Promise<number[]> {",
+    "  const res = await fetch(`/api/v2/leagues/${league}/standings`);",
+    "  return res.json();",
+    "}",
+  ].join("\n"),
+  "web/src/store/standings.ts": [
+    'import { getStandings } from "@/api/standings";',
+    "export function loadStandings(league: string): Promise<number[]> {",
+    "  return getStandings(league);",
+    "}",
+  ].join("\n"),
+  "web/src/store/season.ts": [
+    'import { loadStandings } from "./standings";',
+    "export async function seasonPoints(league: string): Promise<number> {",
+    "  return (await loadStandings(league)).length;",
+    "}",
+  ].join("\n"),
+  "web/src/store/season.spec.ts": [
+    'import { describe, it, expect, vi } from "vitest";',
+    'import { seasonPoints } from "./season";',
+    'vi.mock("./standings", () => ({ loadStandings: async () => [3, 1] }));',
+    'describe("season", () => {',
+    '  it("counts", async () => {',
+    '    expect(await seasonPoints("north")).toBe(2);',
+    "  });",
+    "});",
+  ].join("\n"),
   // A Go package with a file only Windows builds compile.
   "svc/go.mod": "module example.com/garage\n\ngo 1.22\n",
   "svc/garage/garage.go": ["package garage", "", "func ParkCar(bay int) int {", "\treturn bay + 1", "}", ""].join("\n"),
@@ -141,6 +170,11 @@ describe("test verdict: what a test run does not run", () => {
     expect(await verdictOf("web/src/api/clubs.ts")).toEqual({ state: "untested", basis: [] });
     // The store the same test drives is tested.
     expect((await verdictOf("web/src/store/clubs.ts")).state).toBe("tested");
+  });
+
+  it("does not count a test for what lies below a module it replaces, through a third module", async () => {
+    expect(await verdictOf("web/src/api/standings.ts")).toEqual({ state: "untested", basis: [] });
+    expect((await verdictOf("web/src/store/season.ts")).state).toBe("tested");
   });
 
   it("counts a partial mock, which keeps the module's own functions", async () => {
