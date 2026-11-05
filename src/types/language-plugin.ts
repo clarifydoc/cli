@@ -1156,6 +1156,12 @@ export interface LanguagePluginManifest {
    */
   marksEndNames?: boolean;
   /**
+   * A member read written without parentheses (`club.stadium`, `self.players`) may be a method the class declares
+   * (Ruby has no property access): where the class lists no field of that name, the chain goes on from the method's
+   * declared return type.
+   */
+  parenlessMemberReads?: boolean;
+  /**
    * The class a receiver's own name states, in a language whose locals carry
    * no declared type the linker can read (Ruby's `match_report.close!` →
    * `MatchReport`, Scala's `api` → `Api`): evidence for a unique-name method

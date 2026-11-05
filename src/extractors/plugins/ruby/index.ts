@@ -3,6 +3,7 @@ import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addConcernClassMethods } from "./concerns.js";
+import { addMacroMembers } from "./member-macros.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
@@ -364,6 +365,45 @@ function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
       have.add(`${name}@${i + 1}`);
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
     }
+  }
+}
+
+/** The association readers a model class declares: `has_many :players` → `players` (a chain off it is typed by the reader). */
+function associationNames(lines: readonly string[], cls: ClassInfo): Set<string> {
+  const out = new Set<string>();
+  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+    const m = /^\s*(?:has_many|has_one|belongs_to|has_and_belongs_to_many)\s*\(?\s*:([a-z_]\w*)/.exec(lines[i] ?? "");
+    if (m) out.add(m[1]!);
+  }
+  return out;
+}
+
+/**
+ * A chain read off a typed local or an association reader the class declares — `club.players.first.train`,
+ * `league.clubs.last.promote` — written without parentheses, which the call patterns leave to their evidence rules.
+ * The head's type is the evidence: the linker follows each step through the reader's or method's declared return
+ * type and links only a chain it can type to the end. An association name no local of the method shadows is typed
+ * as the reader (`localTypes` from `self.players`).
+ */
+function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>): void {
+  const bound = associations.size > 0 ? boundLocals(lines, fn) : new Set<string>();
+  const members = [...associations].filter((n) => !bound.has(n));
+  const heads = new Set<string>(members);
+  for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
+  if (heads.size === 0) return;
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  const re = new RegExp(`(?<![\\w.@$:])(${[...heads].join("|")})((?:\\.[a-z_]\\w*[?!]?){2,4})(?![\\w?!]|\\s*=[^=~>])`, "g");
+  for (const [i, text] of bodyLines(lines, fn)) {
+    const code = text.replace(/\s#.*$/, "");
+    for (const m of code.matchAll(re)) {
+      const name = `${m[1]}${m[2]}`;
+      if (have.has(`${name}@${i + 1}`)) continue;
+      have.add(`${name}@${i + 1}`);
+      fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
+    }
+  }
+  for (const n of members) {
+    if (fn.calls.some((c) => c.name.startsWith(`${n}.`)) && !fn.localTypes?.some((l) => l.name === n)) (fn.localTypes ??= []).push({ name: n, type: "", from: `self.${n}()` });
   }
 }
 
@@ -941,6 +981,7 @@ export const rubySpec: RegexLangSpec = {
 
     for (const cls of classes) {
       addScopeMethods(lines, cls);
+      addMacroMembers(lines, cls, classes);
       separateSingletonMethods(lines, cls);
       typeBareConstructions(lines, cls);
       for (const m of cls.methods) {
@@ -957,9 +998,11 @@ export const rubySpec: RegexLangSpec = {
       // `agents.find(id)` with no local `agents` calls the method `agents` first.
       // Read from code only: a word in a heredoc or `%w[]` is no call.
       const code = rubyCodeLinesOf(lines);
+      const associations = associationNames(lines, cls);
       for (const m of cls.methods) {
         addImplicitReceiverCalls(code, m);
         addTypedLocalCalls(code, m);
+        addMemberChainCalls(code, m, associations);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m);
         addBareStatementCalls(code, cls, m);

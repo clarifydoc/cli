@@ -5526,8 +5526,10 @@ function chainPoint(
     // Inside an extension function, `this` is its receiver (`this.bay.count()` in `fun Garage.total()`).
     const self = consumer ? null : receiverPoint(ctx, analysis, sourceFile, findEnclosingCallable(analysis, sourceSymbol));
     point = self
-      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? null
-      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
+      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? readerResult(ctx, self, own.name)
+      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name)
+        ?? (consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? readerResult(ctx, { typeName: consumer, typeFile: sourceFile, member: "", consumer }, own.name) : null)
+        ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
@@ -5590,9 +5592,15 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     if (!point?.typeFile) return null;
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
-      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? null;
+      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
   }
   return point;
+}
+
+/** A paren-less member read that is no field: in a language where it may be a method call, what the method returns. */
+function readerResult(ctx: LinkContext, point: InjectionPoint, name: string): InjectionPoint | null {
+  if (!point.typeFile || !manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.parenlessMemberReads) return null;
+  return methodResult(ctx, point, name);
 }
 
 /** Package-function calls being resolved to type a chain head — re-entry would recurse without end. */

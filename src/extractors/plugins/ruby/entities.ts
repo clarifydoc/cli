@@ -97,7 +97,10 @@ export class RubyEntityExtractor extends EntityExtractor {
           const rel = this.parseAssociation(cls.name, stmt.text, orm);
           // An association is a relation only: `has_many :players` is no
           // module the model implements.
-          if (rel) relations.push(rel);
+          if (rel) {
+            relations.push(rel);
+            this.addAssociationReader(cls, rel, stmt.text, cls.line + stmt.line);
+          }
         } catch {
           // skip unparseable statement
         }
@@ -125,6 +128,29 @@ export class RubyEntityExtractor extends EntityExtractor {
     }
 
     return { entities, relations };
+  }
+
+  /**
+   * An association is a reader the class gets from its macro (`has_many :players` → `club.players`): a synthetic
+   * method returning the associated model, so `club.players.first.train` chains onto `Player`. A collection is typed
+   * as its element, as a query of the model is everywhere else. A polymorphic association names no class. Written on
+   * the class the file already declares (a concern too: its includers reach the reader through their mixins).
+   */
+  private addAssociationReader(cls: ClassInfo, rel: EntityRelation, statement: string, line: number): void {
+    if (/\b(?:polymorphic|as):|:(?:polymorphic|as)\s*=>/.test(statement)) return;
+    if (cls.methods.some((m) => m.name === rel.fromField && !m.classLevel)) return;
+    cls.methods.push({
+      name: rel.fromField,
+      params: [],
+      returnType: rel.toEntity,
+      isAsync: false,
+      isExported: true,
+      decorators: ["association"],
+      calls: [],
+      line,
+      endLine: line,
+      synthetic: true,
+    });
   }
 
   /**
