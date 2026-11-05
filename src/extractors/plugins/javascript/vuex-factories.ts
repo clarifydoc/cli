@@ -72,6 +72,17 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
     }
   };
   for (const st of tree.rootNode.namedChildren) if (st) statement(st);
+  // `{ namespaced: true, state: {}, actions: { ...channelActions } }`: the module's own `actions` member.
+  if (sourceText.includes("actions") && sourceText.includes("...")) {
+    for (const pair of tree.rootNode.descendantsOfType("pair")) {
+      const holder = pair?.parent;
+      const value = pair?.childForFieldName("value");
+      if (!pair || holder?.type !== "object" || value?.type !== "object" || keyName(pair.childForFieldName("key")) !== "actions") continue;
+      if (!isModuleObject(holder)) continue;
+      const names = value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text);
+      if (names.length > 0) spreads.actions = [...new Set([...(spreads.actions ?? []), ...names])];
+    }
+  }
   const out: StoreShapes = {};
   if (Object.keys(values).length > 0) out.values = values;
   if (Object.keys(functions).length > 0) out.functions = functions;
@@ -88,6 +99,14 @@ function unwrap(n: Node | null | undefined): Node | null {
 
 function declaresNamespaced(obj: Node): boolean {
   return obj.namedChildren.some((p) => p?.type === "pair" && keyName(p.childForFieldName("key")) === "namespaced" && p.childForFieldName("value")?.type === "true");
+}
+
+/** An object that is a store module: it declares `namespaced`, or `state` beside `mutations`/`getters`/`actions`, or is a module file's default export. */
+function isModuleObject(obj: Node): boolean {
+  const keys = new Set(obj.namedChildren.map((c) => (c?.type === "pair" ? keyName(c.childForFieldName("key")) : c?.type === "shorthand_property_identifier" ? c.text : null)));
+  if (keys.has("namespaced") || keys.has("mutations") || keys.has("getters")) return true;
+  if (keys.has("state")) return true;
+  return obj.parent?.type === "export_statement";
 }
 
 function hasObjectArg(call: Node): boolean {

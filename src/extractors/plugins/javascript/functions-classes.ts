@@ -1567,6 +1567,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // callers invoke (`agent.Profile.get`), and the api-calls inside
               // them need an enclosing symbol to belong to.
               this.extractObjectMembers(name, value, functions, isExported, 0);
+            } else if (name === "actions" && value?.type === "call_expression" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
+              // `const actions = defineActions({ async load({ commit }) {…} })` — a module's `actions`
+              // object handed through a helper: the object passed to the call holds the actions,
+              // named as `const actions = {…}` names them.
+              for (const arg of value.childForFieldName("arguments")?.namedChildren ?? []) {
+                if (arg.type === "object") this.extractObjectMembers(name, arg, functions, isExported, 0);
+              }
             }
             // Named bindings can hide anywhere below (an arrow's body, a
             // useEffect callback, a call argument) — keep walking the value.
