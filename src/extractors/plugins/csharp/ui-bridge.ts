@@ -172,6 +172,15 @@ function findCommand(
   if (!handler || !/^[A-Za-z_]\w*Command$/.test(handler)) return null;
   const exact = findHandler(candidates, handler, uiFile);
   if (exact) return exact;
+  // `KeepCommand = new RelayCommand(Keep)`: the property says which method it runs.
+  const built = candidates.flatMap((c) => {
+    const via = c.cls.properties.find((p) => p.name === handler)?.commandHandler;
+    return via ? [{ ...c, via }] : [];
+  });
+  if (built.length > 0) {
+    const hit = findHandler(built, built[0]!.via, uiFile);
+    if (hit) return hit;
+  }
   const base = handler.slice(0, -"Command".length);
   let best: { file: string; cls: ClassInfo; method: FunctionInfo } | null = null;
   let bestScore = -1;

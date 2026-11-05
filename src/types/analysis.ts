@@ -1380,6 +1380,12 @@ export interface PropertyInfo {
    */
   readAccessor?: string;
   /**
+   * The method a command property runs, when the class builds it over one
+   * (`KeepCommand = new RelayCommand(Keep)`, `new DelegateCommand(() => Keep())`): what a view's
+   * `Command="{Binding KeepCommand}"` reaches. Absent when the command is built over a lambda body or not at all.
+   */
+  commandHandler?: string;
+  /**
    * A computed member's value as written, when its type is not stated (a
    * Python `@property` returning `self.repos.foods`): the project pass types
    * the member as that chain resolves.

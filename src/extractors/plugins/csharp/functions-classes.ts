@@ -1,4 +1,5 @@
 import { constantString } from "./constant-expr.js";
+import { attachCommandHandlers } from "./command-handlers.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
@@ -205,6 +206,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       const key = fieldKeys.get(prop.name);
       if (key && !prop.qualifier) prop.qualifier = key;
     }
+    if (body && properties.length > 0) attachCommandHandlers(body.text, properties);
     if (body && fieldValues.size > 0) refineConstructedFields(this.assignmentsIn(body), fieldValues);
     const strings = body ? this.stringFieldValues(body) : null;
     const superArgs = body ? baseInitializerArgs(body) : null;
