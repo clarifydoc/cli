@@ -1,6 +1,7 @@
 import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import { extractPhpScheduledJobs } from "./scheduled-jobs.js";
 import { phpTaint } from "./taint.js";
+import { extractPhpTypeReferences } from "./type-references.js";
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -115,6 +116,8 @@ export const phpMeta: LanguagePluginMeta = {
     entryPoints: (_tree, sourceText) => extractPhpScheduledJobs(sourceText),
     // Request input followed to a dangerous call inside each request handler.
     taint: phpTaint,
+    // `Rules::GOAL` (also in a property default): the class a constant is read through.
+    typeReferences: extractPhpTypeReferences,
     // Blade templates (.blade.php) surface as UI screens; interactive elements
     // are content-gated on Blade directives (the hook receives no file path).
     screens: (_tree, sourceText, filePath) => extractBladeScreens(sourceText, filePath),

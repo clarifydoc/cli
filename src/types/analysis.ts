@@ -29,7 +29,9 @@ export type TypeUsageKind =
   | "variable"
   | "generic-arg"
   | "cast"
-  | "instantiation";
+  | "instantiation"
+  /** A class constant or enum case read through its class (PHP `Rules::GOAL`). */
+  | "constant";
 
 export interface TypeReference {
   /** The original type token as it appeared in source (e.g. "Promise<User>"). */
