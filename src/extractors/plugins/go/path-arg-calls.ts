@@ -69,6 +69,21 @@ export function goFunctions(lines: readonly string[]): GoFunction[] {
   return out;
 }
 
+/**
+ * Whether the request built on line `at` (`req := httptest.NewRequest(…)`) is handed to a
+ * router later in its function (`e.ServeHTTP(rec, req)`): the app routes it to a handler. A
+ * request handed to a context (`e.NewContext(req, rec)`) and a function called with it runs
+ * that function, not the route.
+ */
+export function servedInProcess(lines: readonly string[], at: number, fns: readonly GoFunction[]): boolean {
+  const name = /\b([A-Za-z_]\w*)\s*(?:,\s*[A-Za-z_]\w*\s*)?:?=\s*(?:http|httptest)\.NewRequest/.exec(lines[at] ?? "")?.[1];
+  const fn = fns.find((f) => f.start <= at && at <= f.end);
+  if (!name || !fn) return false;
+  const served = new RegExp(String.raw`\.ServeHTTP\s*\(\s*(?:[^,()]|\([^()]*\))+,\s*${name}\s*\)`);
+  for (let k = at + 1; k <= fn.end; k++) if (served.test(lines[k]!)) return true;
+  return false;
+}
+
 /** Split at top-level `+`, quotes and parentheses honoured. */
 function plusTerms(expr: string): string[] {
   const out: string[] = [];
@@ -228,23 +243,28 @@ function literalFactorySites(lines: string[], fns: readonly GoFunction[], sites:
  * The request a factory builds from its parameters: `http.NewRequest(method, url, …)`
  * with the URL a parameter, or an `http.Request{Method: method}` in a function
  * taking a URL-named parameter — an api-call of `${url}`, whose verb each call
- * site names.
+ * site names. A test helper's request (and any `httptest.NewRequest`) is a
+ * test's, and counts only when the helper hands it to a router's `ServeHTTP`
+ * (`servedInProcess`): `leagueRequest(t, e, http.MethodGet, "/api/v2/clubs")`
+ * names the endpoint the app then routes.
  */
 export function goRequestFactoryRows(lines: string[]): DataSourceInfo[] {
-  if (!/http\.(?:NewRequest|Request\s*\{)/.test(lines.join("\n"))) return [];
+  if (!/http(?:test)?\.(?:NewRequest|Request\s*\{)/.test(lines.join("\n"))) return [];
   const out: DataSourceInfo[] = [];
-  for (const fn of goFunctions(lines)) {
-    if (fn.testHelper) continue;
+  const fns = goFunctions(lines);
+  for (const fn of fns) {
     const params = new Set(fn.params);
     for (let i = fn.start; i <= fn.end; i++) {
       const line = lines[i]!;
-      const req = /http\.NewRequest(?:WithContext)?\s*\(/.exec(line);
+      const req = /\b(http|httptest)\.NewRequest(?:WithContext)?\s*\(/.exec(line);
       if (req) {
+        if ((fn.testHelper || req[1] === "httptest") && !servedInProcess(lines, i, fns)) continue;
         const args = callArgs(lines, i, req.index + req[0].length - 1);
         const [m, u] = /WithContext/.test(req[0]) ? args.slice(1) : args;
-        if (m && u && params.has(u) && !VERB_LITERAL.test(m)) out.push({ kind: "api-call", name: "http.NewRequest", target: `\${${u}}`, calls: [], line: i + 1 });
+        if (m && u && params.has(u) && !VERB_LITERAL.test(m)) out.push({ kind: "api-call", name: `${req[1]}.NewRequest`, target: `\${${u}}`, calls: [], line: i + 1 });
         continue;
       }
+      if (fn.testHelper) continue;
       const built = /http\.Request\s*\{[^}]*\bMethod\s*:\s*([A-Za-z_]\w*)/.exec(line);
       const url = fn.params.find((p) => URL_PARAM.test(p));
       if (built && params.has(built[1]!) && url) out.push({ kind: "api-call", name: "http.Request", target: `\${${url}}`, calls: [], line: i + 1 });

@@ -1,7 +1,7 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { argValue, callArgs, consumeDestination, publishDestination } from "./mq-destinations.js";
 import { stringConstants } from "./routes.js";
-import { goFunctions, goRequestFactoryRows } from "./path-arg-calls.js";
+import { goFunctions, goRequestFactoryRows, servedInProcess } from "./path-arg-calls.js";
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
@@ -80,9 +80,13 @@ const STRUCT_ENTITY_RE = /&(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{/;
 
 /** `http.Get("url")` / `http.PostForm(...)` — stdlib client helpers. */
 const HTTP_HELPER_RE = /\bhttp\.(Get|Post|PostForm|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
-/** `http.NewRequest("GET", url, ...)` / `http.NewRequestWithContext(ctx, http.MethodGet, url, ...)`. */
+/**
+ * `http.NewRequest("GET", url, ...)` / `http.NewRequestWithContext(ctx, http.MethodGet, url, ...)`,
+ * and a test's in-process request `httptest.NewRequest(http.MethodGet, "/api/v2/clubs/"+id, nil)`,
+ * which the test hands to the router (`e.ServeHTTP(rec, req)`) — the route's handler runs.
+ */
 // `NewRequestWithContext(ctx, …)` / `(r.Context(), …)`: the context comes first.
-const NEW_REQUEST_RE = /http\.NewRequest(?:WithContext\s*\(\s*[\w.]+(?:\(\s*\))?\s*,|\s*\()\s*(?:["'`](GET|POST|PUT|PATCH|DELETE|HEAD)["'`]|http\.Method(Get|Post|Put|Patch|Delete|Head))\s*,\s*(?:["'`]([^"'`]+)["'`])?/;
+const NEW_REQUEST_RE = /\b(http|httptest)\.NewRequest(?:WithContext\s*\(\s*[\w.]+(?:\(\s*\))?\s*,|\s*\()\s*(?:["'`](GET|POST|PUT|PATCH|DELETE|HEAD)["'`]|http\.Method(Get|Post|Put|Patch|Delete|Head))\s*,\s*(?:["'`]([^"'`]+)["'`](?=\s*[,)]))?/;
 /** `client.Get("url")` — any *client-named receiver with an HTTP verb. */
 const CLIENT_VERB_RE = /\b(\w*[Cc]lient)\.\s*(Get|Post|Put|Patch|Delete|Head)\s*\(\s*(?:["'`]([^"'`]+)["'`])?/;
 
@@ -208,13 +212,19 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
     if (newReq) {
-      let target: string | null = newReq[3] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
+      const inProcess = newReq[1] === "httptest";
+      let target: string | null = newReq[4] ?? concatUrl(line.slice(newReq.index! + newReq[0].length));
       // `http.NewRequest("GET", url, nil)` with the URL its function's parameter: a factory each call site fills.
+      // A test helper's request is a test's, and only an in-process one requests the app.
       const urlArg = /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(line.slice(newReq.index! + newReq[0].length))?.[1];
-      if (target === null && urlArg && (functions ??= goFunctions(lines)).some((f) => !f.testHelper && f.start <= i && i <= f.end && f.params.includes(urlArg))) target = `\${${urlArg}}`;
+      if (target === null && urlArg && (functions ??= goFunctions(lines)).some((f) => (inProcess || !f.testHelper) && f.start <= i && i <= f.end && f.params.includes(urlArg))) target = `\${${urlArg}}`;
       // `url := "http://" + fe.ordersAddr` above it: the URL the local was built as.
       if (target === null && urlArg) target = localUrl(lines, i, urlArg);
-      sources.push({ kind: "api-call", name: (newReq[1] ?? newReq[2]!).toUpperCase(), target, calls: [], line: lineNo });
+      // `const clubsPath = "/api/v2/clubs"`: the file's constant.
+      if (target === null && urlArg && inProcess) target = (constants ??= stringConstants(lines)).get(urlArg) ?? null;
+      // An in-process request runs a route only when handed to the router; `"/"` names no route.
+      if (inProcess && (target === null || target === "/" || !servedInProcess(lines, i, (functions ??= goFunctions(lines))))) continue;
+      sources.push({ kind: "api-call", name: (newReq[2] ?? newReq[3]!).toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }
     if (clientVerb) {
