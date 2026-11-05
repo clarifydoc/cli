@@ -36,7 +36,12 @@ const occurrence = (o: Occ) => [
   ...(o.def ? int(3, 1) : []),
   ...(o.typed ? bytes(o.typed.length === 3 ? 8 : 9, o.typed.flatMap((n, i) => int(i + 1, n))) : []),
 ];
-const doc = (path: string, occs: Occ[]) => [...str(1, path), ...occs.flatMap((o) => bytes(2, occurrence(o)))];
+/** Document.position_encoding (6) and Document.text (5), set per path. */
+const docExtras = new Map<string, { enc?: number; text?: string }>();
+const doc = (path: string, occs: Occ[]) => {
+  const x = docExtras.get(path);
+  return [...str(1, path), ...occs.flatMap((o) => bytes(2, occurrence(o))), ...(x?.text !== undefined ? str(5, x.text) : []), ...(x?.enc ? int(6, x.enc) : [])];
+};
 const index = (docs: Array<[string, Occ[]]>, root = "file:///repo") =>
   new Uint8Array([
     ...bytes(1, [...bytes(2, str(1, "scip-typescript")), ...str(3, root)]),
@@ -95,6 +100,49 @@ describe("scipAnswers", () => {
       ["src/b.ts", [{ range: [], typed: [9, 16, 19], symbol: RUN, def: true }]],
     ]));
     expect(scipAnswers(idx, [q("src/a.ts", 5, 3)]).answers).toEqual([{ file: "src/a.ts", line: 5, column: 3, targets: [{ file: "src/b.ts", line: 10 }] }]);
+  });
+
+  describe("position encoding", () => {
+    // `const club = "⚽⚽"; run()` — two football emoji (2 UTF-16 units, 4 UTF-8 bytes, 1 code point each) before the call.
+    const line = 'const club = "\u26bd\u{1f3c6}"; run()';
+    const utf16At = line.indexOf("run");
+    const bytesAt = Buffer.byteLength(line.slice(0, utf16At), "utf8");
+    const pointsAt = [...line.slice(0, utf16At)].length;
+    const run = (enc: number | undefined, col: number, text?: string) => {
+      docExtras.clear();
+      docExtras.set("src/a.ts", { enc, ...(text !== undefined ? { text } : {}) });
+      const idx = decodeScip(index([
+        ["src/a.ts", [{ range: [0, col, col + 3], symbol: RUN }]],
+        ["src/b.ts", [{ range: [9, 16, 19], symbol: RUN, def: true }]],
+      ]));
+      docExtras.clear();
+      return idx;
+    };
+    const hit = [{ file: "src/a.ts", line: 1, column: utf16At, targets: [{ file: "src/b.ts", line: 10 }] }];
+
+    it("reads the document's declared encoding", () => {
+      expect(run(1, 0).documents[0]!.positionEncoding).toBe("utf8");
+      expect(run(3, 0).documents[0]!.positionEncoding).toBe("utf32");
+      expect(run(undefined, 0).documents[0]!.positionEncoding).toBeUndefined();
+    });
+
+    it("converts UTF-8 byte offsets to the query's UTF-16 columns, from the document's text or the file", () => {
+      expect(bytesAt).not.toBe(utf16At);
+      expect(scipAnswers(run(1, bytesAt, line), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
+      expect(scipAnswers(run(1, bytesAt), [q("src/a.ts", 1, utf16At)], undefined, (p, l) => (p === "src/a.ts" && l === 0 ? line : undefined)).answers).toEqual(hit);
+      // The byte offset taken as UTF-16 would miss.
+      expect(scipAnswers(run(undefined, bytesAt), [q("src/a.ts", 1, utf16At)]).answers).toEqual([]);
+    });
+
+    it("converts UTF-32 offsets (code points)", () => {
+      expect(pointsAt).not.toBe(utf16At);
+      expect(scipAnswers(run(3, pointsAt, line), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
+    });
+
+    it("leaves UTF-16 and unspecified documents as they are", () => {
+      expect(scipAnswers(run(2, utf16At), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
+      expect(scipAnswers(run(undefined, utf16At), [q("src/a.ts", 1, utf16At)]).answers).toEqual(hit);
+    });
   });
 
   it("gives no target for a symbol defined outside the index (a dependency)", () => {

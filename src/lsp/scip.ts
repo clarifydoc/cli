@@ -12,8 +12,8 @@ import type { DefinitionQuery } from "./lsp-enhancer.js";
  *
  * Only the fields this needs are decoded — no protobuf dependency:
  * Index.metadata(1) → Metadata.tool_info(2).name(1), .project_root(3);
- * Index.documents(2) → Document.relative_path(1), .occurrences(2) →
- * Occurrence.range(1, packed int32, deprecated) or the typed_range oneof
+ * Index.documents(2) → Document.relative_path(1), .occurrences(2),
+ * Document.text(5), .position_encoding(6); Occurrence.range(1, packed int32, deprecated) or the typed_range oneof
  * single_line_range(8) / multi_line_range(9) — the typed one wins —, .symbol(2),
  * .symbol_roles(3).
  */
@@ -25,8 +25,15 @@ export interface ScipOccurrence {
   roles: number;
 }
 
+/** `Document.position_encoding`: what a range's character offsets count. */
+export type ScipPositionEncoding = "utf8" | "utf16" | "utf32";
+
 export interface ScipDocument {
   path: string;
+  /** Unset when the document says nothing (`UnspecifiedPositionEncoding`): offsets are taken as they come. */
+  positionEncoding?: ScipPositionEncoding;
+  /** Document.text, when the indexer embedded the source. */
+  text?: string;
   occurrences: ScipOccurrence[];
 }
 
@@ -124,6 +131,13 @@ function document(r: Reader): ScipDocument {
   const d: ScipDocument = { path: "", occurrences: [] };
   for (const [field, wire] of r.fields()) {
     if (field === 1 && wire === 2) d.path = r.string();
+    else if (field === 5 && wire === 2) d.text = r.string();
+    else if (field === 6 && wire === 0) {
+      const enc = r.varint();
+      if (enc === 1) d.positionEncoding = "utf8";
+      else if (enc === 2) d.positionEncoding = "utf16";
+      else if (enc === 3) d.positionEncoding = "utf32";
+    }
     else if (field === 2 && wire === 2) d.occurrences.push(occurrence(r.bytes()));
     else r.skip(wire);
   }
@@ -182,12 +196,42 @@ export function scipPathMapper(docs: readonly ScipDocument[], analysisFiles: Rea
   return best.map;
 }
 
+const splitLines = new WeakMap<ScipDocument, string[]>();
+const textLines = (doc: ScipDocument): string[] => splitLines.get(doc) ?? splitLines.set(doc, (doc.text ?? "").split(/\r?\n/)).get(doc)!;
+
+/**
+ * A document's character offset on one line as UTF-16 code units. UTF-8 and
+ * UTF-32 offsets differ from them only past a non-ASCII character, and the
+ * line's text says where; without it (no embedded text, no file) the offset
+ * stands as written, which is right for an ASCII line.
+ */
+function toUtf16(doc: ScipDocument, line0: number, offset: number, fileLine: (line0: number) => string | undefined): number {
+  const enc = doc.positionEncoding;
+  if (!enc || enc === "utf16" || offset === 0) return offset;
+  const text = doc.text !== undefined ? textLines(doc)[line0] : fileLine(line0);
+  if (text === undefined) return offset;
+  let units = 0;
+  let counted = 0;
+  for (const ch of text) {
+    if (counted >= offset) break;
+    counted += enc === "utf32" ? 1 : Buffer.byteLength(ch, "utf8");
+    units += ch.length;
+  }
+  return units + Math.max(0, offset - counted);
+}
+
 /**
  * Answers to the layer-2 questions from a SCIP index. Local symbols
  * (`local N`) resolve within their document; a definition outside the
  * analysis (a dependency's sources) is not a target.
  */
-export function scipAnswers(index: ScipIndex, queries: readonly DefinitionQuery[], mapPath: (p: string) => string | null = normalize): DefinitionAnswerFile {
+export function scipAnswers(
+  index: ScipIndex,
+  queries: readonly DefinitionQuery[],
+  mapPath: (p: string) => string | null = normalize,
+  /** The text of a 0-based line of an analysis file, for a document whose offsets are not UTF-16 and which carries no text. */
+  lineText?: (path: string, line0: number) => string | undefined,
+): DefinitionAnswerFile {
   const definitions = new Map<string, Array<{ file: string; line: number }>>();
   const byPath = new Map<string, ScipDocument>();
   for (const d of index.documents) {
@@ -205,12 +249,14 @@ export function scipAnswers(index: ScipIndex, queries: readonly DefinitionQuery[
     const doc = byPath.get(q.file);
     if (!doc) continue;
     const line0 = q.line - 1;
+    // Queries count UTF-16 code units (a column in the source string); the index counts what its document says.
+    const col = (line: number, c: number) => toUtf16(doc, line, c, (l) => lineText?.(q.file, l));
     const at = doc.occurrences.find((o) => {
       if (o.range.length < 3 || o.roles & DEFINITION) return false;
       const [sl, sc] = o.range as [number, number];
       const el = o.range.length === 3 ? sl : o.range[2]!;
       const ec = o.range.length === 3 ? o.range[2]! : o.range[3]!;
-      return line0 >= sl && line0 <= el && (line0 > sl || q.column >= sc) && (line0 < el || q.column < ec);
+      return line0 >= sl && line0 <= el && (line0 > sl || q.column >= col(sl, sc)) && (line0 < el || q.column < col(el, ec));
     });
     if (!at) continue;
     const key = at.symbol.startsWith("local ") ? `${q.file}\u0000${at.symbol}` : at.symbol;

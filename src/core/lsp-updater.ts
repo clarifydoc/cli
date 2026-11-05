@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { resolve, join } from "path";
 import type {
@@ -134,7 +135,19 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
       const { decodeScip, scipAnswers, scipPathMapper } = await import("../lsp/scip.js");
       const index = decodeScip(await readFile(resolve(options.scip)));
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
-      file = scipAnswers(index, queries, scipPathMapper(index.documents, new Set(perFileAnalyses.map((a) => a.filePath))));
+      // A document that counts UTF-8 bytes or code points and embeds no text: its lines come from the project's own files.
+      const lines = new Map<string, string[] | null>();
+      const lineText = (rel: string, line0: number) => {
+        if (!lines.has(rel)) {
+          try {
+            lines.set(rel, readFileSync(join(projectRoot, rel), "utf8").split(/\r?\n/));
+          } catch {
+            lines.set(rel, null);
+          }
+        }
+        return lines.get(rel)?.[line0];
+      };
+      file = scipAnswers(index, queries, scipPathMapper(index.documents, new Set(perFileAnalyses.map((a) => a.filePath))), lineText);
       if (verbose) console.log(`  SCIP: ${index.documents.length} documents, ${file.answers.length}/${queries.length} questions answered`);
     } else if (options.lsif) {
       const { decodeLsif, lsifAnswers } = await import("../lsp/lsif.js");
