@@ -293,6 +293,8 @@ export interface RegexLangSpec {
   extractHttpClientRegistrations?: (lines: string[], filePath: string) => HttpClientRegistration[];
   /** Calls handing a path to a project function (a request wrapper's call sites) → `FileAnalysis.pathArgCalls`. */
   extractPathArgCalls?: (lines: string[]) => PathArgCall[];
+  /** Channel modules a file binds to topic patterns (a socket's `channel "match:*", MatchChannel`) → `FileAnalysis.channelBindings`. */
+  extractChannelBindings?: (lines: string[]) => Array<{ module: string; topic: string; line: number }>;
   /** Handlers registered under a message name → `FileAnalysis.messageHandlers`. */
   extractMessageHandlers?: (lines: string[]) => Array<{ message: string; handler: string; line: number }>;
   /**

@@ -84,3 +84,52 @@ export function consumeDestination(method: string, args: string[], value: (arg: 
   if (method !== "Consume" && method !== "Subscribe" && method !== "QueueSubscribe" && method !== "ChanSubscribe") return undefined;
   return value(args[0]);
 }
+
+/** An AWS SDK v2 SQS/SNS call and the input struct it is handed: `client.SendMessage(ctx, &sqs.SendMessageInput{…})`. */
+const AWS_CALL_RE = /\.\s*(SendMessage|SendMessageBatch|ReceiveMessage|Publish|PublishBatch)\s*\(/;
+const AWS_INPUT_RE = /&?\b(sqs|sns)\.(\w+)Input\s*\{/;
+const AWS_DESTINATION_RE = /\b(QueueUrl|TopicArn|TargetArn)\s*:\s*(?:aws\.String\(\s*)?("(?:[^"\\]|\\.)*"|`[^`]*`|[\w.]+)\s*\)?\s*,?/;
+
+/**
+ * The queue (`QueueUrl`) or topic (`TopicArn`) an AWS SDK v2 call names, as the
+ * call's input struct states it — inline, or built into a local just above.
+ * `value` reads the argument as a literal or constant; a name it cannot read
+ * comes back in `ref` for the project pass. Null when the line is no such call.
+ */
+export function awsMessagingCall(
+  lines: readonly string[],
+  i: number,
+  value: (arg: string | undefined) => string | null,
+): { publish: boolean; method: string; target: string | null; ref?: string } | null {
+  const call = AWS_CALL_RE.exec(lines[i]!);
+  if (!call) return null;
+  const args = callArgs(lines, i, call.index + call[0].length - 1);
+  const input = args[1] ?? args[0] ?? "";
+  let at = -1;
+  let from = 0;
+  const inline = AWS_INPUT_RE.exec(input);
+  if (inline) {
+    // The struct opens on this line or the next ones: its fields are read from the call's own text.
+    at = i;
+  } else if (/^&?[A-Za-z_]\w*$/.test(input)) {
+    const name = input.replace(/^&/, "");
+    for (let k = i - 1; k >= 0 && k >= i - 30; k--) {
+      if (new RegExp(String.raw`\b${name}\s*:?=\s*&?\b(?:sqs|sns)\.\w+Input\s*\{`).test(lines[k]!)) { at = k; break; }
+    }
+  }
+  if (at < 0) return null;
+  const kind = (inline ?? /\b(sqs|sns)\.(\w+)Input\s*\{/.exec(lines[at]!))?.[2] ?? "";
+  if (!/^(?:SendMessage|SendMessageBatch|ReceiveMessage|Publish|PublishBatch)$/.test(kind)) return null;
+  let text = "";
+  for (let k = at; k < Math.min(lines.length, at + 12); k++) {
+    text += `${lines[k]!}\n`;
+    if (k > at && /^\s*\}/.test(lines[k]!)) break;
+  }
+  from = text.search(/\b(?:sqs|sns)\.\w+Input\s*\{/);
+  const dest = AWS_DESTINATION_RE.exec(text.slice(Math.max(from, 0)));
+  const publish = kind !== "ReceiveMessage";
+  if (!dest) return { publish, method: call[1]!, target: null };
+  const raw = dest[2]!;
+  const target = value(raw);
+  return { publish, method: call[1]!, target, ...(target === null && /^[A-Za-z_][\w.]*$/.test(raw) ? { ref: raw } : {}) };
+}

@@ -38,6 +38,21 @@ export function topicPattern(written: string): string | null {
   return m ? `${m[1]}*` : null;
 }
 
+/** `channel "match:*", LeagueWeb.MatchChannel` in a socket: the module and the topic pattern it serves. */
+const SOCKET_CHANNEL_RE = /^\s*channel\s*\(?\s*("[^"#\\]+")\s*,\s*([A-Z][\w.]*)/;
+
+/** The channel modules a Phoenix socket declares, each with the topic pattern it serves. */
+export function phoenixChannelBindings(lines: string[]): Array<{ module: string; topic: string; line: number }> {
+  if (!lines.some((l) => /^\s*use\s+Phoenix\.Socket\b/.test(l))) return [];
+  const out: Array<{ module: string; topic: string; line: number }> = [];
+  lines.forEach((l, i) => {
+    const m = SOCKET_CHANNEL_RE.exec(l);
+    const topic = m && topicPattern(m[1]!);
+    if (m && topic) out.push({ module: m[2]!, topic, line: i + 1 });
+  });
+  return out;
+}
+
 /** The channel events a file's channel modules handle and send, and its endpoint broadcasts. */
 export function phoenixChannelEvents(lines: string[]): DataSourceInfo[] {
   const text = lines.join("\n");
@@ -51,7 +66,7 @@ export function phoenixChannelEvents(lines: string[]): DataSourceInfo[] {
   const add = (kind: DataSourceInfo["kind"], verb: string, event: string, line: number, topic: string | null): void => {
     // `phx_join`, `phx_reply`…: the protocol's own messages.
     if (event.startsWith("phx_")) return;
-    out.push({ kind, name: `Phoenix.Channel: ${verb}`, target: event, ...(topic ? { topic } : {}), calls: [], line });
+    out.push({ kind, name: `Phoenix.Channel: ${verb}`, target: event, ...(topic ? { topic } : channelFile && !verb.startsWith("Endpoint.") ? { topicFromBinding: true } : {}), calls: [], line });
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;

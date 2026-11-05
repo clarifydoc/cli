@@ -955,6 +955,14 @@ export interface CallExtractionHooks {
    */
   classifyAutoImported?(callName: string): { target: string } | null;
   /**
+   * Whether a dotted call is an HTTP request by the way its client is shaped,
+   * where its name alone would read as something else (a tRPC client's
+   * `trpc.club.byId.query(…)` is a request, though `query` is a database
+   * verb). `imports` are the file's own. Asked only after the call's own
+   * imports and definitions are ruled out, and a database client root still wins.
+   */
+  isApiCallShape?(callName: string, imports: readonly ImportInfo[]): boolean;
+  /**
    * Alternate import-map keys to try for a qualified call's root, in order
    * (e.g. Java `userService` → `UserService`). Matches classify as INFERRED.
    */

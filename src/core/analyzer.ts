@@ -1148,6 +1148,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // context path): outermost, so after mounts compose; before the anchors.
   const basedRouteCount = applyRouteBases(allAnalyses, await readRouteBases(projectRoot, subProjects));
   if (basedRouteCount > 0) progress.detail(`  Routes under a configured base path: ${basedRouteCount}`);
+  // Resolvers that match the path a caller requests, now that mounts and bases have composed it.
+  reconcileProjectRoutes(allAnalyses, projectContext, undefined, "after-mounts");
 
   progress.step("Building dependency graph...");
   // Edges only `import type` states, refined once the call links are known (import-kinds.ts).

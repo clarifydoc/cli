@@ -268,3 +268,16 @@ class Wiring { void Wire(int count) { Register(Save); Bus.On(this.Promote); Run(
 `, "csharp", "method_declaration")).toEqual(["Register", "Save:argument", "Bus.On", "this.Promote:argument", "Run"]);
   });
 });
+
+describe("classifyCalls — a tRPC client call is a request, not a query", () => {
+  const kinds = (names: string[], source = "./server") =>
+    classifyCalls(names.map((name) => ({ name, line: 1, kind: "internal" }) as never), [{ source, specifiers: ["AppRouter"], line: 1 }] as never, "typescript").map((c) => `${c.name}:${c.kind}`);
+  it("reads `trpc.club.byId.query` and `.mutate` as api-calls", () => {
+    expect(kinds(["trpc.club.byId.query", "trpc.club.rename.mutate"])).toEqual(["trpc.club.byId.query:api-call", "trpc.club.rename.mutate:api-call"]);
+  });
+  it("needs trpc named by the root or an import, and leaves a database client and `this` alone", () => {
+    expect(kinds(["client.club.byId.query"])).toEqual(["client.club.byId.query:database"]);
+    expect(kinds(["client.club.byId.query"], "@trpc/client")).toEqual(["client.club.byId.query:api-call"]);
+    expect(kinds(["db.club.byId.query", "this.trpc.club.byId.query"])).toEqual(["db.club.byId.query:database", "this.trpc.club.byId.query:internal"]);
+  });
+});

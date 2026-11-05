@@ -8,15 +8,17 @@ import { allPluginMetas } from "../registry.js";
  * project, in priority order, each on the analyses of its own languages. Runs
  * before router mounts are applied, so a resolver may emit `mount: true` rows
  * for the generic mount pass to compose. In-memory: per-file JSON on disk keeps
- * what the extractor saw. Returns how many rows the resolvers created or
+ * what the extractor saw. A resolver marked `afterMounts` runs in the second
+ * phase, once mounts and base paths have composed the routes. Returns how many rows the resolvers created or
  * rewrote.
  */
 export function reconcileProjectRoutes(
   analyses: FileAnalysis[],
   ctx: ProjectContext,
   registered: readonly RouteResolver[] = registeredRouteResolvers(),
+  phase: "before-mounts" | "after-mounts" = "before-mounts",
 ): number {
-  const resolvers = [...registered];
+  const resolvers = registered.filter((r) => !!r.afterMounts === (phase === "after-mounts"));
   if (resolvers.length === 0) return 0;
   resolvers.sort((a, b) => a.priority - b.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 

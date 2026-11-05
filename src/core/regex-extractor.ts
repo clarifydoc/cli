@@ -93,6 +93,8 @@ export function extractWithRegex(
   if (packageName) analysis.packageName = packageName;
   const messageHandlers = spec.extractMessageHandlers?.(lines);
   if (messageHandlers && messageHandlers.length > 0) analysis.messageHandlers = messageHandlers;
+  const channelBindings = spec.extractChannelBindings?.(lines);
+  if (channelBindings && channelBindings.length > 0) analysis.channelBindings = channelBindings;
   const entryPoints = spec.extractEntryPoints?.(lines, filePath);
   if (entryPoints && entryPoints.length > 0) analysis.entryPoints = entryPoints;
   const clientRegistrations = spec.extractHttpClientRegistrations?.(lines, filePath);

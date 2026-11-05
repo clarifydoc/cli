@@ -147,6 +147,12 @@ export const javascriptCallHooks: CallExtractionHooks = {
     return VUE_COMPILER_MACROS.has(callName) ? { target: "vue" } : null;
   },
 
+  // A tRPC client's `trpc.club.byId.query(…)` / `.mutate(…)`: a request to the procedure, not a database query.
+  isApiCallShape(callName, imports) {
+    if (!TRPC_CLIENT_CALL_RE.test(callName)) return false;
+    return /trpc/i.test(callName.split(".")[0]!) || imports.some((i) => /trpc/i.test(i.source));
+  },
+
   // A container lookup or a cast chained straight into the call
   // (`this.moduleRef.get(ReportService).buildReport()`,
   // `container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(1)`,
@@ -155,6 +161,9 @@ export const javascriptCallHooks: CallExtractionHooks = {
   argsOf: handedArgs,
   argOriginsOf,
 };
+
+/** `<client>.<router>.<procedure>.query` / `.mutate`, never on `this` (the extractor's own rule for an api-call row). */
+const TRPC_CLIENT_CALL_RE = /^(?!this\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}\.(?:query|mutate)$/;
 
 /**
  * TypeScript checks a call's argument count against the signature, so the

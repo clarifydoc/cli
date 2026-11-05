@@ -4,7 +4,7 @@ import type { ClassInfo, DataSourceInfo, ImportInfo, ScreenInfo } from "../../..
 import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
-import { isChannelModule, phoenixChannelEvents } from "./channels.js";
+import { isChannelModule, phoenixChannelBindings, phoenixChannelEvents } from "./channels.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -592,6 +592,9 @@ export const elixirSpec: RegexLangSpec = {
     }
     return classes;
   },
+
+  /** A socket's `channel "match:*", MatchChannel` declarations. */
+  extractChannelBindings: (lines) => phoenixChannelBindings(lines),
 
   /** `phx-*` events, links and forms in LiveView `~H"""` sigils (see heex.ts). */
   extractInteractiveElements: (lines) => heexSigils(lines).flatMap((s) => readHeex(s.text, s.firstLine).elements),

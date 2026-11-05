@@ -80,6 +80,8 @@ export const daprSubscriptions: RouteResolver = {
   languages: ROUTE_LANGUAGES,
   // After the resolvers that anchor routes on their handlers (serverless, Rails…).
   priority: 90,
+  // The subscription names the path the sidecar requests: a mounted router's routes carry it only once composed.
+  afterMounts: true,
   resolve(analyses: FileAnalysis[]): void {
     const subs = analyses.flatMap((a) => (a.routeFacts ?? []).filter((f) => f.kind === "dapr-subscription").map((f) => ({ a, f, s: f.data as DaprSubscription })));
     if (subs.length === 0) return;

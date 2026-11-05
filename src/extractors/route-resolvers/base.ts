@@ -22,6 +22,12 @@ export interface RouteResolver {
   readonly id: string;
   /** Languages whose analyses this resolver sees. */
   readonly languages: readonly Language[];
+  /**
+   * Run after router mounts and configured base paths are composed, on the
+   * paths a caller requests, instead of before them (the default). For a
+   * resolver that matches a route by the path another file states in full.
+   */
+  readonly afterMounts?: boolean;
   /** Run order across all resolvers (lower first), so output never depends on which meta carries a resolver. */
   readonly priority: number;
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void;

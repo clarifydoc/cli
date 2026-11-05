@@ -668,6 +668,14 @@ export interface FileAnalysis {
    */
   messageHandlers?: Array<{ message: string; handler: string; line: number }>;
   /**
+   * Channel modules this file binds to the topic pattern they serve — a Phoenix
+   * socket's `channel "match:*", MatchChannel`. `module` is as written (an alias
+   * or the full name), `topic` ends in `*` for a pattern. Core gives the channel
+   * module's events (`DataSourceInfo.topicFromBinding`) that topic when the
+   * module's own code names none.
+   */
+  channelBindings?: Array<{ module: string; topic: string; line: number }>;
+  /**
    * HTTP clients configured with a base URL in this file, the host included
    * (`httpClientBases` keeps only the path): typed and named .NET clients,
    * `axios.create({ baseURL: process.env.X })`.
@@ -2349,6 +2357,8 @@ export interface DataSourceInfo {
    * without one still meets them all.
    */
   topic?: string;
+  /** A channel module's event whose topic its own code did not state: a `FileAnalysis.channelBindings` entry naming the module supplies it. */
+  topicFromBinding?: boolean;
   /**
    * For `queue-consume`: the function or method of this file that handles the
    * message (`Class.method`), when it is not the one the registration sits in —
