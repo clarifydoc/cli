@@ -204,7 +204,7 @@ export const rustSpec: RegexLangSpec = {
     const code = RUST_CODE.commentFreeLines(lines) as string[];
     // Rocket mounts, route functions and renames, joined across files by rocketMountResolver.
     collectRocketFacts(code, facts);
-    return extractRustRoutes(code);
+    return extractRustRoutes(code, facts);
   },
   extractMessageHandlers: (lines) => extractEventRegistrations(lines),
   extractDataSources: (lines) => extractRustDataSources(lines),

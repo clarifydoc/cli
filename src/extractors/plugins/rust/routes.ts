@@ -1,4 +1,4 @@
-import type { RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
+import type { RouteFact, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { buildAuth, inferredParam, pathParamNames, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractParamsFromDeclaration } from "../shared/regex-base.js";
 import { parseRustParam } from "./params.js";
@@ -59,9 +59,23 @@ const FN_RE = /\bfn\s+(\w+)/;
 /** Top-level fn declaration — marks route-ownership scope for nest resolution. */
 const FN_DEF_RE = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)/;
 /** `.nest("/api", user_routes())` / `.nest("/api", routes::users())`. */
-const NEST_RE = /\.\s*nest\s*\(\s*"([^"]+)"\s*,\s*(?:\w+::)*(\w+)/;
+const NEST_RE = /\.\s*nest\s*\(\s*"([^"]+)"\s*,\s*((?:\w+::)*\w+)/;
+/** actix `.configure(routes::cfg)` — a fn taking `&mut ServiceConfig`, served under the scope it is configured on. */
+const CONFIGURE_RE = /^\.\s*configure\s*\(\s*((?:\w+::)*\w+)\s*\)/;
+/** The fact the cross-file nest resolver reads. */
+export const RUST_NEST_FACT = "rust:nest";
+export interface RustNestFacts {
+  /** Prefix a fn's routes get from a same-file nest, per fn (the first naming it). */
+  local: Array<{ fn: string; prefix: string; owner: string }>;
+  /** A nest or configure naming a fn by a path: the prefix on the chain, the callee as written, the fn it sits in. */
+  calls: Array<{ prefix: string; callee: string; owner: string }>;
+  /** The fn each route line sits in. */
+  owners: Record<number, string>;
+  /** `use a::b::c;` and `use a::b::{c, d as e};` — local name → path. */
+  uses: Record<string, string>;
+}
 /** `.merge(user_routes())` — a nest with no prefix. */
-const MERGE_RE = /\.\s*merge\s*\(\s*(?:\w+::)*(\w+)\s*\(/;
+const MERGE_RE = /\.\s*merge\s*\(\s*((?:\w+::)*\w+)\s*\(/;
 /** `.layer(X)` / `.route_layer(X)` — axum tower layers. */
 const LAYER_RE = /\.\s*(?:route_layer|layer)\s*\(/g;
 /** `Router::new()` / `Router::<S>::new()` opens a chain statement. */
@@ -190,7 +204,7 @@ function attributeParams(
   return { params, guards };
 }
 
-export function extractRustRoutes(lines: string[]): RouteInfo[] {
+export function extractRustRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   /** Owning fn per emitted route (parallel to `routes`; "" = top level). */
   const routeOwner: string[] = [];
@@ -205,6 +219,15 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
   /** Attribute-route handler fn → the actix scope that `.service()`s it. */
   const services = new Map<string, { prefix: string; guards: GuardAttr[] }>();
   let currentFn = "";
+  /** Nests and configures naming a fn by path: the resolver places them across files. */
+  const crossCalls: RustNestFacts["calls"] = [];
+  const owners: Record<number, string> = {};
+  const wholeText = lines.join("\n");
+  const onConfigure = (callee: string, prefix: string): void => {
+    if (prefix) crossCalls.push({ prefix, callee, owner: currentFn });
+    const name = callee.split("::").pop()!;
+    if (!callee.includes("::") && definesFn(lines, name) && !nests.has(name)) nests.set(name, { prefix, owner: currentFn });
+  };
 
   // The axum chain statement in progress: routes and nested fns added so far.
   let chain: { routes: number[]; nested: string[] } | null = null;
@@ -216,6 +239,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
     const line = lines[i]!;
     const lineNo = i + 1;
     const trimmed = line.trim();
+    let scanned = 0;
 
     const fnDef = line.match(FN_DEF_RE);
     if (fnDef) { currentFn = fnDef[1]!; chain = null; }
@@ -242,6 +266,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
       }
       routes.push(route);
       routeOwner.push(currentFn);
+      owners[lineNo] = currentFn;
       routeLayers.push([]);
       routeOwn.push(own);
       continue;
@@ -265,6 +290,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
         if (bound && bound.params.length > 0) route.params = [...bound.params];
         routes.push(route);
         routeOwner.push(currentFn);
+        owners[lineNo] = currentFn;
         routeLayers.push([]);
         routeOwn.push(bound?.guards ?? []);
       }
@@ -276,7 +302,11 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
 
     const nest = line.match(NEST_RE);
     const merge = nest ? null : line.match(MERGE_RE);
-    const nestedFn = nest ? nest[2]! : merge ? merge[1]! : null;
+    const nestedPath = nest ? nest[2]! : merge ? merge[1]! : null;
+    // A qualified path (`api::routes`) names another module's fn: the project pass places it. Only `self::`/an inline module stays here.
+    const qualified = nestedPath !== null && nestedPath.includes("::") && !/^(?:self|Self)::/.test(nestedPath) && !new RegExp(`\\bmod\\s+${nestedPath.split("::")[0]}\\s*\\{`).test(wholeText);
+    const nestedFn = nestedPath === null ? null : qualified ? null : nestedPath.split("::").pop()!;
+    if (nestedPath !== null && (qualified || !definesFn(lines, nestedPath.split("::").pop()!))) crossCalls.push({ prefix: nest ? nest[1]! : "", callee: nestedPath, owner: currentFn });
     if (nestedFn) {
       if (!nests.has(nestedFn)) nests.set(nestedFn, { prefix: nest ? nest[1]! : "", owner: currentFn });
       if (!chain) chain = { routes: [], nested: [] };
@@ -287,6 +317,8 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
     // the call read as one line. A path-less `.route(post().to(h))` under `web::resource("/x")` is the resource's own path.
     let routeText = line;
     const routeAt = line.search(/\.\s*route\s*\(/);
+    // A scope or resource opened earlier on this very line (`web::scope("/x").route("/y", get().to(h))`) is on the stack by now.
+    if (routeAt > 0) { scanActix(line.slice(0, routeAt), scopes, services, onConfigure, () => parenDepth, (d) => { parenDepth = d; }); scanned = routeAt; }
     if (routeAt >= 0 && !balanced(line, line.indexOf("(", routeAt)).closed) {
       for (let k = i + 1; k < Math.min(lines.length, i + 6); k++) {
         routeText += " " + lines[k]!.trim();
@@ -298,9 +330,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
       if (!chain) chain = { routes: [], nested: [] };
       const scope = scopes[scopes.length - 1];
       const inherited = scope ? scopes.flatMap((s) => s.guards) : [];
-      // A resource opened on this very line (`.service(web::resource("/x").route(get().to(h)))`) is not on the stack yet.
-      const sameLine = /(?:\w+::)*resource\s*\(\s*"([^"]*)"\s*\)[^]*\.\s*route\s*\(/.exec(line);
-      const prefix = scopes.map((s) => s.prefix).join("") + (axum[1] === "" && sameLine ? sameLine[1]! : "");
+      const prefix = scopes.map((s) => s.prefix).join("");
       const emit = (verb: string, handler: string | null): void => {
         routes.push({
           path: prefix ? joinPath(prefix, axum[1]!) : axum[1]!,
@@ -312,6 +342,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
           line: lineNo,
         });
         routeOwner.push(currentFn);
+        owners[lineNo] = currentFn;
         routeLayers.push([...inherited]);
         routeOwn.push([]);
         chain!.routes.push(routes.length - 1);
@@ -341,7 +372,7 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
     }
 
     // ── actix App / scope chain ───────────────────────────────────────────
-    scanActix(line, scopes, services, () => parenDepth, (d) => { parenDepth = d; });
+    scanActix(line.slice(scanned), scopes, services, onConfigure, () => parenDepth, (d) => { parenDepth = d; });
 
     if (chain && (trimmed.endsWith(";") || trimmed.startsWith("}"))) chain = null;
   }
@@ -383,7 +414,36 @@ export function extractRustRoutes(lines: string[]): RouteInfo[] {
     }
   }
 
+  if (facts && (crossCalls.length > 0 || routes.length > 0)) {
+    const data: RustNestFacts = {
+      local: [...nests].map(([fn, n]) => ({ fn, prefix: n.prefix, owner: n.owner })),
+      calls: crossCalls,
+      owners,
+      uses: useMap(wholeText),
+    };
+    facts.push({ kind: RUST_NEST_FACT, line: 1, data });
+  }
   return routes;
+}
+
+/** `use a::b::c;` / `use a::{b::c, d as e};` as local name → path. */
+function useMap(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+([^;]+);/gm)) {
+    const body = m[1]!.trim();
+    const brace = body.match(/^((?:\w+::)*)\{([^}]*)\}$/);
+    const items = brace ? brace[2]!.split(",").map((i) => brace[1]! + i.trim()) : [body];
+    for (const it of items) {
+      const [path, alias] = it.split(/\s+as\s+/);
+      const name = alias ?? path!.split("::").pop()!;
+      if (/^\w+$/.test(name)) out[name] = path!;
+    }
+  }
+  return out;
+}
+
+function definesFn(lines: string[], name: string): boolean {
+  return lines.some((l) => FN_DEF_RE.exec(l)?.[1] === name);
 }
 
 function joinPath(prefix: string, path: string): string {
@@ -401,6 +461,7 @@ function scanActix(
   line: string,
   scopes: Array<{ prefix: string; guards: GuardAttr[]; depth: number }>,
   services: Map<string, { prefix: string; guards: GuardAttr[] }>,
+  onConfigure: (callee: string, prefix: string) => void,
   getDepth: () => number,
   setDepth: (d: number) => void,
 ): void {
@@ -437,6 +498,11 @@ function scanActix(
       const top = scopes[scopes.length - 1];
       if (top) top.guards.push(classifyGuard(inner));
       i = end - 1;
+      continue;
+    }
+    if ((m = rest.match(CONFIGURE_RE))) {
+      onConfigure(m[1]!, scopes.map((s) => s.prefix).join(""));
+      i += m[0].length - 1;
       continue;
     }
     if ((m = rest.match(/^\.\s*service\s*\(\s*(?:\w+::)*([a-z_]\w*)\s*\)/))) {
