@@ -114,6 +114,12 @@ export function extractJsVariableAliases(
           if (call && arms.some(empty) && (call.type === "call_expression" || call.type === "new_expression")) valueNode = call;
         }
         if (!nameNode || !valueNode) continue;
+        // `const { uncheckAll } = squadPage`, `} = props.dialogState`: members of a local or a prop
+        // holding a factory's result, bound once every binding of the file is known.
+        if (nameNode.type === "object_pattern" && (valueNode.type === "identifier" || valueNode.type === "member_expression")) {
+          fromHolders.push({ pattern: nameNode, holder: valueNode.text });
+          continue;
+        }
         // A function's own `require`: `const { promoteClub: promote } = require("./clubs")`,
         // `const relegate = require("./clubs").relegateClub` bind the module's members by name, as
         // the same lines at the top of the module do. (The whole module, `const clubs = require(…)`,
@@ -183,7 +189,21 @@ export function extractJsVariableAliases(
     }
   }
 
+  const fromHolders: Array<{ pattern: Node; holder: string }> = [];
   walk(tree.rootNode);
+  // Each member destructured from a holder of a factory's whole result is that factory's member, as
+  // if destructured from its call; a holder that is itself one member of a result is left alone.
+  for (const { pattern, holder } of fromHolders) {
+    const held = conflicted.has(holder) ? undefined : aliases.get(holder);
+    if (!held || held.member !== undefined) continue;
+    for (const prop of pattern.namedChildren) {
+      if (prop.type === "shorthand_property_identifier_pattern") bind(prop.text, held.source, held.factory, prop.text);
+      else if (prop.type === "pair_pattern") {
+        const local = prop.childForFieldName("value");
+        if (local?.type === "identifier") bind(local.text, held.source, held.factory, memberKey(prop, local.text));
+      }
+    }
+  }
   return aliases;
 }
 

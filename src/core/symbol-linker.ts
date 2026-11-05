@@ -3761,7 +3761,12 @@ function resolvePassedName(
     const factory = analysisAt.get(link.targetFile);
     const key = call.member;
     const returned = factory && findEnclosingCallable(factory, link.targetSymbol)?.calls.find((c) => c.passed === "return" && c.returnedAs === key);
-    if (!factory || !returned) return null;
+    if (!factory) return null;
+    if (!returned) {
+      // Handed back through a sub-factory's result the factory spreads (`return { ...crud }`).
+      const spread = spreadMember(ctx, factory, link.targetSymbol, key, depth + 1);
+      return spread && { sourceFile, sourceSymbol, sourceLine: call.line, callName: call.name, targetFile: spread.file, targetSymbol: spread.symbol, targetLine: spread.line, confidence: "INFERRED", strategy: "factory-via", relation: "passes" };
+    }
     const inner = resolvePassedName(link.targetFile, link.targetSymbol, returned, factory, ctx, depth + 1);
     return inner && { ...inner, sourceFile, sourceSymbol, sourceLine: call.line, callName: call.name, confidence: "INFERRED", strategy: "factory-via" };
   }
@@ -3769,6 +3774,45 @@ function resolvePassedName(
   const target = analysisAt.get(link.targetFile);
   if (!target || !isCallableSymbol(target, link.targetSymbol)) return null;
   return { ...link, relation: "passes" };
+}
+
+/**
+ * The function a factory hands back under `member` through the result of a sub-factory it spreads
+ * (`const crud = useSquadCrud(); return { ...crud }`): the sub-factory is what the spread local's
+ * initializer calls (`localTypes[].from`), resolved like any call of the factory, and the member is
+ * the function it returns under that key, or its own nested function of that name — followed through
+ * the sub-factory's own spreads. Two spreads handing back the name decide nothing.
+ */
+function spreadMember(
+  ctx: LinkContext,
+  factory: FileAnalysis,
+  factorySymbol: string,
+  member: string,
+  depth: number,
+): { file: string; symbol: string; line: number } | null {
+  const fn = findEnclosingCallable(factory, factorySymbol);
+  if (!fn?.returnedSpreads?.length || depth > 3) return null;
+  const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const found = new Map<string, { file: string; symbol: string; line: number }>();
+  for (const local of fn.returnedSpreads) {
+    const inits = (fn.localTypes ?? []).filter((l) => l.name === local);
+    const callee = inits.length === 1 && !inits[0]!.type ? /^([A-Za-z_$][\w$]*)\(\)$/.exec(inits[0]!.from ?? "")?.[1] : undefined;
+    const call = callee ? fn.calls.find((c) => c.name === callee && !c.passed) : undefined;
+    const sub = call ? resolveCallToDefinition(factory.filePath, factorySymbol, call, factory, ctx) : null;
+    if (!sub || (sub.strategy && GUESSING_STRATEGIES.has(sub.strategy))) continue;
+    const subAt = analysisAt.get(sub.targetFile);
+    const subFn = subAt ? findEnclosingCallable(subAt, sub.targetSymbol) : null;
+    if (!subAt || !subFn) continue;
+    const returned = subFn.calls.find((c) => c.passed === "return" && c.returnedAs === member);
+    const link = returned ? resolvePassedName(sub.targetFile, sub.targetSymbol, returned, subAt, ctx, depth + 1) : null;
+    const nested = link ? null : subAt.functions.filter((f) => f.name === member && f.line > subFn.line && f.endLine <= subFn.endLine);
+    const hit = link
+      ? { file: link.targetFile, symbol: link.targetSymbol, line: link.targetLine }
+      : nested?.length === 1 ? { file: sub.targetFile, symbol: nested[0]!.name, line: nested[0]!.line }
+      : spreadMember(ctx, subAt, sub.targetSymbol, member, depth + 1);
+    if (hit) found.set(`${hit.file}\0${hit.symbol}`, hit);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
 }
 
 /** A call through a dispatch map: `ACTIONS.save` (one key) or `ACTIONS[]` (a key known only at run time). */
@@ -4329,6 +4373,9 @@ function resolveCallToDefinition(
       const inner = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(factory.file)?.functions
         .filter((f) => f.name === member && f.line > factory.def.line && f.endLine <= factory.def.endLine);
       if (inner?.length === 1) return mkLink(factory.file, inner[0]!.name, inner[0]!.line, "INFERRED", "direct");
+      const factoryAt = ctx.analysisAt!.get(factory.file);
+      const spread = factoryAt ? spreadMember(ctx, factoryAt, factory.def.name, member, 0) : null;
+      if (spread) return mkLink(spread.file, spread.symbol, spread.line, "INFERRED", "direct");
     }
     if (fwd) return mkLink(fwd.file, fwd.def.name, fwd.def.line, "INFERRED", "factory-via");
     if (viaDef) {

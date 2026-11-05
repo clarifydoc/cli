@@ -270,6 +270,27 @@ function postpone(match) { props.actions.updateOne(match); kitStore.actions.upda
     expect(calls[0]).toMatchObject({ kind: "cross-file", target: "~/composables/use-fixtures", via: "useFixtures" });
   });
 
+  it("binds the members destructured from a local or a prop holding a factory's result (real-repo FP)", async () => {
+    const imports = [
+      { source: "~/composables/use-squad-page", specifiers: ["useSquadPage"], line: 1 },
+      { source: "~/composables/use-transfer-dialog", specifiers: ["useTransferDialog"], line: 2, isType: true },
+    ] as unknown as ImportInfo[];
+    const src = `import { useSquadPage } from "~/composables/use-squad-page";
+import type { useTransferDialog } from "~/composables/use-transfer-dialog";
+const props = defineProps<{ dialogState: ReturnType<typeof useTransferDialog> }>();
+const squadPage = useSquadPage(clubId);
+const { benchAll, pick: choose } = squadPage;
+const { confirmTransfer } = props.dialogState;
+const { kitColour } = theme;`;
+    const tree = await parse(src, "x.ts");
+    const aliases = extractJsVariableAliases(tree, imports);
+    expect(aliases.get("benchAll")).toEqual({ source: "~/composables/use-squad-page", factory: "useSquadPage", member: "benchAll" });
+    expect(aliases.get("choose")).toEqual({ source: "~/composables/use-squad-page", factory: "useSquadPage", member: "pick" });
+    expect(aliases.get("confirmTransfer")).toEqual({ source: "~/composables/use-transfer-dialog", factory: "useTransferDialog", member: "confirmTransfer" });
+    // A local nothing binds to a factory says nothing.
+    expect(aliases.has("kitColour")).toBe(false);
+  });
+
   it("drops a name bound to DIFFERENT sources (ambiguous) rather than guessing", async () => {
     const imports = [
       { source: "./a", specifiers: ["useA"], line: 1 },
