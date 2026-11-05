@@ -85,6 +85,20 @@ interface Where {
  * declares the method, so params and symbol links bind; a framework-provided
  * action (`TagViewSet.list`) is anchored on the ViewSet's class line.
  */
+/** The verbs a function view's decorators restrict it to: `@api_view(["GET", "POST"])`, `@require_http_methods(["GET"])`, `@require_POST`, `@require_safe`. */
+export function viewVerbs(decorators: readonly string[]): string[] {
+  const verbs: string[] = [];
+  for (const d of decorators) {
+    const list = /^@?(?:[\w.]+\.)?(?:api_view|require_http_methods)\s*\(\s*\[([^\]]*)\]/.exec(d);
+    if (list) verbs.push(...[...list[1]!.matchAll(/["'](\w+)["']/g)].map((m) => m[1]!.toUpperCase()));
+    if (!list && /^@?(?:[\w.]+\.)?api_view\s*(?:\(\s*\))?$/.test(d.trim())) verbs.push("GET"); // DRF's default
+    const only = /^@?(?:[\w.]+\.)?require_(GET|POST|PUT|DELETE)\b/.exec(d)?.[1];
+    if (only) verbs.push(only);
+    if (/^@?(?:[\w.]+\.)?require_safe\b/.test(d)) verbs.push("GET", "HEAD");
+  }
+  return [...new Set(verbs)];
+}
+
 export const djangoUrlconfResolver: RouteResolver = {
   id: "django-urlconf",
   languages: ["python"],
@@ -213,14 +227,19 @@ export const djangoUrlconfResolver: RouteResolver = {
       return externalBases(ref).some((b) => DRF_VIEW_BASE.test(b)) ? drfDefault(ref.projectId) : own;
     };
 
-    /** A function view's guards, read off its decorators wherever the urlconf imports it from. */
-    const funcAuth = (urlconfFile: string, name: string): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
+    /** The function a view name resolves to from the urlconf: `views.list_cars` through `from . import views`, a bare imported name, or one the urlconf declares. */
+    const viewDef = (urlconfFile: string, name: string): { file: string | null; def: FunctionInfo | undefined } => {
       const parts = name.split(".");
       const fn = parts.pop()!;
       const file = parts.length > 0
         ? (ctx.importIndex.localFor(urlconfFile, parts[0]!) ?? ctx.resolveModule(urlconfFile, parts.join(".")))
         : (ctx.importIndex.localFor(urlconfFile, fn) ?? urlconfFile);
-      const def = file ? ctx.fileOf(file)?.functions.find((f) => f.name === fn) : undefined;
+      return { file, def: file ? ctx.fileOf(file)?.functions.find((f) => f.name === fn) : undefined };
+    };
+
+    /** A function view's guards, read off its decorators wherever the urlconf imports it from. */
+    const funcAuth = (urlconfFile: string, name: string): Partial<Pick<RouteInfo, "auth" | "middleware">> => {
+      const { file, def } = viewDef(urlconfFile, name);
       if (!def) return {};
       const own = guardAuth(decoratorGuards(def.decorators ?? []), false);
       // An `@api_view` function with no `@permission_classes` gets the settings' default.
@@ -238,8 +257,15 @@ export const djangoUrlconfResolver: RouteResolver = {
         // A function view, or a class we cannot see: a route at that path, any method.
         const auth = view.kind === "func" ? funcAuth(viewFile, view.name) : {};
         const fn = viewFile !== file && view.kind === "func" ? ctx.fileOf(viewFile)?.functions.find((f) => f.name === view.name) : undefined;
-        const where = fn ? { analysis: ctx.fileOf(viewFile)!, line: fn.line } : { analysis: urlconf, line };
-        emit(where, { path, httpMethod: null, kind: "api", handler: view.name, ...auth, ...extra });
+        // `views.list_cars` through `from . import views`: the function in its own module, which the handler link then finds there.
+        const dotted = !fn && view.kind === "func" && view.name.includes(".") ? viewDef(viewFile, view.name) : null;
+        const viewAnalysis = dotted?.def && dotted.file ? ctx.fileOf(dotted.file) : undefined;
+        const where = fn ? { analysis: ctx.fileOf(viewFile)!, line: fn.line } : viewAnalysis && dotted?.def ? { analysis: viewAnalysis, line: dotted.def.line } : { analysis: urlconf, line };
+        const handler = viewAnalysis ? view.name.split(".").pop()! : view.name;
+        // `@api_view(["POST"])` / `@require_http_methods([...])` / `@require_POST` name the verbs the function serves.
+        const verbs = view.kind === "func" ? viewVerbs((fn ?? dotted?.def ?? viewDef(viewFile, view.name).def)?.decorators ?? []) : [];
+        if (verbs.length === 0) emit(where, { path, httpMethod: null, kind: "api", handler, ...auth, ...extra });
+        for (const verb of verbs) emit(where, { path, httpMethod: verb, kind: "api", handler, ...auth, ...extra });
         return;
       }
       const auth = authOf(nearestFact(ref), ref);

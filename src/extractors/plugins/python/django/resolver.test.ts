@@ -129,7 +129,7 @@ describe("django-urlconf", () => {
   it("composes nested re_path includes, router registrations and @actions into full paths (real-repo shape)", async () => {
     const files = await analyze(SHOP);
     expect(rows(files)).toEqual([
-      "* /legacy/ping/ views.ping @legacy/urls.py:5",
+      "* /legacy/ping/ ping @legacy/views.py:2",
       "DELETE /api/documents/{slug}/versions/{version_id}/ DocumentViewSet.version @shop/views.py:14",
       "GET /api/documents/ DocumentViewSet.list @shop/views.py:10",
       "GET /api/documents/next_asn/ DocumentViewSet.next_asn @shop/views.py:22",
@@ -580,5 +580,40 @@ websocket_urlpatterns = [path("ws/scores/", ScoresConsumer.as_asgi())]
       "scores/consumers.py": `class ScoresConsumer:\n    def connect(self):\n        pass\n`,
     });
     expect(rows(files).map((r) => r.replace(/ @.*$/, ""))).toEqual(expect.arrayContaining(["* /table/ table", "* /ws/scores/ ScoresConsumer"]));
+  });
+});
+
+describe("function views through `from . import views`", () => {
+  it("anchors the route on the function in its module, with the verbs its decorators allow", async () => {
+    const files = await analyze({
+      "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+      "config/urls.py": `from django.urls import path
+from . import views
+urlpatterns = [
+    path("cars/", views.list_cars),
+    path("cars/add/", views.add_car),
+    path("cars/safe/", views.view_car),
+    path("cars/default/", views.default_car),
+]
+`,
+      "config/views.py": `from rest_framework.decorators import api_view
+from django.views.decorators.http import require_http_methods
+def list_cars(request): pass
+@api_view(["POST", "PUT"])
+def add_car(request): pass
+@require_http_methods(["GET"])
+def view_car(request): pass
+@api_view()
+def default_car(request): pass
+`,
+      "other/views.py": `def list_cars(request): pass\n`,
+    });
+    expect(rows(files)).toEqual([
+      "* /cars/ list_cars @config/views.py:3",
+      "GET /cars/default/ default_car @config/views.py:9",
+      "GET /cars/safe/ view_car @config/views.py:7",
+      "POST /cars/add/ add_car @config/views.py:5",
+      "PUT /cars/add/ add_car @config/views.py:5",
+    ]);
   });
 });
