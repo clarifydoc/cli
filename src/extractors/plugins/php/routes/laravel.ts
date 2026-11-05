@@ -508,10 +508,17 @@ function chainRootIsRoute(call: Node): boolean {
  */
 let facadeAliases: ReadonlySet<string> = new Set();
 const FACADE_USE = /\buse\s+\\?Illuminate\\Support\\Facades\\Route(?:\s+as\s+(\w+))?\s*;/g;
+/** `use Illuminate\Support\Facades;` (or `… as F;`): the namespace is imported, so `Facades\Route::get` names the facade. */
+const FACADE_NAMESPACE_USE = /\buse\s+\\?Illuminate\\Support\\Facades(?:\s+as\s+(\w+))?\s*;/g;
+let facadeNamespaces: ReadonlySet<string> = new Set();
 const FACADE_FQN = /^\\?Illuminate\\Support\\Facades\\Route$/;
 
 function isRouteFacade(scope: string | undefined): boolean {
-  return scope === "Route" || (scope !== undefined && (facadeAliases.has(scope) || FACADE_FQN.test(scope)));
+  if (scope === "Route") return true;
+  if (scope === undefined) return false;
+  if (facadeAliases.has(scope) || FACADE_FQN.test(scope)) return true;
+  const at = scope.lastIndexOf("\\");
+  return at > 0 && scope.slice(at + 1) === "Route" && facadeNamespaces.has(scope.slice(0, at).replace(/^\\/, ""));
 }
 
 /** One pass of a `foreach` over a literal array: the loop variables and what they hold. */
@@ -727,10 +734,12 @@ export function extractLaravelRoutes(root: Node, routes: RouteInfo[], basePrefix
   const aliases = new Set<string>();
   for (const m of root.text.matchAll(FACADE_USE)) if (m[1]) aliases.add(m[1]);
   facadeAliases = aliases;
+  facadeNamespaces = new Set([...root.text.matchAll(FACADE_NAMESPACE_USE)].map((m) => m[1] ?? "Facades"));
   try {
     walkRoutes(root, routes, basePrefix);
   } finally {
     facadeAliases = new Set();
+    facadeNamespaces = new Set();
   }
 }
 
