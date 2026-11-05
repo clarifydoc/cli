@@ -44,7 +44,7 @@ export function extractPageModels(root: Node, facts: RouteFact[]): void {
   }
 }
 
-/** Pair each PageModel with the `.cshtml` beside its `.cshtml.cs`: one route per verb, on the default handler (else the first named). */
+/** Pair each PageModel with the `.cshtml` beside its `.cshtml.cs`: one route per verb on the default handler and one per named handler at `?handler=Name`. */
 export const razorPageRoutes: RouteResolver = {
   id: "razor-page-routes",
   languages: ["csharp", "razor"],
@@ -64,13 +64,13 @@ export const razorPageRoutes: RouteResolver = {
       const rows: RouteInfo[] = [];
       for (const f of a.routeFacts ?? []) {
         if (f.kind !== CS_PAGE_MODEL) continue;
-        const byVerb = new Map<string, CsPageHandler>();
+        // The default handler answers the page's own path; each named one (`OnPostDelete`) is `?handler=Delete`.
+        const seen = new Set<string>();
         for (const h of (f.data as CsPageModelFact).handlers) {
-          const cur = byVerb.get(h.verb);
-          if (!cur || (cur.named !== null && h.named === null)) byVerb.set(h.verb, h);
-        }
-        for (const h of byVerb.values()) {
-          rows.push({ path, httpMethod: h.verb, kind: "api", handler: h.method, calls: [], middleware: [], line: h.line, ...(f.owner ? { owner: f.owner } : {}) });
+          const key = `${h.verb} ${h.named ?? ""}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push({ path: h.named === null ? path : `${path}?handler=${h.named}`, httpMethod: h.verb, kind: "api", handler: h.method, calls: [], middleware: [], line: h.line, ...(f.owner ? { owner: f.owner } : {}) });
         }
       }
       if (rows.length > 0) a.routes = [...a.routes, ...rows];

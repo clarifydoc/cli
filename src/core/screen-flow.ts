@@ -159,7 +159,7 @@ export function buildScreenFlow(input: {
     if (!from) continue;
     for (const t of r.leadsTo) {
       const to = screenAtPath(t.path, r.projectId);
-      if (to) addEdge(addScreen(from), addScreen(to), "submit", t.on ? `on ${t.on}` : t.path);
+      if (to) addEdge(addScreen(from), addScreen(to), t.redirect ? "server-redirect" : "submit", t.on ? `on ${t.on}` : t.path);
     }
   }
 

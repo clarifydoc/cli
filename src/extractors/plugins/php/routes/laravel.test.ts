@@ -342,8 +342,20 @@ Other::get('/nope', [ClubController::class, 'nope']);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
       "GET /clubs ClubController#index",
       "POST /clubs ClubController#store",
-      "GET /cars ClubController#cars",
+      "GET /v2/cars ClubController#cars",
     ].map((x) => x));
+  });
+
+  it("reads a Route facade through its imported namespace: `use Illuminate\\Support\\Facades;` and `Facades\\Route::get`", async () => {
+    const routes = await routesOf(`<?php
+use Illuminate\\Support\\Facades;
+use Illuminate\\Support\\Facades as F;
+use App\\Http\\Controllers\\ClubController;
+Facades\\Route::get('/clubs', [ClubController::class, 'index']);
+F\\Route::post('/clubs', [ClubController::class, 'store']);
+Other\\Route::get('/nope', [ClubController::class, 'nope']);
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["GET /clubs ClubController#index", "POST /clubs ClubController#store"]);
   });
 
   it("gives the bare actions of Route::controller(X::class)->group the controller", async () => {

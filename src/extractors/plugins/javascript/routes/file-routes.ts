@@ -191,8 +191,29 @@ function pagesApiRoutes(r: RouteInfo, analysis: FileAnalysis, sourceText: string
   // `if (method === 'OPTIONS') return` is a preflight guard, not what the handler serves.
   if (methods.size === 1 && methods.has("OPTIONS") && equals.has("OPTIONS")) methods.clear();
   if (methods.size === 0) return [{ ...r, handler: fn.name, line: fn.line }];
-  const others = equals.size > 0 && equals.size === methods.size && /\belse\b/.test(body);
+  const others = equals.size > 0 && equals.size === methods.size && (/\belse\b/.test(body) || continuesPastMethodBranches(body));
   return [...methods, ...(others ? [null] : [])].map(row);
+}
+
+/**
+ * `if (method === 'POST') { …; return }` with no `else`: what follows the last such branch serves the other
+ * methods — unless it only refuses them (`405`, an `Allow` header, a 4xx status).
+ */
+function continuesPastMethodBranches(body: string): boolean {
+  let end = -1;
+  for (const m of body.matchAll(/\bif\s*\([^)]*\bmethod\s*===?\s*['"`][A-Z]+['"`][^)]*\)\s*\{/g)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < body.length && depth > 0; i++) {
+      if (body[i] === "{") depth++;
+      else if (body[i] === "}") depth--;
+    }
+    end = Math.max(end, i);
+  }
+  if (end < 0) return false;
+  const after = body.slice(end).replace(/\}\s*$/, "").trim();
+  if (after === "" || after.startsWith("else")) return false;
+  return !/\b405\b|\bAllow\b|not allowed|\.status\(\s*4\d\d\s*\)|\bsendStatus\(\s*4\d\d/i.test(after);
 }
 
 /**
@@ -227,8 +248,10 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   if (!frameworkIds.includes("nuxt") || !sourceText) return [];
   const m = relativePath.replace(/\\/g, "/").match(/^(?:src\/)?server\/(api|routes)\/(.+)\.(?:[cm]?[tj]s)$/);
   if (!m || !hasDefaultExport(sourceText)) return [];
-  const suffix = /^(.*)\.(get|post|put|patch|delete|head|options)$/i.exec(m[2]!);
-  const file = suffix ? suffix[1]! : m[2]!;
+  // `hello.dev.ts` / `hello.prod.ts` serve `/hello` in one environment: the environment is no part of the path.
+  const named = m[2]!.replace(/\.(?:dev|prod|prerender)$/i, "");
+  const suffix = /^(.*)\.(get|post|put|patch|delete|head|options)$/i.exec(named);
+  const file = suffix ? suffix[1]! : named;
   const path = routeFromSegments(m[1] === "api" ? `api/${file}` : file);
   const line = analysis.exports.find((e) => e.name === "default" || e.kind === "default")?.line ?? 1;
   const wrappers = /^(?:define(?:Cached|Lazy)?EventHandler|eventHandler|defineWebSocketHandler|defineCachedEventHandler)$/;
@@ -236,7 +259,9 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   // A handler that forwards (h3's `proxyRequest`/`sendProxy`) is a proxy to another service, not a route this one
   // serves: a catch-all `server/api/[...].ts` would otherwise take every call the backend's routes did not.
   if (calls.some((c) => /^(?:proxyRequest|sendProxy)$/.test(c.name))) return [];
-  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : null, handler: null, calls, line })];
+  // A WebSocket handler is upgraded from a GET.
+  const socket = !suffix && /\bdefineWebSocketHandler\s*\(/.test(sourceText);
+  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : socket ? "GET" : null, handler: null, calls, line })];
 }
 
 /**
@@ -264,15 +289,31 @@ export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysi
  * `.ts`/`.js` endpoint serves one `api` route per exported HTTP-method handler. A file or folder whose
  * name starts with `_` is no route.
  */
-export function inferAstroRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+export function inferAstroRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[], rawSource = ""): RouteInfo[] {
   if (!frameworkIds.includes("astro")) return [];
   const normalized = relativePath.replace(/\\/g, "/");
   const m = /^(?:.*\/)?src\/pages\/(.+)\.(astro|[cm]?[tj]s)$/.exec(normalized);
   if (!m || m[1]!.split("/").some((s) => s.startsWith("_"))) return [];
   const path = routeFromSegments(m[1]!);
-  if (m[2] === "astro") return [route(path, "frontend", { componentPath: null })];
+  if (m[2] === "astro") return [route(path, "frontend", { componentPath: null, ...astroRedirects(rawSource) })];
   // An endpoint's file extension is not part of its URL (`feed.json.ts` serves `/feed.json`).
   return methodRoutes(path, analysis);
+}
+
+/**
+ * `return Astro.redirect("/login")` in a page's frontmatter: a page with no markup of its own is only that
+ * redirect (`redirectTo`, wiring rather than a screen); a page with markup redirects some requests (a guard) and
+ * leads on to the target (`leadsTo`, followed as a server redirect). A computed target says nothing.
+ */
+function astroRedirects(source: string): Pick<RouteInfo, "redirectTo" | "leadsTo"> {
+  if (!source.includes("Astro.redirect")) return {};
+  const parts = source.split(/^---\s*$/m);
+  const frontmatter = parts.length >= 3 ? parts[1]! : "";
+  const markup = parts.length >= 3 ? parts.slice(2).join("---") : "";
+  const targets = [...new Set([...frontmatter.matchAll(/\bAstro\.redirect\(\s*(['"`])(\/[^'"`$]*)\1/g)].map((m) => m[2]!))];
+  if (targets.length === 0) return {};
+  if (targets.length === 1 && markup.trim() === "") return { redirectTo: targets[0]! };
+  return { leadsTo: targets.map((path) => ({ path, on: "redirect", redirect: true as const })) };
 }
 
 /**

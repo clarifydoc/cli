@@ -181,6 +181,14 @@ describe("Next.js pages/api method sets", () => {
     expect(rows("pages/api/players.ts", guard, [{ name: "handler", line: 1, endLine: 4 }])).toEqual(["POST /api/players"]);
   });
 
+  it("a POST branch that returns, with no else, leaves the rest of the handler to the other methods", () => {
+    const open = "export default function handler(req, res) {\n  if (req.method === 'POST') {\n    create(req);\n    return res.status(201).json({});\n  }\n  res.json([]);\n}";
+    expect(rows("pages/api/players.ts", open, [{ name: "handler", line: 1, endLine: 7 }])).toEqual(["POST /api/players", "null /api/players"]);
+    // ...unless all that follows refuses them.
+    const closed = "export default function handler(req, res) {\n  if (req.method === 'POST') {\n    return res.status(201).json({});\n  }\n  res.status(405).end();\n}";
+    expect(rows("pages/api/players.ts", closed, [{ name: "handler", line: 1, endLine: 6 }])).toEqual(["POST /api/players"]);
+  });
+
   it("reads next-connect chains, wrapper tables and handler maps", () => {
     const chain = "import nc from 'next-connect';\nconst handler = nc().get(list).patch(update);\nexport default handler;";
     expect(rows("pages/api/cars.ts", chain)).toEqual(["GET /api/cars", "PATCH /api/cars"]);
@@ -240,6 +248,14 @@ describe("Nuxt Nitro server routes", () => {
     const [r] = inferNuxtServerRoutes("server/api/cars/index.get.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)");
     expect(r!.calls.map((c) => c.name)).toEqual(["getQuery", "loadAll"]);
     expect(r!.line).toBe(3);
+  });
+
+  it("reads an environment suffix as no part of the path, and a WebSocket handler as a GET", () => {
+    const a = file([call("defineEventHandler", 3)]);
+    expect(inferNuxtServerRoutes("server/routes/hello.dev.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)").map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["null /hello"]);
+    expect(inferNuxtServerRoutes("server/api/clubs.get.prod.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)").map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/clubs"]);
+    const ws = "x\nexport default defineWebSocketHandler({ open(peer) {} })";
+    expect(inferNuxtServerRoutes("server/routes/live.ts", a, ["nuxt"], ws).map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /live"]);
   });
 
   it("is no route when the handler forwards the request elsewhere (a proxy, not a page the app serves)", () => {

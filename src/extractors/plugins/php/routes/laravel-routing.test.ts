@@ -39,4 +39,18 @@ Route::prefix('admin')->group(function () { Route::get('/cars', [CarController::
     laravelRoutingResolver.resolve([bootstrap, api], {} as ProjectContext);
     expect(api.routes.map((r) => r.path)).toEqual(["/clubs"]);
   });
+  it("serves an API file other than routes/api.php under the default prefix when none is stated", async () => {
+    const bootstrap = await file("bootstrap/app.php", `<?php Application::configure()->withRouting(api: __DIR__.'/../routes/public.php');`);
+    const api = await file("routes/public.php", `<?php Route::get('/clubs', [ClubController::class, 'index']);
+Route::get('/', [ClubController::class, 'home']);`);
+    laravelRoutingResolver.resolve([bootstrap, api], {} as ProjectContext);
+    expect(api.routes.map((r) => r.path)).toEqual(["/api/clubs", "/api"]);
+  });
+
+  it("serves it under the stated prefix too", async () => {
+    const bootstrap = await file("bootstrap/app.php", `<?php Application::configure()->withRouting(api: __DIR__.'/../routes/public.php', apiPrefix: 'v2');`);
+    const api = await file("routes/public.php", `<?php Route::get('/clubs', [ClubController::class, 'index']);`);
+    laravelRoutingResolver.resolve([bootstrap, api], {} as ProjectContext);
+    expect(api.routes.map((r) => r.path)).toEqual(["/v2/clubs"]);
+  });
 });
