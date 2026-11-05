@@ -37,26 +37,29 @@ function option(args: string, key: string): string | null {
   return m ? m[1]! : null;
 }
 
-/** The statement starting at line `i`, joined over trailing commas and open brackets. */
-function statementAt(lines: readonly string[], i: number, last: number): { text: string; end: number } {
+/**
+ * The statement starting at line `i`, joined over open brackets and — unless `bracketsOnly` — trailing
+ * commas and backslashes, for at most `span` further lines.
+ */
+export function statementAt(lines: readonly string[], i: number, last: number, { bracketsOnly = false, span = 20 } = {}): { text: string; end: number } {
   let text = (lines[i] ?? "").replace(/\s#.*$/, "");
   let j = i;
   const open = (t: string): number => [...t].reduce((d, ch) => d + ("{[(".includes(ch) ? 1 : ")]}".includes(ch) ? -1 : 0), 0);
-  while ((/[,\\]\s*$/.test(text) || open(text) > 0) && j < last && j - i < 20) text += " " + (lines[++j] ?? "").replace(/\s#.*$/, "").trim();
+  while (((!bracketsOnly && /[,\\]\s*$/.test(text)) || open(text) > 0) && j < last && j - i < span) text += " " + (lines[++j] ?? "").replace(/\s#.*$/, "").trim();
   return { text, end: j };
 }
 
-/** The lines of `cls` that are its own: not a method's body, not a nested class's. */
-function ownLines(cls: ClassInfo, classes: readonly ClassInfo[], limit: number): number[] {
+/** A line that opens a macro `addMacroMembers` reads. */
+const MACRO_HEAD = /^\s*(attr_reader|attr_writer|attr_accessor|cattr_reader|cattr_writer|cattr_accessor|mattr_reader|mattr_writer|mattr_accessor|class_attribute|delegate|def_delegators?|def_instance_delegators?|alias_method|alias|define_method)\b/;
+
+/** Whether line `i` (0-based) is the class's own: not inside a method's body, not inside a nested class. */
+function ownLineTest(cls: ClassInfo, classes: readonly ClassInfo[]): (i: number) => boolean {
   const nested = classes.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
-  const out: number[] = [];
-  for (let i = cls.line; i < limit; i++) {
+  const bodies = cls.methods.filter((m) => !m.synthetic && m.endLine > m.line);
+  return (i) => {
     const n = i + 1;
-    if (nested.some((c) => n >= c.line && n <= c.endLine)) continue;
-    if (cls.methods.some((m) => !m.synthetic && n >= m.line && n <= m.endLine && m.endLine > m.line)) continue;
-    out.push(i);
-  }
-  return out;
+    return !nested.some((c) => n >= c.line && n <= c.endLine) && !bodies.some((m) => n >= m.line && n <= m.endLine);
+  };
 }
 
 /**
@@ -75,11 +78,13 @@ export function addMacroMembers(lines: readonly string[], cls: ClassInfo, classe
     return fn;
   };
   const skipTo = new Set<number>();
-  for (const i of ownLines(cls, classes, limit)) {
+  // Macro heads first: only a line that is one pays for the nesting test.
+  let isOwn: ((i: number) => boolean) | undefined;
+  for (let i = cls.line; i < limit; i++) {
     if (skipTo.has(i)) continue;
     const raw = lines[i] ?? "";
-    const head = /^\s*(attr_reader|attr_writer|attr_accessor|cattr_reader|cattr_writer|cattr_accessor|mattr_reader|mattr_writer|mattr_accessor|class_attribute|delegate|def_delegators?|def_instance_delegators?|alias_method|alias|define_method)\b/.exec(raw);
-    if (!head) continue;
+    const head = MACRO_HEAD.exec(raw);
+    if (!head || !(isOwn ??= ownLineTest(cls, classes))(i)) continue;
     const macro = head[1]!;
     const stmt = statementAt(lines, i, limit - 1);
     for (let k = i + 1; k <= stmt.end; k++) skipTo.add(k);

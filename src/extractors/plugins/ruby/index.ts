@@ -4,6 +4,7 @@ import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addConcernClassMethods } from "./concerns.js";
 import { addMacroMembers } from "./member-macros.js";
+import { ACTIVE_RECORD_ASSOCIATION_MACROS } from "./entities.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
@@ -252,16 +253,24 @@ function boundLocals(lines: readonly string[], fn: FunctionInfo): Set<string> {
   return bound;
 }
 
+/** `@name` as a whole word on the line: an instance variable, never a method call. */
+function mentionsInstanceVariable(line: string, name: string): boolean {
+  const needle = `@${name}`;
+  for (let at = line.indexOf(needle); at >= 0; at = line.indexOf(needle, at + 1)) {
+    if (!/\w/.test(line[at + needle.length] ?? "")) return true;
+  }
+  return false;
+}
+
 const IMPLICIT_RECEIVER_SKIP = new Set(["self", "params", "request", "response", "session", "cookies", "flash", "headers", "super", "nil", "true", "false", "logger", "render", "redirect_to", "head", "it", "yield"]);
-function addImplicitReceiverCalls(lines: readonly string[], fn: FunctionInfo): void {
-  const bound = boundLocals(lines, fn);
+function addImplicitReceiverCalls(lines: readonly string[], fn: FunctionInfo, bound: ReadonlySet<string>): void {
   const have = new Set(fn.calls.map((c) => c.name));
   const extra: CallInfo[] = [];
   for (const c of fn.calls) {
     const root = /^([a-z_]\w*)\./.exec(c.name)?.[1];
     if (!root || bound.has(root) || IMPLICIT_RECEIVER_SKIP.has(root) || have.has(root)) continue;
     // Call names drop an instance variable's `@` (`@repo&.find` → `repo.find`): that is no method call.
-    if (new RegExp(`@${root}\\b`).test(lines[c.line - 1] ?? "")) continue;
+    if (mentionsInstanceVariable(lines[c.line - 1] ?? "", root)) continue;
     have.add(root);
     extra.push({ name: root, kind: "internal", target: null, line: c.line });
   }
@@ -276,10 +285,9 @@ function addImplicitReceiverCalls(lines: readonly string[], fn: FunctionInfo): v
  * is that evidence. A name the method binds as a local or parameter is the
  * local, and a `:name` symbol, `name:` key or `.name` member is no own call.
  */
-function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
+function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo, bound: ReadonlySet<string>): void {
   const own = new Set(cls.methods.map((m) => m.name).filter((n) => !/^self\./.test(n) && n !== "initialize"));
   if (own.size === 0) return;
-  const bound = boundLocals(lines, fn);
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   for (const [i, text] of bodyLines(lines, fn)) {
     // Strings and comments are no code.
@@ -325,8 +333,8 @@ const BARE_STATEMENT_KEYWORDS = new Set([
  * covers the class's own methods; this one the rest, which another file
  * declares.
  */
-function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
-  const bound = boundLocals(lines, fn);
+function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo, locals: ReadonlySet<string>): void {
+  const bound = new Set(locals);
   // A reader the class declares (`attr_reader :scope`) or forwards (`delegate :name, to: :club`) is no method of an ancestor.
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
     const decl = /^\s*(?:attr_reader|attr_accessor|delegate)\b\s*\(?\s*(:[\w?!]+(?:\s*,\s*:[\w?!]+)*)/.exec(lines[i] ?? "");
@@ -369,10 +377,11 @@ function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo): void {
 }
 
 /** The association readers a model class declares: `has_many :players` → `players` (a chain off it is typed by the reader). */
+const ASSOCIATION_READER = new RegExp(String.raw`^\s*(?:${ACTIVE_RECORD_ASSOCIATION_MACROS.join("|")})\s*\(?\s*:([a-z_]\w*)`);
 function associationNames(lines: readonly string[], cls: ClassInfo): Set<string> {
   const out = new Set<string>();
   for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
-    const m = /^\s*(?:has_many|has_one|belongs_to|has_and_belongs_to_many)\s*\(?\s*:([a-z_]\w*)/.exec(lines[i] ?? "");
+    const m = ASSOCIATION_READER.exec(lines[i] ?? "");
     if (m) out.add(m[1]!);
   }
   return out;
@@ -385,8 +394,7 @@ function associationNames(lines: readonly string[], cls: ClassInfo): Set<string>
  * type and links only a chain it can type to the end. An association name no local of the method shadows is typed
  * as the reader (`localTypes` from `self.players`).
  */
-function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>): void {
-  const bound = associations.size > 0 ? boundLocals(lines, fn) : new Set<string>();
+function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>, bound: ReadonlySet<string>): void {
   const members = [...associations].filter((n) => !bound.has(n));
   const heads = new Set<string>(members);
   for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
@@ -402,8 +410,14 @@ function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associa
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
     }
   }
+  // The head of every dotted call name, once: `players.first` starts `players.`.
+  const chained = new Set<string>();
+  for (const c of fn.calls) {
+    const dot = c.name.indexOf(".");
+    if (dot >= 0) chained.add(c.name.slice(0, dot));
+  }
   for (const n of members) {
-    if (fn.calls.some((c) => c.name.startsWith(`${n}.`)) && !fn.localTypes?.some((l) => l.name === n)) (fn.localTypes ??= []).push({ name: n, type: "", from: `self.${n}()` });
+    if (chained.has(n) && !fn.localTypes?.some((l) => l.name === n)) (fn.localTypes ??= []).push({ name: n, type: "", from: `self.${n}()` });
   }
 }
 
@@ -1000,12 +1014,14 @@ export const rubySpec: RegexLangSpec = {
       const code = rubyCodeLinesOf(lines);
       const associations = associationNames(lines, cls);
       for (const m of cls.methods) {
-        addImplicitReceiverCalls(code, m);
+        // The method's locals, read once for the passes that tell a local from a call.
+        const bound = boundLocals(code, m);
+        addImplicitReceiverCalls(code, m, bound);
         addTypedLocalCalls(code, m);
-        addMemberChainCalls(code, m, associations);
+        addMemberChainCalls(code, m, associations, bound);
         addJobDispatchCalls(lines, m);
-        addOwnMethodCalls(code, cls, m);
-        addBareStatementCalls(code, cls, m);
+        addOwnMethodCalls(code, cls, m, bound);
+        addBareStatementCalls(code, cls, m, bound);
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));

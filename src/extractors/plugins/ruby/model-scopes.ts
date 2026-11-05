@@ -1,5 +1,6 @@
 import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { statementAt } from "./member-macros.js";
 
 /**
  * Inside an ActiveRecord model the receiver of a query is the model itself:
@@ -107,10 +108,7 @@ export function addScopeMethods(lines: readonly string[], cls: ClassInfo): void 
     }
     if (!ENUM_RE.test(lines[i] ?? "")) continue;
     // The statement, over the lines its brackets span.
-    let text = (lines[i] ?? "").replace(/\s#.*$/, "");
-    let j = i;
-    const open = (t: string) => [...t].reduce((d, ch) => d + ("{[(".includes(ch) ? 1 : ")]}".includes(ch) ? -1 : 0), 0);
-    while (open(text) > 0 && j < last && j - i < 30) text += " " + (lines[++j] ?? "").replace(/\s#.*$/, "");
+    const { text, end: j } = statementAt(lines, i, last, { bracketsOnly: true, span: 30 });
     for (const name of enumScopes(text)) if (!have.has(name) && !members.has(name)) add(name, i + 1, j + 1);
   }
 }

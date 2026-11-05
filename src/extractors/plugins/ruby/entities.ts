@@ -2,6 +2,18 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsPluralize, railsUnderscore } from "./schema.js";
 
+/** The ActiveRecord association macros; each declares a reader of the same name. */
+export const ACTIVE_RECORD_ASSOCIATION_MACROS: readonly string[] = ["has_many", "belongs_to", "has_one", "has_and_belongs_to_many"];
+
+/** The association macros we understand (ActiveRecord + Sequel). */
+export const ASSOCIATION_MACROS: ReadonlySet<string> = new Set<string>([
+  ...ACTIVE_RECORD_ASSOCIATION_MACROS,
+  "one_to_many",
+  "many_to_one",
+  "one_to_one",
+  "many_to_many",
+]);
+
 /**
  * Extracts ActiveRecord (Rails) and Sequel::Model entities + their
  * associations from Ruby source.
@@ -28,18 +40,6 @@ export class RubyEntityExtractor extends EntityExtractor {
 
   /** Ruby uses `#` for line comments. */
   private static readonly LINE_COMMENT = ["#"] as const;
-
-  /** The association macros we understand (ActiveRecord + Sequel). */
-  private static readonly ASSOCIATION_MACROS = new Set<string>([
-    "has_many",
-    "belongs_to",
-    "has_one",
-    "has_and_belongs_to_many",
-    "one_to_many",
-    "many_to_one",
-    "one_to_one",
-    "many_to_many",
-  ]);
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
     const entities: ClassInfo[] = [];
@@ -336,7 +336,7 @@ export class RubyEntityExtractor extends EntityExtractor {
     const symbol = m[2]!;
     const rest = m[3] ?? "";
 
-    if (!RubyEntityExtractor.ASSOCIATION_MACROS.has(macro)) return null;
+    if (!ASSOCIATION_MACROS.has(macro)) return null;
 
     const cardinality = this.cardinalityFor(macro);
     if (!cardinality) return null;
