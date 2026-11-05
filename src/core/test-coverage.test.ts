@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateOnlyNote, buildTestCoverage, detectFormat, lineRanges, matchReportPath, parseClover, parseCobertura, parseCoverage, parseGoCover, parseJacoco, parseLcov, perTestSources } from "./test-coverage.js";
+import { aggregateOnlyNote, buildTestCoverage, detectFormat, lineRanges, matchReportPath, parallelCoverageFiles, parseClover, parseCobertura, parseCoverage, parseGoCover, parseJacoco, parseLcov, perTestSources } from "./test-coverage.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const lines = (hits: Map<string, Map<number, number>>, file: string) => Object.fromEntries(hits.get(file) ?? []);
@@ -303,5 +303,12 @@ describe("coverage.py data file", () => {
     const { readCoverageDb } = await import("./test-coverage.js");
     const got = await readCoverageDb("/no/such/dir/.coverage");
     expect("unread" in got && got.unread).toMatch(/node:sqlite|could not be read/);
+  });
+});
+
+describe("parallel coverage data files", () => {
+  it("names `.coverage.<host>.<pid>.<random>` beside the combined file, and nothing else", () => {
+    const entries = [".coverage", ".coverage.pitch-01.4321.XkQ3v9", ".coverage.club.example.net.77.a_b2", ".coverage.xml", ".coveragerc", "coverage.json", ".coverage.lock"];
+    expect(parallelCoverageFiles("/repo/", entries)).toEqual(["/repo/.coverage.club.example.net.77.a_b2", "/repo/.coverage.pitch-01.4321.XkQ3v9"]);
   });
 });

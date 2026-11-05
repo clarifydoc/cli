@@ -93,7 +93,7 @@ import { openLoopShapeCache } from "./loop-shape-cache.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands, collectTestSetupRuns } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
-import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
+import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parallelCoverageFiles, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
 import { isTestFile } from "./test-file-detector.js";
 import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
@@ -4164,6 +4164,14 @@ function findCoverageReports(projectRoot: string, projectRoots: readonly string[
       const p = join(projectRoot, root, c);
       if (existsSync(p) && !out.includes(p)) out.push(p);
     }
+    // `coverage run -p` leaves one data file per process beside (or instead of) the combined `.coverage`.
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(join(projectRoot, root));
+    } catch {
+      /* no such folder */
+    }
+    for (const p of parallelCoverageFiles(join(projectRoot, root), entries)) if (!out.includes(p)) out.push(p);
   }
   return out;
 }

@@ -269,6 +269,15 @@ export const COVERAGE_CANDIDATES = [
 ];
 
 /**
+ * coverage.py's parallel data files (`coverage run -p`: `.coverage.<host>.<pid>.<random>`) beside the
+ * combined `.coverage` in `dir` — each one a data file of its own until `coverage combine` merges them.
+ * Names only, sorted; the files are read like `.coverage`.
+ */
+export function parallelCoverageFiles(dir: string, entries: readonly string[]): string[] {
+  return entries.filter((n) => /^\.coverage\..+\.\d+\.[A-Za-z0-9_]+$/.test(n)).sort().map((n) => `${dir.replace(/\/$/, "")}/${n}`);
+}
+
+/**
  * The analyzed file a report path names: the longest analyzed path it ends
  * with, or the one whose path ends with it. Undefined when none does, or two
  * do equally well.
