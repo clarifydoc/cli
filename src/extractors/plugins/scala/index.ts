@@ -2,6 +2,7 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
+import { JAXRS_SCALA_GATE_RE, extractScalaJaxrsRoutes } from "./jaxrs.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
 import { SCALA_CODE } from "./blocks.js";
 import {
@@ -279,10 +280,13 @@ export const scalaSpec: RegexLangSpec = {
   extractRequestAccess: extractScalaRequestAccess,
 
   /**
-   * Play's `conf/routes` is the only route declaration Scala code has; a
-   * controller method carries no annotation. Any other file yields nothing.
+   * Play's `conf/routes` declares a controller's routes (its methods carry no annotation); a
+   * JAX-RS resource declares its own with `@Path` / `@GET`. Any other file yields nothing.
    */
-  extractRoutes: (lines, _classes, filePath) => (filePath && isPlayRoutesFile(filePath) ? extractPlayRoutes(lines) : []),
+  extractRoutes: (lines, _classes, filePath) => {
+    if (filePath && isPlayRoutesFile(filePath)) return extractPlayRoutes(lines);
+    return JAXRS_SCALA_GATE_RE.test(lines.join("\n")) ? extractScalaJaxrsRoutes(lines) : [];
+  },
 
   /**
    * Wrap the generic extractor to read heritage from the whole declaration

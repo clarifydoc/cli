@@ -116,3 +116,41 @@ describe("scala renaming imports", () => {
     ]);
   });
 });
+
+describe("scala JAX-RS resources", () => {
+  const src = `package com.example.league
+import javax.ws.rs.{GET, POST, Path}
+
+@Path("/fixtures")
+class FixtureResource {
+  @GET
+  @Path("/{id}")
+  def one(id: Int): String = "x"
+
+  @POST def create(): String = "y"
+
+  def helper(): Int = 1
+}
+
+class PlainService {
+  @GET def notAResource(): Int = 1
+}
+
+@Path("/garage") trait GarageApi {
+  @DELETE @Path("{car}") def sell(car: String): Unit
+}
+`;
+
+  it("reads class and method @Path with the verb markers, handler Class#method", () => {
+    const routes = scalaSpec.extractRoutes!(src.split("\n"), [], "src/FixtureResource.scala");
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "GET /fixtures/{id} FixtureResource#one",
+      "POST /fixtures FixtureResource#create",
+      "DELETE /garage/{car} GarageApi#sell",
+    ]);
+  });
+
+  it("reads nothing from a file that does not import JAX-RS", () => {
+    expect(scalaSpec.extractRoutes!(src.replace("javax.ws.rs", "other.rs").split("\n"), [], "src/X.scala")).toEqual([]);
+  });
+});
