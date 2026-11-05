@@ -209,6 +209,8 @@ export interface CppTokenFacts {
   cast: Uint8Array;
   /** 1 where an all-caps name calls a macro with arguments no expression reads: a type, `T *`, a block. */
   macroCall: Uint8Array;
+  /** 1 where an all-caps name calls a macro that stands for a type or a scope: `REMOVE_REF_(T) *`, `IS_COPYABLE(T)::value`. */
+  typeMacro: Uint8Array;
   /** 1 where a `(` holds a C++17 fold expression: `...` beside an operator at its own depth. */
   fold: Uint8Array;
   /** 1 where a `(` directly holds what no expression does: a type keyword, a specifier, `{`, `;`. */
@@ -429,6 +431,24 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const next = type(i + 1);
     if (BARE_MACRO_BEFORE.has(next) || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
   }
+  // `using Ref = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`: a macro call where only a type or a scope goes.
+  const typeMacro = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || type(i + 1) !== CPP14Lexer.LeftParen || close[i + 1]! < 0) continue;
+    const prev = type(i - 1);
+    if (prev === CPP14Lexer.Doublecolon || prev === CPP14Lexer.Dot || prev === CPP14Lexer.Arrow) continue;
+    const after = type(close[i + 1]! + 1);
+    // A scope: only a name or a type goes before `::`.
+    if (after === CPP14Lexer.Doublecolon) {
+      typeMacro[i] = 1;
+      continue;
+    }
+    // A type: an alias's, or the first template argument, ended by what only a type's declarator holds.
+    if (after !== CPP14Lexer.Star && after !== CPP14Lexer.And && after !== CPP14Lexer.AndAnd && after !== CPP14Lexer.Semi && after !== CPP14Lexer.Const) continue;
+    let j = i - 1;
+    while (type(j) === CPP14Lexer.Const || type(j) === CPP14Lexer.Volatile || type(j) === CPP14Lexer.Typename_) j--;
+    if ((type(j) === CPP14Lexer.Assign && isId(j - 1) && type(j - 2) === CPP14Lexer.Using) || (type(j) === CPP14Lexer.Less && angle[j]! >= 0)) typeMacro[i] = 1;
+  }
   // `if CONSTEXPR20 (…)`: a macro standing for `constexpr`.
   for (let i = 1; i < n; i++) if (type(i - 1) === CPP14Lexer.If && isId(i) && MACRO_NAME.test(names[i]!) && type(i + 1) === CPP14Lexer.LeftParen) macroCall[i] = 1;
   // `(std::cout << ... << args)`, `(check(args) && ...)`: a fold, its `...` beside an operator at the parentheses' depth.
@@ -458,7 +478,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
   }
-  return facts(all, tokens, names, types, close, angle, cast, macroCall, fold);
+  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, fold);
 
   /** Whether a cast may follow the `)` at `i`: another cast's, or a control header's. */
   function castAfterParen(i: number): boolean {
@@ -482,6 +502,7 @@ function facts(
   angle: Int32Array,
   cast: Uint8Array,
   macroCall: Uint8Array,
+  typeMacro: Uint8Array,
   fold: Uint8Array,
 ): CppTokenFacts {
   const size = all.length;
@@ -493,6 +514,7 @@ function facts(
     angle: new Int32Array(size).fill(-1),
     cast: new Uint8Array(size),
     macroCall: new Uint8Array(size),
+    typeMacro: new Uint8Array(size),
     fold: new Uint8Array(size),
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
@@ -524,6 +546,7 @@ function facts(
     if (angle[i]! >= 0) out.angle[k] = tokens[angle[i]!]!.tokenIndex;
     if (cast[i] === 1) out.cast[k] = 1;
     if (macroCall[i] === 1) out.macroCall[k] = 1;
+    if (typeMacro[i] === 1) out.typeMacro[k] = 1;
     if (fold[i] === 1) out.fold[k] = 1;
     const name = names[i];
     if (name === undefined) return;

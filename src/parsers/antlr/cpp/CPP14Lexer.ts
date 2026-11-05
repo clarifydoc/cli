@@ -30,166 +30,167 @@ export class CPP14Lexer extends antlr.Lexer {
     public static readonly TemplateGreater = 2;
     public static readonly CastLeftParen = 3;
     public static readonly MacroName = 4;
-    public static readonly FoldLeftParen = 5;
-    public static readonly IntegerLiteral = 6;
-    public static readonly CharacterLiteral = 7;
-    public static readonly FloatingLiteral = 8;
-    public static readonly StringLiteral = 9;
-    public static readonly BooleanLiteral = 10;
-    public static readonly PointerLiteral = 11;
-    public static readonly UserDefinedLiteral = 12;
-    public static readonly MultiLineMacro = 13;
-    public static readonly Directive = 14;
-    public static readonly Alignas = 15;
-    public static readonly Alignof = 16;
-    public static readonly Asm = 17;
-    public static readonly Auto = 18;
-    public static readonly Bool = 19;
-    public static readonly Break = 20;
-    public static readonly Case = 21;
-    public static readonly Catch = 22;
-    public static readonly Char = 23;
-    public static readonly Char16 = 24;
-    public static readonly Char32 = 25;
-    public static readonly Char8 = 26;
-    public static readonly Concept = 27;
-    public static readonly Consteval = 28;
-    public static readonly Constinit = 29;
-    public static readonly Requires = 30;
-    public static readonly Class = 31;
-    public static readonly Const = 32;
-    public static readonly Constexpr = 33;
-    public static readonly Co_await = 34;
-    public static readonly Co_return = 35;
-    public static readonly Co_yield = 36;
-    public static readonly Const_cast = 37;
-    public static readonly Continue = 38;
-    public static readonly Decltype = 39;
-    public static readonly Default = 40;
-    public static readonly Delete = 41;
-    public static readonly Do = 42;
-    public static readonly Double = 43;
-    public static readonly Dynamic_cast = 44;
-    public static readonly Else = 45;
-    public static readonly Enum = 46;
-    public static readonly Explicit = 47;
-    public static readonly Export = 48;
-    public static readonly Extern = 49;
-    public static readonly False_ = 50;
-    public static readonly Final = 51;
-    public static readonly Float = 52;
-    public static readonly For = 53;
-    public static readonly Friend = 54;
-    public static readonly Goto = 55;
-    public static readonly If = 56;
-    public static readonly Inline = 57;
-    public static readonly Int = 58;
-    public static readonly Long = 59;
-    public static readonly Mutable = 60;
-    public static readonly Namespace = 61;
-    public static readonly New = 62;
-    public static readonly Noexcept = 63;
-    public static readonly Nullptr = 64;
-    public static readonly Operator = 65;
-    public static readonly Override = 66;
-    public static readonly Private = 67;
-    public static readonly Protected = 68;
-    public static readonly Public = 69;
-    public static readonly Register = 70;
-    public static readonly Reinterpret_cast = 71;
-    public static readonly Return = 72;
-    public static readonly Short = 73;
-    public static readonly Signed = 74;
-    public static readonly Sizeof = 75;
-    public static readonly Static = 76;
-    public static readonly Static_assert = 77;
-    public static readonly Static_cast = 78;
-    public static readonly Struct = 79;
-    public static readonly Switch = 80;
-    public static readonly Template = 81;
-    public static readonly This = 82;
-    public static readonly Thread_local = 83;
-    public static readonly Throw = 84;
-    public static readonly True_ = 85;
-    public static readonly Try = 86;
-    public static readonly SehTry = 87;
-    public static readonly SehExcept = 88;
-    public static readonly SehFinally = 89;
-    public static readonly SehLeave = 90;
-    public static readonly Typedef = 91;
-    public static readonly Typeid_ = 92;
-    public static readonly Typename_ = 93;
-    public static readonly Union = 94;
-    public static readonly Unsigned = 95;
-    public static readonly Using = 96;
-    public static readonly Virtual = 97;
-    public static readonly Void = 98;
-    public static readonly Volatile = 99;
-    public static readonly Wchar = 100;
-    public static readonly While = 101;
-    public static readonly LeftParen = 102;
-    public static readonly RightParen = 103;
-    public static readonly LeftBracket = 104;
-    public static readonly RightBracket = 105;
-    public static readonly LeftBrace = 106;
-    public static readonly RightBrace = 107;
-    public static readonly Plus = 108;
-    public static readonly Minus = 109;
-    public static readonly Star = 110;
-    public static readonly Div = 111;
-    public static readonly Mod = 112;
-    public static readonly Caret = 113;
-    public static readonly And = 114;
-    public static readonly Or = 115;
-    public static readonly Tilde = 116;
-    public static readonly Not = 117;
-    public static readonly Assign = 118;
-    public static readonly Less = 119;
-    public static readonly Greater = 120;
-    public static readonly PlusAssign = 121;
-    public static readonly MinusAssign = 122;
-    public static readonly StarAssign = 123;
-    public static readonly DivAssign = 124;
-    public static readonly ModAssign = 125;
-    public static readonly XorAssign = 126;
-    public static readonly AndAssign = 127;
-    public static readonly OrAssign = 128;
-    public static readonly LeftShiftAssign = 129;
-    public static readonly RightShiftAssign = 130;
-    public static readonly Equal = 131;
-    public static readonly NotEqual = 132;
-    public static readonly LessEqualGreater = 133;
-    public static readonly LessEqual = 134;
-    public static readonly GreaterEqual = 135;
-    public static readonly AndAnd = 136;
-    public static readonly OrOr = 137;
-    public static readonly PlusPlus = 138;
-    public static readonly MinusMinus = 139;
-    public static readonly Comma = 140;
-    public static readonly ArrowStar = 141;
-    public static readonly Arrow = 142;
-    public static readonly Question = 143;
-    public static readonly Colon = 144;
-    public static readonly Doublecolon = 145;
-    public static readonly Semi = 146;
-    public static readonly Dot = 147;
-    public static readonly DotStar = 148;
-    public static readonly Ellipsis = 149;
-    public static readonly QtEmit = 150;
-    public static readonly Identifier = 151;
-    public static readonly DecimalLiteral = 152;
-    public static readonly OctalLiteral = 153;
-    public static readonly HexadecimalLiteral = 154;
-    public static readonly BinaryLiteral = 155;
-    public static readonly Integersuffix = 156;
-    public static readonly UserDefinedIntegerLiteral = 157;
-    public static readonly UserDefinedFloatingLiteral = 158;
-    public static readonly UserDefinedStringLiteral = 159;
-    public static readonly UserDefinedCharacterLiteral = 160;
-    public static readonly Whitespace = 161;
-    public static readonly Newline = 162;
-    public static readonly BlockComment = 163;
-    public static readonly LineComment = 164;
+    public static readonly TypeMacro = 5;
+    public static readonly FoldLeftParen = 6;
+    public static readonly IntegerLiteral = 7;
+    public static readonly CharacterLiteral = 8;
+    public static readonly FloatingLiteral = 9;
+    public static readonly StringLiteral = 10;
+    public static readonly BooleanLiteral = 11;
+    public static readonly PointerLiteral = 12;
+    public static readonly UserDefinedLiteral = 13;
+    public static readonly MultiLineMacro = 14;
+    public static readonly Directive = 15;
+    public static readonly Alignas = 16;
+    public static readonly Alignof = 17;
+    public static readonly Asm = 18;
+    public static readonly Auto = 19;
+    public static readonly Bool = 20;
+    public static readonly Break = 21;
+    public static readonly Case = 22;
+    public static readonly Catch = 23;
+    public static readonly Char = 24;
+    public static readonly Char16 = 25;
+    public static readonly Char32 = 26;
+    public static readonly Char8 = 27;
+    public static readonly Concept = 28;
+    public static readonly Consteval = 29;
+    public static readonly Constinit = 30;
+    public static readonly Requires = 31;
+    public static readonly Class = 32;
+    public static readonly Const = 33;
+    public static readonly Constexpr = 34;
+    public static readonly Co_await = 35;
+    public static readonly Co_return = 36;
+    public static readonly Co_yield = 37;
+    public static readonly Const_cast = 38;
+    public static readonly Continue = 39;
+    public static readonly Decltype = 40;
+    public static readonly Default = 41;
+    public static readonly Delete = 42;
+    public static readonly Do = 43;
+    public static readonly Double = 44;
+    public static readonly Dynamic_cast = 45;
+    public static readonly Else = 46;
+    public static readonly Enum = 47;
+    public static readonly Explicit = 48;
+    public static readonly Export = 49;
+    public static readonly Extern = 50;
+    public static readonly False_ = 51;
+    public static readonly Final = 52;
+    public static readonly Float = 53;
+    public static readonly For = 54;
+    public static readonly Friend = 55;
+    public static readonly Goto = 56;
+    public static readonly If = 57;
+    public static readonly Inline = 58;
+    public static readonly Int = 59;
+    public static readonly Long = 60;
+    public static readonly Mutable = 61;
+    public static readonly Namespace = 62;
+    public static readonly New = 63;
+    public static readonly Noexcept = 64;
+    public static readonly Nullptr = 65;
+    public static readonly Operator = 66;
+    public static readonly Override = 67;
+    public static readonly Private = 68;
+    public static readonly Protected = 69;
+    public static readonly Public = 70;
+    public static readonly Register = 71;
+    public static readonly Reinterpret_cast = 72;
+    public static readonly Return = 73;
+    public static readonly Short = 74;
+    public static readonly Signed = 75;
+    public static readonly Sizeof = 76;
+    public static readonly Static = 77;
+    public static readonly Static_assert = 78;
+    public static readonly Static_cast = 79;
+    public static readonly Struct = 80;
+    public static readonly Switch = 81;
+    public static readonly Template = 82;
+    public static readonly This = 83;
+    public static readonly Thread_local = 84;
+    public static readonly Throw = 85;
+    public static readonly True_ = 86;
+    public static readonly Try = 87;
+    public static readonly SehTry = 88;
+    public static readonly SehExcept = 89;
+    public static readonly SehFinally = 90;
+    public static readonly SehLeave = 91;
+    public static readonly Typedef = 92;
+    public static readonly Typeid_ = 93;
+    public static readonly Typename_ = 94;
+    public static readonly Union = 95;
+    public static readonly Unsigned = 96;
+    public static readonly Using = 97;
+    public static readonly Virtual = 98;
+    public static readonly Void = 99;
+    public static readonly Volatile = 100;
+    public static readonly Wchar = 101;
+    public static readonly While = 102;
+    public static readonly LeftParen = 103;
+    public static readonly RightParen = 104;
+    public static readonly LeftBracket = 105;
+    public static readonly RightBracket = 106;
+    public static readonly LeftBrace = 107;
+    public static readonly RightBrace = 108;
+    public static readonly Plus = 109;
+    public static readonly Minus = 110;
+    public static readonly Star = 111;
+    public static readonly Div = 112;
+    public static readonly Mod = 113;
+    public static readonly Caret = 114;
+    public static readonly And = 115;
+    public static readonly Or = 116;
+    public static readonly Tilde = 117;
+    public static readonly Not = 118;
+    public static readonly Assign = 119;
+    public static readonly Less = 120;
+    public static readonly Greater = 121;
+    public static readonly PlusAssign = 122;
+    public static readonly MinusAssign = 123;
+    public static readonly StarAssign = 124;
+    public static readonly DivAssign = 125;
+    public static readonly ModAssign = 126;
+    public static readonly XorAssign = 127;
+    public static readonly AndAssign = 128;
+    public static readonly OrAssign = 129;
+    public static readonly LeftShiftAssign = 130;
+    public static readonly RightShiftAssign = 131;
+    public static readonly Equal = 132;
+    public static readonly NotEqual = 133;
+    public static readonly LessEqualGreater = 134;
+    public static readonly LessEqual = 135;
+    public static readonly GreaterEqual = 136;
+    public static readonly AndAnd = 137;
+    public static readonly OrOr = 138;
+    public static readonly PlusPlus = 139;
+    public static readonly MinusMinus = 140;
+    public static readonly Comma = 141;
+    public static readonly ArrowStar = 142;
+    public static readonly Arrow = 143;
+    public static readonly Question = 144;
+    public static readonly Colon = 145;
+    public static readonly Doublecolon = 146;
+    public static readonly Semi = 147;
+    public static readonly Dot = 148;
+    public static readonly DotStar = 149;
+    public static readonly Ellipsis = 150;
+    public static readonly QtEmit = 151;
+    public static readonly Identifier = 152;
+    public static readonly DecimalLiteral = 153;
+    public static readonly OctalLiteral = 154;
+    public static readonly HexadecimalLiteral = 155;
+    public static readonly BinaryLiteral = 156;
+    public static readonly Integersuffix = 157;
+    public static readonly UserDefinedIntegerLiteral = 158;
+    public static readonly UserDefinedFloatingLiteral = 159;
+    public static readonly UserDefinedStringLiteral = 160;
+    public static readonly UserDefinedCharacterLiteral = 161;
+    public static readonly Whitespace = 162;
+    public static readonly Newline = 163;
+    public static readonly BlockComment = 164;
+    public static readonly LineComment = 165;
 
     public static readonly channelNames = [
         "DEFAULT_TOKEN_CHANNEL", "HIDDEN"
@@ -197,8 +198,8 @@ export class CPP14Lexer extends antlr.Lexer {
 
     public static readonly literalNames = [
         null, null, null, null, null, null, null, null, null, null, null, 
-        null, null, null, null, "'alignas'", "'alignof'", "'asm'", "'auto'", 
-        "'bool'", "'break'", "'case'", "'catch'", "'char'", "'char16_t'", 
+        null, null, null, null, null, "'alignas'", "'alignof'", "'asm'", 
+        "'auto'", "'bool'", "'break'", "'case'", "'catch'", "'char'", "'char16_t'", 
         "'char32_t'", "'char8_t'", "'concept'", "'consteval'", "'constinit'", 
         "'requires'", "'class'", "'const'", "'constexpr'", "'co_await'", 
         "'co_return'", "'co_yield'", "'const_cast'", "'continue'", "'decltype'", 
@@ -223,34 +224,34 @@ export class CPP14Lexer extends antlr.Lexer {
 
     public static readonly symbolicNames = [
         null, "TemplateLess", "TemplateGreater", "CastLeftParen", "MacroName", 
-        "FoldLeftParen", "IntegerLiteral", "CharacterLiteral", "FloatingLiteral", 
-        "StringLiteral", "BooleanLiteral", "PointerLiteral", "UserDefinedLiteral", 
-        "MultiLineMacro", "Directive", "Alignas", "Alignof", "Asm", "Auto", 
-        "Bool", "Break", "Case", "Catch", "Char", "Char16", "Char32", "Char8", 
-        "Concept", "Consteval", "Constinit", "Requires", "Class", "Const", 
-        "Constexpr", "Co_await", "Co_return", "Co_yield", "Const_cast", 
-        "Continue", "Decltype", "Default", "Delete", "Do", "Double", "Dynamic_cast", 
-        "Else", "Enum", "Explicit", "Export", "Extern", "False_", "Final", 
-        "Float", "For", "Friend", "Goto", "If", "Inline", "Int", "Long", 
-        "Mutable", "Namespace", "New", "Noexcept", "Nullptr", "Operator", 
-        "Override", "Private", "Protected", "Public", "Register", "Reinterpret_cast", 
-        "Return", "Short", "Signed", "Sizeof", "Static", "Static_assert", 
-        "Static_cast", "Struct", "Switch", "Template", "This", "Thread_local", 
-        "Throw", "True_", "Try", "SehTry", "SehExcept", "SehFinally", "SehLeave", 
-        "Typedef", "Typeid_", "Typename_", "Union", "Unsigned", "Using", 
-        "Virtual", "Void", "Volatile", "Wchar", "While", "LeftParen", "RightParen", 
-        "LeftBracket", "RightBracket", "LeftBrace", "RightBrace", "Plus", 
-        "Minus", "Star", "Div", "Mod", "Caret", "And", "Or", "Tilde", "Not", 
-        "Assign", "Less", "Greater", "PlusAssign", "MinusAssign", "StarAssign", 
-        "DivAssign", "ModAssign", "XorAssign", "AndAssign", "OrAssign", 
-        "LeftShiftAssign", "RightShiftAssign", "Equal", "NotEqual", "LessEqualGreater", 
-        "LessEqual", "GreaterEqual", "AndAnd", "OrOr", "PlusPlus", "MinusMinus", 
-        "Comma", "ArrowStar", "Arrow", "Question", "Colon", "Doublecolon", 
-        "Semi", "Dot", "DotStar", "Ellipsis", "QtEmit", "Identifier", "DecimalLiteral", 
-        "OctalLiteral", "HexadecimalLiteral", "BinaryLiteral", "Integersuffix", 
-        "UserDefinedIntegerLiteral", "UserDefinedFloatingLiteral", "UserDefinedStringLiteral", 
-        "UserDefinedCharacterLiteral", "Whitespace", "Newline", "BlockComment", 
-        "LineComment"
+        "TypeMacro", "FoldLeftParen", "IntegerLiteral", "CharacterLiteral", 
+        "FloatingLiteral", "StringLiteral", "BooleanLiteral", "PointerLiteral", 
+        "UserDefinedLiteral", "MultiLineMacro", "Directive", "Alignas", 
+        "Alignof", "Asm", "Auto", "Bool", "Break", "Case", "Catch", "Char", 
+        "Char16", "Char32", "Char8", "Concept", "Consteval", "Constinit", 
+        "Requires", "Class", "Const", "Constexpr", "Co_await", "Co_return", 
+        "Co_yield", "Const_cast", "Continue", "Decltype", "Default", "Delete", 
+        "Do", "Double", "Dynamic_cast", "Else", "Enum", "Explicit", "Export", 
+        "Extern", "False_", "Final", "Float", "For", "Friend", "Goto", "If", 
+        "Inline", "Int", "Long", "Mutable", "Namespace", "New", "Noexcept", 
+        "Nullptr", "Operator", "Override", "Private", "Protected", "Public", 
+        "Register", "Reinterpret_cast", "Return", "Short", "Signed", "Sizeof", 
+        "Static", "Static_assert", "Static_cast", "Struct", "Switch", "Template", 
+        "This", "Thread_local", "Throw", "True_", "Try", "SehTry", "SehExcept", 
+        "SehFinally", "SehLeave", "Typedef", "Typeid_", "Typename_", "Union", 
+        "Unsigned", "Using", "Virtual", "Void", "Volatile", "Wchar", "While", 
+        "LeftParen", "RightParen", "LeftBracket", "RightBracket", "LeftBrace", 
+        "RightBrace", "Plus", "Minus", "Star", "Div", "Mod", "Caret", "And", 
+        "Or", "Tilde", "Not", "Assign", "Less", "Greater", "PlusAssign", 
+        "MinusAssign", "StarAssign", "DivAssign", "ModAssign", "XorAssign", 
+        "AndAssign", "OrAssign", "LeftShiftAssign", "RightShiftAssign", 
+        "Equal", "NotEqual", "LessEqualGreater", "LessEqual", "GreaterEqual", 
+        "AndAnd", "OrOr", "PlusPlus", "MinusMinus", "Comma", "ArrowStar", 
+        "Arrow", "Question", "Colon", "Doublecolon", "Semi", "Dot", "DotStar", 
+        "Ellipsis", "QtEmit", "Identifier", "DecimalLiteral", "OctalLiteral", 
+        "HexadecimalLiteral", "BinaryLiteral", "Integersuffix", "UserDefinedIntegerLiteral", 
+        "UserDefinedFloatingLiteral", "UserDefinedStringLiteral", "UserDefinedCharacterLiteral", 
+        "Whitespace", "Newline", "BlockComment", "LineComment"
     ];
 
     public static readonly modeNames = [
@@ -313,7 +314,7 @@ export class CPP14Lexer extends antlr.Lexer {
     public get modeNames(): string[] { return CPP14Lexer.modeNames; }
 
     public static readonly _serializedATN: number[] = [
-        4,0,164,1624,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,
+        4,0,165,1624,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,
         5,2,6,7,6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,
         2,13,7,13,2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,
         7,19,2,20,7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,
@@ -453,26 +454,26 @@ export class CPP14Lexer extends antlr.Lexer {
         3,182,1596,8,182,1,182,1,182,1,183,1,183,1,183,1,183,5,183,1604,
         8,183,10,183,12,183,1607,9,183,1,183,1,183,1,183,1,183,1,183,1,184,
         1,184,1,184,1,184,5,184,1618,8,184,10,184,12,184,1621,9,184,1,184,
-        1,184,4,444,470,1537,1605,0,185,1,6,3,7,5,8,7,9,9,10,11,11,13,12,
-        15,13,17,14,19,15,21,16,23,17,25,18,27,19,29,20,31,21,33,22,35,23,
-        37,24,39,25,41,26,43,27,45,28,47,29,49,30,51,31,53,32,55,33,57,34,
-        59,35,61,36,63,37,65,38,67,39,69,40,71,41,73,42,75,43,77,44,79,45,
-        81,46,83,47,85,48,87,49,89,50,91,51,93,52,95,53,97,54,99,55,101,
-        56,103,57,105,58,107,59,109,60,111,61,113,62,115,63,117,64,119,65,
-        121,66,123,67,125,68,127,69,129,70,131,71,133,72,135,73,137,74,139,
-        75,141,76,143,77,145,78,147,79,149,80,151,81,153,82,155,83,157,84,
-        159,85,161,86,163,87,165,88,167,89,169,90,171,91,173,92,175,93,177,
-        94,179,95,181,96,183,97,185,98,187,99,189,100,191,101,193,102,195,
-        103,197,104,199,105,201,106,203,107,205,108,207,109,209,110,211,
-        111,213,112,215,113,217,114,219,115,221,116,223,117,225,118,227,
-        119,229,120,231,121,233,122,235,123,237,124,239,125,241,126,243,
-        127,245,128,247,129,249,130,251,131,253,132,255,133,257,134,259,
-        135,261,136,263,137,265,138,267,139,269,140,271,141,273,142,275,
-        143,277,144,279,145,281,146,283,147,285,148,287,149,289,0,291,0,
-        293,150,295,151,297,0,299,0,301,0,303,152,305,153,307,154,309,155,
-        311,0,313,0,315,0,317,0,319,156,321,0,323,0,325,0,327,0,329,0,331,
+        1,184,4,444,470,1537,1605,0,185,1,7,3,8,5,9,7,10,9,11,11,12,13,13,
+        15,14,17,15,19,16,21,17,23,18,25,19,27,20,29,21,31,22,33,23,35,24,
+        37,25,39,26,41,27,43,28,45,29,47,30,49,31,51,32,53,33,55,34,57,35,
+        59,36,61,37,63,38,65,39,67,40,69,41,71,42,73,43,75,44,77,45,79,46,
+        81,47,83,48,85,49,87,50,89,51,91,52,93,53,95,54,97,55,99,56,101,
+        57,103,58,105,59,107,60,109,61,111,62,113,63,115,64,117,65,119,66,
+        121,67,123,68,125,69,127,70,129,71,131,72,133,73,135,74,137,75,139,
+        76,141,77,143,78,145,79,147,80,149,81,151,82,153,83,155,84,157,85,
+        159,86,161,87,163,88,165,89,167,90,169,91,171,92,173,93,175,94,177,
+        95,179,96,181,97,183,98,185,99,187,100,189,101,191,102,193,103,195,
+        104,197,105,199,106,201,107,203,108,205,109,207,110,209,111,211,
+        112,213,113,215,114,217,115,219,116,221,117,223,118,225,119,227,
+        120,229,121,231,122,233,123,235,124,237,125,239,126,241,127,243,
+        128,245,129,247,130,249,131,251,132,253,133,255,134,257,135,259,
+        136,261,137,263,138,265,139,267,140,269,141,271,142,273,143,275,
+        144,277,145,279,146,281,147,283,148,285,149,287,150,289,0,291,0,
+        293,151,295,152,297,0,299,0,301,0,303,153,305,154,307,155,309,156,
+        311,0,313,0,315,0,317,0,319,157,321,0,323,0,325,0,327,0,329,0,331,
         0,333,0,335,0,337,0,339,0,341,0,343,0,345,0,347,0,349,0,351,0,353,
-        157,355,158,357,159,359,160,361,0,363,161,365,162,367,163,369,164,
+        158,355,159,357,160,359,161,361,0,363,162,365,163,367,164,369,165,
         1,0,17,3,0,76,76,85,85,117,117,1,0,10,10,2,0,9,9,32,32,3,0,65,90,
         95,95,97,122,1,0,48,57,1,0,49,57,1,0,48,55,3,0,48,57,65,70,97,102,
         1,0,48,49,2,0,85,85,117,117,2,0,76,76,108,108,4,0,10,10,13,13,39,

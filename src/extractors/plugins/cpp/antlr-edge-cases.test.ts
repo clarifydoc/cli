@@ -42,3 +42,28 @@ class Garage final { void open() override { door(); } };
     expect(read(source)).toEqual({ errors: 0, functions: [["Car::stop", ["shift"]], ["Garage::open", ["door"]]] });
   });
 });
+
+describe("C++ edge cases: macros standing for types", () => {
+  it("reads a type macro in an alias, and a macro's call before `::` among template arguments and defaults", () => {
+    const source = `template <class T>
+using CarRef = const REMOVE_REF_(T) *;
+
+template <class T, class E,
+          bool = is_void_or<T, CAR_IS_COPYABLE(T)>::value && CAR_IS_COPYABLE(E)::value>
+struct GarageBase : Base<T, E> {
+  void park() { enter(); }
+};
+
+template <class T>
+void drive(T t) {
+  static_assert(CAR_IS_COPYABLE(T)::value, "copyable");
+  typename CAR_TRAITS(T)::type gear = shift(t);
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["drive", ["shift"]], ["GarageBase::park", ["enter"]]] });
+  });
+
+  it("keeps a macro's product in an expression a product", () => {
+    expect(read(`int total(int a) { return SCALE(a) * 2; }\n`)).toEqual({ errors: 0, functions: [["total", ["SCALE"]]] });
+  });
+});
