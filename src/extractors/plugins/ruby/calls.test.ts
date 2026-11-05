@@ -9,6 +9,15 @@ const calls = (src: string) => {
 };
 
 describe("ruby paren-less calls", () => {
+  it("captures a command call on a local, safe-navigated or not, and never an attribute read before a keyword", () => {
+    expect(calls("    club.promote 1")).toContain("club.promote");
+    expect(calls("    club&.relegate :season")).toContain("club.relegate");
+    expect(calls("    club.rank squad")).toContain("club.rank");
+    expect(calls("    puts club.name if squad")).not.toContain("club.name");
+    expect(calls("    x = club.size unless squad")).not.toContain("club.size");
+    expect(calls("    total = club.points + 1")).not.toContain("club.points");
+  });
+
   it("captures a constant receiver with no parentheses", () => {
     expect(calls("    Player.all.map(&:to_h)")).toContain("Player.all");
   });

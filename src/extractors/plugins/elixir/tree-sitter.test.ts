@@ -159,3 +159,27 @@ end
     expect(fns.filter((f) => f.name === "table").map((f) => f.line)).toEqual([14, 19]);
   });
 });
+
+describe("Elixir delegation and scripts", () => {
+  const SRC = `defmodule League.Api do
+  defdelegate promote(club), to: League.Club
+  defdelegate drop(club), to: League.Club, as: :relegate
+  defdelegate size(club), to: @store
+end
+`;
+
+  it("reads a `defdelegate` as a function calling the function it delegates to, `as:` renamed", () => {
+    const a = extractWithRegex(SRC, "lib/api.ex", "elixir", undefined, readElixir(SRC));
+    const fns = a.classes.flatMap((c) => c.methods).concat(a.functions);
+    expect(fns.filter((f) => f.name !== "<setup>").map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([
+      ["promote", ["Club.promote"]],
+      ["drop", ["Club.relegate"]],
+    ]);
+  });
+
+  it("records the calls of a script outside any module as its <setup>", () => {
+    const seeds = `League.Club.promote(1)\nLeague.Api.promote(2)\n`;
+    const a = extractWithRegex(seeds, "priv/repo/seeds.exs", "elixir", undefined, readElixir(seeds));
+    expect(a.functions.find((f) => f.name === "<setup>")?.calls.map((c) => c.name)).toEqual(["Club.promote", "Api.promote"]);
+  });
+});

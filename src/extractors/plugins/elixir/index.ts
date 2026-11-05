@@ -521,6 +521,8 @@ export const elixirSpec: RegexLangSpec = {
   extensions: [".ex", ".exs"],
   indentBased: true,
   lineCommentPrefixes: ["#"],
+  // A script's own statements outside any module (`priv/repo/seeds.exs`: `League.Club.promote(1)`) run when it does.
+  topLevelCalls: "parsed",
 
   functionPatterns: [
     {

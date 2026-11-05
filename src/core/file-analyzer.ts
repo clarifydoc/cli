@@ -416,6 +416,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       restoreTypedReceiverCalls(analysis, caseInsensitive);
       importedNameCalls(analysis);
       pre?.postExtract?.(analysis, rawSource);
+      if (pre?.restoreTypedCalls) restoreTypedReceiverCalls(analysis, caseInsensitive);
       analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
       analysis.projectId = projectId;
       analysis.lineCount = countLines(rawSource);

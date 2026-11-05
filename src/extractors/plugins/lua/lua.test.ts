@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import "../../registry.js";
+import { restoreTypedReceiverCalls } from "../../../core/typed-receivers.js";
+import { luaTables } from "./tables.js";
+import { readLua } from "./antlr.js";
 
 describe("Lua scripts", () => {
   it("records a script's own statements as <setup>, never words in a long comment or string or a word operator (real-repo FP)", () => {
@@ -35,5 +38,59 @@ local hex = require("league.codec").to_hex(id)
 `, "access.lua", "lua");
     const setup = a.functions.find((f) => f.name === "<setup>");
     expect(setup?.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["auth.authenticate", "codec.to_hex"]));
+  });
+});
+
+describe("Lua tables as classes", () => {
+  const read = (source: string, path: string) => {
+    const a = extractWithRegex(source, path, "lua", undefined, readLua(source));
+    luaTables(a, source);
+    restoreTypedReceiverCalls(a);
+    return a;
+  };
+
+  it("turns the functions a table stores into its methods and keeps a receiver on `obj:method()`", () => {
+    const a = read(`local Club = {}
+Club.__index = Club
+function Club.new(name)
+  return setmetatable({ name = name }, Club)
+end
+function Club:warmup()
+  return 1
+end
+function Club:train()
+  self:warmup()
+  local mate = Club.new("b")
+  mate:warmup()
+end
+return Club
+`, "club.lua");
+    const club = a.classes.find((c) => c.name === "Club");
+    expect(club?.methods.map((m) => m.name)).toEqual(["new", "warmup", "train"]);
+    expect(club?.isExported).toBe(true);
+    expect(a.functions.some((f) => f.name.startsWith("Club"))).toBe(false);
+    const train = club!.methods.find((m) => m.name === "train")!;
+    expect(train.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["self.warmup", "mate.warmup", "Club.new"]));
+    expect(train.localTypes).toEqual([{ name: "mate", type: "Club" }]);
+  });
+
+  it("makes `setmetatable(Sub, { __index = Base })` the base, and a `local r = require(...)` a namespace import", () => {
+    const a = read(`local Base = require("base")
+local Reserve = {}
+setmetatable(Reserve, { __index = Base })
+function Reserve:bench() end
+local Base2 = {}
+function Base2:play() end
+setmetatable(Reserve, { __index = Base2 })
+`, "reserve.lua");
+    expect(a.imports[0]).toMatchObject({ source: "base", specifiers: ["Base"], isNamespace: true });
+    expect(a.classes.find((c) => c.name === "Reserve")?.extends).toBe("Base");
+  });
+
+  it("reads Roblox `require(script.Parent.X)` as a relative import", () => {
+    const a = extractWithRegex(`local Ball = require(script.Parent.Ball)
+local Pitch = require(script.Parent.Parent.Pitch)
+`, "Part.server.lua", "lua");
+    expect(a.imports.map((i) => [i.source, i.specifiers])).toEqual([["./Ball", ["Ball"]], ["../Pitch", ["Pitch"]]]);
   });
 });

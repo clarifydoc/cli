@@ -983,6 +983,15 @@ export const rubySpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}${m[2]!.replace(/\.([a-z_]\w*[?!]?)(?:\s*\([^()]*\))?/g, ".$1()")}.${m[3]}`, leafName: m[3] }),
     },
     {
+      // A command call on a local — `club.promote 1`, `club&.relegate :season`: the receiver and
+      // method are followed by an argument that starts a value (a number, string, symbol, ivar or
+      // name), which an attribute read never is. A keyword after it (`club.name if x`) is no argument.
+      pattern: new RegExp(
+        String.raw`(?<![\w.@$:])([a-z_]\w*)&?\.([a-z_]\w*[?!]?)[ \t]+(?=(?:\d|["']|:\w|@\w|(?!(?:if|unless|while|until|and|or|not|do|then|rescue|ensure|end|in|when|else|elsif)\b)[a-z_]\w*\b(?![ \t]*[?:]\s)))`,
+      ),
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+    {
       // A whole statement that is just `receiver.method` — `user.save`,
       // `todo.destroy`. Reading an attribute and discarding it does nothing,
       // so a bare `x.y` in statement position is a call for its side effect.

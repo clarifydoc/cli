@@ -129,7 +129,7 @@ export function isNestedScopeType(nodeType: string): boolean {
 }
 
 /** Receivers that name the current instance, across the supported languages. */
-const OWN_INSTANCE_RECEIVERS = new Set(["this", "self", "cls", "Self", "$this"]);
+const OWN_INSTANCE_RECEIVERS = new Set(["this", "self", "cls", "Self", "$this", "static", "Me", "MyClass", "me", "myclass"]);
 
 /** Methods that are noise — chaining, logging, promise utilities, etc. */
 export const NOISE_CALLS = new Set([

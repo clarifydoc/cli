@@ -16,6 +16,8 @@ export const rCallHooks: CallExtractionHooks = {
   anonymousScopeTypes: ["function_definition"],
   resolveCallName(node) {
     const name = callName(node);
-    return name && !LANGUAGE_CALLS.has(name) ? name : null;
+    if (!name || LANGUAGE_CALLS.has(name)) return null;
+    // R6's `private$warmup()` is the class's own member, as `self$warmup()` is.
+    return name.startsWith("private.") ? `self.${name.slice("private.".length)}` : name;
   },
 };
