@@ -370,6 +370,12 @@ export interface FileAnalysis {
    * that request (`InteractiveElementInfo.request.attribute`).
    */
   attributeReads?: Array<{ attribute: string; method?: string; line: number }>;
+  /**
+   * Pages a browser driver opens by address (`page.goto("/clubs/1")`, `cy.visit("/login")`): the
+   * app path, holes as `{}`. Core joins those of test code to the screen at that path
+   * (`ProjectAnalysis.testNavigations`).
+   */
+  browserNavigations?: BrowserNavigation[];
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -1681,6 +1687,30 @@ export interface Instantiation {
   line: number;
   /** The variable it is assigned to (`const roomService = new …`). */
   name?: string;
+}
+
+/** A page a browser driver opens (see `FileAnalysis.browserNavigations`). */
+export interface BrowserNavigation {
+  /** The app path, holes as `{}` segments, query and fragment cut: `/clubs/{}/squad`. */
+  path: string;
+  line: number;
+}
+
+/**
+ * A page a browser test opens (`ProjectAnalysis.testNavigations`): the test code's navigation
+ * joined to the screens the client router serves at that path, as the screen map matches an app's
+ * own links.
+ */
+export interface TestNavigationRow {
+  /** The test file navigating. */
+  file: string;
+  line: number;
+  /** The function the navigation is in, when one encloses it. */
+  symbol?: string;
+  /** The app path as the test writes it, holes as `{}`. */
+  path: string;
+  /** The screen files at that path, of one sub-project; absent when none answers. */
+  screens?: string[];
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
@@ -3956,6 +3986,12 @@ export interface ProjectAnalysis {
    * The test verdict counts them tested (`test-setup`).
    */
   testSetupRuns?: Array<{ file: string; reason: string }>;
+  /**
+   * Pages browser tests open by address (`page.goto`, `cy.visit`), each joined to the screens the
+   * client router serves at that path, as the screen map matches an app's own links; a navigation
+   * no screen answers keeps no `screens`.
+   */
+  testNavigations?: TestNavigationRow[];
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the

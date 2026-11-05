@@ -35,6 +35,7 @@ import { detectGitopsReleases } from "./gitops-releases.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { attachServerRedirects } from "./server-redirects.js";
 import { buildScreenFlow } from "./screen-flow.js";
+import { joinTestNavigations } from "./test-navigations.js";
 import { linkRenderedViews } from "./rendered-views.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
@@ -1721,6 +1722,14 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     fileLayerTiers,
   );
   const layerSplit = layerDisagreements(allAnalyses, fileLayerMap, fileLayerTiers, isUnauthored);
+  // Pages browser tests open by address, joined to the screen at that path.
+  const testNavigations = joinTestNavigations({
+    analyses: allAnalyses,
+    screens: allScreens,
+    projectOf: (f) => analysisOf.get(f)?.projectId,
+    isTest: (f) => fileLayerMap[f] === "test" || isTestFile(f, analysisOf.get(f)?.language),
+  });
+  if (testNavigations.length) progress.detail(`  Browser test navigations: ${testNavigations.length}, ${testNavigations.filter((n) => n.screens).length} to a screen`);
   if (layerSplit.conflicts.length) progress.detail(`  Layers: ${layerSplit.conflicts.length} file(s) placed by path in a layer their content contradicts`);
   const layerViolations = [
     ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
@@ -2330,6 +2339,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(allEntryPoints.length ? { entryPoints: allEntryPoints } : {}),
     ...(projectCommands.length ? { projectCommands } : {}),
     ...(testSetupRuns.length ? { testSetupRuns } : {}),
+    ...(testNavigations.length ? { testNavigations } : {}),
     screens: allScreens,
     symbolLinks,
     componentLaunches: componentLaunches.length ? componentLaunches : undefined,

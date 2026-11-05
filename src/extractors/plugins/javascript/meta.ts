@@ -1,5 +1,6 @@
 import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
+import { extractBrowserNavigations } from "./browser-navigations.js";
 import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
@@ -261,6 +262,7 @@ function astHooks(language: Language): AstExtractorHooks {
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
     attributeReads: extractAttributeReads,
+    browserNavigations: extractBrowserNavigations,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,

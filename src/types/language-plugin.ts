@@ -717,6 +717,8 @@ export interface AstExtractorHooks {
   moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
   /** URL-holding markup attributes the file's scripts read → `FileAnalysis.attributeReads`. */
   attributeReads?(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }>;
+  /** Pages a browser driver opens by address (`page.goto`, `cy.visit`) → `FileAnalysis.browserNavigations`. */
+  browserNavigations?(tree: Tree, sourceText: string): import("./analysis.js").BrowserNavigation[];
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →

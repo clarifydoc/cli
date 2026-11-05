@@ -89,50 +89,12 @@ export function buildScreenFlow(input: {
   };
   for (const s of screens) if (pageOf(s) || DIALOGISH.test(s.formType)) addScreen(s);
 
-  // Screens by route key, name and file.
-  const byKey = new Map<string, Set<ScreenInfo>>();
-  // Paths as written first: a flow's states (`league.wf.club#details`) are no URLs, and a key would cut their `#`.
-  const byExact = new Map<string, Set<ScreenInfo>>();
-  const addKey = (p: string, s: ScreenInfo) => {
-    (byExact.get(p) ?? byExact.set(p, new Set()).get(p)!).add(s);
-    // `/teachers/:uuid?` answers at `/teachers` too.
-    const bare = p.replace(/(?:\/(?::\w+\?|\[\[[^\]]+\]\]))+\/?$/, "") || "/";
-    for (const variant of new Set([p, bare])) {
-      const k = pathKey(variant);
-      (byKey.get(k) ?? byKey.set(k, new Set()).get(k)!).add(s);
-    }
-  };
-  for (const s of screens) {
-    if (s.routePath) addKey(s.routePath, s);
-    for (const p of s.otherRoutes ?? []) addKey(p, s);
-    for (const r of s.renderedBy ?? []) addKey(r.path, s);
-  }
+  const { screenAtPath, writtenAs } = screenPathMatcher(screens, projectOf, related);
   const byName = new Map<string, ScreenInfo[]>();
   for (const s of screens) (byName.get(s.name) ?? byName.set(s.name, []).get(s.name)!).push(s);
   /** The one screen file among `xs` — two files answering to one target name neither. */
   const one = (xs: ScreenInfo[]): ScreenInfo | null =>
     xs.length > 0 && new Set(xs.map((x) => x.filePath)).size === 1 ? xs[0]! : null;
-  /** A concrete path (`/clubs/42`) against the routes with parameters: the most literal segments win. */
-  const byParams = (k: string): ScreenInfo[] => {
-    const segs = k.split("/");
-    let best: ScreenInfo[] = [];
-    let bestLiterals = -1;
-    for (const [rk, set] of byKey) {
-      if (!rk.includes("{}")) continue;
-      const rs = rk.split("/");
-      if (rs.length !== segs.length || !rs.every((seg, i) => seg === "{}" || seg === segs[i])) continue;
-      const literals = rs.filter((seg) => seg !== "{}").length;
-      if (literals > bestLiterals) { best = [...set]; bestLiterals = literals; }
-      else if (literals === bestLiterals) best.push(...set);
-    }
-    return best;
-  };
-  const screenAtPath = (p: string, project: string | undefined): ScreenInfo | null => {
-    const k = pathKey(p);
-    const hits = byExact.has(p) ? [...byExact.get(p)!] : byKey.has(k) ? [...byKey.get(k)!] : byParams(k);
-    const same = hits.filter((s) => projectOf(s.filePath) === project);
-    return one(same.length > 0 ? same : hits.filter((s) => related(project, projectOf(s.filePath))));
-  };
 
   // Client redirects and server routes by path.
   const clientRedirects = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
@@ -240,7 +202,7 @@ export function buildScreenFlow(input: {
   const resolveTarget = (s: ScreenInfo, t: string, project = projectOf(s.filePath)): ScreenInfo | null => {
     if (t.startsWith("/")) return screenAtPath(t, project);
     // A route path as its router spells it (Angular's `clubs/:id`, a flow state): the screen at it.
-    if (byExact.has(t)) return screenAtPath(t, project);
+    if (writtenAs(t)) return screenAtPath(t, project);
     const named = byName.get(t);
     if (named) {
       const same = named.filter((x) => projectOf(x.filePath) === project);
@@ -421,6 +383,74 @@ export function buildScreenFlow(input: {
   return {
     nodes: [...nodes.values()].sort((a, b) => byOrdinal(a.id, b.id)),
     edges: [...edges.values()].sort((a, b) => byOrdinal(a.from, b.from) || byOrdinal(a.to, b.to) || byOrdinal(a.kind, b.kind)),
+  };
+}
+
+/**
+ * The screen a path opens, as the navigation map matches a link: the route path as written first
+ * (a flow's states carry `#`), then segment for segment with every parameter alike, then a concrete
+ * path against the routes with parameters — the most literal segments win. The screen's own
+ * sub-project first, else one `related` to it; one screen file or none.
+ */
+export function screenPathMatcher(
+  screens: readonly ScreenInfo[],
+  projectOf: (file: string) => string | undefined,
+  related: (a: string | undefined, b: string | undefined) => boolean = () => true,
+): {
+  screenAtPath(p: string, project: string | undefined): ScreenInfo | null;
+  /** Every screen at the path (a nested route's layout and its index page alike), when they are of one sub-project. */
+  screensAtPath(p: string, project: string | undefined): ScreenInfo[];
+  writtenAs(p: string): boolean;
+} {
+  // Screens by route key.
+  const byKey = new Map<string, Set<ScreenInfo>>();
+  // Paths as written first: a flow's states (`league.wf.club#details`) are no URLs, and a key would cut their `#`.
+  const byExact = new Map<string, Set<ScreenInfo>>();
+  const addKey = (p: string, s: ScreenInfo) => {
+    (byExact.get(p) ?? byExact.set(p, new Set()).get(p)!).add(s);
+    // `/teachers/:uuid?` answers at `/teachers` too.
+    const bare = p.replace(/(?:\/(?::\w+\?|\[\[[^\]]+\]\]))+\/?$/, "") || "/";
+    for (const variant of new Set([p, bare])) {
+      const k = pathKey(variant);
+      (byKey.get(k) ?? byKey.set(k, new Set()).get(k)!).add(s);
+    }
+  };
+  for (const s of screens) {
+    if (s.routePath) addKey(s.routePath, s);
+    for (const p of s.otherRoutes ?? []) addKey(p, s);
+    for (const r of s.renderedBy ?? []) addKey(r.path, s);
+  }
+  /** The one screen file among `xs` — two files answering to one target name neither. */
+  const one = (xs: ScreenInfo[]): ScreenInfo | null =>
+    xs.length > 0 && new Set(xs.map((x) => x.filePath)).size === 1 ? xs[0]! : null;
+  /** A concrete path (`/clubs/42`) against the routes with parameters: the most literal segments win. */
+  const byParams = (k: string): ScreenInfo[] => {
+    const segs = k.split("/");
+    let best: ScreenInfo[] = [];
+    let bestLiterals = -1;
+    for (const [rk, set] of byKey) {
+      if (!rk.includes("{}")) continue;
+      const rs = rk.split("/");
+      if (rs.length !== segs.length || !rs.every((seg, i) => seg === "{}" || seg === segs[i])) continue;
+      const literals = rs.filter((seg) => seg !== "{}").length;
+      if (literals > bestLiterals) { best = [...set]; bestLiterals = literals; }
+      else if (literals === bestLiterals) best.push(...set);
+    }
+    return best;
+  };
+  const hitsAt = (p: string, project: string | undefined): ScreenInfo[] => {
+    const k = pathKey(p);
+    const hits = byExact.has(p) ? [...byExact.get(p)!] : byKey.has(k) ? [...byKey.get(k)!] : byParams(k);
+    const same = hits.filter((s) => projectOf(s.filePath) === project);
+    return same.length > 0 ? same : hits.filter((s) => related(project, projectOf(s.filePath)));
+  };
+  return {
+    screenAtPath: (p, project) => one(hitsAt(p, project)),
+    screensAtPath(p, project) {
+      const hits = hitsAt(p, project);
+      return new Set(hits.map((s) => projectOf(s.filePath))).size === 1 ? hits : [];
+    },
+    writtenAs: (p) => byExact.has(p),
   };
 }
 
