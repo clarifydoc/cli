@@ -191,8 +191,29 @@ function pagesApiRoutes(r: RouteInfo, analysis: FileAnalysis, sourceText: string
   // `if (method === 'OPTIONS') return` is a preflight guard, not what the handler serves.
   if (methods.size === 1 && methods.has("OPTIONS") && equals.has("OPTIONS")) methods.clear();
   if (methods.size === 0) return [{ ...r, handler: fn.name, line: fn.line }];
-  const others = equals.size > 0 && equals.size === methods.size && /\belse\b/.test(body);
+  const others = equals.size > 0 && equals.size === methods.size && (/\belse\b/.test(body) || continuesPastMethodBranches(body));
   return [...methods, ...(others ? [null] : [])].map(row);
+}
+
+/**
+ * `if (method === 'POST') { …; return }` with no `else`: what follows the last such branch serves the other
+ * methods — unless it only refuses them (`405`, an `Allow` header, a 4xx status).
+ */
+function continuesPastMethodBranches(body: string): boolean {
+  let end = -1;
+  for (const m of body.matchAll(/\bif\s*\([^)]*\bmethod\s*===?\s*['"`][A-Z]+['"`][^)]*\)\s*\{/g)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < body.length && depth > 0; i++) {
+      if (body[i] === "{") depth++;
+      else if (body[i] === "}") depth--;
+    }
+    end = Math.max(end, i);
+  }
+  if (end < 0) return false;
+  const after = body.slice(end).replace(/\}\s*$/, "").trim();
+  if (after === "" || after.startsWith("else")) return false;
+  return !/\b405\b|\bAllow\b|not allowed|\.status\(\s*4\d\d\s*\)|\bsendStatus\(\s*4\d\d/i.test(after);
 }
 
 /**
