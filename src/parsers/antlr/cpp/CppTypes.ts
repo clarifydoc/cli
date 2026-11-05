@@ -160,6 +160,39 @@ const POINTER: ReadonlySet<number> = new Set([CPP14Lexer.Star, CPP14Lexer.And, C
 /** An all-caps macro name: `UNUSED`, `NO_CHECKS`; a name starting with `__` (`__attribute__`) is a compiler's. */
 export const MACRO_NAME = /^[A-Z_][A-Z0-9_]*[A-Z][A-Z0-9_]*$/;
 
+/** What a virt-specifier follows: a declarator's `)`, qualifiers, another virt-specifier. */
+const BEFORE_VIRT_SPECIFIER: ReadonlySet<number> = new Set([
+  CPP14Lexer.RightParen, CPP14Lexer.Const, CPP14Lexer.Volatile, CPP14Lexer.Noexcept, CPP14Lexer.Override, CPP14Lexer.Final,
+  CPP14Lexer.RightBracket, CPP14Lexer.Dot, CPP14Lexer.Arrow, CPP14Lexer.Doublecolon, CPP14Lexer.Colon,
+]);
+
+/** What a variable named `override` / `final` is followed by. */
+const AFTER_VARIABLE: ReadonlySet<number> = new Set([
+  CPP14Lexer.LeftParen, CPP14Lexer.LeftBrace, CPP14Lexer.Assign, CPP14Lexer.Semi, CPP14Lexer.Comma, CPP14Lexer.RightParen,
+  CPP14Lexer.LeftBracket, CPP14Lexer.Dot, CPP14Lexer.Arrow, CPP14Lexer.RightBracket, CPP14Lexer.RightBrace,
+]);
+
+/**
+ * Whether the `override` / `final` at `i` is a name, not a virt-specifier: a keyword only after a function declarator
+ * (`) const override`, `-> T override`) or a class's name (`struct Club final {`); where a statement or a type
+ * precedes it, it is declared or used (`Parent override(find(id));`, `final.go();`).
+ */
+function usedAsName(tokens: Token[], i: number): boolean {
+  const type = (k: number) => tokens[k]?.type ?? -1;
+  const prev = type(i - 1);
+  if (i === 0 || BEFORE_VIRT_SPECIFIER.has(prev) || !AFTER_VARIABLE.has(type(i + 1))) return false;
+  if (POINTER.has(prev) && !(type(i - 2) === CPP14Lexer.Identifier || type(i - 2) === CPP14Lexer.Greater || TYPE_KEYWORDS.has(type(i - 2)))) return false;
+  // A macro before it (`void kick() NOEXCEPT override;`) is a declarator's attribute.
+  if (prev === CPP14Lexer.Identifier && MACRO_NAME.test(tokens[i - 1]!.text ?? "")) return false;
+  // Back to the statement's start: a class head's `final`, a trailing return type's `override`.
+  for (let j = i - 1; j >= 0 && j > i - 40; j--) {
+    const t = type(j);
+    if (t === CPP14Lexer.Semi || t === CPP14Lexer.LeftBrace || t === CPP14Lexer.RightBrace) break;
+    if (t === CPP14Lexer.Arrow || CLASS_KEYWORDS.has(t)) return false;
+  }
+  return true;
+}
+
 /** What the first pass knows of a file's tokens, indexed by `Token.tokenIndex`. */
 export interface CppTokenFacts {
   /** The names used as types. */
@@ -191,6 +224,8 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   const n = tokens.length;
   const type = (i: number) => tokens[i]?.type ?? -1;
   const isId = (i: number) => type(i) === CPP14Lexer.Identifier;
+  // `Club override(find(id));`, `final.go();`: contextual keywords used as names read as identifiers from here on.
+  for (let i = 0; i < n; i++) if ((type(i) === CPP14Lexer.Override || type(i) === CPP14Lexer.Final) && usedAsName(tokens, i)) (tokens[i] as { type: number }).type = CPP14Lexer.Identifier;
   const names: Array<string | undefined> = tokens.map((t) => (t.type === CPP14Lexer.Identifier ? t.text ?? "" : undefined));
 
   // Brackets, by position in `tokens`.
