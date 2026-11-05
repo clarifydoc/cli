@@ -468,7 +468,7 @@ function newCall(ctx: NewExpression_Context, calls: PatternCallName[], text: str
   const type = ctx.newTypeId();
   if (!init || !type || init.start?.type !== CPP14Lexer.LeftParen || !type.start || !type.stop || type.stop.type !== CPP14Lexer.Identifier) return;
   const name = type.stop;
-  const source = `${text.slice(type.start.start, init.start.start)}(`;
+  const source = `new ${text.slice(type.start.start, init.start.start)}(`;
   const byPattern = patternNamedCall(source, cppSpec.callPatterns ?? [], type.start.line, type.start.column);
   const named = byPattern === undefined ? nameCall([idStep(name)], CHAIN_DEPTH) : byPattern;
   if (named) calls.push(named);
