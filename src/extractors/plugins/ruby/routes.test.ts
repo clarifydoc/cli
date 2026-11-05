@@ -330,3 +330,39 @@ end`.split("\n");
     expect(handlers).toEqual(["Api::TransfersController#approve", "Api::TransfersController#history", "Api::TransfersController#index"]);
   });
 });
+
+describe("rubySpec.extractRoutes — devise_token_auth mounts", () => {
+  it("expands `mount_devise_token_auth_for` into the gem's documented routes, on the controllers it names", () => {
+    const out = routes(draw(`  mount_devise_token_auth_for 'Manager', at: 'auth', controllers: {
+    passwords: 'league_overrides/passwords',
+    sessions: 'league_overrides/sessions',
+    token_validations: 'league_overrides/token_validations'
+  }, via: [:get, :post]
+
+  namespace :api do
+    mount_devise_token_auth_for 'Player', at: 'player_auth', skip: [:omniauth_callbacks, :registrations]
+  end`));
+    expect(out.map(sig)).toEqual([
+      "POST /auth -> DeviseTokenAuth::RegistrationsController#create",
+      "DELETE /auth -> DeviseTokenAuth::RegistrationsController#destroy",
+      "PUT /auth -> DeviseTokenAuth::RegistrationsController#update",
+      "POST /auth/sign_in -> LeagueOverrides::SessionsController#create",
+      "DELETE /auth/sign_out -> LeagueOverrides::SessionsController#destroy",
+      "GET /auth/:provider -> null",
+      "GET /auth/:provider/callback -> DeviseTokenAuth::OmniauthCallbacksController#omniauth_success",
+      "POST /auth/:provider/callback -> DeviseTokenAuth::OmniauthCallbacksController#omniauth_success",
+      "GET /auth/validate_token -> LeagueOverrides::TokenValidationsController#validate_token",
+      "POST /auth/password -> LeagueOverrides::PasswordsController#create",
+      "PUT /auth/password -> LeagueOverrides::PasswordsController#update",
+      "GET /auth/password/edit -> LeagueOverrides::PasswordsController#edit",
+      "POST /auth/confirmation -> DeviseTokenAuth::ConfirmationsController#create",
+      "POST /api/player_auth/sign_in -> DeviseTokenAuth::SessionsController#create",
+      "DELETE /api/player_auth/sign_out -> DeviseTokenAuth::SessionsController#destroy",
+      "GET /api/player_auth/validate_token -> DeviseTokenAuth::TokenValidationsController#validate_token",
+      "POST /api/player_auth/password -> DeviseTokenAuth::PasswordsController#create",
+      "PUT /api/player_auth/password -> DeviseTokenAuth::PasswordsController#update",
+      "GET /api/player_auth/password/edit -> DeviseTokenAuth::PasswordsController#edit",
+      "POST /api/player_auth/confirmation -> DeviseTokenAuth::ConfirmationsController#create",
+    ]);
+  });
+});

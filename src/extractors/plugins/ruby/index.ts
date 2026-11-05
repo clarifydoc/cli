@@ -89,6 +89,28 @@ const CANONICAL_ACTIONS = new Set(["index", "create", "new", "show", "update", "
  * dev-only mailer preview) have no project source, so we drop them rather than
  * surface a handler-less "no code" route.
  */
+/**
+ * The routes `mount_devise_token_auth_for` draws, relative to its mount, as the gem documents
+ * them (docs/usage: "Mounted routes"): each with the controller group a `controllers:` /
+ * `skip:` option names and the action that serves it. `/:provider` only redirects to the
+ * OmniAuth middleware, so no controller action serves it.
+ */
+const DEVISE_TOKEN_AUTH_ROUTES: ReadonlyArray<{ path: string; method: string; group: string; action: string | null }> = [
+  { path: "", method: "POST", group: "registrations", action: "create" },
+  { path: "", method: "DELETE", group: "registrations", action: "destroy" },
+  { path: "", method: "PUT", group: "registrations", action: "update" },
+  { path: "/sign_in", method: "POST", group: "sessions", action: "create" },
+  { path: "/sign_out", method: "DELETE", group: "sessions", action: "destroy" },
+  { path: "/:provider", method: "GET", group: "omniauth_callbacks", action: null },
+  { path: "/:provider/callback", method: "GET", group: "omniauth_callbacks", action: "omniauth_success" },
+  { path: "/:provider/callback", method: "POST", group: "omniauth_callbacks", action: "omniauth_success" },
+  { path: "/validate_token", method: "GET", group: "token_validations", action: "validate_token" },
+  { path: "/password", method: "POST", group: "passwords", action: "create" },
+  { path: "/password", method: "PUT", group: "passwords", action: "update" },
+  { path: "/password/edit", method: "GET", group: "passwords", action: "edit" },
+  { path: "/confirmation", method: "POST", group: "confirmations", action: "create" },
+];
+
 const FRAMEWORK_CONTROLLER_RE = /^(rails|active_admin|action_cable|action_mailbox|active_storage)\b/;
 
 /** `supervision_time_schedules` / `reports/positions` → `SupervisionTimeSchedules` / `Positions` */
@@ -1278,6 +1300,28 @@ export const rubySpec: RegexLangSpec = {
       if (deviseMatch && opensDoBlock) {
         const text = `${deviseMatch[1]} :${deviseMatch[2]}`;
         pushBlock("", { text, policies: [text], schemes: ["devise"] });
+        continue;
+      }
+
+      // devise_token_auth: `mount_devise_token_auth_for 'User', at: 'auth', controllers: {…}, skip: […]`
+      // draws the gem's documented routes under the mount, each on the controller the mount
+      // names for its group, else the gem's own (`DeviseTokenAuth::SessionsController`).
+      if (/^mount_devise_token_auth_for\b/.test(line)) {
+        let stmt = line;
+        const open = (t: string) => (t.match(/[{[(]/g)?.length ?? 0) - (t.match(/[}\])]/g)?.length ?? 0);
+        while ((open(stmt) > 0 || /,\s*$/.test(stmt)) && i + 1 < lines.length) stmt += " " + lines[++i]!.trim();
+        const at = stmt.match(/\bat:\s*['"]([^'"]*)['"]/)?.[1] ?? "auth";
+        const base = currentPrefix() + (at ? "/" + at.replace(/^\/+|\/+$/g, "") : "");
+        const named = new Map<string, string>();
+        const controllers = stmt.match(/\bcontrollers:\s*\{([^}]*)\}/)?.[1] ?? "";
+        for (const m of controllers.matchAll(/(\w+):\s*['"]([\w/]+)['"]/g)) named.set(m[1]!, m[2]!);
+        const skip = new Set([...(stmt.match(/\bskip:\s*\[([^\]]*)\]/)?.[1] ?? "").matchAll(/:(\w+)/g)].map((m) => m[1]!));
+        for (const r of DEVISE_TOKEN_AUTH_ROUTES) {
+          if (skip.has(r.group)) continue;
+          const own = named.get(r.group);
+          const handler = r.action ? `${own ? railsControllerClass(own, currentModules()) : `DeviseTokenAuth::${railsCamelize(r.group)}Controller`}#${r.action}` : null;
+          routes.push(withGuards({ path: base + r.path || "/", httpMethod: r.method, kind: "api", handler, calls: [], middleware: [], line: i + 1 }));
+        }
         continue;
       }
 
