@@ -763,7 +763,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       analysis.routes.push(
         ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferNuxtServerRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks),
+        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks, sourceText),
         ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
         ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
         ...inferFlatRoutes(routePath, analysis, routeFrameworks, {

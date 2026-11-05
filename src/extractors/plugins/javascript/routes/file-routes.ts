@@ -239,7 +239,7 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
  * SvelteKit under `src/routes/`: `+page.svelte` is a page; `+server.ts` is an
  * endpoint with one `api` route per exported HTTP-method handler.
  */
-export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[]): RouteInfo[] {
+export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysis, frameworkIds: string[], sourceText = ""): RouteInfo[] {
   if (!frameworkIds.includes("sveltekit")) return [];
   const normalized = relativePath.replace(/\\/g, "/");
 
@@ -249,7 +249,66 @@ export function inferSvelteKitRoutes(relativePath: string, analysis: FileAnalysi
   const server = normalized.match(/^(?:src\/)?routes\/(.*)\+server\.(?:tsx?|jsx?)$/);
   if (server) return methodRoutes(routeFromSegments(server[1]!), analysis);
 
+  const actions = normalized.match(/^(?:src\/)?routes\/(.*)\+page\.server\.(?:tsx?|jsx?)$/);
+  if (actions && sourceText) return svelteActionRoutes(routeFromSegments(actions[1]!), analysis, sourceText);
+
   return [];
+}
+
+/**
+ * The entries of the object literal whose `{` is at `open`: each key with the
+ * line its value starts and ends on, strings and comments skipped.
+ */
+function objectEntries(text: string, open: number): Array<{ key: string; from: number; to: number }> {
+  const out: Array<{ key: string; from: number; to: number }> = [];
+  const lineAt = (i: number) => text.slice(0, i).split("\n").length;
+  let depth = 0;
+  let start = open + 1;
+  const flush = (end: number) => {
+    const m = /^\s*(?:async\s+)?(?:(['"])(.+?)\1|([A-Za-z_$][\w$]*))\s*(?=[:(,]|$)/.exec(text.slice(start, end));
+    if (m) out.push({ key: m[2] ?? m[3]!, from: lineAt(start + m[0].length), to: lineAt(end) });
+  };
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
+    } else if (ch === "/" && text[i + 1] === "/") i = text.indexOf("\n", i) < 0 ? text.length : text.indexOf("\n", i);
+    else if (ch === "/" && text[i + 1] === "*") i = text.indexOf("*/", i) < 0 ? text.length : text.indexOf("*/", i) + 1;
+    else if (ch === "{" || ch === "(" || ch === "[") depth++;
+    else if (ch === "}" || ch === ")" || ch === "]") {
+      if (--depth === 0) {
+        flush(i);
+        break;
+      }
+    } else if (ch === "," && depth === 1) {
+      flush(i);
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * SvelteKit form actions: `export const actions = { rename, remove: async … }`
+ * in a `+page.server.ts` is one POST route per action, at the page's path with
+ * the action's name after `?/` (`POST /clubs?/rename`); `default` is the page's
+ * own path. A form's `action="?/rename"` posts to it. The calls of an inline
+ * action are the file's `<setup>` calls on its lines; a referenced function
+ * (`{ rename }`) is the handler.
+ */
+function svelteActionRoutes(path: string, analysis: FileAnalysis, sourceText: string): RouteInfo[] {
+  const decl = /\bexport\s+const\s+actions\b[^=\n]*=\s*\{/.exec(sourceText);
+  if (!decl) return [];
+  const setup = analysis.functions.find((f) => f.name === "<setup>")?.calls ?? [];
+  return objectEntries(sourceText, decl.index + decl[0].length - 1).map(({ key, from, to }) => {
+    const fn = analysis.functions.find((f) => f.name === `actions.${key}` || f.name === key);
+    return route(key === "default" ? path : `${path}?/${key}`, "api", {
+      httpMethod: "POST",
+      handler: fn?.name ?? null,
+      calls: fn ? [] : setup.filter((c) => c.line >= from && c.line <= to),
+      line: fn?.line ?? from,
+    });
+  });
 }
 
 /**

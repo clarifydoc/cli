@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inferExpoRouterRoutes, inferFileBasedRoute, inferNextRoutes, inferNuxtServerRoutes } from "../extractors/plugins/javascript/routes/file-routes.js";
+import { inferExpoRouterRoutes, inferFileBasedRoute, inferNextRoutes, inferNuxtServerRoutes, inferSvelteKitRoutes } from "../extractors/plugins/javascript/routes/file-routes.js";
 import type { FileAnalysis } from "../types/analysis.js";
 
 const path = (rel: string, frameworks: string[]) => inferFileBasedRoute(rel, frameworks)?.path ?? null;
@@ -239,5 +239,43 @@ describe("Nuxt Nitro server routes", () => {
     const [r] = inferNuxtServerRoutes("server/api/cars/index.get.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)");
     expect(r!.calls.map((c) => c.name)).toEqual(["getQuery", "loadAll"]);
     expect(r!.line).toBe(3);
+  });
+});
+
+describe("SvelteKit form actions", () => {
+  const src = [
+    "import type { Actions } from './$types';",
+    "export const actions: Actions = {",
+    "  default: async ({ request }) => { await createClub(request); },",
+    "  rename: async ({ request }) => {",
+    "    const data = await request.formData();",
+    "    await renameClub(data);",
+    "  },",
+    "  remove,",
+    "} satisfies Actions;",
+    "async function remove() { await dropClub(); }",
+  ].join("\n");
+  const call = (name: string, line: number) => ({ name, line, kind: "internal" });
+  const analysis = {
+    exports: [],
+    functions: [
+      { name: "<setup>", calls: [call("createClub", 3), call("request.formData", 5), call("renameClub", 6)] },
+      { name: "remove", line: 10, endLine: 10, calls: [call("dropClub", 10)] },
+    ],
+  } as unknown as FileAnalysis;
+
+  it("serves each action as POST at the page's path with ?/name, default at the page itself", () => {
+    const rows = inferSvelteKitRoutes("src/routes/clubs/[id]/+page.server.ts", analysis, ["sveltekit"], src);
+    expect(rows.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual([
+      "POST /clubs/:id null",
+      "POST /clubs/:id?/rename null",
+      "POST /clubs/:id?/remove remove",
+    ]);
+    expect(rows[1]!.calls.map((c) => c.name)).toEqual(["request.formData", "renameClub"]);
+  });
+
+  it("reads nothing from a file with no actions or in another framework", () => {
+    expect(inferSvelteKitRoutes("src/routes/clubs/+page.server.ts", analysis, ["sveltekit"], "export const load = () => ({});")).toEqual([]);
+    expect(inferSvelteKitRoutes("src/routes/clubs/+page.server.ts", analysis, ["nuxt"], src)).toEqual([]);
   });
 });
