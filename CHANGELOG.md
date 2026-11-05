@@ -14,6 +14,35 @@ recorded in the git history only.
 
 ### Added
 
+- **`clarifydoc lint <outputDir> [--json]`** checks an analysis against its own invariants: links and exports
+  naming what their file does not define, lines past a file's end, two routes under one dedupe key, API links to a
+  missing route or call, edges to missing entities, files and sub-projects that are not there. Exit 1 on a finding.
+- **Declared project references** (`SubProject.references`): `<ProjectReference>`, Gradle `project(':x')` /
+  `projects.x` and a Maven dependency on a sibling module. When one name is defined in several sub-projects, the
+  one the caller's project references wins; `projectDependencies` carries them as `declared` evidence or edges.
+- **`compile_commands.json`:** includes follow each translation unit's `-iquote`/`-I`/`-isystem` order, and `-D`/`-U`
+  macros pick the live arm of `#ifdef`/`#if defined()`; a changed flag reparses the file on `--incremental`.
+- **Element types from declarations:** a loop or callback over a field or a call (`for c in self.clubs`,
+  `this.repo.all().forEach(…)`, `foreach (var c in await repo.AllAsync())`, Go `range` over another file's result)
+  takes the element of the declared type (`localTypes[].element`, manifest `collectionElementOf`); TS
+  `first<T>(xs: T[]): T`, Python tuple unpacking from a member call and `isinstance(x, (A, B))` narrowing.
+- **Type-parameter bounds** as receiver types (TS `<T extends Club>`, Python `TypeVar(bound=)` and PEP 695).
+- **Kotlin:** `x !is T` early-return smart casts, `operator fun get` indexers, each lambda's own `it`, and a class's
+  member before a same-named free function inside the class.
+- **Routes:** Hono chains on one expression, Laravel `Route::prefix()->get()` and `apiPrefix` for any API file,
+  `Facades\Route`, WebFlux `RequestPredicates` `.or`/`.and`/`path`, FastEndpoints groups and `RoutePrefix`, Razor
+  Pages named handlers (`?handler=Delete`), Next.js method branches without `else`, SvelteKit `?/action` calls,
+  Nitro WebSocket handlers and mode suffixes.
+- **Screens:** React Router `Object.entries(defs).map(…)` routes, Express inline handlers linked to the view they
+  render (`RouteInfo.handlerEndLine`), Blazor component tags and inline lambda handlers, Astro `Astro.redirect`.
+- **Clients and data:** Python `session.add_all`, `grequests`; dbt models by `dbt_project.yml` with `schema.yml`
+  columns; Rust `ureq`/`surf`; Java AsyncHttpClient; Ktor `defaultRequest` bases and `request {}` verbs; resty
+  chains over several lines; MQTT `on('message')` consumers and `+`/`#` topic filters.
+- **Swift:** nested types named by path (`League::Table`), loops over properties and call results, accessors on the
+  regex reading; Objective-C `[[X alloc] init]` links to the class; Dart `$` names and barrel exports; Elixir
+  `except:` and list-form `defdelegate`; Rust inline modules; Lua one-line bodies; Python import-to-distribution
+  names in the package inventory.
+
 - **C and C++ function-like macros are call targets** (`FileAnalysis.macros`): a call of `for_each_club(c, l) { … }`,
   `MAX(a, b)` or any other function-like `#define` links to the `#define` in the file itself or in a header it
   includes (up to four levels, nearest first), when no function of that name is in scope. Two headers defining it at
@@ -435,6 +464,17 @@ recorded in the git history only.
   returns and JSDoc `@returns`; `Object.create`/`util.inherits` inheritance.
 
 ### Changed
+
+- **Wrong facts corrected:** a Kotlin functional `nest` right after a verb call took the verb's path as its prefix;
+  Laravel `Route::prefix('v2')->get('/cars')` dropped `v2`; Java/Kotlin imports resolved by directory instead of the
+  package a file declares (a namesake in a mirrored folder won); out-of-line C++ methods of same-named classes in two
+  namespaces linked to the wrong one; Swift nested types of one leaf name in two outer types were one class; a
+  JS/TS call of a parameter linked to a module function of the same name; PL/SQL `END CASE` ended a routine early;
+  a RestSharp `GetAsync(request)` added a second, target-less api-call; regex-path exports kept functions a plugin
+  dropped afterwards; Razor Pages no longer guess the first named handler at the plain path; Objective-C no longer
+  emits an `alloc` row inside an `init` send; a literal `require('./x')` is no call row.
+- **tsconfig array `extends`:** a later base's `paths` replace an earlier base's; two bases sharing a parent keep both.
+- **C/C++ regex control-flow graphs** take the same `#if 0` / first-branch view as the function reader.
 
 - **An `import()` no longer emits a phantom `default` call.** A tRPC client's `.query()`/`.mutate()` is an api-call,
   not a database call. Swift call names keep their receiver path (`req.parameters.get`).

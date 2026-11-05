@@ -120,5 +120,19 @@ like `knownPackages`. Notes:
 - **Doc comments.** `manifest.docComments` (a `DocCommentSpec` — line prefixes, block delimiters, `docstring`, the attribute lines that may sit between) is all a language supplies — on the manifest, since MCP tools read it with no plugin body loaded; `core/doc-comments.ts` reads the first sentence above each function, method and class (or the docstring opening its body) into `doc`. Shared shapes: `extractors/shared/doc-comment-specs.ts`.
 - **Bindings a body states without a declaration.** A loop variable, a lambda parameter, a narrowed name (`instanceof X x`, `is X`, `if let`, a type switch, `isinstance`), a caught exception or an element read (`list.get(0)`, `m[k]`) is reported as a `localTypes` entry whose `from` names what it is drawn from, or as `CallInfo.receiverType` on the call; core resolves it as it resolves any initializer. JVM and .NET share the chain reader in `shared/element-chain.ts`; tuple unpacking from an annotated return uses `localTypes[].fromIndex` with the manifest's `tupleElementsOf`. Two element types for one name leave it untyped.
 - **Smaller hooks.** `calls.isApiCallShape(callName, imports)` marks a call shape that is an api-call whatever its receiver (tRPC `.query`/`.mutate`); `calls.withSubjectsOf` names the implicit receivers a bare call may run on (Delphi `with`, Kotlin `with`/`apply`); `PreprocessOutcome.restoreTypedCalls` asks for noise-named calls to be restored again after a `postExtract` that created their class (Lua tables). Regex specs: `extractParams` (a declaration's parameters where `extractParamsFromLine` misreads them), `extractModuleBindings` (package-level values a later call reads), `extractChannelBindings` (a socket's `channel "topic:*", Module` → `FileAnalysis.channelBindings`). A route resolver with `afterMounts: true` runs after router mounts and base paths are composed.
+- **Declared facts a manifest opts into (1.618.0).** `collectionElementOf(type)` reads the element of a declared
+  collection (`Club[]`, `list[Club]`, `[]*Club`, `[Club]`) for a loop or callback local the plugin reports as
+  `localTypes[{ from, element: true }]`; `nestedTypeSeparator` (`.` or `::`, default `::`) and `nestedTypesScopeBare`
+  name nested types by path; `constructorCalls` (`init`, `new`) are sends that construct their receiver class;
+  `indexerMethod` (Kotlin `get`) reads `x[i].m()` as `x.get(i).m()`; `bareMembersHideFunctions` makes a class's
+  member win a bare call inside the class over a same-named free function; `importsDeclaredPackages` resolves a
+  dotted import by the package a file declares (`ast.packageName`) before its directory; `compilationDatabase` names
+  the compile database files at a project root (`-I` order and `-D` macros reach `read(source, macros)`);
+  `PackageManifestSpec.projectReferences` returns the sibling projects a build file declares
+  (`SubProject.references`); `preprocessStamp(absolutePath, projectRoot)` fingerprints what a `preprocess` reads
+  beside the file (its `PreprocessContext`) so `--incremental` notices it; `regexControlFlow.sourceView` gives the
+  control-flow scanner the compiler's view of a body. Regex specs: `extractReExports` (a barrel's `export 'x'`);
+  `ImportInfo.inScope.except` (names an import keeps out of scope); `DataSourceInfo.topicSyntax: "mqtt"` joins a
+  publish to the `+`/`#` filters that cover it.
 - **Line numbers are 1-based** in all output.
 - **No cross-plugin imports** — if two plugins need the same logic, extract it to `../shared/` or `shared/regex-base.ts`.

@@ -75,14 +75,6 @@ const ALLOWED: string[] = [
   // A binary .dfm form is read through a text rendering whose line numbers are synthetic (dfm-binary.ts), so a
   // link into it can name a line past the binary file's physical end. Not small: the viewer would need the rendering.
   "sample-delphi line-out-of-range symbol link <component> -> TAboutBox.btnOKClick",
-  // The four below are defects already fixed in the extractors (a call read as an exported definition; a Lisp
-  // special variable exported as a function) that the committed outputs still carry until update-fixtures runs.
-  "sample-automation-scripts symbol-link-symbol-missing symbol link Init -> TrayTip",
-  "sample-automation-scripts symbol-link-symbol-missing symbol link ^!c:: -> TrayTip",
-  "sample-automation-scripts export-undefined function export TrayTip",
-  "sample-coffee-app export-undefined function export success",
-  "sample-grails-app export-undefined function export formatTitle",
-  "sample-commonlisp-app export-undefined function export *web*",
 ];
 
 describe("test-output summaries lint clean", () => {
