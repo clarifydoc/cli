@@ -1,3 +1,4 @@
+import { addRustElementTypes, type RustTypeEnv } from "./element-types.js";
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
 import { blockEndLine, extractClassesWithSpec, headerLineMethods, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
 
@@ -35,6 +36,11 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
 
   const owners = new Map<string, ClassInfo>();
   for (const cls of classes) if (!owners.has(cls.name)) owners.set(cls.name, cls);
+  // What this file states about fields and free functions' results, for the types a body does not declare.
+  const typeEnv: RustTypeEnv = {
+    fields: new Map(classes.flatMap((c) => c.properties.filter((p) => p.type).map((p) => [`${c.name}.${p.name}`, p.type!] as const))),
+    returns: new Map(fns.filter((f) => f.returnType && /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\b/.test(lines[f.line - 1] ?? "")).map((f) => [f.name, f.returnType!] as const)),
+  };
   const stubs = new Map<string, ClassInfo>();
   const attached = new Set<FunctionInfo>();
   const sorted = [...fns].sort((a, b) => a.line - b.line);
@@ -62,7 +68,7 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
           for (const f of onLine) attached.add(f);
           for (const fn of split) {
             owner.methods.push(fn);
-            resolveGenerics(fn, lines, impl.bounds, impl.type);
+            resolveGenerics(fn, lines, impl.bounds, impl.type, typeEnv);
           }
           continue;
         }
@@ -74,15 +80,15 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
         lastLine = fn.line;
         attached.add(fn);
         owner.methods.push(fn);
-        resolveGenerics(fn, lines, impl.bounds, impl.type);
+        resolveGenerics(fn, lines, impl.bounds, impl.type, typeEnv);
       }
     }
   }
-  for (const fn of fns) if (!attached.has(fn)) resolveGenerics(fn, lines, new Map(), null);
+  for (const fn of fns) if (!attached.has(fn)) resolveGenerics(fn, lines, new Map(), null, typeEnv);
   for (const cls of classes) {
     if (cls.kind !== "interface") continue;
     const bounds = genericBounds(declarationHead(lines, cls.line - 1));
-    for (const m of cls.methods) resolveGenerics(m, lines, bounds, null);
+    for (const m of cls.methods) resolveGenerics(m, lines, bounds, null, typeEnv);
   }
   for (const cls of [...classes, ...stubs.values()]) cls.methods.sort((a, b) => a.line - b.line);
   return [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
@@ -264,12 +270,15 @@ function substitute(type: string, bounds: ReadonlyMap<string, string>, selfType:
 }
 
 /** Resolve generic parameters and `Self` in a function's parameter and local types. */
-function resolveGenerics(fn: FunctionInfo, lines: string[], outer: ReadonlyMap<string, string>, selfType: string | null): void {
+function resolveGenerics(fn: FunctionInfo, lines: string[], outer: ReadonlyMap<string, string>, selfType: string | null, typeEnv: RustTypeEnv): void {
   const own = genericBounds(fnHead(lines, fn));
   const bounds = own.size > 0 ? new Map([...outer, ...own]) : outer;
-  if (bounds.size === 0 && !selfType) return;
-  for (const p of fn.params) if (p.type) p.type = substitute(p.type, bounds, selfType);
-  for (const l of fn.localTypes ?? []) l.type = substitute(l.type, bounds, selfType);
+  if (bounds.size > 0 || selfType) {
+    for (const p of fn.params) if (p.type) p.type = substitute(p.type, bounds, selfType);
+    for (const l of fn.localTypes ?? []) l.type = substitute(l.type, bounds, selfType);
+  }
+  // The loop variables, closure parameters, patterns and std chains the body types by what it declares.
+  if (fn.endLine > fn.line) addRustElementTypes(fn, lines.slice(fn.line - 1, fn.endLine), typeEnv, selfType);
 }
 
 /**
