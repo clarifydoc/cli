@@ -221,6 +221,21 @@ interface ExpressRouteMeta {
 }
 const routeMeta = new WeakMap<RouteInfo, ExpressRouteMeta>();
 
+/** A route another reader built (AdonisJS resources) takes part in the router-level guard pass like one read here. */
+export function adoptExpressRoute(route: RouteInfo, receiver: string | null): void {
+  routeMeta.set(route, { receiver, guards: [], params: [...pathParamNames(route.path)].map((name) => ({ name, type: null, binding: "route" as const, inferred: true })) });
+}
+
+/** Guards a group or route chain states (`.use(middleware.auth())`) on a route read here: the route's own, in source order. */
+export function addExpressRouteGuards(route: RouteInfo, middleware: Node[]): void {
+  const meta = routeMeta.get(route);
+  for (const m of middleware) {
+    route.middleware.push(collapse(m.text));
+    const guard = guardFromMiddleware(m);
+    if (guard && meta) meta.mountGuards = [...(meta.mountGuards ?? []), guard];
+  }
+}
+
 /**
  * Express-style: app.get("/path", handler). Runs the per-node visitor over
  * the tree and then the router-level guard pass.
@@ -277,16 +292,19 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               if (arg.type === "array") rest.push(...arg.namedChildren);
               else rest.push(arg);
             }
+            // AdonisJS names a controller action as `[ClubsController, 'index']` or `'#controllers/clubs_controller.index'`.
+            const controllerAction = adonisAction(args.namedChildren[args.namedChildren.length - 1]!);
+            if (controllerAction) rest.length = Math.max(0, rest.length - (args.namedChildren[args.namedChildren.length - 1]!.type === "array" ? 2 : 1));
             // A handler wrapped in an error/async adapter — `asyncHandler(async (req, res) => …)`,
             // `wrap(getUsers)`, `catchAsync(ctrl.list)` — is the function it wraps.
-            const wrapped = rest.length > 0 ? unwrapHandler(rest[rest.length - 1]!) : null;
+            const wrapped = rest.length > 0 && !controllerAction ? unwrapHandler(rest[rest.length - 1]!) : null;
             if (wrapped) rest[rest.length - 1] = wrapped;
             // koa-router mounts a router by its middleware: `router.use("/clubs", clubs.routes())`.
             const routerMiddleware = method === "use" && rest.length > 0 ? routerOfMiddleware(rest[rest.length - 1]!) : null;
             if (routerMiddleware) rest[rest.length - 1] = routerMiddleware;
             // A router loaded where it is mounted: `app.use("/api", require("./routes/api"))`.
             const mountModule = method === "use" && rest.length > 0 ? requiredSource(rest[rest.length - 1]!) : null;
-            const last = rest[rest.length - 1];
+            const last = controllerAction ? undefined : rest[rest.length - 1];
             const lastArgIsFn = !!last && FUNCTION_NODE_TYPES.has(last.type);
 
             // The last argument is the handler: an inline function, or the
@@ -295,7 +313,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             // the handler (`router.get('/', requireAuth, async (req, res) => …)`).
             let handler: string | null = null;
             let middlewareNodes: Node[] = [];
-            if (lastArgIsFn) {
+            if (controllerAction) {
+              handler = controllerAction;
+              middlewareNodes = rest;
+            } else if (lastArgIsFn) {
               middlewareNodes = rest.slice(0, -1);
             } else if (last && (last.type === "identifier" || last.type === "member_expression" || mountModule !== null)) {
               handler = last.text;
@@ -459,6 +480,26 @@ function collectFastifyHooks(root: Node, out: Array<{ receiver: string; line: nu
     for (const child of node.namedChildren) walk(child);
   };
   walk(root);
+}
+
+/**
+ * An AdonisJS controller action handed as a route's last argument — `[ClubsController, 'index']`
+ * (v6, the controller a lazy import binds) or `'#controllers/clubs_controller.index'` /
+ * `'ClubsController.index'` (a string naming the controller) — as `ClubsController.index`.
+ */
+function adonisAction(arg: Node): string | null {
+  if (arg.type === "array") {
+    const [controller, action] = arg.namedChildren;
+    if (arg.namedChildren.length === 2 && controller && (controller.type === "identifier" || controller.type === "member_expression") && action?.type === "string") {
+      return `${controller.text.split(".").pop()}.${stripQuotes(action.text)}`;
+    }
+    return null;
+  }
+  if (arg.type !== "string") return null;
+  const m = /^(?:.*\/)?([A-Za-z0-9_]*[Cc]ontroller[A-Za-z0-9_]*)\.([A-Za-z_$][\w$]*)$/.exec(stripQuotes(arg.text));
+  if (!m) return null;
+  const cls = /^[A-Z]/.test(m[1]!) && !m[1]!.includes("_") ? m[1]! : m[1]!.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+  return `${cls}.${m[2]}`;
 }
 
 /** `clubs.routes()` / `clubs.middleware()` — the router a koa-router mount hands on. */

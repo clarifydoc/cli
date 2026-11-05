@@ -1,3 +1,4 @@
+import { extractAdonisChains, mayDeclareAdonisRoutes } from "./adonis.js";
 import { collectScreenTables } from "./screen-tables.js";
 import { staticMountFacts } from "../../shared/static-mounts.js";
 import type { Node, Tree } from "web-tree-sitter";
@@ -66,6 +67,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // Express guards declared once on the router (`router.use(requireAuth)`)
     // apply to every later route on it — a file-level fact the per-node
     // visitor cannot see, so it is written after the walk.
+    if (mayDeclareAdonisRoutes(sourceText)) extractAdonisChains(tree.rootNode, express);
     applyRouterLevelGuards(tree.rootNode, express, sourceText);
     // Fastify / hapi plugins registered under a prefix: inline ones prefix their routes here,
     // imported ones become mounts for the project mount pass.
