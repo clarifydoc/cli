@@ -889,8 +889,8 @@ export interface CallExtractionHooks {
    */
   readNames?(node: Node): Array<{ name: string; node: Node; passed?: true }>;
   /**
-   * The subjects of the `with` statements a call node sits in the body of (Pascal `with Club do Save;`), innermost
-   * first, when the call is a bare name one of them may own as a member; recorded as `CallInfo.withSubjects`.
+   * The subjects of the `with` statements a call node sits in the body of (Pascal `with Club do Save;`, a Kotlin scope
+   * lambda `with(club) { save() }`), innermost first, when the call is a bare name one of them may own as a member; recorded as `CallInfo.withSubjects`.
    */
   withSubjectsOf?(node: Node): string[] | null;
   /**

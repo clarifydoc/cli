@@ -13,6 +13,7 @@ import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotation
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { typeVariableArgs } from "./arg-kinds.js";
+import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -48,7 +49,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         child.type === "interface_declaration" ||
         child.type === "object_declaration" ||
         child.type === "enum_declaration" ||
-        child.type === "record_declaration"
+        child.type === "record_declaration" ||
+        child.type === "annotation_type_declaration"
       ) {
         this.pushClass(child, classes, lang);
         this.walkNestedClasses(child, classes, lang);
@@ -76,7 +78,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         member.type === "class_declaration" ||
         member.type === "interface_declaration" ||
         member.type === "enum_declaration" ||
-        member.type === "record_declaration"
+        member.type === "record_declaration" ||
+        member.type === "annotation_type_declaration"
       ) {
         this.pushClass(member, classes, lang);
         this.walkNestedClasses(member, classes, lang);
@@ -123,6 +126,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       this.findChildByType(node, "class_body") ??
       this.findChildByType(node, "enum_class_body") ??
       this.findChildByType(node, "interface_body") ??
+      this.findChildByType(node, "annotation_type_body") ??
       this.findChildByType(node, "enum_body");
 
     // Kotlin primary constructor: ALL its parameters (a plain `repo: Repo` is
@@ -146,8 +150,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // keyword token; Java uses a dedicated `interface_declaration`. Marking
     // `kind` is what lets `buildInterfaceImplMap` seed the interface (and thus
     // redirect `this.service.X()` to the implementing class's method).
+    // A Java `@interface` is read as an interface whose elements are methods (`since.value()`); an annotation
+    // type is marked by a `@interface` decorator.
+    const isAnnotationType = node.type === "annotation_type_declaration";
     const isInterface =
       node.type === "interface_declaration" ||
+      isAnnotationType ||
       node.children.some((c) => c.type === "interface");
     // Java `enum X { A, B }` / Kotlin `enum class X { A, B }`: the constants
     // are the members a request schema lists.
@@ -162,6 +170,10 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       }
     }
 
+    // An enum constant's own body (`FAST { void go() { sign(); } }`) declares methods of the enum's anonymous subclass:
+    // the enum keeps those it does not declare itself, so their calls have a symbol to belong to.
+    if (isEnum && body) this.collectConstantBodies(body, lang, methods);
+
     const strings = body ? stringConstants(body) : null;
     return {
       name,
@@ -169,7 +181,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       ...(!isInterface && !isEnum && isAbstract(node) ? { abstract: true as const } : {}),
       extends: extendsName,
       implements: implementsList,
-      decorators,
+      decorators: isAnnotationType ? [...decorators, "@interface"] : decorators,
       methods,
       properties,
       ...(strings ? { fieldValues: strings } : {}),
@@ -177,6 +189,23 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+  }
+
+  /** The methods the bodies of an enum's constants declare, for those names the enum has no method of. */
+  private collectConstantBodies(enumBody: Node, lang: JkLang, methods: FunctionInfo[]): void {
+    const have = new Set(methods.map((m) => m.name));
+    for (const constant of enumBody.children) {
+      if (constant.type !== "enum_constant" && constant.type !== "enum_entry") continue;
+      const bodyNode = this.findChildByType(constant, "class_body");
+      if (!bodyNode) continue;
+      const found: FunctionInfo[] = [];
+      this.collectMembers(bodyNode, lang, found, [], null);
+      for (const m of found) {
+        if (have.has(m.name)) continue;
+        have.add(m.name);
+        methods.push(m);
+      }
+    }
   }
 
   /** Collect methods + properties from a class/interface/enum/companion body. */
@@ -246,6 +275,22 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         }
         if (qualifier) prop.qualifier = qualifier;
         properties.push(prop);
+      } else if (member.type === "annotation_type_element_declaration") {
+        // `@interface Since { String value(); }`: each element is a method answering `since.value()`.
+        const name = member.childForFieldName("name")?.text;
+        if (name) {
+          methods.push({
+            name,
+            params: [],
+            returnType: member.childForFieldName("type")?.text ?? null,
+            isAsync: false,
+            isExported: true,
+            decorators: [],
+            calls: [],
+            line: member.startPosition.row + 1,
+            endLine: member.endPosition.row + 1,
+          });
+        }
       } else if (member.type === "companion_object" || member.type === "object_declaration") {
         // Flatten companion / nested object members onto the class so their
         // calls and data access still attribute to a trace symbol.
@@ -443,6 +488,18 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       : vis === "public" || (node.type === "constructor_declaration");
 
     const localTypes = extractLocalTypes(body, language);
+    // What a loop, a callback, a narrowing, a `catch` or an element access states (see element-types.ts); a name the
+    // body already typed some other way keeps that type.
+    const elements = body ? jvmElementFacts(node, body, language, params) : null;
+    if (elements) {
+      for (const l of elements.locals) {
+        const same = localTypes.filter((t) => t.name === l.name);
+        // A stated type replaces the initializer calls a name was waiting on.
+        if (same.length > 0 && !same.every((t) => !t.type)) continue;
+        for (const t of same) localTypes.splice(localTypes.indexOf(t), 1);
+        localTypes.push(l);
+      }
+    }
     // The container calls a provider method (`@Bean`, `@Provides`,
     // `@Produces`) and an `@Inject`/`@Autowired` method with its parameters
     // resolved: container registrations decide them. Any other method's
@@ -454,6 +511,14 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
     const calls = extractCalls(body, language);
+    if (elements) {
+      for (const call of calls) {
+        const type = elements.receiverOf(call);
+        if (type) call.receiverType = type;
+      }
+    }
+    localTypes.push(...outerFieldLocals(node, language, params, localTypes, calls));
+    if (language === "kotlin") calls.push(...kotlinInvokeCalls(node, params, localTypes, calls));
     typeVariableArgs(calls, params, body, language);
     return {
       name,

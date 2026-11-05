@@ -10,6 +10,7 @@ import {
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { typeCsharpVariableArgs } from "./arg-kinds.js";
+import { csharpElementFacts } from "./element-types.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -141,6 +142,9 @@ export class CSharpExtractor extends FunctionClassExtractor {
           // method under the compiler's name, so the calls in its body are kept.
           const name = csharpOperatorName(member);
           if (name) methods.push(this.parseCsharpMethod(member, name));
+        } else if (member.type === "indexer_declaration") {
+          // `public Player this[int i] => …`: a method named `Item` (the compiler's name), so `squad[3]` is a call of it.
+          methods.push(this.parseCsharpIndexer(member));
         } else if (member.type === "property_declaration") {
           const propName =
             member.childForFieldName("name")?.text ?? "unknown";
@@ -261,6 +265,22 @@ export class CSharpExtractor extends FunctionClassExtractor {
     };
   }
 
+  private parseCsharpIndexer(node: Node): FunctionInfo {
+    const list = node.namedChildren.find((c) => c.type === "bracketed_parameter_list");
+    const body = node.namedChildren.find((c) => c.type === "arrow_expression_clause" || c.type === "accessor_list") ?? null;
+    return {
+      name: "Item",
+      params: list ? this.parseCsharpParams(list) : [],
+      returnType: (node.childForFieldName("type") ?? node.childForFieldName("returns"))?.text ?? null,
+      isAsync: false,
+      isExported: this.getCsharpVisibility(node) === "public",
+      decorators: extractCsharpAttributes(node),
+      calls: extractCalls(body, "csharp"),
+      line: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+    };
+  }
+
   private parseCsharpMethod(node: Node, compiledName?: string): FunctionInfo {
     const name = compiledName ?? node.childForFieldName("name")?.text ?? "anonymous";
     const paramsNode = node.childForFieldName("parameters");
@@ -293,6 +313,18 @@ export class CSharpExtractor extends FunctionClassExtractor {
     }
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
+    // What a loop, a LINQ callback, a `catch` or an element access states (see element-types.ts).
+    const elements = body && this.scope ? csharpElementFacts(node, body, params, this.scope.ownNodes(body)) : null;
+    if (elements) {
+      for (const l of elements.locals) {
+        const same = fn.localTypes?.filter((t) => t.name === l.name) ?? [];
+        // A stated type replaces the initializer calls a name was waiting on.
+        if (same.length > 0 && !(l.type && same.every((t) => !t.type))) continue;
+        if (same.length > 0) fn.localTypes = fn.localTypes!.filter((t) => t.name !== l.name);
+        (fn.localTypes ??= []).push(l);
+      }
+      for (const call of fn.calls) elements.typeReceiver(call);
+    }
     typeCsharpVariableArgs(fn.calls, params, body);
     return fn;
   }
