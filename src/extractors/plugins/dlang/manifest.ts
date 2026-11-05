@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { dubPackageManager } from "./package-manifests.js";
+import { dubTestCommand } from "./test-command.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -8,6 +9,7 @@ import { dubPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const dManifest: LanguagePluginManifest = {
+  testCommand: dubTestCommand,
   language: "dlang",
   family: "dlang",
   packageManagers: [dubPackageManager],
