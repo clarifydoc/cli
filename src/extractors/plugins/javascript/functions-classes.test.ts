@@ -678,3 +678,36 @@ export const useKitPage = () => ({ ...kitCrud, wash });`;
     expect(fns.find((f) => f.name === "useKitPage")?.returnedSpreads).toEqual(["kitCrud"]);
   });
 });
+
+describe("TypeScript: namespaces and generator expressions", () => {
+  it("names a namespace's functions by their path and reads a generator expression as a function", async () => {
+    const src = `
+namespace Pitch { export function mow() { return 1; } export namespace Turf { export const roll = () => 2; } }
+const g = function* () { yield helper(); };`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.map((f) => f.name).sort()).toEqual(["Pitch.Turf.roll", "Pitch.mow", "g"]);
+    expect(fns.find((f) => f.name === "g")!.calls.map((c) => c.name)).toEqual(["helper"]);
+  });
+});
+
+describe("plain JavaScript: JSDoc return types", () => {
+  it("reads @returns {T} as the declared return type of functions, arrows and methods", async () => {
+    const src = `
+/** @returns {import('./lib/m').Club} */
+function makeClub() { return null; }
+/** @return {?Player} */
+const makePlayer = () => null;
+class Garage {
+  /** @returns {Promise<Car>} */
+  async open() { return null; }
+  close() {}
+}`;
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    const x = new JavaScriptExtractor();
+    const fns = x.extractFunctions(tree, src);
+    expect(fns.map((f) => [f.name, f.returnType])).toEqual([["makeClub", "Club"], ["makePlayer", "Player"]]);
+    const garage = x.extractClasses(tree, src).find((c) => c.name === "Garage")!;
+    expect(garage.methods.map((m) => [m.name, m.returnType])).toEqual([["open", "Promise<Car>"], ["close", null]]);
+  });
+});

@@ -242,3 +242,15 @@ describe("resolveTarget — a dotted module that is a package directory", () => 
     expect(resolveTarget("league.core.pipeline.phases.generation", "server/src/league/server/jobs.py", map)).toBe("core/src/league/core/pipeline/phases/generation.py");
   });
 });
+
+describe("resolveTarget — an alias with no name, no config maps it", () => {
+  it("`@/lib/helper` is the one file ending lib/helper; never a namesake elsewhere; two such files are refused", () => {
+    const mk = (paths: string[]) => buildFilePathMap(paths.map((p) => ({ filePath: p }) as any));
+    const one = mk(["src/lib/helper.ts", "src/other/helper.ts", "src/d.ts"]);
+    expect(resolveTarget("@/lib/helper", "src/d.ts", one)).toBe("src/lib/helper.ts");
+    expect(resolveTarget("~/lib/helper.ts", "src/d.ts", one)).toBe("src/lib/helper.ts");
+    expect(resolveTarget("@/missing/helper", "src/d.ts", one)).toBeNull();
+    const two = mk(["a/src/lib/helper.ts", "b/src/lib/helper.ts", "a/src/d.ts"]);
+    expect(resolveTarget("@/lib/helper", "a/src/d.ts", two)).toBeNull();
+  });
+});

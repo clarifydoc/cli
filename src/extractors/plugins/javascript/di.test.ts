@@ -369,12 +369,12 @@ describe("held noise calls survive the body scan (calls array identity)", () => 
   it("restoreHeldCalls finds the held `repo.find` on the stored array", async () => {
     const r = await extract(`
       class S {
-        run(repo: IRepo) { const x = import('./lazy.vue'); repo.find(1); repo.load(); }
+        run(repo: IRepo) { const x = (await import('./lazy')).go(); repo.find(1); repo.load(); }
       }`);
     const m = method(cls(r, "S"), "run");
-    expect(m.calls.map((c) => c.name)).toEqual(["repo.load", "default"]);
+    expect(m.calls.map((c) => c.name)).toEqual(["repo.load", "go"]);
     expect(restoreHeldCalls(m.calls, () => true)).toBe(1);
-    expect(m.calls.map((c) => c.name)).toEqual(["repo.find", "repo.load", "default"]);
+    expect(m.calls.map((c) => c.name)).toEqual(["repo.find", "repo.load", "go"]);
   });
 });
 

@@ -554,7 +554,8 @@ export function classifyCalls(
   outer:
   for (const call of calls) {
     // 0. Auto-imported globals (e.g. Vue <script setup> compiler macros)
-    const auto = hooks?.classifyAutoImported?.(call.name);
+    // A name the file imports itself (`import { emit } from "./bus"`) is that import, never the global.
+    const auto = importMap.has(call.name) ? null : hooks?.classifyAutoImported?.(call.name);
     if (auto) {
       call.kind = "cross-file";
       call.target = auto.target;

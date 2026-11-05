@@ -72,3 +72,37 @@ describe("ES5 constructor functions are classes", () => {
     ]));
   });
 });
+
+describe("ES5 inheritance reaches the base's prototype members", () => {
+  const SRC = `function Vehicle() {}
+Vehicle.prototype.start = function () { return 1; };
+function Car() { Vehicle.call(this); }
+Car.prototype = Object.create(Vehicle.prototype);
+function Truck() {}
+util.inherits(Truck, Vehicle);
+function Bike() {}
+Bike.prototype = new Vehicle();
+function Cart() {}
+Cart.prototype.start = function () { return 2; };
+`;
+  it("reads Object.create, util.inherits and `new Base()` as extends", async () => {
+    const { classes } = await read(SRC);
+    expect(classes.map((c) => `${c.name}<${c.extends ?? ""}`).sort()).toEqual(["Bike<Vehicle", "Car<Vehicle", "Cart<", "Truck<Vehicle", "Vehicle<"]);
+  });
+
+  it("links a child instance's call to the base's member, never a namesake class's", async () => {
+    const lib = createEmptyAnalysis("src/lib.js", "javascript") as FileAnalysis;
+    Object.assign(lib, await read(SRC));
+    const main = createEmptyAnalysis("src/main.js", "javascript") as FileAnalysis;
+    main.functions = [{
+      name: "run", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], line: 3, endLine: 8,
+      localTypes: [{ name: "c", type: "Car" }, { name: "t", type: "Truck" }],
+      calls: [
+        { name: "c.start", kind: "internal", target: null, line: 4 },
+        { name: "t.start", kind: "internal", target: null, line: 5 },
+      ],
+    }];
+    const links = buildSymbolLinks([lib, main]).filter((l) => l.sourceSymbol === "run").map((l) => `${l.callName} -> ${l.targetSymbol}`);
+    expect(links).toEqual(["c.start -> Vehicle.start", "t.start -> Vehicle.start"]);
+  });
+});

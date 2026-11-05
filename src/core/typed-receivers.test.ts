@@ -128,3 +128,32 @@ class Notifier {
     expect(callsOf(a, "Notifier", "notifyClub")).toEqual(["this.send"]);
   });
 });
+
+describe("restoreTypedReceiverCalls — a named import keeps a noise-named bare call", () => {
+  const src = `
+export function kick(club: string, send: (s: string) => void, list: string[]) {
+  send(club);
+  list.find((x) => x);
+}
+export function lineup(club: string) {
+  send(club);
+  find(1);
+  ns.send(club);
+  other.find(2);
+}`;
+  it("keeps send/find imported by name; not a namespace member, a parameter or an unimported name", async () => {
+    await ensureLanguagesLoaded(["typescript"]);
+    const tree = await parseSource(src, "typescript", "page.ts");
+    const a = createEmptyAnalysis("page.ts", "typescript" as Language);
+    a.functions = extractFunctions(tree, src, "typescript");
+    a.imports = [
+      { source: "./match", specifiers: ["send", "findMatch"], isDefault: false, isNamespace: false, isType: false, line: 1, aliases: { findMatch: "find" } },
+      { source: "./rules", specifiers: ["find"], isDefault: false, isNamespace: false, isType: false, line: 2 },
+      { source: "./ns", specifiers: ["ns"], isDefault: false, isNamespace: true, isType: false, line: 3 },
+    ];
+    restoreTypedReceiverCalls(a);
+    const calls = (n: string) => a.functions.find((f) => f.name === n)!.calls.map((c) => c.name);
+    expect(calls("lineup")).toEqual(["send", "find"]);
+    expect(calls("kick")).toEqual([]);
+  });
+});

@@ -193,3 +193,13 @@ describe("a static import of a class's members is no data-access namespace", () 
     expect(a.dataSources[0]!.target).toBe("org.hibernate");
   });
 });
+
+describe("resolveImportSource — a bundler query is no part of the file name", () => {
+  it("resolves ./pitch.js?raw and ./pitch.ts#frag to the file", async () => {
+    const { resolveImportSource } = await import("./import-index.js");
+    const known = new Set(["src/pitch.ts", "src/lib/m.ts"]);
+    expect(resolveImportSource("src/d.ts", "./pitch.js?raw", known)).toBe("src/pitch.ts");
+    expect(resolveImportSource("src/d.ts", "./pitch?url#a", known)).toBe("src/pitch.ts");
+    expect(resolveImportSource("src/d.ts", "./lib/m", known)).toBe("src/lib/m.ts");
+  });
+});

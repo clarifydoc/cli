@@ -45,6 +45,8 @@ export function stripAngleGroups(s: string): string {
  * Python import went unresolved.
  */
 export function relativeModulePath(spec: string): string {
+  // A bundler's query or fragment (`./pitch.js?raw`, `./icon.svg?url#a`) is no part of the file's name.
+  if (spec.startsWith(".")) spec = spec.replace(/[?#][^/]*$/, "");
   const m = /^(\.+)([A-Za-z_][\w.]*)?$/.exec(spec);
   if (!m) return spec;
   const ups = m[1]!.length - 1;

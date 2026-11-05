@@ -30,6 +30,7 @@ import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectorie
 import { buildImportDirectoryResolver, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
+import { splitTopLevel } from "../extractors/shared/value-resolver.js";
 import { bestOverload, type TypeHierarchy } from "./overload-args.js";
 import { markOverloadLink } from "./symbol-dedup.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
@@ -49,6 +50,11 @@ interface SymbolDef {
   reexport?: boolean;
   /** A method of the class object (`FunctionInfo.classLevel`), every definition of the name being one. */
   classLevel?: true;
+  /**
+   * Position of the parameter whose declared type the function returns as written (`identity<T>(c: T): T`):
+   * a call hands back the type of that argument when the written type names no class.
+   */
+  passesThrough?: number;
 }
 
 /**
@@ -748,6 +754,7 @@ function buildSymbolIndex(
         line: fn.line,
         endLine: fn.endLine,
         returnType: overloadReturn(prev, fn.returnType),
+        ...(passThroughIndex(fn) >= 0 && !prev ? { passesThrough: passThroughIndex(fn) } : {}),
       });
     }
 
@@ -987,6 +994,12 @@ function projectTypeHierarchy(analyses: readonly FileAnalysis[]): TypeHierarchy 
 }
 
 /** A name's return type once another definition of it (an overload) is seen: kept only when both agree. */
+/** Index of the parameter typed as the function's return type (`c: T` of `identity<T>(c: T): T`), else -1. */
+function passThroughIndex(fn: { returnType: string | null; params: Array<{ type: string | null }> }): number {
+  const ret = fn.returnType?.trim();
+  return ret && /^[A-Za-z_$][\w$]*$/.test(ret) ? fn.params.findIndex((p) => p.type?.trim() === ret) : -1;
+}
+
 function overloadReturn(prev: SymbolDef | undefined, returnType: string | null): string | null | undefined {
   if (!prev) return returnType;
   return prev.returnType === returnType ? returnType : undefined;
@@ -5758,7 +5771,8 @@ function chainPoint(
     // class call).
     point = ownMethodResult(ctx, sourceFile, consumer, head.name, awaited && receiver.length === 1)
       ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true)
-      ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1);
+      ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1)
+      ?? passThroughResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head, depth);
     rest = receiver.slice(1);
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
@@ -5841,6 +5855,19 @@ function importedFunctionResult(
   name: string,
   awaited: boolean,
 ): InjectionPoint | null {
+  const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, name);
+  if (!link) return null;
+  return returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
+}
+
+/** The definition a bare call of an imported function (or one an include puts in scope) reaches, in another file. */
+function importedFunctionLink(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  name: string,
+): SymbolLink | null {
   // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
   // it is imported when the file does not define it.
   const shared = importsShareScope(analysis.language) && !analysis.functions.some((f) => f.name === name);
@@ -5855,8 +5882,36 @@ function importedFunctionResult(
   } finally {
     resolvingPackageCalls.delete(guard);
   }
-  if (!link || link.relation !== "calls" || link.targetFile === sourceFile) return null;
-  return returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
+  return link && link.relation === "calls" && link.targetFile !== sourceFile ? link : null;
+}
+
+/**
+ * `identity(club).promote()` where `identity<T>(c: T): T` — a function returning the type of one of its
+ * parameters hands back the type of the argument it was given, when that argument is a name the caller types.
+ */
+function passThroughResult(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  head: ChainSegment,
+  depth: number,
+): InjectionPoint | null {
+  if (head.args === undefined) return null;
+  const own = symbolIn(ctx, sourceFile, head.name);
+  const def = own && own.name === head.name && own.passesThrough !== undefined
+    ? own
+    : (() => {
+        const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, head.name);
+        return link ? symbolIn(ctx, link.targetFile, link.targetSymbol) : undefined;
+      })();
+  if (def?.passesThrough === undefined) return null;
+  // A returned name that is a class is already a type: the plain return-type rule decides.
+  const args = splitTopLevel(head.args, ",");
+  const arg = args[def.passesThrough]?.trim();
+  if (!arg || !/^[A-Za-z_$][\w$]*$/.test(arg) || depth >= MAX_INITIALIZER_DEPTH) return null;
+  return scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, arg, depth + 1);
 }
 
 /** Longest run of initializer calls followed to type one local (`a = f(); b = a.g(); b.h()`). */
@@ -5900,6 +5955,8 @@ interface ChainSegment {
   name: string;
   call: boolean;
   ctor?: boolean;
+  /** The text between the parentheses of a call segment (`club` of `identity(club)`). */
+  args?: string;
 }
 
 /**
@@ -5951,7 +6008,7 @@ function receiverChain(callName: string): ChainSegment[] | null {
     const name = seg.slice(0, paren);
     const close = closingParen(seg, paren);
     if (!name || /[[<]/.test(name) || close !== seg.length - 1) return null;
-    out.push({ name, call: true });
+    out.push({ name, call: true, args: seg.slice(paren + 1, close) });
   }
   return out;
 }
