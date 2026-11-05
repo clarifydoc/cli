@@ -204,6 +204,14 @@ function macroArgumentCalls(group: DelimTokenTreeContext, owner: PatternCallName
   return true;
 }
 
+/** Macros whose body is code to emit (proc-macro `quote`), whatever the path they are named by (`quote::quote!`). */
+const GENERATING_MACROS: ReadonlySet<string> = new Set(["quote", "quote_spanned", "parse_quote", "parse_quote_spanned"]);
+
+/** The last segment of a macro's path: `quote::quote` is `quote`. */
+function macroLeaf(path: ParserRuleContext | null): string {
+  return path?.getText().split("::").pop() ?? "";
+}
+
 function walk(root: ParseTree, owner: PatternCallName[], functions: ParsedFunctionSpan[], source: Source): void {
   const stack: ParseTree[] = [root];
   while (stack.length > 0) {
@@ -220,6 +228,9 @@ function walk(root: ParseTree, owner: PatternCallName[], functions: ParsedFuncti
       functions.push({ name: unraw(name.getText()), line: name.start!.line, endLine: ctx.stop?.line ?? name.start!.line, calls: recordPatternCalls(calls) });
       continue;
     }
+    // A `quote! { … }` body is the code a procedural macro WRITES, not code this crate runs: its calls are the
+    // expansion's (`#name(3)`, `Club::new()`), and a function it spells out is declared where it is expanded.
+    if ((ctx instanceof MacroInvocationContext || ctx instanceof MacroInvocationSemiContext) && GENERATING_MACROS.has(macroLeaf(ctx.simplePath()))) continue;
     if (ctx instanceof MacroTranscriberContext) {
       functions.push(...templateItems(ctx, source));
       continue;

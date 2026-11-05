@@ -76,6 +76,14 @@ describe("Rust through ANTLR", () => {
     expect(calls("fn f() { Fixture::new().home(a).away(b).referee(c).venue(d).kickoff(); }")).toContain("Fixture.new().home().away().referee().venue().kickoff");
   });
 
+  it("reads no call inside a quote! body: it is the code a macro writes, not this crate's", () => {
+    const fn = readRust("fn derive(name: Ident) -> TokenStream {\n    let out = quote::quote! { impl #name { fn kick(&self) { #name::build(1); promote(self); } } #name(3) };\n    let more = parse_quote!(Club::new(#name));\n    register(out, more)\n}\nfn promote(c: &Club) {}\n").functions;
+    expect(fn.find((f) => f.name === "derive")!.calls.map((c) => c.name)).toEqual(["register"]);
+    expect(fn.map((f) => f.name)).toEqual(["derive", "promote"]);
+    // A function spelled out at item level by quote! is the expansion's too.
+    expect(readRust("quote! { fn kickoff() {} }\n").functions).toEqual([]);
+  });
+
   it("reads the functions macros declare (real-repo FP)", () => {
     const names = (src: string) => readRust(src).functions.map((f) => f.name);
     // A bare signature, a `cfg_if!`-style braced group, a `macro_rules!` template with a spliced repetition.
