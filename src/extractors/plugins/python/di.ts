@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { callChainText } from "../../shared/call-graph.js";
+import { splitTopLevel } from "./request-schema.js";
 
 /**
  * Dependency injection as Python code spells it — the facts the symbol linker
@@ -85,31 +86,6 @@ export function collectionElement(type: string | null | undefined): { element: s
   else element = args.length === 1 ? args[0] : undefined;
   if (!element || !isClassName(element) || /^(?:Any|None|Self|Optional|Union|Callable|Dict|List|Set|Tuple|Type)$/.test(lastSegment(element))) return null;
   return { element, map: isMap };
-}
-
-/** Split at depth-0 commas (brackets and quotes respected). */
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"') quote = c;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start).trim());
-  return out.filter((p) => p.length > 0);
 }
 
 /** Positional (non-keyword) argument nodes of a call. */

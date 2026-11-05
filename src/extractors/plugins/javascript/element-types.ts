@@ -1,4 +1,5 @@
 import { namesReceiverType } from "./di.js";
+import { splitTopLevel } from "./request-schema.js";
 
 /**
  * The element a TypeScript collection type states, for the variable a loop or a callback binds from it:
@@ -22,7 +23,7 @@ export function collectionElement(type: string | null | undefined): { element: s
     else {
       const kv = /^(?:Map|ReadonlyMap|WeakMap)\s*<\s*(.+)\s*>$/.exec(t);
       if (kv) {
-        const args = splitTopLevel(kv[1]!);
+        const args = splitTopLevel(kv[1]!, ",");
         if (args.length === 2) {
           element = args[1]!;
           map = true;
@@ -32,23 +33,6 @@ export function collectionElement(type: string | null | undefined): { element: s
   }
   element = element?.trim().replace(/^readonly\s+/, "") ?? null;
   return element && namesReceiverType(element) ? { element, map } : null;
-}
-
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "<" || ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start).trim());
-  return out;
 }
 
 /** Array methods whose callback's first parameter is the element (a `Set`/`Map` has `forEach` only). */

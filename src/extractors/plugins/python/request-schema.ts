@@ -45,7 +45,7 @@ export function splitGeneric(type: string): { name: string; args: string[] } {
   return { name: type.slice(0, lb).trim(), args: splitTopLevel(type.slice(lb + 1, -1)) };
 }
 
-/** Split on commas (or `|` when `sep` says so) that are outside brackets/parens/quotes. */
+/** Split on commas (or `|` when `sep` says so) that are outside brackets/parens/braces/quotes. */
 export function splitTopLevel(text: string, sep: "," | "|" = ","): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -54,12 +54,13 @@ export function splitTopLevel(text: string, sep: "," | "|" = ","): string[] {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (quote) {
-      if (ch === quote) quote = null;
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
       continue;
     }
     if (ch === "'" || ch === '"') quote = ch;
-    else if (ch === "[" || ch === "(") depth++;
-    else if (ch === "]" || ch === ")") depth--;
+    else if (ch === "[" || ch === "(" || ch === "{") depth++;
+    else if (ch === "]" || ch === ")" || ch === "}") depth--;
     else if (ch === sep && depth === 0) {
       parts.push(text.slice(start, i).trim());
       start = i + 1;

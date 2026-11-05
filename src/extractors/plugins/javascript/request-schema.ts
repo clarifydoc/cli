@@ -39,14 +39,14 @@ const SERVICE_PARAM_NAMES = new Set(["req", "request", "ctx", "context", "res", 
 const SERVICE_TYPES = /^(?:express\.)?(?:Request|Response|NextFunction|FastifyRequest|FastifyReply|Context|Koa\.Context|ParameterizedContext)(?:<.*>)?$/;
 
 /** `Foo<A, B<C>>` → `{ name: "Foo", args: ["A", "B<C>"] }`; a non-generic → `{ name, args: [] }`. */
-function splitGeneric(type: string): { name: string; args: string[] } {
+export function splitGeneric(type: string): { name: string; args: string[] } {
   const lt = type.indexOf("<");
   if (lt < 0 || !type.endsWith(">")) return { name: type, args: [] };
   return { name: type.slice(0, lt), args: splitTopLevel(type.slice(lt + 1, -1), ",") };
 }
 
 /** Split on a separator at nesting depth 0 (respecting `<>`, `()`, `[]`, `{}` and quotes). */
-function splitTopLevel(text: string, sep: string): string[] {
+export function splitTopLevel(text: string, sep: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let quote: string | null = null;
