@@ -2,13 +2,12 @@ import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import type { ClassInfo } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { declarationLines, extractObjcLocalTypes, objcClasses, objcParams, parseObjcReturnType } from "./receivers.js";
 
 /**
- * Objective-C regex spec. Claims `.m`/`.mm` only — `.h` headers are shared with
- * C/C++ and left to the cpp plugin (an Obj-C header parsed as C is degraded but
- * not broken). Methods are `- (ret)selector…` / `+ (ret)…` with brace bodies;
- * classes come from `@implementation X … @end` (the `@interface` superclass
- * usually lives in the unparsed `.h`, so `extends` is left null here).
+ * Objective-C regex spec. Claims `.m`/`.mm` only — `.h` has one owner, the cpp plugin, which hands an
+ * Objective-C header (`@interface`, a framework import) over from its `preprocess`. Methods are `- (ret)selector…` / `+ (ret)…` with brace bodies;
+ * classes come from `@implementation X … @end` and `@interface`/`@protocol` blocks (receivers.ts).
  */
 export const objcSpec: RegexLangSpec = {
   language: "objc",
@@ -26,25 +25,17 @@ export const objcSpec: RegexLangSpec = {
 
   classPatterns: [],
 
-  // One class per `@implementation X … @end` (categories `@implementation X (Cat)`
-  // attribute to X). Methods are the function clauses inside the block.
-  extractClasses: (lines, fns): ClassInfo[] => {
-    const classes: ClassInfo[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const impl = lines[i].match(/^\s*@implementation\s+(\w+)/);
-      if (!impl) continue;
-      let end = lines.length;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (/^\s*@end\b/.test(lines[j])) { end = j + 1; break; }
-      }
-      classes.push({
-        name: impl[1], extends: null, implements: [], decorators: [],
-        methods: fns.filter((fn) => fn.line >= i + 1 && fn.line <= end),
-        properties: [], isExported: true, line: i + 1, endLine: end,
-      });
-    }
-    return classes;
+  // One class per name and file: `@implementation X … @end` with the `@interface` of the same file merged in
+  // (superclass, protocols, properties and instance variables); a header's `@interface` or `@protocol` stands alone.
+  extractClasses: (lines, fns): ClassInfo[] => objcClasses(lines, fns),
+  // A method declared in an `@interface` is no function: the `@implementation` holds its definition.
+  postProcessFunctions: (lines, fns) => {
+    const declared = declarationLines(lines);
+    return declared.size === 0 ? fns : fns.filter((fn) => !declared.has(fn.line));
   },
+  extractParams: objcParams,
+  parseReturnType: parseObjcReturnType,
+  extractLocalTypes: (body) => extractObjcLocalTypes(body),
 
   importPatterns: [
     { pattern: /^\s*#\s*import\s*[<"]([^>"]+)[>"]/, getSource: (m) => m[1] },

@@ -228,3 +228,10 @@ class Sedan
     expect(basesOf(src, "Sedan")).toEqual(["Chassis", ["Engine"]]);
   });
 });
+
+describe("a struct named as a type is no declaration", () => {
+  it("reads no class in a C prototype, a returned struct or a variable", () => {
+    const src = "struct car *car_new(int wheels);\nstruct car make_car(void);\nstruct car spare;\nstruct car {\n    int wheels;\n};\n";
+    expect(classesOf(src).map((c) => [c.name, c.line])).toEqual([["car", 4]]);
+  });
+});

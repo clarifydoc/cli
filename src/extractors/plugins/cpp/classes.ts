@@ -44,7 +44,7 @@ export const CLASS_PATTERN = new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)
 export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
   // `class Slice;` only says a class exists: its declaration is the header defining it, which a forward declaration
   // in every header that names it must not stand in for.
-  const classes = extractClassesWithSpec(lines, spec).filter((cls) => !FORWARD_DECLARATION.test(lines[cls.line - 1] ?? ""));
+  const classes = extractClassesWithSpec(lines, spec).filter((cls) => !FORWARD_DECLARATION.test(lines[cls.line - 1] ?? "") && !USES_A_TYPE.test(lines[cls.line - 1] ?? ""));
   for (const cls of classes) addPureVirtualMethods(lines, cls, spec);
 
   const namespaces = declaredNamespaces(lines);
@@ -291,6 +291,12 @@ function qualifyNestedClasses(
     for (const cls of same) if (cls.namespace) cls.name = `${cls.namespace}::${cls.name}`;
   }
 }
+
+/**
+ * A line that names a struct as the TYPE of something and declares no type: a prototype returning a pointer
+ * (`struct car *car_new(int wheels);`), a function returning one by value, a variable (`struct car spare;`).
+ */
+const USES_A_TYPE = /^\s*(?:class|struct)\s+[A-Za-z_]\w*\s*(?:[*&]|\s[A-Za-z_]\w*\s*[(;=[,)])/;
 
 /** `class Slice;`, `struct CLUB_API Car;`, `template <typename T> class Box;` — a declaration with no body. */
 const FORWARD_DECLARATION = /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(?:[A-Za-z_][\w()"\s]*\s)?[A-Za-z_]\w*\s*;\s*(?:\/\/.*)?$/;

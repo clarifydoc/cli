@@ -6,6 +6,7 @@ import { C_BUILTINS } from "../c/meta.js";
 import { cppManifest } from "./manifest.js";
 import { cFamilyReachability } from "../shared/c-family-reachability.js";
 import { cppGrpcService } from "../shared/grpc-stubs.js";
+import { isObjcHeader } from "../shared/objc-header.js";
 
 const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...C_BUILTINS,
@@ -21,6 +22,8 @@ const CPP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const cppMeta: LanguagePluginMeta = {
+  // `.h` has one owner; an Objective-C header (`@interface`, a framework import) is read as Objective-C.
+  preprocess: (rawSource, relativePath) => (isObjcHeader(relativePath, rawSource) ? { sourceText: rawSource, language: "objc" } : null),
   // Dead-code reachability (see c-family-reachability.ts).
   reachability: cFamilyReachability,
   regexControlFlow: extendRegexControlFlow([{ match: /^goto\b/, type: "break_statement" }]),
