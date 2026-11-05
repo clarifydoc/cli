@@ -250,6 +250,14 @@ describe("Nuxt Nitro server routes", () => {
     expect(r!.line).toBe(3);
   });
 
+  it("reads an environment suffix as no part of the path, and a WebSocket handler as a GET", () => {
+    const a = file([call("defineEventHandler", 3)]);
+    expect(inferNuxtServerRoutes("server/routes/hello.dev.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)").map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["null /hello"]);
+    expect(inferNuxtServerRoutes("server/api/clubs.get.prod.ts", a, ["nuxt"], "x\nexport default defineEventHandler(() => 1)").map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/clubs"]);
+    const ws = "x\nexport default defineWebSocketHandler({ open(peer) {} })";
+    expect(inferNuxtServerRoutes("server/routes/live.ts", a, ["nuxt"], ws).map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /live"]);
+  });
+
   it("is no route when the handler forwards the request elsewhere (a proxy, not a page the app serves)", () => {
     const proxy = file([call("defineEventHandler", 3), call("joinURL", 5), call("sendRedirect", 7), call("proxyRequest", 9)]);
     expect(inferNuxtServerRoutes("server/api/[...].ts", proxy, ["nuxt"], "x\nexport default defineEventHandler(() => 1)")).toEqual([]);

@@ -248,8 +248,10 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   if (!frameworkIds.includes("nuxt") || !sourceText) return [];
   const m = relativePath.replace(/\\/g, "/").match(/^(?:src\/)?server\/(api|routes)\/(.+)\.(?:[cm]?[tj]s)$/);
   if (!m || !hasDefaultExport(sourceText)) return [];
-  const suffix = /^(.*)\.(get|post|put|patch|delete|head|options)$/i.exec(m[2]!);
-  const file = suffix ? suffix[1]! : m[2]!;
+  // `hello.dev.ts` / `hello.prod.ts` serve `/hello` in one environment: the environment is no part of the path.
+  const named = m[2]!.replace(/\.(?:dev|prod|prerender)$/i, "");
+  const suffix = /^(.*)\.(get|post|put|patch|delete|head|options)$/i.exec(named);
+  const file = suffix ? suffix[1]! : named;
   const path = routeFromSegments(m[1] === "api" ? `api/${file}` : file);
   const line = analysis.exports.find((e) => e.name === "default" || e.kind === "default")?.line ?? 1;
   const wrappers = /^(?:define(?:Cached|Lazy)?EventHandler|eventHandler|defineWebSocketHandler|defineCachedEventHandler)$/;
@@ -257,7 +259,9 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   // A handler that forwards (h3's `proxyRequest`/`sendProxy`) is a proxy to another service, not a route this one
   // serves: a catch-all `server/api/[...].ts` would otherwise take every call the backend's routes did not.
   if (calls.some((c) => /^(?:proxyRequest|sendProxy)$/.test(c.name))) return [];
-  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : null, handler: null, calls, line })];
+  // A WebSocket handler is upgraded from a GET.
+  const socket = !suffix && /\bdefineWebSocketHandler\s*\(/.test(sourceText);
+  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : socket ? "GET" : null, handler: null, calls, line })];
 }
 
 /**
