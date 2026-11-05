@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { vpmPackageManager } from "./package-manifests.js";
 
 /**
@@ -8,6 +9,7 @@ import { vpmPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const vManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "vlang",
   family: "vlang",
   packageManagers: [vpmPackageManager],

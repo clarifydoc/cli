@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { SEMICOLON_DOCS } from "../../shared/doc-comment-specs.js";
 import { clojureFrameworkRules } from "./frameworks.js";
 import { clojarsPackageManager } from "./package-manifests.js";
 
@@ -9,6 +10,7 @@ import { clojarsPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const clojureManifest: LanguagePluginManifest = {
+  docComments: SEMICOLON_DOCS,
   language: "clojure",
   family: "clojure",
   packageManagers: [clojarsPackageManager],

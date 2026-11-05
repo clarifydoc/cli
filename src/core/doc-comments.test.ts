@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { attachDocComments, declarationHeadLine } from "./doc-comments.js";
 import { C_STYLE_DOCS, HASH_DOCS, PASCAL_DOCS, PYTHON_DOCS } from "../extractors/shared/doc-comment-specs.js";
+import { manifestFor } from "../extractors/registry.js";
 import { createEmptyAnalysis, type FunctionInfo, type Language } from "../types/analysis.js";
 
 const fn = (name: string, line: number): FunctionInfo =>
@@ -29,6 +30,18 @@ describe("attachDocComments", () => {
       "function table() {}",
     ].join("\n");
     expect(docs("typescript", src, C_STYLE_DOCS, [["signPlayer", 6], ["table", 10]]).fns).toEqual({ signPlayer: "Signs a player to the club.", table: undefined });
+  });
+
+  it("reads the comment above a decorator whose arguments spread over rows", () => {
+    const src = [
+      "/** Lists the league table. */",
+      "@ApiResponse({",
+      "  status: 200,",
+      "})",
+      "@Get('table')",
+      "table() {}",
+    ].join("\n");
+    expect(docs("typescript", src, C_STYLE_DOCS, [["table", 6]]).fns.table).toBe("Lists the league table.");
   });
 
   it("reads line comments, C# summaries and single-line blocks", () => {
@@ -77,6 +90,21 @@ describe("attachDocComments", () => {
     const doc = docs("pascal", src, PASCAL_DOCS, [["Recalculate", 2]]).fns.Recalculate!;
     expect(doc.length).toBeLessThanOrEqual(200);
     expect(doc.endsWith("…")).toBe(true);
+  });
+});
+
+describe("languages with their own comment shape", () => {
+  const specOf = (l: Language) => manifestFor(l)!.docComments!;
+  it("every plugin that declares none before now reads its comments", () => {
+    for (const l of ["sql", "perl", "elixir", "nim", "raku", "powershell", "julia", "dlang", "vlang", "haxe", "coffeescript", "clojure", "erlang"] as Language[]) expect(manifestFor(l)?.docComments, l).toBeDefined();
+  });
+  it("reads SQL dashes and blocks, PowerShell help blocks, Clojure semicolons, Erlang percents and Perl hashes", () => {
+    expect(docs("sql", "-- Counts the points of a club.\nCREATE FUNCTION club_points() RETURNS int AS $$ $$;", specOf("sql"), [["club_points", 2]]).fns.club_points).toBe("Counts the points of a club.");
+    expect(docs("powershell", "<#\n.SYNOPSIS\nLists the cars in a garage.\n#>\nfunction Get-Car {}", specOf("powershell"), [["Get-Car", 5]]).fns["Get-Car"]).toBe("Lists the cars in a garage.");
+    expect(docs("powershell", "# Lists the cars in a garage.\nfunction Get-Car {}", specOf("powershell"), [["Get-Car", 2]]).fns["Get-Car"]).toBe("Lists the cars in a garage.");
+    expect(docs("clojure", ";; Ranks the clubs by points.\n(defn rank [clubs] clubs)", specOf("clojure"), [["rank", 2]]).fns.rank).toBe("Ranks the clubs by points.");
+    expect(docs("erlang", "%% Signs a player for the club.\nsign(P) -> P.", specOf("erlang"), [["sign", 2]]).fns.sign).toBe("Signs a player for the club.");
+    expect(docs("perl", "# Returns the league table.\nsub table { }", specOf("perl"), [["table", 2]]).fns.table).toBe("Returns the league table.");
   });
 });
 

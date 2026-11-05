@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { SQL_DOCS } from "../../shared/doc-comment-specs.js";
 import { sqlFrameworkRules } from "./frameworks.js";
 
 /**
@@ -8,6 +9,7 @@ import { sqlFrameworkRules } from "./frameworks.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const sqlManifest: LanguagePluginManifest = {
+  docComments: SQL_DOCS,
   language: "sql",
   parsing: "regex",
   extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".drift"],

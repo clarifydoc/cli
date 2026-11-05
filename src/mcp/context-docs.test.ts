@@ -95,6 +95,8 @@ describe("clarifydoc_context_docs", () => {
   it("puts the same in clarifydoc_file, and a count in clarifydoc_status", async () => {
     const file = (await call("clarifydoc_file", { path: "services/playerService.ts", sections: ["decisions"] })).text;
     expect(file).toMatch(/## Decisions\n- \[decision\] Players live in Postgres — docs\/adr\/0001-player-store\.md · Accepted · names 1 analyzed file; 1 committed after it/);
+    expect(file).toContain('- comment, not a decision: services/playerService.ts:8 above getAllPlayers() — "Newest first so that the transfer list shows fresh signings on top."');
+    expect(file).toMatch(/- commit, not a decision: [0-9a-f]{7,} 2026-03-01 Count transfers \(#42\) — "Transfers are counted on the player row because/);
     const status = (await call("clarifydoc_status")).text;
     expect(status).toMatch(/context docs: decision records: 2, context documents: 2 \(1 may be stale\) — clarifydoc_context_docs/);
   });

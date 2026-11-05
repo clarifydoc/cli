@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { POWERSHELL_DOCS } from "../../shared/doc-comment-specs.js";
 import { psgalleryPackageManager } from "./package-manifests.js";
 
 /**
@@ -8,6 +9,7 @@ import { psgalleryPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const powershellManifest: LanguagePluginManifest = {
+  docComments: POWERSHELL_DOCS,
   language: "powershell",
   family: "powershell",
   packageManagers: [psgalleryPackageManager],

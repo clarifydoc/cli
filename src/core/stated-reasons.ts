@@ -18,7 +18,7 @@
 
 import type { DocCommentSpec } from "../types/language-plugin.js";
 import { GIT_SAFE_DIFF, gitText } from "./git-safe.js";
-import { LICENCE } from "./doc-comments.js";
+import { LICENCE, onlyBlankOrAttributes } from "./doc-comments.js";
 import { isGeneratedSource } from "./generated-file-detector.js";
 
 /** Longest quoted comment or commit paragraph, in characters. */
@@ -180,7 +180,7 @@ function anchorOf(lines: readonly string[], b: Block, spec: DocCommentSpec, func
   const below = functions
     .filter((f) => f.line > last && f.line - last <= 20)
     .sort((x, y) => x.line - y.line)[0];
-  if (below && lines.slice(last, below.line - 1).every((l) => !l.trim() || spec.attribute?.test(l))) return { ...below, where: "above" };
+  if (below && onlyBlankOrAttributes(lines, last, below.line - 2, spec)) return { ...below, where: "above" };
   const inside = functions.filter((f) => f.line <= first && f.endLine >= last).sort((x, y) => x.endLine - x.line - (y.endLine - y.line))[0];
   return inside ? { ...inside, where: "inside" } : undefined;
 }

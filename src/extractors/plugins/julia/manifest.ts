@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import { juliaPackageManager } from "./package-manifests.js";
 
 /**
@@ -8,6 +9,7 @@ import { juliaPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const juliaManifest: LanguagePluginManifest = {
+  docComments: HASH_DOCS,
   language: "julia",
   family: "julia",
   packageManagers: [juliaPackageManager],

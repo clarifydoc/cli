@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 import { nimblePackageManager } from "./package-manifests.js";
 
 /**
@@ -8,6 +9,7 @@ import { nimblePackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const nimManifest: LanguagePluginManifest = {
+  docComments: HASH_DOCS,
   language: "nim",
   family: "nim",
   packageManagers: [nimblePackageManager],
