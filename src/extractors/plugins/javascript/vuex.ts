@@ -13,8 +13,8 @@ export { extractStoreShapes } from "./vuex-factories.js";
  * the API call and the route and table behind it.
  *
  * Facts, per file:
- *   - `CallInfo.key` on a dispatch with a literal name, `/`-prefixed with
- *     `{ root: true }` (`dispatchKeyOfArgs`);
+ *   - `CallInfo.key` on a dispatch: its name, every name a name computed from
+ *     literals can take, `/`-prefixed with `{ root: true }` (`dispatchKeyOfArgs`);
  *   - `FileAnalysis.storeModules` for `modules: { contacts, articles: helpCenterArticles }`
  *     in `createStore({…})` / `new Vuex.Store({…})` or in a module's own definition;
  *   - `FileAnalysis.storeShapes` for a module a project factory builds and for
@@ -70,26 +70,138 @@ function keyText(pair: Node): string | null {
   return key ? key.text.replace(/^['"]|['"]$/g, "") : null;
 }
 
+/** Several action names one dispatch may stand for, in one `CallInfo.key`. */
+export const DISPATCH_KEY_SEPARATOR = "|";
+
 /** A dispatch made with `{ root: true }`: the name is global even inside a module. */
 export const ROOT_KEY_PREFIX = "/";
 
 /** A bare `dispatch` (or `context.dispatch`) is the action context's: local to its module. */
 const CONTEXT_DISPATCH = /^(?:dispatch|context\.dispatch)$/;
 
+/** Most action names one computed dispatch name may stand for. */
+const MAX_NAMES = 6;
+const SCOPE_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition", "program"]);
+
 /**
- * The key of `dispatch(name, payload, options)`: the action name, a literal;
- * prefixed `/` with `{ root: true }`. Null when the name is not a literal.
+ * The key of `dispatch(name, payload, options)`: the action name; for a name
+ * computed from literals, each one it can take, joined by `|`
+ * (`` `categories/${action}` ``, `'categories/' + action` with `const action = editing ? 'update' : 'create'`,
+ * `` `articles/${draft ?? 'update'}` `` — the fallback —, a parameter's literal
+ * default, `ACTIONS[kind]` over a map of literals); prefixed `/` with
+ * `{ root: true }`. Null when the name is not known.
  */
 export function dispatchKeyOfArgs(args: readonly Node[]): string | null {
-  const first = args[0];
-  const name =
-    first?.type === "string" ? first.text.slice(1, -1)
-    : first?.type === "template_string" && !first.namedChildren.some((c) => c?.type === "template_substitution") ? first.text.slice(1, -1)
-    : "";
-  if (!name) return null;
+  const names = args[0] ? actionNames(args[0], 0) : null;
+  if (!names || names.length === 0 || names.length > MAX_NAMES) return null;
   const options = args[2];
   const root = options?.type === "object" && options.namedChildren.some((p) => p?.type === "pair" && keyText(p) === "root" && p.childForFieldName("value")?.type === "true");
-  return root ? ROOT_KEY_PREFIX + name : name;
+  return [...new Set(names)].map((n) => (root ? ROOT_KEY_PREFIX + n : n)).join(DISPATCH_KEY_SEPARATOR);
+}
+
+function actionNames(node: Node | null | undefined, depth: number): string[] | null {
+  let n = node ?? null;
+  while (n?.type === "parenthesized_expression") n = n.namedChildren[0] ?? null;
+  if (!n || depth > 4) return null;
+  switch (n.type) {
+    case "string":
+      return n.text.length > 2 ? [n.text.slice(1, -1)] : null;
+    case "template_string": {
+      let out = [""];
+      for (const c of n.namedChildren) {
+        if (!c) continue;
+        if (c.type !== "template_substitution") {
+          out = out.map((p) => p + c.text);
+          continue;
+        }
+        const inner = actionNames(c.namedChildren[0], depth + 1);
+        if (!inner) return null;
+        out = out.flatMap((p) => inner.map((i) => p + i));
+        if (out.length > MAX_NAMES) return null;
+      }
+      return out.every(Boolean) ? out : null;
+    }
+    case "ternary_expression": {
+      const a = actionNames(n.childForFieldName("consequence"), depth + 1);
+      const b = actionNames(n.childForFieldName("alternative"), depth + 1);
+      return a && b ? [...a, ...b] : null;
+    }
+    case "binary_expression": {
+      // `draft ?? 'update'`: the fallback is one name it takes, whatever the left side is.
+      const op = n.childForFieldName("operator")?.text;
+      if (op === "+") {
+        // `'clubs/' + action`
+        const left = actionNames(n.childForFieldName("left"), depth + 1);
+        const right = left ? actionNames(n.childForFieldName("right"), depth + 1) : null;
+        return left && right && left.length * right.length <= MAX_NAMES ? left.flatMap((l) => right.map((r) => l + r)) : null;
+      }
+      if (op !== "??" && op !== "||") return null;
+      const fallback = actionNames(n.childForFieldName("right"), depth + 1);
+      return fallback ? [...(actionNames(n.childForFieldName("left"), depth + 1) ?? []), ...fallback] : null;
+    }
+    case "identifier":
+      return valuesOfName(n, depth);
+    case "subscript_expression": {
+      // `ACTIONS[kind]` over a map whose every value is a literal name.
+      const obj = n.childForFieldName("object");
+      const map = obj?.type === "identifier" ? declaredValue(obj) : null;
+      if (map?.type !== "object") return null;
+      const out: string[] = [];
+      for (const p of map.namedChildren) {
+        const v = p?.type === "pair" ? actionNames(p.childForFieldName("value"), depth + 1) : null;
+        if (!v) return null;
+        out.push(...v);
+      }
+      return out.length > 0 ? out : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The names a variable can hold: its declaration's value and every value assigned to it, or its parameter default. */
+function valuesOfName(id: Node, depth: number): string[] | null {
+  const decl = declaredValue(id);
+  if (decl) {
+    const out = actionNames(decl, depth + 1);
+    if (!out) return null;
+    // `let action = 'create'; if (editing) action = 'update';`
+    const scope = scopeOf(id);
+    for (const asg of scope?.descendantsOfType("assignment_expression") ?? []) {
+      if (asg?.childForFieldName("left")?.text !== id.text) continue;
+      const more = actionNames(asg.childForFieldName("right"), depth + 1);
+      if (!more) return null;
+      out.push(...more);
+    }
+    return out;
+  }
+  // A parameter with a literal default (`(value, action = 'update')`).
+  for (let s = scopeOf(id); s; s = scopeOf(s)) {
+    for (const p of s.childForFieldName("parameters")?.namedChildren ?? []) {
+      const pattern = p?.childForFieldName("pattern") ?? p;
+      if (pattern?.type === "assignment_pattern" && pattern.childForFieldName("left")?.text === id.text) return actionNames(pattern.childForFieldName("right"), depth + 1);
+    }
+  }
+  return null;
+}
+
+/** The value `const name = …` gives the name, in the innermost scope declaring it once. */
+function declaredValue(id: Node): Node | null {
+  for (let s = scopeOf(id); s; s = scopeOf(s)) {
+    const decls = s.descendantsOfType("variable_declarator").filter((d) => d?.childForFieldName("name")?.text === id.text && scopeOf(d)?.id === s.id);
+    if (decls.length === 1) return decls[0]!.childForFieldName("value");
+    if (decls.length > 1) return null;
+    // A parameter of that name shadows any outer declaration.
+    const params = s.childForFieldName("parameters")?.text ?? s.childForFieldName("parameter")?.text ?? "";
+    if (s.type !== "program" && (params.match(/[\w$]+/g) ?? ([] as string[])).includes(id.text)) return null;
+  }
+  return null;
+}
+
+function scopeOf(n: Node): Node | null {
+  let p = n.parent;
+  while (p && !SCOPE_NODES.has(p.type)) p = p.parent;
+  return p;
 }
 
 type Target = { file: string; symbol: string; line: number; viaType?: string; viaTypeFile?: string };
@@ -298,24 +410,26 @@ export class VuexDispatchResolver implements DispatchResolver {
         for (const call of fn.calls) {
           // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
           if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
-          const written = call.key;
-          const root = written.startsWith(ROOT_KEY_PREFIX);
-          const key = root ? written.slice(ROOT_KEY_PREFIX.length) : written;
-          const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name));
-          if (!hit) continue;
-          const link = (t: Target): SymbolLink => ({
-            sourceFile: a.filePath,
-            sourceSymbol: fn.name,
-            sourceLine: call.line,
-            callName: `dispatch:${key}`,
-            targetFile: t.file,
-            targetSymbol: t.symbol,
-            targetLine: t.line,
-            confidence: "INFERRED",
-            ...(t.viaType ? { viaType: t.viaType, viaTypeFile: t.viaTypeFile } : {}),
-          });
-          if (hit.fn) links.push(link({ file: hit.file.filePath, symbol: hit.fn.name, line: hit.fn.line }));
-          for (const t of hit.also ?? []) links.push(link(t));
+          const keys = call.key.split(DISPATCH_KEY_SEPARATOR);
+          for (const written of keys) {
+            const root = written.startsWith(ROOT_KEY_PREFIX);
+            const key = root ? written.slice(ROOT_KEY_PREFIX.length) : written;
+            const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name));
+            if (!hit) continue;
+            const link = (t: Target): SymbolLink => ({
+              sourceFile: a.filePath,
+              sourceSymbol: fn.name,
+              sourceLine: call.line,
+              callName: `dispatch:${key}`,
+              targetFile: t.file,
+              targetSymbol: t.symbol,
+              targetLine: t.line,
+              confidence: "INFERRED",
+              ...(t.viaType ? { viaType: t.viaType, viaTypeFile: t.viaTypeFile } : {}),
+            });
+            if (hit.fn) links.push(link({ file: hit.file.filePath, symbol: hit.fn.name, line: hit.fn.line }));
+            for (const t of hit.also ?? []) links.push(link(t));
+          }
         }
       }
     }

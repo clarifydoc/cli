@@ -293,6 +293,41 @@ describe("vuex-action dispatch with several root stores", () => {
   });
 });
 
+describe("vuex-action dispatch of a computed action name", () => {
+  it("joins every name a template, a concatenation, a ternary, a fallback, a default or a map of literals can take", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import clubs from './modules/clubs';
+export default createStore({ modules: { clubs } });`,
+      "src/store/modules/clubs.js": `const actions = {
+  create: async ({ commit }, c) => { commit('ADD', c); },
+  update: async ({ commit }, c) => { commit('EDIT', c); },
+  publish: async ({ commit }, c) => { commit('PUBLISH', c); },
+};
+export default { namespaced: true, state: {}, actions };`,
+      "src/pages/ClubForm.js": `import { useStore } from 'vuex';
+const store = useStore();
+const KINDS = { draft: 'clubs/create', live: 'clubs/publish' };
+export const save = (club, editing) => {
+  const action = editing ? 'update' : 'create';
+  return store.dispatch(\`clubs/\${action}\`, club);
+};
+export const finish = (club, draftAction) => store.dispatch(\`clubs/\${draftAction ?? 'update'}\`, club);
+export const keep = (club, action = 'update') => store.dispatch('clubs/' + action, club);
+export const byKind = (club, kind) => store.dispatch(KINDS[kind], club);
+export const unknown = (club, name) => store.dispatch(\`clubs/\${name}\`, club);`,
+    }));
+    expect(show(links, "src/pages/ClubForm.js")).toEqual([
+      "save -dispatch:clubs/update-> src/store/modules/clubs.js#actions.update",
+      "save -dispatch:clubs/create-> src/store/modules/clubs.js#actions.create",
+      "finish -dispatch:clubs/update-> src/store/modules/clubs.js#actions.update",
+      "keep -dispatch:clubs/update-> src/store/modules/clubs.js#actions.update",
+      "byKind -dispatch:clubs/create-> src/store/modules/clubs.js#actions.create",
+      "byKind -dispatch:clubs/publish-> src/store/modules/clubs.js#actions.publish",
+    ]);
+  });
+});
+
 describe("vuex-action dispatch from the root store's own imports", () => {
   it("reads a module's actions in the module, never in the root store that imports it", async () => {
     const links = new VuexDispatchResolver().resolve(await analyzeAll({
