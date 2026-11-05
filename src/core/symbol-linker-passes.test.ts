@@ -148,4 +148,12 @@ describe("symbol links through a dispatch map of another file", () => {
     expect(dispatch([actions, decoy, runner([{ name: "ACTIONS.save", kind: "cross-file", target: null, line: 2 }], ["ACTIONS"])])).toEqual([]);
     expect(dispatch([actions, decoy, runner([{ name: "ACTIONS.remove", kind: "cross-file", target: null, line: 2 }])])).toEqual([]);
   });
+
+  it("leaves a member the object defines inline to the ordinary member lookup", () => {
+    // `export const ACTIONS = { save: saveClub, close: () => … }`: `close` is a function of the file, not a name held.
+    const mixed = { ...actions, functions: [...actions.functions, fn("ACTIONS.close", 6)] } as FileAnalysis;
+    const links = buildSymbolLinks([mixed, decoy, runner([{ name: "ACTIONS.close", kind: "cross-file", target: "./lib/actions", line: 2 }])])
+      .filter((l) => l.sourceFile === "src/run.ts" && l.relation !== "reference").map((l) => `${l.callName} ${l.targetFile}::${l.targetSymbol} ${l.relation}`);
+    expect(links).toEqual(["ACTIONS.close src/lib/actions.ts::ACTIONS.close calls"]);
+  });
 });

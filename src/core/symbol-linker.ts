@@ -3985,7 +3985,9 @@ function importedDispatchMapCall(
       relation: "dispatch",
     });
   }
-  if (out.length === 0) return null;
+  // No named function under that key: the member may be one the object literal defines inline
+  // (`export const Helper = { isOpen: () => … }`), which the ordinary member lookup resolves.
+  if (out.length === 0) return undefined;
   ctx.extraLinks.push(...out.slice(1));
   return out[0]!;
 }
@@ -4853,8 +4855,10 @@ function resolveCallToDefinition(
               ((from.length === 2 && headNamesForeignPackage(analysis, from[0]!, ctx)) || callsOutside(from, analysis, ctx));
           }));
         // A receiver the plugin says is bound to a value of no stated type (a block parameter) has no
-        // type for the name to match: the only definition of the leaf is coincidence.
-        const untypedReceiver = !!findEnclosingCallable(analysis, sourceSymbol)?.untypedLocals?.includes(head.replace(/\?$/, ""));
+        // type for the name to match: the only definition of the leaf is coincidence — unless the
+        // parameter is named exactly for the target's class (`|match_report|` → `MatchReport`).
+        const untypedReceiver = !(namedType && tgtClass!.split(/::|\./).pop() === namedType) &&
+          !!findEnclosingCallable(analysis, sourceSymbol)?.untypedLocals?.includes(head.replace(/\?$/, ""));
         if (!untypedReceiver && !contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
           return mkLink(
             entry.file,

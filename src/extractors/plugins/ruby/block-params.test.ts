@@ -56,6 +56,18 @@ describe("Ruby: block parameters", () => {
       row.refresh(1)
     end
   end
+
+  def reschedule(rows)
+    rows.each do |fixture|
+      fixture.postpone!
+    end
+  end
+end
+`;
+  const FIXTURE = `class Fixture
+  def postpone!
+    1
+  end
 end
 `;
   const links = buildSymbolLinks([
@@ -63,6 +75,7 @@ end
     read(PLAYER, "app/models/player.rb"),
     read(COACH, "app/models/coach.rb"),
     read(DECOY, "app/services/decoy.rb"),
+    read(FIXTURE, "app/models/fixture.rb"),
     read(SVC, "app/services/svc.rb"),
   ]);
 
@@ -76,6 +89,10 @@ end
 
   it("never guesses the only definition of a name for a parameter of untyped rows", () => {
     expect(targets(links, "app/services/svc.rb", "row.refresh")).toEqual([]);
+  });
+
+  it("still takes it for a parameter named exactly for the target's class", () => {
+    expect(targets(links, "app/services/svc.rb", "fixture.postpone!")).toEqual(["app/models/fixture.rb::Fixture.postpone!"]);
   });
 });
 
