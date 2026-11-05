@@ -409,7 +409,35 @@ recorded in the git history only.
 - **`clarifydoc_file` on a folder** summarizes each file's test verdict; its decisions section shows comment and
   commit reasons; doc comments for thirteen more languages and above decorators spread over several rows.
 
+- **HTTP clients:** Ktor `HttpClient` calls, RestSharp `RestRequest`, Flurl URL chains, Go resty, a bare `got(url)`,
+  Swift `URLSession` with a `URLRequest`, Ruby `Net::HTTP.get(URI(…))`; a `Faraday.new(url:)` connection is a
+  registered client; Go `http.Get(baseURL + "/x")` reads a package `const` URL; `axios.create({ baseURL:
+  process.env.X + '/api' })` keeps both its env origin and its path.
+- **Data:** SQLAlchemy session verbs name the model they are handed (`session.add(club)` writes Club), Flask-SQLAlchemy
+  implicit table names, `cls.query` in a classmethod; Spark SQL (`spark.sql`, `saveAsTable`, `# MAGIC %sql` cells);
+  database column names from TypeORM `@Column({ name })`, Drizzle builders and Prisma `@map`/`@@map(name:)`;
+  Supabase generated types as entities; dbt models as tables built from their `ref`/`source` inputs; PL/SQL packages
+  (`.pkb`/`.pks`) with their procedures; EF Core `FromSqlRaw` tables; T-SQL `DELETE a FROM t a`.
+- **Buses:** NServiceBus `Send`/`Publish`, AWS SDK for Go SQS/SNS, a Phoenix socket's `channel "match:*", Module`
+  scoping that channel's events; a Dapr subscription served behind Express mounts.
+- **Receiver typing:** loop variables, lambda and closure parameters, narrowing (`instanceof`, `is`, `if let`, type
+  switches, `isinstance`), caught exceptions and element reads typed from what the code states — Java, Kotlin, C#, Go,
+  Rust, Dart, Swift and Python; Kotlin `invoke` and `with`/`apply` receivers, Java `@interface` members, C# indexers;
+  Objective-C receivers, properties and `@interface` classes (an Objective-C `.h` is read as Objective-C).
+- **SwiftUI:** computed properties (`var body: some View`) are functions, so a view's calls have an owner; Swift return
+  types; `extension League.Table`.
+- **Mixins and dispatch:** PHP traits on a typed receiver, `static::`, VB `Me.`/`MyClass.`, an interface call reaching
+  the overrides below an abstract implementing base; Lua method tables as classes, `obj:method()`, `require` bindings;
+  Elixir `defdelegate` and `.exs` top-level calls, Erlang `fun f/1`, R6 `private$f()`, Ruby paren-less command calls.
+- **TypeScript and JavaScript:** a function imported by a noise-word name (`find`, `send`) is linked; dynamic imports
+  (`(await import('./x')).f()`, destructured and `.then` bindings); `import x = require()`, `/// <reference>`,
+  `?raw` imports, namespaces, generator expressions, an unmapped `@/` alias matching one file; generic pass-through
+  returns and JSDoc `@returns`; `Object.create`/`util.inherits` inheritance.
+
 ### Changed
+
+- **An `import()` no longer emits a phantom `default` call.** A tRPC client's `.query()`/`.mutate()` is an api-call,
+  not a database call. Swift call names keep their receiver path (`req.parameters.get`).
 
 - **A block parameter with no stated type no longer takes the only definition of a name** (Ruby,
   `FunctionInfo.untypedLocals`), unless it is named exactly for that definition's class.
