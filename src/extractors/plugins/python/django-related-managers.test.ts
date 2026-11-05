@@ -32,8 +32,17 @@ class Player(models.Model):
 
 class Rule(models.Model):
     filter_has_tags = models.ManyToManyField(Tag, related_name="+")
+
+
+class Fixture(models.Model):
+    club = models.ForeignKey(Club, related_name="entries", on_delete=models.CASCADE)
+
+
+class Car(models.Model):
+    owner = models.ForeignKey("auth.User", related_name="entries", on_delete=models.CASCADE)
 `,
-  "league/services.py": `from .models import Club, Rule
+  "league/services.py": `from django.contrib.auth.models import User
+from .models import Club, Rule
 
 
 def squad(club: Club):
@@ -47,6 +56,10 @@ def matches(rule: Rule, club):
 
 def tagged(tag):
     return tag.clubs.all()
+
+
+def counts(club: Club, user: User, queue):
+    return club.player_set.count(), club.entries.exists(), user.entries.count(), queue.items.count()
 `,
 };
 
@@ -74,15 +87,20 @@ describe("Django related managers", () => {
     expect(rows).toEqual([
       // A reverse accessor by default name, a forward field on a typed receiver, the model's own field,
       // a field one model declares, and a related_name.
+      "club.entries.exists → Fixture",
       "club.player_set.all → Player",
+      "club.player_set.count → Player",
       "club.tags.filter → Tag",
       "rule.filter_has_tags.all → Tag",
       "self.tags.all → Tag",
       "tag.clubs.all → Club",
+      "user.entries.count → Car",
     ]);
     // A model from a dependency (`auth.Group`) and an accessor no model declares name no table.
     const names = (summary.dataAccessGraph?.nodes ?? []).map((n) => n.name);
     expect(names).not.toContain("staff");
     expect(names).not.toContain("socialaccount_set");
+    // A list's own `.count()` is no table.
+    expect(names).not.toContain("items");
   });
 });

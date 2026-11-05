@@ -312,7 +312,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         const djangoManager = (/\.\w*objects\./.test(fnName) && managerModel(fnName) !== null) || heldManager !== null;
         const isQuery =
           PY_DB_LEAVES.has(leaf) || djangoManager ||
-          (PY_GENERIC_DB_LEAVES.has(leaf) && (datastoreChain(fnName) || relatedManager(fnName, leaf))) ||
+          (PY_GENERIC_DB_LEAVES.has(leaf) && datastoreChain(fnName)) || (relatedManager(fnName, leaf) && (PY_GENERIC_DB_LEAVES.has(leaf) || !datastoreChain(fnName))) ||
           (PY_SESSION_STATEMENT_LEAVES.has(leaf) && !fnName.includes("(") && PY_DB_RECEIVER_RE.test(receiver));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
           let access = isSessionWrite ? "write" : dbAccessFor(leaf, PY_DB_ACCESS) ?? (djangoManager ? (DJANGO_WRITE_LEAVES.has(leaf) ? "write" : "read") : undefined);
@@ -383,6 +383,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // A related manager (`doc.tags.all()`) is named after its relation field, never a table:
           // the entity pass resolves the field to the model it relates to.
           const relatedField = !table && !instance && !datastoreChain(fnName) && relatedManager(fnName, leaf) ? parts[parts.length - 2] : undefined;
+          if (relatedField && !access && RELATED_COUNTING_LEAVES.has(leaf)) access = "read";
           // SQLAlchemy names the model in the statement handed over, not in the chain:
           // `session.execute(select(Club)…)`, a local assigned one, `session.query(Club)`.
           // `select(self.model)` names an attribute of the instance, which the project pass resolves.
@@ -549,6 +550,11 @@ function assignedValues(name: string, at: Node): Node[] {
 /** A receiver segment that names a datastore handle or an ORM query. */
 const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|con|conn|connection|cursor|cur|engine|collection|coll|database|queryset|qs)$/i;
 
+/** The queryset verbs a related manager is read through (`club.players.count()`, `club.match_set.exists()`). */
+const RELATED_MANAGER_LEAVES = new Set(["all", "first", "filter", "count", "exists", "exclude", "last", "order_by"]);
+/** The verbs among them that state a read themselves. */
+const RELATED_COUNTING_LEAVES = new Set(["count", "exists", "exclude", "last", "order_by"]);
+
 /**
  * A Django related manager queried — `user.orders.all()`,
  * `self.items.filter(...)`: a set-returning verb on an attribute of an object
@@ -556,7 +562,7 @@ const PY_DATASTORE_SEGMENT_RE = /(^|_)(session|db|con|conn|connection|cursor|cur
  * is any other object's method.
  */
 function relatedManager(fnName: string, leaf: string): boolean {
-  return (leaf === "all" || leaf === "first" || leaf === "filter") &&
+  return RELATED_MANAGER_LEAVES.has(leaf) &&
     /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){2,}$/.test(fnName);
 }
 

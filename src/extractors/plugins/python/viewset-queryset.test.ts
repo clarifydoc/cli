@@ -73,7 +73,8 @@ describe("a DRF viewset's queryset", () => {
   it("is what the routes it inherits its handlers for read", () => {
     const routes = summary.routeMap.filter((r) => r.owner === "ClubViewSet").map((r) => `${r.httpMethod} ${r.path}`).sort();
     expect(routes.length).toBeGreaterThan(0);
-    const reads = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && f.resource === "Club").map((f) => f.entryLabel).sort();
+    // A write the library does (create, update, destroy) is a flow of its own beside the read.
+    const reads = [...new Set((summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && f.resource === "Club").map((f) => f.entryLabel))].sort();
     expect(reads).toEqual(routes);
   });
 

@@ -68,7 +68,7 @@ export class DrfViewSetActionResolver implements DispatchResolver {
               return true;
             }
             if (!name.startsWith("serializer.")) return false;
-            const call = name.slice("serializer.".length) as "is_valid" | "save:create" | "save:update";
+            const call = name.slice("serializer.".length) as "is_valid" | "save:create" | "save:update" | "data";
             if (serializer) serializerRuns(index, serializer, call, (file, symbol, line) => link(file, symbol, line, `serializer.${call.split(":")[0]}`));
             return true;
           },

@@ -30,10 +30,10 @@ export const DRF_SERIALIZER = /^(?:BaseSerializer|Serializer|ModelSerializer|Hyp
 
 /** The hooks DRF's view mixins and `GenericAPIView` call on the instance, by method (`serializer.*`: on its serializer). */
 export const VIEW_CALLS: Record<string, readonly string[]> = {
-  list: ["get_queryset", "filter_queryset", "paginate_queryset", "get_serializer", "get_paginated_response"],
-  create: ["get_serializer", "serializer.is_valid", "perform_create", "get_success_headers"],
-  retrieve: ["get_object", "get_serializer"],
-  update: ["get_object", "get_serializer", "serializer.is_valid", "perform_update"],
+  list: ["get_queryset", "filter_queryset", "paginate_queryset", "get_serializer", "serializer.data", "get_paginated_response"],
+  create: ["get_serializer", "serializer.is_valid", "perform_create", "serializer.data", "get_success_headers"],
+  retrieve: ["get_object", "get_serializer", "serializer.data"],
+  update: ["get_object", "get_serializer", "serializer.is_valid", "perform_update", "serializer.data"],
   partial_update: ["update"],
   destroy: ["get_object", "perform_destroy"],
   get_object: ["get_queryset", "filter_queryset", "check_object_permissions"],
@@ -52,6 +52,8 @@ export const SERIALIZER_CALLS: Record<string, readonly string[]> = {
   run_validation: ["to_internal_value", "validate"],
   "save:create": ["save", "create"],
   "save:update": ["save", "update"],
+  // `.data` runs `to_representation`: the project's own, else the library's, which calls each method field's `get_<field>`.
+  data: ["to_representation"],
 };
 
 /** Whether a serializer is built with an instance (`save()` updates) or with data alone (`save()` creates). */
@@ -59,10 +61,31 @@ export type SaveMode = "create" | "update";
 
 const KEY_PREFIX = "drf-serializer:";
 
+/** The function (or module) a node sits in, as text: where a local's later reads are looked for. */
+function scopeTextOf(node: Node): string {
+  let scope: Node | null = node.parent;
+  while (scope && scope.type !== "function_definition" && scope.type !== "module") scope = scope.parent;
+  return scope?.text ?? "";
+}
+
+/**
+ * Whether the serializer a call builds has its `.data` read: straight off the call
+ * (`ClubSerializer(club).data`), or off the local it is bound to (`s = ClubSerializer(club)` … `s.data`).
+ */
+function readsData(node: Node): boolean {
+  let up: Node | null = node.parent;
+  while (up?.type === "await") up = up.parent;
+  if (up?.type === "attribute" && up.childForFieldName("attribute")?.text === "data") return true;
+  if (up?.type !== "assignment" || up.childForFieldName("left")?.type !== "identifier") return false;
+  const local = up.childForFieldName("left")!.text;
+  return new RegExp(String.raw`\b${local}\.data\b`).test(scopeTextOf(node));
+}
+
 /**
  * `ClubSerializer(club, data=…)` / `self.get_serializer(instance=club, …)` → `drf-serializer:update`;
  * `ClubSerializer(data=…)` → `drf-serializer:create` — what its `save()` will call. A call
- * spreading its arguments, or passing neither, states nothing.
+ * spreading its arguments, or passing neither, states no mode. A `:data` part says the serializer's
+ * `.data` is read (`drf-serializer:update:data`): its `to_representation` runs.
  */
 export function drfSerializerKey(node: Node, callName?: string): string | null {
   if (callName !== undefined) {
@@ -72,9 +95,10 @@ export function drfSerializerKey(node: Node, callName?: string): string | null {
   if (node.type !== "call") return null;
   let instance = false;
   let data = false;
+  let spread = false;
   for (const a of node.childForFieldName("arguments")?.namedChildren ?? []) {
     if (a.type === "comment") continue;
-    if (a.type === "list_splat" || a.type === "dictionary_splat") return null;
+    if (a.type === "list_splat" || a.type === "dictionary_splat") { spread = true; continue; }
     if (a.type !== "keyword_argument") instance = true;
     else {
       const k = a.childForFieldName("name")?.text;
@@ -82,12 +106,22 @@ export function drfSerializerKey(node: Node, callName?: string): string | null {
       else if (k === "data") data = true;
     }
   }
-  return instance ? `${KEY_PREFIX}update` : data ? `${KEY_PREFIX}create` : null;
+  const mode = spread ? null : instance ? "update" : data ? "create" : null;
+  const reads = readsData(node);
+  if (!mode && !reads) return null;
+  return KEY_PREFIX + [mode, reads ? "data" : null].filter(Boolean).join(":");
 }
 
+const keyParts = (key: string | undefined): string[] => (key?.startsWith(KEY_PREFIX) ? key.slice(KEY_PREFIX.length).split(":") : []);
+
 /** The save mode a call's key states, if any. */
-export const saveModeOf = (key: string | undefined): SaveMode | null =>
-  key === `${KEY_PREFIX}update` ? "update" : key === `${KEY_PREFIX}create` ? "create" : null;
+export const saveModeOf = (key: string | undefined): SaveMode | null => {
+  const parts = keyParts(key);
+  return parts.includes("update") ? "update" : parts.includes("create") ? "create" : null;
+};
+
+/** Whether a call's key says the serializer it builds has its `.data` read. */
+export const readsSerializerData = (key: string | undefined): boolean => keyParts(key).includes("data");
 
 /** The project's Python classes and functions by name, with their bases resolved through imports. */
 export class PythonClassIndex {
@@ -198,6 +232,20 @@ export class PythonClassIndex {
     return this.serializerFields.get(`${c.file.filePath}::${c.cls.name}`)?.validators ?? [];
   }
 
+  /** The methods the serializer's `SerializerMethodField`s run (`get_size`), declared on the class. */
+  methodFieldsOf(c: ClassAt): string[] {
+    return (this.serializerFields.get(`${c.file.filePath}::${c.cls.name}`)?.methodFields ?? []).map((f) => f.method);
+  }
+
+  /** `Meta.model` of the nearest serializer along the chain stating one, as written. */
+  metaModelOf(chain: readonly ClassAt[]): { model: string; at: ClassAt } | null {
+    for (const c of chain) {
+      const model = this.serializerFields.get(`${c.file.filePath}::${c.cls.name}`)?.metaModel;
+      if (model) return { model, at: c };
+    }
+    return null;
+  }
+
   /** Whether a serializer whose chain this is has a field `name`: declared along it, or in the nearest `Meta.fields`. */
   hasField(chain: readonly ClassAt[], name: string): boolean {
     let meta: DrfSerializerFieldsFact["metaFields"];
@@ -275,7 +323,7 @@ export function follow(
 export function serializerRuns(
   index: PythonClassIndex,
   serializer: ClassAt,
-  call: "is_valid" | "save:create" | "save:update",
+  call: "is_valid" | "save:create" | "save:update" | "data",
   emit: (file: FileAnalysis, symbol: string, line: number) => void,
   linkDeclared = true,
 ): void {
@@ -283,6 +331,18 @@ export function serializerRuns(
   follow(chain, call, SERIALIZER_CALLS, {
     declared: (c, fn) => emit(c.file, `${c.cls.name}.${fn.name}`, fn.line),
     library(name) {
+      if (name === "to_representation") {
+        // The library's own: each `SerializerMethodField` runs its method on the instance.
+        const seen = new Set<string>();
+        for (const c of chain) {
+          for (const method of index.methodFieldsOf(c)) {
+            if (seen.has(method)) continue;
+            seen.add(method);
+            follow(chain, method, {}, { declared: (d, fn) => emit(d.file, `${d.cls.name}.${fn.name}`, fn.line), library: () => true });
+          }
+        }
+        return true;
+      }
       if (name !== "to_internal_value") return false;
       // Each field's own check and the functions its `validators=[…]` names.
       const seen = new Set<string>();

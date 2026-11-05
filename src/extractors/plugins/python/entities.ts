@@ -1034,7 +1034,8 @@ function resolveDjangoRelatedManagers(analyses: FileAnalysis[]): void {
         const fn = [...a.functions, ...a.classes.flatMap((c) => c.methods ?? [])].find((f) => f.line <= ds.line && ds.line <= f.endLine);
         const typed = fn?.params.find((p) => p.name === root)?.type ?? fn?.localTypes?.find((l) => l.name === root && l.type)?.type;
         const t = typed?.replace(/^Optional\[(.*)\]$/, "$1").split(/[.|[\s]/).filter(Boolean).pop();
-        if (t && models.has(t)) owner = t;
+        // A model the project does not declare (`user: User`, Django's own) still names the relations pointing at it.
+        if (t && (models.has(t) || onModel.has(t))) owner = t;
       }
       const viaOwner = owner ? onModel.get(owner)?.get(field) : undefined;
       const anywhere = byAccessor.get(field);

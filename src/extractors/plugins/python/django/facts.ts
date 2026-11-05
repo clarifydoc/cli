@@ -115,6 +115,10 @@ export interface DjViewClassFact {
  */
 export const DRF_SERIALIZER_FIELDS = "drf:serializer-fields";
 export interface DrfSerializerFieldsFact {
+  /** `Meta.model = Club`, as written (a dotted name keeps its last part). */
+  metaModel?: string;
+  /** `size = serializers.SerializerMethodField()` → `{ field: "size", method: "get_size" }` (`method_name=` names another). */
+  methodFields?: Array<{ field: string; method: string }>;
   fields?: string[];
   metaFields?: string[] | "__all__";
   validators?: string[];
@@ -437,10 +441,13 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   const data: DjViewClassFact = {};
   const validators = new Set<string>();
   const fields = new Set<string>();
+  const methodFields: Array<{ field: string; method: string }> = [];
   let metaFields: DrfSerializerFieldsFact["metaFields"];
+  let metaModel: string | undefined;
   for (const stmt of body.namedChildren) {
     if (stmt.type === "class_definition" && stmt.childForFieldName("name")?.text === "Meta") {
       metaFields = metaFieldsOf(stmt) ?? metaFields;
+      metaModel = metaModelOf(stmt) ?? metaModel;
       continue;
     }
     const expr = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
@@ -459,6 +466,10 @@ function classFact(cls: Node, facts: RouteFact[]): void {
     } else if (right.type === "call") {
       const callee = right.childForFieldName("function")?.text ?? "";
       if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:Field|Serializer)$/.test(callee)) fields.add(left);
+      if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:^|\.)SerializerMethodField$/.test(callee)) {
+        const named = keyword(right, "method_name") ?? positional(right)[0];
+        methodFields.push({ field: left, method: named?.type === "string" ? pyString(named.text) : `get_${left}` });
+      }
       for (const arg of right.childForFieldName("arguments")?.namedChildren ?? []) {
         const list = arg.type === "keyword_argument" && arg.childForFieldName("name")?.text === "validators" ? arg.childForFieldName("value") : null;
         if (list?.type !== "list" && list?.type !== "tuple") continue;
@@ -469,8 +480,10 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   if (Object.keys(data).length > 0) {
     facts.push({ kind: DJ_VIEW_CLASS, line: cls.startPosition.row + 1, owner: name, data });
   }
-  if (validators.size > 0 || fields.size > 0 || metaFields) {
+  if (validators.size > 0 || fields.size > 0 || metaFields || metaModel) {
     const data: DrfSerializerFieldsFact = {
+      ...(metaModel ? { metaModel } : {}),
+      ...(methodFields.length > 0 ? { methodFields } : {}),
       ...(fields.size > 0 ? { fields: [...fields] } : {}),
       ...(metaFields ? { metaFields } : {}),
       ...(validators.size > 0 ? { validators: [...validators] } : {}),
@@ -484,6 +497,17 @@ function classFact(cls: Node, facts: RouteFact[]): void {
     for (const m of mapping[1]!.matchAll(/["'](get|post|put|patch|delete)["']\s*:\s*["'](\w+)["']/gi)) listActions[m[1]!.toUpperCase()] = m[2]!;
     if (Object.keys(listActions).length > 0) facts.push({ kind: DRF_ROUTER_CLASS, line: cls.startPosition.row + 1, owner: name, data: { listActions } satisfies DrfRouterClassFact });
   }
+}
+
+/** `class Meta: model = Club` / `model = league.models.Club` → `Club`. */
+function metaModelOf(meta: Node): string | null {
+  for (const stmt of meta.childForFieldName("body")?.namedChildren ?? []) {
+    const expr = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (expr?.type !== "assignment" || expr.childForFieldName("left")?.text !== "model") continue;
+    const right = expr.childForFieldName("right");
+    if (right?.type === "identifier" || right?.type === "attribute") return right.text.split(".").pop()!;
+  }
+  return null;
 }
 
 /** `class Meta: fields = ["name", "nickname"]` → those names; `"__all__"` / `exclude = …` → every field; else null. */
