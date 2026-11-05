@@ -89,8 +89,9 @@ class Bus {
   fun record() {}
 }
 class Pit(val bay: Bay)`, "kotlin");
-    expect(members(lap)).toEqual(["constructor(Bay,Int): null", "record(): null", "copy(Bay,Int): Lap @1", "component1(): Bay @1", "component2(): Int @1"]);
+    expect(members(lap)).toEqual(["constructor(Bay,Int): null", "record(): null", "copy(Bay,Int): Lap @1", "component1(): Bay @1", "component2(): Int @1", "getBay(): Bay @1", "getN(): Int @1"]);
     expect(lap!.methods.find((m) => m.name === "copy")!.params.every((p) => p.defaultValue !== null)).toBe(true);
-    expect(plain!.methods.some((m) => m.synthetic)).toBe(false);
+    // A plain class has no copy() or componentN(), only the accessors Java sees on its properties.
+    expect(members(plain)).toEqual(["constructor(Bay): null", "getBay(): Bay @4"]);
   });
 });

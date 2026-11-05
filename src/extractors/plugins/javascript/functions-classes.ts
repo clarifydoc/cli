@@ -22,6 +22,7 @@ import {
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, wrappedFunction } from "./wrapped-functions.js";
+import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -69,8 +70,9 @@ function finishBody(
   body: Node | null,
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
+  params: readonly ParamInfo[] = [],
 ): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[] } {
-  const scan = scanBody(body, paramNames, ctx);
+  const scan = scanBody(body, paramNames, ctx, params);
   calls.push(...scan.extraCalls);
   return {
     calls,
@@ -152,6 +154,7 @@ function scanBody(
   body: Node | null,
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
+  params: readonly ParamInfo[] = [],
 ): { extraCalls: CallInfo[]; localTypes: LocalType[]; returnedSpreads: string[] } {
   const extraCalls: CallInfo[] = [];
   const returnedSpreads: string[] = [];
@@ -176,6 +179,72 @@ function scanBody(
     for (const child of pattern.namedChildren) bindPattern(child);
   };
 
+  // Collections whose element type the source states (a parameter or an annotated local), by name; the
+  // variables a `for … of` over one and the callbacks it hands its elements to bind are typed as the element.
+  const collections = new Map<string, { element: string; map: boolean }>();
+  for (const p of params) {
+    const c = collectionElement(p.type);
+    if (c) collections.set(p.name, c);
+  }
+  /** The parameters of a callback a collection hands its elements to, by function node id. */
+  const callbackElements = new Map<number, { element: string; both: boolean }>();
+  /** The collection `node` reads: a name, or a chain off one that keeps its elements. */
+  const collectionOf = (node: Node | null): { element: string; map: boolean } | null => {
+    for (let hop = 0; node && hop < 6; hop++) {
+      if (node.type === "identifier") return collections.get(node.text) ?? null;
+      if (node.type === "parenthesized_expression" || node.type === "non_null_expression") {
+        node = node.namedChild(0);
+        continue;
+      }
+      if (node.type !== "call_expression") return null;
+      const fn = node.childForFieldName("function");
+      const prop = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : undefined;
+      if (!prop || !KEEPS_ELEMENTS.has(prop)) return null;
+      node = fn!.childForFieldName("object");
+    }
+    return null;
+  };
+  const noteCallback = (call: Node): void => {
+    const fn = call.childForFieldName("function");
+    if (fn?.type !== "member_expression") return;
+    const prop = fn.childForFieldName("property")?.text;
+    if (!prop || !ELEMENT_CALLBACKS.has(prop)) return;
+    const source = collectionOf(fn.childForFieldName("object"));
+    // A `Map`'s `forEach` hands the value first; its other callbacks do not exist.
+    if (!source || (source.map && prop !== "forEach")) return;
+    const first = call.childForFieldName("arguments")?.namedChildren[0];
+    if (first && FUNCTION_EXPRESSIONS.has(first.type)) callbackElements.set(first.id, { element: source.element, both: prop === "sort" || prop === "toSorted" });
+  };
+  /** The element a `for (… of <iterable>)` yields, with where it lands: the whole binding, or the value of an entry. */
+  const loopElement = (right: Node | null): { element: string; entry: boolean } | null => {
+    let node = right;
+    while (node?.type === "parenthesized_expression") node = node.namedChild(0);
+    if (node?.type === "identifier") {
+      const c = collections.get(node.text);
+      return c ? { element: c.element, entry: c.map } : null;
+    }
+    if (node?.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      const method = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : undefined;
+      const object = fn?.type === "member_expression" ? fn.childForFieldName("object") : null;
+      if (object?.type === "identifier" && collections.get(object.text)?.map) {
+        const c = collections.get(object.text)!;
+        if (method === "values") return { element: c.element, entry: false };
+        if (method === "entries") return { element: c.element, entry: true };
+        return null;
+      }
+      const kept = collectionOf(node);
+      return kept && !kept.map ? { element: kept.element, entry: false } : null;
+    }
+    return null;
+  };
+  const bindTyped = (name: string, element: string): void => {
+    const entry = { local: { name, type: element }, annotated: true };
+    const list = bindings.get(name);
+    if (list) list.push(entry);
+    else bindings.set(name, [entry]);
+  };
+
   // Children are read once per node (each read crosses into WASM) and the
   // parent's type is passed down rather than asked for.
   // `ownBody`: outside every function expression, where a `return` is the function's own.
@@ -193,6 +262,8 @@ function scanBody(
         extraCalls.push({ name: value.text.replace(/\s+/g, ""), kind: "internal", target: null, line: value.startPosition.row + 1 });
       }
     }
+
+    if (inScope && type === "call_expression" && collections.size > 0) noteCallback(node);
 
     if (type === "call_expression" && children[0]?.type === "import") {
       const args = children[children.length - 1];
@@ -223,14 +294,24 @@ function scanBody(
           // A named function expression is its own symbol: its locals are not ours.
           childScope = false;
         } else {
-          // An inline callback's parameters shadow our locals inside it.
-          bindPattern(node.childForFieldName("parameters") ?? node.childForFieldName("parameter"));
+          // An inline callback's parameters shadow our locals inside it — typed, when a collection hands it its elements.
+          const handed = callbackElements.get(node.id);
+          const list = node.childForFieldName("parameters") ?? node.childForFieldName("parameter");
+          const names = handed && list ? (list.type === "identifier" ? [list] : list.namedChildren.map((p) => p.childForFieldName("pattern") ?? p)) : [];
+          names.forEach((p, i) => {
+            if (handed && p.type === "identifier" && (i === 0 || (i === 1 && handed.both))) bindTyped(p.text, handed.element);
+            else bindPattern(p);
+          });
+          if (!handed || !list) bindPattern(list);
         }
       } else if (type === "method_definition") {
         bindPattern(node.childForFieldName("parameters"));
       } else if (type === "variable_declarator") {
         const name = children[0];
         if (name?.type === "identifier") {
+          const annotation = children.find((c) => c.type === "type_annotation");
+          const stated = annotation ? collectionElement(annotation.text.replace(/^:\s*/, "")) : null;
+          if (stated) collections.set(name.text, stated);
           // A conditional initializer binds the name once per arm (`slug ? publicApi() : userApi()`).
           const locals = conditionalLocals(children, name.text) ?? [declaredLocal(node, children, name.text, ctx)];
           const list = bindings.get(name.text);
@@ -242,7 +323,16 @@ function scanBody(
       } else if (type === "catch_clause") {
         bindPattern(node.childForFieldName("parameter"));
       } else if (type === "for_in_statement") {
-        bindPattern(node.childForFieldName("left"));
+        const left = node.childForFieldName("left");
+        const over = node.childForFieldName("operator")?.text === "of" ? loopElement(node.childForFieldName("right")) : null;
+        if (over && left?.type === "identifier" && !over.entry) bindTyped(left.text, over.element);
+        // `for (const [id, club] of clubsById)`: the value is the element, the key states nothing.
+        else if (over?.entry && left?.type === "array_pattern") {
+          left.namedChildren.forEach((p, i) => {
+            if (i === 1 && p.type === "identifier") bindTyped(p.text, over.element);
+            else bindPattern(p);
+          });
+        } else bindPattern(left);
       } else if (type === "assignment_expression") {
         const left = children[0];
         if (left?.type === "identifier") reassigned.add(left.text);
@@ -1511,7 +1601,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
+    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -1572,7 +1662,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx);
+    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -2032,7 +2122,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
-          const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx);
+          const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
           methods.push({
             name: methodName,
             params,

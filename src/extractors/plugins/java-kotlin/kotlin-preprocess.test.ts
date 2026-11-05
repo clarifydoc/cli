@@ -194,7 +194,7 @@ describe("Kotlin preprocess — a primary constructor wrapped onto its own line"
     const fixed = joinWrappedConstructors(src)!;
     expect(fixed.split("\n")[1]).toBe("    class Box<T : Any> @Inject constructor(");
     const names = (await classesOf(fixed)).map((c) => [c[0], c[4]]);
-    expect(names).toContainEqual(["Box", ["constructor", "open"]]);
+    expect(names).toContainEqual(["Box", ["constructor", "open", "getT"]]);
   });
 
   it("leaves alone: the one-line form, secondary constructors, `::class`, strings", () => {

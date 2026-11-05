@@ -150,6 +150,22 @@ export function synthesizeJavaMembers(classNode: Node, cls: ClassInfo, body: Nod
   };
 }
 
+/**
+ * The accessors Java sees on a Kotlin class's properties: `getName()` / `setPoints(…)`, and `isActive()` for a
+ * Boolean named `isActive` (its setter `setActive`). Only what the property declaration implies — a private property
+ * has none, a `@JvmField` is a field — and never a member the class writes itself.
+ */
+export function synthesizeKotlinAccessors(cls: ClassInfo): void {
+  for (const p of cls.properties) {
+    if (p.isStatic || p.visibility === "private" || p.decorators?.some((d) => /^JvmField\b/.test(d.replace(/^@/, "").trim()))) continue;
+    const isFlag = p.type === "Boolean" && /^is[A-Z]/.test(p.name);
+    addUnlessWritten(cls.methods, synthetic(isFlag ? p.name : `get${capitalize(p.name)}`, [], p.type, cls.line));
+    if (!p.isReadonly) {
+      addUnlessWritten(cls.methods, synthetic(`set${capitalize(isFlag ? p.name.slice(2) : p.name)}`, [{ name: p.name, type: p.type, defaultValue: null }], "Unit", cls.line));
+    }
+  }
+}
+
 /** Kotlin `data class`: `copy(…)` with every property optional, and `componentN()` for each in order. */
 export function synthesizeKotlinDataMembers(classNode: Node, cls: ClassInfo): void {
   const modifiers = classNode.namedChildren.find((c) => c.type === "modifiers");

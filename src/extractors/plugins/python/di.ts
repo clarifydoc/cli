@@ -61,6 +61,32 @@ function collapse(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The element a collection annotation states: `list[Club]`, `List[Club]`, `Sequence[Club]`, `Iterable[Club]`,
+ * `set[Club]`, `tuple[Club, ...]` → `Club`; `dict[str, Club]`, `Mapping[str, Club]` → `Club` with `map: true`.
+ * `Optional[…]` / `… | None` and a quoted forward reference are looked through. Null for any other type, and for an
+ * element that is no class (`list[str]`, `list[int]`).
+ */
+export function collectionElement(type: string | null | undefined): { element: string; map: boolean } | null {
+  let t = collapse(type ?? "").replace(/\b(?:typing|collections(?:\.abc)?)\./g, "");
+  t = t.split("|").map((p) => p.trim()).filter((p) => p && p !== "None").join("|");
+  const opt = /^Optional\[(.+)\]$/.exec(t);
+  if (opt) t = opt[1]!;
+  if (!t || t.includes("|")) return null;
+  const m = /^(list|List|Sequence|MutableSequence|Iterable|Iterator|Collection|Set|set|FrozenSet|frozenset|AbstractSet|MutableSet|Deque|deque|Tuple|tuple|Generator|dict|Dict|Mapping|MutableMapping|DefaultDict|defaultdict|OrderedDict)\[(.+)\]$/.exec(t);
+  if (!m) return null;
+  const args = splitTopLevel(m[2]!).map((a) => a.trim().replace(/^(['"])(.*)\1$/, "$2"));
+  const kind = m[1]!;
+  const isMap = /^(?:dict|Dict|Mapping|MutableMapping|DefaultDict|defaultdict|OrderedDict)$/.test(kind);
+  let element: string | undefined;
+  if (isMap) element = args.length === 2 ? args[1] : undefined;
+  else if (/^(?:Tuple|tuple)$/.test(kind)) element = args.length === 2 && args[1] === "..." ? args[0] : args.length === 1 ? args[0] : undefined;
+  else if (kind === "Generator") element = args[0];
+  else element = args.length === 1 ? args[0] : undefined;
+  if (!element || !isClassName(element) || /^(?:Any|None|Self|Optional|Union|Callable|Dict|List|Set|Tuple|Type)$/.test(lastSegment(element))) return null;
+  return { element, map: isMap };
+}
+
 /** Split at depth-0 commas (brackets and quotes respected). */
 function splitTopLevel(text: string): string[] {
   const out: string[] = [];
@@ -370,6 +396,8 @@ interface StatementVisitor {
   ret?(stmt: Node): void;
   /** A name bound by something other than an assignment (loop target, `as` alias). */
   rebind?(name: string): void;
+  /** A `for` statement; true when it bound its targets itself (typed by what it loops over). */
+  loop?(stmt: Node): boolean;
 }
 
 /**
@@ -392,7 +420,9 @@ function walkStatements(node: Node, v: StatementVisitor): void {
     if (NESTED_SCOPES.has(t)) continue;
     if (v.rebind) {
       // `for x in …` / `with … as x` bind names to values no annotation types.
-      if (t === "for_statement") boundNames(child.childForFieldName("left"), v.rebind);
+      if (t === "for_statement") {
+        if (!v.loop?.(child)) boundNames(child.childForFieldName("left"), v.rebind);
+      }
       else if (t === "with_statement") withAliases(child, v.rebind);
     }
     if (STATEMENT_HOLDERS.has(t)) walkStatements(child, v);
@@ -461,8 +491,48 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
     if (paramNames.has(name)) return paramFact(params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
   };
+  // Collections whose element type the source states (a parameter, an annotated local), by name.
+  const collections = new Map<string, { element: string; map: boolean }>();
+  for (const p of params) {
+    const c = collectionElement(p.type);
+    if (c) collections.set(p.name, c);
+  }
+  /** A `for` target (a statement's or a comprehension's): typed by what it loops over, else true is not returned. */
+  const bindLoop = (clause: Node): boolean => {
+    const left = clause.childForFieldName("left");
+    const over = left ? loopOver(clause.childForFieldName("right"), collections) : null;
+    if (!left || !over) return false;
+    const targets = left.type === "identifier" ? [left] : left.type === "pattern_list" || left.type === "tuple_pattern" ? left.namedChildren : [];
+    // `for c in clubs`, `for c in by_id.values()`: the target is the element; `for i, c in enumerate(clubs)` and
+    // `for k, c in by_id.items()`: the second target is (the first is a counter or a key).
+    const element = over.pair ? targets[1] : targets.length === 1 ? targets[0] : undefined;
+    if (!element || element.type !== "identifier" || (over.pair && targets.length !== 2)) return false;
+    for (const t of targets) {
+      if (t === element) {
+        table.assign(t.text, { type: over.element });
+        untyped.add(t.text);
+      } else boundNames(t, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
+    }
+    return true;
+  };
+  /** The comprehensions of a statement (`[c.rank() for c in clubs]`): their targets are names of their own. */
+  const comprehensions = (stmt: Node): void => {
+    if (!stmt.text.includes(" for ")) return;
+    const stack: Node[] = [stmt];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (node.type === "for_in_clause") {
+        if (!bindLoop(node)) boundNames(node.childForFieldName("left"), (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
+      }
+      if (node.type === "lambda" || NESTED_SCOPES.has(node.type)) continue;
+      for (const c of node.namedChildren) stack.push(c);
+    }
+  };
   walkStatements(body, {
+    loop: bindLoop,
+    ret(stmt) { if (collections.size > 0) comprehensions(stmt); },
     statement(stmt) {
+      if (collections.size > 0) comprehensions(stmt);
       const a = stmt.namedChild(0);
       if (a?.type !== "assignment") return;
       const left = a.childForFieldName("left");
@@ -477,6 +547,8 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
       const annotation = a.childForFieldName("type");
       if (annotation) {
         table.declare(name, { type: collapse(annotation.text) });
+        const stated = collectionElement(annotation.text);
+        if (stated) collections.set(name, stated);
         return;
       }
       const comment = typeComments ? trailingTypeComment(stmt) : null;
@@ -518,6 +590,40 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
     out.push(local);
   }
   return out;
+}
+
+/**
+ * What a `for` statement's iterable yields: its element, and whether the target is a pair (`enumerate(xs)`,
+ * `by_id.items()`: counter or key first). `pair: false` — one target takes the element; `pair: true` — two
+ * targets, the second takes it. Null for an iterable the source does not type.
+ */
+function loopOver(right: Node | null, collections: ReadonlyMap<string, { element: string; map: boolean }>): { element: string; pair: boolean } | null {
+  let node = right;
+  for (let hop = 0; node && hop < 4; hop++) {
+    if (node.type === "identifier") {
+      const c = collections.get(node.text);
+      return c && !c.map ? { element: c.element, pair: false } : null;
+    }
+    if (node.type !== "call") return null;
+    const fn = node.childForFieldName("function");
+    const args = node.childForFieldName("arguments")?.namedChildren.filter((c) => c.type !== "comment") ?? [];
+    if (fn?.type === "attribute") {
+      const object = fn.childForFieldName("object");
+      const method = fn.childForFieldName("attribute")?.text;
+      const c = object?.type === "identifier" ? collections.get(object.text) : undefined;
+      if (!c?.map || args.length > 0) return null;
+      return method === "values" ? { element: c.element, pair: false } : method === "items" ? { element: c.element, pair: true } : null;
+    }
+    if (fn?.type !== "identifier" || args.length !== 1) return null;
+    // `enumerate(clubs)` counts them; `reversed(clubs)`, `sorted(clubs)`, `list(clubs)` keep the elements.
+    if (fn.text === "enumerate") {
+      const inner = loopOver(args[0]!, collections);
+      return inner && !inner.pair ? { element: inner.element, pair: true } : null;
+    }
+    if (!["reversed", "sorted", "list", "set", "tuple", "iter"].includes(fn.text)) return null;
+    node = args[0]!;
+  }
+  return null;
 }
 
 /**

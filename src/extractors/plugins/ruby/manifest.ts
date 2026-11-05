@@ -35,6 +35,8 @@ export const rubyManifest: LanguagePluginManifest = {
   selfTypedMembers: rubyModelFinders,
   // `valid?` and `save!` are names of their own.
   marksEndNames: true,
+  // `club.stadium` calls the reader `has_one :stadium` (or a `def stadium`) declares.
+  parenlessMemberReads: true,
   packageManagers: [rubygemsPackageManager],
   packageEcosystems: ["rubygems"],
   parsing: "regex",

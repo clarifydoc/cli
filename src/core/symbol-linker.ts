@@ -1758,6 +1758,8 @@ interface LinkContext {
   analyses: FileAnalysis[];
   /** Lazy: top-level function name → definitions (provider functions in bindings). */
   functionsByName?: Map<string, Array<{ file: string; returnType: string | null }>>;
+  /** Lazy: facade class name → the files whose top-level functions it names (`FileAnalysis.facadeClass`). */
+  facadeFiles?: Map<string, string[]>;
   /** Lazy: extension method name → definitions with their receiver type. */
   extensions?: Map<string, ExtensionDef[]>;
   /** Lazy: file → its analysis. */
@@ -2427,6 +2429,33 @@ function callableAtLine(analysis: FileAnalysis, line: number): string | null {
   for (const fn of analysis.functions) consider(fn.name, fn.line, fn.endLine);
   for (const cls of analysis.classes) for (const m of cls.methods) consider(`${cls.name}.${m.name}`, m.line, m.endLine);
   return best ? (best as { symbol: string }).symbol : null;
+}
+
+/**
+ * What a call names when it goes through the class a compiler makes of another construct, in the languages of one
+ * family: a file's top-level functions through its facade class (`FileAnalysis.facadeClass`), and a class's own
+ * members through the holder of an `object` or companion (`classMemberHolders`). The facade must be the one of its
+ * name in the caller's family and project; a class that declares a member named like the holder keeps that reading.
+ */
+function compiledNameMember(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, parts: string[], mkLink: MkLink, line: number): SymbolLink | null {
+  const head = parts[0]!;
+  const holders = manifestFor(analysis.language as Language)?.classMemberHolders;
+  if (parts.length === 3 && holders?.includes(parts[1]!) && ctx.classNameIndex.has(head)) {
+    const declares = (ctx.classNameIndex.get(head) ?? []).some((f) => ctx.classAt.get(memberKey(f, head))?.properties.some((p) => p.name === parts[1]));
+    return declares ? null : classNameMember(ctx, analysis, sourceFile, [head, parts[2]!], mkLink, line);
+  }
+  if (parts.length !== 2 || ctx.classNameIndex.has(head)) return null;
+  if (!ctx.facadeFiles) {
+    ctx.facadeFiles = new Map();
+    for (const a of ctx.analyses) if (a.facadeClass) (ctx.facadeFiles.get(a.facadeClass) ?? ctx.facadeFiles.set(a.facadeClass, []).get(a.facadeClass)!).push(a.filePath);
+  }
+  const family = extensionFamily(sourceFile);
+  const files = (ctx.facadeFiles.get(head) ?? []).filter((f) => extensionFamily(f) === family);
+  const same = files.filter((f) => ctx.projectOf.get(f) === analysis.projectId);
+  const candidates = same.length > 0 ? same : files;
+  // One `@file:JvmName` shared by the parts of a multifile class: the part that declares the function.
+  const hits = candidates.map((f) => ({ f, def: ctx.symbolIndex.get(f)?.get(parts[1]!) })).filter((h) => h.def && !h.def.name.includes("."));
+  return hits.length === 1 ? mkLink(hits[0]!.f, hits[0]!.def!.name, hits[0]!.def!.line, "INFERRED", "class-name") : null;
 }
 
 /**
@@ -4425,6 +4454,13 @@ function resolveCallToDefinition(
     }
   }
 
+  // ── Strategy 3d: a member reached through the names another language's compiler gives a class ──
+  // `ClubsKt.rank(…)` (a Kotlin file's top-level function), `Referee.INSTANCE.whistle()`, `Club.Companion.build()`.
+  if (!def && isQualified) {
+    const link = compiledNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line);
+    if (link) return link;
+  }
+
   // ── Strategy 3c: a call on a module written out by its declared name ──
   // `MyApp.Accounts.User.get(…)`: the longest dotted prefix some file declares
   // as a module/class is the receiver.
@@ -5568,8 +5604,10 @@ function chainPoint(
     // Inside an extension function, `this` is its receiver (`this.bay.count()` in `fun Garage.total()`).
     const self = consumer ? null : receiverPoint(ctx, analysis, sourceFile, findEnclosingCallable(analysis, sourceSymbol));
     point = self
-      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? null
-      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name) ?? globalMember(ctx, sourceFile, own.name);
+      ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? readerResult(ctx, self, own.name)
+      : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name)
+        ?? (consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? readerResult(ctx, { typeName: consumer, typeFile: sourceFile, member: "", consumer }, own.name) : null)
+        ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
@@ -5632,9 +5670,15 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     if (!point?.typeFile) return null;
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
-      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? null;
+      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
   }
   return point;
+}
+
+/** A paren-less member read that is no field: in a language where it may be a method call, what the method returns. */
+function readerResult(ctx: LinkContext, point: InjectionPoint, name: string): InjectionPoint | null {
+  if (!point.typeFile || !manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.parenlessMemberReads) return null;
+  return methodResult(ctx, point, name);
 }
 
 /** Package-function calls being resolved to type a chain head — re-entry would recurse without end. */
