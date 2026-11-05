@@ -396,9 +396,7 @@ function walkStatements(node: Node, v: StatementVisitor): void {
     if (NESTED_SCOPES.has(t)) continue;
     if (v.rebind) {
       // `for x in …` / `with … as x` bind names to values no annotation types.
-      if (t === "for_statement") {
-        if (!v.loop?.(child)) boundNames(child.childForFieldName("left"), v.rebind);
-      }
+      if (t === "for_statement" && !v.loop?.(child)) boundNames(child.childForFieldName("left"), v.rebind);
       else if (t === "with_statement") withAliases(child, v.rebind);
     }
     if (STATEMENT_HOLDERS.has(t)) walkStatements(child, v);
@@ -457,7 +455,23 @@ function paramFact(p: ParamInfo | undefined): Fact {
  * as `from` — one entry per distinct initializer — and the linker types it
  * through the callee's declared return type.
  */
-export function collectLocalTypes(body: Node, params: readonly ParamInfo[], typeComments: boolean): LocalType[] {
+/** The parameters whose declared type is a collection of a class, by name. */
+export function collectionParams(params: readonly ParamInfo[]): Map<string, { element: string; map: boolean }> {
+  const out = new Map<string, { element: string; map: boolean }>();
+  for (const p of params) {
+    const c = collectionElement(p.type);
+    if (c) out.set(p.name, c);
+  }
+  return out;
+}
+
+export function collectLocalTypes(
+  body: Node,
+  params: readonly ParamInfo[],
+  typeComments: boolean,
+  /** The parameters' collections, when the caller already read them (`collectionParams`). */
+  collections: Map<string, { element: string; map: boolean }> = collectionParams(params),
+): LocalType[] {
   const table = new FactTable();
   const paramNames = new Set(params.map((p) => p.name));
   const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean }>>();
@@ -467,12 +481,7 @@ export function collectLocalTypes(body: Node, params: readonly ParamInfo[], type
     if (paramNames.has(name)) return paramFact(params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
   };
-  // Collections whose element type the source states (a parameter, an annotated local), by name.
-  const collections = new Map<string, { element: string; map: boolean }>();
-  for (const p of params) {
-    const c = collectionElement(p.type);
-    if (c) collections.set(p.name, c);
-  }
+  // Collections whose element type the source states (a parameter, an annotated local), by name: `collections`.
   /** A `for` target (a statement's or a comprehension's): typed by what it loops over, else true is not returned. */
   const bindLoop = (clause: Node): boolean => {
     const left = clause.childForFieldName("left");
