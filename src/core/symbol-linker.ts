@@ -17,7 +17,7 @@ import {
   type ImportInfo,
   type InteractiveElementInfo,
 } from "../types/analysis.js";
-import type { ImportResolveContext, LanguagePluginManifest, PackageRoot } from "../types/language-plugin.js";
+import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, StructuralMatch } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -3593,7 +3593,7 @@ export function buildInterfaceImplMap(
   const structuralIfaces = [...map.values()].filter((e) => e.structural && e.methods.length > 0);
   if (structuralIfaces.length > 0) {
     const methodSets = new Map<string, {
-      name: string; file: string; methods: Map<string, { name: string; line: number }>; arity: Map<string, number>;
+      name: string; file: string; dir: string; methods: Map<string, { name: string; line: number }>; arity: Map<string, number>;
       sigs: Map<string, MethodSignature>;
     }>();
     for (const a of analyses) {
@@ -3603,7 +3603,7 @@ export function buildInterfaceImplMap(
         if (cls.kind === "interface") continue;
         const key = `${scope}\0${cls.name}`;
         let set = methodSets.get(key);
-        if (!set) methodSets.set(key, (set = { name: cls.name, file: a.filePath, methods: new Map(), arity: new Map(), sigs: new Map() }));
+        if (!set) methodSets.set(key, (set = { name: cls.name, file: a.filePath, dir: dirOf(a.filePath), methods: new Map(), arity: new Map(), sigs: new Map() }));
         for (const m of cls.methods) {
           if (set.methods.has(m.name)) continue;
           set.methods.set(m.name, { name: m.name, line: m.line });
@@ -3643,18 +3643,19 @@ export function buildInterfaceImplMap(
     }
     for (const entry of structuralIfaces) {
       const ifaceLang = languageOf.get(entry.interfaceFile) ?? "";
+      // Beyond name and parameter count some languages demand identical
+      // signatures and package-private methods (Go).
+      const match = pluginFor(ifaceLang as Language)?.structuralMatch;
+      const ifaceDir = dirOf(entry.interfaceFile);
       for (const set of methodSets.values()) {
         if (set.methods.size === 0) continue;
         if (!sameTypeSpace(entry.interfaceFile, ifaceLang, set.file, languageOf.get(set.file) ?? "")) continue;
         // Name AND parameter count: an HTTP handler's `GetByID(c)` is not a
         // repository's `GetByID(ctx, id)`.
-        // Go demands identical signatures, and an unexported method can only be
-        // satisfied from the interface's own package.
-        const exact = typesSpanFiles(ifaceLang);
-        const samePackage = dirOf(entry.interfaceFile) === dirOf(set.file);
+        const samePackage = !match || ifaceDir === set.dir;
         if (!entry.methods.every((m) => set.methods.has(m.name) && (m.arity === undefined || set.arity.get(m.name) === m.arity)
-          && (!exact || !m.sig || signaturesCompatible(m.sig, set.sigs.get(m.name)))
-          && (!exact || samePackage || !/^[a-z_]/.test(m.name)))) continue;
+          && (!match || !m.sig || signaturesCompatible(match, m.sig, set.sigs.get(m.name)))
+          && (samePackage || !match!.packagePrivate(m.name)))) continue;
         if (entry.impls.some((im) => im.className === set.name && im.classFile === set.file)) continue;
         entry.impls.push({ className: set.name, classFile: set.file, methods: set.methods });
       }
@@ -3673,23 +3674,11 @@ function signatureOf(m: { params: { type: string | null }[]; returnType: string 
 
 const dirOf = (file: string): string => file.slice(0, file.lastIndexOf("/") + 1);
 
-/**
- * A type as written, compared without spacing or package qualifiers (`ctx
- * context.Context` and `Context` from another package's view). `null` when it
- * is unstated or names a type parameter (a lone capital), which stands for any.
- */
-function typeKey(t: string | null, result = false): string | null {
-  // A result's pointer is not always kept by the extractor, so only a parameter's counts.
-  let k = t?.replace(/\s+/g, "").replace(/\b[A-Za-z_]\w*\./g, "").replace(/interface\{\}/g, "any") ?? "";
-  if (result) k = k.replace(/^\*/, "");
-  return k === "" || /(^|[^\w])[A-Z]\d?(?!\w)/.test(k) ? null : k;
-}
-
 /** Equal wherever both sides state a type: unknown on either side decides nothing. */
-function signaturesCompatible(want: MethodSignature, have: MethodSignature | undefined): boolean {
+function signaturesCompatible(match: StructuralMatch, want: MethodSignature, have: MethodSignature | undefined): boolean {
   if (!have) return true;
   const differs = (a: string | null, b: string | null, result = false): boolean => {
-    const x = typeKey(a, result), y = typeKey(b, result);
+    const x = match.typeKey(a, result), y = match.typeKey(b, result);
     return x !== null && y !== null && x !== y;
   };
   if (want.params.some((t, i) => differs(t, have.params[i] ?? null))) return false;

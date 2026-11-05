@@ -1265,6 +1265,12 @@ export interface LanguagePluginManifest {
    */
   typesSpanFiles?: boolean;
   /**
+   * How a structurally satisfied interface (`ClassInfo.structural`) is checked
+   * beyond a method's name and parameter count — a language that demands
+   * identical signatures (Go). Absent: name and arity only (Python `Protocol`).
+   */
+  structuralMatch?: StructuralMatch;
+  /**
    * A render call's template name as the paths its template file may end with,
    * for a framework that spells names its own way: Laravel `view('clubs.show')`
    * → `views/clubs/show.blade.php`, CodeIgniter `view('clubs/edit')` →
@@ -2056,3 +2062,15 @@ export interface ProjectCommand {
 
 /** A migration file recognised by its path: its ecosystem and the migration's name, or null. */
 export type MigrationFileRule = (path: string) => { ecosystem: MigrationInfo["ecosystem"]; name: string } | null;
+
+/** A language's rules for what makes a type satisfy a structural interface. */
+export interface StructuralMatch {
+  /**
+   * A declared type as written, normalized for comparison (spacing, package
+   * qualifiers, aliases of the top type). `result` is a method's return type.
+   * `null` when it is unstated or names a type parameter, which stands for any.
+   */
+  typeKey(type: string | null, result: boolean): string | null;
+  /** The method name is visible only inside its own package (Go: lowercase first letter). */
+  packagePrivate(name: string): boolean;
+}

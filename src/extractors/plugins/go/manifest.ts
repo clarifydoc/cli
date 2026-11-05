@@ -5,6 +5,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { goFrameworkRules } from "./frameworks.js";
 import { goPackageManager } from "./package-manifests.js";
 import { goPackageDirectory } from "./package-directory.js";
+import { goStructuralMatch } from "./structural-match.js";
 import { goServiceConfig } from "./service-config.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
@@ -32,6 +33,7 @@ export const goManifest: LanguagePluginManifest = {
   extensions: [".go"],
   // One type spans files here: a type's methods sit in any file of its package directory.
   typesSpanFiles: true,
+  structuralMatch: goStructuralMatch,
   testFilePatterns: [/_test\.go$/],
   testSubjectAffixes: { suffixes: ["_test"] },
   // protoc and protoc-gen-grpc-gateway output.
