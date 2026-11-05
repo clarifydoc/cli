@@ -2578,9 +2578,15 @@ export interface ContextValue {
 export interface ComponentSubscription {
   /** The component class, as the file names it. */
   component: string;
-  /** The output (`confirmClicked`). */
+  /** The output (`confirmClicked`), or the reference's outcome member (`closed`, `result`, `afterClosed`). */
   event: string;
   line: number;
+  /**
+   * Set when it is the dialog's own outcome, not an output: `ref.closed.subscribe(…)`,
+   * `ref.result.then(…)`, `dialogRef.afterClosed().subscribe(…)` run when the dialog
+   * closes itself (`close`), `ref.dismissed` when it is dismissed (`dismiss`).
+   */
+  result?: "close" | "dismiss";
 }
 
 /** A value bound to a child component's prop (`FileAnalysis.propBindings`). */

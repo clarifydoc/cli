@@ -1,4 +1,4 @@
-import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
+import type { ClassInfo, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
@@ -151,6 +151,25 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const child = childFile ? byPath.get(childFile) : undefined;
         const target = child ? innermostAt(spans(parent), sub.line) : null;
         if (!child || !target) continue;
+        if (sub.result) {
+          // The dialog's own outcome: each method closing it through its active-dialog reference.
+          for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap)) {
+            const k = `${closer.file}\u0000${closer.symbol}\u0000${closer.callName}\u0000${parent.filePath}\u0000${target.symbol}`;
+            if (seenLink.has(k)) continue;
+            seenLink.add(k);
+            links.push({
+              sourceFile: closer.file,
+              sourceSymbol: closer.symbol,
+              sourceLine: closer.line,
+              callName: closer.callName,
+              targetFile: parent.filePath,
+              targetSymbol: target.symbol,
+              targetLine: target.line,
+              confidence: "INFERRED",
+            });
+          }
+          continue;
+        }
         // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
         let emitter: FileAnalysis | undefined = child;
         for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
@@ -182,6 +201,53 @@ export class JsComponentEmitResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/**
+ * The reference an open dialog holds to itself, by type → the methods that close it
+ * (`this.modal.close(result)`) and dismiss it. ng-bootstrap's modal and offcanvas, Material's dialog.
+ */
+const ACTIVE_DIALOG_REFS: Record<string, { close: string; dismiss?: string }> = {
+  NgbActiveModal: { close: "close", dismiss: "dismiss" },
+  NgbActiveOffcanvas: { close: "close", dismiss: "dismiss" },
+  MatDialogRef: { close: "close" },
+};
+
+/**
+ * The methods of the dialog class `component` (or a base it extends, three deep) that close it —
+ * `result: "close"` — or dismiss it, through a field holding its active-dialog reference.
+ */
+function dialogClosers(
+  file: FileAnalysis,
+  component: string,
+  result: "close" | "dismiss",
+  byPath: Map<string, FileAnalysis>,
+  filePathMap: Map<string, string>,
+): Array<{ file: string; symbol: string; line: number; callName: string }> {
+  const out: Array<{ file: string; symbol: string; line: number; callName: string }> = [];
+  let owner: FileAnalysis | undefined = file;
+  let name: string | undefined = component;
+  for (let depth = 0; owner && name && depth < 3; depth++) {
+    const cls: ClassInfo | undefined = owner.classes.find((c) => c.name === name);
+    if (!cls) break;
+    const verbs = new Set<string>();
+    for (const p of cls.properties ?? []) {
+      const ref = ACTIVE_DIALOG_REFS[(p.type ?? "").replace(/<.*$/s, "").trim()];
+      const verb = ref?.[result];
+      if (verb) verbs.add(`this.${p.name}.${verb}`);
+    }
+    for (const m of cls.methods ?? []) {
+      const call = m.calls.find((c) => verbs.has(c.name));
+      if (call) out.push({ file: owner.filePath, symbol: `${cls.name}.${m.name}`, line: call.line, callName: call.name });
+    }
+    if (out.length) break;
+    const base: string | undefined = cls.extends?.replace(/<.*$/s, "").trim();
+    const from: string | undefined = base ? owner.imports.find((i) => i.specifiers.includes(base))?.source : undefined;
+    const next: string | null = from ? resolveTarget(from, owner.filePath, filePathMap) : null;
+    owner = next ? byPath.get(next) : undefined;
+    name = base;
+  }
+  return out;
 }
 
 /** A handler that only passes the event on: `$emit('save', car)`, `(car) => emit('save', car)`. */

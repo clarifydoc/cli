@@ -10,7 +10,7 @@ import type { ComponentSubscription } from "../../../types/analysis.js";
  * component-emit resolver joins the child's emit to the subscribing function.
  */
 export function componentSubscriptions(tree: Tree, sourceText: string): ComponentSubscription[] {
-  if (!sourceText.includes("componentInstance")) return [];
+  if (!/componentInstance|\.(?:closed|dismissed|result|afterClosed)\b/.test(sourceText)) return [];
   const out: ComponentSubscription[] = [];
   const visit = (n: Node): void => {
     if (n.type === "call_expression") {
@@ -25,15 +25,23 @@ export function componentSubscriptions(tree: Tree, sourceText: string): Componen
 
 function subscriptionOf(call: Node): ComponentSubscription | null {
   const fn = call.childForFieldName("function");
-  if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "subscribe") return null;
+  if (fn?.type !== "member_expression") return null;
+  const method = fn.childForFieldName("property")?.text;
+  // `ref.result.then(…)`: the promise a dialog's close() resolves.
+  if (method === "then") return outcomeOf(fn.childForFieldName("object"), call);
+  if (method !== "subscribe") return null;
   // `x.pipe(first()).pipe(…)` before the subscribe: the observable is `x`.
   let source = fn.childForFieldName("object");
   while (source?.type === "call_expression") {
     const inner = source.childForFieldName("function");
-    if (inner?.type !== "member_expression" || inner.childForFieldName("property")?.text !== "pipe") return null;
+    if (inner?.type !== "member_expression") return null;
+    // Material's `dialogRef.afterClosed()`.
+    if (inner.childForFieldName("property")?.text === "afterClosed") return outcomeOf(source, call);
+    if (inner.childForFieldName("property")?.text !== "pipe") return null;
     source = inner.childForFieldName("object");
   }
   if (source?.type !== "member_expression") return null;
+  if (OUTCOMES[source.childForFieldName("property")?.text ?? ""]) return outcomeOf(source, call);
   const event = source.childForFieldName("property")?.text;
   let instance = source.childForFieldName("object");
   let component: string | null = null;
@@ -48,6 +56,22 @@ function subscriptionOf(call: Node): ComponentSubscription | null {
   if (!event || instance?.type !== "member_expression" || instance.childForFieldName("property")?.text !== "componentInstance") return null;
   component ??= openedComponent(instance.childForFieldName("object"), call);
   return component ? { component, event, line: call.startPosition.row + 1 } : null;
+}
+
+/** A dialog reference's own outcome → whether the dialog closing or being dismissed fires it. */
+const OUTCOMES: Record<string, "close" | "dismiss"> = { closed: "close", result: "close", afterClosed: "close", dismissed: "dismiss" };
+
+/**
+ * `ref.closed`, `ref.dismissed`, `ref.result`, `ref.afterClosed()` on the reference a dialog
+ * was opened with: what the dialog's own `close(x)` / `dismiss()` runs.
+ */
+function outcomeOf(source: Node | null, call: Node): ComponentSubscription | null {
+  const member = source?.type === "call_expression" ? source.childForFieldName("function") : source;
+  if (member?.type !== "member_expression") return null;
+  const event = member.childForFieldName("property")?.text ?? "";
+  const result = OUTCOMES[event];
+  const component = result ? openedComponent(member.childForFieldName("object"), call) : null;
+  return result && component ? { component, event, line: call.startPosition.row + 1, result } : null;
 }
 
 /** The component class the reference holding the dialog was opened with: `modal = this.modalService.open(ConfirmDialogComponent, …)`, in the enclosing function. */

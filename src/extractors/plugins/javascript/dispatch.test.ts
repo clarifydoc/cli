@@ -478,3 +478,42 @@ describe("JsProvideInjectResolver", () => {
     expect(links.map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)).toEqual(["<template> transferPlayer -> onTransferPlayer"]);
   });
 });
+
+describe("a dialog closing itself runs the opener's result handler", () => {
+  const cls = (name: string, methods: Array<[string, number, number, string[]]>, properties: Array<[string, string]> = []) => ({
+    name, extends: null, implements: [], decorators: [], isExported: true, line: 1, endLine: 99,
+    properties: properties.map(([n, type]) => ({ name: n, type, visibility: "private", isStatic: false, isReadonly: true, decorators: [] })),
+    methods: methods.map(([m, a, b, calls]) => ({ ...fn(m, a, b), calls: calls.map((c, i) => ({ name: c, kind: "internal", target: null, line: a + 1 + i, column: 4 })) })),
+  });
+
+  it("joins the dialog's close() through its active-modal reference to the function handling `closed` (real-repo FP)", () => {
+    const modal = fa("src/app/club/edit-club-modal.component.ts", {
+      classes: [cls("EditClubModalComponent", [["save", 40, 50, ["this.clubService.save", "this.modal.close"]], ["cancel", 52, 55, ["this.modal.dismiss"]], ["reset", 60, 62, ["this.form.reset"]]], [["modal", "NgbActiveModal"]])] as never,
+    });
+    const opener = fa("src/app/club/club-detail.component.ts", {
+      classes: [cls("ClubDetailComponent", [["openEdit", 20, 30, []], ["other", 31, 40, []]])] as never,
+      imports: [{ source: "./edit-club-modal.component", specifiers: ["EditClubModalComponent"], line: 2 }] as never,
+      componentSubscriptions: [
+        { component: "EditClubModalComponent", event: "closed", line: 24, result: "close" },
+        { component: "EditClubModalComponent", event: "dismissed", line: 33, result: "dismiss" },
+      ],
+    });
+    const links = new JsComponentEmitResolver().resolve([modal, opener]);
+    expect(links.map((l) => [l.sourceSymbol, l.sourceLine, l.callName, l.targetFile, l.targetSymbol])).toEqual([
+      ["EditClubModalComponent.save", 42, "this.modal.close", "src/app/club/club-detail.component.ts", "ClubDetailComponent.openEdit"],
+      ["EditClubModalComponent.cancel", 53, "this.modal.dismiss", "src/app/club/club-detail.component.ts", "ClubDetailComponent.other"],
+    ]);
+  });
+
+  it("links nothing for a component that holds no active-dialog reference", () => {
+    const card = fa("src/app/club/club-card.component.ts", {
+      classes: [cls("ClubCardComponent", [["save", 40, 50, ["this.modal.close"]]], [["modal", "ModalShell"]])] as never,
+    });
+    const opener = fa("src/app/club/club-detail.component.ts", {
+      classes: [cls("ClubDetailComponent", [["openEdit", 20, 30, []]])] as never,
+      imports: [{ source: "./club-card.component", specifiers: ["ClubCardComponent"], line: 2 }] as never,
+      componentSubscriptions: [{ component: "ClubCardComponent", event: "closed", line: 24, result: "close" }],
+    });
+    expect(new JsComponentEmitResolver().resolve([card, opener])).toEqual([]);
+  });
+});
