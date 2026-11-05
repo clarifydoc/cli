@@ -10,6 +10,7 @@ import {
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { typeCsharpVariableArgs } from "./arg-kinds.js";
+import { csharpElementFacts } from "./element-types.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -293,6 +294,18 @@ export class CSharpExtractor extends FunctionClassExtractor {
     }
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
+    // What a loop, a LINQ callback, a `catch` or an element access states (see element-types.ts).
+    const elements = body && this.scope ? csharpElementFacts(node, body, params, this.scope.ownNodes(body)) : null;
+    if (elements) {
+      for (const l of elements.locals) {
+        if (fn.localTypes?.some((t) => t.name === l.name)) continue;
+        (fn.localTypes ??= []).push(l);
+      }
+      for (const call of fn.calls) {
+        const type = elements.receiverOf(call);
+        if (type) call.receiverType = type;
+      }
+    }
     typeCsharpVariableArgs(fn.calls, params, body);
     return fn;
   }

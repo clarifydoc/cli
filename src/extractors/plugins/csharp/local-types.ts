@@ -290,7 +290,7 @@ export function extractCsharpTopLevelLocalTypes(root: Node): LocalType[] | undef
 /** The node kinds a body's typed locals (and the reassignments that qualify them) come from. */
 const SCOPE_NODE_TYPES = [
   "variable_declaration", "foreach_statement", "declaration_pattern", "declaration_expression",
-  "lambda_expression", "assignment_expression",
+  "lambda_expression", "assignment_expression", "catch_declaration",
 ];
 
 /**
@@ -335,6 +335,12 @@ export class FileScopeNodes {
    * A name declared with two different types in one body (two sibling blocks)
    * is left out — the call list cannot tell which one a call used.
    */
+  /** Declaration nodes of a member body that are its own code (not a local function's), in document order. */
+  ownNodes(body: Node): Node[] {
+    const ids = new Set([body.id]);
+    return this.within(body).filter((n) => inScope(n, ids, true));
+  }
+
   localTypesOf(body: Node | null): LocalType[] | undefined {
     return body ? localTypesFrom(this.within(body), new Set([body.id]), true) : undefined;
   }

@@ -13,6 +13,7 @@ import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotation
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { typeVariableArgs } from "./arg-kinds.js";
+import { jvmElementFacts } from "./element-types.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -443,6 +444,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       : vis === "public" || (node.type === "constructor_declaration");
 
     const localTypes = extractLocalTypes(body, language);
+    // What a loop, a callback, a narrowing, a `catch` or an element access states (see element-types.ts); a name the
+    // body already typed some other way keeps that type.
+    const elements = body ? jvmElementFacts(node, body, language, params) : null;
+    if (elements) {
+      for (const l of elements.locals) if (!localTypes.some((t) => t.name === l.name)) localTypes.push(l);
+    }
     // The container calls a provider method (`@Bean`, `@Provides`,
     // `@Produces`) and an `@Inject`/`@Autowired` method with its parameters
     // resolved: container registrations decide them. Any other method's
@@ -454,6 +461,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
     const calls = extractCalls(body, language);
+    if (elements) {
+      for (const call of calls) {
+        const type = elements.receiverOf(call);
+        if (type) call.receiverType = type;
+      }
+    }
     typeVariableArgs(calls, params, body, language);
     return {
       name,
