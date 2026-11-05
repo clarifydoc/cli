@@ -73,6 +73,14 @@ export function jsDocParamTypes(doc: string): Map<string, string> {
   return out;
 }
 
+/** `@returns {T}` / `@return {T}` → T (the declared return type of plain JS). */
+export function jsDocReturnType(doc: string): string | null {
+  const m = /@returns?\b/.exec(doc);
+  if (!m) return null;
+  const braced = bracedType(doc, m.index + m[0].length);
+  return braced ? normalizeJsDocType(braced.type) : null;
+}
+
 /** `@type {T}` → T. */
 export function jsDocTypeTag(doc: string): string | null {
   const m = /@type\b/.exec(doc);

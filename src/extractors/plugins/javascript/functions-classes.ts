@@ -20,7 +20,7 @@ import {
   restatesType,
   type InjectedType,
 } from "./di.js";
-import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
+import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedFunction } from "./wrapped-functions.js";
 import { loadedMemberCall } from "./loaded-members.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
@@ -1122,7 +1122,7 @@ function piniaStateObject(member: Node): Node | null {
 }
 
 /** Any JSDoc tag this extractor reads — the per-file gate before looking at comments at all. */
-const JSDOC_TAG_RE = /@(?:param|arg|argument|type|implements|interface)\b/;
+const JSDOC_TAG_RE = /@(?:param|arg|argument|returns?|type|implements|interface)\b/;
 
 /** A constructor function read as a class (see `JavaScriptExtractor.prototypeClasses`). */
 interface PrototypeClass {
@@ -1317,6 +1317,34 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         }
       }
     }
+    // Inheritance: `Child.prototype = Object.create(Base.prototype)`, `= new Base()`, `util.inherits(Child, Base)`,
+    // `Object.setPrototypeOf(Child.prototype, Base.prototype)` — the constructor's class extends the base.
+    const bases = new Map<string, string>();
+    const baseOf = (n: Node | null | undefined): string | null => {
+      const text = n?.text.replace(/\s+/g, "") ?? "";
+      return /^[A-Za-z_$][\w$.]*$/.test(text.replace(/\.prototype$/, "")) ? text.replace(/\.prototype$/, "") : null;
+    };
+    for (const stmt of root.descendantsOfType("expression_statement")) {
+      const expr = stmt?.namedChild(0);
+      if (expr?.type === "assignment_expression") {
+        const owner = /^([A-Za-z_$][\w$]*)\.prototype$/.exec(expr.childForFieldName("left")?.text.replace(/\s+/g, "") ?? "")?.[1];
+        const right = expr.childForFieldName("right");
+        if (!owner || !ctors.has(owner) || !right) continue;
+        const arg = right.type === "call_expression" && right.childForFieldName("function")?.text === "Object.create" ? right.childForFieldName("arguments")?.namedChildren[0]
+          : right.type === "new_expression" ? right.childForFieldName("constructor") : null;
+        const base = baseOf(arg);
+        if (base && base !== owner && !bases.has(owner)) bases.set(owner, base);
+      } else if (expr?.type === "call_expression") {
+        const callee = expr.childForFieldName("function")?.text;
+        const args = expr.childForFieldName("arguments")?.namedChildren ?? [];
+        if ((callee === "util.inherits" || callee === "inherits" || callee === "Object.setPrototypeOf") && args.length >= 2) {
+          const owner = args[0]!.text.replace(/\.prototype$/, "");
+          const base = baseOf(args[1]);
+          if (ctors.has(owner) && base && base !== owner && !bases.has(owner)) bases.set(owner, base);
+        }
+      }
+    }
+    for (const owner of bases.keys()) if (!members.has(owner)) members.set(owner, []);
     for (const [owner, ctor] of ctors) {
       const body = ctor.childForFieldName("body");
       for (const stmt of body?.namedChildren ?? []) {
@@ -1335,7 +1363,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push({
         cls: {
           name: owner,
-          extends: null,
+          extends: bases.get(owner) ?? null,
           implements: [],
           decorators: [],
           methods,
@@ -1357,7 +1385,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.ctxTree = tree;
     this.pinia = sourceText.includes("defineStore");
     this.alpine = sourceText.includes("Alpine.data(");
-    this.prototypes = sourceText.includes(".prototype");
+    this.prototypes = sourceText.includes(".prototype") || sourceText.includes("inherits(");
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
@@ -1578,8 +1606,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
   private parseJsFunction(node: Node, isExported: boolean): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
-    const params = this.extractJsParams(node.childForFieldName("parameters"), this.jsdocOf(node));
-    const returnType = node.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+    const doc = this.jsdocOf(node);
+    const params = this.extractJsParams(node.childForFieldName("parameters"), doc);
+    const returnType = node.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? (doc ? jsDocReturnType(doc) : null);
     const isAsync = node.text.startsWith("async ");
     const decorators = this.extractDecorators(node);
 
@@ -1637,11 +1666,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
 
     // `(u) => …` puts its list in `parameters`; a bare `u => …` puts the one
     // identifier in `parameter`, which used to leave the arrow with no params.
+    const doc = this.jsdocOf(docAnchor);
     const params = this.extractJsParams(
       funcNode.childForFieldName("parameters") ?? funcNode.childForFieldName("parameter"),
-      this.jsdocOf(docAnchor),
+      doc,
     );
-    const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+    const returnType = funcNode.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? (doc ? jsDocReturnType(doc) : null);
     const isAsync = funcNode.text.startsWith("async ");
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
@@ -2125,8 +2155,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const methodName =
             member.childForFieldName("name")?.text ?? "anonymous";
           const paramsNode = member.childForFieldName("parameters");
-          const params = this.extractJsParams(paramsNode, this.jsdocOf(member));
-          const returnType = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null;
+          const memberDoc = this.jsdocOf(member);
+          const params = this.extractJsParams(paramsNode, memberDoc);
+          const returnType = member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? (memberDoc ? jsDocReturnType(memberDoc) : null);
           const isAsync = member.text.startsWith("async ");
           const methodBody = member.childForFieldName("body");
           const requestAccess = requestAccessOf(params, methodBody);
