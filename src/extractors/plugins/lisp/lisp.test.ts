@@ -137,3 +137,15 @@ describe("Lisp packages", () => {
     expect(fmt(quicklispPackageManager.manifests[0]!.parse(asd, { declaredIn: "shop.asd" } as never))).toEqual(["caveman2@null prod", "dexador@null prod", "postmodern@null prod", "shop@null dev", "rove@null dev"]);
   });
 });
+
+describe("Common Lisp package exports", () => {
+  it("a special variable in :export is no function", () => {
+    const a = analyze([
+      "(defpackage :club.web (:use :cl) (:export #:*league* #:sign-player))",
+      "(in-package :club.web)",
+      "(defvar *league* nil)",
+      "(defun sign-player (p) (list p))",
+    ].join("\n"), "src/web.lisp", "commonlisp");
+    expect(a.exports.map((e) => [e.name, e.kind])).toEqual([["*league*", "variable"], ["sign-player", "function"]]);
+  });
+});

@@ -149,3 +149,11 @@ describe("AppleScript", () => {
     expect(a.dataSources.map((d) => d.name)).toEqual(["GET https://crm.example.com/v2/cars", "POST https://crm.example.com/v2/cars/{aCar}/close"]);
   });
 });
+
+describe("AutoHotkey exports", () => {
+  it("never export a call that only looked like a definition", () => {
+    const a = analyze(["Init()", "", "Init() {", "    TrayTip(\"Cars loaded\")", "}"].join("\n"), "cars.ahk", "autohotkey");
+    expect(a.functions.map((f) => f.name)).toContain("Init");
+    expect(a.exports.map((e) => `${e.name}:${e.line}`)).toEqual(["Init:3"]);
+  });
+});

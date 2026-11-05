@@ -110,3 +110,5 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 - **Optional fields** — new fields on `ProjectAnalysis` should be optional so old `project-summary.json` files still load.
 - **Progress reporting** — use the `ProgressReporter` class in `analyzer.ts`, not `console.log` directly.
 - **BFS with index pointer** — never use `Array.shift()` for BFS queues (it's O(n)); use `let qi = 0; while (qi < queue.length) { ... queue[qi++]; ... }`.
+
+- **`analysis-lint.ts`** — `lintAnalysis(project, files?)`, a pure check of one analysis against itself (links to non-functions, lines past a file's end, two routes with one `dedupeRoutes` key, `apiRouteLinks` to rows the summary lacks, relations to missing entities, exports naming nothing the file defines). `clarifydoc lint <outputDir>` prints it (exit 1); `analysis-lint.test.ts` gates every `test-output/` summary with a commented allow-list. A new rule must be clean on a freshly generated fixture set, or fix the extractor.
