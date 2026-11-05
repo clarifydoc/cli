@@ -92,6 +92,11 @@ describe("Razor Pages", () => {
     const view = { language: "razor", filePath: "Pages/Club.cshtml", routes: [], screens: [{ routePath: "/clubs/{id:int}" }] } as unknown as FileAnalysis;
     const decoy = { language: "razor", filePath: "Pages/Other.cshtml", routes: [], screens: [{ routePath: "/other" }] } as unknown as FileAnalysis;
     razorPageRoutes.resolve([cs, view, decoy], {} as any);
-    expect(cs.routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`).sort()).toEqual(["GET /clubs/{id} OnGet", "POST /clubs/{id} OnPostAsync"]);
+    expect(cs.routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`).sort()).toEqual([
+      "GET /clubs/{id} OnGet",
+      "GET /clubs/{id}?handler=Helper OnGetHelper",
+      "POST /clubs/{id} OnPostAsync",
+      "POST /clubs/{id}?handler=Save OnPostSave",
+    ]);
   });
 });
