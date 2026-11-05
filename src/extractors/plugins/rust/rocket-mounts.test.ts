@@ -52,3 +52,25 @@ fn referees() -> Html<String> { todo!() }`);
     expect(paths).toEqual(["GET /api/version", "GET /api/clubs", "DELETE /api/clubs/{club_id}", "GET /admin/referees"]);
   });
 });
+
+describe("Rocket mounts with the handlers named inline", () => {
+  it("prefixes the handlers of a `routes![…]` list, bare or by module path, and no namesake", () => {
+    const main = file("src/main.rs", `#[get("/clubs")]
+fn list_clubs() -> String { String::new() }
+
+fn rocket() -> Rocket<Build> {
+    rocket::build()
+        .mount("/api/v1", routes![list_clubs, garage::list_cars])
+}`);
+    const garage = file("src/garage.rs", `#[get("/cars")]
+fn list_cars() -> String { String::new() }
+#[get("/parts")]
+fn list_parts() -> String { String::new() }`);
+    const other = file("src/other.rs", `#[get("/cars")]
+fn list_cars() -> String { String::new() }`);
+    rocketMountResolver.resolve([main, garage, other], {} as ProjectContext);
+    expect(main.routes.map((r) => r.path)).toEqual(["/api/v1/clubs"]);
+    expect(garage.routes.map((r) => r.path)).toEqual(["/api/v1/cars", "/parts"]);
+    expect(other.routes.map((r) => r.path)).toEqual(["/cars"]);
+  });
+});

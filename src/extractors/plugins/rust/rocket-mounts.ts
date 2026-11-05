@@ -22,12 +22,12 @@ import type { RouteResolver } from "../../route-resolvers/base.js";
 export const ROCKET_FACT = "rust:rocket";
 
 interface RocketFacts {
-  mounts: Array<{ base: string; fn: string; line: number }>;
+  mounts: Array<{ base: string; fn: string; handlers?: string[]; line: number }>;
   routeFns: Array<{ name: string; handlers: string[]; includes: string[] }>;
   aliases: Array<{ alias: string; path: string }>;
 }
 
-const MOUNT_RE = /\.mount\s*\(\s*(?:"([^"]*)"|\[([^\]]*)\]\s*\.\s*concat\s*\(\s*\))\s*,\s*((?:\w+::)*\w+)\s*\(\s*\)/g;
+const MOUNT_RE = /\.mount\s*\(\s*(?:"([^"]*)"|\[([^\]]*)\]\s*\.\s*concat\s*\(\s*\))\s*,\s*(?:((?:\w+::)*\w+)\s*\(\s*\)|routes!\s*\[([^\]]*)\])/g;
 const ROUTE_FN_RE = /\bfn\s+(\w+)\s*\(\s*\)\s*->\s*Vec\s*<\s*(?:rocket::)?Route\s*>\s*\{/g;
 
 /** Per file: the mounts, route functions and renames, as one route fact. */
@@ -38,7 +38,10 @@ export function collectRocketFacts(lines: string[], facts: RouteFact[] | undefin
   const out: RocketFacts = { mounts: [], routeFns: [], aliases: [] };
   for (const m of text.matchAll(MOUNT_RE)) {
     const base = m[1] ?? [...(m[2] ?? "").matchAll(/"([^"]*)"/g)].map((s) => s[1]).join("");
-    out.mounts.push({ base, fn: m[3]!, line: text.slice(0, m.index!).split("\n").length });
+    const line = text.slice(0, m.index!).split("\n").length;
+    // `.mount("/api", routes![a, b::c])`: the handlers are named right there, no route function.
+    if (m[4] !== undefined) out.mounts.push({ base, fn: "", handlers: m[4].split(",").map((h) => h.trim()).filter(Boolean), line });
+    else out.mounts.push({ base, fn: m[3]!, line });
   }
   for (const m of text.matchAll(ROUTE_FN_RE)) {
     const body = blockAt(text, m.index! + m[0].length - 1);
@@ -75,7 +78,7 @@ function qualify(useBody: string, at: number): string {
 }
 
 /** A Rust file's module path: `src/api/core/folders.rs` → api::core::folders; `mod.rs`, `main.rs`, `lib.rs` are their directory. */
-function moduleOf(filePath: string): string {
+export function moduleOf(filePath: string): string {
   const rel = filePath.replace(/^(?:.*\/)?src\//, "");
   const segs = rel.replace(/\.rs$/, "").split("/");
   if (["mod", "main", "lib"].includes(segs[segs.length - 1]!)) segs.pop();
@@ -83,7 +86,7 @@ function moduleOf(filePath: string): string {
 }
 
 /** `crate::a::b`, `self::b`, `super::b` and a bare `b` from module `from`, as a module path. */
-function resolvePath(path: string, from: string): string {
+export function resolvePath(path: string, from: string): string {
   const segs = path.split("::");
   if (segs[0] === "crate") return segs.slice(1).join("::");
   const base = from ? from.split("::") : [];
@@ -123,6 +126,16 @@ export const rocketMountResolver: RouteResolver = {
 
     const prefixes = new Map<string, Map<string, string>>(); // file → handler → base
     for (const mount of mounts) {
+      for (const h of mount.handlers ?? []) {
+        // A bare name is a handler of the mounting file; `clubs::list` one of the module it names.
+        const segs = h.split("::");
+        const name = segs.pop()!;
+        const target = segs.length === 0 ? byModule.get(mount.from) : byModule.get(resolvePath(segs.join("::"), mount.from));
+        if (!target) continue;
+        const handlers = prefixes.get(target.file.filePath) ?? prefixes.set(target.file.filePath, new Map()).get(target.file.filePath)!;
+        if (!handlers.has(name)) handlers.set(name, mount.base);
+      }
+      if (!mount.fn) continue;
       const seen = new Set<string>();
       const visit = (fn: { module: string; name: string } | null): void => {
         if (!fn || seen.has(`${fn.module}#${fn.name}`)) return;
