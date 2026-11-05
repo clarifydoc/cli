@@ -45,6 +45,8 @@ interface SymbolDef {
   returnType?: string | null;
   /** Only a re-export names it here (`from .impl import Service` in `__init__`): the definition is elsewhere. */
   reexport?: boolean;
+  /** A method of the class object (`FunctionInfo.classLevel`), every definition of the name being one. */
+  classLevel?: true;
 }
 
 /**
@@ -748,6 +750,7 @@ function buildSymbolIndex(
           line: method.line,
           endLine: method.endLine,
           returnType: overloadReturn(prev, method.returnType),
+          ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
         });
         // Also store unqualified as fallback (if not already taken by a function). A constructor
         // its name does not mark (Dart's `Event.openPage`) is reached through its type only: by its
@@ -3028,6 +3031,12 @@ interface InjectionPoint {
    * (`ParamInfo.injected` / a qualifier) leave it unset.
    */
   container?: boolean;
+  /**
+   * The value answers the class's class-level methods first: a query of the class
+   * (`selfTypedMembers.queries`, an ActiveRecord relation: `Club.where(…).by_rank`), or what a
+   * class-level method returning `self` gives (a scope). Absent for an instance.
+   */
+  classSide?: true;
 }
 
 /**
@@ -5649,7 +5658,8 @@ const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "thi
  */
 function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false): InjectionPoint | null {
   if (!point.typeFile) return null;
-  let hit = findMethodInClass(ctx, point.typeName, point.typeFile, method);
+  let hit = point.classSide ? findMethodInClass(ctx, point.typeName, point.typeFile, method, undefined, "class", true) : null;
+  hit ??= findMethodInClass(ctx, point.typeName, point.typeFile, method);
   if (!hit) {
     // An extension function of the type (`fun Garage.inventory(): Report`): the chain goes on from what it returns.
     ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
@@ -5657,7 +5667,11 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
   }
   if (!hit) return frameworkSelfMember(ctx, point, method);
-  return returnedPoint(ctx, symbolIn(ctx, hit.file, hit.symbol)?.returnType, hit.file, point, awaited);
+  const def = symbolIn(ctx, hit.file, hit.symbol);
+  const next = returnedPoint(ctx, def?.returnType, hit.file, point, awaited);
+  // A class-level method returning `self` gives the class object, or a query of it (a scope): its
+  // class-level methods answer next.
+  return next && def?.classLevel && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;
 }
 
 /**
@@ -5668,7 +5682,8 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
 function frameworkSelfMember(ctx: LinkContext, point: InjectionPoint, method: string): InjectionPoint | null {
   if (!point.typeFile) return null;
   const spec = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.selfTypedMembers;
-  if (!spec?.members.includes(method)) return null;
+  const query = !!spec?.queries?.includes(method);
+  if (!spec || (!query && !spec.members.includes(method))) return null;
   let name = declaredTypeName(ctx, point.typeFile, point.typeName);
   let file = point.typeFile;
   const seen = new Set<string>();
@@ -5676,7 +5691,9 @@ function frameworkSelfMember(ctx: LinkContext, point: InjectionPoint, method: st
     seen.add(memberKey(file, name));
     const written = ctx.classAt.get(memberKey(file, name))?.extends?.replace(/^::/, "");
     if (!written) return null;
-    if (spec.bases.includes(written)) return { typeName: point.typeName, typeFile: point.typeFile, member: "", consumer: point.consumer, container: false };
+    if (spec.bases.includes(written)) {
+      return { typeName: point.typeName, typeFile: point.typeFile, member: "", consumer: point.consumer, container: false, ...(query ? { classSide: true as const } : {}) };
+    }
     const base = bareClassName(written);
     const baseFile = locateClass(ctx, base, file, ctx.projectOf.get(file) ?? "root");
     if (!baseFile) return null;
@@ -6554,6 +6571,14 @@ function linkThroughPoint(
     return link;
   };
 
+  // A query of the class (an ActiveRecord relation) answers the class's class-level methods first.
+  const classSide = point.classSide && point.typeFile ? findMethodInClass(ctx, point.typeName, point.typeFile, method, sourceFile, "class", true) : null;
+  if (classSide) {
+    const link = mkLink(classSide.file, classSide.symbol, classSide.line, "INFERRED", "injection");
+    if (!classSide.symbol.startsWith(`${point.typeName}.`)) Object.assign(link, { viaType: point.typeName, viaTypeFile: point.typeFile });
+    return link;
+  }
+
   const bound = boundImplementation(ctx, analysis, sourceFile, point);
   if (bound) {
     const target = findMethodInClass(ctx, bound.className, bound.classFile, method);
@@ -7003,6 +7028,8 @@ function findMethodInClass(
   nearFile?: string,
   /** "class": a member called on the class object itself (see `methodAlongAncestors`). */
   side: "instance" | "class" = "instance",
+  /** With "class": a class's (and its bases') own members count only when they are class-level (`SymbolDef.classLevel`). */
+  classLevelOnly = false,
 ): { file: string; symbol: string; line: number } | null {
   // Several class bases (Python): the C3 method resolution order decides.
   if (pluginFor(ctx.languageOf.get(classFile) as Language)?.multipleInheritance && ctx.classAt.get(memberKey(classFile, className))?.implements.length) {
@@ -7015,7 +7042,7 @@ function findMethodInClass(
       return null;
     }
   }
-  return methodAlongAncestors(ctx, className, classFile, method, nearFile, new Set(), side);
+  return methodAlongAncestors(ctx, className, classFile, method, nearFile, new Set(), side, classLevelOnly);
 }
 
 /**
@@ -7035,6 +7062,8 @@ function methodAlongAncestors(
   seen: Set<string>,
   /** "class": a member called on the class object (`Club.table`) — its `extend`ed modules, not its includes. */
   side: "instance" | "class" = "instance",
+  /** With "class": the class's and its bases' own members count only when class-level (an instance method is no answer). */
+  classLevelOnly = false,
 ): { file: string; symbol: string; line: number } | null {
   let name = className;
   let file = classFile;
@@ -7058,13 +7087,13 @@ function methodAlongAncestors(
     const prepended = mixins && side === "instance" ? viaMixins("prepend") : null;
     if (prepended) return prepended;
     const def = symbolIn(ctx, file, `${name}.${method}`);
-    if (def) {
+    if (def && (!classLevelOnly || side !== "class" || def.classLevel)) {
       // A base's property read through its accessor (`Count` → `GetCount`) runs the accessor as the
       // class the lookup started from overrides it, as a virtual getter dispatches.
       const accessor = depth > 0 ? accessorOverride(ctx, def.name, method, className, classFile, nearFile) : null;
       return accessor ?? { file, symbol: def.name, line: def.line };
     }
-    const elsewhere = methodBesideClass(ctx, name, file, method, nearFile);
+    const elsewhere = classLevelOnly && side === "class" ? null : methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
