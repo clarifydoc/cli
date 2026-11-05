@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { PERCENT_DOCS } from "../../shared/doc-comment-specs.js";
 import { rebarPackageManager } from "./package-manifests.js";
 
 /**
@@ -8,6 +9,7 @@ import { rebarPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const erlangManifest: LanguagePluginManifest = {
+  docComments: PERCENT_DOCS,
   language: "erlang",
   family: "erlang",
   packageManagers: [rebarPackageManager],

@@ -72,6 +72,27 @@ describe("pages browser tests open", () => {
   });
 });
 
+describe("a layout route wraps the page below it", () => {
+  const projectOf = (f: string) => (f.startsWith("e2e/") ? "e2e" : "web");
+  const isTest = (f: string) => f.startsWith("e2e/");
+  const screens = [
+    screen("web/src/views/ClubLayout.vue", "/clubs/:id"),
+    screen("web/src/views/Players.vue", "/clubs/:id/players"),
+    screen("web/src/views/ClubsIndex.vue", "/clubs"),
+  ];
+  const analyses = [file("web/tests/players.spec.ts", "web", [["/clubs/7/players", 3]])];
+
+  it("reaches the layout screen of a parent path whose file renders the router outlet", () => {
+    const rows = joinTestNavigations({ analyses, screens, projectOf, isTest: (f) => f.includes("/tests/") || isTest(f), outlets: new Set(["web/src/views/ClubLayout.vue"]) });
+    expect(rows[0]!.screens).toEqual(["web/src/views/ClubLayout.vue", "web/src/views/Players.vue"]);
+  });
+
+  it("a parent page with no outlet is no layout", () => {
+    const rows = joinTestNavigations({ analyses, screens, projectOf, isTest: (f) => f.includes("/tests/"), outlets: new Set(["web/src/views/Other.vue"]) });
+    expect(rows[0]!.screens).toEqual(["web/src/views/Players.vue"]);
+  });
+});
+
 describe("what a page a browser test opens is made of", () => {
   const ui = [
     "web/src/App.vue",
@@ -171,6 +192,24 @@ describe("what a page a browser test opens is made of", () => {
     });
     pagePartsOf({ rows, uses: two, imports: two, lazy: {}, screens, routeFiles: new Set(["web/src/router.ts"]), mounts: ["web/src/main.ts", "web/src/admin.ts"], projectOf: () => "web", isTest: (f) => f.includes("/tests/") });
     expect(rows[0]!.entry).toBeUndefined();
+  });
+
+  it("a file-routed app: its app file and default layout are the entry of a page they import no path to", () => {
+    const rows = [{ file: "web/tests/a.spec.ts", line: 1, path: "/clubs", screens: ["web/pages/clubs.vue"] }];
+    const parts = pagePartsOf({
+      rows,
+      uses: { "web/app.vue": [], "web/layouts/default.vue": ["web/components/Sidebar.vue"] },
+      imports: {},
+      lazy: {},
+      screens: [screen("web/pages/clubs.vue", "/clubs"), screen("web/layouts/default.vue"), screen("web/components/Sidebar.vue")],
+      routeFiles: new Set(),
+      mounts: ["web/app.vue", "web/layouts/default.vue"],
+      routedMounts: ["web/app.vue", "web/layouts/default.vue"],
+      projectOf: () => "web",
+      isTest: (f) => f.includes("/tests/"),
+    });
+    expect(rows[0]).toMatchObject({ entry: "web/app.vue" });
+    expect(parts["web/app.vue"]).toEqual(["web/components/Sidebar.vue", "web/layouts/default.vue"]);
   });
 
   it("the test verdict: tested by navigation, with the test and the page it opens", () => {

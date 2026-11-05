@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeImpactDiff, renderImpactMarkdown, renderImpactText } from "./impact-diff.js";
+import { computeImpactDiff, measuredTestsFor, renderImpactMarkdown, renderImpactText } from "./impact-diff.js";
 import type { BlastRadiusInfo, ProjectAnalysis, TraceImpactInfo } from "../types/analysis.js";
 
 // ─── fixture ────────────────────────────────────────────────────────────────
@@ -327,6 +327,13 @@ describe("measured tests — per-test coverage contexts", () => {
     },
   } as unknown as ProjectAnalysis;
   const changedSign = { symbols: { changed: [{ file: "app/club.py", symbol: "Club.sign", line: 6, endLine: 8 }], moduleLevel: [] } };
+
+  it("names the measured tests of given functions for a reader that has no diff (explain)", () => {
+    const m = measuredTestsFor(league, [{ file: "app/club.py", symbol: "Club.sign" }, { file: "app/club.py", symbol: "Club.nowhere" }]);
+    expect(m?.tests.map((t) => t.id)).toEqual(["tests/test_club.py::TestClub::test_sign", "e2e/test_cup.py::test_final"]);
+    expect(m?.more).toBe(1);
+    expect(measuredTestsFor(league, [{ file: "app/other.py", symbol: "x" }])).toBeUndefined();
+  });
 
   it("lists the tests the coverage run saw execute a changed function first, labelled measured, and runs them", () => {
     const r = computeImpactDiff(league, ["app/club.py"], changedSign);

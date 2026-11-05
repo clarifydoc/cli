@@ -1,4 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
+import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { haxelibPackageManager } from "./package-manifests.js";
 
 /**
@@ -6,6 +7,7 @@ import { haxelibPackageManager } from "./package-manifests.js";
  * EAGERLY. This module must stay a leaf: types and package-manifests.ts only.
  */
 export const haxeManifest: LanguagePluginManifest = {
+  docComments: C_STYLE_DOCS,
   language: "haxe",
   family: "haxe",
   packageManagers: [haxelibPackageManager],

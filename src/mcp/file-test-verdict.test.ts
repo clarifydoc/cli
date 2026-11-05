@@ -98,6 +98,19 @@ describe("fileTestVerdict", () => {
   });
 });
 
+describe("clarifydoc_file on a folder", () => {
+  it("summarizes the test verdict of every file in it, untested first", async () => {
+    const { server } = buildMcpServer({ projectRoot: join(dir, "app"), analysisDir: join(dir, "out"), allowAnalyze: false, allowColdStart: false, log: () => {} });
+    const res = (await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "clarifydoc_file", arguments: { path: "src/", limit: 1 } } })) as { result: { content: Array<{ text: string }> } };
+    const text = res.result.content[0]!.text;
+    expect(text).toContain("# src/ — test verdicts for 4 files");
+    expect(text).toContain("tested: 2, untested: 1, nothing_to_test: 1");
+    expect(text).toContain("## Untested (1)\n- src/transfers.ts — 2 functions, no test reaches it");
+    // Capped at `limit` rows, the rest counted.
+    expect(text).toContain("## Tested (2)\n- src/garage.ts — coverage\n  … 1 more");
+  });
+});
+
 const PINNED: Record<string, string[]> = {
   "src/table.ts": [
     "## Tests",

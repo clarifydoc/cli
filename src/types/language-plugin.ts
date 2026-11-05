@@ -729,7 +729,7 @@ export interface AstExtractorHooks {
   /** Pages a browser driver opens by address (`page.goto`, `cy.visit`) → `FileAnalysis.browserNavigations`. */
   browserNavigations?(tree: Tree, sourceText: string): import("./analysis.js").BrowserNavigation[];
   /** The call mounting a browser app's root component, when the file makes one → `FileAnalysis.appMount`. */
-  appMount?(tree: Tree, sourceText: string): { line: number } | undefined;
+  appMount?(tree: Tree, sourceText: string, filePath?: string): { line: number; routed?: true } | undefined;
   /**
    * Paths the file names as string data that the toolchain loads as modules
    * (glob imports, worker URLs, config-file script paths) →

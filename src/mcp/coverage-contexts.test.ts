@@ -120,6 +120,12 @@ describe("per-test coverage contexts in the MCP tools", () => {
     expect(text.indexOf("Measured")).toBeLessThan(text.indexOf("| Tests to run"));
   });
 
+  it("clarifydoc_explain's tests section lists the measured tests of the function", async () => {
+    const text = await call("per-test", "clarifydoc_explain", { subject: "Club.release", file: "app/club.py", maxTokens: 4000 });
+    expect(text).toContain("Measured — the coverage run saw these execute it (per-test contexts from coverage.json");
+    expect(text).toContain("TestClub.test_release (tests/test_club.py:9)");
+  });
+
   it("says once that an aggregate-only report has no per-test evidence", async () => {
     const file = await call("aggregate", "clarifydoc_file", { path: "app/club.py", sections: ["tests"] });
     expect(file).toContain("per-test evidence unavailable: coverage.xml records no test contexts (aggregate-only)");

@@ -5,7 +5,7 @@ import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, type ToolCon
 import { noResults } from "../empty.js";
 import { bestNamed } from "../search-rank.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
-import { testsReaching } from "../../core/impact-diff.js";
+import { measuredLabel, measuredTestsFor, testsReaching } from "../../core/impact-diff.js";
 import { roleLine } from "../role.js";
 import { routeFactId } from "../../core/fact-ids.js";
 import { byOrdinal } from "../../core/ordinal.js";
@@ -233,10 +233,20 @@ function definedIn(summary: ProjectAnalysis, symbol: string): string | undefined
 }
 
 /** The tests that reach a subject through the call graph, and how to run them; saying so when none does. */
-function testsPart(summary: ProjectAnalysis, targets: ReadonlyArray<{ file: string; symbol: string }>): string {
+export function testsPart(summary: ProjectAnalysis, targets: ReadonlyArray<{ file: string; symbol: string }>): string {
   const { tests, commands } = testsReaching(summary, targets);
-  if (!tests.length) return "None of the analysed tests reaches it through the call graph.";
+  // What a coverage run saw execute it, test by test: measured, where the call graph only guesses.
+  const m = measuredTestsFor(summary, targets);
+  const measured = m
+    ? [
+        `Measured — the coverage run saw these execute it (per-test contexts from ${m.from.join(", ")}; ${Math.min(m.tests.length, 8)} of ${m.tests.length + m.more}):`,
+        ...m.tests.slice(0, 8).map((t) => `- ${measuredLabel(t, true)}`),
+        ...(tests.length ? ["", "Through the call graph:"] : []),
+      ]
+    : [];
+  if (!tests.length && !measured.length) return "None of the analysed tests reaches it through the call graph.";
   return [
+    ...measured,
     ...tests.slice(0, 8).map((t) => `- ${t.symbol} (${t.file}:${t.line})${t.depth > 1 ? ` — ${t.depth} calls away` : ""}`),
     ...(tests.length > 8 ? [`- … ${tests.length - 8} more`] : []),
     ...commands.map((c) => `\nRun: \`${c.command}\``),

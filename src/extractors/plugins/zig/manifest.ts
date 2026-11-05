@@ -1,5 +1,6 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { zigPackageManager } from "./package-manifests.js";
+import { zigTestCommand } from "./test-command.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -10,6 +11,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
  */
 export const zigManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
+  testCommand: zigTestCommand,
   language: "zig",
   family: "zig",
   packageManagers: [zigPackageManager],

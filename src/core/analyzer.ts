@@ -1477,19 +1477,20 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
     usesGraph[a.filePath] = [...new Set([...imported.filter((d) => rendered.has(d) || !screenFiles.has(d)), ...rendered])];
   }
+  const routerOutlets = new Set(allAnalyses.filter((a) => {
+      const outlet = manifestFor(a.language as Language)?.routerOutlet;
+      if (!outlet || !screenFiles.has(a.filePath)) return false;
+      // An Angular component's outlet is in its external template.
+      const template = a.angularTemplateUrl ? posixJoin(a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1), a.angularTemplateUrl) : null;
+      return outlet.test(rawSources.get(a.filePath) ?? "") || (!!template && outlet.test(rawSources.get(template) ?? ""));
+    }).map((a) => a.filePath));
   const screenFlow = buildScreenFlow({
     screens: allScreens,
     routes: allRoutes,
     launches: componentLaunches,
     elements: allInteractiveElements,
     componentGraph: usesGraph,
-    outlets: new Set(allAnalyses.filter((a) => {
-      const outlet = manifestFor(a.language as Language)?.routerOutlet;
-      if (!outlet || !screenFiles.has(a.filePath)) return false;
-      // An Angular component's outlet is in its external template.
-      const template = a.angularTemplateUrl ? posixJoin(a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1), a.angularTemplateUrl) : null;
-      return outlet.test(rawSources.get(a.filePath) ?? "") || (!!template && outlet.test(rawSources.get(template) ?? ""));
-    }).map((a) => a.filePath)),
+    outlets: routerOutlets,
     projectOf: (f) => analysisByPath.get(f)?.projectId,
     // Two apps' pages are no link targets of each other: only sub-projects one imports from the other share pages.
     related: (a, b) => a === b || !!projectImports.get(a ?? "root")?.has(b ?? "root") || !!projectImports.get(b ?? "root")?.has(a ?? "root"),
@@ -1730,6 +1731,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     screens: allScreens,
     projectOf: (f) => analysisOf.get(f)?.projectId,
     isTest: isTestCode,
+    outlets: routerOutlets,
   });
   // What each page they open is made of, and the app start it runs.
   const pageParts = testNavigations.length
@@ -1741,6 +1743,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       screens: allScreens,
       routeFiles: new Set(allRoutes.filter((r) => r.kind === "frontend").map((r) => r.filePath)),
       mounts: allAnalyses.filter((a) => a.appMount && !isTestCode(a.filePath)).map((a) => a.filePath),
+      routedMounts: allAnalyses.filter((a) => a.appMount?.routed && !isTestCode(a.filePath)).map((a) => a.filePath),
       projectOf: (f) => analysisOf.get(f)?.projectId,
       isTest: isTestCode,
     })

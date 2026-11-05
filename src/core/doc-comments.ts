@@ -28,7 +28,7 @@ const CODE_LINE = /(?:[;{}]\s*$)|^(?:import|export|const|let|var|return|if|for|w
 /** Attach `doc` to every function, class and method the comments of `source` document. */
 export function attachDocComments(analysis: FileAnalysis, source: string, spec: DocCommentSpec | undefined): void {
   if (!spec || analysis.functions.length + analysis.classes.length === 0) return;
-  if (!/\/\/|\/\*|#|--|"""|'''|\(\*|\{/.test(source)) return;
+  if (!/\/\/|\/\*|#|--|"""|'''|\(\*|\{|;|%/.test(source)) return;
   const lines = source.split(/\r?\n/);
   const attach = (item: FunctionInfo | ClassInfo): void => {
     if (!item.line || item.line < 1 || item.line > lines.length) return;
@@ -46,7 +46,14 @@ export function attachDocComments(analysis: FileAnalysis, source: string, spec: 
 function commentAbove(lines: readonly string[], at: number, spec: DocCommentSpec): string | null {
   let i = at - 1;
   // A decorator or attribute between the comment and the declaration belongs to the declaration.
-  while (i >= 0 && spec.attribute?.test(lines[i]!)) i--;
+  // A decorator whose arguments spread over rows (`@ApiResponse({` … `})`) is skipped whole.
+  const isAttribute = (t: string): boolean => !!spec.attribute?.test(t);
+  for (;;) {
+    if (i >= 0 && isAttribute(lines[i]!)) { i--; continue; }
+    const opener = i >= 0 ? attributeOpening(lines, i, isAttribute) : -1;
+    if (opener < 0) break;
+    i = opener - 1;
+  }
   // The declaration line may itself carry the decorators (`@Get() handler()`); the comment is still above.
   if (i < 0) return null;
   const last = lines[i]!.trim();
@@ -124,7 +131,9 @@ function clean(raw: readonly string[]): string | null {
       if (para.length) break;
       continue;
     }
-    if (TAG.test(t)) break;
+    // Comment-based help (PowerShell) heads its text with a keyword line.
+    if (/^\.(?:SYNOPSIS|DESCRIPTION)$/i.test(t)) continue;
+    if (TAG.test(t) || /^\.(?:PARAMETER|EXAMPLE|NOTES|LINK|INPUTS|OUTPUTS)\b/i.test(t)) break;
     para.push(t);
   }
   let text = para.join(" ").replace(/\s+/g, " ").trim();
@@ -246,4 +255,20 @@ function startsWithDoc(rows: readonly string[], doc: string): boolean {
   if (!want.length) return false;
   const have = words(rows.join(" ")).join(" ");
   return have.includes(want.join(" "));
+}
+
+/**
+ * Whether the rows `from`..`to` (0-based, inclusive) hold nothing but blank rows and attributes — the
+ * language's attribute shape, with an attribute's arguments spread over rows counting with it.
+ */
+export function onlyBlankOrAttributes(lines: readonly string[], from: number, to: number, spec: DocCommentSpec): boolean {
+  let depth = 0;
+  for (let r = from; r <= to; r++) {
+    const row = lines[r] ?? "";
+    if (depth > 0) depth += bracketDelta(row);
+    else if (!row.trim()) continue;
+    else if (spec.attribute?.test(row)) depth += bracketDelta(row);
+    else return false;
+  }
+  return depth <= 0;
 }

@@ -63,8 +63,17 @@ export async function markersIn(root: string, file: string): Promise<DecisionMar
 export async function decisionsAbout(store: AnalysisStore, loaded: LoadedAnalysis, file: string, limit: number): Promise<string[]> {
   const index = await contextIndex(store, loaded);
   const docs = index.docs.filter((d) => index.staleness.get(d.path)?.governs.includes(file));
-  const markers = await markersIn(store.projectRoot, file);
-  return [...bulletList(docs, limit, (d) => docRow(d, index.staleness.get(d.path))), ...bulletList(markers, limit, markerRow)];
+  const source = await readFile(join(store.projectRoot, file), "utf8").catch(() => "");
+  const markers = findDecisionMarkers(source, file);
+  // The reasons comments and commit bodies state: not decisions, and said so, beside the records.
+  const { comments } = reasonComments(source, file, await store.fileAnalysis(file).catch(() => null), undefined);
+  const commits = await commitReasons(store.projectRoot, file, {}).catch(() => null);
+  return [
+    ...bulletList(docs, limit, (d) => docRow(d, index.staleness.get(d.path))),
+    ...bulletList(markers, limit, markerRow),
+    ...topRows(comments, Math.min(limit, MAX_REASON_COMMENTS), (c) => `comment, not a decision: ${commentRow(c)}`),
+    ...topRows(commits?.reasons ?? [], Math.min(limit, MAX_REASON_COMMITS), (c) => `commit, not a decision: ${commitRow(c)}`),
+  ];
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);

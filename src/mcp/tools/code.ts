@@ -443,7 +443,7 @@ export function fileTool(ctx: ToolContext): McpTool {
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Path, or a unique suffix." },
+        path: { type: "string", description: "Path, or a unique suffix. A folder gives each file's test verdict, summarized." },
         sections: { type: "array", items: { type: "string", enum: [...FILE_SECTIONS] } },
         limit: { type: "number" },
       },
@@ -452,8 +452,11 @@ export function fileTool(ctx: ToolContext): McpTool {
     },
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
-      const path = mustResolveFile(loaded, requiredStringArg(args, "path"));
       const limit = numberArg(args, "limit", 15, { max: 200 });
+      // A folder: the test verdict of each file in it, summarized.
+      const folder = directoryOf(loaded, requiredStringArg(args, "path"));
+      if (folder) return { text: await directoryVerdicts(ctx, loaded, folder.dir, folder.files, limit) };
+      const path = mustResolveFile(loaded, requiredStringArg(args, "path"));
       const requested = stringArrayArg(args, "sections")
         .map((s) => s.toLowerCase())
         .filter((s): s is FileSection => (FILE_SECTIONS as readonly string[]).includes(s));
@@ -700,6 +703,43 @@ export function fileTool(ctx: ToolContext): McpTool {
  */
 /** The verdict context of a loaded summary: its link index is built once, not per call. */
 const verdictContexts = new WeakMap<object, TestVerdictContext>();
+
+/** The analysed files under a folder, when the argument names one (a trailing `/`, or no file of that name). */
+function directoryOf(loaded: LoadedAnalysis, arg: string): { dir: string; files: string[] } | null {
+  const dir = arg.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+  const files = loaded.summary.files ?? [];
+  if (!dir || (files.includes(dir) && !arg.endsWith("/"))) return null;
+  const under = files.filter((f) => f.startsWith(`${dir}/`));
+  return under.length ? { dir, files: under } : null;
+}
+
+/** Most files whose verdict one folder call reads (each reads its per-file analysis). */
+const MAX_VERDICT_FILES = 500;
+
+/** The test verdict of every file under a folder — counts, then the untested files and the tested ones with their basis. */
+async function directoryVerdicts(ctx: ToolContext, loaded: LoadedAnalysis, dir: string, files: string[], limit: number): Promise<string> {
+  const summary = loaded.summary;
+  let vctx = verdictContexts.get(summary);
+  if (!vctx) verdictContexts.set(summary, (vctx = testVerdictContext(summary)));
+  const read = files.slice(0, MAX_VERDICT_FILES);
+  const rows: Array<{ file: string; state: string; basis: string[]; functions: number }> = [];
+  for (const file of read) {
+    const v = fileTestVerdict(summary, file, await ctx.store.fileAnalysis(file).catch(() => null), vctx);
+    rows.push({ file, state: v.state, basis: v.basis, functions: v.functions.length });
+  }
+  const by = (state: string) => rows.filter((r) => r.state === state);
+  const untested = by("untested").sort((a, b) => b.functions - a.functions || (a.file < b.file ? -1 : 1));
+  const tested = by("tested");
+  const counts = countMap(Object.fromEntries(["tested", "untested", "nothing_to_test", "test_file"].map((k) => [k, by(k).length])));
+  return joinLines([
+    `# ${dir}/ — test verdicts for ${files.length} file${files.length === 1 ? "" : "s"}${files.length > read.length ? ` (the first ${read.length} read)` : ""}`,
+    counts,
+    "",
+    ...section(`Untested (${untested.length})`, bulletList(untested, limit, (r) => `${r.file} — ${r.functions} function${r.functions === 1 ? "" : "s"}, no test reaches it`)),
+    ...section(`Tested (${tested.length})`, bulletList(tested, limit, (r) => `${r.file} — ${r.basis.join(", ")}`)),
+    `Next: clarifydoc_file path="<file>" sections=["tests"] — the tests behind one verdict.`,
+  ]);
+}
 
 async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: string, limit: number): Promise<string[]> {
   const summary = loaded.summary;

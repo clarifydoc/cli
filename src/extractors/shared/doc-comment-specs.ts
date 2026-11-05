@@ -52,3 +52,25 @@ export const VB_DOCS: DocCommentSpec = {
   line: ["'''", "'"],
   attribute: /^\s*<[A-Z][^>]*>\s*_?$/,
 };
+
+/** SQL: `--` lines and `/* … *\/` blocks above a statement. */
+export const SQL_DOCS: DocCommentSpec = {
+  line: ["---", "--"],
+  block: [["/**", "*/"], ["/*", "*/"]],
+};
+
+/** PowerShell: `#` lines and `<# … #>` comment-based help. */
+export const POWERSHELL_DOCS: DocCommentSpec = {
+  line: ["#"],
+  block: [["<#", "#>"]],
+};
+
+/** Lisp family: `;;;` and `;;` (and `;`) comment lines above a form. */
+export const SEMICOLON_DOCS: DocCommentSpec = {
+  line: [";;;", ";;", ";"],
+};
+
+/** Erlang: `%%%` and `%%` (and `%`) comment lines above a function. */
+export const PERCENT_DOCS: DocCommentSpec = {
+  line: ["%%%", "%%", "%"],
+};

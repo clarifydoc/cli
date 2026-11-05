@@ -16,6 +16,11 @@ describe("the file that starts a browser app", () => {
     expect(await mount(`import { mount } from 'svelte'\nimport App from './App.svelte'\nmount(App, { target: document.body })\n`)).toEqual({ line: 3 });
   });
 
+  it("a Nuxt app's root files start the app though they mount nothing", () => {
+    for (const f of ["app.vue", "app/app.vue", "web/app.vue", "layouts/default.vue", "web/layouts/default.vue"]) expect(extractAppMount(undefined as never, "", f), f).toEqual({ line: 1, routed: true });
+    for (const f of ["App.vue", "pages/app.vue", "components/app.vue", "layouts/admin.vue", "src/app.ts"]) expect(extractAppMount(undefined as never, "", f), f).toBeUndefined();
+  });
+
   it("a project's own function of that name mounts nothing", async () => {
     expect(await mount(`export const actions = {\n  async createApp({ commit }, club) { commit('add', club) },\n}\n`)).toBeUndefined();
     expect(await mount(`import { render } from '@testing-library/vue'\nrender(ClubCard)\n`)).toBeUndefined();

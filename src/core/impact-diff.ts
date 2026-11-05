@@ -763,6 +763,34 @@ function measuredTestsOf(
   } else {
     for (const f of changedFiles) for (const fn of cov.get(f)?.functions ?? []) rows.push({ label: fn.name, fn });
   }
+  return measuredFromRows(coverage, rows);
+}
+
+/**
+ * The tests a per-test coverage report saw run given functions — what `clarifydoc_explain` shows
+ * for a route handler or a function. Undefined when the report names no tests for them.
+ */
+export function measuredTestsFor(
+  summary: Pick<ProjectAnalysis, "testCoverage">,
+  targets: ReadonlyArray<{ file: string; symbol: string }>,
+): ImpactDiffResult["measuredTests"] {
+  const coverage = summary.testCoverage;
+  if (!coverage?.tests?.length) return undefined;
+  const cov = new Map(coverage.files.map((f) => [f.file, f]));
+  const rows: Array<{ label: string; fn: NonNullable<TestCoverageReport["files"][number]["functions"]>[number] }> = [];
+  for (const t of targets) {
+    const leaf = t.symbol.split(".").pop()!;
+    const fns = cov.get(t.file)?.functions ?? [];
+    const fn = fns.find((f) => f.name === t.symbol) ?? fns.find((f) => f.name === leaf || f.name.endsWith(`.${leaf}`));
+    if (fn) rows.push({ label: t.symbol, fn });
+  }
+  return measuredFromRows(coverage, rows);
+}
+
+function measuredFromRows(
+  coverage: TestCoverageReport,
+  rows: ReadonlyArray<{ label: string; fn: NonNullable<TestCoverageReport["files"][number]["functions"]>[number] }>,
+): ImpactDiffResult["measuredTests"] {
   const byId = new Map<string, CoverageTest & { ran: string[] }>();
   let more = 0;
   for (const { label, fn } of rows) {
@@ -786,7 +814,7 @@ function coverageFunctionOf(file: TestCoverageReport["files"][number] | undefine
 }
 
 /** A measured test as a reader names it: the marked test function with its place, else the report's id. */
-function measuredLabel(t: CoverageTest, withPlace: boolean): string {
+export function measuredLabel(t: CoverageTest, withPlace: boolean): string {
   if (t.symbol && t.line !== undefined) return withPlace ? `${t.symbol} (${t.file}:${t.line})` : t.symbol;
   return t.id;
 }
