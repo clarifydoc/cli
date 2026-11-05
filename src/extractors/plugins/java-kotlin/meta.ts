@@ -27,6 +27,7 @@ import { javaManifest, kotlinManifest } from "./manifest.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractJavaKotlinTypeReferences } from "./type-references.js";
 import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
+import { jvmPackageName } from "./package-name.js";
 import { jvmPackages } from "./packages.js";
 import { JavaKotlinExtractor } from "./functions-classes.js";
 import { JavaKotlinImportExportExtractor } from "./imports-exports.js";
@@ -128,6 +129,8 @@ function jvmMeta(language: Language, opts: {
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
       ...(language === "kotlin" ? { facadeClass: kotlinFacadeClass } : {}),
+      // `package com.example.league;` — what an `import com.example.league.Club` names, whatever directory holds the file.
+      packageName: (tree) => jvmPackageName(tree),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
       // `RestClient.createClient(X.class, url)` and other proxy factories.

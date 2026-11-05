@@ -253,7 +253,7 @@ export function jvmElementFacts(
 
   // Kotlin `is` narrowing: the name keeps its declared type outside the regions that test it, so it is typed only
   // when every receiver use of it sits inside such regions, all of one type.
-  const narrowed = new Map<string, Array<{ type: string; region: Node }>>();
+  const narrowed = new Map<string, Array<{ type: string; region: { startIndex: number; endIndex: number } }>>();
 
   const lambdaNames = (lambda: Node): Array<{ name: string; type: string | null }> => {
     const out: Array<{ name: string; type: string | null }> = [];
@@ -303,14 +303,37 @@ export function jvmElementFacts(
     return receiver && method ? { receiver: receiver.text, method } : null;
   };
 
+  // The names a lambda binds, over the lambda's own extent: a call inside it reads the lambda's binding of a name
+  // (typed or not) — never the one another lambda gave `it`, and never the method-wide table's.
+  const lambdaScopes: Array<{ name: string; type: string | null; from: [number, number]; to: [number, number] }> = [];
   const bindLambda = (lambda: Node): void => {
     const names = lambdaNames(lambda);
     const callee = lambdaCallee(lambda);
     const found = callee ? callbackElement(callee.receiver, callee.method, rootState, rules) : null;
     names.forEach((n, i) => {
-      if (n.type) bind(n.name, n.type);
-      else bind(n.name, found && found.positions.includes(i) ? found.type : null);
+      const type = n.type ?? (found && found.positions.includes(i) ? found.type : null);
+      bind(n.name, type);
+      if (n.name) {
+        lambdaScopes.push({
+          name: n.name,
+          type,
+          from: [lambda.startPosition.row, lambda.startPosition.column],
+          to: [lambda.endPosition.row, lambda.endPosition.column],
+        });
+      }
     });
+  };
+  /** The type the innermost lambda around a call gives `name`; undefined when no lambda binds it there. */
+  const scopedType = (name: string, call: CallInfo): string | null | undefined => {
+    if (lambdaScopes.length === 0 || call.column === undefined) return undefined;
+    const at: [number, number] = [call.line - 1, call.column];
+    const before = (a: [number, number], b: [number, number]) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+    let best: (typeof lambdaScopes)[number] | undefined;
+    for (const sc of lambdaScopes) {
+      if (sc.name !== name || !before(sc.from, at) || !before(at, sc.to)) continue;
+      if (!best || (before(best.from, sc.from) && before(sc.to, best.to))) best = sc;
+    }
+    return best ? best.type : undefined;
   };
 
   const regionOf = (check: Node): Node | null => {
@@ -417,6 +440,31 @@ export function jvmElementFacts(
         }
         break;
       }
+      case "if_expression": {
+        // `if (x !is Club) return` — and `if (x !is Club || stale) throw …` — leaves `x` a `Club` for the rest of the block.
+        if (language !== "kotlin" || n.children.some((c) => c.type === "else")) break;
+        const parent = n.parent;
+        const bodyNode = n.namedChildren.find((c) => c.type === "control_structure_body");
+        const cond = n.namedChildren[0];
+        if (!parent || !bodyNode || !cond || cond === bodyNode || !endsInJump(bodyNode)) break;
+        const arms: Node[] = [];
+        const flatten = (c: Node): void => {
+          if (c.type === "disjunction_expression") for (const k of c.namedChildren) flatten(k);
+          else arms.push(c);
+        };
+        flatten(cond);
+        for (const arm of arms) {
+          if (arm.type !== "check_expression" || !arm.children.some((c) => c.type === "!is")) continue;
+          const subject = arm.namedChildren[0];
+          const type = arm.namedChildren.find((c) => c.type === "user_type")?.text;
+          const cls = type ? classOf(type) : null;
+          if (subject?.type !== "simple_identifier" || !cls) continue;
+          const list = narrowed.get(subject.text) ?? [];
+          list.push({ type: cls, region: { startIndex: n.endIndex, endIndex: parent.endIndex } });
+          narrowed.set(subject.text, list);
+        }
+        break;
+      }
       case "when_entry": {
         if (language !== "kotlin") break;
         const test = n.namedChildren.find((c) => c.type === "when_condition")?.namedChildren.find((c) => c.type === "type_test");
@@ -463,10 +511,19 @@ export function jvmElementFacts(
   const receiverOf = (call: CallInfo): string | null => {
     if (call.receiverType) return null;
     const split = splitCallName(call.name);
-    if (!split || !/[([]/.test(split.receiver)) return null;
+    if (!split) return null;
+    if (/^[A-Za-z_$][\w$]*$/.test(split.receiver)) return scopedType(split.receiver, call) ?? null;
+    if (!/[([]/.test(split.receiver)) return null;
     return valueOfChain(split.receiver, rootState, rules);
   };
   return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf } : null;
+}
+
+/** A Kotlin branch body that always leaves the block: its last statement is a `return`, `throw`, `break` or `continue`. */
+function endsInJump(body: Node): boolean {
+  let last: Node | undefined = body.namedChildren[body.namedChildren.length - 1];
+  if (last?.type === "statements") last = last.namedChildren[last.namedChildren.length - 1];
+  return last?.type === "jump_expression";
 }
 
 /**

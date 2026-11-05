@@ -4301,7 +4301,10 @@ function resolveCallToDefinition(
   const ownerClass = !isQualified && !reference && !bareIsFunction && call.kind === "internal" && targetFile === sourceFile
     ? callerClass(ctx, analysis, sourceSymbol, call.line)
     : undefined;
-  if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null)) {
+  // A free function of the name does not hide the member in a language whose implicit receiver comes first.
+  const memberFirst = !!ownerClass && !!def && memberClassOf(ctx, sourceFile, def) === null && pluginFor(analysis.language)?.bareMembersHideFunctions === true
+    && findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) !== null;
+  if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null || memberFirst)) {
     const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) : null;
     if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
       if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
@@ -5705,7 +5708,7 @@ function resolveThroughDeclaredType(
     return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
   }
 
-  const receiver = receiverChain(call.name);
+  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
   const branches: InjectionPoint[] = [];
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false, branches);
@@ -5934,7 +5937,7 @@ function initializerPoint(
   if (local.fromIndex !== undefined) {
     // A tuple unpacking (`a, b = load()`): the element of the one call's declared tuple type. Only a single
     // call (no member chain) names its own declared return type here.
-    const only = receiverChain(`${local.from}.x`);
+    const only = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
     if (only?.length !== 1 || !only[0]!.call) return null;
     pendingTupleIndex = local.fromIndex;
     try {
@@ -5945,7 +5948,7 @@ function initializerPoint(
   }
   // The initializer is the receiver of an imagined member call on its result: a call, or a
   // member read off one (`usePublicApi(slug).explore`).
-  const chain = receiverChain(`${local.from}.x`);
+  const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain.some((seg) => seg.call)) return null;
   return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true);
 }
@@ -5964,9 +5967,10 @@ interface ChainSegment {
  * `a`, `getB()`. Splits on `.` and `::` outside brackets, so arguments that
  * contain dots stay inside their call. Null when the receiver indexes
  * (`rows[i].m()` — an element, not a declared member) or the brackets do not
- * balance.
+ * balance. Where the language's indexer is a member (`indexerMethod`: Kotlin's `operator fun get`),
+ * `league[3]` is the call `league.get(3)`, so the element's class is the method's declared return type.
  */
-function receiverChain(callName: string): ChainSegment[] | null {
+function receiverChain(callName: string, indexer?: string): ChainSegment[] | null {
   const out: ChainSegment[] = [];
   let i = 0;
   const ctor = /^\s*new\s+([\w$\\.]+)\s*(?=\()/.exec(callName);
@@ -5999,6 +6003,11 @@ function receiverChain(callName: string): ChainSegment[] | null {
     const seg = receiverSegment(text);
     const paren = seg.indexOf("(");
     if (paren < 0) {
+      const index = indexer ? /^([A-Za-z_$][\w$]*)\[([^[\]]*)\]$/.exec(seg) : null;
+      if (index) {
+        out.push({ name: index[1]!, call: false }, { name: indexer!, call: true, args: index[2]! });
+        continue;
+      }
       if (seg.includes("[") || seg.includes("<") || !seg) return null;
       out.push({ name: seg, call: false });
       continue;

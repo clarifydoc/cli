@@ -18,6 +18,9 @@ let platformSuffixesByLanguage: ReadonlyMap<string, readonly string[]> = new Map
 /** The importing file's language says the import names its standard library (`LanguagePluginManifest.standardImport`). */
 let standardImportRule: (importingFile: string, source: string, hasFile: (path: string) => boolean) => boolean = () => false;
 
+/** Languages whose imports name the package a file declares (`LanguagePluginManifest.importsDeclaredPackages`). */
+let declaredPackageLanguages: ReadonlySet<string> = new Set();
+
 /** Called once by the registry after aggregating every plugin's data. */
 export function registerLinkScoringData(
   prefixes: readonly string[],
@@ -25,7 +28,9 @@ export function registerLinkScoringData(
   partialPrefixes: ReadonlyMap<string, string> = new Map(),
   platformSuffixes: ReadonlyMap<string, readonly string[]> = new Map(),
   standardImport?: (importingFile: string, source: string, hasFile: (path: string) => boolean) => boolean,
+  declaredPackages: ReadonlySet<string> = new Set(),
 ): void {
+  declaredPackageLanguages = declaredPackages;
   if (standardImport) standardImportRule = standardImport;
   externalModulePrefixes = prefixes;
   stripSourceExtensionReSlot = stripRe;
@@ -272,11 +277,46 @@ function setPreferring(map: Map<string, string>, key: string, filePath: string):
  *  bare-name resolution in a multi-project solution. */
 const projectOfCache = new WeakMap<Map<string, string>, Map<string, string>>();
 
+/**
+ * Per filePathMap, `${family}\0${package}\0${name}` → the files declaring that package and a type or top-level
+ * function of that name (`importsDeclaredPackages`: Java, Kotlin) — what an import resolves to whatever
+ * directory holds the file.
+ */
+const declaredMembersCache = new WeakMap<Map<string, string>, Map<string, string[]>>();
+
+/** The one file that declares the package and the member `source` names; undefined when none or several do. */
+function declaredPackageTarget(source: string, sourceFile: string, filePathMap: Map<string, string>): string | undefined {
+  const index = declaredMembersCache.get(filePathMap);
+  if (!index || index.size === 0 || source.includes("*")) return undefined;
+  const family = extensionFamily(sourceFile) ?? "";
+  const segments = source.split(".");
+  // The longest package that has a declaring file: `com.x.Club.Builder` names `Club` in `com.x`.
+  for (let i = segments.length - 1; i > 0; i--) {
+    const files = index.get(`${family}\0${segments.slice(0, i).join(".")}\0${segments[i]}`);
+    if (files) return files.length === 1 ? files[0] : undefined;
+  }
+  return undefined;
+}
+
 /** Build a map for resolving import sources to file paths */
 export function buildFilePathMap(analyses: FileAnalysis[]): Map<string, string> {
   const map = new Map<string, string>();
   const projectOf = new Map<string, string>();
+  const declared = new Map<string, string[]>();
+  declaredMembersCache.set(map, declared);
   for (const a of analyses) {
+    if (a.packageName && declaredPackageLanguages.has(a.language)) {
+      const family = extensionFamily(a.filePath) ?? "";
+      const names = new Set<string>();
+      for (const c of a.classes) names.add(c.name.split(".")[0]!);
+      for (const f of a.functions) if (!f.name.includes(".") && !f.name.startsWith("<")) names.add(f.name);
+      for (const name of names) {
+        const key = `${family}\0${a.packageName}\0${name}`;
+        const list = declared.get(key);
+        if (list) list.push(a.filePath);
+        else declared.set(key, [a.filePath]);
+      }
+    }
     if (a.projectId) projectOf.set(a.filePath, a.projectId);
     map.set(a.filePath, a.filePath);
     const base = a.filePath.replace(requireRegistered(stripSourceExtensionReSlot), "");
@@ -404,6 +444,9 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
 
   // 4. Dotted module path: "models.user" → "models/user", "services.user_service" → "services/user_service"
   if (importSource.includes(".")) {
+    // A type of a declared package is in the file that declares it, whichever directory holds it.
+    const declared = declaredPackageTarget(importSource, sourceFile, filePathMap);
+    if (declared) return declared;
     const asPath = importSource.replace(/\./g, "/");
     const dotMatch = tryMatch(asPath, filePathMap, sourceFile);
     if (dotMatch) return dotMatch;

@@ -339,6 +339,11 @@ export const PLATFORM_SUFFIXES_BY_LANGUAGE: ReadonlyMap<string, readonly string[
   ALL_MANIFESTS.filter((m) => m.platformSuffixes?.length).map((m) => [m.language, m.platformSuffixes!]),
 );
 
+/** Languages whose imports name the package a file declares (`LanguagePluginManifest.importsDeclaredPackages`). */
+const DECLARED_PACKAGE_LANGUAGES: ReadonlySet<string> = new Set(
+  ALL_MANIFESTS.filter((m) => m.importsDeclaredPackages).map((m) => m.language),
+);
+
 /** Languages that describe an API rather than implement it (see `LanguagePluginManifest.apiContract`). */
 const API_CONTRACT_LANGUAGES: ReadonlySet<string> = new Set(
   ALL_MANIFESTS.filter((m) => m.apiContract).map((m) => m.language),
@@ -590,7 +595,7 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
 // Push the aggregates into link-scoring (it cannot import the registry: it is
 // imported by plugin code, and metas are imported by the registry — a static
 // import here would close an ESM cycle and TDZ plugin classes).
-registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE, isStandardImport);
+registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE, isStandardImport, DECLARED_PACKAGE_LANGUAGES);
 
 // ─── Framework detection rules ───────────────────────────────────────────
 
