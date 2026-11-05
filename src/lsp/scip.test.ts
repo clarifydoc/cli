@@ -26,8 +26,16 @@ interface Occ {
   range: number[];
   symbol: string;
   def?: boolean;
+  /** The typed_range oneof: SingleLineRange (field 8) or MultiLineRange (field 9). */
+  typed?: number[];
 }
-const occurrence = (o: Occ) => [...bytes(1, o.range.flatMap(varint)), ...str(2, o.symbol), ...(o.def ? int(3, 1) : [])];
+// An empty `range` writes no field 1 at all, as a producer that sets only the typed range does.
+const occurrence = (o: Occ) => [
+  ...(o.range.length ? bytes(1, o.range.flatMap(varint)) : []),
+  ...str(2, o.symbol),
+  ...(o.def ? int(3, 1) : []),
+  ...(o.typed ? bytes(o.typed.length === 3 ? 8 : 9, o.typed.flatMap((n, i) => int(i + 1, n))) : []),
+];
 const doc = (path: string, occs: Occ[]) => [...str(1, path), ...occs.flatMap((o) => bytes(2, occurrence(o)))];
 const index = (docs: Array<[string, Occ[]]>, root = "file:///repo") =>
   new Uint8Array([
@@ -45,6 +53,15 @@ describe("decodeScip", () => {
     expect(decoded.documents).toEqual([
       { path: "src/a.ts", occurrences: [{ range: [3, 4, 9], symbol: "npm pkg 1.0 src/b.ts/run().", roles: 0 }, { range: [0, 9, 1, 2], symbol: "local 0", roles: 1 }] },
     ]);
+  });
+
+  it("reads the typed range, which wins over the deprecated one when both are set", () => {
+    const decoded = decodeScip(index([["src/a.ts", [
+      { range: [], typed: [3, 4, 9], symbol: "a#" },
+      { range: [], typed: [0, 9, 1, 2], symbol: "b#" },
+      { range: [7, 0, 1], typed: [3, 4, 9], symbol: "c#" },
+    ]]]));
+    expect(decoded.documents[0]!.occurrences.map((o) => o.range)).toEqual([[3, 4, 9], [0, 9, 1, 2], [3, 4, 9]]);
   });
 
   it("refuses a truncated index rather than guessing", () => {
@@ -70,6 +87,14 @@ describe("scipAnswers", () => {
       // A local symbol resolves within its own document.
       { file: "src/a.ts", line: 7, column: 1, targets: [{ file: "src/a.ts", line: 3 }] },
     ]);
+  });
+
+  it("answers from an index that writes only typed ranges", () => {
+    const idx = decodeScip(index([
+      ["src/a.ts", [{ range: [], typed: [4, 2, 5], symbol: RUN }]],
+      ["src/b.ts", [{ range: [], typed: [9, 16, 19], symbol: RUN, def: true }]],
+    ]));
+    expect(scipAnswers(idx, [q("src/a.ts", 5, 3)]).answers).toEqual([{ file: "src/a.ts", line: 5, column: 3, targets: [{ file: "src/b.ts", line: 10 }] }]);
   });
 
   it("gives no target for a symbol defined outside the index (a dependency)", () => {

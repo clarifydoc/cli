@@ -13,7 +13,9 @@ import type { DefinitionQuery } from "./lsp-enhancer.js";
  * Only the fields this needs are decoded — no protobuf dependency:
  * Index.metadata(1) → Metadata.tool_info(2).name(1), .project_root(3);
  * Index.documents(2) → Document.relative_path(1), .occurrences(2) →
- * Occurrence.range(1, packed int32), .symbol(2), .symbol_roles(3).
+ * Occurrence.range(1, packed int32, deprecated) or the typed_range oneof
+ * single_line_range(8) / multi_line_range(9) — the typed one wins —, .symbol(2),
+ * .symbol_roles(3).
  */
 
 export interface ScipOccurrence {
@@ -89,10 +91,23 @@ class Reader {
   }
 }
 
+/** SingleLineRange (3 fields) or MultiLineRange (4): proto3 omits a zero, so every slot starts at 0. */
+function typedRange(r: Reader, size: 3 | 4): number[] {
+  const out = new Array<number>(size).fill(0);
+  for (const [field, wire] of r.fields()) {
+    if (field >= 1 && field <= size && wire === 0) out[field - 1] = r.varint();
+    else r.skip(wire);
+  }
+  return out;
+}
+
 function occurrence(r: Reader): ScipOccurrence {
   const o: ScipOccurrence = { range: [], symbol: "", roles: 0 };
+  let typed: number[] | undefined;
   for (const [field, wire] of r.fields()) {
-    if (field === 1 && wire === 2) {
+    if (field === 8 && wire === 2) typed = typedRange(r.bytes(), 3);
+    else if (field === 9 && wire === 2) typed = typedRange(r.bytes(), 4);
+    else if (field === 1 && wire === 2) {
       const packed = r.bytes();
       while (packed.pos < packed.end) o.range.push(packed.varint());
     } else if (field === 1 && wire === 0) o.range.push(r.varint());
@@ -100,6 +115,8 @@ function occurrence(r: Reader): ScipOccurrence {
     else if (field === 3 && wire === 0) o.roles = r.varint();
     else r.skip(wire);
   }
+  // The typed range (what current indexers write) wins over the deprecated `range`.
+  if (typed) o.range = typed;
   return o;
 }
 
