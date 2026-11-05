@@ -14,6 +14,20 @@ recorded in the git history only.
 
 ### Added
 
+- **Browser test suites reach the pages they open.** `page.goto("/projects/1")`, `cy.visit(…)` and `browser.url(…)`
+  in a test file are navigations (`FileAnalysis.browserNavigations`), joined to the screens the client router serves
+  at that path (`ProjectAnalysis.testNavigations`); a test opening a page reaches the screen, the components and
+  composables it uses and the file that mounts the app (`FileAnalysis.appMount`, `ProjectAnalysis.pageParts`) —
+  never another routed page, never past a component more than 20 UI files share. Whether a file is tested
+  (`clarifydoc_file`) names the test and the page.
+- **A mocked module is not tested by the test that mocks it.** `vi.mock`/`jest.mock` with a literal path
+  (`FileAnalysis.mockedModules`, partial mocks aside): the test's import of that file and its calls into it no
+  longer count.
+- **A Go file the default build leaves out** (`//go:build windows`, `_windows.go`) is compiled into no test run
+  (`FileAnalysis.excludedFromDefaultBuild`): no importer or reach counts for it; tests are taken to run on Linux.
+- **A Rails query chain calls the model's class methods.** `Club.where(…).by_rank` resolves class-side first —
+  scopes, extended modules, a concern's `ClassMethods` — then as before.
+
 - **Django REST Framework runs what it dispatches.** A ViewSet route reaches the hooks DRF's own action calls
   (`get_queryset`, `get_object`, `perform_create`, `get_serializer`, …) on the project's nearest override;
   `serializer.is_valid()` reaches the serializer's `validate_<field>` (fields it declares or `Meta.fields`
@@ -273,6 +287,9 @@ recorded in the git history only.
   module alive instead of reporting them unreachable.
 
 ### Changed
+
+- **Fixed: a call on a constant the project never declares** (`I18n.default_locale`) no longer falls back to a
+  project method of the same name in a language that looks capitalized names up as constants.
 
 - **Doc-comment syntax lives on the language manifest** (`LanguagePluginManifest.docComments`), so a tool reading
   it on demand never needs the plugin loaded.
