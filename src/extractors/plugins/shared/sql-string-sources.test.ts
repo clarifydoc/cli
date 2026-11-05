@@ -314,3 +314,25 @@ describe("joinedTableRows", () => {
     expect(rows.map((r) => r.target)).toEqual(["kits"]);
   });
 });
+
+describe("statementAccesses — comma source after a JOIN's ON, T-SQL DELETE alias", () => {
+  const brief = (q: string) => statementAccesses(q).map((a) => `${a.verb} ${a.table}${a.joined ? " j" : ""}`);
+
+  it("reads a comma-joined source after a JOIN's ON condition", () => {
+    expect(brief("SELECT c.id FROM clubs c JOIN players p ON p.club_id = c.id, cars k WHERE k.id = 1")).toEqual([
+      "SELECT clubs", "SELECT players j", "SELECT cars j",
+    ]);
+    // A comma inside a function call of the condition ends nothing.
+    expect(brief("SELECT * FROM clubs c JOIN players p ON coalesce(p.club_id, 0) = c.id")).toEqual(["SELECT clubs", "SELECT players j"]);
+  });
+
+  it("reads `DELETE a FROM clubs a` as a write of clubs, joins included", () => {
+    expect(brief("DELETE s FROM stadiums s WHERE s.closed = 1")).toEqual(["DELETE FROM stadiums"]);
+    expect(brief("DELETE s FROM [dbo].[seats] AS s INNER JOIN stands t ON t.id = s.stand_id")).toEqual(["DELETE FROM seats", "SELECT stands j"]);
+    expect(brief("DELETE clubs FROM clubs JOIN players ON players.club_id = clubs.id")).toEqual(["DELETE FROM clubs", "SELECT players j"]);
+  });
+
+  it("does not take prose for a DELETE", () => {
+    expect(brief("Delete item from cart")).toEqual([]);
+  });
+});

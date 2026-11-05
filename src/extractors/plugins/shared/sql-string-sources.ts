@@ -47,7 +47,7 @@ const LINE_TOKEN_RE = /"((?:[^"\\]|\\.)*)"|\b([A-Z][A-Z0-9_]{2,})\b/g;
  * modifiers (`INSERT IGNORE INTO`, `UPDATE IGNORE t`, `DELETE LOW_PRIORITY FROM`): never a table.
  */
 const SQL_START_RE =
-  /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
+  /\b(SELECT|INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|DELETE\s+(?:TOP\s*\([^)]*\)\s*(?:PERCENT\s+)?)?\w+\s+FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
 /** {@link SQL_START_RE} where the text starts. */
 const SQL_START_AT_RE = new RegExp(`^${SQL_START_RE.source}`, "i");
 /** MySQL's statement modifiers, dropped from the verb. */
@@ -375,6 +375,37 @@ function statementStart(stmt: string): RegExpMatchArray | null {
   return first;
 }
 
+/** The clause words that end a JOIN's `ON` condition. */
+const ON_ENDS_RE = /^(?:JOIN|INNER|LEFT|RIGHT|FULL|CROSS|NATURAL|OUTER|WHERE|GROUP|ORDER|HAVING|UNION|LIMIT|OFFSET|FETCH|EXCEPT|INTERSECT|WINDOW|FOR|RETURNING|SET)\b/i;
+
+/**
+ * For the text after a JOIN's table: the offset of the comma that ends its `ON` condition at the top level (the
+ * comma-joined source follows it), or null when the condition ends at a clause word, a `;` or the end first.
+ */
+function commaAfterOn(rest: string): number | null {
+  const on = /^\s*(?:(?:AS\s+)?(?!ON\b)\w+\s+)?ON\b/i.exec(rest);
+  if (!on) return null;
+  let depth = 0;
+  let quote = "";
+  for (let i = on[0].length; i < rest.length; i++) {
+    const ch = rest[i]!;
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "'") quote = ch;
+    else if (ch === "(") depth++;
+    else if (ch === ")") {
+      if (--depth < 0) return null;
+    } else if (depth === 0) {
+      if (ch === ";") return null;
+      if (ch === ",") return i;
+      if (/[A-Za-z]/.test(ch) && !/\w/.test(rest[i - 1] ?? " ") && ON_ENDS_RE.test(rest.slice(i, i + 12))) return null;
+    }
+  }
+  return null;
+}
+
 /**
  * Every table and routine a statement touches, the statement's own target
  * first: the written table of a write, the top-level FROM source of a SELECT.
@@ -391,7 +422,7 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
   const sql = stmt.slice(start.index!);
   // A write after CTEs reads what their bodies read: the sources are scanned from the `WITH`.
   const sourceSql = start.index! > 0 && /^\s*\(?\s*WITH\b/i.test(stmt) && !/^SELECT/i.test(start[1]!) ? stmt.slice(stmt.search(/\bWITH\b/i)) : sql;
-  const verb = start[1]!.toUpperCase().replace(VERB_MODIFIER_RE, "").replace(/\s+/g, " ");
+  const verb = start[1]!.toUpperCase().replace(VERB_MODIFIER_RE, "").replace(/\s+/g, " ").replace(/^DELETE\b.*\bFROM$/, "DELETE FROM");
   const ctes = cteNames(stmt);
   let aliasMap: Map<string, string> | undefined;
   const aliases = (): Map<string, string> => (aliasMap ??= sourceAliases(sourceSql));
@@ -412,6 +443,15 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
     }
     const m = sql.match(WRITE_RE) ?? sql.match(CREATE_DROP_RE);
     let written = m ? m[2] ?? m[3] ?? m[4] ?? m[5] : undefined;
+    // T-SQL `DELETE s FROM stadiums s [JOIN …]`: the name after DELETE is the alias (or the table) the FROM gives it.
+    const tsqlDelete = m ? null : /^DELETE\s+(?:TOP\s*\([^)]*\)\s*(?:PERCENT\s+)?)?(\w+)\s+FROM\b/i.exec(sql);
+    if (tsqlDelete) {
+      // Only an alias a source gives, or a source's own name: "Delete item from cart" is prose.
+      const name = tsqlDelete[1]!;
+      const known = aliases().get(name.toLowerCase()) ?? (new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?:[\w$\[\]"` + "`" + String.raw`]+\.)*[\[\"` + "`" + String.raw`]?${name}[\]\"` + "`" + String.raw`]?(?![\w$])`, "i").test(sourceSql) ? name : undefined);
+      if (!known) return [];
+      written = known;
+    }
     // `UPDATE c SET … FROM clubs c` (T-SQL, also through a JOIN): the alias names the table its source gives it.
     if (written && verb.startsWith("UPDATE") && /^\w+$/.test(written)) written = aliases().get(written.toLowerCase()) ?? written;
     const table = tableName(written, ctes);
@@ -434,6 +474,19 @@ export function statementAccesses(raw: string): SqlStatementAccess[] {
     if (/^USING/i.test(m[0]) && !usingSources) continue;
     const top = depthAt(m.index) === 0;
     sources.push({ name: captured(m) ?? "", routine: m[5] !== undefined, top });
+    // `FROM a JOIN b ON a.id = b.a_id, c WHERE …`: a comma ends the ON condition and opens another source. An ON
+    // clause states SQL, so no WHERE is wanted here.
+    if (m[5] === undefined && /^JOIN/i.test(m[0])) {
+      const afterOn = commaAfterOn(sourceSql.slice(m.index + m[0].length));
+      let rest = afterOn === null ? "" : sourceSql.slice(m.index + m[0].length + afterOn);
+      let more: RegExpMatchArray | null;
+      while (rest && (more = rest.match(COMMA_SOURCE_RE)) !== null) {
+        sources.push({ name: captured(more) ?? "", routine: more[5] !== undefined, top });
+        rest = rest.slice(more[0].length);
+        if (more[5] !== undefined) break;
+      }
+      continue;
+    }
     if (m[5] !== undefined || !hasWhere || !/^(?:FROM|USING)/i.test(m[0])) continue;
     // `FROM a x, b y WHERE …` — only where a WHERE follows, so UI prose
     // ("Select friends from Facebook, Twitter") gains nothing.

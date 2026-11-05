@@ -76,6 +76,15 @@ public class LeagueValueProviderFactory : IValueProviderFactory {
   });
 });
 
+describe("C# EF raw SQL names its tables", () => {
+  it("reads the tables of FromSqlRaw and ExecuteSqlRaw statements", async () => {
+    const rows = await dbSourcesOf(`    var open = _db.Clubs.FromSqlRaw("SELECT * FROM clubs c JOIN players p ON p.club_id = c.id WHERE c.open = 1").ToList();
+    _db.Database.ExecuteSqlRaw("UPDATE garages SET open = 0");`);
+    const sql = rows.filter((r) => r.name.startsWith("EF SQL:")).map((r) => `${r.name} ${r.entity} ${r.access}${r.joined ? " joined" : ""}`);
+    expect(sql).toEqual(["EF SQL: SELECT clubs read", "EF SQL: SELECT players read joined", "EF SQL: UPDATE garages write"]);
+  });
+});
+
 async function apiCallsOf(body: string): Promise<DataSourceInfo[]> {
   const src = `namespace X;
 public class S {
