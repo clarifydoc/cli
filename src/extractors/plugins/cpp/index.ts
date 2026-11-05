@@ -154,7 +154,7 @@ export const cppSpec: RegexLangSpec = {
         const path = m[1]!.replace(/\s+/g, "");
         // `new Home::Table::Iterator(…)` constructs the nested class at that path, as `new Club(` constructs `Club`. A one-segment
         // scope (`new Rank::Iterator(…)`, an alias maybe) keeps the owner as the receiver, which the alias follows.
-        if (/\bnew\s+(?:::\s*)?$/.test(line.slice(0, m.index)) && path.includes("::") && /^[A-Z]/.test(m[2]!)) return { name: `${path}::${m[2]}`, leafName: m[2]! };
+        if (/\bnew\s+(?:::\s*)?$/.test((line ?? "").slice(0, m.index)) && path.includes("::") && /^[A-Z]/.test(m[2]!)) return { name: `${path}::${m[2]}`, leafName: m[2]! };
         return { name: `${path.includes("::") ? path : m[1]}.${m[2]}`, leafName: m[2]!, receiverType: path };
       },
     },
