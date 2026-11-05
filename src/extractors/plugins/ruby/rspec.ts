@@ -42,6 +42,13 @@ function titleOf(args: string): { title: string; subject?: string } | null {
 const DESCRIBED = /(?<![\w.@$:])described_class\b/g;
 const DESCRIBED_LENGTH = "described_class".length;
 
+/** A line with `described_class` spelled as the constant a block types it as (its `localTypes`), as the call scan reads it. */
+export function withDescribedClass(line: string, fn: FunctionInfo): string {
+  if (!line.includes("described_class")) return line;
+  const subject = fn.localTypes?.find((l) => l.name === "described_class")?.type;
+  return subject ? line.replace(DESCRIBED, subject) : line;
+}
+
 /**
  * The calls of `fromLine..toLine` (0-based, inclusive) less those on lines a nested block owns.
  * `described_class` is the described constant itself, so a call through it is read as a call on
@@ -109,38 +116,6 @@ function ownLets(code: readonly string[], from: number, to: number, owned: Reado
   return out;
 }
 
-/** The enqueues of a job class (`described_class.perform_later(…)`): they run its `perform`. */
-const ENQUEUES = new Set(["perform_later", "perform_now", "perform_async", "perform_in", "perform_at"]);
-
-/**
- * Member calls on a name the block types, written without parentheses (`service.perform`,
- * `expect(service.ready?)`): in Ruby `x.name` always calls a method. The parenthesised spelling is
- * already read. An enqueue on the described job class also calls its `perform`.
- */
-function addTypedMemberCalls(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, typed: ReadonlyMap<string, string>, calls: CallInfo[]): void {
-  if (typed.size === 0) return;
-  const have = new Set(calls.map((c) => c.name));
-  const re = /(?<![\w.@$:])([a-z_]\w*)\.([a-z_]\w*[?!]?)(?![\w?!])(?!\s*=(?![=~>]))/g;
-  for (let i = from; i <= to; i++) {
-    if (owned.has(i)) continue;
-    for (const m of code[i]!.matchAll(re)) {
-      const type = typed.get(m[1]!);
-      if (!type) continue;
-      const name = `${m[1] === "described_class" ? type : m[1]}.${m[2]}`;
-      // `x.name(…)` is the call scan's (held back as noise until its receiver is typed, then restored).
-      const parenthesised = /^\s*\(/.test(code[i]!.slice(m.index + m[0].length));
-      if (!parenthesised && !have.has(name)) {
-        have.add(name);
-        calls.push({ name, kind: "internal", target: null, line: i + 1, column: m.index });
-      }
-      if (m[1] === "described_class" && ENQUEUES.has(m[2]!) && !have.has(`${type}.perform`)) {
-        have.add(`${type}.perform`);
-        calls.push({ name: `${type}.perform`, kind: "internal", target: null, line: i + 1, receiverType: type });
-      }
-    }
-  }
-}
-
 /**
  * The spec file's groups, examples and hooks as functions, in source order,
  * appended to `fns`. A file with no RSpec group is returned as it was.
@@ -203,18 +178,34 @@ export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPattern
     letsOf.set(b, scope);
     return scope;
   };
-  const out = [...fns];
-  for (const b of blocks) {
-    const owned = ownedOf.get(b)!;
-    const path = pathOf(b);
+  // The names typed inside a block: `described_class`, and the `let`s built from a known class.
+  const typedOf = (b: Block): Map<string, string> => {
     const subject = subjectOf(b);
     const typed = new Map<string, string>(subject ? [["described_class", subject]] : []);
     for (const [name, type] of scopeOf(b)) {
       if (type) typed.set(name, type);
       else typed.delete(name);
     }
+    return typed;
+  };
+  // A helper `def` written in a group sees what the group types: `described_class` and its `let`s
+  // are methods it can call, unless it binds the name itself.
+  for (const fn of fns) {
+    let inner: Block | null = null;
+    for (const b of blocks) if (b.start < fn.line - 1 && fn.endLine - 1 <= b.end && (!inner || b.start > inner.start)) inner = b;
+    if (!inner) continue;
+    const own = new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]);
+    const seen = [...typedOf(inner)].filter(([name]) => !own.has(name)).map(([name, type]) => ({ name, type }));
+    if (seen.length) fn.localTypes = [...(fn.localTypes ?? []), ...seen];
+  }
+  const out = [...fns];
+  for (const b of blocks) {
+    const owned = ownedOf.get(b)!;
+    const path = pathOf(b);
+    const subject = subjectOf(b);
+    const typed = typedOf(b);
+    // Member calls on the names typed here (`service.perform`) are the plugin's typed-call passes', as in any method.
     const calls = callsOver(code, b.start, b.end, owned, ["#"], callPatterns, subject);
-    addTypedMemberCalls(code, b.start, b.end, owned, typed, calls);
     const fn: FunctionInfo = {
       // `::` would read as the `file::symbol` separator; the title itself stays as written.
       name: [...path, b.title].join(" › ").replace(/::/g, ":"),
