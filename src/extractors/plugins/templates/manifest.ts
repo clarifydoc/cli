@@ -42,6 +42,14 @@ export const freemarkerManifest: LanguagePluginManifest = {
   importTarget: false,
 };
 
+/** EJS views (`.ejs`), the Express default: `<%- include('partials/x') %>`, scriptlets, forms and links. */
+export const ejsManifest: LanguagePluginManifest = {
+  language: "ejs",
+  parsing: "regex",
+  extensions: [".ejs"],
+  importTarget: false,
+};
+
 /** Razor views and pages (`.cshtml`); Blazor components (`.razor`) are the blazor plugin's. */
 export const razorManifest: LanguagePluginManifest = {
   language: "razor",

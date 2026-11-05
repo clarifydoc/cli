@@ -262,8 +262,12 @@ export function visitVueRouterRoute(node: Node, routes: RouteInfo[], facts?: Rou
           // Angular lazy routes carry the target in a `loadComponent`/
           // `loadChildren` thunk (`() => import('./x').then(m => m.XComponent)`)
           // instead of a bare `component` identifier — same join target.
-          handler = componentHandler(value);
-          componentPath = componentSpecifier(value);
+          // A `loadChildren` target is a route array or a module, never a page: the parent renders no
+          // screen of its own, its children (resolved from the module) do.
+          if (keyText !== "loadChildren") {
+            handler = componentHandler(value);
+            componentPath = componentSpecifier(value);
+          }
           if (keyText === "loadChildren") lazyChildren = /import\(\s*['"]([^'"]+)['"]\s*\)/.exec(value.text)?.[1] ?? null;
         } else if ((keyText === "redirect" || keyText === "redirectTo") && value) {
           redirectTo = value.type === "string" ? stripQuotes(value.text) : "";

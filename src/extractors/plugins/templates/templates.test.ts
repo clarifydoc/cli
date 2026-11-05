@@ -125,4 +125,22 @@ describe("URLs a page script reads off an element", () => {
     readTemplate(d, `<button id="save" data-url="{% url 'league-api:dashboard' %}">Save</button>`, "django");
     expect(d.interactiveElements.find((e) => e.request)?.request).toEqual({ method: "", target: "route:league-api:dashboard", attribute: "data-url" });
   });
+
+  it("reads an EJS view: includes, scriptlets blanked, a form and links with output tags in their attributes", () => {
+    const a = analysis("views/clubs/list.ejs", "ejs");
+    readTemplate(a, `<title>Clubs</title>
+<%- include('partials/header') %>
+<% clubs.forEach(function (club) { %>
+  <a href="/clubs/<%= club.id %>">View <%= club.name %></a>
+<% }) %>
+<form method="post" action="<%= basePath %>/clubs">
+  <input name="name">
+  <button type="submit">Add</button>
+</form>
+<%- include("partials/footer", { year: 2026 }) %>`, "ejs");
+    expect(a.subComponents.map((s) => [s.name, s.importSource])).toEqual([["header", "partials/header"], ["footer", "partials/footer"]]);
+    expect(a.interactiveElements.filter((e) => e.request).map((e) => `${e.element} ${e.request?.method} ${e.request?.target}`)).toEqual(["link GET /clubs/:param", "form POST /clubs"]);
+    expect(a.dataSources.map((d) => d.name)).toEqual(["GET /clubs/:param", "POST /clubs"]);
+    expect(a.screens[0]).toMatchObject({ formType: "EjsTemplate", caption: "Clubs" });
+  });
 });

@@ -368,7 +368,7 @@ async function loadCachedFileResult(
   const hasFrontendRoute = (analysis.routes ?? []).some((r) => r.kind === "frontend");
   const isUiSource =
     hasFrontendRoute ||
-    /\.(vue|svelte|jsx|tsx)$/.test(analysis.filePath) ||
+    /\.(vue|svelte|astro|jsx|tsx)$/.test(analysis.filePath) ||
     (analysis.subComponents?.length ?? 0) > 0 ||
     (analysis.interactiveElements?.length ?? 0) > 0;
   let rawSource: string | null = null;
@@ -2598,7 +2598,10 @@ function withoutComments(source: string): string {
 const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|urlpath|url_path|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;
 
 function extractNavigationTargets(raw: string, fromBase = false): string[] {
-  const source = withoutComments(raw).replace(BASE_URL_PREFIX, "");
+  // An output tag inside a link's value (`href="/clubs/<%= club.id %>"`) is a parameter like `${club.id}`.
+  const source = withoutComments(raw)
+    .replace(BASE_URL_PREFIX, "")
+    .replace(/\bhref\s*=\s*"[^"\n]*<%[=-][^"\n]*"/g, (attr) => attr.replace(/<%[=-]\s*([^%]*?)\s*%>/g, (_m, e: string) => "${" + e.replace(/[^\w.]+/g, "_") + "}"));
   const targets = new Set<string>();
   // Hash routes (AngularJS, hash-mode routers): `href="#/devices"`, `ng-href="#!/log"`, `$location.path('/devices')`.
   for (const m of source.matchAll(/\b(?:ng-)?href\s*=\s*["']#!?(\/(?:\{\{[^}]*\}\}|[^"'\s])*)|\$location\.(?:path|url)\(\s*['"`](\/[^'"`]*)['"`]/g)) targets.add((m[1] ?? m[2])!);
@@ -2921,6 +2924,25 @@ function buildScreensFromRoutes(
   const byPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const knownFiles = new Set(byPath.keys());
 
+  // A page imported through a barrel (`export { default as GaragePage } from './GaragePage'`) is the
+  // file that declares it: follow the re-exports of `name` until a file stating it itself.
+  const throughBarrels = (file: string, name: string, depth = 0): string => {
+    const barrel = byPath.get(file);
+    if (!barrel || depth > 4) return file;
+    const stated = barrel.exports.find((e) => e.name === name && e.source);
+    const sources = stated ? [stated] : barrel.exports.filter((e) => e.name === "*" && e.source);
+    const targets = new Set<string>();
+    for (const e of sources) {
+      const next = resolveImportSource(file, e.source!, knownFiles);
+      if (!next) continue;
+      const inner = stated?.sourceName ?? name;
+      // `export *` forwards only a module that defines the name.
+      if (!stated && !byPath.get(next)?.exports.some((x) => x.name === inner)) continue;
+      targets.add(throughBarrels(next, inner === "default" ? name : inner, depth + 1));
+    }
+    return targets.size === 1 ? [...targets][0]! : file;
+  };
+
   // Follow a route's `component` to the concrete project file it renders.
   // Relative/absolute specifiers (lazy `import("./pak.vue")` paths) resolve
   // against the route-config file; a bare identifier (statically-imported
@@ -2938,7 +2960,7 @@ function buildScreensFromRoutes(
       return null;
     }
     const viaImport = importIndex.localFor(configFile, spec);
-    if (viaImport) return viaImport;
+    if (viaImport) return throughBarrels(viaImport, spec);
     // A view class whose screen is its markup (`CatalogView` → `CatalogView.xaml`, its code-behind a
     // `.xaml.cs`): the one file of the sub-project with a screen of that name.
     // A module the router names (`ClubWeb.Live.Clubs`, or the alias-less `Live.Clubs`) is the screen of that module name.
@@ -3042,7 +3064,9 @@ function buildScreensFromRoutes(
   // A file several screen classes live in (three view controllers in one Swift file): one screen per class.
   const pages: Array<{ analysis: FileAnalysis; routes: RouteInfo[] }> = [];
   for (const entry of byComponent.values()) {
-    const declared = (n: string | null | undefined): n is string => !!n && entry.analysis.classes.some((c) => c.name === n);
+    // A function component counts as well: two pages of one `.tsx` file are two screens.
+    const declared = (n: string | null | undefined): n is string =>
+      !!n && (entry.analysis.classes.some((c) => c.name === n) || (/^[A-Z]/.test(n) && entry.analysis.functions.some((f) => f.name === n)));
     const names = [...new Set(entry.routes.map((r) => r.componentPath).filter(declared))];
     if (names.length < 2) {
       pages.push(entry);
@@ -3121,7 +3145,7 @@ function buildScreensFromComponents(
     // Angular `.ts` component with an inline `@Component` template).
     const hasTree = (analysis.templateTree?.length ?? 0) > 0;
     // An Angular component with an external template is UI even when its tree is empty (a shell of links and an outlet).
-    return hasTree || !!analysis.angularTemplateUrl || /\.(vue|svelte|jsx|tsx|razor)$/.test(analysis.filePath);
+    return hasTree || !!analysis.angularTemplateUrl || /\.(vue|svelte|astro|jsx|tsx|razor)$/.test(analysis.filePath);
   });
   const parts = importIndex ? routerlessParts(allAnalyses, candidates, importIndex) : new Set<string>();
   for (const analysis of candidates) {
@@ -3189,7 +3213,7 @@ function routerlessParts(allAnalyses: FileAnalysis[], candidates: FileAnalysis[]
 function screenNameFromFile(analysis: FileAnalysis): string {
   const fileBaseName = analysis.filePath.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "");
   // A single-file component IS its file: `UserCard.vue` is `UserCard`.
-  if (/\.(vue|svelte|razor)$/.test(analysis.filePath)) return fileBaseName;
+  if (/\.(vue|svelte|astro|razor)$/.test(analysis.filePath)) return fileBaseName;
   const namedExport = analysis.exports.find(
     (e) => e.name !== "default" && (e.kind === "function" || e.kind === "class"),
   );
@@ -3220,6 +3244,8 @@ function screenFormType(analysis: FileAnalysis, isComponent: boolean): string {
     ? "Blazor"
     : path.endsWith(".vue")
     ? "Vue"
+    : path.endsWith(".astro")
+    ? "Astro"
     : path.endsWith(".svelte")
       ? "Svelte"
       : fw.includes("angular")

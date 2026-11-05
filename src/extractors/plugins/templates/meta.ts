@@ -1,6 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { readTemplate, templateSpec, type TemplateLanguage } from "./index.js";
-import { freemarkerManifest, gotemplateManifest, handlebarsManifest, liquidManifest, razorManifest, velocityManifest } from "./manifest.js";
+import { ejsManifest, freemarkerManifest, gotemplateManifest, handlebarsManifest, liquidManifest, razorManifest, velocityManifest } from "./manifest.js";
 import { RazorTargetResolver } from "./razor-target-resolver.js";
 
 /** Server templates: their screens, partials, forms and links (see index.ts). */
@@ -15,4 +15,5 @@ export const liquidMeta = templateMeta(liquidManifest, "liquid");
 export const velocityMeta = templateMeta(velocityManifest, "velocity");
 export const gotemplateMeta = templateMeta(gotemplateManifest, "gotemplate");
 export const freemarkerMeta = templateMeta(freemarkerManifest, "freemarker");
+export const ejsMeta = templateMeta(ejsManifest, "ejs");
 export const razorMeta: LanguagePluginMeta = { ...templateMeta(razorManifest, "razor"), dispatchResolvers: [new RazorTargetResolver()] };
