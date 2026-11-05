@@ -5,7 +5,7 @@ import { findChildByType } from "../../../shared/node-helpers.js";
 import { buildAuth, filterKind, routeFilters, splitList, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { collectGroupCalls, extractMinimalApiRoutes, GROUP_CALL_GATE, MINIMAL_API_GATE } from "./minimal-api.js";
-import { FAST_ENDPOINT_GATE, extractFastEndpoints } from "./fast-endpoints.js";
+import { FAST_ENDPOINT_GATE, collectFastPrefix, extractFastEndpoints } from "./fast-endpoints.js";
 import { PAGE_MODEL_GATE, extractPageModels } from "./razor-pages.js";
 import { AZURE_FUNCTIONS_GATE, extractAzureFunctionRoutes } from "./azure-functions.js";
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
@@ -911,7 +911,8 @@ export const csharpRouteExtractor: RouteExtractor = {
     // Cheap gate: skip the full-tree walk for files with no route attributes.
     const minimal = MINIMAL_API_GATE.test(sourceText);
     const azure = AZURE_FUNCTIONS_GATE.test(sourceText);
-    const fast = FAST_ENDPOINT_GATE.test(sourceText) && /\bEndpoint(?:WithoutRequest|WithMapping)?\s*<|\bEp\.|\bEndpointWithoutRequest\b|:\s*Endpoint\b/.test(sourceText);
+    const fast = FAST_ENDPOINT_GATE.test(sourceText) && /\bEndpoint(?:WithoutRequest|WithMapping)?\s*<|\bEp\.|\bEndpointWithoutRequest\b|:\s*Endpoint\b|:\s*Group\b/.test(sourceText);
+    if (facts && sourceText.includes("RoutePrefix")) collectFastPrefix(sourceText, facts);
     const pageModel = !!facts && PAGE_MODEL_GATE.test(sourceText);
     if (
       !minimal &&
@@ -932,7 +933,7 @@ export const csharpRouteExtractor: RouteExtractor = {
     // Azure Functions HTTP triggers (see azure-functions.ts).
     if (azure) extractAzureFunctionRoutes(tree.rootNode, routes);
     // FastEndpoints (`Configure() { Get("/x"); }`) and Razor Pages' PageModel handlers.
-    if (fast) extractFastEndpoints(tree.rootNode, routes);
+    if (fast) extractFastEndpoints(tree.rootNode, routes, facts);
     if (pageModel && facts) extractPageModels(tree.rootNode, facts);
     return routes;
   },

@@ -4,6 +4,7 @@ import { parseSource } from "../../../../parsers/parser-manager.js";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { csharpRouteExtractor } from "./aspnet.js";
 import { razorPageRoutes } from "./razor-pages.js";
+import { fastEndpointPrefixes } from "./fast-endpoint-prefixes.js";
 
 async function read(source: string, file = "C.cs") {
   const tree = await parseSource(source, "csharp" as any, file);
@@ -32,6 +33,8 @@ public class Decoy { public void Configure() { Get("/nope"); } }`;
     const rows = routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler} ${r.owner}`).sort();
     expect(rows).toEqual([
       "GET /api/fixtures/{Id} HandleAsync GetFixtureEndpoint",
+      // A group's endpoint keeps its own path until the group's prefix is joined (`prefixUnresolved`).
+      "GET /list HandleAsync GroupedEndpoint",
       "POST /api/fixtures HandleAsync SaveFixtureEndpoint",
       "POST /api/v2/fixtures HandleAsync SaveFixtureEndpoint",
       "PUT /api/fixtures HandleAsync SaveFixtureEndpoint",
@@ -39,6 +42,40 @@ public class Decoy { public void Configure() { Get("/nope"); } }`;
     ]);
     expect(routes.find((r) => r.path === "/api/fixtures/{Id}")!.auth?.roles).toEqual(["Admin"]);
     expect(routes.find((r) => r.httpMethod === "PUT")!.auth?.anonymous).toBe(true);
+  });
+});
+
+describe("FastEndpoints groups and the global route prefix", () => {
+  const analysis = async (file: string, src: string): Promise<FileAnalysis> => {
+    const { routes, facts } = await read(src, file);
+    return { language: "csharp", filePath: file, projectId: "p", routes, routeFacts: facts } as unknown as FileAnalysis;
+  };
+  it("joins the prefix of a Group<>() class and Endpoints.RoutePrefix, which an endpoint may opt out of", async () => {
+    const program = await analysis("Program.cs", `app.UseFastEndpoints(c => { c.Endpoints.RoutePrefix = "api"; });`);
+    const group = await analysis("ClubsGroup.cs", `public class ClubsGroup : Group { public ClubsGroup() { Configure("clubs", ep => { ep.Description(x => x.WithTags("Clubs")); }); } }`);
+    const eps = await analysis("Eps.cs", `public class ListClubs : EndpointWithoutRequest {
+    public override void Configure() { Get("list"); Group<ClubsGroup>(); }
+    public override async Task HandleAsync(CancellationToken ct) { }
+}
+public class Health : EndpointWithoutRequest {
+    public override void Configure() { Get("/health"); Options(x => x.DontAddRoutePrefix()); }
+    public override async Task HandleAsync(CancellationToken ct) { }
+}
+public class ListCars : EndpointWithoutRequest {
+    public override void Configure() { Get("/cars"); }
+    public override async Task HandleAsync(CancellationToken ct) { }
+}
+public class Orphan : EndpointWithoutRequest {
+    public override void Configure() { Get("x"); Group<MissingGroup>(); }
+    public override async Task HandleAsync(CancellationToken ct) { }
+}`);
+    fastEndpointPrefixes.resolve([program, group, eps], {} as any);
+    expect(eps.routes.map((r) => `${r.httpMethod} ${r.path}${r.prefixUnresolved ? " ?" : ""}`).sort()).toEqual([
+      "GET /api/cars",
+      "GET /api/clubs/list",
+      "GET /health",
+      "GET /x ?",
+    ]);
   });
 });
 
