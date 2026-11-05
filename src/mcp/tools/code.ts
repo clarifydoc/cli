@@ -727,6 +727,10 @@ async function testsOfFile(ctx: ToolContext, loaded: LoadedAnalysis, path: strin
     return lines;
   }
   if (verdict.testSetup) lines.push(`run while the tests are set up: ${verdict.testSetup}`);
+  if (verdict.navigation) {
+    const n = verdict.navigation;
+    lines.push(`opened by a browser test: ${n.test.symbol ? `${n.test.symbol} ` : ""}${loc(n.test.file, n.test.line)} goes to ${n.path}${n.page === path ? "" : ` (part of ${n.page})`}`);
+  }
   const importers = verdict.importers;
   if (importers.length) {
     lines.push(`test files depending on it (${importers.length}):`);

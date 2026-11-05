@@ -195,9 +195,19 @@ export function testReachWalker(
 
 /**
  * What a file's test verdict rests on: a test file depending on it, a test reaching one of its functions, a coverage
- * report that ran its lines, the test framework running it while it sets a test run up (`testSetupRuns`).
+ * report that ran its lines, the test framework running it while it sets a test run up (`testSetupRuns`), a browser
+ * test opening a page it is part of (`testNavigations`, `pageParts`).
  */
-export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "test-setup";
+export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "test-setup" | "navigation";
+
+/** A browser test opening a page a file is part of: the navigation, and the page (or app start) the file belongs to. */
+export interface TestNavigationReach {
+  test: { file: string; line: number; symbol?: string };
+  /** The app path the test opens. */
+  path: string;
+  /** The screen or app-start file the file is (part of). */
+  page: string;
+}
 
 /**
  * Whether a file is tested, by the one rule every reader shares:
@@ -208,7 +218,9 @@ export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "t
  * - `tested` — a test file depends on it (component graph), a test reaches one of its functions
  *   through the call graph (`testsReachingEach`, six calls at most — a route counting as one, crossed
  *   only from a test's own in-process request), a coverage report ran some of its lines, or the test
- *   framework runs it while setting a test run up (a migration applied to the test database);
+ *   framework runs it while setting a test run up (a migration applied to the test database), or a
+ *   browser test opens a page it is part of (the page, what the page uses — bounded, never through a
+ *   shared component — and the app start every page runs);
  * - `untested` — none of those.
  */
 export interface FileTestVerdict {
@@ -228,6 +240,8 @@ export interface FileTestVerdict {
   coverage?: FileTestCoverage;
   /** Why the test framework runs it while setting a test run up, when it does. */
   testSetup?: string;
+  /** A browser test opening a page it is part of, when one does. */
+  navigation?: TestNavigationReach;
 }
 
 /** The parts of an analysis `fileTestVerdict` reads, built once for many files. */
@@ -239,9 +253,11 @@ export interface TestVerdictContext {
   coverageRow(path: string): FileTestCoverage | undefined;
   /** Why the test framework runs the file while setting a test run up, if it does. */
   testSetupOf(path: string): string | undefined;
+  /** A browser test opening a page the file is part of, if one does. */
+  navigationOf(path: string): TestNavigationReach | undefined;
 }
 
-type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns">;
+type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns" | "testNavigations" | "pageParts">;
 
 export function testVerdictContext(summary: VerdictSummary): TestVerdictContext {
   const testCode = testCodeIndex(summary);
@@ -249,6 +265,7 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
   let walker: ReturnType<typeof testReachWalker> | undefined;
   let coverage: Map<string, FileTestCoverage> | undefined;
   let setup: Map<string, string> | undefined;
+  let navigated: Map<string, TestNavigationReach> | undefined;
   return {
     testCode,
     testImportersOf(path) {
@@ -273,6 +290,20 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
     testSetupOf(path) {
       setup ??= new Map((summary.testSetupRuns ?? []).map((r) => [r.file, r.reason]));
       return setup.get(path);
+    },
+    navigationOf(path) {
+      if (!navigated) {
+        navigated = new Map();
+        // Rows come in file and line order: the first navigation naming a file is its evidence.
+        for (const row of summary.testNavigations ?? []) {
+          if (!testCode.isTestFile(row.file)) continue;
+          const test = { file: row.file, line: row.line, ...(row.symbol ? { symbol: row.symbol } : {}) };
+          for (const page of [...(row.screens ?? []), ...(row.entry ? [row.entry] : [])]) {
+            for (const f of [page, ...(summary.pageParts?.[page] ?? [])]) if (!navigated.has(f)) navigated.set(f, { test, path: row.path, page });
+          }
+        }
+      }
+      return navigated.get(path);
     },
   };
 }
@@ -304,6 +335,11 @@ export function fileTestVerdict(
   if (coverage && coverage.covered > 0) basis.push("coverage");
   const testSetup = ctx.testSetupOf(path);
   if (testSetup) basis.push("test-setup");
+  const navigation = ctx.navigationOf(path);
+  if (navigation) basis.push("navigation");
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
-  return { state, basis, declared, importers, functions, reach, ...(coverage ? { coverage } : {}), ...(testSetup ? { testSetup } : {}) };
+  return {
+    state, basis, declared, importers, functions, reach,
+    ...(coverage ? { coverage } : {}), ...(testSetup ? { testSetup } : {}), ...(navigation ? { navigation } : {}),
+  };
 }

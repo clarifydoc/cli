@@ -376,6 +376,12 @@ export interface FileAnalysis {
    * (`ProjectAnalysis.testNavigations`).
    */
   browserNavigations?: BrowserNavigation[];
+  /**
+   * The file starts a browser app: the line of the call mounting its root component (`createApp(App)`,
+   * `bootstrapApplication(AppComponent)`, `createRoot(el).render(…)`). A browser test opening any
+   * page of the app runs it.
+   */
+  appMount?: { line: number };
   dataSources: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
@@ -1711,6 +1717,8 @@ export interface TestNavigationRow {
   path: string;
   /** The screen files at that path, of one sub-project; absent when none answers. */
   screens?: string[];
+  /** The file starting the app those screens belong to (`FileAnalysis.appMount`), when one does. */
+  entry?: string;
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
@@ -3992,6 +4000,12 @@ export interface ProjectAnalysis {
    * no screen answers keeps no `screens`.
    */
   testNavigations?: TestNavigationRow[];
+  /**
+   * What makes up each page a browser test opens, and the app start it runs (`TestNavigationRow.screens`,
+   * `entry`): the files it uses, bounded (core/test-navigations.ts `pagePartsOf`). Keyed by screen or
+   * start file; the key itself is not listed.
+   */
+  pageParts?: Record<string, string[]>;
   screens: ScreenInfo[];
   /**
    * Resolved frontend→backend links: each outbound `api-call` matched to the
