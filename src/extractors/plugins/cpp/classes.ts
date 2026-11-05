@@ -39,6 +39,12 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
   const namespaces = declaredNamespaces(lines);
   const nsAt = namespacesByLine(lines);
   qualifyNestedClasses(lines, classes, namespaces, nsAt);
+  for (const cls of classes) {
+    if (cls.kind === "enum" || /\b(?:enum|typedef)\b/.test(lines[cls.line - 1] ?? "")) continue;
+    const bases = cppBases(lines, cls.line - 1);
+    cls.extends = bases.extends;
+    cls.implements = bases.implements;
+  }
   const declared = new Map<string, ClassInfo>();
   for (const cls of classes) if (!declared.has(cls.name)) declared.set(cls.name, cls);
   const stubs = new Map<string, ClassInfo>();
@@ -159,6 +165,63 @@ export function outOfLineOwner(line: string, name: string): string | null {
   return segments.length > 0 ? segments.join("::") : null;
 }
 
+
+/**
+ * Every base of a class head, read from its header line and the lines a wrapped head continues over, up to the
+ * `{` (never into the body): `class Sedan : public Chassis, protected virtual Tyre<int>, Plugin {`. Access keywords,
+ * `virtual` and template arguments are dropped, a base that is the class template's own parameter (`template <class T>
+ * class Crtp : public T`) names no class. The first is `extends`; the others are `implements`, as a Python class's
+ * bases are. A protoc server base keeps its qualifier in `implements` — it names the service.
+ */
+export function cppBases(lines: readonly string[], index: number): { extends: string | null; implements: string[] } {
+  let text = (lines[index] ?? "").replace(/\/\/.*$/, "");
+  for (let k = 1; k < 8 && !/[{;]/.test(text) && index + k < lines.length; k++) text += " " + lines[index + k]!.replace(/\/\/.*$/, "");
+  const end = text.search(/[{;]/);
+  if (end >= 0) text = text.slice(0, end);
+  // A class template's parameter list may stand on the line above.
+  if (index > 0 && /^\s*template\b[^;{]*>\s*$/.test(lines[index - 1] ?? "")) text = lines[index - 1]! + " " + text;
+  const header = /^\s*template\s*<((?:[^<>]|<[^<>]*>)*)>/.exec(text);
+  const templateParams = new Set([...(header?.[1] ?? "").matchAll(/(?:typename|class|\bint|\bbool|\bsize_t)\s*(?:\.\.\.)?\s*(\w+)/g)].map((m) => m[1]!));
+  const keyword = /\b(?:class|struct)\b/.exec(text.slice(header?.[0].length ?? 0));
+  if (!keyword) return { extends: null, implements: [] };
+  const after = text.slice((header?.[0].length ?? 0) + keyword.index + keyword[0].length);
+  let depth = 0;
+  let colon = -1;
+  for (let i = 0; i < after.length && colon < 0; i++) {
+    const c = after[i]!;
+    if (c === "<" || c === "(" || c === "[") depth++;
+    else if (c === ">" || c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === ":" && depth === 0) {
+      if (after[i + 1] === ":") i++;
+      else colon = i;
+    }
+  }
+  if (colon < 0) return { extends: null, implements: [] };
+  const clause = after.slice(colon + 1);
+  const parts: string[] = [];
+  let current = "";
+  depth = 0;
+  for (const c of clause) {
+    if (c === "<" || c === "(" || c === "[") depth++;
+    else if (c === ">" || c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    if (c === "," && depth === 0) { parts.push(current); current = ""; } else current += c;
+  }
+  parts.push(current);
+  const bases: string[] = [];
+  const services: string[] = [];
+  for (const part of parts) {
+    let p = part.replace(/\b(?:public|private|protected|virtual)\b/g, " ").replace(/\.\.\./g, " ").trim();
+    for (let prev = ""; prev !== p;) { prev = p; p = p.replace(/<[^<>]*>/g, ""); }
+    const name = /^(?:::)?((?:\w+\s*::\s*)*\w+)\s*$/.exec(p)?.[1]?.replace(/\s+/g, "");
+    if (!name || templateParams.has(name)) continue;
+    const leaf = name.replace(/.*::/, "");
+    bases.push(leaf);
+    if (name.endsWith("::Service")) services.push(name);
+  }
+  const rest = bases.slice(1).filter((b) => b !== bases[0]);
+  return { extends: bases[0] ?? null, implements: [...new Set([...services, ...rest])] };
+}
+
 /** `class Season::FixtureIterator : public Iterator {`, `struct Paddock<K, C>::Node {`: a nested class defined outside its owner. */
 const QUALIFIED_CLASS_HEAD = /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(?:[A-Z][A-Z0-9_]+\s+)?((?:[A-Za-z_]\w*(?:\s*<[^<>{};]*>)?\s*::\s*)+)([A-Za-z_]\w*)\s*(?:final\s*)?(?::(?!:)\s*(?:virtual\s+)?(?:public|private|protected)?\s*(?:virtual\s+)?([\w:]+))?/;
 
@@ -187,7 +250,6 @@ function qualifyNestedClasses(
       while (outer.length > 0 && (namespaces.has(outer[0]!) || /^[a-z_]/.test(outer[0]!))) scopes.push(outer.shift()!);
       if (scopes.length > 0) cls.namespace = [ns, ...scopes].filter(Boolean).join("::");
       cls.name = [...outer, head[2]!].join("::");
-      cls.extends = head[3] ? head[3].replace(/.*::/, "") : null;
       continue;
     }
     // The innermost class whose body holds this one (already named, being earlier).

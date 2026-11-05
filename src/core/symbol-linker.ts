@@ -442,7 +442,8 @@ export function buildSymbolLinks(
       for (const impl of impls) {
         // Where the method actually is: the class body, a sibling file of its
         // package (Go), or a base class it inherits from.
-        const implMethod = findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
+        const implMethod = explicitImplementation(ctx, impl.className, impl.classFile, info.interfaceName, ifaceMethod.name)
+          ?? findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
         // A class that declares none takes the interface's own (a C# `class Match : Club`
         // whose base list names the interface), or an extending interface's restatement
         // of it: no implementation to fan out to.
@@ -3463,7 +3464,7 @@ export function buildInterfaceImplMap(
         const entry: InterfaceImplInfo = {
           interfaceName: cls.name,
           interfaceFile: a.filePath,
-          methods: cls.methods.map((m) => ({ name: m.name, line: m.line, arity: m.params.length })),
+          methods: cls.methods.map((m) => ({ name: m.name, line: m.line, arity: m.params.length, sig: signatureOf(m) })),
           impls: [],
         };
         if (cls.structural) entry.structural = true;
@@ -3564,6 +3565,7 @@ export function buildInterfaceImplMap(
   if (structuralIfaces.length > 0) {
     const methodSets = new Map<string, {
       name: string; file: string; methods: Map<string, { name: string; line: number }>; arity: Map<string, number>;
+      sigs: Map<string, MethodSignature>;
     }>();
     for (const a of analyses) {
       // A type's method set spans its directory only where types span files (Go).
@@ -3572,11 +3574,12 @@ export function buildInterfaceImplMap(
         if (cls.kind === "interface") continue;
         const key = `${scope}\0${cls.name}`;
         let set = methodSets.get(key);
-        if (!set) methodSets.set(key, (set = { name: cls.name, file: a.filePath, methods: new Map(), arity: new Map() }));
+        if (!set) methodSets.set(key, (set = { name: cls.name, file: a.filePath, methods: new Map(), arity: new Map(), sigs: new Map() }));
         for (const m of cls.methods) {
           if (set.methods.has(m.name)) continue;
           set.methods.set(m.name, { name: m.name, line: m.line });
           set.arity.set(m.name, m.params.length);
+          set.sigs.set(m.name, signatureOf(m));
         }
       }
     }
@@ -3598,12 +3601,13 @@ export function buildInterfaceImplMap(
           const ifaces = (byName.get(name) ?? []).filter((d) => sameTypeSpace(file, lang, d.interfaceFile, languageOf.get(d.interfaceFile) ?? ""));
           const structs = [...methodSets.entries()].filter(([k, s]) => s.name === name && k !== key && sameTypeSpace(file, lang, s.file, languageOf.get(s.file) ?? ""));
           const promoted = ifaces.length === 1
-            ? ifaces[0]!.methods.map((m) => ({ name: m.name, line: m.line, arity: m.arity }))
-            : structs.length === 1 ? [...structs[0]![1].methods.values()].map((m) => ({ ...m, arity: structs[0]![1].arity.get(m.name) })) : [];
+            ? ifaces[0]!.methods.map((m) => ({ name: m.name, line: m.line, arity: m.arity, sig: m.sig }))
+            : structs.length === 1 ? [...structs[0]![1].methods.values()].map((m) => ({ ...m, arity: structs[0]![1].arity.get(m.name), sig: structs[0]![1].sigs.get(m.name) })) : [];
           for (const m of promoted) {
             if (set.methods.has(m.name)) continue;
             set.methods.set(m.name, { name: m.name, line: m.line });
             if (m.arity !== undefined) set.arity.set(m.name, m.arity);
+            if (m.sig) set.sigs.set(m.name, m.sig);
           }
         }
       }
@@ -3615,7 +3619,13 @@ export function buildInterfaceImplMap(
         if (!sameTypeSpace(entry.interfaceFile, ifaceLang, set.file, languageOf.get(set.file) ?? "")) continue;
         // Name AND parameter count: an HTTP handler's `GetByID(c)` is not a
         // repository's `GetByID(ctx, id)`.
-        if (!entry.methods.every((m) => set.methods.has(m.name) && (m.arity === undefined || set.arity.get(m.name) === m.arity))) continue;
+        // Go demands identical signatures, and an unexported method can only be
+        // satisfied from the interface's own package.
+        const exact = typesSpanFiles(ifaceLang);
+        const samePackage = dirOf(entry.interfaceFile) === dirOf(set.file);
+        if (!entry.methods.every((m) => set.methods.has(m.name) && (m.arity === undefined || set.arity.get(m.name) === m.arity)
+          && (!exact || !m.sig || signaturesCompatible(m.sig, set.sigs.get(m.name)))
+          && (!exact || samePackage || !/^[a-z_]/.test(m.name)))) continue;
         if (entry.impls.some((im) => im.className === set.name && im.classFile === set.file)) continue;
         entry.impls.push({ className: set.name, classFile: set.file, methods: set.methods });
       }
@@ -3623,6 +3633,38 @@ export function buildInterfaceImplMap(
   }
 
   return map;
+}
+
+/** A method's parameter and result types as written, one entry per parameter; `null` where unstated. */
+interface MethodSignature { params: (string | null)[]; result: string | null }
+
+function signatureOf(m: { params: { type: string | null }[]; returnType: string | null }): MethodSignature {
+  return { params: m.params.map((p) => p.type), result: m.returnType };
+}
+
+const dirOf = (file: string): string => file.slice(0, file.lastIndexOf("/") + 1);
+
+/**
+ * A type as written, compared without spacing or package qualifiers (`ctx
+ * context.Context` and `Context` from another package's view). `null` when it
+ * is unstated or names a type parameter (a lone capital), which stands for any.
+ */
+function typeKey(t: string | null, result = false): string | null {
+  // A result's pointer is not always kept by the extractor, so only a parameter's counts.
+  let k = t?.replace(/\s+/g, "").replace(/\b[A-Za-z_]\w*\./g, "").replace(/interface\{\}/g, "any") ?? "";
+  if (result) k = k.replace(/^\*/, "");
+  return k === "" || /(^|[^\w])[A-Z]\d?(?!\w)/.test(k) ? null : k;
+}
+
+/** Equal wherever both sides state a type: unknown on either side decides nothing. */
+function signaturesCompatible(want: MethodSignature, have: MethodSignature | undefined): boolean {
+  if (!have) return true;
+  const differs = (a: string | null, b: string | null, result = false): boolean => {
+    const x = typeKey(a, result), y = typeKey(b, result);
+    return x !== null && y !== null && x !== y;
+  };
+  if (want.params.some((t, i) => differs(t, have.params[i] ?? null))) return false;
+  return !differs(want.result, have.result, true);
 }
 
 /** An interface and every interface extending it, at any depth, itself first. */
@@ -3668,7 +3710,7 @@ export interface InterfaceImplInfo {
    * `arity`: declared parameter count, which a structural implementation must match;
    * `inherited`: an embedded interface's method, declared there.
    */
-  methods: { name: string; line: number; arity?: number; inherited?: true }[];
+  methods: { name: string; line: number; arity?: number; sig?: MethodSignature; inherited?: true }[];
   impls: {
     className: string;
     classFile: string;
@@ -6666,7 +6708,7 @@ function linkThroughPoint(
 
   const bound = boundImplementation(ctx, analysis, sourceFile, point);
   if (bound) {
-    const target = findMethodInClass(ctx, bound.className, bound.classFile, method);
+    const target = explicitImplementation(ctx, bound.className, bound.classFile, point.typeName, method) ?? findMethodInClass(ctx, bound.className, bound.classFile, method);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "di-binding"));
   }
   if (!point.typeFile) {
@@ -6689,7 +6731,8 @@ function linkThroughPoint(
     // An implementation that does not declare the member is an abstract base:
     // the call runs in the one class below it that does (`ServiceImpl extends
     // AbstractQuery extends … AbstractSupport implements Service`).
-    const target = findMethodInClass(ctx, impl.className, impl.classFile, method)
+    const target = explicitImplementation(ctx, impl.className, impl.classFile, point.typeName, method)
+      ?? findMethodInClass(ctx, impl.className, impl.classFile, method)
       ?? overrideBelow(ctx, impl.className, impl.classFile, method, sourceIsTest);
     if (target) return throughDeclared(mkLink(target.file, target.symbol, target.line, "INFERRED", "interface-redirect"));
   }
@@ -7102,6 +7145,22 @@ function ownerOverrideLinks(
     });
   }
   return out;
+}
+
+/**
+ * The member a class declares for `iface` explicitly (`void IScout.Report()`), beside another interface's
+ * same-named one. Null when the class states no such member.
+ */
+function explicitImplementation(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  iface: string,
+  method: string,
+): { file: string; symbol: string; line: number } | null {
+  const cls = ctx.classAt.get(memberKey(classFile, className));
+  const m = cls?.methods.find((f) => f.name === method && f.explicitInterface === bareSupertypeName(iface));
+  return m ? { file: classFile, symbol: `${className}.${method}`, line: m.line } : null;
 }
 
 function findMethodInClass(

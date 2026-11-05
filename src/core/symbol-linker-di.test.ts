@@ -907,11 +907,50 @@ describe("symbol-linker — structural interfaces", () => {
     expect(callsFrom(links, "svc/svc.go")[0]).toMatchObject({ targetFile: "repo/pg_methods.go", targetSymbol: "PgRepo.Find", strategy: "interface-redirect" });
   });
 
+  it("requires the parameter and result types a structural interface states, not just name and arity", () => {
+    const iface = file("repo/repo.go", [{ ...cls("ClubStore", { kind: "interface", methods: [method("Get", [], [param("id", "string")])] }), structural: true }], { language: "go" });
+    const withReturn = (name: string, p: string, ret: string | null) => ({ ...method(name, [], [param("x", p)], 4), returnType: ret });
+    const db = file("repo/db.go", [cls("DB", { methods: [withReturn("Get", "string", "error")] })], { language: "go" });
+    const cache = file("repo/cache.go", [cls("Cache", { methods: [withReturn("Get", "int", "error")] })], { language: "go" });
+    const svc = file("svc/svc.go", [cls("Service", { properties: [prop("store", "ClubStore")], methods: [method("Run", [call("store.Get")])] })], { language: "go" });
+    const links = callsFrom(buildSymbolLinks([iface, db, cache, svc]), "svc/svc.go");
+    const targets = links.map((l) => l.targetSymbol);
+    expect(targets).toContain("DB.Get");
+    expect(targets).not.toContain("Cache.Get");
+  });
+
+  it("keeps an unexported interface method to its own package", () => {
+    const iface = file("repo/repo.go", [{ ...cls("clubStore", { kind: "interface", methods: [method("load")] }), structural: true }], { language: "go" });
+    const here = file("repo/db.go", [cls("DB", { methods: [method("load", [], [], 4)] })], { language: "go" });
+    const away = file("other/db.go", [cls("Away", { methods: [method("load", [], [], 4)] })], { language: "go" });
+    const svc = file("repo/svc.go", [cls("Service", { properties: [prop("store", "clubStore")], methods: [method("Run", [call("store.load")])] })], { language: "go" });
+    const targets = callsFrom(buildSymbolLinks([iface, here, away, svc]), "repo/svc.go").map((l) => l.targetSymbol);
+    expect(targets).toContain("DB.load");
+    expect(targets).not.toContain("Away.load");
+  });
+
   it("never matches a nominal interface structurally", () => {
     const iface = file("src/IRepo.ts", [cls("IRepo", { kind: "interface", methods: [method("find")] })], { language: "typescript" });
     const impl = file("src/Repo.ts", [cls("Repo", { methods: [method("find", [], [], 3)] })], { language: "typescript" });
     const svc = file("src/svc.ts", [cls("Svc", { properties: [prop("repo", "IRepo")], methods: [method("run", [call("this.repo.find")])] })], { language: "typescript" });
     expect(callsFrom(buildSymbolLinks([iface, impl, svc]), "src/svc.ts")[0]!.targetSymbol).toBe("IRepo.find");
+  });
+});
+
+describe("symbol-linker — explicit interface implementations", () => {
+  it("sends each interface's call to the member that names it, though both are called Report", () => {
+    const scout = file("src/IScout.cs", [cls("IScout", { kind: "interface", methods: [method("Report", [], [], 2)] })], { language: "csharp" });
+    const analyst = file("src/IAnalyst.cs", [cls("IAnalyst", { kind: "interface", methods: [method("Report", [], [], 2)] })], { language: "csharp" });
+    const coach = file("src/Coach.cs", [cls("Coach", {
+      implements: ["IScout", "IAnalyst"],
+      methods: [
+        { ...method("Report", [], [], 5), explicitInterface: "IScout" } as ReturnType<typeof method>,
+        { ...method("Report", [], [], 9), explicitInterface: "IAnalyst" } as ReturnType<typeof method>,
+      ],
+    })], { language: "csharp" });
+    const runner = file("src/Runner.cs", [cls("Runner", { methods: [method("Go", [call("scout.Report"), call("analyst.Report")], [param("scout", "IScout"), param("analyst", "IAnalyst")], 3)] })], { language: "csharp" });
+    const links = callsFrom(buildSymbolLinks([scout, analyst, coach, runner]), "src/Runner.cs");
+    expect(links.map((l) => [l.callName, l.targetLine])).toEqual([["scout.Report", 5], ["analyst.Report", 9]]);
   });
 });
 

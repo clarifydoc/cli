@@ -4,7 +4,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
-import { declaredNamespaces, extractCppClasses } from "./classes.js";
+import { cppBases, declaredNamespaces, extractCppClasses } from "./classes.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
@@ -223,13 +223,8 @@ export const cppSpec: RegexLangSpec = {
     {
       // An export or attribute macro may stand before the name: `class CLUB_API Kit {`, `struct __declspec(dllexport) Car`.
       pattern: new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+${CLASS_ATTRIBUTES}([A-Za-z_]\w*)(?:\s*:\s*(?:public|private|protected)?\s*([\w:]+))?\s*\{?`),
-      getExtends: (line) => {
-        const m = line.match(/:\s*(?:public|private|protected)?\s*([\w:]+)/);
-        if (!m) return null;
-        return m[1].replace(/.*::/, "");
-      },
-      // protoc's server base `demo::CurrencyService::Service` keeps its qualifier: it names the service.
-      getImplements: (line) => [...line.matchAll(/(?:public|private|protected)?\s*((?:\w+::)*\w+::Service)\b/g)].map((m) => m[1]!).filter((b) => b.includes("::")),
+      getExtends: (line) => cppBases([line], 0).extends,
+      getImplements: (line) => cppBases([line], 0).implements,
     },
     { pattern: /^\s*(?:typedef\s+)?enum(?:\s+class)?\s+([A-Za-z_]\w*)\s*[:{]?/, getExtends: () => null },
     { pattern: /^\s*typedef\s+struct\s+([A-Za-z_]\w*)\s*\{?/, getExtends: () => null },

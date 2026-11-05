@@ -286,6 +286,11 @@ export class CSharpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
     };
     if (!body && this.hasModifier(node, "abstract")) fn.abstract = true;
+    const explicit = node.namedChildren.find((c) => c.type === "explicit_interface_specifier");
+    if (explicit) {
+      const iface = explicit.text.replace(/<.*$/s, "").replace(/\.\s*$/, "").trim().replace(/^global::/, "").replace(/.*[.:]/, "");
+      if (iface) fn.explicitInterface = iface;
+    }
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
     typeCsharpVariableArgs(fn.calls, params, body);
