@@ -183,3 +183,48 @@ struct Ticket {
     expect(methodNames(classes[0])).toEqual(["play"]);
   });
 });
+
+describe("C++ base clauses", () => {
+  const basesOf = (src: string, name: string) => {
+    const c = classesOf(src).find((x) => x.name === name)!;
+    return [c.extends, c.implements];
+  };
+
+  it("reads every base, past access keywords, virtual and template arguments", () => {
+    const src = `
+template <typename T> class Tyre { public: void roll(); };
+class Chassis { public: void weld(); };
+class Engine { public: virtual void start() = 0; };
+class Plugin { public: void load(); };
+class Sedan : public Chassis, virtual public Engine, protected Tyre<int>, Plugin {
+ public:
+  void start() override;
+};
+class Racer : virtual Chassis { void go(); };
+struct Plain : Chassis {};
+`;
+    expect(basesOf(src, "Sedan")).toEqual(["Chassis", ["Engine", "Tyre", "Plugin"]]);
+    expect(basesOf(src, "Racer")).toEqual(["Chassis", []]);
+    expect(basesOf(src, "Plain")).toEqual(["Chassis", []]);
+  });
+
+  it("never reads a base from the class body, and drops a template parameter", () => {
+    const src = `
+class Entity { public: void tick(); };
+template <typename T>
+class Crtp : public Tyre<Crtp<T>>, public T { void x(); };
+`;
+    expect(basesOf(src, "Entity")).toEqual([null, []]);
+    expect(basesOf(src, "Crtp")).toEqual(["Tyre", []]);
+  });
+
+  it("reads a head wrapped over several lines", () => {
+    const src = `
+class Sedan
+    : public Chassis,
+      public Engine {
+};
+`;
+    expect(basesOf(src, "Sedan")).toEqual(["Chassis", ["Engine"]]);
+  });
+});
