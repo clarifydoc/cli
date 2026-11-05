@@ -53,6 +53,18 @@ describe("R functions, classes and imports", () => {
   });
 });
 
+describe("R6 private members", () => {
+  it("reads `private$warmup()` as the class's own member, as `self$warmup()` is", async () => {
+    const a = await analyze([
+      'Club <- R6::R6Class("Club",',
+      "  public = list(train = function() { private$warmup(); self$rest() }, rest = function() 1),",
+      "  private = list(warmup = function() 2))",
+    ].join("\n"));
+    const train = a.classes.find((c) => c.name === "Club")!.methods.find((m) => m.name === "train")!;
+    expect(train.calls.map((c) => c.name)).toEqual(["self.warmup", "self.rest"]);
+  });
+});
+
 describe("R routes", () => {
   it("reads Plumber annotations and the programmatic API", async () => {
     const a = await analyze([

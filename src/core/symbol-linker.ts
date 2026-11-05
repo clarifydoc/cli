@@ -445,6 +445,19 @@ export function buildSymbolLinks(
         // package (Go), or a base class it inherits from.
         const implMethod = explicitImplementation(ctx, impl.className, impl.classFile, info.interfaceName, ifaceMethod.name)
           ?? findMethodInClass(ctx, impl.className, impl.classFile, ifaceMethod.name);
+        // An abstract base that names the interface and declares none: what runs is the override of each
+        // class below it that inherits the interface through it (`ClubRepo extends BaseRepo implements Repo`).
+        if (!implMethod) {
+          const implIsTest = TEST_DOUBLE_PATH_RE.test(info.interfaceFile) || isTestFile(info.interfaceFile, (ctx.languageOf.get(info.interfaceFile) ?? "") as Language);
+          for (const target of overridesBelow(ctx, impl.className, impl.classFile, ifaceMethod.name, implIsTest)) {
+            links.push({
+              sourceFile: info.interfaceFile, sourceSymbol: ifaceSymbol, sourceLine: ifaceMethod.line, callName: ifaceMethod.name,
+              targetFile: target.file, targetSymbol: target.symbol, targetLine: target.line,
+              confidence: "INFERRED", strategy: "interface-fanout", relation: "implements", navigational: true,
+            });
+          }
+          continue;
+        }
         // A class that declares none takes the interface's own (a C# `class Match : Club`
         // whose base list names the interface), or an extending interface's restatement
         // of it: no implementation to fan out to.
@@ -4360,7 +4373,7 @@ function resolveCallToDefinition(
   // self-linking and dead-ending instead of reaching the service.
   if (!def && isQualified && call.kind === "internal" && targetFile === sourceFile && parts.length === 2) {
     const head = parts[0]!;
-    if (head === "self" || head === "Self" || head === "this" || head === "cls") {
+    if (head === "self" || head === "Self" || head === "this" || head === "cls" || head === "static" || /^(?:me|myclass)$/i.test(head)) {
       // The ENCLOSING class's own member, else the one its bases provide —
       // not whichever class of the file happens to define the name first.
       const dot = sourceSymbol.indexOf(".");

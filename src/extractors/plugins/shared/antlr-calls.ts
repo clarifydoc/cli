@@ -64,13 +64,18 @@ export function markLocalCalls(calls: PatternCallName[], bindings: readonly Loca
  * - a selector path is its last two names — `s.repo.Find(` is `repo.Find`, as the baseline pattern reads it;
  * - a member called on a call's result is the chain from a head of one or two names, at most `chainDepth`
  *   calls deep — `pb.NewClient(conn).Get(` is `pb.NewClient().Get` (0 when the language has no chain patterns);
- * - a Lua `obj:method(` is `method`, which is all the baseline reads after a colon;
+ * - a Lua `obj:method(` is `obj.method`, a chain's (`a.b:method(`) just `method`, which is all the baseline reads after a colon;
  * - a receiver no name spells (`items[0].Close(`, `(*T).M(`, `x.(T).M(`) names none.
  */
 export function patternCallName(segments: readonly CalleeSegment[], chainDepth: number): PatternCallName | null {
   const last = segments.at(-1);
   if (!last || last.kind !== "id") return null;
-  if (last.colon) return { name: last.name, leafName: last.name, line: last.line, column: last.column };
+  if (last.colon) {
+    // `obj:method(` is a call on `obj` — Lua's `self:warmup()` and `mate:warmup()` are two receivers' — when a plain name precedes.
+    const receiver = segments.length === 2 ? segments[0]! : undefined;
+    if (receiver?.kind === "id" && !receiver.colon) return { name: `${receiver.name}.${last.name}`, leafName: last.name, line: receiver.line, column: receiver.column };
+    return { name: last.name, leafName: last.name, line: last.line, column: last.column };
+  }
   if (segments.every((s) => s.kind === "id" && !s.colon)) {
     const ids = segments as ReadonlyArray<Extract<CalleeSegment, { kind: "id" }>>;
     const from = ids.length >= 2 ? ids[ids.length - 2]! : last;

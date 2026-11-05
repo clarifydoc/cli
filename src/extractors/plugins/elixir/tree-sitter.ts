@@ -107,6 +107,7 @@ function visitNode(node: TSNode, owner: PatternCallName[] | null, walk: Walk): v
     definition(node, owner, walk);
     return;
   }
+  if (macro === "defdelegate" && delegation(node, walk)) return;
   if (macro && MODULES.has(macro)) {
     walk.last = null;
     visit(node, owner === walk.topLevel ? null : owner, walk);
@@ -132,6 +133,37 @@ function headCalls(head: TSNode | undefined, calls: PatternCallName[] | null, wa
   } else if (head.type === "call") {
     for (const part of namedChildren(head)) if (part.type === "arguments") visit(part, calls, walk);
   }
+}
+
+/** The value a keyword list gives `key` (`to: League.Club`, `as: :relegate`), as its node. */
+function keywordValue(keywords: TSNode | undefined, key: string): TSNode | null {
+  if (keywords?.type !== "keywords") return null;
+  for (const pair of namedChildren(keywords)) {
+    if (pair.type !== "pair") continue;
+    if (pair.childForFieldName("key")?.text.replace(/:\s*$/, "") === key) return pair.childForFieldName("value");
+  }
+  return null;
+}
+
+/**
+ * `defdelegate drop(c), to: League.Club, as: :relegate`: a function of its own whose one call is the function
+ * it delegates to (`Club.relegate`, as a remote call is named — its module's last name and the function, the
+ * `as:` name when one is given). A delegate to something no module names (`to: @store`) or a list of heads
+ * is no function this reads.
+ */
+function delegation(call: TSNode, walk: Walk): boolean {
+  const args = namedChildren(call).find((c) => c.type === "arguments");
+  const parts = args ? namedChildren(args) : [];
+  const name = definitionName(parts[0]);
+  const to = keywordValue(parts[1], "to");
+  if (!name || !to || (to.type !== "alias" && to.type !== "atom")) return false;
+  const as = keywordValue(parts[1], "as");
+  const target = as?.type === "atom" ? as.text.replace(/^:/, "") : name.text;
+  const module = to.text.replace(/^:/, "").split(".").pop()!;
+  walk.last = null;
+  const calls: PatternCallName[] = [{ name: `${module}.${target}`, leafName: target, line: name.startPosition.row + 1, column: name.startPosition.column }];
+  walk.functions.push({ span: { name: name.text, line: call.startPosition.row + 1, endLine: call.endPosition.row + 1 }, calls });
+  return true;
 }
 
 /** A `def` clause: a function of its own when it has a name, its body walked either way. */

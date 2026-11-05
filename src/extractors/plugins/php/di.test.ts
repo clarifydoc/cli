@@ -169,6 +169,8 @@ class Player extends Model implements Auth {
   use Sorts { sort as order; }
 }`);
     expect([cls!.extends, cls!.implements]).toEqual(["Model", ["Auth", "HasRoles", "Notifiable", "Sorts"]]);
+    // A mixed-in trait is a member source, so the linker follows a typed receiver into it.
+    expect(cls!.mixins).toEqual([{ name: "HasRoles", kind: "include" }, { name: "Notifiable", kind: "include" }, { name: "Sorts", kind: "include" }]);
   });
 
   it("reads a method's return type from `@return` when it declares none", async () => {

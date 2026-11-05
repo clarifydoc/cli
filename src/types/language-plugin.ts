@@ -813,6 +813,11 @@ export interface PreprocessOutcome {
   /** Run after extraction to merge container data back in (e.g. Vue template elements). */
   postExtract?(analysis: FileAnalysis, rawSource: string): void;
   /**
+   * `postExtract` adds classes or typed locals the call scan could not see (a Lua table's functions): the
+   * member calls the scan held back as noise (`Club.new(…)`) are put back for the receivers it now types.
+   */
+  restoreTypedCalls?: true;
+  /**
    * The source is one block of a larger file (a Vue / Svelte `<script>`): the
    * rest — a template — may use what the block imports, so no import of it is
    * judged unused.

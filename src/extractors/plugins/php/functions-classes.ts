@@ -130,6 +130,7 @@ export class PhpExtractor extends FunctionClassExtractor {
 
     let extendsName: string | null = null;
     const impls: string[] = [];
+    const mixins: NonNullable<ClassInfo["mixins"]> = [];
 
     for (const c of node.children) {
       if (c.type === "base_clause") {
@@ -170,7 +171,11 @@ export class PhpExtractor extends FunctionClassExtractor {
           // `use HasRoles, Notifiable;` — a trait's methods are the class's own,
           // recorded as supertypes the way Ruby records an `include`.
           for (const part of member.namedChildren) {
-            if (part.type === "name" || part.type === "qualified_name") impls.push(part.text.replace(/.*\\/, ""));
+            if (part.type !== "name" && part.type !== "qualified_name") continue;
+            const trait = part.text.replace(/.*\\/, "");
+            impls.push(trait);
+            // A mixed-in trait is a member source the way `extends` is: the class's instances reach its methods.
+            if (!mixins.some((m) => m.name === trait)) mixins.push({ name: trait, kind: "include" });
           }
         }
       }
@@ -206,6 +211,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       kind,
       ...(node.children.some((c) => c.type === "abstract_modifier") ? { abstract: true as const } : {}),
+      ...(mixins.length > 0 ? { mixins } : {}),
     };
   }
 

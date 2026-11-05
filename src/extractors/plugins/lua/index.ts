@@ -87,9 +87,16 @@ export const luaSpec: RegexLangSpec = {
 
   importPatterns: [
     {
-      pattern: /(?:local\s+\w+\s*=\s*)?require\s*\(?['"]([^'"]+)['"]\)?/,
-      getSource: (m) => m[1],
-      getSpecifiers: (m) => { const parts = m[1].split("."); return [parts[parts.length - 1]]; },
+      // Roblox: `require(script.Parent.Ball)` is the sibling module `Ball`, `script.Parent.Parent.Ball` one directory up.
+      pattern: /(?:local\s+(\w+)\s*=\s*)?require\s*\(\s*script((?:\.Parent)+)\.(\w+(?:\.\w+)*)\s*\)/,
+      getSource: (m) => `${m[2].split(".Parent").length > 2 ? "../".repeat(m[2].split(".Parent").length - 2) : "./"}${m[3].replace(/\./g, "/")}`,
+      getSpecifiers: (m) => [m[1] ?? m[3].split(".").pop()!],
+    },
+    {
+      pattern: /(?:local\s+(\w+)\s*=\s*)?require\s*\(?['"]([^'"]+)['"]\)?/,
+      getSource: (m) => m[2],
+      // The name the module is bound to (`local r = require("referee")`), else the module's own last part.
+      getSpecifiers: (m) => { const parts = m[2].split("."); return [m[1] ?? parts[parts.length - 1]]; },
     },
   ],
 };
