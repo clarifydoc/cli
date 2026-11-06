@@ -1058,6 +1058,12 @@ export interface CallInfo {
    */
   returnedAs?: string;
   /**
+   * A member call whose leaf looks like a built-in's (`ACTIONS.map(club)`) on a name imported from the project:
+   * kept only for the linker, which joins it when the exporting file declares that name as an object literal
+   * holding the key, and otherwise draws no edge.
+   */
+  mapMember?: true;
+  /**
    * The type the call's receiver is, when the call expression itself says
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,
@@ -2953,9 +2959,11 @@ export interface InteractiveElementInfo {
   /**
    * Names the handler reads that a template scope binds, not the component: a `v-for` loop variable
    * whose collection's element type the script states (`type`), and a scoped slot's parameter the
-   * component the tag sits in provides (`slot`: that component's tag, the slot, the slot prop).
+   * component the tag sits in provides (`slot`: that component's tag, the slot, the slot prop). A loop variable
+   * over a literal array of objects in the same component lists the functions its objects hold under each key
+   * (`callbacks`: `{ action: ["remove", "refresh"] }` for `{ label, action: this.remove }`).
    */
-  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string } }>;
+  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string }; callbacks?: Record<string, string[]> }>;
   /**
    * A markup element with no handler of its own, as a compound selector of what
    * a script can find it by — `button#save.btn[data-delete]`: tag, id, classes

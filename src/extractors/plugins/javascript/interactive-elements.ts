@@ -1,4 +1,4 @@
-import { templateScopes, type TemplateScope } from "./template-scopes.js";
+import { templateScopes, WHOLE_SLOT_PROPS, type TemplateScope } from "./template-scopes.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
 
@@ -245,8 +245,22 @@ export function extractVueInteractiveElements(
       while ((bindMatch = bindRegex.exec(attrs)) !== null) {
         const value = (bindMatch[2] ?? bindMatch[3] ?? "").trim();
         // Vue's own attributes are no props: a function `:ref` receives the element.
-        if (!INLINE_FUNCTION.test(value) || VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
-        elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+        if (VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
+        if (INLINE_FUNCTION.test(value)) {
+          elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+        } else {
+          // `:options="{ onClick: () => remove(id) }"`: each arrow of the object is a function of its own.
+          for (const [key, arrow] of objectArrows(value)) {
+            elements.push({ element: "custom", event: `:${bindMatch[1]}.${key}`, handler: arrow, line, component: tagName });
+          }
+        }
+      }
+      // `v-bind="{ onSave: () => save(club) }"`: an object of props; each arrow is the prop it names.
+      const objectRegex = /(?:^|\s)v-bind\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+      for (let obj = objectRegex.exec(attrs); obj; obj = objectRegex.exec(attrs)) {
+        for (const [key, arrow] of objectArrows((obj[1] ?? obj[2] ?? "").trim())) {
+          elements.push({ element: "custom", event: `:${key}`, handler: arrow, line, component: tagName });
+        }
       }
     }
 
@@ -268,6 +282,39 @@ export function extractVueInteractiveElements(
   return elements;
 }
 
+/**
+ * The arrow and function-expression entries of an object literal written in markup
+ * (`{ onSave: () => save(club), label: 'x', onClose: close }` → `onSave`), each with its text.
+ */
+function objectArrows(value: string): Array<[string, string]> {
+  if (!value.startsWith("{") || !value.endsWith("}") || !value.includes("=>") && !value.includes("function")) return [];
+  const body = value.slice(1, -1);
+  const entries: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let from = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      entries.push(body.slice(from, i));
+      from = i + 1;
+    }
+  }
+  entries.push(body.slice(from));
+  const out: Array<[string, string]> = [];
+  for (const entry of entries) {
+    const m = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(entry);
+    if (m && INLINE_FUNCTION.test(m[2]!)) out.push([m[1]!, m[2]!]);
+  }
+  return out;
+}
+
 /** The names `handler` reads that the scopes in force bind (`InteractiveElementInfo.scope`). */
 function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fullSource: string): Pick<InteractiveElementInfo, "scope"> {
   if (!handler || !scopes) return {};
@@ -276,15 +323,93 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
   for (const scope of [...scopes].reverse()) {
     for (const name of scope.names) {
       if (found.some((f) => f.name === name) || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(handler)) continue;
-      if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.props![name]! } });
+      if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.whole ? WHOLE_SLOT_PROPS : scope.props![name]! } });
       else {
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
+        const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) : undefined;
         if (type) found.push({ name, type });
-        else found.push({ name });
+        else found.push({ name, ...(callbacks ? { callbacks } : {}) });
       }
     }
   }
   return found.length > 0 ? { scope: found } : {};
+}
+
+/**
+ * The functions the objects of a literal array hold under each key — the action items a template loops over
+ * (`items: [{ label: 'Delete', action: this.remove }, { label: 'Refresh', action: refresh }]`, as a `data()`
+ * field, a `const`, a `ref([…])`, or a computed/method returning the literal): `{ action: ["remove", "refresh"] }`.
+ * Only values that name a function (`fn`, `this.fn`, `{ fn }`) count; none when the collection is not declared
+ * as one such literal in this component.
+ */
+function literalCallbacksOf(source: string, script: string): Record<string, string[]> | undefined {
+  const name = /^(?:this\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim())?.[1];
+  if (!name) return undefined;
+  const wrapper = String.raw`(?:(?:ref|shallowRef|reactive|computed)\s*(?:<[^>()]*>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?)?`;
+  const starts = [
+    ...script.matchAll(new RegExp(String.raw`(?<![\w$.])${name}\s*[:=]\s*${wrapper}\[`, "g")),
+    ...script.matchAll(new RegExp(String.raw`(?<![\w$.])${name}\s*\(\s*\)\s*\{\s*return\s*\[`, "g")),
+  ];
+  // One declaration only: a second one of the name is another collection.
+  if (starts.length !== 1) return undefined;
+  const open = starts[0]!.index! + starts[0]![0].length - 1;
+  const body = balanced(script, open, "[", "]");
+  if (body === null) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const element of splitTopLevel(body)) {
+    const obj = element.trim();
+    if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
+    for (const entry of splitTopLevel(obj.slice(1, -1))) {
+      const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*(?::\s*(?:this\.)?([A-Za-z_$][\w$]*)(?:\.bind\(this\))?)?\s*$/.exec(entry);
+      if (!m) continue;
+      const fn = m[2] ?? m[1]!;
+      if (/^(?:undefined|null|true|false|this)$/.test(fn)) continue;
+      const list = (out[m[1]!] ??= []);
+      if (!list.includes(fn)) list.push(fn);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The text between the bracket at `open` and its match, skipping strings; null when unbalanced. */
+function balanced(text: string, open: number, left: string, right: string): string | null {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === left || c === "(" || c === "{" || c === "[") depth++;
+    else if (c === right || c === ")" || c === "}" || c === "]") {
+      if (--depth === 0) return text.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/** `text` split at its top-level commas (outside brackets and strings). */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(text.slice(from));
+  return out.filter((e) => e.trim());
 }
 
 /**
@@ -361,6 +486,14 @@ export function extractSlotFunctions(template: string, fullSource: string, hands
     for (const b of attrs.matchAll(/(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)\s*=\s*"\s*([A-Za-z_$][\w$]*)\s*"/g)) {
       if (b[1] === "name" || !handsOn(b[2]!)) continue;
       out.push({ slot, prop: b[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase()), handler: b[2]!, line });
+    }
+    // `<slot v-bind="{ save: saveAll, reload }">`: an object of slot props.
+    for (const obj of attrs.matchAll(/(?:^|\s)v-bind\s*=\s*(?:"\s*\{([^"]*)\}\s*"|'\s*\{([^']*)\}\s*')/g)) {
+      for (const entry of (obj[1] ?? obj[2] ?? "").split(",")) {
+        const e = /^\s*([A-Za-z_$][\w$]*)\s*(?::\s*([A-Za-z_$][\w$]*)\s*)?$/.exec(entry);
+        const handler = e?.[2] ?? e?.[1];
+        if (e && handler && handsOn(handler)) out.push({ slot, prop: e[1]!, handler, line });
+      }
     }
   }
   return out;

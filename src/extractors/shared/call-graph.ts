@@ -192,6 +192,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argKinds?: string[] | null;
     withSubjects?: string[] | null;
     stated?: boolean;
+    mapMember?: boolean;
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
@@ -242,6 +243,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
         push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
         if (withSubjectsOf) candidates[candidates.length - 1]!.withSubjects = withSubjectsOf(node);
         if (hooks?.statedMember?.(node, name)) candidates[candidates.length - 1]!.stated = true;
+        else if (isNoise(name) && hooks?.importedMapMember?.(node, name)) {
+          candidates[candidates.length - 1]!.stated = true;
+          candidates[candidates.length - 1]!.mapMember = true;
+        }
       }
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
@@ -319,6 +324,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.passed) call.passed = c.passed;
     if (c.read) call.read = true;
     if (c.returnedAs) call.returnedAs = c.returnedAs;
+    if (c.mapMember) call.mapMember = true;
     if (!c.isReference && localHere.has(c.name)) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
@@ -470,6 +476,8 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
           results.push(call);
         } else if (!isNoise(name) || hooks?.statedMember?.(node, name)) {
           results.push(call);
+        } else if (hooks?.importedMapMember?.(node, name)) {
+          results.push({ ...call, mapMember: true });
         } else if (name.includes(".")) {
           holdNoiseCall(results, call);
         }

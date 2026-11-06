@@ -4191,6 +4191,8 @@ function resolveCallToDefinition(
   }
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
+  // A noise-named key off an imported name is a link only through that name's dispatch map.
+  if (call.mapMember) return null;
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"

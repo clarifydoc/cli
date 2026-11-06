@@ -205,3 +205,163 @@ describe("Angular getters returning a child", () => {
     expect(rows.some((r) => r.includes("car-form"))).toBe(false);
   });
 });
+
+const VUE_ARROWS: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/components/SquadBar.vue": `<script setup>
+const props = defineProps({ onPick: { type: Function, default: null } });
+function pick() { props.onPick(); }
+</script>
+<template><button @click="pick">Pick</button></template>
+`,
+  "src/views/ClubPage.vue": `<script setup>
+import axios from 'axios';
+import SquadBar from '../components/SquadBar.vue';
+async function pickPlayer(id) { await axios.post('/api/v2/players/pick', { id }); }
+async function dropPlayer(id) { await axios.delete('/api/v2/players/drop'); }
+async function rest() { await axios.get('/api/v2/rest'); }
+</script>
+<template>
+  <SquadBar v-bind="{ onPick: () => pickPlayer(1), label: 'x' }" />
+  <SquadBar :options="{ onDrop: (id) => dropPlayer(id), label: 'y' }" />
+  <SquadBar :options="{ label: 'z', onRest: rest }" />
+</template>
+`,
+};
+
+describe("Vue arrows inside a v-bind object", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-vbind-arrows-"));
+    summary = await run(dir, VUE_ARROWS);
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("reads each arrow's calls as a function of its own, and joins `v-bind` prop arrows to the child's prop call", () => {
+    const rows = linkRows(summary, "src/views/ClubPage.vue");
+    expect(rows).toContain("<SquadBar:onPick@9> -pickPlayer-> src/views/ClubPage.vue#pickPlayer");
+    expect(rows).toContain("<SquadBar:options.onDrop@10> -dropPlayer-> src/views/ClubPage.vue#dropPlayer");
+    expect(rows.some((r) => r.includes("rest"))).toBe(false);
+    expect(linkRows(summary, "src/components/SquadBar.vue")).toContain("pick -props.onPick-> src/views/ClubPage.vue#<SquadBar:onPick@9>");
+  });
+});
+
+const VUE_WHOLE_SLOT: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/components/ClubShell.vue": `<script setup>
+import axios from 'axios';
+async function saveAll(club) { await axios.put('/api/v2/clubs/all', club); }
+async function reload() { await axios.get('/api/v2/clubs'); }
+</script>
+<template><div><slot :save="saveAll" v-bind="{ reload }" /></div></template>
+`,
+  "src/components/CarShell.vue": `<script setup>
+import axios from 'axios';
+async function saveAll(car) { await axios.put('/api/v2/cars/all', car); }
+</script>
+<template><div><slot :save="saveAll" /></div></template>
+`,
+  "src/views/ClubPage.vue": `<script setup>
+import ClubShell from '../components/ClubShell.vue';
+</script>
+<template>
+  <ClubShell>
+    <template #default="props">
+      <button @click="props.save(1)">Save</button>
+      <button @click="props.reload?.()">Reload</button>
+      <button @click="props.missing()">Missing</button>
+    </template>
+  </ClubShell>
+</template>
+`,
+  "src/views/DecoyPage.vue": `<script setup>
+import CarShell from '../components/CarShell.vue';
+</script>
+<template>
+  <CarShell v-slot="slotProps"><button @click="slotProps.save(1)">Save</button></CarShell>
+</template>
+`,
+};
+
+describe("Vue scoped slot bound to a whole props object", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-whole-slot-"));
+    summary = await run(dir, VUE_WHOLE_SLOT);
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("joins `props.save` / `props.reload` to the functions the provider's slot offers, never the other component's", () => {
+    expect(linkRows(summary, "src/views/ClubPage.vue")).toEqual([
+      "<setup> -props.reload-> src/components/ClubShell.vue#reload",
+      "<setup> -props.save-> src/components/ClubShell.vue#saveAll",
+    ]);
+    expect(linkRows(summary, "src/views/DecoyPage.vue")).toEqual(["<setup> -slotProps.save-> src/components/CarShell.vue#saveAll"]);
+  });
+});
+
+const VUE_ITEMS: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/views/ClubPage.vue": `<template>
+  <ul>
+    <li v-for="item in items" :key="item.label"><button @click="item.action()">{{ item.label }}</button></li>
+    <li v-for="entry in entries"><button @click="entry.run(1)">Go</button></li>
+    <li v-for="row in rows"><button @click="row.action()">Row</button></li>
+  </ul>
+</template>
+<script>
+import axios from 'axios';
+export default {
+  props: ['rows'],
+  data() {
+    return { items: [{ label: 'Delete', action: this.remove }, { label: 'Refresh', action: this.refresh }] };
+  },
+  computed: {
+    entries() { return [{ label: 'Save', run: this.save }]; },
+  },
+  methods: {
+    remove() { return axios.delete('/api/v2/clubs/1'); },
+    refresh() { return axios.get('/api/v2/clubs'); },
+    save() { return axios.post('/api/v2/clubs', {}); },
+    action() { return axios.get('/api/v2/decoy'); },
+  },
+};
+</script>
+`,
+  "src/views/CarPage.vue": `<template>
+  <ul><li v-for="item in items"><button @click="item.action()">x</button></li></ul>
+</template>
+<script setup>
+import axios from 'axios';
+const items = ref([{ label: 'Delete', action: removeCar }]);
+function removeCar() { return axios.delete('/api/v2/cars/1'); }
+</script>
+`,
+};
+
+describe("Vue action items from a literal array", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-loop-items-"));
+    summary = await run(dir, VUE_ITEMS);
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("links `item.action()` to each function the component's own literal array holds under that key", () => {
+    expect(linkRows(summary, "src/views/ClubPage.vue").filter((r) => r.startsWith("<setup>"))).toEqual([
+      "<setup> -entry.run-> src/views/ClubPage.vue#save",
+      "<setup> -item.action-> src/views/ClubPage.vue#refresh",
+      "<setup> -item.action-> src/views/ClubPage.vue#remove",
+    ]);
+    expect(linkRows(summary, "src/views/CarPage.vue")).toContain("<setup> -item.action-> src/views/CarPage.vue#removeCar");
+  });
+});

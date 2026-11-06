@@ -66,23 +66,45 @@ function dispatchMapNames(node: Node): ReadonlySet<string> {
 
 let importsTree: Node["tree"] | null = null;
 let importNames = new Set<string>();
+let projectImportNames = new Set<string>();
 
 /** The names the file imports (`import { ACTIONS }`, `import ACTIONS`, `{ a as ACTIONS }`), read once per tree. */
 function importedNames(node: Node): ReadonlySet<string> {
   if (node.tree === importsTree) return importNames;
   importsTree = node.tree;
   importNames = new Set();
+  projectImportNames = new Set();
   for (const stmt of node.tree.rootNode.namedChildren) {
     if (stmt.type !== "import_statement") continue;
+    const source = stmt.childForFieldName("source")?.text.slice(1, -1) ?? "";
+    // A project file (relative, or through an alias), never a package: `lodash`'s `_.map` is no project's map.
+    const local = /^(?:\.{1,2}\/|[@~#]\/)/.test(source);
+    const add = (name: string) => {
+      importNames.add(name);
+      if (local) projectImportNames.add(name);
+    };
     for (const spec of stmt.descendantsOfType(["import_specifier", "identifier"])) {
       if (!spec) continue;
       if (spec.type === "import_specifier") {
-        const local = spec.childForFieldName("alias") ?? spec.childForFieldName("name");
-        if (local) importNames.add(local.text);
-      } else if (spec.parent?.type === "import_clause") importNames.add(spec.text);
+        const bound = spec.childForFieldName("alias") ?? spec.childForFieldName("name");
+        if (bound) add(bound.text);
+      } else if (spec.parent?.type === "import_clause") add(spec.text);
     }
   }
   return importNames;
+}
+
+/**
+ * Whether a call `ACTIONS.map(…)` reads a key off a name the file imports from the project: the key may be
+ * an own property of an object literal the exporting file declares, however much its leaf looks like an array
+ * method. Only the linker can tell (it reads the exporting file's map), so the call is kept marked
+ * `CallInfo.mapMember` and links nowhere else.
+ */
+export function importedMapMember(callName: string, node: Node): boolean {
+  const dot = callName.indexOf(".");
+  if (dot <= 0 || callName.indexOf(".", dot + 1) >= 0) return false;
+  importedNames(node);
+  return projectImportNames.has(callName.slice(0, dot));
 }
 
 /**

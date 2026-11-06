@@ -461,3 +461,42 @@ export const c = () => store.dispatch('garages/load');`,
     ]);
   });
 });
+
+describe("vuex-action dispatch of actions merged by Object.assign", () => {
+  it("follows `actions: Object.assign({}, baseActions, { save() {} })` and `const actions = Object.assign(…)`", async () => {
+    const links = new VuexDispatchResolver().resolve(await analyzeAll({
+      "src/store/index.js": `import { createStore } from 'vuex';
+import clubs from './modules/clubs';
+import cars from './modules/cars';
+export default createStore({ modules: { clubs, cars } });`,
+      "src/store/modules/base.js": `export const baseActions = { async list({ commit }) { commit('SET', []); } };`,
+      "src/store/modules/clubs.js": `import { baseActions } from './base';
+export default {
+  namespaced: true,
+  state: {},
+  actions: Object.assign({}, baseActions, {
+    async save({ commit }, c) { commit('SET', c); },
+    drop: async ({ commit }, id) => { commit('DROP', id); },
+  }),
+};`,
+      "src/store/modules/cars.js": `const carActions = { rev: async () => {} };
+const actions = Object.assign({}, carActions, { park() {} });
+export default { namespaced: true, state: {}, actions };`,
+      "src/pages/Page.js": `import { useStore } from 'vuex';
+const store = useStore();
+export const a = () => store.dispatch('clubs/list');
+export const b = () => store.dispatch('clubs/save');
+export const c = () => store.dispatch('clubs/drop');
+export const d = () => store.dispatch('cars/rev');
+export const e = () => store.dispatch('cars/park');
+export const f = () => store.dispatch('cars/save');`,
+    }));
+    expect(show(links, "src/pages/Page.js")).toEqual([
+      "a -dispatch:clubs/list-> src/store/modules/base.js#baseActions.list",
+      "b -dispatch:clubs/save-> src/store/modules/clubs.js#actions.save",
+      "c -dispatch:clubs/drop-> src/store/modules/clubs.js#actions.drop",
+      "d -dispatch:cars/rev-> src/store/modules/cars.js#carActions.rev",
+      "e -dispatch:cars/park-> src/store/modules/cars.js#actions.park",
+    ]);
+  });
+});

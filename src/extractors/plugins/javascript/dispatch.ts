@@ -2,6 +2,7 @@ import type { ClassInfo, FileAnalysis, Language, SymbolLink } from "../../../typ
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
+import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -455,22 +456,75 @@ export class JsSlotScopeResolver implements DispatchResolver {
           const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
           const child = childFile ? byPath.get(childFile) : undefined;
           if (!child) continue;
-          const offered = (child.slotFunctions ?? []).filter((f) => f.slot === s.slot!.name && f.prop === s.slot!.prop);
-          // Two outlets of one slot offering the prop different functions: no guess.
-          if (new Set(offered.map((f) => f.handler)).size !== 1) continue;
-          const name = offered[0]!.handler;
-          const span = spansOf(child).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
-          if (!span) continue;
-          links.push({
-            sourceFile: parent.filePath,
-            sourceSymbol: "<setup>",
-            sourceLine: el.line,
-            callName: s.name,
-            targetFile: child.filePath,
-            targetSymbol: span.symbol,
-            targetLine: span.line,
-            confidence: "INFERRED",
-          });
+          // `#default="props"` binds every prop under one name: each `props.save` the handler reads is that prop.
+          const members: Array<{ call: string; prop: string }> = s.slot.prop === WHOLE_SLOT_PROPS
+            ? [...new Set([...(el.handler ?? "").replace(/\?\./g, ".").matchAll(new RegExp(`(?<![\\w$.])${s.name.replace(/\$/g, "\\$")}\\.([A-Za-z_$][\\w$]*)`, "g"))].map((m) => m[1]!))].map((prop) => ({ call: `${s.name}.${prop}`, prop }))
+            : [{ call: s.name, prop: s.slot.prop }];
+          for (const member of members) {
+            const offered = (child.slotFunctions ?? []).filter((f) => f.slot === s.slot!.name && f.prop === member.prop);
+            // Two outlets of one slot offering the prop different functions: no guess.
+            if (new Set(offered.map((f) => f.handler)).size !== 1) continue;
+            const name = offered[0]!.handler;
+            const span = spansOf(child).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+            if (!span) continue;
+            links.push({
+              sourceFile: parent.filePath,
+              sourceSymbol: "<setup>",
+              sourceLine: el.line,
+              callName: member.call,
+              targetFile: child.filePath,
+              targetSymbol: span.symbol,
+              targetLine: span.line,
+              confidence: "INFERRED",
+            });
+          }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/**
+ * An action item's callback: `<li v-for="item in items"><button @click="item.action()">` over a literal
+ * array of objects the component declares (`{ label: 'Delete', action: this.remove }`). The loop variable's
+ * member runs whichever item was clicked, so each function the array holds under that key is a candidate:
+ * one INFERRED link per function, from the component's `<setup>`, by the name as the markup spells it.
+ */
+export class JsLoopItemCallbackResolver implements DispatchResolver {
+  readonly id = "loop-item-callback";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 35;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const links: SymbolLink[] = [];
+    for (const parent of analyses) {
+      const els = (parent.interactiveElements ?? []).filter((el) => el.handler && el.scope?.some((s) => s.callbacks));
+      if (els.length === 0) continue;
+      const spans = spansOf(parent);
+      const seen = new Set<string>();
+      for (const el of els) {
+        for (const s of el.scope!) {
+          if (!s.callbacks) continue;
+          const read = new RegExp(`(?<![\\w$.])${s.name.replace(/\$/g, "\\$")}\\??\\.([A-Za-z_$][\\w$]*)`, "g");
+          for (const m of el.handler!.matchAll(read)) {
+            for (const fn of s.callbacks[m[1]!] ?? []) {
+              const span = spans.find((sp) => sp.symbol === fn || sp.symbol.endsWith(`.${fn}`));
+              const key = `${el.line}\0${s.name}.${m[1]}\0${span?.symbol}`;
+              if (!span || seen.has(key)) continue;
+              seen.add(key);
+              links.push({
+                sourceFile: parent.filePath,
+                sourceSymbol: "<setup>",
+                sourceLine: el.line,
+                callName: `${s.name}.${m[1]}`,
+                targetFile: parent.filePath,
+                targetSymbol: span.symbol,
+                targetLine: span.line,
+                confidence: "INFERRED",
+              });
+            }
+          }
         }
       }
     }
