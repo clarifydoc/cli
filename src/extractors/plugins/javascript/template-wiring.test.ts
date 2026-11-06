@@ -205,3 +205,46 @@ describe("Angular getters returning a child", () => {
     expect(rows.some((r) => r.includes("car-form"))).toBe(false);
   });
 });
+
+const VUE_ARROWS: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/components/SquadBar.vue": `<script setup>
+const props = defineProps({ onPick: { type: Function, default: null } });
+function pick() { props.onPick(); }
+</script>
+<template><button @click="pick">Pick</button></template>
+`,
+  "src/views/ClubPage.vue": `<script setup>
+import axios from 'axios';
+import SquadBar from '../components/SquadBar.vue';
+async function pickPlayer(id) { await axios.post('/api/v2/players/pick', { id }); }
+async function dropPlayer(id) { await axios.delete('/api/v2/players/drop'); }
+async function rest() { await axios.get('/api/v2/rest'); }
+</script>
+<template>
+  <SquadBar v-bind="{ onPick: () => pickPlayer(1), label: 'x' }" />
+  <SquadBar :options="{ onDrop: (id) => dropPlayer(id), label: 'y' }" />
+  <SquadBar :options="{ label: 'z', onRest: rest }" />
+</template>
+`,
+};
+
+describe("Vue arrows inside a v-bind object", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-vbind-arrows-"));
+    summary = await run(dir, VUE_ARROWS);
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("reads each arrow's calls as a function of its own, and joins `v-bind` prop arrows to the child's prop call", () => {
+    const rows = linkRows(summary, "src/views/ClubPage.vue");
+    expect(rows).toContain("<SquadBar:onPick@9> -pickPlayer-> src/views/ClubPage.vue#pickPlayer");
+    expect(rows).toContain("<SquadBar:options.onDrop@10> -dropPlayer-> src/views/ClubPage.vue#dropPlayer");
+    expect(rows.some((r) => r.includes("rest"))).toBe(false);
+    expect(linkRows(summary, "src/components/SquadBar.vue")).toContain("pick -props.onPick-> src/views/ClubPage.vue#<SquadBar:onPick@9>");
+  });
+});

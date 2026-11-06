@@ -245,8 +245,22 @@ export function extractVueInteractiveElements(
       while ((bindMatch = bindRegex.exec(attrs)) !== null) {
         const value = (bindMatch[2] ?? bindMatch[3] ?? "").trim();
         // Vue's own attributes are no props: a function `:ref` receives the element.
-        if (!INLINE_FUNCTION.test(value) || VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
-        elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+        if (VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
+        if (INLINE_FUNCTION.test(value)) {
+          elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+        } else {
+          // `:options="{ onClick: () => remove(id) }"`: each arrow of the object is a function of its own.
+          for (const [key, arrow] of objectArrows(value)) {
+            elements.push({ element: "custom", event: `:${bindMatch[1]}.${key}`, handler: arrow, line, component: tagName });
+          }
+        }
+      }
+      // `v-bind="{ onSave: () => save(club) }"`: an object of props; each arrow is the prop it names.
+      const objectRegex = /(?:^|\s)v-bind\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+      for (let obj = objectRegex.exec(attrs); obj; obj = objectRegex.exec(attrs)) {
+        for (const [key, arrow] of objectArrows((obj[1] ?? obj[2] ?? "").trim())) {
+          elements.push({ element: "custom", event: `:${key}`, handler: arrow, line, component: tagName });
+        }
       }
     }
 
@@ -266,6 +280,39 @@ export function extractVueInteractiveElements(
   }
 
   return elements;
+}
+
+/**
+ * The arrow and function-expression entries of an object literal written in markup
+ * (`{ onSave: () => save(club), label: 'x', onClose: close }` → `onSave`), each with its text.
+ */
+function objectArrows(value: string): Array<[string, string]> {
+  if (!value.startsWith("{") || !value.endsWith("}") || !value.includes("=>") && !value.includes("function")) return [];
+  const body = value.slice(1, -1);
+  const entries: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let from = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      entries.push(body.slice(from, i));
+      from = i + 1;
+    }
+  }
+  entries.push(body.slice(from));
+  const out: Array<[string, string]> = [];
+  for (const entry of entries) {
+    const m = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(entry);
+    if (m && INLINE_FUNCTION.test(m[2]!)) out.push([m[1]!, m[2]!]);
+  }
+  return out;
 }
 
 /** The names `handler` reads that the scopes in force bind (`InteractiveElementInfo.scope`). */
