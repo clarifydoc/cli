@@ -192,6 +192,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     argKinds?: string[] | null;
     withSubjects?: string[] | null;
     stated?: boolean;
+    /** The plugin's per-site answer (`CallExtractionHooks.boundAt`); absent = the function-wide set decides. */
+    bound?: boolean;
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
@@ -211,6 +213,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     passed?: CallInfo["passed"],
   ) => {
     candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, passed, receiver, key, args, argCount, argOrigins, argKinds });
+    if (!isReference && hooks.boundAt) candidates[candidates.length - 1]!.bound = hooks.boundAt(node, name);
   };
   const addResult = (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string) => {
     if (!name) return;
@@ -308,9 +311,11 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     const typed = (c.receiver?.type ? `\0<${c.receiver.type}>` : "") + (c.withSubjects ? `\0with(${c.withSubjects.join(",")})` : "");
     // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
     // A dispatch map's value is one claim per key it is held under (`{ save: saveClub, store: saveClub }`).
-    const seenKey = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.read ? `${c.name}\0read` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
+    const seenKeyBase = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.read ? `${c.name}\0read` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
       : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
+    // A site its own block binds the name of is another claim than one the module's name reaches.
+    const seenKey = c.bound ? `${seenKeyBase}\0bound` : seenKeyBase;
     // One site is one call, however many ways the walk met it (a decorator is also its call node).
     const site = `${c.name}\0@${c.line}:${c.column}`;
     if (seen.has(seenKey) || seen.has(site)) continue;
@@ -319,7 +324,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     if (c.passed) call.passed = c.passed;
     if (c.read) call.read = true;
     if (c.returnedAs) call.returnedAs = c.returnedAs;
-    if (!c.isReference && localHere.has(c.name)) call.boundLocally = true;
+    if (!c.isReference && (c.bound ?? localHere.has(c.name))) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;

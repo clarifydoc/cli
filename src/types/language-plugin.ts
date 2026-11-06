@@ -983,6 +983,14 @@ export interface CallExtractionHooks {
    */
   statedMember?(node: Node, name: string): boolean;
   /**
+   * Whether a call site's own block binds the name it calls (or the head of the receiver it calls through): per
+   * site, so a `{ const save = … }` in one block does not hide a module function `save()` called from a sibling,
+   * and a block's `let v = make()` hides the parameter `v` only inside it. Without it the function's every binding
+   * counts for every site. For a dotted name the answer is about its head, and true only where a nested block's
+   * untyped declaration shadows a parameter (a typed one is `receiverTypeOf`'s). Sets `CallInfo.boundLocally`.
+   */
+  boundAt?(node: Node, name: string): boolean;
+  /**
    * The local names a declaration binds from what a call returns (`const { save } = useClubActions()`,
    * `const [rows, refresh] = useMatches()`): a function the factory hands back, so a name handed on
    * from there (`onClick={save}`) is kept for the factory's module to answer.

@@ -1,4 +1,5 @@
 import { argOriginsOf } from "./arg-origins.js";
+import { boundAtSite } from "./block-scope.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
@@ -163,6 +164,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(1)`,
   // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
   receiverTypeOf: receiverTypeOfCall,
+  boundAt: boundAtSite,
   argsOf: handedArgs,
   argOriginsOf,
 };

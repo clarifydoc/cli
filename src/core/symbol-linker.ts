@@ -5792,6 +5792,10 @@ function resolveThroughDeclaredType(
 
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
+  // A parameter a nested block's own untyped declaration hides at this site (`CallInfo.boundLocally` on a dotted
+  // call): its declared type is not the receiver's.
+  if (call.boundLocally && !receiver[0]!.ctor && !receiver[0]!.call
+    && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === receiver[0]!.name)) return null;
   const branches: InjectionPoint[] = [];
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false, branches);
   if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
@@ -6498,7 +6502,13 @@ function scopedName(
   if (declared) {
     const typeName = receiverTypeName(declared.type, analysis.language);
     if (!typeName && !declared.qualifier) return null;
-    const ref = typeName
+    // A class the caller's own body declares is the type its name states there, before an import or a namesake.
+    const ownClass = typeName && callable && pluginFor(analysis.language)?.lexicalCallScope
+      ? analysis.classes.find((c) => c.name === typeName && callable.line < c.line && c.endLine <= callable.endLine)
+      : undefined;
+    const ref = ownClass
+      ? { typeName: ownClass.name, typeFile: sourceFile }
+      : typeName
       ? nestedTypeRef(ctx, consumer, typeName, sourceFile) ??
         typeRefFor(ctx, typeName, sourceFile, analysis.projectId, () => namespaceScope(ctx, analysis, sourceSymbol), declared.type)
       : null;
