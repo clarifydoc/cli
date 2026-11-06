@@ -8,6 +8,7 @@ import { rubyReachability } from "./reachability.js";
 import { railsRouteAnchor } from "./route-anchor.js";
 import { grapeMounts } from "./grape.js";
 import { RailsViewResolver } from "./rails-views.js";
+import { RubyNodeRendererResolver } from "./renderer-dispatch.js";
 import { RUBY_REGEX_CONTROL_FLOW } from "./control-flow.js";
 import { RUBY_SECURITY_RULES } from "./security-rules.js";
 
@@ -23,7 +24,7 @@ export const rubyMeta: LanguagePluginMeta = {
   // Grape APIs take the prefix, version and path of the APIs that mount them.
   routeResolvers: [railsRouteAnchor, grapeMounts],
   // An action renders its Jbuilder view by convention (see rails-views.ts).
-  dispatchResolvers: [new RailsViewResolver()],
+  dispatchResolvers: [new RailsViewResolver(), new RubyNodeRendererResolver()],
   builtinTypes: new Set(COMMON_PRIMITIVES),
   // `class Scope` inside `class Policy` reaches none of Policy's instance methods.
   nestedClassesShareNothing: true,
