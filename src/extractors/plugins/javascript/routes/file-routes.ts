@@ -256,13 +256,16 @@ export function inferNuxtServerRoutes(relativePath: string, analysis: FileAnalys
   const path = routeFromSegments(m[1] === "api" ? `api/${file}` : file);
   const line = analysis.exports.find((e) => e.name === "default" || e.kind === "default")?.line ?? 1;
   const wrappers = /^(?:define(?:Cached|Lazy)?EventHandler|eventHandler|defineWebSocketHandler|defineCachedEventHandler)$/;
-  const calls = (analysis.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.line >= line && !wrappers.test(c.name));
+  // An anonymous `export default defineEventHandler(async (event) => …)` is the function `default`, which holds
+  // the handler's calls; what the file runs from the export on stays in `<setup>`.
+  const handlerFn = analysis.functions.find((f) => f.name === "default");
+  const calls = [...(analysis.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.line >= line), ...(handlerFn?.calls ?? [])].filter((c) => !wrappers.test(c.name));
   // A handler that forwards (h3's `proxyRequest`/`sendProxy`) is a proxy to another service, not a route this one
   // serves: a catch-all `server/api/[...].ts` would otherwise take every call the backend's routes did not.
   if (calls.some((c) => /^(?:proxyRequest|sendProxy)$/.test(c.name))) return [];
   // A WebSocket handler is upgraded from a GET.
   const socket = !suffix && /\bdefineWebSocketHandler\s*\(/.test(sourceText);
-  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : socket ? "GET" : null, handler: null, calls, line })];
+  return [route(path, "api", { httpMethod: suffix ? suffix[2]!.toUpperCase() : socket ? "GET" : null, handler: handlerFn ? "default" : null, calls, line })];
 }
 
 /**
