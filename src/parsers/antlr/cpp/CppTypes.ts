@@ -220,8 +220,6 @@ export interface CppTokenFacts {
   cast: Uint8Array;
   /** 1 where an all-caps name calls a macro with arguments no expression reads: a type, `T *`, a block. */
   macroCall: Uint8Array;
-  /** 1 where an all-caps name calls a macro that stands for a type or a scope: `REMOVE_REF_(T) *`, `IS_COPYABLE(T)::value`. */
-  typeMacro: Uint8Array;
   /** 1 where an all-caps name stands for `if`: `IF_CONSTEXPR(c) { … } else { … }`. */
   ifMacro: Uint8Array;
   /** 1 where an all-caps name stands for `try` (`CATCH_TRY {`): its block is followed by handlers. */
@@ -236,9 +234,40 @@ export interface CppTokenFacts {
   next: Int32Array;
 }
 
+/**
+ * `using Ref = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`: an all-caps macro called where only a type or a scope
+ * goes stands for a name; its arguments go to the hidden channel, so the parser reads the name alone.
+ */
+function hideTypeMacroArguments(all: Token[]): void {
+  const tokens = all.filter((t) => t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF);
+  const n = tokens.length;
+  const type = (i: number) => tokens[i]?.type ?? -1;
+  const close = new Int32Array(n).fill(-1);
+  const open: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (type(i) === CPP14Lexer.LeftParen) open.push(i);
+    else if (type(i) === CPP14Lexer.RightParen && open.length > 0) close[open.pop()!] = i;
+  }
+  for (let i = 0; i + 1 < n; i++) {
+    if (type(i) !== CPP14Lexer.Identifier || !MACRO_NAME.test(tokens[i]!.text ?? "") || type(i + 1) !== CPP14Lexer.LeftParen || close[i + 1]! < 0) continue;
+    const prev = type(i - 1);
+    if (prev === CPP14Lexer.Doublecolon || prev === CPP14Lexer.Dot || prev === CPP14Lexer.Arrow) continue;
+    const after = type(close[i + 1]! + 1);
+    let hide = after === CPP14Lexer.Doublecolon;
+    if (!hide && (after === CPP14Lexer.Star || after === CPP14Lexer.And || after === CPP14Lexer.AndAnd || after === CPP14Lexer.Semi || after === CPP14Lexer.Const)) {
+      let j = i - 1;
+      while (type(j) === CPP14Lexer.Const || type(j) === CPP14Lexer.Volatile || type(j) === CPP14Lexer.Typename_) j--;
+      hide = type(j) === CPP14Lexer.Assign && type(j - 1) === CPP14Lexer.Identifier && type(j - 2) === CPP14Lexer.Using;
+    }
+    if (!hide) continue;
+    for (let k = i + 1; k <= close[i + 1]!; k++) (tokens[k] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
+  }
+}
+
 export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   stream.fill();
   const all = stream.getTokens();
+  hideTypeMacroArguments(all);
   const tokens = all.filter((t) => t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF);
   const n = tokens.length;
   const type = (i: number) => tokens[i]?.type ?? -1;
@@ -497,6 +526,11 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
     if (asmOperands && !conditional) macroCall[i] = 1;
+    // `template <class T, ENABLE_IF(!is_text<T>::value) = 0>`: a logical operator in a template parameter's macro, which no
+    // declaration's type holds.
+    if (macroCall[i] !== 1 && (type(i - 1) === CPP14Lexer.Comma || type(i - 1) === CPP14Lexer.Less) && type(close[i + 1]! + 1) === CPP14Lexer.Assign) {
+      for (let j = i + 2; j < close[i + 1]!; j++) if (type(j) === CPP14Lexer.Not || type(j) === CPP14Lexer.AndAnd || type(j) === CPP14Lexer.OrOr) macroCall[i] = 1;
+    }
   }
   // `BENCHMARK_LOOP {`, `SET_SOURCE_PATH return …`, `BEGIN_NAMESPACE class …`: a bare macro where a statement or
   // declaration starts, before what only starts another — a name alone there would be an expression.
@@ -540,24 +574,6 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     const endsBlock = next === CPP14Lexer.RightBrace && (BLOCK_BEFORE.has(type(before)) || type(before) === CPP14Lexer.Namespace || (isId(before) && type(before - 1) === CPP14Lexer.Namespace));
     if (BARE_MACRO_BEFORE.has(next) || endsBlock || i + 1 === n || (isId(i + 1) && MACRO_NAME.test(names[i + 1]!) && type(i + 2) !== CPP14Lexer.Semi)) macroCall[i] = 1;
   }
-  // `using Ref = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`: a macro call where only a type or a scope goes.
-  const typeMacro = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || type(i + 1) !== CPP14Lexer.LeftParen || close[i + 1]! < 0) continue;
-    const prev = type(i - 1);
-    if (prev === CPP14Lexer.Doublecolon || prev === CPP14Lexer.Dot || prev === CPP14Lexer.Arrow) continue;
-    const after = type(close[i + 1]! + 1);
-    // A scope: only a name or a type goes before `::`.
-    if (after === CPP14Lexer.Doublecolon) {
-      typeMacro[i] = 1;
-      continue;
-    }
-    // A type: an alias's, or the first template argument, ended by what only a type's declarator holds.
-    if (after !== CPP14Lexer.Star && after !== CPP14Lexer.And && after !== CPP14Lexer.AndAnd && after !== CPP14Lexer.Semi && after !== CPP14Lexer.Const) continue;
-    let j = i - 1;
-    while (type(j) === CPP14Lexer.Const || type(j) === CPP14Lexer.Volatile || type(j) === CPP14Lexer.Typename_) j--;
-    if ((type(j) === CPP14Lexer.Assign && isId(j - 1) && type(j - 2) === CPP14Lexer.Using) || (type(j) === CPP14Lexer.Less && angle[j]! >= 0)) typeMacro[i] = 1;
-  }
   // `if CONSTEXPR20 (…)`: a macro standing for `constexpr`.
   for (let i = 1; i < n; i++) if (type(i - 1) === CPP14Lexer.If && isId(i) && MACRO_NAME.test(names[i]!) && type(i + 1) === CPP14Lexer.LeftParen) macroCall[i] = 1;
   // `(std::cout << ... << args)`, `(check(args) && ...)`: a fold, its `...` beside an operator at the parentheses' depth.
@@ -587,7 +603,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
   }
-  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, tryMacro, catchMacro, ifMacro, fold);
+  return facts(all, tokens, names, types, close, angle, cast, macroCall, tryMacro, catchMacro, ifMacro, fold);
 
   /** Whether a cast may follow the `)` at `i`: another cast's, or a control header's. */
   function castAfterParen(i: number): boolean {
@@ -611,7 +627,6 @@ function facts(
   angle: Int32Array,
   cast: Uint8Array,
   macroCall: Uint8Array,
-  typeMacro: Uint8Array,
   tryMacro: Uint8Array,
   catchMacro: Uint8Array,
   ifMacro: Uint8Array,
@@ -626,7 +641,6 @@ function facts(
     angle: new Int32Array(size).fill(-1),
     cast: new Uint8Array(size),
     macroCall: new Uint8Array(size),
-    typeMacro: new Uint8Array(size),
     tryMacro: new Uint8Array(size),
     catchMacro: new Uint8Array(size),
     ifMacro: new Uint8Array(size),
@@ -661,7 +675,6 @@ function facts(
     if (angle[i]! >= 0) out.angle[k] = tokens[angle[i]!]!.tokenIndex;
     if (cast[i] === 1) out.cast[k] = 1;
     if (macroCall[i] === 1) out.macroCall[k] = 1;
-    if (typeMacro[i] === 1) out.typeMacro[k] = 1;
     if (tryMacro[i] === 1) out.tryMacro[k] = 1;
     if (catchMacro[i] === 1) out.catchMacro[k] = 1;
     if (ifMacro[i] === 1) out.ifMacro[k] = 1;

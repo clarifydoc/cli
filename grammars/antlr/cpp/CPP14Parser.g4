@@ -75,7 +75,6 @@ qualifiedId
 
 nestedNameSpecifier
     : (theTypeName | decltypeSpecifier)? Doublecolon // [ClarifyDoc] a namespace's name is a name too
-    | TypeMacro macroArguments Doublecolon // [ClarifyDoc] a macro standing for a type or scope: `IS_COPYABLE(T)::value`
     | nestedNameSpecifier (Template? simpleTemplateId | Identifier) Doublecolon // [ClarifyDoc] template-id first
     ;
 
@@ -554,7 +553,6 @@ keywordTypeSpecifier
 
 simpleTypeSpecifier
     : nestedNameSpecifier? theTypeName
-    | TypeMacro macroArguments // [ClarifyDoc] a macro standing for a type: `const REMOVE_REF_(T) *`
     | nestedNameSpecifier Template simpleTemplateId
     | Char
     | Char8 // [ClarifyDoc] C++20

@@ -167,8 +167,8 @@ per target at its `// Insert here @header` marker.
 
 - **C++: the leftovers of the 1.613 baseline.** `override`/`final` used as names (a variable, `final.go()`) read as
   identifiers where no declarator or class head precedes them (`usedAsName`); a macro call standing for a type or a
-  scope (`using R = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`) is retyped `TypeMacro` and read as a type
-  specifier / nested-name step; non-type template parameters (`template <size_t N>`) never open template brackets,
+  scope (`using R = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`) has its arguments moved to the hidden channel
+  by the first pass, so the grammar reads a name (a grammar alternative for it cost 7% on a C++20 library); non-type template parameters (`template <size_t N>`) never open template brackets,
   so `conditional_t < N<256, A, B>` compares; a `>=` may follow a closed template; `decltype(auto)` may follow a
   requires clause; a `static_assert` message is any constant expression; a lambda among template arguments is
   skipped whole by the scan for the closing `>`; macros standing for `try` (`CATCH_TRY {`) and `catch (…)`

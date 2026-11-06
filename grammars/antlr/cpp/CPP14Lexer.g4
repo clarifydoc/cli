@@ -11,7 +11,6 @@ tokens {
     TemplateGreater,
     CastLeftParen,
     MacroName,
-    TypeMacro,
     CatchMacro,
     FoldLeftParen
 }

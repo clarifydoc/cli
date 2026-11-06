@@ -208,7 +208,6 @@ const NO_FACTS: CppTokenFacts = {
   angle: new Int32Array(0),
   cast: new Uint8Array(0),
   macroCall: new Uint8Array(0),
-  typeMacro: new Uint8Array(0),
   tryMacro: new Uint8Array(0),
   catchMacro: new Uint8Array(0),
   ifMacro: new Uint8Array(0),
@@ -243,9 +242,6 @@ export abstract class CPP14ParserBase extends Parser {
     });
     this.facts.macroCall.forEach((call, name) => {
       if (call === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.MacroName;
-    });
-    this.facts.typeMacro.forEach((macro, name) => {
-      if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.TypeMacro;
     });
     this.facts.tryMacro.forEach((macro, name) => {
       if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.Try;
@@ -626,7 +622,8 @@ export abstract class CPP14ParserBase extends Parser {
     const t = this.lt(1);
     if (!this.macroAt(t) || this.lt(2).type !== CPP14Lexer.LeftParen) return false;
     const after = this.typeAt(this.afterMacro(t.tokenIndex));
-    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater || after === CPP14Lexer.Assign;
+    // A default (`= 0`) only after a macro the first pass retyped: `ENABLE_IF(a)` alone also reads as a declaration.
+    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater || (after === CPP14Lexer.Assign && t.type === CPP14Lexer.MacroName);
   }
 
   /** `module league;`, `module;`, `export module league:stats;`: `module` as a keyword. */
