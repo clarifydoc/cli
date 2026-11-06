@@ -21,6 +21,12 @@ describe("the file that starts a browser app", () => {
     for (const f of ["App.vue", "pages/app.vue", "components/app.vue", "layouts/admin.vue", "src/app.ts"]) expect(extractAppMount(undefined as never, "", f), f).toBeUndefined();
   });
 
+  it("a plain Vue project's root app.vue is a component, not the Nuxt root", () => {
+    expect(extractAppMount(undefined as never, "", "app.vue", ["vue", "vite"])).toBeUndefined();
+    expect(extractAppMount(undefined as never, "", "layouts/default.vue", ["vue"])).toBeUndefined();
+    expect(extractAppMount(undefined as never, "", "app.vue", ["vue", "nuxt"])).toEqual({ line: 1, routed: true });
+  });
+
   it("a project's own function of that name mounts nothing", async () => {
     expect(await mount(`export const actions = {\n  async createApp({ commit }, club) { commit('add', club) },\n}\n`)).toBeUndefined();
     expect(await mount(`import { render } from '@testing-library/vue'\nrender(ClubCard)\n`)).toBeUndefined();

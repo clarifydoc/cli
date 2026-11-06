@@ -67,4 +67,13 @@ router.get('/clubs', [ClubsController, 'index'])`);
     expect(rows(await routesOf("const r = await axios.get('/clubs', ['a', 'b'])"))).toEqual([]);
     expect(rows(await routesOf("const r = await api.get('/clubs/export', 'blob')"))).toEqual([]);
   });
+
+  it("types a parameter by its .where() matcher and keeps the path", async () => {
+    const routes = await routesOf(`${head}
+router.get('/clubs/:id', [ClubsController, 'show']).where('id', router.matchers.number())
+router.get('/cars/:code', [CarsController, 'show']).where('code', /^[0-9]+$/)
+router.get('/players/:slug', [PlayersController, 'show']).where('slug', router.matchers.slug())`);
+    expect(routes.map((r) => `${r.path} ${r.params?.map((p) => `${p.name}:${p.type}`).join()}`)).toEqual(["/clubs/:id id:number", "/cars/:code code:number", "/players/:slug slug:slug"]);
+  });
 });
+

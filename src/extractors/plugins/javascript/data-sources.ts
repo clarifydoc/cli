@@ -1971,6 +1971,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // are its data access; any other SDK (`openai.embeddings.create`, an
         // MCP `client.callTool`) is not a database, whatever its verbs.
         const sdk = !emittedApiCall && fn?.type === "member_expression" && ormChain ? this.clientKind(ormChain) : null;
+        // Astro content collections: `getCollection('clubs')`, `getEntry('clubs', id)` from `astro:content` read the collection.
+        if (fn?.type === "identifier" && (fnName === "getCollection" || fnName === "getEntry" || fnName === "getEntries") && this.sourceText.includes("astro:content")) {
+          const collection = literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null);
+          if (collection && /^[\w-]+$/.test(collection)) {
+            sources.push(this.ds({ kind: "database", name: `astro.content.${fnName}`, target: collection, entity: collection, line: node.startPosition.row + 1, access: "read" }));
+            return;
+          }
+        }
         if (sdk === "vector") {
           const op = vectorStoreAccess(fnName, node);
           if (op) {

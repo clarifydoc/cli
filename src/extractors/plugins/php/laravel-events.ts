@@ -31,20 +31,49 @@ interface ListenerDef {
 /** `dispatch(new SettleFee(…))`, `dispatch_sync(…)`, `Bus::dispatch(…)` — the queue helpers that take the job object. */
 const JOB_DISPATCH_CALL = /^(?:dispatch|dispatch_sync|dispatch_now|Bus\.(?:dispatch|dispatchSync|dispatchNow|chain|batch))$/;
 
-/**
- * A queued job runs its `handle` when dispatched: the classes with a `handle`
- * method, by name — a name two classes share is no job we can name.
- */
-function jobHandlers(analyses: FileAnalysis[]): Map<string, ListenerDef[]> {
-  const byName = new Map<string, Array<{ file: string; cls: ClassInfo }>>();
-  for (const a of analyses) for (const cls of a.classes as ClassInfo[]) (byName.get(cls.name) ?? byName.set(cls.name, []).get(cls.name)!).push({ file: a.filePath, cls });
-  const out = new Map<string, ListenerDef[]>();
-  for (const [name, defs] of byName) {
-    if (defs.length !== 1) continue;
-    const m = defs[0]!.cls.methods.find((x) => x.name === "handle");
-    if (m) out.set(name, [{ file: defs[0]!.file, symbol: `${name}.handle`, line: m.line }]);
+interface JobDef extends ListenerDef {
+  /** The class's namespace-qualified name, `App\\Jobs\\SyncClub`, or the bare name when the file declares no namespace. */
+  fqn: string;
+}
+
+const nsOf = (a: FileAnalysis): string => (a.declaredNamespace ?? "").replace(/^\\/, "");
+
+/** A queued job runs its `handle` when dispatched: the classes with a `handle` method, by leaf name. */
+function jobHandlers(analyses: FileAnalysis[]): Map<string, JobDef[]> {
+  const out = new Map<string, JobDef[]>();
+  for (const a of analyses) {
+    const ns = nsOf(a);
+    for (const cls of a.classes as ClassInfo[]) {
+      const m = cls.methods.find((x) => x.name === "handle");
+      if (!m) continue;
+      (out.get(cls.name) ?? out.set(cls.name, []).get(cls.name)!).push({ file: a.filePath, symbol: `${cls.name}.handle`, line: m.line, fqn: ns ? `${ns}\\${cls.name}` : cls.name });
+    }
   }
   return out;
+}
+
+/**
+ * The job a name written in `file` stands for: the class its `use` import or its own namespace says
+ * (`new \\App\\Jobs\\SyncClub`, `new Jobs\\SyncClub` under a `use App\\Jobs`), never the leaf name alone
+ * when two classes share it. A name no namespace fact places is a job only when ONE class bears it,
+ * the file imports none of that name and declares no namespace of its own.
+ */
+function jobFor(a: FileAnalysis, written: string, defs: JobDef[] | undefined): JobDef | undefined {
+  if (!defs || defs.length === 0) return undefined;
+  const ns = nsOf(a);
+  const name = written.replace(/^\\/, "");
+  const head = name.split("\\")[0]!;
+  const rest = name.slice(head.length);
+  const imp = a.imports.find((i) => i.specifiers.includes(head) && !i.executes);
+  let fqn: string;
+  if (written.startsWith("\\")) fqn = name;
+  else if (imp) fqn = imp.source.replace(/^\\/, "") + rest;
+  else fqn = ns ? `${ns}\\${name}` : name;
+  const exact = defs.filter((d) => d.fqn.toLowerCase() === fqn.toLowerCase());
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return undefined;
+  if (defs.length === 1 && !imp && !ns && !written.includes("\\")) return defs[0];
+  return undefined;
 }
 
 const bareType = (t: string): string => t.replace(/^\?/, "").replace(/^\\?(?:[\w]+\\)*/, "").trim();
@@ -74,8 +103,8 @@ export class LaravelEventResolver implements DispatchResolver {
 
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
-    const emit = (file: string, symbol: string, line: number, type: string, callName: string, table: Map<string, ListenerDef[]> = listeners): void => {
-      for (const l of table.get(type) ?? []) {
+    const emit = (file: string, symbol: string, line: number, type: string, callName: string, targets: ListenerDef[] = listeners.get(type) ?? []): void => {
+      for (const l of targets) {
         if (l.file === file && l.symbol === symbol) continue;
         const key = `${file}\0${symbol}\0${l.file}\0${l.symbol}`;
         if (seen.has(key)) continue;
@@ -83,21 +112,24 @@ export class LaravelEventResolver implements DispatchResolver {
         links.push({ sourceFile: file, sourceSymbol: symbol, sourceLine: line, callName, targetFile: l.file, targetSymbol: l.symbol, targetLine: l.line, resolvedBy: "text", confidence: "INFERRED", relation: "dispatch" });
       }
     };
-    const scan = (file: string, symbol: string, fn: FunctionInfo): void => {
+    const scan = (a: FileAnalysis, symbol: string, fn: FunctionInfo): void => {
+      const file = a.filePath;
       let dispatcher: string | null = null;
       let jobDispatcher: string | null = null;
       for (const c of fn.calls) {
         const stat = STATIC_DISPATCH.exec(c.name);
         if (stat && listeners.has(stat[1]!)) emit(file, symbol, c.line, stat[1]!, c.name);
-        if (stat && jobs.has(stat[1]!)) emit(file, symbol, c.line, stat[1]!, c.name, jobs);
+        const job = stat ? jobFor(a, stat[1]!, jobs.get(stat[1]!)) : undefined;
+        if (stat && job) emit(file, symbol, c.line, stat[1]!, c.name, [job]);
         if (!dispatcher && DISPATCHER_CALL.test(c.name)) dispatcher = c.name;
         if (JOB_DISPATCH_CALL.test(c.name)) jobDispatcher ??= c.name;
       }
       if (jobDispatcher) {
         for (const c of fn.calls) {
-          const m = /^new\s+\\?([\w\\]+)/.exec(c.name);
+          const m = /^new\s+(\\?[\w\\]+)/.exec(c.name);
           const type = m ? bareType(m[1]!) : null;
-          if (type && jobs.has(type)) emit(file, symbol, c.line, type, `${jobDispatcher}(${type})`, jobs);
+          const job = m && type ? jobFor(a, m[1]!, jobs.get(type)) : undefined;
+          if (type && job) emit(file, symbol, c.line, type, `${jobDispatcher}(${type})`, [job]);
         }
       }
       if (!dispatcher) return;
@@ -109,8 +141,8 @@ export class LaravelEventResolver implements DispatchResolver {
       }
     };
     for (const a of analyses) {
-      for (const fn of a.functions) scan(a.filePath, fn.name, fn);
-      for (const cls of a.classes as ClassInfo[]) for (const m of cls.methods) scan(a.filePath, `${cls.name}.${m.name}`, m);
+      for (const fn of a.functions) scan(a, fn.name, fn);
+      for (const cls of a.classes as ClassInfo[]) for (const m of cls.methods) scan(a, `${cls.name}.${m.name}`, m);
     }
     return links;
   }

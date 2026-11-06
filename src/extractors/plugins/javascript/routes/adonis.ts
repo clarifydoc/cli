@@ -16,7 +16,7 @@ import { adoptExpressRoute, addExpressRouteGuards, joinPrefix, receiverName } fr
  */
 
 export function mayDeclareAdonisRoutes(sourceText: string): boolean {
-  return /adonis/i.test(sourceText) && /\.(?:group|resource|shallowResource)\s*\(|\)\s*\.\s*(?:use|middleware)\s*\(/.test(sourceText);
+  return /adonis/i.test(sourceText) && /\.(?:group|resource|shallowResource)\s*\(|\)\s*\.\s*(?:use|middleware|where)\s*\(/.test(sourceText);
 }
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "any", "route"]);
@@ -91,6 +91,18 @@ export function extractAdonisChains(root: Node, routes: RouteInfo[]): void {
       if (mod.prop === "prefix") {
         const arg = mod.args[0];
         if (arg?.type === "string") for (const r of rows) r.path = joinPrefix(stripQuotes(arg.text), r.path);
+      } else if (mod.prop === "where") {
+        // `.where('id', router.matchers.number())` / `.where('id', /^[0-9]+$/)`: the parameter's type; the path stays as written.
+        const [nameArg, matcher] = mod.args;
+        const type = nameArg?.type === "string" && matcher ? matcherType(matcher.text) : null;
+        if (type) {
+          const name = stripQuotes(nameArg!.text);
+          for (const r of rows) {
+            if (!new RegExp(`:${name}\\b`).test(r.path)) continue;
+            r.params ??= [...r.path.matchAll(/:(\w+)/g)].map((m) => ({ name: m[1]!, type: null, binding: "route" as const, inferred: true }));
+            for (const p of r.params) if (p.name === name) p.type = type;
+          }
+        }
       } else if (mod.prop === "use" || mod.prop === "middleware") {
         for (const r of rows) addExpressRouteGuards(r, mod.args.flatMap((a) => (a.type === "array" ? a.namedChildren : [a])));
       }
@@ -126,4 +138,13 @@ function resourceRoutes(chain: Chain, routes: RouteInfo[]): RouteInfo[] {
     }
   }
   return out;
+}
+
+/** The type a param matcher states: `matchers.number()`, `matchers.uuid()`, `matchers.slug()`, or a pattern of digits. */
+function matcherType(text: string): string | null {
+  const named = /\bmatchers\s*\.\s*(number|uuid|slug)\s*\(/.exec(text);
+  if (named) return named[1]!;
+  const pattern = /\bmatch\s*:\s*(\/.+\/[a-z]*)|^(\/.+\/[a-z]*)$/s.exec(text.trim());
+  const source = pattern?.[1] ?? pattern?.[2];
+  return source && /^\/\^?(?:\\d|\[0-9\])[+*]?\$?\/[a-z]*$/.test(source) ? "number" : null;
 }

@@ -252,6 +252,17 @@ describe("symbol-linker — route-handler fallback guards (pit-stop FPs)", () =>
     expect(graded([routes, controller, other])[0]).toEqual(["PlayerController#index", "AMBIGUOUS"]);
   });
 
+  it("serves a route whose stated handler is an interface method by the one implementation, never a pick between two", () => {
+    const java = (path: string, opts: Parameters<typeof file>[2]) => ({ ...file(path, "web", opts), language: "java" }) as unknown as FileAnalysis;
+    const iface = java("league/ClubHandler.java", { classes: [{ ...cls("ClubHandler"), kind: "interface", methods: [fn("list", [])] }] });
+    const impl = java("league/ClubHandlerImpl.java", { classes: [{ ...cls("ClubHandlerImpl"), implements: ["ClubHandler"], methods: [fn("list", [])] }] });
+    const other = java("league/CarHandlerImpl.java", { classes: [{ ...cls("CarHandlerImpl"), implements: ["ClubHandler"], methods: [fn("list", [])] }] });
+    const router = { ...java("league/ClubRouter.java", {}), routes: [{ ...route("/clubs", "ClubHandler#list"), line: 8 }] } as unknown as FileAnalysis;
+    const routeLinks = (files: FileAnalysis[]) => buildSymbolLinks(files).filter((l) => l.sourceSymbol.startsWith("route:")).map((l) => [l.targetFile, l.strategy]);
+    expect(routeLinks([iface, impl, router])).toContainEqual(["league/ClubHandlerImpl.java", "interface-redirect"]);
+    expect(routeLinks([iface, impl, other, router]).map((l) => l[0])).toEqual(["league/ClubHandler.java"]);
+  });
+
   it("serves a route a resolver anchored on its handler by that method, never a namesake class's", () => {
     // `resources :clubs` moved onto `def index` of `ClubsController`; `Api::V1::ClubsController`
     // declares `index` too, and the name search took whichever came first.
