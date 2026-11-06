@@ -17,18 +17,6 @@ Screen / Route  →  handler / service  →  API call / ORM query  →  Entity /
    (UI tab)         (Call Traces)         (Data Access)            (Data Model)
 ```
 
-## The three layers
-
-ClarifyDoc is built as layers, each one optional and additive:
-
-| Layer | What it does | Needs |
-|-------|--------------|-------|
-| **1 — Deterministic extraction** | Routes, imports/exports, functions, classes, data sources & mutations, ORM entities & relations, interactive elements, screens, complexity, security. Pure static analysis. | tree-sitter / regex only |
-| **2 — LSP enhancement** *(optional)* | Resolves cross-file calls the text linker missed by running real language servers in Docker (`textDocument/definition` + `references`). | Docker |
-| **3 — AI enrichment** *(roadmap)* | Adds to — never replaces — the layer-1/2 structure: derives **user stories** and end-to-end **flows** from the extracted graph. | LLM |
-
-Layer 1 always runs and is fully self-contained. Layers 2 and 3 only *augment* the same data model, so the base extraction stays trustworthy and reproducible.
-
 ## How it fits together
 
 ```mermaid
@@ -248,7 +236,7 @@ clarifydoc analyze ./my-app --include "**/*.ts" "**/*.tsx" --max-files 50 --no-p
 ```bash
 clarifydoc impact <path>               # What changed files reach: screens, routes, entities, tests to run
 clarifydoc diff <base> <head>          # What changed in the API surface (and the import cycles introduced) between two analyses; --fail-on breaking
-clarifydoc lsp-update <analysis-dir>   # Run layer-2 LSP enhancement on an existing analysis
+clarifydoc lsp-update <analysis-dir>   # Resolve more calls with real language servers (Docker) on an existing analysis
 clarifydoc report <analysis-dir>       # (Re)generate the HTML report from project-summary.json
 clarifydoc cfg <file> -f <function>    # Draw one function's control flow as Mermaid
 clarifydoc seq <path> --route "POST /x" # Draw what a route does, in order, as a Mermaid sequence diagram
