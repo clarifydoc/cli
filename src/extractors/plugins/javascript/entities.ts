@@ -20,6 +20,12 @@ const DECORATOR_CARDINALITY: Record<string, EntityRelation["cardinality"]> = {
   BelongsToMany: "many-to-many",
   // A schema DSL's foreign-key column (`@ForeignKeyColumn(() => ClubTable, { onDelete })`): the field is the key.
   ForeignKeyColumn: "many-to-one",
+  // AdonisJS Lucid (`@hasMany(() => Player)`).
+  hasMany: "one-to-many",
+  belongsTo: "many-to-one",
+  hasOne: "one-to-one",
+  manyToMany: "many-to-many",
+  hasManyThrough: "one-to-many",
 };
 
 /** Relation decorators whose field is the foreign key column itself. */
@@ -35,7 +41,7 @@ const SEQUELIZE_CARDINALITY: Record<string, EntityRelation["cardinality"]> = {
 
 /** TypeORM/MikroORM column decorators that mark a persisted scalar/value field. */
 const COLUMN_DECORATORS =
-  /^@(Column|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|Property|Enum|Embedded|RelationId|PrimaryKey|ForeignKey)\b/;
+  /^@(column(?:\.\w+)?|Column|PrimaryGeneratedColumn|PrimaryColumn|ObjectIdColumn|CreateDateColumn|UpdateDateColumn|DeleteDateColumn|VersionColumn|Property|Enum|Embedded|RelationId|PrimaryKey|ForeignKey)\b/;
 
 /** Line-comment prefixes for the C-family languages this extractor handles. */
 const SLASH_COMMENT = ["//"] as const;
@@ -166,7 +172,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           endLine: cls.endLine,
           // TypeORM `@Entity("app_users")`, `@Entity({ name: "app_users" })`; MikroORM `{ tableName }`;
           // sequelize-typescript / a schema DSL `@Table({ tableName | name })`.
-          tableName: cls.decorators.map((d) => /^@?(?:Entity|Table)\s*\(\s*(?:["'`]([^"'`]+)["'`]|\{[^}]*?\b(?:name|tableName)\s*:\s*["'`]([^"'`]+)["'`])/.exec(d)).map((m) => m?.[1] ?? m?.[2]).find(Boolean) ?? null,
+          tableName: (orm === "lucid" ? /\bstatic\s+table\s*=\s*["'`]([^"'`]+)["'`]/.exec(body.join("\n"))?.[1] : undefined) ?? cls.decorators.map((d) => /^@?(?:Entity|Table)\s*\(\s*(?:["'`]([^"'`]+)["'`]|\{[^}]*?\b(?:name|tableName)\s*:\s*["'`]([^"'`]+)["'`])/.exec(d)).map((m) => m?.[1] ?? m?.[2]).find(Boolean) ?? null,
         }),
       );
     }
@@ -359,7 +365,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
   /** Pull a `name: "..."` option out of a decorator argument string. */
   private optionName(args: string | null): string | null {
     if (args == null) return null;
-    const m = args.match(/\bname\s*:\s*["'`]([^"'`]+)["'`]/);
+    const m = args.match(/\b(?:name|columnName)\s*:\s*["'`]([^"'`]+)["'`]/);
     return m ? m[1] : null;
   }
 
@@ -473,6 +479,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
   private decoratorOrm(ctx: EntityExtractContext): string {
     const sources = ctx.analysis.imports.map((imp) => imp.source);
     // Match `@mikro-orm/core`, `@mikro-orm/postgresql`, etc. broadly.
+    if (sources.some((s) => s.includes("@adonisjs/lucid"))) return "lucid";
     if (sources.some((s) => s.includes("mikro-orm"))) return "mikro-orm";
     if (sources.some((s) => s.includes("typeorm"))) return "typeorm";
     if (sources.some((s) => s.includes("sequelize-typescript"))) return "sequelize";
@@ -493,6 +500,8 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
     if (cls.decorators.some((d) => /^(entity|embeddable)$/i.test(d.replace(/\(.*$/s, "").trim()))) {
       return true;
     }
+    // An AdonisJS Lucid model: a class extending what `@adonisjs/lucid` supplies (`BaseModel`, a model mixin's result).
+    if (cls.extends && ctx.analysis.imports.some((i) => i.source.startsWith("@adonisjs/lucid") && i.specifiers.includes("BaseModel")) && /\bBaseModel\b|\bcompose\s*\(/.test(cls.extends)) return true;
     // `@Table({ … })` (sequelize-typescript, a schema DSL) over a class whose members are columns.
     if (cls.decorators.some((d) => /^@?Table\b/.test(d.trim())) && this.bodyInteriorOf(ctx, cls).some((l) => /@(?:Column|PrimaryGeneratedColumn|PrimaryKey|PrimaryColumn)\b/.test(l))) return true;
     // Some pipelines store decorators with the leading '@' or call args intact.

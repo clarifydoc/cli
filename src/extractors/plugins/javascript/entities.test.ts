@@ -134,3 +134,39 @@ export const cars = pgTable("cars", {
     expect(a.entityRelations?.map((r) => [r.fromEntity, r.toEntity, r.foreignKey])).toEqual([["clubs", "leagues", "league_id"]]);
   });
 });
+
+describe("JS entities — AdonisJS Lucid models", () => {
+  it("reads @column fields and association decorators of a BaseModel class", async () => {
+    const a = await analyze(`import { BaseModel, column, hasMany, belongsTo } from '@adonisjs/lucid/orm'
+import type { HasMany, BelongsTo } from '@adonisjs/lucid/types/relations'
+import { DateTime } from 'luxon'
+import Player from '#models/player'
+import League from '#models/league'
+
+export default class Club extends BaseModel {
+  static table = 'clubs'
+
+  @column({ isPrimary: true })
+  declare id: number
+
+  @column({ columnName: 'short_name' })
+  declare shortName: string
+
+  @column()
+  declare leagueId: number
+
+  @column.dateTime({ autoCreate: true })
+  declare createdAt: DateTime
+
+  @hasMany(() => Player)
+  declare players: HasMany<typeof Player>
+
+  @belongsTo(() => League)
+  declare league: BelongsTo<typeof League>
+}`, "app/models/club.ts");
+    const club = a.classes.find((c) => c.name === "Club")!;
+    expect(club.properties.map((p) => [p.name, p.column ?? null])).toEqual([["id", null], ["shortName", "short_name"], ["leagueId", null], ["createdAt", null]]);
+    expect(a.entityRelations?.map((r) => `${r.fromEntity}.${r.fromField} ${r.cardinality} ${r.toEntity}`)).toEqual(["Club.players one-to-many Player", "Club.league many-to-one League"]);
+  });
+});
+
