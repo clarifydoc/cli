@@ -1,3 +1,4 @@
+import { SEMICOLON_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { quicklispPackageManager, racketPackageManager } from "./package-manifests.js";
 
@@ -8,6 +9,7 @@ import { quicklispPackageManager, racketPackageManager } from "./package-manifes
  */
 export const racketManifest: LanguagePluginManifest = {
   language: "racket",
+  docComments: SEMICOLON_DOCS,
   family: "lisp",
   packageManagers: [racketPackageManager],
   packageEcosystems: ["racket"],
@@ -22,6 +24,7 @@ export const racketManifest: LanguagePluginManifest = {
 
 export const schemeManifest: LanguagePluginManifest = {
   language: "scheme",
+  docComments: SEMICOLON_DOCS,
   family: "lisp",
   parsing: "regex",
   extensions: [".scm", ".ss", ".sld", ".sls"],
@@ -32,6 +35,7 @@ export const schemeManifest: LanguagePluginManifest = {
 
 export const commonLispManifest: LanguagePluginManifest = {
   language: "commonlisp",
+  docComments: SEMICOLON_DOCS,
   family: "lisp",
   packageManagers: [quicklispPackageManager],
   packageEcosystems: ["quicklisp"],

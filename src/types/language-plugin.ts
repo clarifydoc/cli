@@ -404,6 +404,17 @@ export interface DocCommentSpec {
   docstring?: boolean;
   /** Lines between the comment and the declaration that belong to the declaration: decorators, attributes, annotations. */
   attribute?: RegExp;
+  /**
+   * What may stand before a `block` opener on its line and still make it documentation: Elixir's `@doc """` /
+   * `@moduledoc ~S"""` heredoc (the opener `"""` follows the attribute). A block opening after anything else is code.
+   */
+  blockLead?: RegExp;
+  /** A module's own doc is a statement opening its body (Elixir `@moduledoc """`), not a comment above it. */
+  moduleDocInside?: true;
+  /** Perl POD: the text between a `=head`/`=pod`/`=item` line and the `=cut` just above the declaration. */
+  pod?: true;
+  /** The `line` prefixes are matched without regard to case (batch `REM`, `rem`). */
+  caseInsensitive?: true;
 }
 
 /** What a rule's `judge` decided about one match. */

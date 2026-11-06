@@ -1,3 +1,4 @@
+import { BANG_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 
 /**
@@ -8,6 +9,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
  */
 export const fortranManifest: LanguagePluginManifest = {
   language: "fortran",
+  docComments: BANG_DOCS,
   family: "fortran",
   parsing: "regex",
   // Fixed form (`.f`, `.for`, `.f77`, `.fpp`) and free form; `.F90` / `.F` (preprocessed) by case-folding.

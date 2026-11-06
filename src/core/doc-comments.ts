@@ -28,11 +28,12 @@ const CODE_LINE = /(?:[;{}]\s*$)|^(?:import|export|const|let|var|return|if|for|w
 /** Attach `doc` to every function, class and method the comments of `source` document. */
 export function attachDocComments(analysis: FileAnalysis, source: string, spec: DocCommentSpec | undefined): void {
   if (!spec || analysis.functions.length + analysis.classes.length === 0) return;
-  if (!/\/\/|\/\*|#|--|"""|'''|\(\*|\{|;|%/.test(source)) return;
+  if (!/\/\/|\/\*|#|--|"""|'''|\(\*|\{|;|%|!|::|=cut|\brem\b/i.test(source)) return;
   const lines = source.split(/\r?\n/);
   const attach = (item: FunctionInfo | ClassInfo): void => {
     if (!item.line || item.line < 1 || item.line > lines.length) return;
-    const doc = (spec.docstring ? docstringBelow(lines, item.line - 1) : null) ?? commentAbove(lines, item.line - 1, spec);
+    const inner = spec.moduleDocInside && "methods" in item ? moduleDocInside(lines, item.line - 1) : null;
+    const doc = (spec.docstring ? docstringBelow(lines, item.line - 1) : null) ?? inner ?? commentAbove(lines, item.line - 1, spec);
     if (doc) item.doc = doc;
   };
   for (const fn of analysis.functions) if (!fn.name.startsWith("<")) attach(fn);
@@ -56,6 +57,12 @@ function commentAbove(lines: readonly string[], at: number, spec: DocCommentSpec
   }
   // The declaration line may itself carry the decorators (`@Get() handler()`); the comment is still above.
   if (i < 0) return null;
+  // POD is usually followed by a blank row before the sub it documents.
+  if (spec.pod && !lines[i]!.trim()) {
+    let k = i;
+    while (k > 0 && !lines[k]!.trim()) k--;
+    if (lines[k]!.trim() === "=cut") i = k;
+  }
   const last = lines[i]!.trim();
   for (const [open, close] of spec.block ?? []) {
     if (!last.endsWith(close)) continue;
@@ -66,7 +73,7 @@ function commentAbove(lines: readonly string[], at: number, spec: DocCommentSpec
       if (start >= 0 && (j < i || start + open.length <= t.length - close.length)) {
         body.unshift(t.slice(start + open.length));
         // A block that opens after code on its line (`x = 1; /* … */`) documents nothing.
-        if (start > 0 && !/^\s*$/.test(t.slice(0, start))) return null;
+        if (start > 0 && !/^\s*$/.test(t.slice(0, start)) && !spec.blockLead?.test(t.slice(0, start))) return null;
         const text = body.join("\n");
         return clean(text.slice(0, text.lastIndexOf(close)).split("\n").map((l) => l.replace(/^\s*\*(?!\))\s?/, "")));
       }
@@ -74,16 +81,53 @@ function commentAbove(lines: readonly string[], at: number, spec: DocCommentSpec
     }
     // Not this block's opener (`/*` rather than `/**`): try the next shape.
   }
+  if (spec.pod && last === "=cut") {
+    const top = podTop(lines, i);
+    return top < 0 ? null : clean(lines.slice(top + 1, i));
+  }
   if ((spec.block ?? []).some(([, close]) => last.endsWith(close))) return null;
-  const prefix = (spec.line ?? []).find((p) => last.startsWith(p));
+  const starts = (t: string, p: string) => (spec.caseInsensitive ? t.toLowerCase().startsWith(p.toLowerCase()) : t.startsWith(p));
+  const prefix = (spec.line ?? []).find((p) => starts(last, p));
   if (!prefix) return null;
   const body: string[] = [];
   for (let j = i; j >= 0; j--) {
     const t = lines[j]!.trim();
-    if (!t.startsWith(prefix)) break;
+    if (!starts(t, prefix)) break;
     body.unshift(t.slice(prefix.length));
   }
   return clean(body);
+}
+
+/** Elixir's `@moduledoc """ … """` (or `@moduledoc "…"`) opening the body of the module declared at row `at` (0-based). */
+function moduleDocInside(lines: readonly string[], at: number): string | null {
+  let k = at + 1;
+  while (k < lines.length && k < at + 6 && !lines[k]!.trim()) k++;
+  const m = /^\s*@moduledoc\s+(?:~[sS])?("""|")(.*)$/.exec(lines[k] ?? "");
+  if (!m) return null;
+  const q = m[1]!;
+  const end = m[2]!.indexOf(q);
+  if (end >= 0) return clean([m[2]!.slice(0, end)]);
+  if (q === '"') return null;
+  const body = [m[2]!];
+  for (let n = k + 1; n < lines.length && n < k + 80; n++) {
+    const close = lines[n]!.indexOf(q);
+    if (close >= 0) {
+      body.push(lines[n]!.slice(0, close));
+      return clean(body);
+    }
+    body.push(lines[n]!);
+  }
+  return null;
+}
+
+/** The row (0-based) of the POD command (`=head2`, `=pod`, `=item`) opening the block that `=cut` closes on row `cut`; -1 when none. */
+function podTop(lines: readonly string[], cut: number): number {
+  for (let j = cut - 1; j >= 0 && cut - j < 120; j--) {
+    const t = lines[j]!;
+    if (/^=(?:head\d|pod|item|over|back|begin|for)\b/.test(t)) return j;
+    if (/^=cut\b/.test(t)) return -1;
+  }
+  return -1;
 }
 
 /** The docstring opening the body of the declaration at line `at` (0-based): the first statement after its header. */
@@ -237,14 +281,17 @@ function commentTop(lines: readonly string[], end: number, spec: DocCommentSpec 
   for (const [open, close] of spec.block ?? []) {
     if (!last.endsWith(close)) continue;
     for (let j = end; j >= 0 && end - j < 80; j--) {
-      const at = lines[j]!.trim().indexOf(open);
-      if (at >= 0 && (j < end || at + open.length <= last.length - close.length)) return at === 0 ? j : -1;
+      const t = lines[j]!.trim();
+      const at = t.indexOf(open);
+      if (at >= 0 && (j < end || at + open.length <= last.length - close.length)) return at === 0 || !!spec.blockLead?.test(t.slice(0, at)) ? j : -1;
     }
   }
-  const prefix = (spec.line ?? []).find((p) => last.startsWith(p));
+  if (spec.pod && last === "=cut") return podTop(lines, end);
+  const starts = (t: string, p: string) => (spec.caseInsensitive ? t.toLowerCase().startsWith(p.toLowerCase()) : t.startsWith(p));
+  const prefix = (spec.line ?? []).find((p) => starts(last, p));
   if (!prefix) return -1;
   let j = end;
-  while (j > 0 && lines[j - 1]!.trim().startsWith(prefix)) j--;
+  while (j > 0 && starts(lines[j - 1]!.trim(), prefix)) j--;
   return j;
 }
 
