@@ -24,15 +24,6 @@ Screen / Route  →  handler / service  →  API call / ORM query  →  Entity /
 The report `clarifydoc analyze --html` writes, on an open-source web app: the architecture, the data model,
 screens and their handlers, a call traced from the UI through `PUT /user` to the `User` table, and blast radius.
 
-## Versioning by content hash
-
-Every analyzed file is tracked in `manifest.json` by **SHA-256 of its contents** plus an `EXTRACTOR_VERSION` stamp. This makes change-tracking explicit:
-
-- `--incremental` reuses cached per-file JSON for files whose hash is unchanged (mtime fast-path, hash slow-path — survives branch switches and sync tools that bump mtime).
-- A re-run with no file, option or git state changed rebuilds nothing; one in which only documentation (`.md`, `.rst`, `.adoc`) changed re-checks doc drift on the last analysis and keeps the rest.
-- Bumping `EXTRACTOR_VERSION` invalidates the whole cache, so a fixed extractor never leaves stale JSON behind.
-- Per-file output carries `analyzedAt`; the project summary records framework/LSP provenance and per-link `confidence` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`).
-
 ## Install
 
 ```bash
@@ -587,6 +578,15 @@ Over nine pinned repositories, as of extractor 1.588.0:
 
 Bad numbers get published too: a corpus picked to flatter the tool measures nothing. The first run
 scored route paths at 0.000 on FastAPI and missed every DELETE call in a demo app's frontend.
+
+## Versioning by content hash
+
+Every analyzed file is tracked in `manifest.json` by **SHA-256 of its contents** plus an `EXTRACTOR_VERSION` stamp. This makes change-tracking explicit:
+
+- `--incremental` reuses cached per-file JSON for files whose hash is unchanged (mtime fast-path, hash slow-path — survives branch switches and sync tools that bump mtime).
+- A re-run with no file, option or git state changed rebuilds nothing; one in which only documentation (`.md`, `.rst`, `.adoc`) changed re-checks doc drift on the last analysis and keeps the rest.
+- Bumping `EXTRACTOR_VERSION` invalidates the whole cache, so a fixed extractor never leaves stale JSON behind.
+- Per-file output carries `analyzedAt`; the project summary records framework/LSP provenance and per-link `confidence` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`).
 
 ## License
 
