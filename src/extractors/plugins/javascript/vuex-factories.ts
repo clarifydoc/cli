@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { FileAnalysis, FunctionInfo, ShapeEntry, ShapeExpr, ShapeFunction, StoreShapes } from "../../../types/analysis.js";
 import { resolveTarget } from "../../shared/link-scoring.js";
+import { objectAssignArgs } from "./functions-classes.js";
 
 /**
  * A Vuex module a project factory builds: `export default createStore({ name:
@@ -49,6 +50,10 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
       // `const actions = { load, ...readActions }`: actions another file defines.
       const spread = name.text === "actions" ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
       if (spread.length > 0) spreads[name.text] = spread;
+    } else if (value.type === "call_expression" && name.text === "actions" && objectAssignArgs(value).length > 0) {
+      // `const actions = Object.assign({}, baseActions, { save() {…} })`.
+      const spread = mergedActionNames(value);
+      if (spread.length > 0) spreads.actions = [...new Set([...(spreads.actions ?? []), ...spread])];
     } else if (value.type === "call_expression" && hasObjectArg(value)) {
       const s = shape(value, 0);
       if (s) values[name.text] = s;
@@ -73,13 +78,16 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   };
   for (const st of tree.rootNode.namedChildren) if (st) statement(st);
   // `{ namespaced: true, state: {}, actions: { ...channelActions } }`: the module's own `actions` member.
-  if (sourceText.includes("actions") && sourceText.includes("...")) {
+  if (sourceText.includes("actions") && (sourceText.includes("...") || sourceText.includes("Object.assign"))) {
     for (const pair of tree.rootNode.descendantsOfType("pair")) {
       const holder = pair?.parent;
       const value = pair?.childForFieldName("value");
-      if (!pair || holder?.type !== "object" || value?.type !== "object" || keyName(pair.childForFieldName("key")) !== "actions") continue;
+      if (!pair || holder?.type !== "object" || !value || keyName(pair.childForFieldName("key")) !== "actions") continue;
+      if (value.type !== "object" && objectAssignArgs(value).length === 0) continue;
       if (!isModuleObject(holder)) continue;
-      const names = value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text);
+      const names = value.type === "object"
+        ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text)
+        : mergedActionNames(value);
       if (names.length > 0) spreads.actions = [...new Set([...(spreads.actions ?? []), ...names])];
     }
   }
@@ -90,6 +98,22 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   if (Object.keys(spreads).length > 0) out.spreads = spreads;
   if (!out.values && !out.functions && !out.namespaced && !out.spreads) return undefined;
   return JSON.stringify(out).length > MAX_SHAPES_SIZE ? undefined : out;
+}
+
+/** The names an `Object.assign({}, a, { …b }, …)` merges in: its identifier arguments and the spreads of its literals. */
+function mergedActionNames(call: Node): string[] {
+  const out: string[] = [];
+  for (const arg of objectAssignArgs(call)) {
+    const v = unwrap(arg);
+    if (v?.type === "identifier") out.push(v.text);
+    else if (v?.type === "object") {
+      for (const c of v.namedChildren) {
+        const inner = c?.type === "spread_element" ? unwrap(c.namedChildren[0]) : null;
+        if (inner?.type === "identifier") out.push(inner.text);
+      }
+    }
+  }
+  return out;
 }
 
 function unwrap(n: Node | null | undefined): Node | null {

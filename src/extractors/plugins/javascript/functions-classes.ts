@@ -1974,6 +1974,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           functions.push(this.parseJsArrowOrExpr(name, value, isExported));
         } else if (value.type === "object" && depth < MAX_NAMESPACE_DEPTH) {
           this.extractObjectMembers(name, value, functions, isExported, depth + 1);
+        } else if (key === "actions" && depth < MAX_NAMESPACE_DEPTH) {
+          // `actions: Object.assign({}, baseActions, { save() {…} })`: the literals it merges are the actions written here.
+          for (const arg of objectAssignArgs(value)) if (arg.type === "object") this.extractObjectMembers(name, arg, functions, isExported, depth + 1);
         }
       } else if (member.type === "method_definition") {
         const key = objectKeyName(member.childForFieldName("name"));
@@ -2729,6 +2732,14 @@ function factoryObject(fn: Node): Node | null {
 }
 
 /** The object literal an arrow function returns as its expression body (`(id) => ({ … })`), or null. */
+/** The arguments of an `Object.assign(target, …sources)` call, or none for any other expression. */
+export function objectAssignArgs(node: Node | null | undefined): Node[] {
+  let n = node ?? null;
+  while (n?.type === "parenthesized_expression") n = n.namedChildren[0] ?? null;
+  if (n?.type !== "call_expression" || n.childForFieldName("function")?.text !== "Object.assign") return [];
+  return n.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+}
+
 function returnedObject(fn: Node): Node | null {
   if (fn.type !== "arrow_function") return null;
   let body: Node | null = fn.childForFieldName("body");
