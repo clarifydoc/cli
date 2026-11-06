@@ -380,6 +380,19 @@ export function buildSymbolLinks(
             } else if (first) {
               const stated = classPart !== null && candidates === 1 && exact === 1;
               pushRouteLink(first.filePath, first.def, stated ? "INFERRED" : "AMBIGUOUS", "route-scan");
+              // A handler the route states on an INTERFACE (`handler::list`, `ClubHandler#list`) runs in the one
+              // implementation a registration binds or the interface has — never a pick between two.
+              if (stated && classPart && ctx.interfaceImplMap.has(memberKey(first.filePath, classPart))) {
+                const through = linkThroughPoint(
+                  ctx, analysis, sourceFile,
+                  { typeName: classPart, typeFile: first.filePath, member: handlerName, consumer: "", container: true },
+                  handlerName,
+                  (targetFile, targetSymbol, targetLine, confidence, strategy) => ({
+                    sourceFile, sourceSymbol, sourceLine: route.line, callName, targetFile, targetSymbol, targetLine, confidence, strategy, relation: relationForStrategy(strategy),
+                  }),
+                );
+                if (through && (through.strategy === "di-binding" || through.strategy === "interface-redirect") && through.targetFile !== first.filePath) links.push(through);
+              }
             }
           }
         }
