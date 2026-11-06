@@ -20,7 +20,10 @@ describe("test commands per language", () => {
       "pytest tests/test_cars.py::test_total tests/test_cars.py::TestGarage::test_add",
     );
     expect(goTestCommand([{ file: "pkg/cars/cars_test.go", names: ["TestTotal", "helper"] }, { file: "pkg/x/x_test.go", names: [] }])).toBe(
-      "go test ./pkg/cars ./pkg/x -run '^(TestTotal)$'",
+      "go test ./pkg/cars -run '^(TestTotal)$' && go test ./pkg/x",
+    );
+    expect(goTestCommand([{ file: "pkg/cars/cars_test.go", names: ["GarageSuite.TestAdd", "GarageSuite.SetupTest", "TestTotal"] }, { file: "pkg/club/club_test.go", names: ["TestTotal"] }])).toBe(
+      "go test ./pkg/cars ./pkg/club -run '^(TestTotal)$' && go test ./pkg/cars -run '/^(TestAdd)$'",
     );
     expect(jvmTestCommand([{ file: "src/test/java/CarsTest.java", names: ["CarsTest.createsCar", "CarsTest.totals"] }], ctx([], ["pom.xml"]))).toBe(
       "mvn test -Dtest='CarsTest#createsCar+totals'",

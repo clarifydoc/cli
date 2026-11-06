@@ -5895,7 +5895,7 @@ function chainPoint(
         resolvingPackageCalls.delete(guard);
       }
       if (link && link.relation === "calls") {
-        point = returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer });
+        point = returnedPoint(ctx, instanceReturn(symbolIn(ctx, link.targetFile, link.targetSymbol)), link.targetFile, { typeName: "", typeFile: null, consumer });
         rest = rest.slice(1);
       }
     }
@@ -5942,7 +5942,7 @@ function importedFunctionResult(
 ): InjectionPoint | null {
   const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, name);
   if (!link) return null;
-  return returnedPoint(ctx, symbolIn(ctx, link.targetFile, link.targetSymbol)?.returnType, link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
+  return returnedPoint(ctx, instanceReturn(symbolIn(ctx, link.targetFile, link.targetSymbol)), link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
 }
 
 /** The definition a bare call of an imported function (or one an include puts in scope) reaches, in another file. */
@@ -6268,6 +6268,15 @@ function closingParen(s: string, open: number): number {
   return -1;
 }
 
+/**
+ * The return type a call on the result is made on. A function whose written type keeps more than `returnType`
+ * (`FunctionInfo.declaredReturnType`: a Go slice, map or channel, which `returnType` reduces to its element) hands
+ * back a container, which has no members of the element's class.
+ */
+function instanceReturn(def: SymbolDef | undefined): string | null | undefined {
+  return def?.declaredReturn ? null : def?.returnType;
+}
+
 /** Return-type spellings that mean "the receiver's own class" (fluent setters, `static` factories). */
 const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "this", "Self"]);
 
@@ -6290,7 +6299,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
   }
   if (!hit) return frameworkSelfMember(ctx, point, method);
   const def = symbolIn(ctx, hit.file, hit.symbol);
-  const next = returnedPoint(ctx, def?.returnType, hit.file, point, awaited);
+  const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
   // class-level methods answer next.
   return next && def?.classLevel && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;
@@ -6376,7 +6385,7 @@ function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string,
   }
   const def = symbolIn(ctx, sourceFile, name);
   if (!def || def.name !== name) return null;
-  return returnedPoint(ctx, def.returnType, sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited);
+  return returnedPoint(ctx, instanceReturn(def), sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited);
 }
 
 /** `Task<User>` → `User` when `Task` is one of the language's async result types; otherwise as written. */

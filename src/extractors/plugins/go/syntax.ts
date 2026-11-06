@@ -221,3 +221,13 @@ export function goSignatureAt(code: string, open: number): { results: string[]; 
   if (bodyEnd < 0) return null;
   return { results: goResultTypes(head.text), bodyStart: head.bodyOpen + 1, bodyEnd };
 }
+
+/**
+ * A result type as written (`[]*Club`, `map[string]*Club`, `chan *Club`) when it is a slice, array, map or channel —
+ * the stripped return type keeps only its element, but a call on such a result has no methods of that element.
+ * Null for any other type.
+ */
+export function goContainerResult(type: string | null | undefined): string | null {
+  const written = type?.replace(/\s+/g, "");
+  return written && /^\*?(?:\[\d*\]|map\[|chan\b|<-chan\b)/.test(written) ? written : null;
+}

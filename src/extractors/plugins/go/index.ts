@@ -8,7 +8,6 @@ import { addGoWhereFields, withGoArgOrigins, withGoArgOriginsInClasses } from ".
 import type { FunctionInfo, ParamInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
-import { featureEnabled } from "../../../core/feature-flags.js";
 import { addRegexMethodValues } from "./method-values-regex.js";
 import { extractGoRoutes, type ClosureCalls } from "./routes.js";
 import { extractHumaRoutes } from "./huma.js";
@@ -17,7 +16,7 @@ import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
-import { blankCodeInStrings, goResultTextAt, goResultTypes } from "./syntax.js";
+import { blankCodeInStrings, goContainerResult, goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
 import { spawnImports } from "../shared/process-spawns.js";
@@ -98,15 +97,18 @@ function parseGoReturnType(line: string): string | null {
   return first ? stripGoTypeModifiers(first) : null;
 }
 
-/** The declared result of a `func` line as written (`[]*Club`), where the stripped return type keeps only the element (a slice). */
+/**
+ * The declared result of a `func` line as written (`[]*Club`, `map[string]*Club`, `chan *Club`), where the stripped
+ * return type keeps only the element: a slice, a map and a channel have no methods of their own, so a call chained
+ * onto such a result links nothing.
+ */
 function declaredGoReturn(line: string): string | null {
   const head = /^\s*func\s+(?:\([^)]*\)\s*)?[A-Za-z_]\w*\s*(?:\[[^\]]*\]\s*)?\(/.exec(line);
   const results = head ? goResultTextAt(line, head[0].length - 1) : null;
   if (!results) return null;
   const types = goResultTypes(results.text);
   const first = types.find((t) => stripGoTypeModifiers(t) !== "error") ?? types[0];
-  const written = first?.replace(/\s+/g, "");
-  return written && /^\*?\[\d*\]/.test(written) ? written : null;
+  return goContainerResult(first);
 }
 
 function withGoDeclaredReturns(lines: string[], fns: FunctionInfo[]): FunctionInfo[] {
@@ -190,15 +192,16 @@ export const goSpec: RegexLangSpec = {
 
   // Read with comments blanked, and strings that hold code: a commented-out registration, or one a template or a
   // test sample spells (`` const sample = `r.GET("/x", h)` ``), serves nothing.
-  extractRoutes: (lines, classes, _file, fns, facts) => {
+  extractRoutes: (lines, classes, _file, fns, facts, parsed) => {
     const code = blankCodeInStrings(GO_CODE.commentFreeLines(lines));
     // A closure handling one of several routes a function registers carries its own body's calls.
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
     const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
     const members = [...(fns ?? []), ...classes.flatMap((c) => c.methods)];
-    // The ANTLR front end reads method values handed on itself; the regex reading does it here.
-    if (!featureEnabled("antlr:go")) addRegexMethodValues(code, members);
+    // The ANTLR front end reads method values handed on itself; the regex reading does it here — also for a file
+    // that front end gave up on (syntax errors), whose functions the patterns read.
+    if (!parsed) addRegexMethodValues(code, members);
     dropRouteHandlerValues(routes, members);
     return routes;
   },
