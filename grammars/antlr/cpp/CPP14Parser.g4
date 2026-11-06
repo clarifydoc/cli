@@ -343,7 +343,7 @@ macroStatement
 
 // [ClarifyDoc] A statement macro taking the statement after it as its body: `SECTION("kickoff") { … }`.
 macroBlockStatement
-    : {this.IsMacroBlock()}? (Identifier macroArguments | MacroName macroArguments?) statement (Else statement)? // [ClarifyDoc] `IF_CONSTEXPR(c) { … } else { … }`
+    : {this.IsMacroBlock()}? (Identifier macroArguments | MacroName macroArguments?) statement
     ;
 
 // [ClarifyDoc] C++17: `if (auto it = squad.find(id); it != squad.end())`.

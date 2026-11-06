@@ -216,6 +216,10 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
         const named = byPattern === undefined ? nameCall([idStep(name)], CHAIN_DEPTH) : byPattern;
         if (named) calls.push(named);
       }
+    } else if (calls && ctx instanceof SelectionStatementContext && ctx.If() && ctx.If()!.symbol.text !== "if") {
+      // `IF_CONSTEXPR(c) { … } else { … }`: a macro standing for `if`, called by its name, its arguments an `if`'s.
+      const head = ctx.If()!.symbol;
+      calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
     } else if (calls && (ctx instanceof TryBlockContext || ctx instanceof HandlerContext) && macroHead(ctx)) {
       // `CLUB_TRY { … } CLUB_CATCH_ALL { … }`: macros standing for `try` and `catch (…)` are called by their names.
       const head = macroHead(ctx)!;
@@ -228,7 +232,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
       const args = ctx.children[1];
       if (args instanceof MacroArgumentsContext) macroArgumentCalls(args, stream, calls);
-      if (ctx instanceof MacroBlockStatementContext) for (const body of ctx.statement().reverse()) stack.push({ node: body, owner: into });
+      if (ctx instanceof MacroBlockStatementContext) stack.push({ node: ctx.statement(), owner: into });
       continue;
     }
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push({ node: ctx.children[i]!, owner: into });

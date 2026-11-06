@@ -222,6 +222,8 @@ export interface CppTokenFacts {
   macroCall: Uint8Array;
   /** 1 where an all-caps name calls a macro that stands for a type or a scope: `REMOVE_REF_(T) *`, `IS_COPYABLE(T)::value`. */
   typeMacro: Uint8Array;
+  /** 1 where an all-caps name stands for `if`: `IF_CONSTEXPR(c) { … } else { … }`. */
+  ifMacro: Uint8Array;
   /** 1 where an all-caps name stands for `try` (`CATCH_TRY {`): its block is followed by handlers. */
   tryMacro: Uint8Array;
   /** 1 where an all-caps name stands for `catch (…)` after such a block. */
@@ -500,6 +502,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
   // declaration starts, before what only starts another — a name alone there would be an expression.
   const tryMacro = new Uint8Array(n);
   const catchMacro = new Uint8Array(n);
+  const ifMacro = new Uint8Array(n);
   const openOf = new Int32Array(n).fill(-1);
   close.forEach((c, o) => c >= 0 && (openOf[c] = o));
   /** The `}` ending the handler that starts at `k` (`catch (…) { … }`, `CATCH_ALL { … }`, `CATCH_ANY(type) { … }`), or -1. */
@@ -520,6 +523,9 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
     if (!isId(i) || !MACRO_NAME.test(names[i]!) || types.has(names[i]!) || !starts) continue;
     if (type(i + 1) === CPP14Lexer.LeftParen && close[i + 1]! >= 0) {
       callEnd[close[i + 1]!] = 1;
+      // `IF_CONSTEXPR(c) { … } else { … }`: a macro standing for `if`, since its block is followed by `else`.
+      const body = close[i + 1]! + 1;
+      if (type(body) === CPP14Lexer.LeftBrace && close[body]! >= 0 && type(close[body]! + 1) === CPP14Lexer.Else) ifMacro[i] = 1;
       continue;
     }
     // `CATCH_TRY { … } CATCH_ALL { … }`: macros standing for `try` and `catch (…)`; a plain `catch` may follow too.
@@ -581,7 +587,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       }
     }
   }
-  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, tryMacro, catchMacro, fold);
+  return facts(all, tokens, names, types, close, angle, cast, macroCall, typeMacro, tryMacro, catchMacro, ifMacro, fold);
 
   /** Whether a cast may follow the `)` at `i`: another cast's, or a control header's. */
   function castAfterParen(i: number): boolean {
@@ -608,6 +614,7 @@ function facts(
   typeMacro: Uint8Array,
   tryMacro: Uint8Array,
   catchMacro: Uint8Array,
+  ifMacro: Uint8Array,
   fold: Uint8Array,
 ): CppTokenFacts {
   const size = all.length;
@@ -622,6 +629,7 @@ function facts(
     typeMacro: new Uint8Array(size),
     tryMacro: new Uint8Array(size),
     catchMacro: new Uint8Array(size),
+    ifMacro: new Uint8Array(size),
     fold: new Uint8Array(size),
     nonExpression: new Uint8Array(size),
     next: new Int32Array(size).fill(-1),
@@ -656,6 +664,7 @@ function facts(
     if (typeMacro[i] === 1) out.typeMacro[k] = 1;
     if (tryMacro[i] === 1) out.tryMacro[k] = 1;
     if (catchMacro[i] === 1) out.catchMacro[k] = 1;
+    if (ifMacro[i] === 1) out.ifMacro[k] = 1;
     if (fold[i] === 1) out.fold[k] = 1;
     const name = names[i];
     if (name === undefined) return;

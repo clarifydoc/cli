@@ -211,6 +211,7 @@ const NO_FACTS: CppTokenFacts = {
   typeMacro: new Uint8Array(0),
   tryMacro: new Uint8Array(0),
   catchMacro: new Uint8Array(0),
+  ifMacro: new Uint8Array(0),
   fold: new Uint8Array(0),
   nonExpression: new Uint8Array(0),
   next: new Int32Array(0),
@@ -248,6 +249,9 @@ export abstract class CPP14ParserBase extends Parser {
     });
     this.facts.tryMacro.forEach((macro, name) => {
       if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.Try;
+    });
+    this.facts.ifMacro.forEach((macro, name) => {
+      if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.If;
     });
     this.facts.catchMacro.forEach((macro, name) => {
       if (macro === 1) (stream.get(name) as { type: number }).type = CPP14Lexer.CatchMacro;
