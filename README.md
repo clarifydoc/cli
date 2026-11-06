@@ -4,6 +4,7 @@ Extract a structured, versioned map of any codebase — **frontend route → API
 
 ClarifyDoc parses a repo (or a folder of repos) with tree-sitter / regex extractors and produces per-file JSON plus a project-wide summary: routes, call traces, data access, an entity-relationship model, dependency and blast-radius graphs, and an interactive HTML report. Everything it extracts is content-hashed so you can tell exactly what changed between runs.
 
+**Install:** `npm install -g clarifydoc`, or `npx clarifydoc` without installing — [on npm](https://www.npmjs.com/package/clarifydoc).
 **Documentation:** [CLI reference](docs/cli-reference.md) — every command and option ·
 [Reading the output](docs/reading-the-output.md) — what each file holds, how it is encoded, and how to query it.
 
@@ -312,8 +313,9 @@ set, a note on the merge request carries the same comment.
 
 **Anywhere else**
 
-`ci/run.sh` is what both run. Give it `CD_CLI` (the built `dist/cli.js`), `CD_OUT` and `CD_BASE_SHA`, and it
-does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
+`ci/run.sh` is what both run. Give it `CD_CLI` (the built `dist/cli.js` — from npm,
+`npm install -g clarifydoc@0.12.0` and `CD_CLI="$(npm root -g)/clarifydoc/dist/cli.js"`), `CD_OUT` and
+`CD_BASE_SHA`, and it does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
 
 ## Supported languages
 
@@ -418,6 +420,9 @@ Or, in a config file (Claude Code, Cursor, Windsurf, …):
   }
 }
 ```
+
+Without a global install, the same entry runs it through npx: `"command": "npx", "args": ["-y", "clarifydoc", "mcp"]`
+(`clarifydoc@0.12.0` to pin the version). The first start downloads the package, about 9 MB.
 
 With no path, the server serves the project containing the client's working directory — walking up to the nearest
 `.git` or manifest, so it maps the whole project even when launched in a subdirectory — and reads
