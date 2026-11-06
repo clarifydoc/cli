@@ -6,9 +6,21 @@ import type { Node, Tree } from "web-tree-sitter";
  * `class Paths: MATCHES = "/api/v2/matches"` (as `Paths.MATCHES`). A value
  * built from others (`CLUB_URL = CLUBS_URL + "/{id}"`, `f"{BASE}/clubs"`)
  * keeps each name it reads as a `${…}` hole, which the project pass fills in
- * this file's scope (`core/module-values.ts`). A name bound twice, or bound to
- * anything else, is left out.
+ * this file's scope (`core/module-values.ts`). A name bound twice, bound to
+ * anything else, or rebound by a function through `global`, is left out.
  */
+/**
+ * The module names a function rebinds through `global x`: assignments there bind the module variable, so the
+ * value the module level states is one of several the name holds at run time.
+ */
+export function globalRebinds(tree: Tree): Set<string> {
+  const out = new Set<string>();
+  for (const g of tree.rootNode.descendantsOfType("global_statement")) {
+    for (const id of g.namedChildren) if (id.type === "identifier") out.add(id.text);
+  }
+  return out;
+}
+
 export function extractPythonModuleValues(tree: Tree): Record<string, string> {
   const out = new Map<string, string>();
   const clash = new Set<string>();
@@ -38,6 +50,7 @@ export function extractPythonModuleValues(tree: Tree): Record<string, string> {
     }
   };
   read(tree.rootNode, "");
+  for (const k of globalRebinds(tree)) clash.add(k);
   for (const k of clash) out.delete(k);
   return Object.fromEntries(out);
 }

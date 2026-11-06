@@ -237,6 +237,16 @@ export class PythonClassIndex {
     return (this.serializerFields.get(`${c.file.filePath}::${c.cls.name}`)?.methodFields ?? []).map((f) => f.method);
   }
 
+  /** The project serializers a serializer's fields are (`players = PlayerSerializer(many=True)`), as `c` sees them. */
+  nestedSerializersOf(c: ClassAt): ClassAt[] {
+    const out: ClassAt[] = [];
+    for (const written of this.serializerFields.get(`${c.file.filePath}::${c.cls.name}`)?.nested ?? []) {
+      const child = this.classNamed(written, c.file);
+      if (child && this.chainOf(child).external.some((b) => DRF_SERIALIZER.test(b))) out.push(child);
+    }
+    return out;
+  }
+
   /** `Meta.model` of the nearest serializer along the chain stating one, as written. */
   metaModelOf(chain: readonly ClassAt[]): { model: string; at: ClassAt } | null {
     for (const c of chain) {
@@ -326,32 +336,37 @@ export function serializerRuns(
   call: "is_valid" | "save:create" | "save:update" | "data",
   emit: (file: FileAnalysis, symbol: string, line: number) => void,
   linkDeclared = true,
+  seen: Set<ClassInfo> = new Set(),
 ): void {
+  if (seen.has(serializer.cls)) return;
+  seen.add(serializer.cls);
   const { chain } = index.chainOf(serializer);
   follow(chain, call, SERIALIZER_CALLS, {
     declared: (c, fn) => emit(c.file, `${c.cls.name}.${fn.name}`, fn.line),
     library(name) {
       if (name === "to_representation") {
         // The library's own: each `SerializerMethodField` runs its method on the instance.
-        const seen = new Set<string>();
+        const done = new Set<string>();
         for (const c of chain) {
           for (const method of index.methodFieldsOf(c)) {
-            if (seen.has(method)) continue;
-            seen.add(method);
+            if (done.has(method)) continue;
+            done.add(method);
             follow(chain, method, {}, { declared: (d, fn) => emit(d.file, `${d.cls.name}.${fn.name}`, fn.line), library: () => true });
           }
+          // A nested serializer field renders its own value: the child's `to_representation` runs too.
+          for (const child of index.nestedSerializersOf(c)) serializerRuns(index, child, "data", emit, true, seen);
         }
         return true;
       }
       if (name !== "to_internal_value") return false;
       // Each field's own check and the functions its `validators=[…]` names.
-      const seen = new Set<string>();
+      const done = new Set<string>();
       for (const c of chain) {
         for (const m of c.cls.methods) {
           // DRF calls `validate_<field>(value)` for a field the serializer has, with the one value.
-          if (!/^validate_\w+$/.test(m.name) || seen.has(m.name) || m.params.filter((p) => p.name !== "self").length !== 1) continue;
+          if (!/^validate_\w+$/.test(m.name) || done.has(m.name) || m.params.filter((p) => p.name !== "self").length !== 1) continue;
           if (!index.hasField(chain, m.name.slice("validate_".length))) continue;
-          seen.add(m.name);
+          done.add(m.name);
           follow(chain, m.name, {}, { declared: (d, fn) => emit(d.file, `${d.cls.name}.${fn.name}`, fn.line), library: () => true });
         }
         for (const v of index.validatorsOf(c)) {

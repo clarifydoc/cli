@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { NameAliasInfo, TypeAliasInfo } from "../../../types/analysis.js";
+import { globalRebinds } from "./module-values.js";
 
 /** `Club`, `league.Club`: a class as a module-level name refers to it. */
 const CLASS_REF = /^(?:[A-Za-z_]\w*\.)*[A-Z]\w*$/;
@@ -41,6 +42,8 @@ function isClassRef(node: Node): boolean {
  */
 export function extractPythonNameAliases(tree: Tree): NameAliasInfo[] {
   const out: NameAliasInfo[] = [];
+  // A name a function rebinds through `global` is not one fixed alias.
+  const rebound = globalRebinds(tree);
   for (const stmt of tree.rootNode.namedChildren) {
     if (stmt.type !== "expression_statement") continue;
     let assignment = stmt.namedChild(0);
@@ -51,7 +54,7 @@ export function extractPythonNameAliases(tree: Tree): NameAliasInfo[] {
       names.push(left.text);
       const right = assignment.childForFieldName("right");
       if (right?.type === "identifier") {
-        for (const name of names) out.push({ name, target: right.text, line: stmt.startPosition.row + 1 });
+        for (const name of names) if (!rebound.has(name)) out.push({ name, target: right.text, line: stmt.startPosition.row + 1 });
         break;
       }
       assignment = right;

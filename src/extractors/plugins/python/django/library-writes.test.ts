@@ -15,12 +15,14 @@ const FILES: Record<string, string> = {
   "config/settings.py": `ROOT_URLCONF = "config.urls"\nINSTALLED_APPS = ["league"]\n`,
   "config/urls.py": `from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from league.views import CarViewSet, ClubViewSet, GarageViewSet, NewPlayerView, SquadView, SignupView, BadgeView, TableView
+from league.views import CarViewSet, ClubViewSet, GarageViewSet, ShedViewSet, MixedViewSet, LeagueView, NewPlayerView, SquadView, SignupView, BadgeView, TableView
 
 router = DefaultRouter()
 router.register(r"cars", CarViewSet)
 router.register(r"clubs", ClubViewSet)
 router.register(r"garages", GarageViewSet)
+router.register(r"sheds", ShedViewSet, basename="shed")
+router.register(r"mixed", MixedViewSet, basename="mixed")
 
 urlpatterns = [
     path("api/", include(router.urls)),
@@ -29,6 +31,7 @@ urlpatterns = [
     path("signup/", SignupView.as_view()),
     path("badges/", BadgeView.as_view()),
     path("table/", TableView.as_view()),
+    path("league/", LeagueView.as_view()),
 ]
 `,
   "league/models.py": `from django.db import models
@@ -100,6 +103,11 @@ class BadgeSerializer(serializers.ModelSerializer):
         return validated_data
 
 
+class LeagueSerializer(serializers.Serializer):
+    clubs = ClubSerializer(many=True)
+    label = serializers.CharField()
+
+
 class PlainSerializer(serializers.Serializer):
     label = serializers.CharField()
 
@@ -110,7 +118,7 @@ class PlainSerializer(serializers.Serializer):
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from league.models import Car, Club, Garage, Player
-from league.serializers import BadgeSerializer, CarSerializer, ClubSerializer, PlainSerializer, PlayerSerializer
+from league.serializers import BadgeSerializer, CarSerializer, ClubSerializer, LeagueSerializer, PlainSerializer, PlayerSerializer
 
 
 class CarViewSet(viewsets.ModelViewSet):
@@ -128,6 +136,21 @@ class GarageViewSet(viewsets.ModelViewSet):
 
     def create(self, request):
         return Response({"made": True})
+
+
+class ShedViewSet(viewsets.ModelViewSet):
+    def get_queryset(self):
+        return Garage.objects.filter(name="x")
+
+
+class MixedViewSet(viewsets.ModelViewSet):
+    def get_queryset(self):
+        return Car.objects.filter(pk__in=Garage.objects.values("pk"))
+
+
+class LeagueView(APIView):
+    def get(self, request):
+        return Response(LeagueSerializer({"clubs": [], "label": "x"}).data)
 
 
 class NewPlayerView(generics.CreateAPIView):
@@ -220,5 +243,18 @@ describe("DRF library effects", () => {
     expect(reads).toContain("GET /api/clubs/ Player");
     // `.data` of a response is no serializer's.
     expect(reads.filter((r) => r.startsWith("GET /table/"))).toEqual([]);
+  });
+
+  it("a viewset whose model only get_queryset names writes that model; two models are no model", () => {
+    const writes = flows("db-write");
+    expect(writes).toContain("POST /api/sheds/ Garage");
+    expect(writes).toContain("DELETE /api/sheds/{pk}/ Garage");
+    expect(writes.filter((w) => w.includes("/api/mixed/"))).toEqual([]);
+  });
+
+  it("a nested serializer field runs the child's method fields", () => {
+    const reads = flows("db-read");
+    expect(reads).toContain("GET /league/ Player");
+    expect(reads).toContain("GET /league/ Standing");
   });
 });
