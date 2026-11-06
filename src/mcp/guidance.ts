@@ -84,6 +84,18 @@ const REACH_FOR: ReachRule[] = [
     fileOnly: true,
   },
   {
+    question: "What does this route or function do, step by step?",
+    brief: "what a route does, in order",
+    tools: "clarifydoc_sequence",
+    why: "it draws the calls, the tables read and written and the HTTP hops to other tiers in the order they happen, as a Mermaid sequence diagram with the loops and branches around them",
+  },
+  {
+    question: "Did this branch change the API surface?",
+    tools: "clarifydoc_diff",
+    why: "it compares the routes, parameters, request bodies, guards, versions, cross-tier links and data reached with the project at a git ref, and marks each change breaking or risky",
+    fileOnly: true,
+  },
+  {
     question: "What does this endpoint accept, and who may call it?",
     brief: "what an endpoint accepts, who may call it",
     tools: "clarifydoc_contract",
@@ -105,6 +117,8 @@ const EXAMPLES: Array<{ call: string; what: string }> = [
   { call: 'clarifydoc_architecture view="modules" depth=2', what: "folders and the imports between them, each with afferent and efferent coupling and instability Ce/(Ca+Ce)" },
   { call: 'clarifydoc_impact proposed=[{"file":"src/clubs.ts","content":"…"}]', what: "what an edit not made yet would break: changed functions, their callers and routes, signatures and overrides callers no longer fit, syntax errors" },
   { call: 'clarifydoc_extract package="axios" symbol="create"', what: "an installed package's export as its installed version declares it" },
+  { call: 'clarifydoc_export format="er.mmd"', what: "a whole-project document or diagram to commit or show — ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid, GraphML, Cypher; no `format` lists them" },
+  { call: 'clarifydoc_facts kind="route" query="clubs"', what: "facts under stable IDs to cite in a document as [R-3fa2c1]; `check` with the draft's text says which cited IDs the analysis no longer holds" },
   { call: 'clarifydoc_search query="match report" offset="50@3fa2c1"', what: "the next page of a list: pass a footer's offset as written; the revision after the `@` says when rows may have moved" },
 ];
 

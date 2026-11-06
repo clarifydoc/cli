@@ -64,6 +64,29 @@ export function findRoutes(routes: readonly Row[], subject: string, file?: strin
   return same.length ? same : pool.filter((r) => r.path.toLowerCase().includes(path.toLowerCase()));
 }
 
+/**
+ * The seed a sequence starts from: the route's call-graph anchor, or the one
+ * file declaring the symbol. Throws with the candidates when the subject names
+ * none or several — `seq` and the MCP tool both say the same thing.
+ */
+export function sequenceSeed(summary: ProjectAnalysis, subject: { route?: string; symbol?: string; file?: string }): { file: string; symbol: string; title: string } {
+  const { route, symbol, file } = subject;
+  if (route) {
+    const found = findRoutes(summary.routeMap ?? [], route, file);
+    if (found.length !== 1) {
+      throw new Error(found.length === 0 ? `No route matches "${route}"` : `"${route}" matches ${found.length} routes — pass the method, or the file:\n${found.slice(0, 15).map((r) => `  ${r.httpMethod ?? ""} ${r.path}  (${r.filePath}:${r.line})`).join("\n")}`);
+    }
+    const r = found[0]!;
+    const anchor = routeAnchor(r, summary.symbolLinks ?? []);
+    if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
+    return { file: r.filePath!, symbol: anchor, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` };
+  }
+  if (!symbol) throw new Error("Pass a route or a symbol");
+  const defs = [...new Set((summary.symbolLinks ?? []).filter((l) => l.sourceSymbol === symbol && (!file || l.sourceFile.includes(file))).map((l) => l.sourceFile))];
+  if (defs.length !== 1) throw new Error(defs.length === 0 ? `${symbol} calls nothing the analysis resolved` : `${symbol} is declared in ${defs.length} files — pass the file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
+  return { file: defs[0]!, symbol, title: symbol };
+}
+
 const classLane = (file: string, symbol: string): string => {
   if (symbol.startsWith("route:")) return file.split("/").pop()!;
   const dot = symbol.lastIndexOf(".");

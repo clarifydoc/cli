@@ -255,7 +255,8 @@ export class AnalysisStore {
   private manifest: { key: string; manifest: Manifest | null } | null = null;
   /** Per-file verdicts by the mtime they were judged at, so a moved mtime is hashed once. */
   private judged = new Map<string, { mtime: number; changed: boolean }>();
-  private readonly log: (message: string) => void;
+  /** Diagnostics → stderr in a session; tools running their own long tasks log through it too. */
+  readonly log: (message: string) => void;
 
   constructor(private readonly options: AnalysisStoreOptions) {
     this.log = options.log ?? (() => {});
@@ -319,6 +320,14 @@ export class AnalysisStore {
       clearTimeout(timer);
       clearInterval(ticker);
     }
+  }
+
+  /**
+   * Any long task a tool started (the base analysis `clarifydoc_diff` needs), held to the same call
+   * deadline as an analysis: `pending` past it, the task going on for the next call to join.
+   */
+  waitWithin<T>(run: Promise<T>): Promise<{ done: T } | { pending: AnalysisRunState }> {
+    return this.within(run);
   }
 
   /** `refresh`, answering `pending` instead when the run outlasts the call deadline. */

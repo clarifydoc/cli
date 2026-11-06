@@ -75,10 +75,16 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_context_docs",
       "clarifydoc_impact",
       "clarifydoc_control_flow",
+      "clarifydoc_sequence",
+      "clarifydoc_diff",
+      "clarifydoc_export",
+      "clarifydoc_facts",
       "clarifydoc_analyze",
       "clarifydoc_explain",
     ]);
+    // diff writes the base ref's analysis beside this one; nothing else but analyze writes.
     expect(tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
+      "clarifydoc_diff",
       "clarifydoc_analyze",
     ]);
   });
@@ -171,6 +177,8 @@ describe("clarifydoc MCP tools — react fixture", () => {
     ["clarifydoc_data_flows", { resource: "zzz-not-a-thing" }],
     ["clarifydoc_health", { category: "security", file: "zzz-not-a-thing" }],
     ["clarifydoc_context_docs", { query: "zzz-not-a-thing" }],
+    ["clarifydoc_facts", { query: "zzz-not-a-thing" }],
+    ["clarifydoc_facts", { kind: "route", query: "zzz-not-a-thing" }],
   ])("%s points at another tool when it has nothing to show", async (name, args) => {
     const { text, isError } = await call(server, name, args);
     expect(isError, `${name} treated an empty result as a failure`).toBe(false);
@@ -436,6 +444,82 @@ describe("clarifydoc MCP tools — react fixture", () => {
     });
     const contents = (res?.result as { contents: Array<{ text: string }> }).contents;
     expect(contents[0].text).toContain("# ClarifyDoc — sample-react");
+  });
+
+  it("serves the output schema and what detect reads, as resources", async () => {
+    const read = async (uri: string) => {
+      const res = await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri } });
+      return JSON.parse((res?.result as { contents: Array<{ text: string }> }).contents[0].text);
+    };
+    const schema = await read("clarifydoc://analysis/schema");
+    expect(JSON.stringify(schema)).toContain("routeMap");
+    const detected = await read("clarifydoc://project/detect");
+    // What the analysis recorded, read again now: the same frameworks.
+    for (const fw of loaded.summary.detectedFrameworks ?? []) expect(detected.frameworks.map((f: { name: string }) => f.name)).toContain(fw.name);
+    expect(detected.analyzableExtensions).toContain(".ts");
+  });
+
+  it("status lint=true adds what the analysis says that contradicts itself", async () => {
+    const { text, isError } = await call(server, "clarifydoc_status", { lint: true });
+    expect(isError).toBe(false);
+    expect(text).toContain("# ClarifyDoc — sample-react");
+    expect(text).toMatch(/^## Lint: /m);
+  });
+
+  it("export lists the formats, renders one, and sends a folder-shaped one to the CLI", async () => {
+    const { EXPORT_FORMATS } = await import("../export/index.js");
+    const list = await call(server, "clarifydoc_export");
+    for (const f of EXPORT_FORMATS) expect(list.text).toContain(`- ${f.name} — `);
+    const arch = await call(server, "clarifydoc_export", { format: "architecture.md" });
+    expect(arch.isError).toBe(false);
+    expect(arch.text).toBe(EXPORT_FORMATS.find((f) => f.name === "ARCHITECTURE.md")!.render(loaded.summary as never).trimEnd());
+    const mmd = EXPORT_FORMATS.find((f) => f.name.endsWith(".mmd"))!;
+    expect((await call(server, "clarifydoc_export", { format: mmd.name })).text).toContain("```mermaid");
+    const vault = await call(server, "clarifydoc_export", { format: "obsidian" });
+    expect(vault.isError).toBe(true);
+    expect(vault.text).toContain("clarifydoc export . --format obsidian --out-dir");
+    expect((await call(server, "clarifydoc_export", { format: "zzz.md" })).isError).toBe(true);
+  });
+
+  it("facts lists the analysis's facts by ID and checks the IDs a text cites", async () => {
+    const { factsOf } = await import("../core/fact-ids.js");
+    const all = [...factsOf(loaded.summary).values()];
+    const route = all.find((f) => f.kind === "route")!;
+    const listed = await call(server, "clarifydoc_facts", { kind: "route" });
+    expect(listed.text).toContain(`${route.id}  ${route.text}`);
+    expect(listed.text).not.toMatch(/^- [SEXLD]-/m);
+    const unknown = all.some((f) => f.id === "R-000000") ? "R-000001" : "R-000000";
+    const checked = await call(server, "clarifydoc_facts", { check: `Players come from [${route.id}].\nAnd [${unknown}].` });
+    expect(checked.text).toContain("1 of 2 cited facts are not in the analysis.");
+    expect(checked.text).toContain(`✗ ${unknown} (line 2)`);
+  });
+
+  it("diff refuses on a read-only server, naming the command that does it", async () => {
+    const { text, isError } = await call(server, "clarifydoc_diff", { base: "main" });
+    expect(isError).toBe(true);
+    expect(text).toContain("clarifydoc diff --base main");
+  });
+});
+
+describe("clarifydoc_sequence — backend fixture", () => {
+  const { server, store } = serverFor("sample-backend");
+
+  it("draws a route's flow as a Mermaid sequence diagram", async () => {
+    const { routeAnchor } = await import("../core/sequence.js");
+    const loaded = await store.load();
+    const r = loaded.summary.routeMap.find((x) => x.httpMethod && routeAnchor(x, loaded.summary.symbolLinks ?? []))!;
+    const title = `${r.httpMethod!.toUpperCase()} ${r.path}`;
+    const { text, isError } = await call(server, "clarifydoc_sequence", { route: title, file: r.filePath! });
+    expect(isError).toBe(false);
+    expect(text).toContain(`# ${title} — in order (${r.filePath})`);
+    expect(text).toMatch(/```mermaid\nsequenceDiagram/);
+  });
+
+  it("says which routes a subject names when it is not one, and that none matches", async () => {
+    const miss = await call(server, "clarifydoc_sequence", { route: "/zzz-not-a-thing" });
+    expect(miss.isError).toBe(true);
+    expect(miss.text).toContain('No route matches "/zzz-not-a-thing"');
+    expect((await call(server, "clarifydoc_sequence", {})).text).toContain("Pass `route`");
   });
 });
 

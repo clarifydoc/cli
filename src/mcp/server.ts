@@ -26,6 +26,8 @@ import { renderUsage, usageLine } from "./usage.js";
 import { WORKFLOW_PROMPTS } from "./prompts.js";
 import { explainTool } from "./tools/explain.js";
 import { contextDocsTool } from "./tools/decisions.js";
+import { diffTool, exportTool, factsTool, sequenceTool } from "./tools/commands.js";
+import { detectProject } from "../core/detect-project.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
 
@@ -183,6 +185,10 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     contextDocsTool(ctx),
     impactTool(ctx),
     controlFlowTool(ctx),
+    sequenceTool(ctx),
+    diffTool(ctx),
+    exportTool(ctx),
+    factsTool(ctx),
     analyzeTool(ctx),
   ];
   // Composed from the tools above, so it says nothing they would not.
@@ -209,6 +215,21 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
       description: "The tool calls of this session in order: answer sizes, times, failures and misses.",
       mimeType: "text/markdown",
       read: async () => renderUsage([...(server?.usage() ?? [])]),
+    },
+    // `clarifydoc schema` and `clarifydoc detect`: reference text a client may fetch, kept off the tool list's budget.
+    {
+      uri: "clarifydoc://analysis/schema",
+      name: "ClarifyDoc output schema",
+      description: "The fields of the per-file JSON and of project-summary.json (same content as clarifydoc schema).",
+      mimeType: "application/json",
+      read: async () => JSON.stringify((await import("../core/output-schema.js")).outputSchema(), null, 2),
+    },
+    {
+      uri: "clarifydoc://project/detect",
+      name: "Detected languages and frameworks",
+      description: "The project's file extensions and the frameworks its manifests name, read now without an analysis (same content as clarifydoc detect --json).",
+      mimeType: "application/json",
+      read: async () => JSON.stringify(await detectProject(projectRoot), null, 2),
     },
   ];
 

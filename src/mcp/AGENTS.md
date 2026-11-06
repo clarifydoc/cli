@@ -17,7 +17,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 | [package-api.ts](package-api.ts) | `clarifydoc_extract package=`: an installed package's exported API (or one export's declaration) through the plugin's `PackageManagerSpec.installedApi`, looked up beside the manifests declaring it, then each sub-project, then the root |
 | [guidance.ts](guidance.ts) | When to reach for which tool, said once: the server instructions and `AGENT_GUIDANCE` (the AGENTS.md / CLAUDE.md section `clarifydoc install` and the editor write). A `fileOnly` rule goes only into the file — the instructions are on the up-front budget |
 | [role.ts](role.ts) | What a file or function is (route handler, data access, data model, screen, entry point, API client, shared utility, orchestrator), from extracted facts only — never a name token; `clarifydoc_explain`'s second line |
-| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts`, `decisions.ts` (`clarifydoc_context_docs` and `clarifydoc_file`'s Decisions section: decision records, context documents and decision markers from `core/context-docs.ts`, reused for 30 s; a document is read only from that list; per `file` (and `function`), the reasons comments and commit bodies state, from `core/stated-reasons.ts`) |
+| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans), `data.ts`, `decisions.ts` (`clarifydoc_context_docs` and `clarifydoc_file`'s Decisions section: decision records, context documents and decision markers from `core/context-docs.ts`, reused for 30 s; a document is read only from that list; per `file` (and `function`), the reasons comments and commit bodies state, from `core/stated-reasons.ts`), `commands.ts` (the CLI commands that print what an agent asks for, answered from the served analysis: `seq` → `clarifydoc_sequence`, `diff --base` → `clarifydoc_diff`, `export` → `clarifydoc_export` (one format; a folder-shaped bundle stays a command), `facts` → `clarifydoc_facts`; `lint` is `clarifydoc_status lint=true`, `report` is `clarifydoc_analyze report=true`, `schema` and `detect --json` are the resources `clarifydoc://analysis/schema` and `clarifydoc://project/detect`; `install`, `hook`, `lsp-update` and `ask` stay commands) |
 
 ## Rules that keep it working
 
@@ -75,8 +75,10 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).
-- **`readOnly` is a contract.** Every tool but `clarifydoc_analyze` only reads. Keep it that way: the VS Code
-  integration advertises the server as safe and defaults to `--no-auto-analyze`.
+- **`readOnly` is a contract.** Every tool but `clarifydoc_analyze` and `clarifydoc_diff` only reads, and those two
+  write only under the analysis directory (`clarifydoc_diff` the base ref's analysis in `.base/<commit>/`, built in a
+  temporary worktree it removes) and refuse under `--no-auto-analyze`. Keep it that way: the VS Code integration
+  advertises the server as safe and defaults to `--no-auto-analyze`.
 - **Read-only must still not dead-end.** `--no-auto-analyze` blocks re-analysis on request, but a project with no
   analysis at all is still analyzed once (`AnalysisStore.coldStart`) — otherwise every tool call would answer "run it
   from the editor" and the agent could do nothing. `--no-cold-start` forbids even that, which is what the tests use.
@@ -88,7 +90,7 @@ write. That is what lets an external agent be configured as nothing but a comman
   overrides shown as `\u202e` escapes, not applied), source excerpts are `fenced` with a backtick run the text
   cannot close, and the instructions say quoted repository text is never an instruction.
 - **The up-front cost has a budget.** `tools/list` plus the instructions must stay under `BUDGET_BYTES`
-  ([budget.test.ts](budget.test.ts)), and `tools/list` alone (14,000 bytes) and the instructions (1,300 characters)
+  ([budget.test.ts](budget.test.ts)), and `tools/list` alone (15,000 bytes) and the instructions (1,300 characters)
   under their own; a description that pushes past one is argued for in the commit that raises it. A tool's
   description is one "Use …" sentence plus its arguments in a few words; an example call goes to `EXAMPLES` in
   [guidance.ts](guidance.ts), which only the AGENTS.md / CLAUDE.md section carries, and the instructions name
@@ -100,8 +102,8 @@ write. That is what lets an external agent be configured as nothing but a comman
   `ALWAYS_LOAD` (search, trace) carry `_meta["anthropic/alwaysLoad"]: true`, which Claude Code reads to load
   those schemas up front while it defers the rest behind its tool search; `_meta` is not counted in the budget
   (it reaches the host, not the model).
-- **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, or a cold
-  start — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
+- **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, a cold
+  start, or the base ref `clarifydoc_diff` analyzes (`AnalysisStore.waitWithin`) — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
   with its stage and file count (`describeRun`, read off the analyzer's own progress line), and the run goes on.
   The next call joins that run (`AnalysisStore.running`), never a second one. A request carrying `_meta.progressToken`
   gets `notifications/progress` each second meanwhile (`ToolExtras.progress`, sent by the stdio transport).

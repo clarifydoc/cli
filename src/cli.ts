@@ -4,12 +4,6 @@ import { TOOL_VERSION } from "./core/version.js";
 import { resolve, relative, join, basename, dirname } from "path";
 import { existsSync } from "fs";
 import { analyze } from "./core/analyzer.js";
-import {
-  gatherProjectInfo,
-  detectFrameworksAcrossRoots,
-} from "./core/framework-detector.js";
-import { detectSubProjects } from "./core/project-detector.js";
-import { EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE } from "./extractors/registry.js";
 import { gitChangedFiles, gitChangedHunks, gitUserName } from "./core/git-changed-files.js";
 import {
   controlFlowForFile,
@@ -435,56 +429,27 @@ program
   .argument("[path]", "Path to project root")
   .option("--json", "Print JSON instead of text")
   .action(async (path: string | undefined, opts: { json?: boolean }) => {
-    // What discovery picks up — the same tables it globs by — so a caller that
-    // watches for changes (the VS Code extension) never keeps its own list.
-    const analyzable = {
-      analyzableExtensions: Object.keys(EXTENSION_TO_LANGUAGE).sort(),
-      namedFiles: [...NAMED_FILE_LANGUAGE.keys()].sort(),
-    };
+    const { analyzableFiles, detectProject } = await import("./core/detect-project.js");
     if (path === undefined) {
       if (!opts.json) {
         console.error("detect: a project path is required (or pass --json for the analyzable file types).");
         process.exitCode = 1;
         return;
       }
-      console.log(JSON.stringify(analyzable, null, 2));
+      console.log(JSON.stringify(analyzableFiles(), null, 2));
       return;
     }
 
-    const projectRoot = resolve(path);
-    const info = await gatherProjectInfo(projectRoot);
-
-    // Frameworks are detected across the analyzed root AND every sub-project
-    // root — build manifests in a monorepo (a Flutter `pubspec.yaml`, a nested
-    // `package.json`/`pom.xml`) live below the root, so a root-only scan misses
-    // them. This mirrors what `analyze` records in `detectedFrameworks`.
-    const subProjects = await detectSubProjects(projectRoot);
-    const { merged: frameworks } = await detectFrameworksAcrossRoots(
-      projectRoot,
-      subProjects.map((s) => s.root),
-    );
-
+    const detected = await detectProject(path);
     if (opts.json) {
-      console.log(
-        JSON.stringify(
-          {
-            root: projectRoot,
-            fileExtensions: [...info.fileExtensions].sort(),
-            frameworks: frameworks.map((fw) => ({ name: fw.name, detectedVia: fw.detectedVia })),
-            ...analyzable,
-          },
-          null,
-          2,
-        ),
-      );
+      console.log(JSON.stringify(detected, null, 2));
       return;
     }
 
+    const { frameworks } = detected;
     console.log("Project info:");
-    console.log(`  Root: ${projectRoot}`);
-    console.log(
-      `  File extensions: ${[...info.fileExtensions].sort().join(", ")}`,
-    );
+    console.log(`  Root: ${detected.root}`);
+    console.log(`  File extensions: ${detected.fileExtensions.join(", ")}`);
 
     if (frameworks.length === 0) {
       console.log("  No frameworks detected.");
@@ -670,7 +635,7 @@ program
     const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
     try {
       const { loadReportSummary } = await import("./core/report-payload.js");
-      const { buildSequence, findRoutes, routeAnchor, sequenceFiles } = await import("./core/sequence.js");
+      const { buildSequence, routeAnchor, sequenceFiles, sequenceSeed } = await import("./core/sequence.js");
       let summary;
       try {
         summary = await loadReportSummary(analysisDir);
@@ -714,22 +679,7 @@ program
         return;
       }
       // The seed in an analysis: the route's call-graph anchor, or the one file declaring the symbol.
-      const seedIn = (an: typeof summary, route: string | undefined, file: string | undefined): { file: string; symbol: string; title: string } => {
-        if (route) {
-          const found = findRoutes(an.routeMap ?? [], route, file);
-          if (found.length !== 1) {
-            throw new Error(found.length === 0 ? `No route matches "${route}"` : `"${route}" matches ${found.length} routes — pass the method, or --file:\n${found.slice(0, 15).map((r) => `  ${r.httpMethod ?? ""} ${r.path}  (${r.filePath}:${r.line})`).join("\n")}`);
-          }
-          const r = found[0]!;
-          const anchor = routeAnchor(r, an.symbolLinks ?? []);
-          if (!anchor) throw new Error(`${r.httpMethod ?? ""} ${r.path} calls nothing the analysis resolved`);
-          return { file: r.filePath!, symbol: anchor, title: `${r.httpMethod ? `${r.httpMethod.toUpperCase()} ` : ""}${r.path}` };
-        }
-        if (!options.symbol) throw new Error("Pass --route or --symbol");
-        const defs = [...new Set((an.symbolLinks ?? []).filter((l) => l.sourceSymbol === options.symbol && (!file || l.sourceFile.includes(file))).map((l) => l.sourceFile))];
-        if (defs.length !== 1) throw new Error(defs.length === 0 ? `${options.symbol} calls nothing the analysis resolved` : `${options.symbol} is declared in ${defs.length} files — pass --file:\n${defs.map((f) => `  ${f}`).join("\n")}`);
-        return { file: defs[0]!, symbol: options.symbol as string, title: options.symbol as string };
-      };
+      const seedIn = (an: typeof summary, route: string | undefined, file: string | undefined) => sequenceSeed(an, { route, symbol: options.symbol, file });
       const seed = seedIn(summary, options.route, options.file);
       if (options.diff) {
         const { diffSequences, renderSequenceDiff, sequenceTree } = await import("./core/sequence-diff.js");

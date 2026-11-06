@@ -45,9 +45,9 @@ export function statusTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_status",
     title: "ClarifyDoc analysis status",
-    description: "Use first: what is mapped (frameworks, sub-projects, counts of routes, screens, links, traces, entities, findings) and how fresh it is.",
-    inputSchema: NO_ARGS,
-    handler: async () => {
+    description: "Use first: what is mapped (frameworks, sub-projects, counts of routes, screens, links, traces, entities, findings) and how fresh it is. `lint`: rows that contradict each other.",
+    inputSchema: { type: "object", properties: { lint: { type: "boolean" } }, additionalProperties: false },
+    handler: async (args) => {
       if (!(await ctx.store.exists()) && !ctx.store.allowColdStart) {
         return {
           text:
@@ -57,7 +57,20 @@ export function statusTool(ctx: ToolContext): McpTool {
         };
       }
       const loaded = await requireAnalysis(ctx);
-      return { text: await statusReport(loaded, ctx.store) };
+      const report = await statusReport(loaded, ctx.store);
+      if (!booleanArg(args, "lint")) return { text: report };
+      // `clarifydoc lint`: what the analysis says about itself that cannot all be true — reads every per-file JSON.
+      const { countByRule, lintAnalysis, loadFileAnalyses } = await import("../../core/analysis-lint.js");
+      const found = lintAnalysis(loaded.summary, await loadFileAnalyses(loaded.analysisDir, loaded.summary.files ?? []));
+      return {
+        text: joinLines([
+          report,
+          "",
+          `## Lint: ${found.length === 0 ? "no contradictions in the analysis's own facts" : `${plural(found.length, "contradiction")} (${Object.entries(countByRule(found)).map(([r, n]) => `${r} ${n}`).join(", ")})`}`,
+          ...found.slice(0, 40).map((f) => `- ${f.rule}${f.file ? ` ${loc(f.file, f.line)}` : ""} — ${f.message}`),
+          found.length > 40 ? `  … ${found.length - 40} more — \`clarifydoc lint ${loaded.analysisDir}\` lists them all` : "",
+        ]),
+      };
     },
   };
 }
@@ -66,12 +79,13 @@ export function analyzeTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_analyze",
     title: "Re-analyze the project",
-    description: "Use after edits: re-runs the analysis incrementally; writes only the analysis directory. `full` re-parses all, `cancel` stops a run.",
+    description: "Use after edits: re-runs the analysis incrementally; writes only the analysis directory. `full` re-parses all, `cancel` stops a run, `report` writes report.html.",
     inputSchema: {
       type: "object",
       properties: {
         full: { type: "boolean" },
         cancel: { type: "boolean" },
+        report: { type: "boolean" },
       },
       additionalProperties: false,
     },
@@ -103,8 +117,15 @@ export function analyzeTool(ctx: ToolContext): McpTool {
       }
       const result = outcome.done;
       const loaded = await requireAnalysis(ctx);
+      // `clarifydoc report`: the interactive viewer as one file, never opened from here (the agent says where it is).
+      let reportLine = "";
+      if (booleanArg(args, "report")) {
+        const { generateHtmlReport } = await import("../../core/html-report.js");
+        reportLine = `Report written: ${await generateHtmlReport({ analysisDir: loaded.analysisDir, openBrowser: false })} — open it in a browser.`;
+      }
       return {
         text: joinLines([
+          ...(reportLine ? [reportLine] : []),
           result.upToDate
             ? `Already up to date (checked in ${((Date.now() - started) / 1000).toFixed(1)}s): no file, option or git state changed since the last analysis of ${result.fileCount} files.`
             : `Analysis complete in ${((Date.now() - started) / 1000).toFixed(1)}s (${full ? "full re-scan" : result.docsOnly ? "only documentation changed: doc drift re-checked, the rest kept" : "incremental"}): ${result.fileCount} files.`,
