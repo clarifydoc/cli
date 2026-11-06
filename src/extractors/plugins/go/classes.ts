@@ -1,10 +1,10 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractParamsFromDeclaration, findEndLine, type ParamParser } from "../shared/regex-base.js";
 import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
-import { extractGoLocalTypes, goPackageVars, type GoBodyReading, type GoConstructors } from "./locals.js";
+import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
-import { bracketDelta, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
+import { bracketDelta, goContainerResult, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
 /**
  * Go types as the linker needs them. Go declares methods OUTSIDE the type, in
@@ -68,6 +68,13 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
       if (shadow >= 0 || declared.has(receiver.name)) typeShadowedCalls(lines, fn, receiver.name!, receiver.type);
       else locals.unshift({ name: receiver.name, type: receiver.type });
     }
+    // A parameter the body redeclares in an inner block (`club := &Club{}` beside a `club *Car` parameter): each
+    // call on the name states the type of the declaration it sees, where that is read.
+    for (const param of fn.params) {
+      const written = reading.paramTypes?.get(param.name) ?? param.type;
+      if (param.isReceiver || !written || param.name === "_" || !declared.has(param.name) || goContainerResult(written)) continue;
+      typeShadowedCalls(lines, fn, param.name, written);
+    }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
     typeSwitchCalls(lines, fn);
@@ -79,6 +86,23 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     if (stubs.get(receiver.type) === owner) owner.endLine = Math.max(owner.endLine, fn.endLine);
   }
   return [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The type a declaration of `name` on one line states: `name := &Club{}`, `name := new(Club)`, `var name Club`, or a
+ * type assertion's value (`name, ok := x.(*Car)`). Null where it is not stated (a call's result, an index, a second
+ * variable of a pair).
+ */
+function statedDeclarationType(code: string, name: string): string | null {
+  const v = new RegExp(`\\bvar\\s+${name}\\s+([*\\[\\]\\w.]+)\\s*(?:=|$)`).exec(code);
+  if (v) return v[1]!;
+  const d = new RegExp(`(?:^|[\\s(;])((?:[A-Za-z_]\\w*\\s*,\\s*)*${name}(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*:=\\s*([^;]+)`).exec(code);
+  if (!d) return null;
+  const names = d[1]!.split(",").map((n) => n.trim());
+  const rhs = d[2]!.trim();
+  const assertion = /^[A-Za-z_][\w.]*\.\(\s*(\*?[A-Za-z_][\w.]*)\s*\)$/.exec(rhs);
+  if (assertion) return names[0] === name ? assertion[1]! : null;
+  return names.length === 1 ? initializerType(rhs, 0, 1) : null;
 }
 
 /**
@@ -102,8 +126,9 @@ function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: str
       const header = /^\s*(?:for|if|switch|select)\b/.test(code);
       const range = header ? new RegExp(`^\\s*for\\s+[A-Za-z_]\\w*\\s*,\\s*${name}\\s*:=\\s*range\\s+([A-Za-z_]\\w*)\\s*\\{`).exec(code) : null;
       const element = range ? new RegExp(`\\b${range[1]}\\s+\\[\\]\\*?([A-Za-z_][\\w.]*)`).exec(signature)?.[1] ?? null : null;
+      const stated = range ? null : statedDeclarationType(code, name);
       // A header's local lives in the block it opens; any other in the block it stands in.
-      open.push({ depth: header ? start : start - 1, from: ln, type: element });
+      open.push({ depth: header ? start : start - 1, from: ln, type: element ?? stated });
     }
     for (const c of code) {
       if (c === "{") depth++;
@@ -254,10 +279,12 @@ function methodSpec(name: string, seg: Segment, parseParam: ParamParser): Functi
   const params = close > open ? groupedParams(splitGoTopLevel(seg.text.slice(open + 1, close)), parseParam) : [];
   const results = close > open ? goResultTypes(seg.text.slice(close + 1)) : [];
   const ret = results.find((r) => r !== "error") ?? results[0] ?? null;
+  const declared = goContainerResult(ret);
   return {
     name,
     params,
     returnType: ret ? stripTypeModifiers(ret, "go") : null,
+    ...(declared ? { declaredReturnType: declared } : {}),
     isAsync: false,
     isExported: /^[A-Z]/.test(name),
     decorators: [],

@@ -58,7 +58,7 @@ export function extractWithRegex(
   const routeFacts: RouteFact[] = [];
   analysis.routes = isTestFile(filePath, language)
     ? []
-    : spec.extractRoutes?.(lines, analysis.classes, filePath, analysis.functions, routeFacts) ?? [];
+    : spec.extractRoutes?.(lines, analysis.classes, filePath, analysis.functions, routeFacts, !!parsed) ?? [];
   if (routeFacts.length > 0) analysis.routeFacts = routeFacts;
   analysis.screens = spec.extractScreens?.(lines, filePath, analysis.classes) ?? [];
   const uiComponents = spec.extractUiComponents?.(lines, filePath, analysis.classes);
