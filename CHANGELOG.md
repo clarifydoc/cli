@@ -78,6 +78,14 @@ recorded in the git history only.
   C's grammar first and C++'s only when C refuses it (`readingVariant` on the language manifest, decided from the
   project's file mix before any worker starts; `FileAnalysis.frontEnd.variant`). An incremental run re-reads a
   header when its project's mix flips.
+- **The C reader parses more of what compilers accept:** line splices (`\`-newline) and form feeds outside
+  directives, strings and comments (C++ too); statement macros without `;` before `}`, `case` or `default`, and
+  macro calls taking operators or declarations as arguments (`check_int(a, ==, b)`); bare macros alone in a block;
+  X-macro lists a file defines; macros joined to macros as strings (`= VERSION_PREFIX VERSION_SUFFIX;`); MSVC
+  calling conventions and `__declspec(…)` around return types and function pointers (`HRESULT (WINAPI *p)(…)`,
+  `FAR *`); attribute macros before a declared name; a label ending a block; `deprecated` as a name; a function
+  returning a struct whose body precedes its name. A file that still fails is read again with its `asm`
+  statements blanked.
 - **The C++ reader parses more of what compilers accept:** `override`/`final` used as names; a macro standing for a
   type or a scope (`MACRO(E)::value`, `using A = const MACRO(T) *;`); non-type template parameters compared
   (`conditional_t<N < 256, A, B>`), `>=` after a closed template, `decltype(auto)` after a requires clause, any
