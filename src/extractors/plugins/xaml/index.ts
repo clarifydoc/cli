@@ -216,7 +216,13 @@ function viewModelOf(root: XamlTag, flat: XamlTag[]): string | null {
   if (element) return typeLeaf(element.raw);
   const design = root.attrs["d:DataContext"] ?? flat[0]?.attrs["d:DataContext"];
   const m = design && /\{d:DesignInstance\s+(?:Type\s*=\s*)?(?:\{x:Type\s+)?([\w:.]+)/.exec(design);
-  return m ? typeLeaf(m[1]!) : null;
+  if (m) return typeLeaf(m[1]!);
+  // Prism's `prism:ViewModelLocator.AutoWireViewModel="True"`: the view `ClubView` / `ClubPage` / `Club` is wired to
+  // `ClubViewModel` by naming convention.
+  const wired = Object.entries(root.attrs).some(([k, v]) => /(?:^|:)ViewModelLocator\.AutoWireViewModel$/.test(k) && /^true$/i.test(v.trim()));
+  if (!wired) return null;
+  const view = root.attrs["x:Class"]?.split(".").pop();
+  return view ? `${view.replace(/(?:View|Page)$/, "")}ViewModel` : null;
 }
 
 export function extractXamlScreens(lines: string[], filePath: string): ScreenInfo[] {
