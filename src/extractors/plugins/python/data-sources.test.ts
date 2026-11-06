@@ -705,3 +705,16 @@ describe("a database session is no HTTP client", () => {
     expect(http.map((c) => c.name)).toEqual(["get"]);
   });
 });
+
+describe("Python MQTT clients", () => {
+  async function rows(src: string) {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => [d.kind, d.target, d.topicSyntax]);
+  }
+  it("marks paho publishes and subscribes as MQTT topics, only in a file that imports a client", async () => {
+    expect(await rows(["import paho.mqtt.client as mqtt", "c = mqtt.Client()", 'c.subscribe("stadium/+/score")', 'c.publish("stadium/home/score", "2")'].join("\n"))).toEqual([
+      ["queue-consume", "stadium/+/score", "mqtt"], ["queue-publish", "stadium/home/score", "mqtt"],
+    ]);
+    expect(await rows(["c = Decoy()", 'c.publish("stadium/home/score", "2")'].join("\n"))).toEqual([]);
+  });
+});

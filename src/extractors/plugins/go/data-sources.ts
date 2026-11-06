@@ -175,6 +175,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const sources: DataSourceInfo[] = extractSqlStringDataSources(normLines);
   let constants: Map<string, string> | undefined;
   let kvClient: boolean | undefined;
+  let mqttPaho: boolean | undefined;
   const awsMessaging = lines.some((l) => /"github\.com\/aws\/aws-sdk-go-v2\/service\/(?:sqs|sns)"/.test(l));
   const hasResty = lines.some((l) => /go-resty|resty\.New/.test(l));
   let functions: ReturnType<typeof goFunctions> | undefined;
@@ -288,6 +289,15 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
         if (k > i && /^\s*\}/.test(lines[k]!)) break;
       }
       sources.push({ kind: "queue-publish", name: "MQ: sarama ProducerMessage", target: topic, ...(ref ? { targetRef: ref } : {}), calls: [], line: lineNo });
+      continue;
+    }
+
+    // MQTT (paho): `client.Subscribe("stadium/+/score", 0, cb)` / `client.Publish("stadium/home/score", 0, false, msg)`;
+    // the filter is kept as written and its syntax marked for the topic join.
+    const mqttCall = /\b\w+\.(Publish|Subscribe)\s*\(\s*"([^"]+)"/.exec(line);
+    if (mqttCall && (mqttPaho ??= lines.some((l) => /["/]eclipse\/paho\.mqtt\.golang["/]|\bmqtt\.NewClient\b/.test(l)))) {
+      const publishes = mqttCall[1] === "Publish";
+      sources.push({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: mqttCall[2]!, topicSyntax: "mqtt", calls: [], line: lineNo });
       continue;
     }
 

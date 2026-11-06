@@ -1,5 +1,5 @@
 import type { PackageScope } from "../../../types/analysis.js";
-import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
+import type { DeclaredPackage, PackageManagerSpec, ProjectReference } from "../../../types/language-plugin.js";
 import { declared, jsonObject } from "../shared/declared-package.js";
 import { npmInstalledApi } from "./installed-api.js";
 import { packageLockLicenses, parsePackageLock, parsePnpmLock, parseYarnLock, withLicenses, withLocked } from "../shared/lockfiles.js";
@@ -139,6 +139,32 @@ function mentioned(config: string, word: string): boolean {
   return new RegExp(`["'\x60](?:plugin:)?${w}(?:["'\x60/]|$)`, "m").test(config);
 }
 
+/**
+ * The sibling projects a package.json declares by protocol: `"@league/core": "workspace:*"` (pnpm, yarn, bun) names
+ * a workspace package, `file:../core` / `link:../core` / `portal:../core` a directory. A plain version range is
+ * a registry dependency — even when a workspace of that name exists, the manifest does not say it is that one.
+ */
+export function npmProjectReferences(text: string): ProjectReference[] {
+  const json = jsonObject(text);
+  if (!json) return [];
+  const out: ProjectReference[] = [];
+  for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+    const deps = json[section];
+    if (!deps || typeof deps !== "object") continue;
+    for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+      if (typeof spec !== "string") continue;
+      const path = /^(?:file|link|portal):(.+)$/.exec(spec)?.[1];
+      if (spec.startsWith("workspace:")) {
+        // `workspace:../core` and `workspace:*` / `workspace:^` / `workspace:~1.2.0` — a path form is a path, the rest the name (or the alias's target).
+        const rest = spec.slice("workspace:".length);
+        if (/^\.\.?\//.test(rest)) out.push({ path: rest });
+        else out.push({ path: "", package: /^(?:npm:)?(@?[\w.-]+(?:\/[\w.-]+)?)@/.exec(rest)?.[1] ?? name });
+      } else if (path && /^\.\.?(?:\/|$)/.test(path)) out.push({ path });
+    }
+  }
+  return out;
+}
+
 export const npmPackageManager: PackageManagerSpec = {
   ecosystem: "npm",
   manifests: [{
@@ -155,6 +181,7 @@ export const npmPackageManager: PackageManagerSpec = {
       return pnpm ? withLocked(pkgs, parsePnpmLock(pnpm)) : pkgs;
     },
     selfName: (text) => { const name = jsonObject(text)?.name; return typeof name === "string" && name ? name : null; },
+    projectReferences: npmProjectReferences,
   }],
   // `@scope/pkg/sub` → `@scope/pkg`, `lodash/fp` → `lodash`; relative paths
   // and the `@/` / `~` aliases name project files.

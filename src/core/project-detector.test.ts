@@ -104,3 +104,30 @@ describe("detectSubProjects — the sibling projects a build declares", () => {
     }
   });
 });
+
+describe("detectSubProjects — npm workspace protocol references", () => {
+  it("joins workspace: and file: dependencies, never a registry range of the same name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cd-npm-refs-"));
+    try {
+      const files: Record<string, string> = {
+        "web/package.json": JSON.stringify({ name: "@league/web", dependencies: { "@league/core": "workspace:*", "@league/kit": "file:../kit", "@league/shared": "^1.0.0" }, devDependencies: { "@league/tools": "workspace:^" } }),
+        "core/package.json": JSON.stringify({ name: "@league/core" }),
+        "kit/package.json": JSON.stringify({ name: "@league/kit" }),
+        "shared/package.json": JSON.stringify({ name: "@league/shared" }),
+        "tools/package.json": JSON.stringify({ name: "@league/tools" }),
+        "other/package.json": JSON.stringify({ name: "@league/tools" }),
+      };
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const projects = await detectSubProjects(root);
+      const rootOf = (id: string) => projects.find((p) => p.id === id)?.root;
+      const refs = projects.find((p) => p.root === "web")?.references?.map((r) => rootOf(r.project)).sort();
+      // `@league/tools` is published by two projects: the reference stays unresolved rather than guessed.
+      expect(refs).toEqual(["core", "kit"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

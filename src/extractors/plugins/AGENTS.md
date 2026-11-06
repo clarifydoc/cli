@@ -135,10 +135,10 @@ like `knownPackages`. Notes:
   dotted import by the package a file declares (`ast.packageName`) before its directory; `compilationDatabase` names
   the compile database files at a project root (`-I` order and `-D` macros reach `read(source, macros)`);
   `PackageManifestSpec.projectReferences` returns the sibling projects a build file declares
-  (`SubProject.references`); `preprocessStamp(absolutePath, projectRoot)` fingerprints what a `preprocess` reads
+  (`SubProject.references`; a reference may name a package — `ProjectReference.package`, npm `workspace:` — resolved to the one sub-project of that ecosystem declaring it); `preprocessStamp(absolutePath, projectRoot)` fingerprints what a `preprocess` reads
   beside the file (its `PreprocessContext`) so `--incremental` notices it; `regexControlFlow.sourceView` gives the
   control-flow scanner the compiler's view of a body. Regex specs: `extractReExports` (a barrel's `export 'x'`);
-  `ImportInfo.inScope.except` (names an import keeps out of scope); `DataSourceInfo.topicSyntax: "mqtt"` joins a
+  `ImportInfo.inScope.except` (names an import keeps out of scope); `DataSourceInfo.topicSyntax: "mqtt"` (JS, Python paho/aiomqtt, Java/Kotlin Paho/HiveMQ, Go paho, C# MQTTnet) joins a
   publish to the `+`/`#` filters that cover it.
 - **Line numbers are 1-based** in all output.
 - **No cross-plugin imports** — if two plugins need the same logic, extract it to `../shared/` or `shared/regex-base.ts`.

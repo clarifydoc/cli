@@ -1207,4 +1207,28 @@ describe("Java AsyncHttpClient", () => {
     ]);
     expect((await sourcesOf(`    foo.prepareGet("/api/decoy");`, "java")).filter((d) => d.kind === "api-call")).toEqual([]);
   });
+  it("reads new RequestBuilder(\"PUT\").setUrl(url) with its verb, only in a file that imports it", async () => {
+    const body = `    Request put = new RequestBuilder("PUT").setUrl("https://league.example.com/api/clubs/1").build();
+    Request post = new RequestBuilder().setMethod("POST").setUrl("https://league.example.com/api/players").build();
+    new Decoy("PUT").setUrl("/api/decoy");`;
+    const found = (await sourcesOf(body, "java", "import org.asynchttpclient.*;")).filter((d) => d.kind === "api-call");
+    expect(found.map((d) => [d.name, d.target])).toEqual([["PUT", "https://league.example.com/api/clubs/1"], ["POST", "https://league.example.com/api/players"]]);
+    expect((await sourcesOf(`    new RequestBuilder("PUT").setUrl("/api/decoy");`, "java")).filter((d) => d.kind === "api-call")).toEqual([]);
+  });
+});
+
+describe("Java and Kotlin MQTT clients", () => {
+  const rows = async (body: string, lang: "java" | "kotlin", header: string) =>
+    (await sourcesOf(body, lang, header)).filter((d) => d.kind.startsWith("queue-")).map((d) => [d.kind, d.target, d.topicSyntax]);
+  it("marks Paho and HiveMQ topics as MQTT, only in a file that imports a client", async () => {
+    expect(await rows(`    client.subscribe("stadium/+/score");
+    client.publish("stadium/home/score", message);
+    mqtt.publishWith().topic("stadium/away/score").send();
+    mqtt.subscribeWith().topicFilter("stadium/#").send();`, "java", "import org.eclipse.paho.client.mqttv3.*;")).toEqual([
+      ["queue-consume", "stadium/+/score", "mqtt"], ["queue-publish", "stadium/home/score", "mqtt"],
+      ["queue-publish", "stadium/away/score", "mqtt"], ["queue-consume", "stadium/#", "mqtt"],
+    ]);
+    expect(await rows(`    client.subscribe("stadium/+/score")`, "kotlin", "import org.eclipse.paho.client.mqttv3.*")).toEqual([["queue-consume", "stadium/+/score", "mqtt"]]);
+    expect(await rows(`    client.subscribe("stadium/+/score");`, "java", "")).toEqual([]);
+  });
 });

@@ -268,8 +268,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private refitFile = false;
   /** The file uses RestSharp (`new RestRequest("clubs/{id}", Method.Get)`). */
   private restSharpFile = false;
+  private mqttFile = false;
   /** Locals and fields the file builds with `new RestRequest(…)`: sending one is no second request. */
   private restRequestVars = new Set<string>();
+  /** A RestRequest local's verb when the file sets it (`request.Method = Method.Delete`) or sends it through one verb helper. */
+  private restRequestVerbs = new Map<string, string>();
   /** The file uses Flurl.Http (`"https://…".AppendPathSegment("clubs").GetJsonAsync()`). */
   private flurlFile = false;
   /** The file uses Confluent.Kafka. */
@@ -306,8 +309,20 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     }
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
     this.refitFile = REFIT_GATE.test(sourceText);
+    this.mqttFile = /\bMQTTnet\b|\bMqttApplicationMessageBuilder\b/.test(sourceText);
     this.restSharpFile = /\bRestSharp\b/.test(sourceText);
     this.restRequestVars = new Set(this.restSharpFile ? [...sourceText.matchAll(/\b(\w+)\s*=\s*new\s+(?:RestSharp\.)?RestRequest\b/g)].map((m) => m[1]!) : []);
+    this.restRequestVerbs = new Map();
+    if (this.restSharpFile) {
+      for (const m of sourceText.matchAll(/\b(\w+)\.Method\s*=\s*(?:RestSharp\.)?Method\.(\w+)/g)) this.restRequestVerbs.set(m[1]!, m[2]!.toUpperCase());
+      // `client.PostAsync(request)` overrides the request's own method, so a variable sent through one verb helper has that verb.
+      const sent = new Map<string, Set<string>>();
+      for (const m of sourceText.matchAll(/\.(?:Execute)?(Get|Post|Put|Delete|Patch|Head|Options)Async\s*(?:<[^<>()]*>)?\(\s*(\w+)\s*[,)]/g)) {
+        if (!this.restRequestVars.has(m[2]!)) continue;
+        (sent.get(m[2]!) ?? sent.set(m[2]!, new Set()).get(m[2]!)!).add(m[1]!.toUpperCase());
+      }
+      for (const [name, verbs] of sent) if (verbs.size === 1) this.restRequestVerbs.set(name, [...verbs][0]!);
+    }
     this.flurlFile = /\bFlurl(?:\.Http)?\b/.test(sourceText);
     this.usesKafka = /\bConfluent\.Kafka\b|\bIConsumer\s*</.test(sourceText);
     this.usesDapr = /\bDapr\b|\bDaprClient\b/.test(sourceText);
@@ -906,7 +921,13 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (node.type === "object_creation_expression" && this.restSharpFile && /(?:^|\.)RestRequest$/.test(node.childForFieldName("type")?.text ?? "")) {
       const args = argumentNodes(node);
       const first = args[0]?.text.trim().replace(NAMED_ARG_RE, "").trim();
-      const verb = /^(?:RestSharp\.)?Method\.(\w+)$/.exec(args[1]?.text.trim().replace(NAMED_ARG_RE, "").trim() ?? "")?.[1]?.toUpperCase() ?? "GET";
+      const stated = /^(?:RestSharp\.)?Method\.(\w+)$/.exec(args[1]?.text.trim().replace(NAMED_ARG_RE, "").trim() ?? "")?.[1]?.toUpperCase();
+      let holder: Node | null = node.parent;
+      while (holder && !/^(?:variable_declarator|assignment_expression|argument|statement|expression_statement)$|_statement$/.test(holder.type)) holder = holder.parent;
+      const local = holder && /^(?:variable_declarator|assignment_expression)$/.test(holder.type) ? /^[\w.]*?(\w+)\s*=/.exec(holder.text)?.[1] : undefined;
+      const sender = holder?.type === "argument" ? holder.parent?.parent : null;
+      const sentBy = sender?.type === "invocation_expression" ? /^(?:Execute)?(Get|Post|Put|Delete|Patch|Head|Options)Async$/.exec(sender.childForFieldName("function")?.text.replace(/<.*$/, "").replace(/^.*\./, "") ?? "")?.[1]?.toUpperCase() : undefined;
+      const verb = sentBy ?? (local ? this.restRequestVerbs.get(local) : undefined) ?? stated ?? "GET";
       const target = first && /^[@$]*"/.test(first) ? this.evalUri(first, node.startPosition.row + 1, 0) : null;
       if (first) sources.push(this.ds({ kind: "api-call", name: verb, target, line: node.startPosition.row + 1 }));
       return;
@@ -915,6 +936,23 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
 
     const fn = node.childForFieldName("function");
     if (!fn) return;
+    // MQTTnet: `new MqttApplicationMessageBuilder().WithTopic("stadium/home/score")` publishes; `WithTopicFilter("stadium/+/score")`
+    // or `WithTopicFilter(f => f.WithTopic("stadium/#"))` subscribes. The filter is kept as written.
+    if (this.mqttFile && fn.type === "member_access_expression") {
+      const mqttMethod = fn.childForFieldName("name")?.text;
+      let inFilter = false;
+      for (let up: Node | null = node.parent, hops = 0; up && hops < 6 && mqttMethod === "WithTopic"; up = up.parent, hops++) {
+        if (up.type === "invocation_expression") { inFilter = /\.WithTopicFilter$/.test(up.childForFieldName("function")?.text ?? ""); break; }
+      }
+      if (mqttMethod === "WithTopicFilter" || mqttMethod === "WithTopic") {
+        const topic = /^\$?@?"([^"{}]+)"$/.exec(argumentNodes(node)[0]?.text.trim() ?? "")?.[1];
+        const subscribes = mqttMethod === "WithTopicFilter" || inFilter || /TopicFilterBuilder|\bSubscribe/.test(fn.childForFieldName("expression")?.text ?? "");
+        if (topic && /^[\w./+#-]+$/.test(topic)) {
+          sources.push({ ...this.ds({ kind: subscribes ? "queue-consume" : "queue-publish", name: `MQTT: ${subscribes ? "subscribe" : "publish"}`, target: topic, line: node.startPosition.row + 1 }), topicSyntax: "mqtt" });
+          return;
+        }
+      }
+    }
     // Flurl: a URL string or `new Url(…)` extended with path segments, then sent.
     if (this.flurlFile && fn.type === "member_access_expression") {
       const verb = FLURL_SEND.exec(fn.childForFieldName("name")?.text.replace(/<.*$/, "") ?? "")?.[1];

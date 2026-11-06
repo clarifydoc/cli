@@ -131,6 +131,11 @@ export interface ProjectReference {
   anchor?: readonly string[];
   /** The path is spelled loosely (a type-safe accessor `projects.clubCore` for `club-core`): compare without case and separators. */
   loose?: boolean;
+  /**
+   * The reference names a package instead of a directory (`"@league/core": "workspace:*"`): it resolves to the ONE
+   * sub-project of the same ecosystem whose manifest declares that name (`path` is ignored; two such, none, itself: no reference).
+   */
+  package?: string;
 }
 
 /** Where a manifest read for its own name sits (`PackageManifestSpec.selfName`). */

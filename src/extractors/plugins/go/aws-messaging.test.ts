@@ -29,3 +29,15 @@ func a() {
     expect(rows(`func a() { client.SendMessage(ctx, &sqs.SendMessageInput{ QueueUrl: aws.String("q1") }) }`)).toEqual([]);
   });
 });
+
+describe("Go MQTT clients (paho)", () => {
+  it("marks Publish and Subscribe topics as MQTT, only in a file that imports paho", () => {
+    const mqtt = extractGoDataSources(`import mqtt "github.com/eclipse/paho.mqtt.golang"
+func a() {
+	client.Subscribe("stadium/+/score", 0, onScore)
+	client.Publish("stadium/home/score", 0, false, "2")
+}`.split("\n")).filter((d) => d.kind.startsWith("queue")).map((d) => [d.kind, d.target, d.topicSyntax]);
+    expect(mqtt).toEqual([["queue-consume", "stadium/+/score", "mqtt"], ["queue-publish", "stadium/home/score", "mqtt"]]);
+    expect(rows(`func a() { client.Publish("stadium/home/score", 0, false, "2") }`)).toEqual([]);
+  });
+});
