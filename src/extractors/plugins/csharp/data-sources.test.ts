@@ -969,7 +969,23 @@ public class H { RestClient client;
   void request(string path) {}
   void Decoy() { request("/decoy"); }
 }`);
-    expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "clubs/{id}"], ["GET", "cars"], ["GET", "garages"]]);
+    expect(found.map((d) => [d.name, d.target])).toEqual([["GET", "clubs/{id}"], ["GET", "cars"], ["POST", "garages"]]);
+  });
+  it("takes the verb from request.Method or from the verb helper that sends the request", async () => {
+    const found = await calls(`using RestSharp;
+public class H { RestClient client;
+  public async Task M(int id) {
+    var del = new RestRequest("clubs/{id}");
+    del.Method = Method.Delete;
+    await client.ExecuteAsync(del);
+    var put = new RestRequest("players");
+    await client.PutAsync(put);
+    await client.PostAsync(new RestRequest("garages"));
+    var late = new RestRequest("cars", Method.Put);
+    await client.ExecuteAsync(late);
+  }
+}`);
+    expect(found.map((d) => [d.name, d.target])).toEqual([["DELETE", "clubs/{id}"], ["PUT", "players"], ["POST", "garages"], ["PUT", "cars"]]);
   });
   it("reads a Flurl chain from a URL string through its path segments to the send", async () => {
     const found = await calls(`using Flurl.Http;
@@ -983,5 +999,21 @@ public class H { public async Task M() {
     const found = await calls(`using Flurl.Http;
 public class H { public async Task M(HttpClient http) { await http.GetAsync("/clubs"); } }`);
     expect(found.every((d) => d.name !== "GET")).toBe(true);
+  });
+});
+
+describe("C# MQTTnet topics", () => {
+  async function rows(src: string) {
+    const tree = await parseSource(src, "csharp" as any, "H.cs");
+    return new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => [d.kind, d.target, d.topicSyntax]);
+  }
+  it("marks MQTTnet publishes and filters as MQTT, only in a file that uses the library", async () => {
+    expect(await rows(`using MQTTnet;
+public class H { public async Task M(IMqttClient c) {
+  var msg = new MqttApplicationMessageBuilder().WithTopic("stadium/home/score").WithPayload("2").Build();
+  await c.SubscribeAsync(new MqttFactory().CreateSubscribeOptionsBuilder().WithTopicFilter(f => f.WithTopic("stadium/+/score")).Build());
+  var all = new MqttTopicFilterBuilder().WithTopic("stadium/#").Build();
+} }`)).toEqual([["queue-publish", "stadium/home/score", "mqtt"], ["queue-consume", "stadium/+/score", "mqtt"], ["queue-consume", "stadium/#", "mqtt"]]);
+    expect(await rows(`public class H { void M(Other o) { o.WithTopic("stadium/x"); } }`)).toEqual([]);
   });
 });

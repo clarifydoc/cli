@@ -706,6 +706,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private ktorDefaultBase: string | null = null;
   /** The file imports AsyncHttpClient (`org.asynchttpclient`, or its old `com.ning.http.client`). */
   private isAsyncHttpClientFile = false;
+  private isMqttFile = false;
   /** The file imports CXF's JAX-RS `WebClient`. */
   private isCxfWebClientFile = false;
   /**
@@ -750,6 +751,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
     this.ktorClientText = /\bio\.ktor\.client\b/.test(text) ? text : null;
     this.ktorDefaultBase = this.ktorClientText ? /\bdefaultRequest\s*\{[^{}]*?\burl\s*\(\s*"(https?:\/\/[^"$]+)"\s*\)/.exec(text)?.[1] ?? null : null;
+    this.isMqttFile = /\b(?:org\.eclipse\.paho|com\.hivemq\.client\d*\.mqtt)\b/.test(text);
     this.isAsyncHttpClientFile = /\b(?:org\.asynchttpclient|com\.ning\.http\.client)\b/.test(text);
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.httpExchange = /@(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text) && /\binterface\s+\w/.test(text) ? httpExchangeInterface(text) : null;
@@ -1094,6 +1096,30 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const url = urlExpression(call.firstArg, node, 0);
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
       sources.push(this.ds({ kind: "api-call", name: target ? method.slice(7).toUpperCase() : method, target, line }));
+      return;
+    }
+
+    // MQTT (Eclipse Paho `client.publish("t", msg)` / `client.subscribe("t/+")`, HiveMQ `publishWith().topic("t")` /
+    // `subscribeWith().topicFilter("t/#")`): the filter is kept as written, its syntax marked for the topic join.
+    if (this.isMqttFile && call.firstArg) {
+      const hive = (method === "topic" && /\bpublishWith\s*\(/.test(receiver)) || (method === "topicFilter" && /\bsubscribeWith\s*\(/.test(receiver));
+      const paho = (method === "publish" || method === "subscribe") && /^[\w$.]+$/.test(receiver.trim());
+      if (hive || paho) {
+        const topic = urlExpression(call.firstArg, node, 0);
+        if (topic && /^[\w$.:+#/{}-]+$/.test(topic)) {
+          const publishes = method === "publish" || method === "topic";
+          sources.push({ ...this.ds({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: topic, line }), topicSyntax: "mqtt" });
+          return;
+        }
+      }
+    }
+
+    // AsyncHttpClient: `new RequestBuilder("PUT").setUrl(url)` (or `.setMethod("PUT")` anywhere in the chain) is the request itself.
+    if (this.isAsyncHttpClientFile && method === "setUrl" && call.firstArg && /\bRequestBuilder\s*\(/.test(receiver)) {
+      const verb = /\bRequestBuilder\s*\(\s*"(\w+)"/.exec(receiver)?.[1] ?? /\.setMethod\s*\(\s*"(\w+)"/.exec(receiver)?.[1] ?? "GET";
+      const url = urlExpression(call.firstArg, node, 0);
+      const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
+      sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target, line }));
       return;
     }
 

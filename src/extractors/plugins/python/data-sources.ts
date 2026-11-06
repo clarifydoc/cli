@@ -57,6 +57,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   /** The file uses boto3 (SQS/SNS clients) or redis-py (pub/sub). */
   private boto3 = false;
   private redis = false;
+  private mqtt = false;
   /** The file names urllib: a bare `urlopen(…)` is `urllib.request.urlopen`. */
   private urllib = false;
 
@@ -68,6 +69,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
     this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
+    this.mqtt = /^\s*(?:import\s+paho\.mqtt|from\s+paho(?:\.mqtt)?(?:\.\w+)*\s+import|import\s+(?:asyncio_mqtt|aiomqtt)|from\s+(?:asyncio_mqtt|aiomqtt)\s+import)\b/m.test(sourceText);
     this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
     this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
@@ -196,6 +198,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
               target,
               line: node.startPosition.row + 1,
             }));
+            return;
+          }
+        }
+        // MQTT (paho, aiomqtt): `client.publish("stadium/score", msg)` / `client.subscribe("stadium/+")`, topic filters kept as written.
+        if (this.mqtt && (leaf === "publish" || leaf === "subscribe") && fnName.includes(".")) {
+          const topic = pyArg(node, "topic", 0);
+          if (topic && /^[\w$.:+#/-]+$/.test(topic)) {
+            sources.push({ ...this.ds({ kind: leaf === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${leaf}`, target: topic, line: node.startPosition.row + 1 }), topicSyntax: "mqtt" });
             return;
           }
         }

@@ -234,6 +234,12 @@ async function declaredReferences(root: string, project: SubProject, subProjects
         const text = await readFile(join(root, project.root, file), "utf-8").catch(() => null);
         if (text === null) continue;
         for (const ref of await spec.projectReferences(text, selfNameContext(root, project.root, file))) {
+          if (ref.package) {
+            const eco = manager.registry ?? manager.ecosystem;
+            const named = subProjects.filter((p) => p.id !== project.id && p.packageName === ref.package && (p.packageEcosystem ?? eco) === eco);
+            if (named.length === 1 && !out.has(named[0]!.id)) out.set(named[0]!.id, posix.join(base, file));
+            continue;
+          }
           let from = base;
           if (ref.anchor) {
             let dir = base;
