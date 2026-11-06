@@ -363,7 +363,12 @@ program
   )
   .argument("<outputDir>", "Analysis output directory (holds project-summary.json)")
   .option("--json", "Print JSON instead of text")
-  .action(async (outputDir: string, opts: { json?: boolean }) => {
+  .option(
+    "--carets [file]",
+    "Caret assertions beside the source (`// ^^^ call -> src/club.ts::save`): with a file (project-relative), print it with a caret line for every fact; " +
+      "without, check every assertion in the analyzed files instead of linting (exit 1 on a failed or unmatched one)",
+  )
+  .action(async (outputDir: string, opts: { json?: boolean; carets?: string | boolean }) => {
     const { loadReportSummary } = await import("./core/report-payload.js");
     const { lintAnalysis, loadFileAnalyses, countByRule } = await import("./core/analysis-lint.js");
     const dir = resolve(outputDir);
@@ -373,6 +378,42 @@ program
     } catch {
       console.error(`lint: no project-summary.json in ${dir} — run \`clarifydoc analyze\` first.`);
       process.exitCode = 1;
+      return;
+    }
+    if (opts.carets !== undefined) {
+      const { readFile } = await import("fs/promises");
+      const { checkCaretAssertions, formatCaretFailures, renderCarets } = await import("./core/caret-assertions.js");
+      const wanted = typeof opts.carets === "string" ? [opts.carets.replace(/\\/g, "/")] : (summary.files ?? []);
+      const analyses = await loadFileAnalyses(dir, wanted);
+      const files = new Map<string, { source: string; analysis: import("./types/analysis.js").FileAnalysis }>();
+      for (const p of wanted) {
+        const analysis = analyses.get(p);
+        if (!analysis) continue;
+        try {
+          files.set(p, { source: await readFile(resolve(summary.projectRoot, p), "utf-8"), analysis });
+        } catch {
+          // The source moved since the analysis: nothing to read assertions from.
+        }
+      }
+      if (typeof opts.carets === "string") {
+        const file = files.get(wanted[0]!);
+        const text = file && renderCarets(summary, wanted[0]!, file);
+        if (text === undefined) {
+          console.error(`lint: ${wanted[0]} is not an analyzed file with a readable source and a comment syntax.`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(text);
+        return;
+      }
+      const results = checkCaretAssertions(summary, files);
+      const bad = formatCaretFailures(results);
+      if (opts.json) console.log(JSON.stringify({ results: results.map((r) => ({ file: r.assertion.file, line: r.assertion.commentLine, kind: r.assertion.kind, text: r.assertion.text, status: r.status, message: r.message, found: r.found })) }, null, 2));
+      else {
+        for (const line of bad) console.log(line);
+        console.log(results.length === 0 ? "No caret assertions found." : `${results.length - bad.length} of ${results.length} caret assertion(s) passed.`);
+      }
+      if (bad.length > 0) process.exitCode = 1;
       return;
     }
     const findings = lintAnalysis(summary, await loadFileAnalyses(dir, summary.files ?? []));
