@@ -167,7 +167,7 @@ export function buildModuleValueLookup(
       return dir === null ? null : unique(filesIn(dir), rest, a);
     }
     // A bare name another file of the caller's own package defines.
-    return !imp && !rest && pluginFor(a.language)?.directoryScope ? unique(filesIn(dirOf(fromFile)), expr, a) : null;
+    return !imp && !rest && pluginFor(a.language)?.directoryScope ? unique(filesIn(dirOf(fromFile)).filter((f) => !a.packageName || !f.packageName || f.packageName === a.packageName), expr, a) : null;
   };
 
   const resolve = (fromFile: string, expr: string, depth: number): string | null => {
