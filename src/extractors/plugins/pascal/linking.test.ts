@@ -446,16 +446,17 @@ describe("Pascal unit search paths", () => {
   <PropertyGroup Condition="'$(Platform)'=='Linux64'">
     <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
   </PropertyGroup>`);
-    // The order the platforms are listed in decides nothing: the result is the one without any build file.
+    // The order the platforms are listed in decides nothing: the unit is neither, so no link names either.
     const swapped = dproj(`  <PropertyGroup Condition="'$(Platform)'=='Linux64'">
     <DCC_UnitSearchPath>Posix</DCC_UnitSearchPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Platform)'=='Win32'">
     <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
   </PropertyGroup>`);
-    const bare = await targets({});
-    expect(await targets({ "League.dproj": both, "League.dpr": program("") })).toEqual(bare);
-    expect(await targets({ "League.dproj": swapped, "League.dpr": program("") })).toEqual(bare);
+    // Without any build file the generic rules still pick one.
+    expect(await targets({})).toEqual(washes("Posix"));
+    expect(await targets({ "League.dproj": both, "League.dpr": program("") })).toEqual([]);
+    expect(await targets({ "League.dproj": swapped, "League.dpr": program("") })).toEqual([]);
     // A group every build reads still decides, and so does the one directory a platform group leaves.
     const general = dproj(`  <PropertyGroup>
     <DCC_UnitSearchPath>Win</DCC_UnitSearchPath>
@@ -545,5 +546,57 @@ end.
   it("decides nothing for a subject of unknown type, and keeps a call outside the with a plain bare call", async () => {
     expect(await links("  with Mystery do Save;")).toEqual([]);
     expect(await links("  with Club do Fill(Save);\n  Save;")).toEqual([]);
+  });
+});
+
+describe("Pascal with statements: a dotted callee is looked up in the subject", () => {
+  const DATA = `unit Data;
+interface
+type
+  TClubQuery = class
+    procedure Open;
+  end;
+  TDm = class
+    Clubs: TClubQuery;
+  end;
+var Dm: TDm;
+implementation
+procedure TClubQuery.Open;
+begin
+end;
+end.
+`;
+  const DECOY = `unit Decoy;
+interface
+type
+  TCars = class
+    procedure Open;
+  end;
+var Clubs: TCars;
+implementation
+procedure TCars.Open;
+begin
+end;
+end.
+`;
+  const main = (body: string) => `unit Main;
+interface
+uses Data, Decoy;
+procedure Run;
+implementation
+procedure Run;
+begin
+${body}
+end;
+end.
+`;
+  const links = (body: string) => linksFrom({ "Data.pas": DATA, "Decoy.pas": DECOY, "Main.pas": main(body) }, "Main.pas");
+
+  it("links `Clubs.Open` inside `with Dm do` through the subject's field, not the namesake variable", async () => {
+    expect(await links("  with Dm do Clubs.Open;")).toEqual(["Run: Clubs.Open -> Data.pas::TClubQuery.Open (injection)"]);
+  });
+
+  it("keeps a dotted call outside any with as it was", async () => {
+    expect(await links("  Clubs.Open;")).toEqual(["Run: Clubs.Open -> Decoy.pas::TCars.Open (injection)"]);
   });
 });
