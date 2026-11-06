@@ -165,4 +165,19 @@ describe("Zig test blocks", () => {
     expect(tests[0]!.calls.map((c) => c.name)).toContain("rank");
     expect(a.functions.find((f) => f.name === "rank")!.testCase).toBeUndefined();
   });
+
+  it("keeps a test named after its function apart from it, and a body-less doctest reaches the function", async () => {
+    const a = await analyze([
+      "pub fn kick(n: u32) u32 { return n; }",
+      "pub fn pass() void {}",
+      'test "kick" {',
+      "    _ = kick(2);",
+      "}",
+      "test pass {}",
+    ].join("\n"), "src/play.zig");
+    expect(a.functions.map((f) => f.name)).toEqual(["kick", "pass", 'test "kick"', "test pass"]);
+    expect(a.functions.find((f) => f.name === "kick")!.testCase).toBeUndefined();
+    expect(a.functions.find((f) => f.name === 'test "kick"')!.calls.map((c) => c.name)).toEqual(["kick"]);
+    expect(a.functions.find((f) => f.name === "test pass")!.calls.map((c) => c.name)).toEqual(["pass"]);
+  });
 });

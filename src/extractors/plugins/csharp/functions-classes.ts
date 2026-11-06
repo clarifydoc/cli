@@ -98,6 +98,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
+    const generatedProperties: PropertyInfo[] = [];
 
     // C# 12 primary constructor (`class S(IRepo repo)`, records, structs): its
     // parameters are in scope in every member, which is what lets the linker
@@ -194,6 +195,10 @@ export class CSharpExtractor extends FunctionClassExtractor {
                   isReadonly: this.hasModifier(member, "readonly"),
                 };
                 properties.push(prop);
+                // CommunityToolkit `[ObservableProperty] private string _clubName;`: the generator adds the public
+                // property `ClubName` (a leading `_` / `m_` dropped, the first letter capitalized) over the field.
+                const generated = observableProperty(extractCsharpAttributes(member), fieldName);
+                if (generated) generatedProperties.push({ name: generated, type: typeText, visibility: "public", isStatic: false, isReadonly: false, accessor: true });
                 const typeNode = varDecl.childForFieldName("type");
                 if (prop.visibility !== "public" && typeNode && NAMED_FIELD_TYPES.has(typeNode.type)) {
                   const init = decl.namedChildren.find((c) => c.id !== nameNode?.id && c.type !== "bracketed_argument_list");
@@ -206,6 +211,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
     }
 
+    for (const g of generatedProperties) if (!properties.some((q) => q.name === g.name)) properties.push(g);
     for (const prop of properties) {
       const key = fieldKeys.get(prop.name);
       if (key && !prop.qualifier) prop.qualifier = key;
@@ -610,4 +616,11 @@ function csharpDefaultValue(p: Node): string | null {
   if (field) return field.text;
   const eq = p.children.findIndex((c) => c.type === "=");
   return eq >= 0 ? p.children[eq + 1]?.text ?? null : null;
+}
+
+/** The property CommunityToolkit's generator makes for a field carrying `[ObservableProperty]`; null for any other field. */
+function observableProperty(attributes: readonly string[], field: string): string | null {
+  if (!attributes.some((a) => /^\[?\s*(?:ObservableProperty|ObservableProperty\w*Attribute)\b/.test(a))) return null;
+  const bare = field.replace(/^(?:_|m_)/, "");
+  return /^[A-Za-z]\w*$/.test(bare) ? bare[0]!.toUpperCase() + bare.slice(1) : null;
 }

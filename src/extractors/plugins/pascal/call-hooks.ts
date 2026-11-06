@@ -83,12 +83,13 @@ function insideWith(node: Node): boolean {
 
 /**
  * The subjects of the `with` statements `node` is in the body of, innermost first (a later subject of one `with`
- * before an earlier one: `with A, B do` looks in B first), for a call of a bare name. Only a subject that is a plain
+ * before an earlier one: `with A, B do` looks in B first), for a call of a bare or dotted name. Only a subject that is a plain
  * name chain is kept: another says nothing the linker could type.
  */
 function withSubjects(node: Node): string[] | null {
   const callee = node.type === "statement" ? node.children.find((c) => c.type !== "comment") : node.type === "exprCall" ? node.namedChildren[0] : null;
-  if (callee?.type !== "identifier") return null;
+  // A bare name, or a dotted one whose head the subject may own (`with Dm do Clubs.Open` is `Dm.Clubs.Open`).
+  if (!callee || (callee.type !== "identifier" && !(callee.type === "exprDot" && nameChain(callee) && !/^(?:self|inherited)\b/i.test(callee.text)))) return null;
   const out: string[] = [];
   for (let p: Node | null = node.parent, child: Node = node; p && p.type !== "defProc"; child = p, p = p.parent) {
     if (p.type !== "with") continue;

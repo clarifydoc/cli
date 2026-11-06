@@ -22,6 +22,9 @@ export class ZigExtractor extends FunctionClassExtractor {
       // `test "ranks clubs" { … }` and `test rank { … }`: tests the source file declares itself.
       else if (child.type === "test_declaration") functions.push(testBlock(child));
     }
+    // A test named after a function (`test "kick"` beside `fn kick`) is a function of its own, never that one.
+    const declared = new Set(functions.filter((f) => !f.testCase).map((f) => f.name));
+    for (const f of functions) if (f.testCase && f.testCase.title === f.name && declared.has(f.name)) f.name = `test "${f.name}"`;
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
@@ -100,6 +103,11 @@ function fn(node: Node): FunctionInfo {
 function testBlock(node: Node): FunctionInfo {
   const label = node.namedChildren.find((c) => c.type === "string" || c.type === "identifier");
   const title = label?.type === "string" ? label.text.slice(1, -1) : label ? `test ${label.text}` : `test at line ${node.startPosition.row + 1}`;
+  const calls = extractCalls(node.namedChildren.find((c) => c.type === "block") ?? null, "zig");
+  // A doctest (`test rank { … }`) is the declaration's own test whatever its body calls: it reaches `rank`.
+  if (label?.type === "identifier" && !calls.some((c) => c.name === label.text)) {
+    calls.push({ name: label.text, kind: "internal", target: null, line: label.startPosition.row + 1, column: label.startPosition.column + 1 });
+  }
   return {
     name: title,
     params: [],
@@ -107,7 +115,7 @@ function testBlock(node: Node): FunctionInfo {
     isAsync: false,
     isExported: false,
     decorators: [],
-    calls: extractCalls(node.namedChildren.find((c) => c.type === "block") ?? null, "zig"),
+    calls,
     line: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
     testCase: { title: label?.type === "string" ? title : label?.text ?? title, path: [], kind: "case" },

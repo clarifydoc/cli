@@ -1,5 +1,5 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
-import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
+import { ELIXIR_DOCS } from "../../shared/doc-comment-specs.js";
 import { hexPackageManager } from "./package-manifests.js";
 
 /**
@@ -9,7 +9,7 @@ import { hexPackageManager } from "./package-manifests.js";
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
  */
 export const elixirManifest: LanguagePluginManifest = {
-  docComments: HASH_DOCS,
+  docComments: ELIXIR_DOCS,
   language: "elixir",
   family: "elixir",
   packageManagers: [hexPackageManager],

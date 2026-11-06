@@ -56,6 +56,12 @@ function closeOf(code: string, open: number): number {
  */
 export function parseSwiftReturnType(line: string, nameColumn?: number): string | null {
   const head = codeOf(nameColumn !== undefined && nameColumn >= 0 ? line.slice(nameColumn) : line);
+  // A computed or observed property (`var title: String {`): the function made for it returns its declared type.
+  const accessor = /^[A-Za-z_]\w*\s*:\s*([^={]+?)\s*(?:=[^{]*)?\{/.exec(head);
+  if (accessor) {
+    const t = accessor[1]!.replace(/^(?:some|any)\s+/, "").trim();
+    return !t || t === "Void" || t === "()" ? null : t;
+  }
   let i = head.search(/[<(]/);
   if (i < 0) return null;
   if (head[i] === "<") {

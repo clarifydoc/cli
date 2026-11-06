@@ -136,3 +136,53 @@ describe("declarationHeadLine", () => {
     expect(declarationHeadLine(lines, 2, { line: ["//"] }, {})).toBe(2);
   });
 });
+
+describe("comment lanes of the script and lisp-family languages", () => {
+  const lane = (language: Language, source: string, name: string, line: number, kind: "fn" | "class" = "fn") => {
+    const spec = manifestFor(language)!.docComments!;
+    expect(spec, `${language} has docComments`).toBeDefined();
+    const r = docs(language, source, spec, kind === "fn" ? [[name, line]] : [], kind === "class" ? [[name, line]] : []);
+    return kind === "fn" ? r.fns[name] : r.classes[name];
+  };
+
+  it("reads an Elixir @doc / @moduledoc heredoc past @spec and @impl, and no other heredoc", () => {
+    const src = [
+      "defmodule League.Table do",
+      '  @moduledoc """',
+      "  Ranks the clubs of a league. Ties go to goal difference.",
+      '  """',
+      "",
+      '  @doc """',
+      "  Adds the points of one match.",
+      "",
+      "  ## Examples",
+      '  """',
+      "  @spec add(integer) :: integer",
+      "  def add(points), do: points",
+      "",
+      '  @sample """',
+      "  Not documentation here.",
+      '  """',
+      "  def other, do: 1",
+      "end",
+    ].join("\n");
+    expect(lane("elixir", src, "add", 12)).toBe("Adds the points of one match.");
+    expect(lane("elixir", src, "other", 17)).toBeUndefined();
+    expect(lane("elixir", src, "League.Table", 1, "class")).toBe("Ranks the clubs of a league.");
+  });
+
+  it("reads Perl POD above a sub", () => {
+    const src = ["=head2 kickoff", "", "Starts the match for both clubs. Then waits.", "", "=cut", "", "sub kickoff {", "}"].join("\n");
+    expect(lane("perl", src, "kickoff", 7)).toBe("Starts the match for both clubs.");
+    expect(lane("perl", ["# Ends the match.", "sub whistle {", "}"].join("\n"), "whistle", 2)).toBe("Ends the match.");
+  });
+
+  it("reads `;`, `!` and batch `REM` / `::` comment lines", () => {
+    expect(lane("commonlisp", [";; Scores a goal for the home club.", "(defun goal ()", ")"].join("\n"), "goal", 2)).toBe("Scores a goal for the home club.");
+    expect(lane("racket", ["; Scores a goal for the away club.", "(define (goal) 1)"].join("\n"), "goal", 2)).toBe("Scores a goal for the away club.");
+    expect(lane("fortran", ["! Adds up the points of a squad.", "function total(p)"].join("\n"), "total", 2)).toBe("Adds up the points of a squad.");
+    expect(lane("autohotkey", ["; Opens the club roster window.", "OpenRoster() {", "}"].join("\n"), "OpenRoster", 2)).toBe("Opens the club roster window.");
+    expect(lane("batch", ["REM Builds the match report.", "rem and ships it.", ":build", "echo x"].join("\n"), "build", 3)).toBe("Builds the match report.");
+    expect(lane("batch", [":: Cleans the pitch folder.", ":clean"].join("\n"), "clean", 2)).toBe("Cleans the pitch folder.");
+  });
+});

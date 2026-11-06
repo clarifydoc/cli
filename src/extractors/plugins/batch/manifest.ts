@@ -1,3 +1,4 @@
+import { BATCH_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 
 /**
@@ -8,6 +9,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
  */
 export const batchManifest: LanguagePluginManifest = {
   language: "batch",
+  docComments: BATCH_DOCS,
   family: "batch",
   parsing: "regex",
   extensions: [".bat", ".cmd"],

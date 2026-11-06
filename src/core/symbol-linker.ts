@@ -5707,6 +5707,9 @@ function directoryFunction(
   for (const file of ctx.directoryFiles.get(dir) ?? []) {
     if (file === sourceFile || extensionFamily(file) !== family) continue;
     if (!sourceIsTest && isTestFile(file, (ctx.languageOf.get(file) ?? analysis.language) as Language)) continue;
+    // A file that declares another package than the caller's shares no scope with it, whatever the folder.
+    const declared = ctx.analysisByFile?.get(file)?.packageName;
+    if (analysis.packageName && declared && declared !== analysis.packageName) continue;
     const def = symbolIn(ctx, file, name);
     if (!def || def.name.includes(".")) continue;
     if (found) return null;

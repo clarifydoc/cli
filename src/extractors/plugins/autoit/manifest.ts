@@ -1,8 +1,10 @@
+import { SEMICOLON_DOCS } from "../../shared/doc-comment-specs.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 
 /** Static tier of this plugin. This module must stay a leaf: types only. */
 export const autoitManifest: LanguagePluginManifest = {
   language: "autoit",
+  docComments: SEMICOLON_DOCS,
   family: "autoit",
   parsing: "regex",
   extensions: [".au3"],

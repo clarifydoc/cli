@@ -74,3 +74,33 @@ export const SEMICOLON_DOCS: DocCommentSpec = {
 export const PERCENT_DOCS: DocCommentSpec = {
   line: ["%%%", "%%", "%"],
 };
+
+/**
+ * Elixir: `#` comments, and the `@doc """ … """` / `@moduledoc """ … """` heredoc above a function or module (`@spec`,
+ * `@impl true` between it and the `def` are attributes).
+ */
+export const ELIXIR_DOCS: DocCommentSpec = {
+  line: ["##", "#"],
+  block: [['"""', '"""']],
+  blockLead: /^\s*@(?:doc|moduledoc|typedoc)\s*(?:~[sS])?\s*$/,
+  moduleDocInside: true,
+  attribute: /^\s*@[\w.]+/,
+};
+
+/** Perl: `#` comments, and POD (`=head2 name` … `=cut`) above a sub or package. */
+export const PERL_DOCS: DocCommentSpec = {
+  line: ["#"],
+  pod: true,
+  attribute: /^\s*:\s*\w+/,
+};
+
+/** `!` comments (Fortran free form; `!>` and `!!` Doxygen/FORD). */
+export const BANG_DOCS: DocCommentSpec = {
+  line: ["!>", "!!", "!"],
+};
+
+/** Batch: `::` and `REM` comment lines (`@REM` too), in any case. */
+export const BATCH_DOCS: DocCommentSpec = {
+  line: ["::", "@rem ", "rem "],
+  caseInsensitive: true,
+};

@@ -18,9 +18,9 @@ use crate::league::table as t;
 fn go() { sys::ignite(); t::rank(); }
 fn main() { go(); }
 `,
-  // Two functions of one name in one file: the per-file index cannot tell them apart, so no link is guessed.
+  // Two functions of one name in one file: each is named by its module, so the call names the one it means.
   "src/pair.rs": `mod sys { pub fn ignite() {} }
-mod decoy { pub fn ignite() {} }
+mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
 `,
 };
@@ -47,7 +47,9 @@ describe("Rust inline modules", () => {
     expect(links).toContain("src/main.rs:8 rank -> src/main.rs::rank");
   });
 
-  it("guesses nothing between two functions of one name", () => {
-    expect(links.filter((l) => l.startsWith("src/pair.rs"))).toEqual([]);
+  it("links a call to the right one of two same-named functions in two inline modules, and a bare call to its own module's", () => {
+    expect(links).toContain("src/pair.rs:3 sys::ignite -> src/pair.rs::sys::ignite");
+    expect(links).toContain("src/pair.rs:2 decoy::ignite -> src/pair.rs::decoy::ignite");
+    expect(links.filter((l) => l.startsWith("src/pair.rs:3") && l.includes("decoy"))).toEqual([]);
   });
 });

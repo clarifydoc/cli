@@ -97,7 +97,9 @@ export async function applyModuleSearchPaths(
         const chosen = choose(plan, candidates, fold(imp.source), fold);
         if (!chosen || chosen === a.filePath) continue;
         const written = imp.source;
-        imp.source = relativeFrom(a.filePath, chosen);
+        // Two platform folders hold the unit and the build says neither: the import points at no file, rather than
+        // at the one the generic rules would happen to pick.
+        imp.source = relativeFrom(a.filePath, chosen === REFUSED ? `${dirOf(a.filePath)}/${written}.ambiguous` : chosen);
         retarget(a, written, imp.source);
         rewritten++;
       }
@@ -115,12 +117,15 @@ interface Plan {
   pins: Map<string, string | null>;
 }
 
+/** `choose`'s answer when the build files name two candidates and decide between neither: the import means none of them. */
+const REFUSED = Symbol("refused");
+
 function choose(
   plan: Plan,
   candidates: readonly string[],
   key: string,
   fold: (s: string) => string,
-): string | null {
+): string | null | typeof REFUSED {
   const pinned = plan.pins.get(key);
   if (pinned && candidates.includes(pinned)) return pinned;
   const home = candidates.filter((c) => plan.homes.has(fold(dirOf(c))));
@@ -134,7 +139,7 @@ function choose(
   // Directories a platform's group adds: which applies is the build's, so the one candidate they hold is the
   // answer, and two candidates (`Win/Garage.pas`, `Posix/Garage.pas`) are none — never the first listed.
   const conditioned = candidates.filter((c) => plan.conditional.includes(fold(dirOf(c))));
-  return conditioned.length === 1 ? conditioned[0]! : null;
+  return conditioned.length === 1 ? conditioned[0]! : conditioned.length > 1 ? REFUSED : null;
 }
 
 /** Calls classified into the module by its written name now name its file. */

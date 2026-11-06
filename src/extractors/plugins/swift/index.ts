@@ -109,10 +109,18 @@ function parseSwiftParam(paramText: string): ParamInfo | null {
  */
 function nestedTypeNames(lines: readonly string[], classes: ClassInfo[]): void {
   const byLine = [...classes].sort((a, b) => a.line - b.line || b.endLine - a.endLine);
+  // `extension Foundation.Date` names the module the type comes from: the head's first segment is an imported module.
+  const modules = new Set<string>();
+  for (const l of lines) {
+    const im = /^\s*(?:@\w+\s+)*import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(\w+)/.exec(l);
+    if (im) modules.add(im[1]!);
+  }
   for (const cls of byLine) {
     const head = /^\s*(?:(?:public|package|internal|private|fileprivate)\s+)?extension\s+((?:[A-Z]\w*\s*\.\s*)+[A-Z]\w*)/.exec(lines[cls.line - 1] ?? "");
     if (head) {
-      cls.name = head[1]!.replace(/\s+/g, "").split(".").join("::");
+      const path = head[1]!.replace(/\s+/g, "").split(".");
+      if (path.length > 1 && modules.has(path[0]!)) path.shift();
+      cls.name = path.join("::");
       continue;
     }
     let holder: ClassInfo | null = null;
