@@ -3,6 +3,22 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## 0.12.1 — 2026-11-06
+
+### Fixed
+
+- **`npx clarifydoc install` writes an entry that starts.** Run through npx, `install` wrote a bare `clarifydoc`
+  command, which only exists after a global install; the MCP entry, the hooks and the shell form a subagent is told
+  now start it as `npx -y clarifydoc` (`cmd /c npx -y clarifydoc` on Windows).
+
+### Changed
+
+- **CI installs the CLI from npm.** The GitHub Action installs the npm version matching its own ref, and builds
+  from its checkout only when that version is not published. The GitLab template installs `clarifydoc@latest`, or
+  the version in `CLARIFYDOC_VERSION`; `CLARIFYDOC_REF` is gone.
+- The package carries `ci/` (the CI runner and its comment writers), so any CI can run `ci/run.sh` from it.
+- Releases are published from the release workflow with provenance (npm trusted publishing).
+
 ## 0.12.0 — 2026-11-06
 
 First release on npm: `npm install -g clarifydoc`, or `npx clarifydoc`.

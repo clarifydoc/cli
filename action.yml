@@ -54,20 +54,37 @@ runs:
       with:
         node-version: 24
 
-    # The CLI is built from this action's own checkout (npm is not used yet), cached by its sources.
+    # The CLI this action's checkout is: from npm when that version is published there (every grammar included,
+    # nothing to compile), else built from the checkout itself (a ref ahead of the last release), cached by its sources.
     - id: cli
       shell: bash
       run: |
-        key="$(cd "$GITHUB_ACTION_PATH" && { cat package.json package-lock.json; find src scripts -type f | LC_ALL=C sort | xargs cat; } | sha256sum | cut -c1-20)"
-        echo "key=clarifydoc-cli-${RUNNER_OS}-${key}" >> "$GITHUB_OUTPUT"
-    - id: cli-cache
+        version="$(node -p "require(process.env.GITHUB_ACTION_PATH + '/package.json').version")"
+        if npm view "clarifydoc@${version}" version >/dev/null 2>&1; then
+          echo "source=npm" >> "$GITHUB_OUTPUT"
+          echo "key=clarifydoc-cli-npm-${version}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "path=${RUNNER_TEMP}/clarifydoc-cli/node_modules/clarifydoc/dist/cli.js" >> "$GITHUB_OUTPUT"
+        else
+          key="$(cd "$GITHUB_ACTION_PATH" && { cat package.json package-lock.json; find src scripts -type f | LC_ALL=C sort | xargs cat; } | sha256sum | cut -c1-20)"
+          echo "source=checkout" >> "$GITHUB_OUTPUT"
+          echo "key=clarifydoc-cli-${RUNNER_OS}-${key}" >> "$GITHUB_OUTPUT"
+          echo "path=${GITHUB_ACTION_PATH}/dist/cli.js" >> "$GITHUB_OUTPUT"
+        fi
+    - if: steps.cli.outputs.source == 'npm'
+      shell: bash
+      env:
+        VERSION: ${{ steps.cli.outputs.version }}
+      run: npm install --prefix "$RUNNER_TEMP/clarifydoc-cli" --no-audit --no-fund --no-save "clarifydoc@${VERSION}"
+    - if: steps.cli.outputs.source == 'checkout'
+      id: cli-cache
       uses: actions/cache@v4
       with:
         path: |
           ${{ github.action_path }}/node_modules
           ${{ github.action_path }}/dist
         key: ${{ steps.cli.outputs.key }}
-    - if: steps.cli-cache.outputs.cache-hit != 'true'
+    - if: steps.cli.outputs.source == 'checkout' && steps.cli-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
@@ -93,7 +110,7 @@ runs:
     - id: run
       shell: bash
       env:
-        CD_CLI: ${{ github.action_path }}/dist/cli.js
+        CD_CLI: ${{ steps.cli.outputs.path }}
         CD_OUT: ${{ runner.temp }}/clarifydoc
         CD_PATH: ${{ inputs.path }}
         CD_BASE_SHA: ${{ steps.base.outputs.sha }}

@@ -28,6 +28,5 @@ npm-debug.log*
 # Coverage
 coverage/
 
-# npm package staging (scripts/pack-standalone.mjs) and its tarballs
-.pack/
+# npm tarballs
 clarifydoc-*.tgz

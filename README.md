@@ -158,7 +158,7 @@ No install or clone is needed at all:
 
 ```bash
 npx clarifydoc analyze ./my-app --html   # always the latest published version
-npx clarifydoc@0.12.0 analyze ./my-app   # pin a version (recommended in CI)
+npx clarifydoc@0.12.1 analyze ./my-app   # pin a version (recommended in CI)
 npx --yes clarifydoc report ./.clarifydoc/my-app   # --yes skips the install prompt in CI
 ```
 
@@ -297,7 +297,8 @@ jobs:
 The base commit is analyzed once and cached by its SHA. The head starts from that analysis, so only the
 changed files reparse. One pull-request comment carries the result and is edited on every push. The SARIF
 goes to code scanning, and the job summary repeats the comment. Inputs: `path`, `fail-on`, `fail-on-api`,
-`base`, `comment`, `sarif`, `args` (further `analyze` options), `token`.
+`base`, `comment`, `sarif`, `args` (further `analyze` options), `token`. The action installs the CLI of its own
+version from npm; a ref ahead of the last release builds it from the action's checkout instead.
 
 **GitLab CI**
 
@@ -308,14 +309,19 @@ variables:
   CLARIFYDOC_FAIL_ON: "contract,route-miss"
 ```
 
-Findings land in the merge request's Code Quality widget and test report. With `CLARIFYDOC_GITLAB_TOKEN`
+The job installs the CLI from npm — `CLARIFYDOC_VERSION` (default `latest`) pins it. Findings land in the merge
+request's Code Quality widget and test report. With `CLARIFYDOC_GITLAB_TOKEN`
 set, a note on the merge request carries the same comment.
 
 **Anywhere else**
 
-`ci/run.sh` is what both run. Give it `CD_CLI` (the built `dist/cli.js` — from npm,
-`npm install -g clarifydoc@0.12.0` and `CD_CLI="$(npm root -g)/clarifydoc/dist/cli.js"`), `CD_OUT` and
-`CD_BASE_SHA`, and it does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
+`ci/run.sh` is what both run, and the npm package carries it. Give it `CD_CLI` (the CLI's `dist/cli.js`),
+`CD_OUT` and `CD_BASE_SHA`, and it does the same in any CI with git and Node 24. It exits 2 when a gate tripped.
+
+```bash
+npm install -g clarifydoc@0.12.1
+CD_CLI="$(npm root -g)/clarifydoc/dist/cli.js" CD_OUT=.clarifydoc CD_BASE_SHA="$BASE" bash "$(npm root -g)/clarifydoc/ci/run.sh"
+```
 
 ## Supported languages
 
@@ -422,7 +428,7 @@ Or, in a config file (Claude Code, Cursor, Windsurf, …):
 ```
 
 Without a global install, the same entry runs it through npx: `"command": "npx", "args": ["-y", "clarifydoc", "mcp"]`
-(`clarifydoc@0.12.0` to pin the version). The first start downloads the package, about 9 MB.
+(`clarifydoc@0.12.1` to pin the version). The first start downloads the package, about 9 MB.
 
 With no path, the server serves the project containing the client's working directory — walking up to the nearest
 `.git` or manifest, so it maps the whole project even when launched in a subdirectory — and reads

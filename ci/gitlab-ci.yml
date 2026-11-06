@@ -11,7 +11,7 @@
 # set, a note on the merge request carries the API surface diff and the new
 # findings, edited in place on every pipeline.
 variables:
-  CLARIFYDOC_REF: main            # the clarifydoc/cli ref to build
+  CLARIFYDOC_VERSION: latest      # the clarifydoc npm version, e.g. "0.12.1" to pin it
   CLARIFYDOC_PATH: "."            # project to analyze, relative to the repository root
   CLARIFYDOC_FAIL_ON: ""          # e.g. "contract,route-miss" or "error"
   CLARIFYDOC_FAIL_ON_API: ""      # breaking | risky
@@ -26,27 +26,29 @@ clarifydoc:
   variables:
     GIT_DEPTH: "0"
   cache:
-    - key: clarifydoc-cli-$CLARIFYDOC_REF
-      paths: [.clarifydoc-cli/]
     - key: clarifydoc-base-$CI_MERGE_REQUEST_DIFF_BASE_SHA
       paths: [.clarifydoc/base/]
   script:
+    # From npm: every grammar included, nothing to compile, no install script run.
+    - npm install --prefix .clarifydoc-cli --no-audit --no-fund --no-save "clarifydoc@$CLARIFYDOC_VERSION"
+    - CD_HOME="$PWD/.clarifydoc-cli/node_modules/clarifydoc"
     - |
-      if [ ! -f .clarifydoc-cli/dist/cli.js ]; then
-        rm -rf .clarifydoc-cli
-        git clone --depth 1 --branch "$CLARIFYDOC_REF" https://github.com/clarifydoc/cli.git .clarifydoc-cli
-        (cd .clarifydoc-cli && npm ci --no-audit --no-fund && npm run build)
-        # Pascal and Kotlin grammars need Docker to build; without them those files are read by the regex tier.
+      # 0.12.0 was published without these scripts (pin 0.12.1 or later to skip this): take them from the repository.
+      if [ ! -f "$CD_HOME/ci/run.sh" ]; then
+        mkdir -p "$CD_HOME/ci"
+        for f in run.sh comment.mjs gitlab-note.mjs; do
+          curl -fsSL "https://raw.githubusercontent.com/clarifydoc/cli/main/ci/$f" -o "$CD_HOME/ci/$f"
+        done
       fi
     - |
       set +e
-      CD_CLI="$PWD/.clarifydoc-cli/dist/cli.js" CD_OUT="$PWD/.clarifydoc" CD_PATH="$CLARIFYDOC_PATH" \
+      CD_CLI="$CD_HOME/dist/cli.js" CD_OUT="$PWD/.clarifydoc" CD_PATH="$CLARIFYDOC_PATH" \
         CD_BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" CD_FAIL_ON="$CLARIFYDOC_FAIL_ON" \
         CD_FAIL_ON_API="$CLARIFYDOC_FAIL_ON_API" CD_ARGS="$CLARIFYDOC_ARGS" \
-        bash .clarifydoc-cli/ci/run.sh
+        bash "$CD_HOME/ci/run.sh"
       code=$?
       set -e
-      [ -f .clarifydoc/comment.md ] && node .clarifydoc-cli/ci/gitlab-note.mjs .clarifydoc/comment.md
+      [ -f .clarifydoc/comment.md ] && node "$CD_HOME/ci/gitlab-note.mjs" .clarifydoc/comment.md
       exit $code
   artifacts:
     when: always

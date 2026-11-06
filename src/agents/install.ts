@@ -26,15 +26,21 @@ export interface Launcher {
   script?: string;
 }
 
-/** How this CLI is started: the global/npx binary when it runs as one, else node + this script. */
-export function selfCommand(argv?: string): Launcher {
+/**
+ * How this CLI is started: the global binary when it runs as one, npx when npx ran it, else node + this script.
+ * npx runs it from a cache that does not last and puts no `clarifydoc` on the PATH, so an entry written from
+ * there starts it through npx again (on Windows through `cmd /c`, since an app spawns `npx.cmd` without a shell).
+ */
+export function selfCommand(argv?: string, platform: NodeJS.Platform = process.platform): Launcher {
   const argv1 = argv ?? process.argv[1] ?? "";
   const script = resolve(argv1);
+  if (/[\\/]_npx[\\/]/.test(script)) {
+    return platform === "win32" ? { command: "cmd", args: ["/c", "npx", "-y", "clarifydoc"] } : { command: "npx", args: ["-y", "clarifydoc"] };
+  }
   if (/[\\/]node_modules[\\/]|[\\/]bin[\\/]clarifydoc(?:\.cmd)?$/.test(script) || /(^|[\\/])clarifydoc(?:\.cmd)?$/.test(argv1)) {
-    // npx runs it from a cache that does not last: only an installed binary is worth pinning.
     let real: string | undefined;
     try {
-      real = /[\\/]_npx[\\/]/.test(script) ? undefined : realpathSync(script);
+      real = realpathSync(script);
     } catch {
       real = undefined;
     }

@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, st
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { editedFile, fileStem, framed, normalizeHookInput, runHook, searchTerm } from "./hooks.js";
-import { CLIENTS, applyPlans, explorerTools, mcpSnippet, pinnedLauncher, planClaudeHooks, planCodexHooks, planCopilotHooks, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, userServerKey } from "./install.js";
+import { CLIENTS, applyPlans, explorerTools, mcpSnippet, pinnedLauncher, planClaudeHooks, planCodexHooks, planCopilotHooks, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand, userServerKey } from "./install.js";
 import { parseJsonc } from "./jsonc.js";
 import { buildMcpServer } from "../mcp/server.js";
 
@@ -289,6 +289,18 @@ describe("install plans", () => {
     // A project file is shared: the bare command.
     expect(JSON.parse(mcpSnippet("claude-code", "/repo", installed).snippet).mcpServers.clarifydoc).toEqual({ command: "clarifydoc", args: ["mcp"] });
     expect(JSON.parse(mcpSnippet("copilot", "/repo", installed).snippet).mcpServers.clarifydoc).toEqual({ type: "local", command: process.execPath, args: ["/opt/garage/cli.js", "mcp", "/repo"], tools: ["*"] });
+  });
+
+  it("starts an npx-run CLI through npx again, since npx leaves no clarifydoc on the PATH", () => {
+    const cached = "/home/coach/.npm/_npx/3fa2c1/node_modules/.bin/clarifydoc";
+    expect(selfCommand(cached, "linux")).toEqual({ command: "npx", args: ["-y", "clarifydoc"] });
+    expect(selfCommand("C:\\Users\\coach\\AppData\\Local\\npm-cache\\_npx\\3fa2c1\\node_modules\\clarifydoc\\dist\\cli.js", "win32")).toEqual({ command: "cmd", args: ["/c", "npx", "-y", "clarifydoc"] });
+    const npx = selfCommand(cached, "linux");
+    expect(JSON.parse(mcpSnippet("claude-code", "/repo", npx).snippet).mcpServers.clarifydoc).toEqual({ command: "npx", args: ["-y", "clarifydoc", "mcp"] });
+    // Nothing to pin: a user-level file names the project and keeps npx.
+    expect(JSON.parse(mcpSnippet("claude-desktop", "/repo", npx).snippet).mcpServers.clarifydoc).toEqual({ command: "npx", args: ["-y", "clarifydoc", "mcp", "/repo"] });
+    // A global install is still the bare command.
+    expect(selfCommand("/usr/local/bin/clarifydoc", "linux").command).toBe("clarifydoc");
   });
 
   it("turns each MCP workflow prompt into a skill", () => {
