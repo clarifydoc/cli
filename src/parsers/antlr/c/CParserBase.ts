@@ -84,7 +84,7 @@ export abstract class CParserBase extends Parser {
     const next = this.lt(k + 1);
     const follows = next.type === CLexer.Identifier || next.type === CLexer.CallingConvention || next.type === CLexer.Star || next.type === CLexer.RightParen
       || next.type === CLexer.Comma || next.type === CLexer.LeftBracket || SPECIFIER_KEYWORDS.has(next.type)
-      || (next.type === CLexer.LeftParen && (this.lt(k + 2).type === CLexer.Star || this.lt(k + 2).type === CLexer.Caret));
+      || (next.type === CLexer.LeftParen && (this.lt(k + 2).type === CLexer.Star || this.lt(k + 2).type === CLexer.Caret || this.lt(k + 2).type === CLexer.CallingConvention));
     if (!follows) return false;
     const prev = this.lt(k === 1 ? -1 : k - 1);
     // After a type, or a struct body's `}` (`typedef struct x { … } Club, *ClubPtr;`), a name before `,` `;` `=` is declared.
@@ -97,7 +97,7 @@ export abstract class CParserBase extends Parser {
   private macroAttributeAt(k: number): boolean {
     if (!this.macroName(this.lt(k))) return false;
     const next = this.afterClosing(this.lt(k + 1));
-    return !!next && (SPECIFIER_KEYWORDS.has(next.type) || next.type === CLexer.Identifier || next.type === CLexer.Star);
+    return !!next && (SPECIFIER_KEYWORDS.has(next.type) || next.type === CLexer.Identifier || next.type === CLexer.CallingConvention || next.type === CLexer.Star);
   }
 
   /** Declaration specifiers start at `k`. */
