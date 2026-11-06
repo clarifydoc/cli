@@ -8,7 +8,7 @@
  */
 import { Parser, Token, type CommonTokenStream, type TokenStream } from "antlr4ng";
 import { CLexer } from "./CLexer.js";
-import { QUALIFIER_KEYWORDS, SPECIFIER_KEYWORDS, STATEMENT_KEYWORDS, STATIC_ASSERT, TYPE_KEYWORDS } from "./CKeywords.js";
+import { QUALIFIER_KEYWORDS, SPECIFIER_KEYWORDS, STATEMENT_KEYWORDS, STATIC_ASSERT, TAG_KEYWORDS, TYPE_KEYWORDS } from "./CKeywords.js";
 import { readTypes, type CTokenFacts } from "./CTypes.js";
 
 /** What may follow a declarator's name: an identifier here is the name, not a type. */
@@ -199,6 +199,11 @@ export abstract class CParserBase extends Parser {
       after = this.afterClosing(open);
     }
     if (!after) return true;
+    // `seq_define(item, data)⏎struct item_s { … };`: a tag with a body is a definition, not a K&R parameter.
+    if (TAG_KEYWORDS.has(after.type)) {
+      const tag = this.following(after);
+      if (tag?.type === CLexer.LeftBrace || (tag?.type === CLexer.Identifier && this.following(tag)?.type === CLexer.LeftBrace)) return true;
+    }
     return (SPECIFIER_KEYWORDS.has(after.type) || this.known(after)) && this.declarationFollows(after);
   }
 
@@ -261,7 +266,9 @@ export abstract class CParserBase extends Parser {
     const after = this.macroCall();
     if (!after) return false;
     // `TYPE_MAP(XX)` before `default:` or `}`, another macro: no `;` follows it.
-    if (this.macroName(this.lt(1)) && (after.type === CLexer.RightBrace || after.type === CLexer.Case || after.type === CLexer.Default || (this.macroName(after) && this.following(after)?.type === CLexer.LeftParen))) return true;
+    // A call is never followed by `}`, `case` or `default` in C, so a name of any case with arguments is a macro there.
+    if (after.type === CLexer.RightBrace || after.type === CLexer.Case || after.type === CLexer.Default) return true;
+    if (this.macroName(this.lt(1)) && this.macroName(after) && this.following(after)?.type === CLexer.LeftParen) return true;
     return holds && after.type === CLexer.Semi;
   }
   /** A statement macro: `name(…)` followed by a statement's start rather than `;` or an operator. */

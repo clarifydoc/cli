@@ -466,10 +466,7 @@ functionSpecifier
     | '_Noreturn'
     | '__stdcall'
     | gnuAttribute
-    | '__declspec' '(' (Identifier
-		| Restrict // CLANG
-		| 'deprecated' '(' StringLiteral? ')'
-		) ')'
+    | '__declspec' '(' gnuAttributeList ')' // [ClarifyDoc] `align(8)`, `deprecated("x")`, `dllexport`
     ;
 
 // ISO C: alignment-specifier (6.7.6)
@@ -510,7 +507,7 @@ directDeclarator
 
 // ISO C: pointer (6.7.7.1)
 pointer
-    : (('*' | '^') (typeQualifierList | callingConvention)?)+ // ^ - Blocks language extension; [ClarifyDoc] calling convention
+    : (callingConvention? ('*' | '^') (typeQualifierList | callingConvention)?)+ // ^ - Blocks language extension; [ClarifyDoc] calling convention, either side: `FAR *LPFOO`
     ;
 
 // ISO C: type-qualifier-list (6.7.7.1)
@@ -690,8 +687,8 @@ sehStatement
 labeledStatement
     : Identifier ':' statement?
     | Label Identifier ';'
-    | 'case' constantExpression ':' statement
-    | 'default' ':' statement
+    | 'case' constantExpression ':' statement? // [ClarifyDoc] C23: a label may end a block
+    | 'default' ':' statement?
     ;
 
 // ISO C: compound-statement (6.8.3)

@@ -152,9 +152,7 @@ Default
     : 'default'
     ;
 
-Deprecated
-    : 'deprecated' // CLANG
-    ;
+// [ClarifyDoc] `deprecated` is no keyword (clang's attribute name): `int deprecated = 0;` declares a variable.
 
 Do
     : 'do'

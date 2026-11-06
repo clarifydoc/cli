@@ -63,3 +63,10 @@ export const TYPEDEF = typesOf(["typedef"]);
 
 /** `_Static_assert` / `static_assert`. */
 export const STATIC_ASSERT = typesOf(["_Static_assert", "static_assert"]);
+
+/** Keywords whose `(…)` heads a block (`if (x) {`), and the ones a block follows directly (`else {`, `do {`). */
+export const BLOCK_HEAD_KEYWORDS = typesOf(["if", "for", "while", "switch"]);
+export const BLOCK_KEYWORDS = typesOf(["else", "do"]);
+
+/** MSVC calling conventions, which stand between a return type and a function's name. */
+export const CALLING_KEYWORDS = typesOf(["__cdecl", "__stdcall", "__fastcall", "__clrcall", "__thiscall", "__vectorcall"]);
