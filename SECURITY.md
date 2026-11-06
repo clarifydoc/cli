@@ -31,7 +31,8 @@ next to them. Network access happens only in these cases:
 
 | When | What is contacted | What is sent |
 |---|---|---|
-| Docker is available and LSP enhancement is on (the default; `--no-lsp` turns it off) | Docker registries and the language servers' package registries, the first time each language-server image is built | Nothing from your code — only the image build's own downloads. The language servers then run locally, in containers, on your files |
-| `--osv` | `api.osv.dev` | The names and versions of the packages your manifests declare |
+| Docker is available and LSP enhancement is on (the default for `analyze`; `--no-lsp` turns it off; `mcp` only with `--lsp`) | Docker registries and the language servers' package registries, the first time each language-server image is built | Nothing from your code — only the image build's own downloads |
+| The same, while the language servers run | The package feeds your project uses | The containers run with network access, and a language server may resolve your project's dependencies: the C#/VB image runs `dotnet restore`, which asks NuGet (or the feeds in your `nuget.config`) for your package ids and versions. Source files are not sent |
+| `--osv` | `api.osv.dev` | The name, ecosystem and version of each third-party package pinned to an exact version. Your own workspace packages are skipped; private package names are sent |
 
 There is no telemetry. `report.html` is a single self-contained file that makes no network requests.
