@@ -36,7 +36,7 @@ import {
   separateSingletonMethods,
   typeBareConstructions,
 } from "./di.js";
-import { addAnonymousClassCalls } from "./anonymous-classes.js";
+import { addAnonymousClassCalls, declaredByLets, type Anonymous } from "./anonymous-classes.js";
 import { blockParamsOf } from "./block-params.js";
 import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
@@ -424,11 +424,13 @@ function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associa
   for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
   if (heads.size === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
-  const re = new RegExp(`(?<![\\w.@$:])(${[...heads].join("|")})((?:\\.[a-z_]\\w*[?!]?){2,4})(?![\\w?!]|\\s*=[^=~>])`, "g");
+  // A step may carry arguments (`players.find_by(id: 1).injure!`): they are dropped from the name, as the steps' types
+  // do not depend on them. One level of nested parentheses is read.
+  const re = new RegExp(`(?<![\\w.@$:])(${[...heads].join("|")})((?:\\.[a-z_]\\w*[?!]?(?:\\((?:[^()]|\\([^()]*\\))*\\))?){2,4})(?![\\w?!]|\\s*=[^=~>])`, "g");
   for (const [i, text] of bodyLines(lines, fn)) {
     const code = text.replace(/\s#.*$/, "");
     for (const m of code.matchAll(re)) {
-      const name = `${m[1]}${m[2]}`;
+      const name = `${m[1]}${m[2]!.replace(/\((?:[^()]|\([^()]*\))*\)/g, "")}`;
       if (have.has(`${name}@${i + 1}`)) continue;
       have.add(`${name}@${i + 1}`);
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
@@ -451,8 +453,37 @@ function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associa
  * spec group's examples, or a `def` written inside a block, are functions of their own — with
  * `described_class` spelled as the constant the block types it as.
  */
+/** The innermost function holding a 1-based line. */
+function holderOf(fns: readonly FunctionInfo[], line: number): FunctionInfo | undefined {
+  return fns.filter((h) => h.line <= line && line <= h.endLine).sort((a, b) => a.endLine - a.line - (b.endLine - b.line))[0];
+}
+
+/** The anonymous classes the `let`s of the groups around `fn` build, innermost group last (so it wins). */
+function letClassesAround(code: readonly string[], fns: readonly FunctionInfo[], fn: FunctionInfo): Map<string, Anonymous> {
+  const out = new Map<string, Anonymous>();
+  const around = fns
+    .filter((o) => o !== fn && o.line <= fn.line && o.endLine >= fn.endLine && (o.line < fn.line || o.endLine > fn.endLine))
+    .sort((a, b) => b.endLine - b.line - (a.endLine - a.line));
+  for (const o of around) {
+    // A name `let` twice in one group is not one class: neither reading is kept.
+    const mine = declaredByLets(code, o.line - 1, o.endLine);
+    for (const found of mine) {
+      const name = found.name;
+      if (mine.some((x) => x !== found && x.name === name && holderOf(fns, x.line) === holderOf(fns, found.line))) { out.delete(name); continue; }
+      // A `let` written in a nested group belongs to that group: the innermost function holding it must be one around `fn`.
+      const holder = holderOf(fns, found.line);
+      if (holder === o || (holder && around.includes(holder))) out.set(name, found);
+    }
+  }
+  return out;
+}
+
 function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly FunctionInfo[]): void {
-  const typed = fns.filter((fn) => fn.localTypes?.length || lines.slice(fn.line - 1, fn.endLine).some((l) => l.includes(".perform_") || l.includes(".deliver_") || l.includes("Class.new(")));
+  const hasLetClass = lines.some((l) => l.includes("Class.new(")) && lines.some((l) => /^\s*let!?\s*\(/.test(l));
+  const code0 = hasLetClass ? rubyCodeLinesOf(lines) : [];
+  const inheritedOf = new Map<FunctionInfo, Map<string, Anonymous>>();
+  if (hasLetClass) for (const fn of fns) { const got = letClassesAround(code0, fns, fn); if (got.size) inheritedOf.set(fn, got); }
+  const typed = fns.filter((fn) => inheritedOf.has(fn) || fn.localTypes?.length || lines.slice(fn.line - 1, fn.endLine).some((l) => l.includes(".perform_") || l.includes(".deliver_") || l.includes("Class.new(")));
   if (typed.length === 0) return;
   const code = rubyCodeLinesOf(lines);
   // One scratch view per source, filled over a function's span and cleared after it.
@@ -469,7 +500,7 @@ function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly Func
       if (inner === fn || inner.line <= fn.line || inner.endLine > fn.endLine) continue;
       for (let i = inner.line - 1; i < Math.min(inner.endLine, to); i++) ownCode[i] = ownRaw[i] = "";
     }
-    addAnonymousClassCalls(ownCode, fn, code);
+    addAnonymousClassCalls(ownCode, fn, code, inheritedOf.get(fn));
     addTypedLocalCalls(ownCode, fn);
     addJobDispatchCalls(ownRaw, fn);
     for (let i = from; i < to; i++) ownCode[i] = ownRaw[i] = "";
@@ -1042,6 +1073,13 @@ export const rubySpec: RegexLangSpec = {
       },
     },
     { pattern: /^\s*module\s+(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
+    {
+      // `Striker = Class.new(Base) do … end` — an anonymous class a constant names: a class of that name
+      // extending `Base`, whose block's `def`s are its methods. Only the `do` form (its `end` closes the class);
+      // a brace block or a class nobody names is no class here.
+      pattern: /^\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)\s*=\s*Class\.new\(\s*(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\s*\)\s*do\b/,
+      getExtends: (line) => /Class\.new\(\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/.exec(line)?.[1] ?? null,
+    },
   ],
 
   /**

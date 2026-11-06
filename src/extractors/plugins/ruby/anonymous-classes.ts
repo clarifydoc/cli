@@ -11,25 +11,56 @@ const CONST = String.raw`[A-Z]\w*(?:::[A-Z]\w*)*`;
 const DECLARES = new RegExp(String.raw`^\s*([a-z_]\w*)\s*=\s*Class\.new\(\s*(?:::)?(${CONST})\s*\)\s*(\{|\bdo\b)?`);
 const ARGS = String.raw`(?:\((?:[^()]|\([^()]*\))*\))?`;
 
-interface Anonymous { base: string; overrides: Set<string> }
+const LET_CLASS = /^\s*let!?\s*\(\s*:([a-z_]\w*)\s*\)\s*(?:(do)\s*$|\{(.*))/;
+const LET_BUILD = new RegExp(String.raw`^\s*(?:\{\s*)?Class\.new\(\s*(?:::)?(${CONST})\s*\)\s*(\{|\bdo\b)?`);
+
+export interface Anonymous { base: string; overrides: Set<string> }
 
 /** The anonymous classes `lines` (the function's own code, one entry per line from `from`) declare, with the methods each one's block defines. */
+function overridesOf(whole: readonly string[], i: number, indent: number): Set<string> {
+  const overrides = new Set<string>();
+  for (let j = i + 1; j < whole.length; j++) {
+    const text = whole[j] ?? "";
+    if (text.trim() && /^\s*/.exec(text)![0].length <= indent) break;
+    const def = /^\s*def\s+(?:self\.)?([a-z_]\w*[?!=]?)/.exec(text);
+    if (def) overrides.add(def[1]!);
+  }
+  return overrides;
+}
+
+/**
+ * The anonymous classes the `let`s of one RSpec group build — `let(:klass) { Class.new(Club) }`, or `do` with
+ * the construction as its first statement — which the group's examples use as `klass.new.close`. Read over
+ * lines `from..to` (0-based, inclusive of `from`, exclusive of `to`); the caller keeps each let with the group that holds it.
+ */
+export function declaredByLets(lines: readonly string[], from: number, to: number): Array<Anonymous & { name: string; line: number }> {
+  const out: Array<Anonymous & { name: string; line: number }> = [];
+  for (let i = from; i < to; i++) {
+    const m = LET_CLASS.exec(lines[i] ?? "");
+    if (!m) continue;
+    let rest = m[3] ?? "";
+    let at = i;
+    if (m[2]) {
+      at = i + 1;
+      while (at < to && !(lines[at] ?? "").trim()) at++;
+      rest = lines[at] ?? "";
+    }
+    const c = LET_BUILD.exec(rest);
+    if (!c) continue;
+    const indent = /^\s*/.exec(lines[at]!)![0].length;
+    const overrides = c[2] ? overridesOf(lines, at, indent) : new Set<string>();
+    out.push({ name: m[1]!, base: c[1]!, overrides, line: i + 1 });
+  }
+  return out;
+}
+
 function declared(lines: readonly string[], whole: readonly string[], from: number, to: number): Map<string, Anonymous> {
   const out = new Map<string, Anonymous>();
   for (let i = from; i < to; i++) {
     const m = DECLARES.exec(lines[i] ?? "");
     if (!m) continue;
-    const overrides = new Set<string>();
-    if (m[3]) {
-      // The block runs to the first later line indented no deeper than the declaration's (its `end`/`}`).
-      const indent = /^\s*/.exec(lines[i]!)![0].length;
-      for (let j = i + 1; j < whole.length; j++) {
-        const text = whole[j] ?? "";
-        if (text.trim() && /^\s*/.exec(text)![0].length <= indent) break;
-        const def = /^\s*def\s+(?:self\.)?([a-z_]\w*[?!=]?)/.exec(text);
-        if (def) overrides.add(def[1]!);
-      }
-    }
+    // The block runs to the first later line indented no deeper than the declaration's (its `end`/`}`).
+    const overrides = m[3] ? overridesOf(whole, i, /^\s*/.exec(lines[i]!)![0].length) : new Set<string>();
     // A name rebound to anything else is not one anonymous class: neither reading is kept.
     if (out.has(m[1]!)) out.delete(m[1]!);
     else out.set(m[1]!, { base: m[2]!, overrides });
@@ -38,11 +69,13 @@ function declared(lines: readonly string[], whole: readonly string[], from: numb
 }
 
 /** Calls on instances (`whole`: the file's code, where a block's own `def`s are still written)  of an anonymous subclass, and the locals holding one, onto `fn`. */
-export function addAnonymousClassCalls(lines: readonly string[], fn: FunctionInfo, whole: readonly string[] = lines): void {
+export function addAnonymousClassCalls(lines: readonly string[], fn: FunctionInfo, whole: readonly string[] = lines, inherited?: ReadonlyMap<string, Anonymous>): void {
   const from = fn.line - 1;
   const to = Math.min(fn.endLine, lines.length);
-  if (!lines.slice(from, to).some((l) => l.includes("Class.new("))) return;
+  if (!inherited?.size && !lines.slice(from, to).some((l) => l.includes("Class.new("))) return;
   const classes = declared(lines, whole, from, to);
+  // A group's `let` classes, unless the example rebinds the name.
+  for (const [name, anon] of inherited ?? []) if (!classes.has(name) && !fn.localTypes?.some((l) => l.name === name)) classes.set(name, anon);
   if (classes.size === 0) return;
   const names = [...classes.keys()].join("|");
   const direct = new RegExp(String.raw`(?<![\w.@$:])(${names})\.new\b${ARGS}\.([a-z_]\w*[?!]?)(?![\w?!])`, "g");
