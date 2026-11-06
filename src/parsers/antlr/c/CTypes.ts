@@ -101,6 +101,8 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
     if (prev === CLexer.Dot || prev === CLexer.Arrow) continue;
     // A specifier macro: `leagueAtomic int n;`, `TARGET_POPCNT static int f(`.
     if (boundary(i) && BEFORE_MACRO_KEYWORDS.has(type(i + 1))) types.add(name);
+    // `static UINT __stdcall start(`: a name before a calling-convention keyword is the return type.
+    if ((boundary(i) || BEFORE_MACRO_KEYWORDS.has(prev)) && CALLING_KEYWORDS.has(type(i + 1)) && isId(i + 2)) types.add(name);
     // `ILEpointer __attribute__((aligned(16))) slot;`: a name before an attribute and a declared name is the type.
     if (boundary(i) && type(i + 1) === CLexer.Attribute && type(i + 2) === CLexer.LeftParen) {
       let j = i + 2;
@@ -129,11 +131,13 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
       if (declared > i && (AFTER_NAME.has(after) || CALLING_KEYWORDS.has(after) || (after === CLexer.LeftParen && (boundary(i) || afterType || inRun)) || after === CLexer.Star)) types.add(name);
     }
     // `HRESULT (WINAPI *pfn)(…);`: a name before a function pointer's declarator is its return type.
-    if (boundary(i) && type(i + 1) === CLexer.LeftParen && isId(i + 2) && type(i + 3) === CLexer.Star && isId(i + 4) && type(i + 5) === CLexer.RightParen && type(i + 6) === CLexer.LeftParen) {
+    let qualified = i + 3;
+    while (QUALIFIER_KEYWORDS.has(type(qualified + 1))) qualified++;
+    if (boundary(i) && type(i + 1) === CLexer.LeftParen && isId(i + 2) && type(i + 3) === CLexer.Star && isId(qualified + 1) && type(qualified + 2) === CLexer.RightParen && type(qualified + 3) === CLexer.LeftParen) {
       types.add(name);
       // Its parameters are bare type names: `(HANDLE, PWSTR*)`.
-      let from = i + 7;
-      for (let j = i + 7; j < tokens.length && type(j) !== CLexer.RightParen; j++) {
+      let from = qualified + 4;
+      for (let j = qualified + 4; j < tokens.length && type(j) !== CLexer.RightParen; j++) {
         if (type(j) !== CLexer.Comma) continue;
         if (isId(from) && (j === from + 1 || type(from + 1) === CLexer.Star)) types.add(names[from]!);
         from = j + 1;
@@ -315,6 +319,12 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
   };
   /** The token at `i` is the first inside a struct, union or enum body: `enum tag {`. */
   const startsTagBody = (i: number) => typeOf(i - 1) === CLexer.LeftBrace && (TAG_KEYWORDS.has(typeOf(i - 2)) || (isName(i - 2) && TAG_KEYWORDS.has(typeOf(i - 3))));
+  /** Qualifiers between a `*` and the name it points to (`*const fn`), counted from `i`. */
+  const qualifiersAfter = (i: number) => {
+    let n = 0;
+    while (QUALIFIER_KEYWORDS.has(typeOf(i + n))) n++;
+    return n;
+  };
   const caps = (i: number) => isName(i) && isMacro(names[i]!) && !types.has(names[i]!);
   /** The `}` at `i` ends a struct, union or enum body: `} name(…) {` then defines a function returning it. */
   const closesTag = (i: number) => {
@@ -390,7 +400,7 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     // `size_t token_pos SILENCE_INIT(0)`: a lowercase name before an all-caps one is the declared name, the other a macro.
     else if (!types.has(names[i]!) && declaratorNext && isName(i - 1) && types.has(names[i - 1]!) && !(isMacro(names[i + 1]!) && !isMacro(names[i]!))) retype[k] = CLexer.CallingConvention;
     // `int (WINAPI *fn)(…)`: after a return type, whatever the first pass took the name for.
-    else if ((!types.has(names[i]!) || isName(i - 2) || BEFORE_MACRO_KEYWORDS.has(typeOf(i - 2)) || typeOf(i - 2) === CLexer.Star) && prev === CLexer.LeftParen && (next === CLexer.Star || next === CLexer.Caret) && isName(i + 2) && typeOf(i + 3) === CLexer.RightParen) {
+    else if ((!types.has(names[i]!) || isName(i - 2) || BEFORE_MACRO_KEYWORDS.has(typeOf(i - 2)) || typeOf(i - 2) === CLexer.Star) && prev === CLexer.LeftParen && (next === CLexer.Star || next === CLexer.Caret) && isName(i + 2 + qualifiersAfter(i + 2)) && typeOf(i + 3 + qualifiersAfter(i + 2)) === CLexer.RightParen) {
       const open = tokens[i - 1]!.tokenIndex;
       const after = close[open]! >= 0 ? position.get(close[open]!)! + 1 : -1;
       if (typeOf(after) === CLexer.LeftParen) retype[k] = CLexer.CallingConvention;
