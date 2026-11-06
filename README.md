@@ -132,6 +132,12 @@ Every analyzed file is tracked in `manifest.json` by **SHA-256 of its contents**
 ## Install
 
 ```bash
+npm install -g clarifydoc   # or run it without installing: npx clarifydoc analyze ./my-app --html
+```
+
+From a checkout:
+
+```bash
 npm install
 npm run setup
 npm run build
@@ -147,15 +153,15 @@ packages' native `node-gyp` builds are never loaded by the WASM parser.
 
 ### Run with npx
 
-Once the package is published to npm, no install or clone is needed at all:
+No install or clone is needed at all:
 
 ```bash
 npx clarifydoc analyze ./my-app --html   # always the latest published version
-npx clarifydoc@0.7.0 analyze ./my-app    # pin a version (recommended in CI)
+npx clarifydoc@0.12.0 analyze ./my-app   # pin a version (recommended in CI)
 npx --yes clarifydoc report ./.clarifydoc/my-app   # --yes skips the install prompt in CI
 ```
 
-Until it is published (or when working against a local checkout), point npx at the clone instead — it resolves the package from the folder and runs the same bin:
+When working against a local checkout, point npx at the clone instead — it resolves the package from the folder and runs the same bin:
 
 ```bash
 # from inside the repo root
@@ -165,10 +171,11 @@ npx . analyze ./my-app --html
 npx /path/to/clarifydoc analyze ./my-app --html
 ```
 
-The published package bundles its dependencies — grammars as WASM only, with no install scripts — so
-installing it compiles nothing and needs no Docker. `npm run pack:standalone` builds that tarball from a
-checkout (after `setup` and `build`), and `npm run smoke:tarball -- <file.tgz>` installs it into an empty
-directory and checks that every grammar loads and the MCP server answers.
+The published package carries every grammar as WASM in `dist/grammars/` (copied there by the build) and depends
+only on four pure-JS packages — the grammar packages are devDependencies — so installing it runs no install
+script, compiles nothing and needs no Docker. `npm publish` lints, builds and refuses a package missing a grammar
+first (`prepublishOnly`; run `npm run setup` before it), and `npm run smoke:tarball -- <file.tgz>` installs a packed
+tarball into an empty directory and checks that every grammar loads and the MCP server answers.
 
 For a persistent `clarifydoc` command on your PATH during development, use a link instead of npx:
 
@@ -443,7 +450,14 @@ instead of interleaving with it.
 | `clarifydoc_explain` | One route, screen, function or file packed into a token budget: what it is (route handler, data access, …, from the facts), contract and callers, what it reaches, source, the routes sharing its tables, blast radius |
 | `clarifydoc_impact` | Impact of the current git diff: screens, routes, entities, tests to run; the changed functions and their callers, signature breaks, owners and reviewers, files usually changed with it; with `proposed` (a file's new content) the same for an edit not made yet |
 | `clarifydoc_control_flow` | One function's control flow as Mermaid, or the backward slice at a line: the statements that can affect the values used there |
-| `clarifydoc_analyze` | Re-run the analysis (incremental). The only tool that writes anything |
+| `clarifydoc_sequence` | What a route or function does, in order, as a Mermaid sequence diagram: calls, data access, HTTP hops to other tiers (`clarifydoc seq`) |
+| `clarifydoc_diff` | The API surface against a git ref (default `HEAD`): routes, parameters, request bodies, guards, versions, links and data reached, each breaking or risky (`clarifydoc diff --base`). Writes the ref's analysis under the analysis directory; refused with `--no-auto-analyze` |
+| `clarifydoc_export` | One whole-project document or diagram — ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, Mermaid, GraphML, Cypher, CSV (`clarifydoc export`); no `format` lists them |
+| `clarifydoc_facts` | The analysis's facts under stable IDs to cite in a document, or a check of the IDs a text cites (`clarifydoc facts`) |
+| `clarifydoc_analyze` | Re-run the analysis (incremental); `report=true` also writes `report.html`. With `clarifydoc_diff`, the only tool that writes anything |
+
+`clarifydoc_status lint=true` adds `clarifydoc lint`'s contradictions, and the resources `clarifydoc://analysis/schema`
+and `clarifydoc://project/detect` carry what `clarifydoc schema` and `clarifydoc detect --json` print.
 
 Flags: `--analysis-dir <dir>` to read an exact analysis directory, `--no-auto-analyze` to forbid re-analysis on
 request (the first analysis still runs), `--no-cold-start` to forbid even that, plus the `analyze` filters

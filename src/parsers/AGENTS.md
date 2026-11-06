@@ -10,6 +10,9 @@ Wraps `web-tree-sitter` WASM runtime. Key functions:
   (`meta.treeSitter`): Swift's manifest registers `tree-sitter-swift` while the language stays on the regex path
 
 Grammars are lazy-loaded from npm packages via `GRAMMAR_PACKAGES`. Parsers, languages, and compiled queries are all cached.
+A built package reads each grammar's wasm from `dist/grammars/` first: the build copies every variant a plugin
+manifest declares there (`scripts/copy-grammars.mjs`), so the grammar packages are devDependencies and installing
+`clarifydoc` compiles nothing. Running from `src/` (the tests) finds none there and reads node_modules.
 
 A grammar whose largest WebAssembly function body is over 150 KB (`BASELINE_ONLY_BODY_BYTES` — the lexer of Swift,
 Julia, Bash) is compiled to stay on V8's baseline tier (`compileBaselineOnly`): V8's optimizing compiler held 3.5 GB

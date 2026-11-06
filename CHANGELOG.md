@@ -3,7 +3,31 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
-## Unreleased
+## 0.12.0 — 2026-11-06
+
+First release on npm: `npm install -g clarifydoc`, or `npx clarifydoc`.
+
+### Added
+
+- **MCP tools for the CLI commands that print an answer:** `clarifydoc_sequence` (`seq` — what a route or function
+  does, in order, as a Mermaid sequence diagram), `clarifydoc_diff` (`diff --base` — the API surface against a git
+  ref, each change breaking or risky; the ref is analyzed once and kept under the analysis directory, and refused
+  under `--no-auto-analyze`), `clarifydoc_export` (`export` — one document or diagram; no `format` lists them) and
+  `clarifydoc_facts` (`facts` — facts under stable IDs, or a check of the IDs a text cites).
+- `clarifydoc_status lint=true` adds `clarifydoc lint`'s contradictions; `clarifydoc_analyze report=true` writes
+  `report.html`.
+- MCP resources `clarifydoc://analysis/schema` (`clarifydoc schema`) and `clarifydoc://project/detect`
+  (`clarifydoc detect --json`).
+
+### Changed
+
+- **The package carries its grammars.** Every tree-sitter grammar the analyzer loads ships as WASM in
+  `dist/grammars/`, and the grammar packages moved to devDependencies: installing `clarifydoc` pulls four pure-JS
+  packages, runs no install script and needs no git, compiler or Docker. The package holds `dist/` (without source
+  maps) and `docker/` only.
+- The MCP `tools/list` budget is 15,000 bytes (was 14,000) for the four tools above.
+
+## 0.11.0 — 2026-11-06
 
 ### Removed
 

@@ -27,5 +27,6 @@ export default defineConfig({
   // Mirror the committed standalone-viewer template into dist/ (same relative
   // subpath as in src/) so html-report.ts resolves it via import.meta.url in
   // both the source (vitest) and bundled layouts.
-  onSuccess: "node scripts/copy-viewer-asset.mjs",
+  // …and every grammar wasm into dist/grammars/, so the published package needs no grammar package.
+  onSuccess: "node scripts/copy-viewer-asset.mjs && node scripts/copy-grammars.mjs",
 });

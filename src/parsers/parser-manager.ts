@@ -7,6 +7,7 @@ import {
   type Node as TSNode,
 } from "web-tree-sitter";
 import { readFile } from "fs/promises";
+import { existsSync } from "fs";
 import v8 from "v8";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -105,12 +106,21 @@ function resolveGrammarKey(language: TreeSitterLanguage, filePath?: string): Gra
   return language;
 }
 
+/**
+ * The grammars the package carries: the build copies every variant's wasm to
+ * `dist/grammars/` (scripts/copy-grammars.mjs), so an installed package needs
+ * no grammar package. Running from src/ there is none and node_modules answers.
+ */
+const BUNDLED_GRAMMARS = new URL("./grammars/", import.meta.url);
+
 /** Find the grammar WASM file path */
 function getGrammarPath(key: GrammarKey): string {
   const variant = grammarVariants.get(key);
   if (!variant) {
     throw new Error(`No tree-sitter grammar registered for "${key}"`);
   }
+  const bundled = fileURLToPath(new URL(variant.wasm, BUNDLED_GRAMMARS));
+  if (existsSync(bundled)) return bundled;
   const pkgJsonPath = require.resolve(`${variant.pkg}/package.json`);
   return join(dirname(pkgJsonPath), variant.wasm);
 }
