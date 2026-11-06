@@ -4,6 +4,12 @@ Extract a structured, versioned map of any codebase — **frontend route → API
 
 ClarifyDoc parses a repo (or a folder of repos) with tree-sitter / regex extractors and produces per-file JSON plus a project-wide summary: routes, call traces, data access, an entity-relationship model, dependency and blast-radius graphs, and an interactive HTML report. Everything it extracts is content-hashed so you can tell exactly what changed between runs.
 
+**For AI agents**, `clarifydoc mcp` serves the same map over the Model Context Protocol. Claude Code, Cursor, Copilot,
+Codex and other MCP clients can then ask *who calls this endpoint?*, *which tables does this screen write?* or *what
+breaks if I change this file?*, and get short answers with `path:line` references instead of reading whole files.
+Connecting it takes one line, for example `claude mcp add clarifydoc -- npx -y clarifydoc mcp` — see
+[MCP server](#mcp-server--for-ai-agents) for every tool and client.
+
 **Install:** `npm install -g clarifydoc`, or `npx clarifydoc` without installing — [on npm](https://www.npmjs.com/package/clarifydoc).
 **Documentation:** [CLI reference](docs/cli-reference.md) — every command and option ·
 [Reading the output](docs/reading-the-output.md) — what each file holds, how it is encoded, and how to query it.
