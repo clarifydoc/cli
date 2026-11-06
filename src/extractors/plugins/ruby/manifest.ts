@@ -33,6 +33,12 @@ export const rubyManifest: LanguagePluginManifest = {
   typeNamedByReceiver: rubyTypeNamedByReceiver,
   // `Club.find(id)` is a Club, `Club.where(…)` a query of Clubs (ActiveRecord).
   selfTypedMembers: rubyModelFinders,
+  // On a receiver nothing types, these are ActiveRecord's (`players.find_by(…)`), not the one class that defines the name.
+  untypedReceiverMembers: [
+    ...rubyModelFinders.members, ...rubyModelFinders.queries,
+    "update", "update!", "update_all", "update_attribute", "update_attributes", "update_columns", "destroy", "destroy!", "destroy_all",
+    "delete", "delete_all", "save", "save!", "reload", "count", "exists?", "pluck", "find_each", "find_in_batches", "build", "new_record?", "persisted?",
+  ],
   // `valid?` and `save!` are names of their own.
   marksEndNames: true,
   // `club.stadium` calls the reader `has_one :stadium` (or a `def stadium`) declares.
