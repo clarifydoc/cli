@@ -131,6 +131,7 @@ primaryExpression
     : Identifier {this.LookupSymbol();}
     | constant
     | stringMacro* StringLiteral (StringLiteral | stringMacro)* // [ClarifyDoc] `"%" PRIu64`, `"x" QUOTE(n) "y"`: macros among strings
+    | stringMacro stringMacro+ // [ClarifyDoc] `ANSI_PREFIX DISPLAY_PREFIX`: macros joined, no literal beside them
     | '(' expression ')'
     | genericSelection
 

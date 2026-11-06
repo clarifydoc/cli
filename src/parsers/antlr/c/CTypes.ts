@@ -257,6 +257,17 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     const o = tokens[i]?.type === CLexer.RightParen ? opens.get(tokens[i]!.tokenIndex) : undefined;
     return o === undefined ? -1 : indexOf(o) - 1;
   };
+  // Two all-caps names in a row where an operand stands can only be string macros joined: `ANSI_PREFIX DISPLAY_PREFIX;`,
+  // `f(a, SEP SEP, b)`.
+  for (let i = 0; i + 1 < tokens.length; i++) {
+    if (names[i] === undefined || names[i + 1] === undefined || !isMacro(names[i]!) || !isMacro(names[i + 1]!) || types.has(names[i]!) || types.has(names[i + 1]!)) continue;
+    const before = tokens[i - 1]?.type;
+    const after = tokens[i + 2]?.type;
+    if ((before === CLexer.Assign || before === CLexer.Comma || before === CLexer.LeftParen) && (after === CLexer.Semi || after === CLexer.Comma || after === CLexer.RightParen)) {
+      stringMacro[tokens[i]!.tokenIndex] = 1;
+      stringMacro[tokens[i + 1]!.tokenIndex] = 1;
+    }
+  }
   for (let pass = 0; pass < 3; pass++) {
     for (let i = 0; i < tokens.length; i++) {
       if (names[i] === undefined || stringMacro[tokens[i]!.tokenIndex] === 1) continue;

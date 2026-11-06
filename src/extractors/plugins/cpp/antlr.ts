@@ -37,6 +37,7 @@ import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
+import { blankAsm } from "../c/rewrites.js";
 import { defineCalls, leftOutCalls, tokenCalls, type CallOwner, type TokenKinds } from "../shared/token-calls.js";
 import { readC } from "../c/antlr.js";
 import { cppSpec } from "./index.js";
@@ -82,7 +83,7 @@ export function readCpp(source: string, macros?: BuildMacros, variant?: string):
     return asC.syntaxErrors === 0 ? asC : readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
   }
   const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
-  if (parsed.syntaxErrors === 0 || CPP_ONLY.test(codeOnly(source))) return parsed;
+  if (parsed.syntaxErrors === 0 || CPP_ONLY.test(codeOnly(blankAsm(source)).replace(/^[ \t]*#.*$/gm, ""))) return parsed;
   // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
   // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
   const asC = readC(source, macros);

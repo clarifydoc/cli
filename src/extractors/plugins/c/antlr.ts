@@ -26,6 +26,7 @@ import type { CallInfo } from "../../../types/analysis.js";
 import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
 import { SPECIFIER_KEYWORDS } from "../../../parsers/antlr/c/CKeywords.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
+import { blankAsm } from "./rewrites.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { defineCalls, leftOutCalls, tokenCalls, type TokenKinds } from "../shared/token-calls.js";
 
@@ -60,7 +61,14 @@ const C_TOKENS: TokenKinds = {
  * inside a function, whose calls the function makes where it uses the macro.
  */
 export function readC(source: string, macros?: BuildMacros): ParsedStructure {
-  return readWithBranches(normalizeSource(source), false, read, macros);
+  const text = normalizeSource(source);
+  const parsed = readWithBranches(text, false, read, macros);
+  if (parsed.syntaxErrors === 0) return parsed;
+  // A file the grammar refuses is read again without what no grammar of C reads and the analysis does not need.
+  const rewritten = blankAsm(text);
+  if (rewritten === text) return parsed;
+  const again = readWithBranches(rewritten, false, read, macros);
+  return again.syntaxErrors === 0 ? again : parsed;
 }
 
 /** A function the walk found: its span, the calls it makes so far, and the lines its definition covers. */
