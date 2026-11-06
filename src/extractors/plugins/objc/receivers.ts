@@ -1,5 +1,6 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { stripTypeArguments } from "../shared/path-utils.js";
 
 /**
  * What Objective-C source states about the type of a receiver: a method's parameters (`(Club *)visitor`) and
@@ -20,7 +21,7 @@ export function objcType(raw: string | null | undefined): string | null {
   if (/\(\s*\^|\(\s*\*/.test(t)) return null;
   const proto = /^id\s*<\s*([A-Za-z_]\w*)\s*(?:,[^>]*)?>\s*\*?$/.exec(t);
   if (proto) return proto[1]!;
-  t = t.replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>/g, "").replace(/\*/g, "").trim();
+  t = stripTypeArguments(t).replace(/\*/g, "").trim();
   return /^[A-Z_a-z]\w*$/.test(t) && !/^(?:id|void|instancetype|Class|SEL|BOOL|int|char|float|double|long|short|unsigned|signed)$/.test(t) ? t : null;
 }
 
@@ -52,7 +53,7 @@ export function objcParams(lines: string[], i: number): ParamInfo[] | undefined 
   if (!head) return undefined;
   const rest = text.slice(head[0].length);
   const params: ParamInfo[] = [];
-  for (const m of rest.matchAll(/:\s*\(([^)]*(?:\([^)]*\)[^)]*)*)\)\s*([A-Za-z_]\w*)/g)) {
+  for (const m of rest.matchAll(/:\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*([A-Za-z_]\w*)/g)) {
     params.push({ name: m[2]!, type: objcType(m[1]) ?? m[1]!.trim(), defaultValue: null });
   }
   return params;

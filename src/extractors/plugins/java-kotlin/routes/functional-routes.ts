@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallInfo, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
+import { stripTypeArguments } from "../../shared/path-utils.js";
 
 /**
  * Functional routing that names its handlers by method reference:
@@ -18,7 +19,7 @@ export const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 
 /** The class a type node names: generics, nullability and package qualifiers dropped. Null for `var`/primitives. */
 function typeName(text: string): string | null {
-  const bare = text.replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>/g, "").replace(/[?\s]/g, "").split(".").pop() ?? "";
+  const bare = stripTypeArguments(text).replace(/[?\s]/g, "").split(".").pop() ?? "";
   return /^[A-Z]\w*$/.test(bare) ? bare : null;
 }
 

@@ -9,6 +9,16 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `s` with every `<…>` type-argument list removed, however deeply nested (`Map<K, List<V>>` → `Map`); innermost
+ *  lists go first, so no `<` or `>` of a balanced list survives. */
+export function stripTypeArguments(s: string): string {
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(/<[^<>]*>/g, "");
+  }
+  return s;
+}
+
 /** `s` without its trailing slashes (`a/b//` → `a/b`); a char scan, so a long run of slashes costs nothing. */
 export function trimTrailingSlashes(s: string): string {
   let end = s.length;

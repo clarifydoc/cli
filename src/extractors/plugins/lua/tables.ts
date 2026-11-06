@@ -63,7 +63,7 @@ export function luaTables(analysis: FileAnalysis, rawSource: string): void {
     (byTable.get(m[1]!) ?? byTable.set(m[1]!, []).get(m[1]!)!).push({ fn, leaf: m[2]! });
   }
   if (byTable.size === 0) return;
-  const returned = RETURNED_TABLE.exec(rawSource.replace(/(?:\r?\n\s*)+$/, ""))?.[1];
+  const returned = RETURNED_TABLE.exec(rawSource.trimEnd())?.[1];
   const moved = new Set<FunctionInfo>();
   const classes: ClassInfo[] = [];
   for (const [table, members] of byTable) {

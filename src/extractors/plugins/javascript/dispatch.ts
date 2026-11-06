@@ -3,6 +3,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
 import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -458,7 +459,7 @@ export class JsSlotScopeResolver implements DispatchResolver {
           if (!child) continue;
           // `#default="props"` binds every prop under one name: each `props.save` the handler reads is that prop.
           const members: Array<{ call: string; prop: string }> = s.slot.prop === WHOLE_SLOT_PROPS
-            ? [...new Set([...(el.handler ?? "").replace(/\?\./g, ".").matchAll(new RegExp(`(?<![\\w$.])${s.name.replace(/\$/g, "\\$")}\\.([A-Za-z_$][\\w$]*)`, "g"))].map((m) => m[1]!))].map((prop) => ({ call: `${s.name}.${prop}`, prop }))
+            ? [...new Set([...(el.handler ?? "").replace(/\?\./g, ".").matchAll(new RegExp(`(?<![\\w$.])${escapeRegex(s.name)}\\.([A-Za-z_$][\\w$]*)`, "g"))].map((m) => m[1]!))].map((prop) => ({ call: `${s.name}.${prop}`, prop }))
             : [{ call: s.name, prop: s.slot.prop }];
           for (const member of members) {
             const offered = (child.slotFunctions ?? []).filter((f) => f.slot === s.slot!.name && f.prop === member.prop);
@@ -506,7 +507,7 @@ export class JsLoopItemCallbackResolver implements DispatchResolver {
       for (const el of els) {
         for (const s of el.scope!) {
           if (!s.callbacks) continue;
-          const read = new RegExp(`(?<![\\w$.])${s.name.replace(/\$/g, "\\$")}\\??\\.([A-Za-z_$][\\w$]*)`, "g");
+          const read = new RegExp(`(?<![\\w$.])${escapeRegex(s.name)}\\??\\.([A-Za-z_$][\\w$]*)`, "g");
           for (const m of el.handler!.matchAll(read)) {
             for (const fn of s.callbacks[m[1]!] ?? []) {
               const span = spans.find((sp) => sp.symbol === fn || sp.symbol.endsWith(`.${fn}`));

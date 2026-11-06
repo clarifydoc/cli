@@ -1,4 +1,5 @@
 import { templateScopes, WHOLE_SLOT_PROPS, type TemplateScope } from "./template-scopes.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
 
@@ -322,7 +323,7 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
   // The innermost scope binding a name wins.
   for (const scope of [...scopes].reverse()) {
     for (const name of scope.names) {
-      if (found.some((f) => f.name === name) || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(handler)) continue;
+      if (found.some((f) => f.name === name) || !new RegExp(`(?<![\\w$.])${escapeRegex(name)}(?![\\w$])`).test(handler)) continue;
       if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.whole ? WHOLE_SLOT_PROPS : scope.props![name]! } });
       else {
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;

@@ -26,7 +26,9 @@ export function withMarkupExpressions(raw: string, blanked: string, kind: "vue" 
 
 interface Span { start: number; end: number; expr: string }
 
-const decodeEntities = (s: string) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+/** One pass, so a decoded `&` never starts another entity (`&amp;lt;` is `&lt;`, not `<`). */
+const decodeEntities = (s: string) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ENTITIES[e]!);
 
 const blankOf = (m: string) => m.replace(/[^\n\r]/g, " ");
 

@@ -371,6 +371,6 @@ Route::controller(MatchController::class)->prefix('matches')->group(function () 
       "GET /matches MatchController#index App\\Http\\Controllers\\MatchController",
       "POST /matches/{id}/settle MatchController#settle App\\Http\\Controllers\\MatchController",
       "GET /matches/closure null ",
-    ].map((x) => x.replace("null ", "null ")));
+    ]);
   });
 });

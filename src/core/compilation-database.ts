@@ -1,6 +1,7 @@
 import { posix } from "path";
 import { COMPILATION_DATABASES } from "../extractors/registry.js";
 import { readAtRoots } from "./config-values.js";
+import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 import type { BuildMacros } from "../types/language-plugin.js";
 import type { FileAnalysis, SubProject } from "../types/analysis.js";
 
@@ -35,7 +36,7 @@ export async function loadCompilationDatabase(
   const known = new Set(files);
   const dirs = new Set<string>([""]);
   for (const f of files) for (let d = posix.dirname(f); d !== "." && !dirs.has(d); d = posix.dirname(d)) dirs.add(d);
-  const root = projectRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = trimTrailingSlashes(projectRoot.replace(/\\/g, "/"));
 
   /** A path of the database as a project-relative one, or null when it is outside the project. */
   const inProject = (abs: string, isFile: boolean): string | null => {

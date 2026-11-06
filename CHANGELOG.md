@@ -517,6 +517,12 @@ recorded in the git history only.
 
 ### Changed
 
+- **Pattern matching that cannot run away (1.623.0):** the code-scanning findings are closed. Patterns with
+  nested repetition that could backtrack exponentially on crafted input (Objective-C method parameters, Rust
+  `#[path]` attributes, Lua trailing blank lines) or quadratically (a URL's `${…}` holes, a project root's trailing
+  slashes) now run in linear time; names put into a pattern are fully escaped; a template's `&amp;lt;` decodes to
+  `&lt;`, not `<`. Generic type arguments are removed however deep they nest (Objective-C, Java/Kotlin functional
+  routes), where two levels was the limit.
 - **Wrong facts corrected (1.621.0):** a Go call on a function returning a slice, map or channel (`Load().Save()`)
   linked as if one element came back; a plain Vue project's root `app.vue` was taken for a Nuxt app start; a
   RestSharp `PostAsync(request)` was a GET; a Ruby `find_by`/`save`/`where` on a receiver nothing types linked to

@@ -1,4 +1,5 @@
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
+import { escapeRegex } from "../../shared/path-utils.js";
 
 /**
  * Routes that a meta-framework derives from where a file sits rather than from
@@ -150,7 +151,7 @@ function declaredMethods(sourceText: string): string[] {
   const wrapped = /\bexport\s+default\s+(?:[\w.$]+\s*\(\s*)+\{/.exec(sourceText);
   if (wrapped) for (const k of objectMethodKeys(sourceText, wrapped.index + wrapped[0].length - 1)) methods.add(k);
   for (const m of sourceText.matchAll(/\b([A-Za-z_$][\w$]*)\s*\[\s*(?:\w+\.)?method(?:\s*\.\s*toUpperCase\s*\(\s*\))?\s*\]/g)) {
-    const decl = new RegExp(`\\b(?:const|let|var)\\s+${m[1]!.replace(/\$/g, "\\$")}\\b[^=]*=\\s*\\{`).exec(sourceText);
+    const decl = new RegExp(`\\b(?:const|let|var)\\s+${escapeRegex(m[1]!)}\\b[^=]*=\\s*\\{`).exec(sourceText);
     if (decl) for (const k of objectMethodKeys(sourceText, decl.index + decl[0].length - 1)) methods.add(k);
   }
   return [...methods];

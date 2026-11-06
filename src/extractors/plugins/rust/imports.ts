@@ -23,7 +23,7 @@ export function extractRustImports(lines: string[]): ImportInfo[] {
       // `#[path = "export.rs"] mod export_;` loads that file, relative to the declaring file's directory — on this
       // line or the attribute lines above it.
       const above = text.slice(0, m.index).split("\n").slice(-4).join("\n");
-      const attr = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/.exec(m[1]!) ?? [...above.matchAll(/#\[\s*path\s*=\s*"([^"]+)"\s*\]\s*(?:\n\s*(?:#\[[^\]\n]*\]|\/\/[^\n]*)\s*)*$/g)].at(-1);
+      const attr = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/.exec(m[1]!) ?? [...above.matchAll(/#\[\s*path\s*=\s*"([^"]+)"\s*\][ \t\r]*(?:\n[ \t]*(?:#\[[^\]\n]*\]|\/\/[^\n]*)?[ \t\r]*)*$/g)].at(-1);
       const file = attr?.[1];
       out.push({ source: file ? (file.startsWith(".") ? file : `./${file}`) : "self", specifiers: [m[2]!], isDefault: false, isNamespace: false, isType: false, line });
     }

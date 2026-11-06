@@ -1,4 +1,5 @@
 import type { FunctionInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * The parameter a block hands its body: `clubs.each { |club| … }`, `team.players.map do |player| … end`.
@@ -14,7 +15,7 @@ const ELEMENT_ITERATORS = [
   "each", "map", "collect", "flat_map", "select", "filter", "reject", "find", "detect", "find_all", "filter_map",
   "each_with_index", "each_with_object", "sort_by", "group_by", "partition", "min_by", "max_by", "sum", "count",
   "any?", "all?", "none?", "find_each", "each_entry", "take_while", "drop_while", "uniq", "tally_by", "each_slice_flat",
-].map((n) => n.replace(/[?]/g, "\\?"));
+].map(escapeRegex);
 
 /** `<receiver chain>.each { |x|` / `… do |x, i|` — the receiver up to four steps, arguments one level deep. */
 const STEP = String.raw`[a-z_]\w*[?!]?(?:\((?:[^()]|\([^()]*\))*\))?`;
