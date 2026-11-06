@@ -408,7 +408,8 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
   });
   // A `:` right before a `}` ends a label (`default:⏎}`): nothing else can precede a closing brace so.
   tokens.forEach((t, i) => {
-    if (t.type === CLexer.Colon && typeOf(i + 1) === CLexer.RightBrace) retype[t.tokenIndex] = CLexer.LabelColon;
+    // A bare macro after it (`case 1:⏎YY_RULE_SETUP`) is a block item of its own, no statement of the label.
+    if (t.type === CLexer.Colon && (typeOf(i + 1) === CLexer.RightBrace || (i + 1 < tokens.length && retype[tokens[i + 1]!.tokenIndex] === CLexer.MacroName))) retype[t.tokenIndex] = CLexer.LabelColon;
   });
   return { types, known, macro, close, blockArg, stringMacro, retype, next };
 }
