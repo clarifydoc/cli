@@ -119,6 +119,8 @@ export interface DrfSerializerFieldsFact {
   metaModel?: string;
   /** `size = serializers.SerializerMethodField()` → `{ field: "size", method: "get_size" }` (`method_name=` names another). */
   methodFields?: Array<{ field: string; method: string }>;
+  /** `players = PlayerSerializer(many=True)` → `"PlayerSerializer"`: a field that is itself a serializer (its leaf class name). */
+  nested?: string[];
   fields?: string[];
   metaFields?: string[] | "__all__";
   validators?: string[];
@@ -443,6 +445,7 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   const validators = new Set<string>();
   const fields = new Set<string>();
   const methodFields: Array<{ field: string; method: string }> = [];
+  const nested = new Set<string>();
   let metaFields: DrfSerializerFieldsFact["metaFields"];
   let metaModel: string | undefined;
   for (const stmt of body.namedChildren) {
@@ -467,6 +470,7 @@ function classFact(cls: Node, facts: RouteFact[]): void {
     } else if (right.type === "call") {
       const callee = right.childForFieldName("function")?.text ?? "";
       if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:Field|Serializer)$/.test(callee)) fields.add(left);
+      if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:^|\.)[A-Z]\w*Serializer$/.test(callee) && !/(?:^|\.)(?:SerializerMethodField|ListSerializer)$/.test(callee)) nested.add(callee.split(".").pop()!);
       if (left && /^[A-Za-z_]\w*$/.test(left) && /(?:^|\.)SerializerMethodField$/.test(callee)) {
         const named = keyword(right, "method_name") ?? positional(right)[0];
         methodFields.push({ field: left, method: named?.type === "string" ? pyString(named.text) : `get_${left}` });
@@ -481,10 +485,11 @@ function classFact(cls: Node, facts: RouteFact[]): void {
   if (Object.keys(data).length > 0) {
     facts.push({ kind: DJ_VIEW_CLASS, line: cls.startPosition.row + 1, owner: name, data });
   }
-  if (validators.size > 0 || fields.size > 0 || metaFields || metaModel) {
+  if (validators.size > 0 || fields.size > 0 || metaFields || metaModel || nested.size > 0) {
     const data: DrfSerializerFieldsFact = {
       ...(metaModel ? { metaModel } : {}),
       ...(methodFields.length > 0 ? { methodFields } : {}),
+      ...(nested.size > 0 ? { nested: [...nested] } : {}),
       ...(fields.size > 0 ? { fields: [...fields] } : {}),
       ...(metaFields ? { metaFields } : {}),
       ...(validators.size > 0 ? { validators: [...validators] } : {}),

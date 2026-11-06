@@ -56,12 +56,20 @@ export const drfLibraryWrites: RouteResolver = {
     const candidates = analyses.filter((a) => (a.routeFacts ?? []).length > 0 || a.routes.some((r) => r.owner || r.handler) || a.classes.length > 0);
     if (candidates.length === 0) return;
     const index = new PythonClassIndex(analyses);
-    /** The model a view's `queryset` names, else its serializer's `Meta.model`. */
+    /** The model a view's `queryset` names, else its `get_queryset`'s, else its serializer's `Meta.model`. */
     const modelOf = (chain: readonly ClassAt[]): string | null => {
       for (const c of chain) {
         const row = c.file.dataSources.find((d) => d.kind === "database" && d.entity && d.line > c.cls.line && d.line <= c.cls.endLine
           && !c.cls.methods.some((m) => d.line >= m.line && d.line <= m.endLine) && /(?:^|\.)objects\b/.test(d.name));
         if (row) return row.entity!;
+      }
+      // `get_queryset` returning `Club.objects.filter(…)`: the one model its body reads through a manager.
+      const getter = declaredAlong(chain, "get_queryset");
+      if (getter) {
+        const file = chain[getter.at]!.file;
+        const entities = new Set(file.dataSources.filter((d) => d.kind === "database" && d.entity && d.line >= getter.fn.line && d.line <= getter.fn.endLine && /(?:^|\.)objects\b/.test(d.name)).map((d) => d.entity!));
+        if (entities.size === 1) return [...entities][0]!;
+        return null;
       }
       const serializer = index.viewSerializer(chain);
       return serializer ? index.metaModelOf(index.chainOf(serializer).chain)?.model ?? null : null;
