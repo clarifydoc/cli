@@ -4191,8 +4191,8 @@ function resolveCallToDefinition(
   }
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
-  // A noise-named key off an imported name that is no dispatch map (`ContactAPI.filter` on an imported
-  // `new ContactAPI()`) resolves as any member call would, but never by a name-only guess: an imported
+  // A noise-named key off an imported name that is no dispatch map (`ClubAPI.filter` on an imported
+  // `new ClubAPI()`) resolves as any member call would, but never by a name-only guess: an imported
   // array's `.map` must not reach some project function `map`.
   if (call.mapMember) {
     const { mapMember: _mapMember, ...plain } = call;
