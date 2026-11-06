@@ -687,9 +687,12 @@ sehStatement
 // ISO C: labeled-statement (6.8.2)
 labeledStatement
     : Identifier ':' statement?
+    | Identifier LabelColon
     | Label Identifier ';'
-    | 'case' constantExpression ':' statement? // [ClarifyDoc] C23: a label may end a block
-    | 'default' ':' statement?
+    | 'case' constantExpression ':' statement
+    | 'case' constantExpression LabelColon // [ClarifyDoc] C23: a label may end a block (the first pass retypes the `:` before a `}`)
+    | 'default' ':' statement
+    | 'default' LabelColon
     ;
 
 // ISO C: compound-statement (6.8.3)

@@ -40,7 +40,8 @@ lexer grammar CLexer;
 tokens {
     MacroName,
     CallingConvention,
-    StringMacro
+    StringMacro,
+    LabelColon
 }
 
 // Insert here @header for lexer.

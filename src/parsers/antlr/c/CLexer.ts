@@ -35,163 +35,164 @@ export class CLexer extends antlr.Lexer {
     public static readonly MacroName = 1;
     public static readonly CallingConvention = 2;
     public static readonly StringMacro = 3;
-    public static readonly Attribute = 4;
-    public static readonly KW__builtin_offsetof = 5;
-    public static readonly KW__builtin_va_arg = 6;
-    public static readonly KW__builtin_available = 7;
-    public static readonly KW__try = 8;
-    public static readonly KW__except = 9;
-    public static readonly KW__finally = 10;
-    public static readonly KW__leave = 11;
-    public static readonly KW__builtin_choose_expr = 12;
-    public static readonly KW__builtin_types_compatible_p = 13;
-    public static readonly KW__builtin_tgmath = 14;
-    public static readonly KW__builtin_complex = 15;
-    public static readonly KW__cdecl = 16;
-    public static readonly KW__clrcall = 17;
-    public static readonly KW__declspec = 18;
-    public static readonly KW__extension__ = 19;
-    public static readonly KW__fastcall = 20;
-    public static readonly KW__m128 = 21;
-    public static readonly KW__m128d = 22;
-    public static readonly KW__m128i = 23;
-    public static readonly KW__stdcall = 24;
-    public static readonly KW__thiscall = 25;
-    public static readonly KW__vectorcall = 26;
-    public static readonly KW__real__ = 27;
-    public static readonly KW__imag__ = 28;
-    public static readonly KW__func__ = 29;
-    public static readonly KW__FUNCTION__ = 30;
-    public static readonly KW__PRETTY_FUNCTION__ = 31;
-    public static readonly Alignas = 32;
-    public static readonly Alignof = 33;
-    public static readonly Maxof = 34;
-    public static readonly Minof = 35;
-    public static readonly Countof = 36;
-    public static readonly Asm_1 = 37;
-    public static readonly Asm_2 = 38;
-    public static readonly Asm_3 = 39;
-    public static readonly Auto = 40;
-    public static readonly Bool = 41;
-    public static readonly Break = 42;
-    public static readonly Case = 43;
-    public static readonly Char = 44;
-    public static readonly Const = 45;
-    public static readonly Constexpr = 46;
-    public static readonly Continue = 47;
-    public static readonly Default = 48;
-    public static readonly Do = 49;
-    public static readonly Double = 50;
-    public static readonly Else = 51;
-    public static readonly Enum = 52;
-    public static readonly Extern = 53;
-    public static readonly False_ = 54;
-    public static readonly Float = 55;
-    public static readonly For = 56;
-    public static readonly Goto = 57;
-    public static readonly If = 58;
-    public static readonly Inline = 59;
-    public static readonly Int = 60;
-    public static readonly Label = 61;
-    public static readonly Long = 62;
-    public static readonly Nullptr_ = 63;
-    public static readonly Register = 64;
-    public static readonly Restrict = 65;
-    public static readonly Return = 66;
-    public static readonly Short = 67;
-    public static readonly Signed = 68;
-    public static readonly Sizeof = 69;
-    public static readonly Static = 70;
-    public static readonly Static_assert = 71;
-    public static readonly Struct = 72;
-    public static readonly Switch = 73;
-    public static readonly True_ = 74;
-    public static readonly Typedef = 75;
-    public static readonly Typeof = 76;
-    public static readonly Typeof_unqual = 77;
-    public static readonly Union = 78;
-    public static readonly Unsigned = 79;
-    public static readonly Void = 80;
-    public static readonly Volatile_1 = 81;
-    public static readonly Volatile_2 = 82;
-    public static readonly While = 83;
-    public static readonly Atomic = 84;
-    public static readonly BitInt = 85;
-    public static readonly Complex = 86;
-    public static readonly Decimal128 = 87;
-    public static readonly Decimal32 = 88;
-    public static readonly Decimal64 = 89;
-    public static readonly Generic = 90;
-    public static readonly Imaginary = 91;
-    public static readonly Noreturn = 92;
-    public static readonly StaticAssert = 93;
-    public static readonly ThreadLocal = 94;
-    public static readonly LeftParen = 95;
-    public static readonly RightParen = 96;
-    public static readonly LeftBracket = 97;
-    public static readonly RightBracket = 98;
-    public static readonly LeftBrace = 99;
-    public static readonly RightBrace = 100;
-    public static readonly Less = 101;
-    public static readonly LessEqual = 102;
-    public static readonly Greater = 103;
-    public static readonly GreaterEqual = 104;
-    public static readonly LeftShift = 105;
-    public static readonly RightShift = 106;
-    public static readonly Plus = 107;
-    public static readonly PlusPlus = 108;
-    public static readonly Minus = 109;
-    public static readonly MinusMinus = 110;
-    public static readonly Star = 111;
-    public static readonly Div = 112;
-    public static readonly Mod = 113;
-    public static readonly And = 114;
-    public static readonly Or = 115;
-    public static readonly AndAnd = 116;
-    public static readonly OrOr = 117;
-    public static readonly Caret = 118;
-    public static readonly Not = 119;
-    public static readonly Tilde = 120;
-    public static readonly Question = 121;
-    public static readonly Colon = 122;
-    public static readonly Semi = 123;
-    public static readonly Comma = 124;
-    public static readonly Assign = 125;
-    public static readonly StarAssign = 126;
-    public static readonly DivAssign = 127;
-    public static readonly ModAssign = 128;
-    public static readonly PlusAssign = 129;
-    public static readonly MinusAssign = 130;
-    public static readonly LeftShiftAssign = 131;
-    public static readonly RightShiftAssign = 132;
-    public static readonly AndAssign = 133;
-    public static readonly XorAssign = 134;
-    public static readonly OrAssign = 135;
-    public static readonly Equal = 136;
-    public static readonly NotEqual = 137;
-    public static readonly Arrow = 138;
-    public static readonly Dot = 139;
-    public static readonly Ellipsis = 140;
-    public static readonly Identifier = 141;
-    public static readonly IntegerConstant = 142;
-    public static readonly FloatingConstant = 143;
-    public static readonly DigitSequence = 144;
-    public static readonly CharacterConstant = 145;
-    public static readonly StringLiteral = 146;
-    public static readonly MultiLineMacro = 147;
-    public static readonly LineDirective = 148;
-    public static readonly Directive = 149;
-    public static readonly Whitespace = 150;
-    public static readonly Newline = 151;
-    public static readonly BlockComment = 152;
-    public static readonly LineComment = 153;
+    public static readonly LabelColon = 4;
+    public static readonly Attribute = 5;
+    public static readonly KW__builtin_offsetof = 6;
+    public static readonly KW__builtin_va_arg = 7;
+    public static readonly KW__builtin_available = 8;
+    public static readonly KW__try = 9;
+    public static readonly KW__except = 10;
+    public static readonly KW__finally = 11;
+    public static readonly KW__leave = 12;
+    public static readonly KW__builtin_choose_expr = 13;
+    public static readonly KW__builtin_types_compatible_p = 14;
+    public static readonly KW__builtin_tgmath = 15;
+    public static readonly KW__builtin_complex = 16;
+    public static readonly KW__cdecl = 17;
+    public static readonly KW__clrcall = 18;
+    public static readonly KW__declspec = 19;
+    public static readonly KW__extension__ = 20;
+    public static readonly KW__fastcall = 21;
+    public static readonly KW__m128 = 22;
+    public static readonly KW__m128d = 23;
+    public static readonly KW__m128i = 24;
+    public static readonly KW__stdcall = 25;
+    public static readonly KW__thiscall = 26;
+    public static readonly KW__vectorcall = 27;
+    public static readonly KW__real__ = 28;
+    public static readonly KW__imag__ = 29;
+    public static readonly KW__func__ = 30;
+    public static readonly KW__FUNCTION__ = 31;
+    public static readonly KW__PRETTY_FUNCTION__ = 32;
+    public static readonly Alignas = 33;
+    public static readonly Alignof = 34;
+    public static readonly Maxof = 35;
+    public static readonly Minof = 36;
+    public static readonly Countof = 37;
+    public static readonly Asm_1 = 38;
+    public static readonly Asm_2 = 39;
+    public static readonly Asm_3 = 40;
+    public static readonly Auto = 41;
+    public static readonly Bool = 42;
+    public static readonly Break = 43;
+    public static readonly Case = 44;
+    public static readonly Char = 45;
+    public static readonly Const = 46;
+    public static readonly Constexpr = 47;
+    public static readonly Continue = 48;
+    public static readonly Default = 49;
+    public static readonly Do = 50;
+    public static readonly Double = 51;
+    public static readonly Else = 52;
+    public static readonly Enum = 53;
+    public static readonly Extern = 54;
+    public static readonly False_ = 55;
+    public static readonly Float = 56;
+    public static readonly For = 57;
+    public static readonly Goto = 58;
+    public static readonly If = 59;
+    public static readonly Inline = 60;
+    public static readonly Int = 61;
+    public static readonly Label = 62;
+    public static readonly Long = 63;
+    public static readonly Nullptr_ = 64;
+    public static readonly Register = 65;
+    public static readonly Restrict = 66;
+    public static readonly Return = 67;
+    public static readonly Short = 68;
+    public static readonly Signed = 69;
+    public static readonly Sizeof = 70;
+    public static readonly Static = 71;
+    public static readonly Static_assert = 72;
+    public static readonly Struct = 73;
+    public static readonly Switch = 74;
+    public static readonly True_ = 75;
+    public static readonly Typedef = 76;
+    public static readonly Typeof = 77;
+    public static readonly Typeof_unqual = 78;
+    public static readonly Union = 79;
+    public static readonly Unsigned = 80;
+    public static readonly Void = 81;
+    public static readonly Volatile_1 = 82;
+    public static readonly Volatile_2 = 83;
+    public static readonly While = 84;
+    public static readonly Atomic = 85;
+    public static readonly BitInt = 86;
+    public static readonly Complex = 87;
+    public static readonly Decimal128 = 88;
+    public static readonly Decimal32 = 89;
+    public static readonly Decimal64 = 90;
+    public static readonly Generic = 91;
+    public static readonly Imaginary = 92;
+    public static readonly Noreturn = 93;
+    public static readonly StaticAssert = 94;
+    public static readonly ThreadLocal = 95;
+    public static readonly LeftParen = 96;
+    public static readonly RightParen = 97;
+    public static readonly LeftBracket = 98;
+    public static readonly RightBracket = 99;
+    public static readonly LeftBrace = 100;
+    public static readonly RightBrace = 101;
+    public static readonly Less = 102;
+    public static readonly LessEqual = 103;
+    public static readonly Greater = 104;
+    public static readonly GreaterEqual = 105;
+    public static readonly LeftShift = 106;
+    public static readonly RightShift = 107;
+    public static readonly Plus = 108;
+    public static readonly PlusPlus = 109;
+    public static readonly Minus = 110;
+    public static readonly MinusMinus = 111;
+    public static readonly Star = 112;
+    public static readonly Div = 113;
+    public static readonly Mod = 114;
+    public static readonly And = 115;
+    public static readonly Or = 116;
+    public static readonly AndAnd = 117;
+    public static readonly OrOr = 118;
+    public static readonly Caret = 119;
+    public static readonly Not = 120;
+    public static readonly Tilde = 121;
+    public static readonly Question = 122;
+    public static readonly Colon = 123;
+    public static readonly Semi = 124;
+    public static readonly Comma = 125;
+    public static readonly Assign = 126;
+    public static readonly StarAssign = 127;
+    public static readonly DivAssign = 128;
+    public static readonly ModAssign = 129;
+    public static readonly PlusAssign = 130;
+    public static readonly MinusAssign = 131;
+    public static readonly LeftShiftAssign = 132;
+    public static readonly RightShiftAssign = 133;
+    public static readonly AndAssign = 134;
+    public static readonly XorAssign = 135;
+    public static readonly OrAssign = 136;
+    public static readonly Equal = 137;
+    public static readonly NotEqual = 138;
+    public static readonly Arrow = 139;
+    public static readonly Dot = 140;
+    public static readonly Ellipsis = 141;
+    public static readonly Identifier = 142;
+    public static readonly IntegerConstant = 143;
+    public static readonly FloatingConstant = 144;
+    public static readonly DigitSequence = 145;
+    public static readonly CharacterConstant = 146;
+    public static readonly StringLiteral = 147;
+    public static readonly MultiLineMacro = 148;
+    public static readonly LineDirective = 149;
+    public static readonly Directive = 150;
+    public static readonly Whitespace = 151;
+    public static readonly Newline = 152;
+    public static readonly BlockComment = 153;
+    public static readonly LineComment = 154;
 
     public static readonly channelNames = [
         "DEFAULT_TOKEN_CHANNEL", "HIDDEN", "LINEDIRECTIVECHANNEL"
     ];
 
     public static readonly literalNames = [
-        null, null, null, null, null, "'__builtin_offsetof'", "'__builtin_va_arg'", 
+        null, null, null, null, null, null, "'__builtin_offsetof'", "'__builtin_va_arg'", 
         "'__builtin_available'", "'__try'", "'__except'", "'__finally'", 
         "'__leave'", "'__builtin_choose_expr'", "'__builtin_types_compatible_p'", 
         "'__builtin_tgmath'", "'__builtin_complex'", "'__cdecl'", "'__clrcall'", 
@@ -217,8 +218,8 @@ export class CLexer extends antlr.Lexer {
     ];
 
     public static readonly symbolicNames = [
-        null, "MacroName", "CallingConvention", "StringMacro", "Attribute", 
-        "KW__builtin_offsetof", "KW__builtin_va_arg", "KW__builtin_available", 
+        null, "MacroName", "CallingConvention", "StringMacro", "LabelColon", 
+        "Attribute", "KW__builtin_offsetof", "KW__builtin_va_arg", "KW__builtin_available", 
         "KW__try", "KW__except", "KW__finally", "KW__leave", "KW__builtin_choose_expr", 
         "KW__builtin_types_compatible_p", "KW__builtin_tgmath", "KW__builtin_complex", 
         "KW__cdecl", "KW__clrcall", "KW__declspec", "KW__extension__", "KW__fastcall", 
@@ -309,7 +310,7 @@ export class CLexer extends antlr.Lexer {
     public get modeNames(): string[] { return CLexer.modeNames; }
 
     public static readonly _serializedATN: number[] = [
-        4,0,153,1911,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,
+        4,0,154,1911,6,-1,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,
         5,2,6,7,6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,
         2,13,7,13,2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,
         7,19,2,20,7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,
@@ -472,26 +473,26 @@ export class CLexer extends antlr.Lexer {
         1883,8,182,1,182,1,182,1,183,1,183,1,183,1,183,5,183,1891,8,183,
         10,183,12,183,1894,9,183,1,183,1,183,1,183,1,183,1,183,1,184,1,184,
         1,184,1,184,5,184,1905,8,184,10,184,12,184,1908,9,184,1,184,1,184,
-        4,1792,1839,1857,1892,0,185,1,4,3,5,5,6,7,7,9,8,11,9,13,10,15,11,
-        17,12,19,13,21,14,23,15,25,16,27,17,29,18,31,19,33,20,35,21,37,22,
-        39,23,41,24,43,25,45,26,47,27,49,28,51,29,53,30,55,31,57,32,59,33,
-        61,34,63,35,65,36,67,37,69,38,71,39,73,40,75,41,77,42,79,43,81,44,
-        83,45,85,46,87,47,89,48,91,49,93,50,95,51,97,52,99,53,101,54,103,
-        55,105,56,107,57,109,58,111,59,113,60,115,61,117,62,119,63,121,64,
-        123,65,125,66,127,67,129,68,131,69,133,70,135,71,137,72,139,73,141,
-        74,143,75,145,76,147,77,149,78,151,79,153,80,155,81,157,82,159,83,
-        161,84,163,85,165,86,167,87,169,88,171,89,173,90,175,91,177,92,179,
-        93,181,94,183,95,185,96,187,97,189,98,191,99,193,100,195,101,197,
-        102,199,103,201,104,203,105,205,106,207,107,209,108,211,109,213,
-        110,215,111,217,112,219,113,221,114,223,115,225,116,227,117,229,
-        118,231,119,233,120,235,121,237,122,239,123,241,124,243,125,245,
-        126,247,127,249,128,251,129,253,130,255,131,257,132,259,133,261,
-        134,263,135,265,136,267,137,269,138,271,139,273,140,275,141,277,
-        0,279,0,281,0,283,0,285,0,287,142,289,0,291,0,293,0,295,0,297,0,
-        299,0,301,0,303,0,305,0,307,0,309,0,311,0,313,143,315,0,317,0,319,
-        0,321,0,323,0,325,144,327,0,329,0,331,0,333,0,335,145,337,0,339,
-        0,341,0,343,0,345,0,347,0,349,146,351,0,353,0,355,0,357,147,359,
-        148,361,149,363,150,365,151,367,152,369,153,1,0,25,4,0,36,36,65,
+        4,1792,1839,1857,1892,0,185,1,5,3,6,5,7,7,8,9,9,11,10,13,11,15,12,
+        17,13,19,14,21,15,23,16,25,17,27,18,29,19,31,20,33,21,35,22,37,23,
+        39,24,41,25,43,26,45,27,47,28,49,29,51,30,53,31,55,32,57,33,59,34,
+        61,35,63,36,65,37,67,38,69,39,71,40,73,41,75,42,77,43,79,44,81,45,
+        83,46,85,47,87,48,89,49,91,50,93,51,95,52,97,53,99,54,101,55,103,
+        56,105,57,107,58,109,59,111,60,113,61,115,62,117,63,119,64,121,65,
+        123,66,125,67,127,68,129,69,131,70,133,71,135,72,137,73,139,74,141,
+        75,143,76,145,77,147,78,149,79,151,80,153,81,155,82,157,83,159,84,
+        161,85,163,86,165,87,167,88,169,89,171,90,173,91,175,92,177,93,179,
+        94,181,95,183,96,185,97,187,98,189,99,191,100,193,101,195,102,197,
+        103,199,104,201,105,203,106,205,107,207,108,209,109,211,110,213,
+        111,215,112,217,113,219,114,221,115,223,116,225,117,227,118,229,
+        119,231,120,233,121,235,122,237,123,239,124,241,125,243,126,245,
+        127,247,128,249,129,251,130,253,131,255,132,257,133,259,134,261,
+        135,263,136,265,137,267,138,269,139,271,140,273,141,275,142,277,
+        0,279,0,281,0,283,0,285,0,287,143,289,0,291,0,293,0,295,0,297,0,
+        299,0,301,0,303,0,305,0,307,0,309,0,311,0,313,144,315,0,317,0,319,
+        0,321,0,323,0,325,145,327,0,329,0,331,0,333,0,335,146,337,0,339,
+        0,341,0,343,0,345,0,347,0,349,147,351,0,353,0,355,0,357,148,359,
+        149,361,150,363,151,365,152,367,153,369,154,1,0,25,4,0,36,36,65,
         90,95,95,97,122,1,0,48,57,2,0,66,66,98,98,1,0,48,49,2,0,88,88,120,
         120,1,0,49,57,1,0,48,55,3,0,48,57,65,70,97,102,2,0,85,85,117,117,
         2,0,76,76,108,108,2,0,69,69,101,101,2,0,43,43,45,45,2,0,80,80,112,

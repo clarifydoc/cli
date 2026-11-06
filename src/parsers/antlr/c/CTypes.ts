@@ -406,5 +406,9 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
       if (typeOf(after) === CLexer.LeftParen) retype[k] = CLexer.CallingConvention;
     }
   });
+  // A `:` right before a `}` ends a label (`default:⏎}`): nothing else can precede a closing brace so.
+  tokens.forEach((t, i) => {
+    if (t.type === CLexer.Colon && typeOf(i + 1) === CLexer.RightBrace) retype[t.tokenIndex] = CLexer.LabelColon;
+  });
   return { types, known, macro, close, blockArg, stringMacro, retype, next };
 }
