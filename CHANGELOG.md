@@ -42,6 +42,37 @@ recorded in the git history only.
   regex reading; Objective-C `[[X alloc] init]` links to the class; Dart `$` names and barrel exports; Elixir
   `except:` and list-form `defdelegate`; Rust inline modules; Lua one-line bodies; Python import-to-distribution
   names in the package inventory.
+- **Caret assertions beside the source:** a comment line whose `^^^` marks a span under a source line states the
+  fact expected there (`def`, `call -> file::symbol`, `route`, `api-call … -> route`, `table name read|write`), in
+  the language's own line-comment prefix. `clarifydoc lint <dir> --carets` checks every analyzed file (exit 1 on a
+  failed or unmatched assertion); `--carets <file>` prints the file with a caret line per fact.
+- **npm workspace references:** `workspace:`, `file:`, `link:` and `portal:` dependencies are declared project
+  references between sub-projects (one sub-project publishing the name, else none).
+- **Clients and buses:** RestSharp takes the verb from `request.Method` or the helper that sends it; AsyncHttpClient
+  `new RequestBuilder("PUT").setUrl(…)`; MQTT publishes and subscriptions with `+`/`#` filters in Python (paho,
+  aiomqtt), Java/Kotlin (Paho, HiveMQ), Go (paho) and C# (MQTTnet).
+- **Python/Django:** a viewset whose model comes only from `get_queryset` writes that model; a nested serializer
+  field runs the child serializer's method fields.
+- **Ruby:** a chain with arguments mid-way (`team.players.find_by(id: 1).injure!`) reaches the model;
+  `Striker = Class.new(Base) do … end` is a class; a `let(:klass) { Class.new(Base) }` types `klass.new` in the
+  group's examples; CommonMarker renderer subclasses' node methods are reached from `render`.
+- **Routes and screens:** Werkzeug converters with arguments (`<regex("[0-9]+"):id>`) and Express patterns holding
+  a `/` are one parameter; a WebFlux handler typed as an interface reaches its one implementation; Laravel jobs
+  resolve by namespace; Adonis `.where()` matchers type the parameter and Lucid models are entities; Astro markup
+  `{expressions}`, `getStaticPaths` and content collections (`getCollection`) are read.
+- **JS/TS:** a class declared inside a function is reported and wins over a top-level namesake; block-scoped
+  bindings decide per call site (`boundAt`); `Club & { … }` types as `Club`; an anonymous default export
+  (`export default withAuth(async …)`) is a function `default`, the handler of its pages/api route.
+- **Vue/Vuex:** actions merged with `Object.assign`; arrows inside a `v-bind` object; a scoped slot bound to a whole
+  props object (`#default="props"` → `props.save()`); a `v-for` item's callback from the component's literal array;
+  a noise-named key of an imported object map (`ACTIONS.map(…)`) links through the map only.
+- **Go:** interface methods carry their declared container result, so a loop over `repo.All()` is typed; a
+  parameter shadowed in an inner block by a stated type is typed there; a file read by the patterns after a syntax
+  error keeps its method values; `go test` commands filter per package and run testify suite methods as subtests.
+- **Native:** Swift accessors carry their declared type; Rust functions of two inline modules are named by module
+  path; Delphi `with Dm do Clubs.Open` goes through the subject; Dart `await for` over a `Stream<T>` call; Prism
+  `AutoWireViewModel` and CommunityToolkit `[ObservableProperty]`; a Zig doctest reaches the function it names;
+  doc comments for Elixir `@doc`/`@moduledoc`, Perl POD, Lisp, Fortran, AutoHotkey, AutoIt and batch.
 
 - **A header is read by its project's language:** in a sub-project with C sources and no C++ ones, a `.h` is read by
   C's grammar first and C++'s only when C refuses it (`readingVariant` on the language manifest, decided from the
@@ -477,6 +508,16 @@ recorded in the git history only.
   returns and JSDoc `@returns`; `Object.create`/`util.inherits` inheritance.
 
 ### Changed
+
+- **Wrong facts corrected (1.621.0):** a Go call on a function returning a slice, map or channel (`Load().Save()`)
+  linked as if one element came back; a plain Vue project's root `app.vue` was taken for a Nuxt app start; a
+  RestSharp `PostAsync(request)` was a GET; a Ruby `find_by`/`save`/`where` on a receiver nothing types linked to
+  the one project class defining the name (manifest `untypedReceiverMembers`); `new Club()` inside a function that
+  declares `Club` linked a top-level namesake; a TS block's untyped `let v` kept the shadowed parameter's type; a
+  Kotlin (and any `directoryScope` language) bare call reached a folder-mate of another declared package; Swift
+  `extension Foundation.Date` became a project class; a Zig `test "kick"` became a second function `kick`; two
+  Delphi platform units the build files cannot tell apart no longer fall to a pick; a Python name a function
+  rebinds with `global` is no fixed module value or alias.
 
 - **Wrong facts corrected:** a Kotlin functional `nest` right after a verb call took the verb's path as its prefix;
   Laravel `Route::prefix('v2')->get('/cars')` dropped `v2`; Java/Kotlin imports resolved by directory instead of the
