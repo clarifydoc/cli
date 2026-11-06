@@ -138,7 +138,7 @@ describe("Prism AutoWireViewModel", () => {
     ${attr}>
   <Button Command="{Binding SaveCommand}" />
 </UserControl>`;
-  const vm = (cls: string, attr: string) => xamlSpec.extractScreens!(view(cls, attr).split("\n"), `Views/${cls}.xaml`)[0]!.viewModel;
+  const vm = (cls: string, attr: string) => xamlSpec.extractScreens!(view(cls, attr).split("\n"), `Views/${cls}.xaml`, [])[0]!.viewModel;
 
   it("wires ClubView to ClubViewModel by convention", () => {
     expect(vm("ClubView", 'prism:ViewModelLocator.AutoWireViewModel="True"')).toBe("ClubViewModel");
