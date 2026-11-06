@@ -326,12 +326,90 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
       if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.whole ? WHOLE_SLOT_PROPS : scope.props![name]! } });
       else {
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
+        const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) : undefined;
         if (type) found.push({ name, type });
-        else found.push({ name });
+        else found.push({ name, ...(callbacks ? { callbacks } : {}) });
       }
     }
   }
   return found.length > 0 ? { scope: found } : {};
+}
+
+/**
+ * The functions the objects of a literal array hold under each key — the action items a template loops over
+ * (`items: [{ label: 'Delete', action: this.remove }, { label: 'Refresh', action: refresh }]`, as a `data()`
+ * field, a `const`, a `ref([…])`, or a computed/method returning the literal): `{ action: ["remove", "refresh"] }`.
+ * Only values that name a function (`fn`, `this.fn`, `{ fn }`) count; none when the collection is not declared
+ * as one such literal in this component.
+ */
+function literalCallbacksOf(source: string, script: string): Record<string, string[]> | undefined {
+  const name = /^(?:this\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim())?.[1];
+  if (!name) return undefined;
+  const wrapper = String.raw`(?:(?:ref|shallowRef|reactive|computed)\s*(?:<[^>()]*>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?)?`;
+  const starts = [
+    ...script.matchAll(new RegExp(String.raw`(?<![\w$.])${name}\s*[:=]\s*${wrapper}\[`, "g")),
+    ...script.matchAll(new RegExp(String.raw`(?<![\w$.])${name}\s*\(\s*\)\s*\{\s*return\s*\[`, "g")),
+  ];
+  // One declaration only: a second one of the name is another collection.
+  if (starts.length !== 1) return undefined;
+  const open = starts[0]!.index! + starts[0]![0].length - 1;
+  const body = balanced(script, open, "[", "]");
+  if (body === null) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const element of splitTopLevel(body)) {
+    const obj = element.trim();
+    if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
+    for (const entry of splitTopLevel(obj.slice(1, -1))) {
+      const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*(?::\s*(?:this\.)?([A-Za-z_$][\w$]*)(?:\.bind\(this\))?)?\s*$/.exec(entry);
+      if (!m) continue;
+      const fn = m[2] ?? m[1]!;
+      if (/^(?:undefined|null|true|false|this)$/.test(fn)) continue;
+      const list = (out[m[1]!] ??= []);
+      if (!list.includes(fn)) list.push(fn);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The text between the bracket at `open` and its match, skipping strings; null when unbalanced. */
+function balanced(text: string, open: number, left: string, right: string): string | null {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === left || c === "(" || c === "{" || c === "[") depth++;
+    else if (c === right || c === ")" || c === "}" || c === "]") {
+      if (--depth === 0) return text.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/** `text` split at its top-level commas (outside brackets and strings). */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(text.slice(from));
+  return out.filter((e) => e.trim());
 }
 
 /**

@@ -305,3 +305,63 @@ describe("Vue scoped slot bound to a whole props object", () => {
     expect(linkRows(summary, "src/views/DecoyPage.vue")).toEqual(["<setup> -slotProps.save-> src/components/CarShell.vue#saveAll"]);
   });
 });
+
+const VUE_ITEMS: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/views/ClubPage.vue": `<template>
+  <ul>
+    <li v-for="item in items" :key="item.label"><button @click="item.action()">{{ item.label }}</button></li>
+    <li v-for="entry in entries"><button @click="entry.run(1)">Go</button></li>
+    <li v-for="row in rows"><button @click="row.action()">Row</button></li>
+  </ul>
+</template>
+<script>
+import axios from 'axios';
+export default {
+  props: ['rows'],
+  data() {
+    return { items: [{ label: 'Delete', action: this.remove }, { label: 'Refresh', action: this.refresh }] };
+  },
+  computed: {
+    entries() { return [{ label: 'Save', run: this.save }]; },
+  },
+  methods: {
+    remove() { return axios.delete('/api/v2/clubs/1'); },
+    refresh() { return axios.get('/api/v2/clubs'); },
+    save() { return axios.post('/api/v2/clubs', {}); },
+    action() { return axios.get('/api/v2/decoy'); },
+  },
+};
+</script>
+`,
+  "src/views/CarPage.vue": `<template>
+  <ul><li v-for="item in items"><button @click="item.action()">x</button></li></ul>
+</template>
+<script setup>
+import axios from 'axios';
+const items = ref([{ label: 'Delete', action: removeCar }]);
+function removeCar() { return axios.delete('/api/v2/cars/1'); }
+</script>
+`,
+};
+
+describe("Vue action items from a literal array", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-loop-items-"));
+    summary = await run(dir, VUE_ITEMS);
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("links `item.action()` to each function the component's own literal array holds under that key", () => {
+    expect(linkRows(summary, "src/views/ClubPage.vue").filter((r) => r.startsWith("<setup>"))).toEqual([
+      "<setup> -entry.run-> src/views/ClubPage.vue#save",
+      "<setup> -item.action-> src/views/ClubPage.vue#refresh",
+      "<setup> -item.action-> src/views/ClubPage.vue#remove",
+    ]);
+    expect(linkRows(summary, "src/views/CarPage.vue")).toContain("<setup> -item.action-> src/views/CarPage.vue#removeCar");
+  });
+});

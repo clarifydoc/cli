@@ -486,6 +486,53 @@ export class JsSlotScopeResolver implements DispatchResolver {
 }
 
 /**
+ * An action item's callback: `<li v-for="item in items"><button @click="item.action()">` over a literal
+ * array of objects the component declares (`{ label: 'Delete', action: this.remove }`). The loop variable's
+ * member runs whichever item was clicked, so each function the array holds under that key is a candidate:
+ * one INFERRED link per function, from the component's `<setup>`, by the name as the markup spells it.
+ */
+export class JsLoopItemCallbackResolver implements DispatchResolver {
+  readonly id = "loop-item-callback";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 35;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const links: SymbolLink[] = [];
+    for (const parent of analyses) {
+      const els = (parent.interactiveElements ?? []).filter((el) => el.handler && el.scope?.some((s) => s.callbacks));
+      if (els.length === 0) continue;
+      const spans = spansOf(parent);
+      const seen = new Set<string>();
+      for (const el of els) {
+        for (const s of el.scope!) {
+          if (!s.callbacks) continue;
+          const read = new RegExp(`(?<![\\w$.])${s.name.replace(/\$/g, "\\$")}\\??\\.([A-Za-z_$][\\w$]*)`, "g");
+          for (const m of el.handler!.matchAll(read)) {
+            for (const fn of s.callbacks[m[1]!] ?? []) {
+              const span = spans.find((sp) => sp.symbol === fn || sp.symbol.endsWith(`.${fn}`));
+              const key = `${el.line}\0${s.name}.${m[1]}\0${span?.symbol}`;
+              if (!span || seen.has(key)) continue;
+              seen.add(key);
+              links.push({
+                sourceFile: parent.filePath,
+                sourceSymbol: "<setup>",
+                sourceLine: el.line,
+                callName: `${s.name}.${m[1]}`,
+                targetFile: parent.filePath,
+                targetSymbol: span.symbol,
+                targetLine: span.line,
+                confidence: "INFERRED",
+              });
+            }
+          }
+        }
+      }
+    }
+    return links;
+  }
+}
+
+/**
  * Vue's provide/inject of a function: `provide('transferPlayer', onTransferPlayer)` in
  * an ancestor, `const transferPlayer = inject('transferPlayer')` … `transferPlayer(p)` in a
  * component below it. Vue finds the key up the component tree at runtime; the join is
