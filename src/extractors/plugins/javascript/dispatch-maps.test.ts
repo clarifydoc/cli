@@ -132,17 +132,21 @@ export const HANDLERS = { map: 1, filter: 2 };`,
     "src/clubs.js": `export function mapClub(c) { return c; }
 export function filterClub(c) { return c; }
 export function map(c) { return c; }`,
+    "src/api.js": `class ClubAPI { filter(q) { return q; } }
+export default new ClubAPI();`,
     "src/run.js": `import { ACTIONS } from './actions';
+import ClubAPI from './api';
 import { LISTS, HANDLERS } from './lists';
 import _ from 'lodash';
 export function runMap(club) { return ACTIONS.map(club); }
 export function runFilter(club) { return ACTIONS.filter(club); }
 export function runList() { return LISTS.map((x) => x); }
 export function runHandlers() { return HANDLERS.map(1); }
-export function runLodash(xs) { return _.map(xs, (x) => x); }`,
+export function runLodash(xs) { return _.map(xs, (x) => x); }
+export function runApi(q) { return ClubAPI.filter(q); }`,
   };
 
-  it("links `ACTIONS.map` through the object literal the exporting file declares, and no array or package's `.map`", async () => {
+  it("links `ACTIONS.map` through the object literal the exporting file declares, an imported instance's `filter` as any member call, and no array or package's `.map`", async () => {
     const dir = await mkdtemp(join(tmpdir(), "clarifydoc-imported-map-"));
     for (const [path, text] of Object.entries(files)) {
       await mkdir(dirname(join(dir, "app", path)), { recursive: true });
@@ -155,6 +159,7 @@ export function runLodash(xs) { return _.map(xs, (x) => x); }`,
       .map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}#${l.targetSymbol}`)
       .sort();
     expect(rows).toEqual([
+      "runApi -ClubAPI.filter-> src/api.js#ClubAPI.filter",
       "runFilter -ACTIONS.filter-> src/clubs.js#filterClub",
       "runMap -ACTIONS.map-> src/clubs.js#mapClub",
     ]);

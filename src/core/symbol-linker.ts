@@ -4191,8 +4191,14 @@ function resolveCallToDefinition(
   }
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
-  // A noise-named key off an imported name is a link only through that name's dispatch map.
-  if (call.mapMember) return null;
+  // A noise-named key off an imported name that is no dispatch map (`ContactAPI.filter` on an imported
+  // `new ContactAPI()`) resolves as any member call would, but never by a name-only guess: an imported
+  // array's `.map` must not reach some project function `map`.
+  if (call.mapMember) {
+    const { mapMember: _mapMember, ...plain } = call;
+    const link = resolveCallToDefinition(sourceFile, sourceSymbol, plain, analysis, ctx, reference);
+    return link && !(link.strategy && GUESSING_STRATEGIES.has(link.strategy)) ? link : null;
+  }
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"
