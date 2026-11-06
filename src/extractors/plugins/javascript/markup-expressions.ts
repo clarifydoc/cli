@@ -1,3 +1,4 @@
+import { astroFrontmatter } from "../../../parsers/astro-sfc.js";
 import { projectCalleeIn } from "./markup-calls.js";
 
 /**
@@ -10,8 +11,8 @@ import { projectCalleeIn } from "./markup-calls.js";
  * destructured parameters and a snippet's declaration are no expressions, and one that calls
  * nothing a project could define is left out.
  */
-export function withMarkupExpressions(raw: string, blanked: string, kind: "vue" | "svelte"): string {
-  const spans = kind === "vue" ? vueExpressions(raw) : svelteExpressions(raw);
+export function withMarkupExpressions(raw: string, blanked: string, kind: "vue" | "svelte" | "astro"): string {
+  const spans = kind === "vue" ? vueExpressions(raw) : kind === "astro" ? astroExpressions(raw) : svelteExpressions(raw);
   let out = blanked;
   // Back to front: a replacement changes the columns after it, never the lines.
   for (const { start, end, expr } of spans.sort((a, b) => b.start - a.start)) {
@@ -73,6 +74,38 @@ function svelteExpressions(raw: string): Span[] {
     const expr = svelteExpression(t.slice(open + 1, end));
     if (expr) spans.push({ start: open, end: end + 1, expr });
   }
+  return spans;
+}
+
+/**
+ * An Astro component's markup: every `{expression}` outside the frontmatter, scripts and styles
+ * (`{fmtScore(n)}`, `<Crest src={crestUrl(club)} />`, `{clubs.map((c) => <li>{label(c)}</li>)}`).
+ * An expression that holds markup of its own is not TypeScript: its nested `{…}` are read instead,
+ * the callback around them left out.
+ */
+function astroExpressions(raw: string): Span[] {
+  const fence = astroFrontmatter(raw);
+  const blankOfFm = fence ? blankOf(raw.slice(0, fence.close)) + raw.slice(fence.close) : raw;
+  const t = templateText(blankOfFm, false);
+  const spans: Span[] = [];
+  const scan = (from: number, to: number): void => {
+    for (let i = from; i < to; i++) {
+      if (t[i] !== "{") continue;
+      const end = closingBrace(t, i);
+      if (end < 0 || end >= to) continue;
+      const open = i;
+      i = end;
+      const inner = t.slice(open + 1, end);
+      if (/<[A-Za-z][\w.:-]*[\s/>]/.test(inner)) {
+        scan(open + 1, end);
+        continue;
+      }
+      if (NOT_VALUE.test(t.slice(Math.max(0, open - 60), open))) continue;
+      const expr = inner.trim().replace(/^\.\.\./, "");
+      if (expr) spans.push({ start: open, end: end + 1, expr });
+    }
+  };
+  scan(0, t.length);
   return spans;
 }
 
