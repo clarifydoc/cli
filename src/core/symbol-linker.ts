@@ -4867,7 +4867,7 @@ function resolveCallToDefinition(
     // indexed/call receiver (`signatures[0].getReturnType`) yields an element
     // of unknown type, where a unique-name match is usually coincidence.
     const isPlainReceiver = /^[\w$]+\??$/.test(head);
-    if (isPlainReceiver && head !== "this" && head !== "self" && head !== "Self" && !ALL_BUILTIN_MEMBERS.has(leafName)) {
+    if (isPlainReceiver && head !== "this" && head !== "self" && head !== "Self" && !ALL_BUILTIN_MEMBERS.has(leafName) && !manifestFor(analysis.language as Language)?.untypedReceiverMembers?.includes(leafName)) {
       const entry = leafCatalog.get(leafName);
       if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId)) {
         // Receiver-type contradiction veto: when the receiver's DECLARED type

@@ -1627,6 +1627,14 @@ export interface LanguagePluginManifest {
    */
   builtinMembers?: readonly string[];
   /**
+   * Framework member names (ActiveRecord's `find_by`, `save`, `where`) that a plain receiver the
+   * project cannot type never resolves to a project definition of by name-uniqueness: the call is
+   * the framework's far more often than the one class that happens to define the name. Kept apart
+   * from `builtinMembers`, which is read across every language. A stated receiver, a typed one
+   * and a class's own definitions are unaffected.
+   */
+  untypedReceiverMembers?: readonly string[];
+  /**
    * stdlib / well-known package prefixes: an import source equal to a prefix,
    * or starting with `<prefix>.` or `<prefix>/`, never resolves to a project file.
    */
