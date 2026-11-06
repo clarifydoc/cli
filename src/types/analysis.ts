@@ -1058,6 +1058,12 @@ export interface CallInfo {
    */
   returnedAs?: string;
   /**
+   * A member call whose leaf looks like a built-in's (`ACTIONS.map(club)`) on a name imported from the project:
+   * kept only for the linker, which joins it when the exporting file declares that name as an object literal
+   * holding the key, and otherwise draws no edge.
+   */
+  mapMember?: true;
+  /**
    * The type the call's receiver is, when the call expression itself says
    * so and no field, parameter or local does — a service-locator lookup
    * chained straight into the call (`app(Mailer::class)->send()`,

@@ -983,6 +983,12 @@ export interface CallExtractionHooks {
    */
   statedMember?(node: Node, name: string): boolean;
   /**
+   * Whether a noise-named member call reads a key off a name the file imports from the project
+   * (`ACTIONS.map(club)`): kept as a call marked `CallInfo.mapMember`, which the linker joins only through
+   * the exporting file's own dispatch map.
+   */
+  importedMapMember?(node: Node, name: string): boolean;
+  /**
    * The local names a declaration binds from what a call returns (`const { save } = useClubActions()`,
    * `const [rows, refresh] = useMatches()`): a function the factory hands back, so a name handed on
    * from there (`onClick={save}`) is kept for the factory's module to answer.

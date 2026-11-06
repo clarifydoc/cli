@@ -3,7 +3,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
-import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember } from "./dispatch-maps.js";
+import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember } from "./dispatch-maps.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
@@ -123,6 +123,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
 
   // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.
   statedMember: (node, name) => dispatchMapMember(name, node),
+  importedMapMember: (node, name) => importedMapMember(name, node),
 
   // `addEventListener("resize", this.onResize)`: the instance's own method, handed on.
   passedArguments(call) {
