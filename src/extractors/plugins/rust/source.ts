@@ -14,7 +14,7 @@
  * a quote inside a comment or a character literal (`'"'`) opens nothing.
  */
 export function blankRustCodeStrings(source: string): string {
-  if (!source.includes('"')) return source;
+  if (!source.includes('"') && !source.includes("quote")) return source;
   const blank = (s: string): string => s.replace(/[^\r\n]/g, " ");
   let out = "";
   let i = 0;
@@ -33,6 +33,19 @@ export function blankRustCodeStrings(source: string): string {
       out += source.slice(i, end);
       i = end;
       continue;
+    }
+    if (c === "q" || c === "p") {
+      // `quote! { … }`: the tokens a procedural macro emits, code of the program it expands in — never this one's calls.
+      const q = /^(?:parse_)?quote(?:_spanned)?!\s*[{(\[]/.exec(source.slice(i, i + 40));
+      if (q && !isIdentChar(source[i - 1])) {
+        const open = i + q[0].length;
+        const end = delimitedEnd(source, open - 1);
+        if (end > 0) {
+          out += source.slice(i, open) + blank(source.slice(open, end - 1)) + source[end - 1];
+          i = end;
+          continue;
+        }
+      }
     }
     if (c === "'") {
       // A char literal (`'"'`, `'\''`, `'\u{1F600}'`); a lifetime (`'a`) has no closing tick.
@@ -83,6 +96,34 @@ const RUST_ITEM_TEXT = /(?:^|[^\w])(?:fn|struct|enum|trait|impl|union|macro_rule
 function literal(text: string, openLen: number, closeLen: number, blank: (s: string) => string): string {
   if (!/[\r\n]/.test(text) && !RUST_ITEM_TEXT.test(text.slice(openLen, text.length - closeLen))) return text;
   return text.slice(0, openLen) + blank(text.slice(openLen, text.length - closeLen)) + text.slice(text.length - closeLen);
+}
+
+/** Offset just past the delimiter closing the one at `open` (strings, char literals and comments skipped), or -1. */
+function delimitedEnd(source: string, open: number): number {
+  const pairs: Record<string, string> = { "{": "}", "(": ")", "[": "]" };
+  const stack: string[] = [pairs[source[open]!]!];
+  let i = open + 1;
+  while (i < source.length && stack.length > 0) {
+    const ch = source[i]!;
+    if (ch === "/" && source[i + 1] === "/") {
+      const nl = source.indexOf("\n", i);
+      i = nl < 0 ? source.length : nl;
+    } else if (ch === "/" && source[i + 1] === "*") {
+      i = blockCommentEnd(source, i);
+    } else if (ch === '"') {
+      i++;
+      while (i < source.length && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
+      i++;
+    } else if (ch === "'") {
+      const lit = /^'(?:\\(?:u\{[0-9A-Fa-f]+\}|x[0-9A-Fa-f]{2}|.)|[^'\\\n])'/.exec(source.slice(i, i + 12));
+      i += lit ? lit[0].length : 1;
+    } else {
+      if (pairs[ch]) stack.push(pairs[ch]!);
+      else if (ch === stack[stack.length - 1]) stack.pop();
+      i++;
+    }
+  }
+  return stack.length === 0 ? i : -1;
 }
 
 function isIdentChar(ch: string | undefined): boolean {

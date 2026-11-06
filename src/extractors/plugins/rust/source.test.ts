@@ -6,6 +6,16 @@ import { join } from "node:path";
 import { blankRustCodeStrings } from "./source.js";
 
 describe("blankRustCodeStrings", () => {
+  it("blanks the body of quote! (tokens of another program), keeping lines and the code around it", () => {
+    const src = 'fn gen() {\n    let t = quote! { let x = decoy_call("}"); };\n    parse_quote!(fn other() {});\n    kick();\n}';
+    const out = blankRustCodeStrings(src);
+    expect(out.length).toBe(src.length);
+    expect(out.split("\n")).toHaveLength(src.split("\n").length);
+    expect(out).not.toContain("decoy_call");
+    expect(out).not.toContain("other");
+    expect(out).toContain("kick();");
+  });
+
   it("blanks multi-line string text and keeps lines, columns and one-line strings", () => {
     const src = 'let a = "/api/x";\nlet s = r#"\nfn fake() {}\n"#;\nlet c = \'"\'; // "not a string\nlet t = "a\nfn also_fake() {}";';
     const out = blankRustCodeStrings(src);
