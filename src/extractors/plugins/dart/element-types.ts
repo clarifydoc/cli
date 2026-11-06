@@ -41,7 +41,7 @@ export function addDartElementTypes(fn: FunctionInfo, lines: readonly string[], 
   const code = lines.slice(fn.line - 1, fn.endLine).map(codeOf);
   const body = code.join("\n");
   const hasIs = /\bis\b/.test(body);
-  const mayCollect = fields !== null || /<|\[|\bMap\b|\bList\b/.test(body);
+  const mayCollect = fields !== null || /<|\[|\bMap\b|\bList\b|\bfor\b/.test(body);
   if (!hasIs && !mayCollect) return;
 
   const lists = new Map<string, string>();
@@ -82,6 +82,14 @@ export function addDartElementTypes(fn: FunctionInfo, lines: readonly string[], 
   }
 
   const extra: NonNullable<FunctionInfo["localTypes"]> = [];
+  // `await for (final c in clubStream())`, `for (final c in repo.clubs())`: the element of what the call is declared to return.
+  for (const f of body.matchAll(/\bfor\s*\(\s*(?:final|var)\s+(?:[A-Z]\w*\??\s+)?([a-z_$]\w*)\s+in\s+(?:this\s*\.\s*)?([A-Za-z_$][\w$]*(?:\s*[?!]?\.\s*[A-Za-z_$][\w$]*)*)\s*\(/g)) {
+    const open = f.index! + f[0].length - 1;
+    const close = closeOf(body, open);
+    if (close < 0 || !/^\s*\)/.test(body.slice(close))) continue;
+    const from = `${f[2]!.replace(/\s+/g, "").replace(/[?!]\./g, ".")}()`;
+    if (!declared.has(f[1]!)) extra.push({ name: f[1]!, type: "", from, element: true });
+  }
   if (lists.size > 0 || maps.size > 0) {
     extra.push(...elementParams(body, lists, maps));
     for (const [name, element] of [...lists, ...maps]) {

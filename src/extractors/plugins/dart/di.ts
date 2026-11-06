@@ -542,7 +542,7 @@ function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null
 
 /** `List<Club>`, `Iterable<Club>?`, `Set<Club>`: the element class; null for anything else. */
 export function elementType(type: string | null | undefined): string | null {
-  return /^\s*(?:List|Iterable|Set|Queue|UnmodifiableListView)\s*<\s*([A-Z]\w*)\s*>\s*\??\s*$/.exec(type ?? "")?.[1] ?? null;
+  return /^\s*(?:List|Iterable|Set|Queue|Stream|UnmodifiableListView)\s*<\s*([A-Z]\w*)\s*>\s*\??\s*$/.exec(type ?? "")?.[1] ?? null;
 }
 
 /** `Map<String, Club>` → `Club`: the value type of a map whose values are a class; null otherwise. */

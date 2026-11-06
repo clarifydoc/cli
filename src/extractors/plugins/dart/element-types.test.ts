@@ -71,6 +71,13 @@ void decoy(List<Player> players, Map<String, Player> byId, Object o) {
 void plain(List<String> names) {
   for (final n in names) { n.promote(); }
 }
+Stream<Club> clubStream() async* {}
+class Feed { Stream<Player> playerStream() async* {} }
+Future<void> watch(Stream<Club> live, Feed feed) async {
+  await for (final c in clubStream()) { c.promote(); }
+  await for (final p in feed.playerStream()) { p.promote(); }
+  await for (final k in live) { k.promote(); }
+}
 `,
 };
 
@@ -119,6 +126,12 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:dart"]])("D
     expect(target("narrow", "x.promote")).toEqual(["Club.promote"]);
     expect(target("narrow", "y.promote")).toEqual(["Club.promote"]);
     expect(target("decoy", "o.promote")).toEqual(["Player.promote"]);
+  });
+
+  it("types the variable of an `await for` over a Stream call, a Stream parameter", () => {
+    expect(target("watch", "c.promote")).toEqual(["Club.promote"]);
+    expect(target("watch", "p.promote")).toEqual(["Player.promote"]);
+    expect(target("watch", "k.promote")).toEqual(["Club.promote"]);
   });
 
   it("keeps the namesake apart and leaves ambiguous bindings untyped", () => {
