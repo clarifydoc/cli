@@ -286,7 +286,15 @@ export function receiverTypeName(raw: string | null | undefined, language: Langu
       s = present[0]!;
       continue;
     }
-    if (splitTopLevel(s, ["&"]).length > 1) return null;
+    // An intersection (`Club & { badge: string }`) has every member's members: with one named type left once the
+    // inline object types are dropped, that type is the receiver. Two named types decide nothing.
+    const intersection = splitTopLevel(s, ["&"]);
+    if (intersection.length > 1) {
+      const named = intersection.filter((m) => !m.trim().startsWith("{"));
+      if (named.length !== 1 || named.length === intersection.length) return null;
+      s = named[0]!;
+      continue;
+    }
     const generic = matchGeneric(s);
     if (generic) {
       const name = generic.name.split(/\\|::|\./).pop() ?? "";

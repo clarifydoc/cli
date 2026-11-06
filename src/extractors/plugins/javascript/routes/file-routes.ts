@@ -175,7 +175,8 @@ function pagesApiRoutes(r: RouteInfo, analysis: FileAnalysis, sourceText: string
   if (!hasDefaultExport(sourceText)) return [];
   const exported = /\bexport\s+default\s+(?:async\s+)?(?:function\s+(\w+)|(?:[\w.]+\s*\(\s*)*(\w+)\s*\)*\s*;?\s*$)/m.exec(sourceText);
   const name = exported?.[1] ?? exported?.[2];
-  const fn = name ? analysis.functions.find((f) => f.name === name) : undefined;
+  // An anonymous default export (`export default withAuth(async (req, res) => …)`) is the function named `default`.
+  const fn = analysis.functions.find((f) => f.name === (name ?? "default"));
   const declared = declaredMethods(sourceText);
   const row = (method: string | null): RouteInfo => ({ ...r, httpMethod: method, handler: fn?.name ?? name ?? null, line: fn?.line ?? 1 });
   if (declared.length > 0) return declared.map(row);

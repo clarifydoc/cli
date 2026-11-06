@@ -40,6 +40,24 @@ interface ScanContext {
   dispatchMappers: ReadonlySet<string>;
   /** Top-level `const x = 'literal'` of the file (see `moduleStringConstants`). */
   moduleStrings: ReadonlyMap<string, string>;
+  /** Classes function bodies declare, by name: whether the class is reported (its name is the file's only one). */
+  localClasses: ReadonlyMap<string, boolean>;
+}
+
+/**
+ * The classes function bodies declare, by name, each with whether it is reported as a class of its own: only where
+ * its name is the file's one class of it (two classes of a name share their members' symbol names).
+ */
+function localClassesOf(root: Node): Map<string, boolean> {
+  const count = new Map<string, number>();
+  const local = new Set<string>();
+  for (const n of root.descendantsOfType(["class_declaration", "abstract_class_declaration"])) {
+    const name = n?.childForFieldName("name")?.text;
+    if (!n || !name) continue;
+    count.set(name, (count.get(name) ?? 0) + 1);
+    if (n.parent?.type === "statement_block") local.add(name);
+  }
+  return new Map([...local].map((name) => [name, count.get(name) === 1]));
 }
 
 /**
@@ -150,6 +168,8 @@ function scanBody(
   // name → every binding seen (null = a binding whose type is not stated).
   const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
   const reassigned = new Set<string>();
+  /** Class names this body declares that are not reported: a local typed by one states no class we know. */
+  const hiddenTypes = new Set<string>();
   const bindUntyped = (name: string): void => {
     const list = bindings.get(name);
     if (list) list.push(null);
@@ -260,7 +280,14 @@ function scanBody(
   // `ownBody`: outside every function expression, where a `return` is the function's own.
   const walk = (node: Node, isRoot: boolean, inScope: boolean, parentType: string, ownBody: boolean): void => {
     const type = node.type;
-    if (!isRoot && SEPARATE_SCOPES.has(type)) return;
+    if (!isRoot && SEPARATE_SCOPES.has(type)) {
+      // A class this body declares is its own: an instance's type is that class, never a namesake elsewhere.
+      if (type === "class_declaration" && inScope) {
+        const declared = node.childForFieldName("name")?.text;
+        if (declared && ctx.localClasses.get(declared) === false) hiddenTypes.add(declared);
+      }
+      return;
+    }
     const children = node.children;
     if (ownBody && type === "return_statement") spreadLocals(node.namedChildren[0], returnedSpreads);
 
@@ -376,6 +403,7 @@ function scanBody(
       continue;
     }
     if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
+    if (hiddenTypes.has(first.local.type)) continue;
     localTypes.push(first.local);
   }
   return { extraCalls, localTypes, returnedSpreads };
@@ -486,7 +514,7 @@ function conditionalLocals(children: readonly Node[], name: string): Array<{ loc
  * file sees when its own scope does not bind the name.
  */
 export function topLevelLocalTypes(tree: Tree, sourceText: string): LocalType[] {
-  const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map() };
+  const ctx: ScanContext = { jsdoc: JSDOC_TAG_RE.test(sourceText), tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map(), localClasses: new Map() };
   const locals = scanBody(tree.rootNode, new Set(), ctx).localTypes;
   return sourceText.includes("new ") ? [...locals, ...objectPathTypes(tree.rootNode)] : locals;
 }
@@ -1242,7 +1270,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * `extractClasses` are each called once per file, synchronously — the one
    * instance is shared by the typescript and javascript metas).
    */
-  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map() };
+  private ctx: ScanContext = { jsdoc: false, tokenTypes: new Map(), dispatchProps: new Map(), dispatchMappers: new Set(), moduleStrings: new Map(), localClasses: new Map() };
   private ctxTree: Tree | null = null;
   /** Whether the file defines a Pinia store (a substring gate, see `piniaStoreOf`). */
   private pinia = false;
@@ -1336,6 +1364,15 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
     this.beginFile(tree, sourceText);
     const classes = super.extractClasses(tree, sourceText);
+    // A class a function body declares (`function a() { class Club {} … new Club() }`) is its own class, found by
+    // line span, so a construction there never reaches a top-level namesake. Only where its name is the file's one
+    // (two classes of a name share their members' symbol names): the construction is then bound locally and links nowhere.
+    if (this.ctx.localClasses.size > 0) {
+      for (const node of tree.rootNode.descendantsOfType(["class_declaration", "abstract_class_declaration"])) {
+        const name = node?.childForFieldName("name")?.text;
+        if (node && node.parent?.type === "statement_block" && name && this.ctx.localClasses.get(name)) classes.push(this.parseJsClass(node, false));
+      }
+    }
     if (this.ctx.dispatchProps.size > 0) for (const c of classes) for (const m of c.methods) addDispatchPropCalls(m, this.ctx.dispatchProps);
     // Named zod schemas, as the request types a route validates with (zod-schemas.ts).
     classes.push(...extractZodSchemas(tree.rootNode, sourceText));
@@ -1477,6 +1514,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       dispatchProps: sourceText.includes("connect(") ? dispatchPropsOf(tree.rootNode) : new Map(),
       dispatchMappers: sourceText.includes("connect(") ? dispatchMappersOf(tree.rootNode) : new Set(),
       moduleStrings: sourceText.includes("class ") ? moduleStringConstants(tree.rootNode) : new Map(),
+      localClasses: sourceText.includes("class ") ? localClassesOf(tree.rootNode) : new Map(),
     };
   }
 
@@ -1523,6 +1561,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const wrapped = value.type === "call_expression" ? wrappedFunction(value) : null;
           const name = wrapped?.type === "function_expression" ? wrapped.childForFieldName("name")?.text : undefined;
           if (wrapped && name) functions.push(this.parseJsArrowOrExpr(name, wrapped, true));
+          // No name to give: `export default withAuth(async (req, res) => …)`, `export default async (req, res) => …` —
+          // the module's default function, as an importer (and a `pages/api` route) calls it.
+          else if (!wrapped) {
+            const anonymous = FUNCTION_EXPRESSIONS.has(value.type) && !value.childForFieldName("name") ? value
+              : value.type === "call_expression" ? handlerOf(value, true) : null;
+            if (anonymous && !functions.some((f) => f.name === "default")) functions.push(this.parseJsArrowOrExpr("default", anonymous, true));
+          }
           if (value.type === "call_expression" || value.type === "new_expression") this.extractStoreCallActions(value, functions);
         }
         this.extractJsFunctions(child, functions, true);

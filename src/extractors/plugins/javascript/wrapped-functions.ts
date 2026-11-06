@@ -109,6 +109,8 @@ export function handlerOf(value: Node, exported: boolean): Node | null {
  */
 export function boundHandler(fn: Node): boolean {
   const call = fn.parent?.type === "arguments" ? fn.parent.parent : null;
+  // `export default withAuth(async (req, res) => …)`: the module's default function.
+  if (call?.type === "call_expression" && call.parent?.type === "export_statement" && call.parent.parent?.type === "program") return !wrappedFunction(call) && handlerOf(call, true)?.id === fn.id;
   const declarator = call?.parent;
   if (call?.type !== "call_expression" || declarator?.type !== "variable_declarator" || declarator.childForFieldName("name")?.type !== "identifier") return false;
   const declaration = declarator.parent;
