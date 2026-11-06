@@ -1,4 +1,4 @@
-import { templateScopes, type TemplateScope } from "./template-scopes.js";
+import { templateScopes, WHOLE_SLOT_PROPS, type TemplateScope } from "./template-scopes.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
 
@@ -323,7 +323,7 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
   for (const scope of [...scopes].reverse()) {
     for (const name of scope.names) {
       if (found.some((f) => f.name === name) || !new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(handler)) continue;
-      if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.props![name]! } });
+      if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.whole ? WHOLE_SLOT_PROPS : scope.props![name]! } });
       else {
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
         if (type) found.push({ name, type });
@@ -408,6 +408,14 @@ export function extractSlotFunctions(template: string, fullSource: string, hands
     for (const b of attrs.matchAll(/(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)\s*=\s*"\s*([A-Za-z_$][\w$]*)\s*"/g)) {
       if (b[1] === "name" || !handsOn(b[2]!)) continue;
       out.push({ slot, prop: b[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase()), handler: b[2]!, line });
+    }
+    // `<slot v-bind="{ save: saveAll, reload }">`: an object of slot props.
+    for (const obj of attrs.matchAll(/(?:^|\s)v-bind\s*=\s*(?:"\s*\{([^"]*)\}\s*"|'\s*\{([^']*)\}\s*')/g)) {
+      for (const entry of (obj[1] ?? obj[2] ?? "").split(",")) {
+        const e = /^\s*([A-Za-z_$][\w$]*)\s*(?::\s*([A-Za-z_$][\w$]*)\s*)?$/.exec(entry);
+        const handler = e?.[2] ?? e?.[1];
+        if (e && handler && handsOn(handler)) out.push({ slot, prop: e[1]!, handler, line });
+      }
     }
   }
   return out;

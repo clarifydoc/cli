@@ -14,7 +14,12 @@ export interface TemplateScope {
   component?: string;
   slot?: string;
   props?: Record<string, string>;
+  /** Slot: the whole props object bound to one name (`#default="props"`); `names` holds that name and `props` is empty. */
+  whole?: boolean;
 }
+
+/** `scope.slot.prop` of a scope that binds the slot's whole props object: the member comes from the call (`props.save`). */
+export const WHOLE_SLOT_PROPS = "*";
 
 const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
 
@@ -50,8 +55,11 @@ export function templateScopes(template: string): Map<number, TemplateScope[]> {
     const slot = /(?:^|\s)(?:v-slot(?::([\w-]+))?|#([\w-]+))\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(attrs);
     if (slot) {
       const owner = tag === "template" ? [...stack].reverse().find((s) => s.custom)?.tag : custom ? tag : undefined;
-      const props = slotParams(slot[3] ?? slot[4] ?? "");
+      const raw = slot[3] ?? slot[4] ?? "";
+      const props = slotParams(raw);
       if (owner && props) own.push({ kind: "slot", names: Object.keys(props), component: owner, slot: slot[1] ?? slot[2] ?? "default", props });
+      // `#default="props"`: every prop of the slot under one name, read as `props.save`.
+      else if (owner && /^\s*[A-Za-z_$][\w$]*\s*$/.test(raw)) own.push({ kind: "slot", names: [raw.trim()], component: owner, slot: slot[1] ?? slot[2] ?? "default", props: {}, whole: true });
     }
     const scopes = own.length > 0 ? [...inherited, ...own] : inherited;
     if (scopes.length > 0) out.set(m.index, scopes);
