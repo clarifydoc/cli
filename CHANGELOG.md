@@ -47,6 +47,15 @@ recorded in the git history only.
   C's grammar first and C++'s only when C refuses it (`readingVariant` on the language manifest, decided from the
   project's file mix before any worker starts; `FileAnalysis.frontEnd.variant`). An incremental run re-reads a
   header when its project's mix flips.
+- **The C++ reader parses more of what compilers accept:** `override`/`final` used as names; a macro standing for a
+  type or a scope (`MACRO(E)::value`, `using A = const MACRO(T) *;`); non-type template parameters compared
+  (`conditional_t<N < 256, A, B>`), `>=` after a closed template, `decltype(auto)` after a requires clause, any
+  constant expression as a `static_assert` message; lambdas among template arguments; macros standing for
+  `try`/`catch`/`if` (`CATCH_TRY { } CATCH_ALL { }`, `IF_CONSTEXPR(c) { } else { }`), recorded as calls to the
+  macro; a bare macro ending a block or following a macro call; GNU `asm` with qualifiers and operands, also inside
+  a macro's arguments; a macro template parameter with a default; a capitalized name in a declaration's parentheses
+  read as a value when a literal is among the arguments. Files these refused before now fall back to the patterns
+  far less often.
 - **C and C++ function-like macros are call targets** (`FileAnalysis.macros`): a call of `for_each_club(c, l) { … }`,
   `MAX(a, b)` or any other function-like `#define` links to the `#define` in the file itself or in a header it
   includes (up to four levels, nearest first), when no function of that name is in scope. Two headers defining it at
