@@ -523,6 +523,14 @@ describe("normalizeRoutePath — holes before separators", () => {
     expect(normalizeRoutePath("players/<pk>/notes")).toBe("/players/{}/notes");
   });
 
+  it("reads a converter with arguments and a parameter with its own pattern as one parameter", () => {
+    expect(normalizeRoutePath('/leagues/<regex("[0-9]+"):lid>')).toBe("/leagues/{}");
+    expect(normalizeRoutePath("/garages/<string(length=3):code>/cars")).toBe("/garages/{}/cars");
+    expect(normalizeRoutePath("/drivers/<any(a,b):kind>")).toBe("/drivers/{}");
+    expect(normalizeRoutePath("/clubs/:id(\\d+)")).toBe("/clubs/{}");
+    expect(normalizeRoutePath("/files/:name(.+/x)/raw")).toBe("/files/{}/raw");
+  });
+
   it("reduces a Django re_path regex to the path it matches", () => {
     expect(normalizeRoutePath("^players/(?P<pk>[^/.]+)/$")).toBe("/players/{}");
     expect(normalizeRoutePath("^documents/(?P<pk>\\d+)/versions/(?P<version_id>\\d+)/?$")).toBe(

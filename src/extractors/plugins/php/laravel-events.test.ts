@@ -8,7 +8,9 @@ import type { FileAnalysis } from "../../../types/analysis.js";
 async function fileOf(filePath: string, src: string): Promise<FileAnalysis> {
   const tree = await parseSource(src, "php" as any, filePath);
   const x = new PhpExtractor();
-  return { filePath, language: "php", projectId: "league", functions: x.extractFunctions(tree, src), classes: x.extractClasses(tree, src) } as unknown as FileAnalysis;
+  const declaredNamespace = /^namespace\s+([\w\\]+);/m.exec(src)?.[1];
+  const imports = [...src.matchAll(/^use\s+([\w\\]+)(?:\s+as\s+(\w+))?;/gm)].map((m) => ({ source: m[1]!, specifiers: [m[2] ?? m[1]!.split("\\").pop()!] }));
+  return { filePath, language: "php", projectId: "league", functions: x.extractFunctions(tree, src), classes: x.extractClasses(tree, src), imports, declaredNamespace } as unknown as FileAnalysis;
 }
 
 describe("Laravel events → listeners", () => {
@@ -75,6 +77,34 @@ class Garage { public function handle() {} }`),
     expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol} (${l.callName})`).sort()).toEqual([
       "TransferController.loan -> ScoutReport.handle (dispatch(ScoutReport))",
       "TransferController.sign -> SettleFee.handle (SettleFee.dispatch)",
+    ]);
+  });
+
+  it("a job name two classes share resolves by the use import or the namespace, never by the leaf", async () => {
+    const analyses = await Promise.all([
+      fileOf("app/Http/Controllers/ClubController.php", `<?php
+namespace App\\Http\\Controllers;
+use App\\Jobs\\SyncClub;
+class ClubController {
+  public function sync() { dispatch(new SyncClub(1)); }
+  public function full() { dispatch(new \\App\\Legacy\\SyncClub(1)); }
+}`),
+      fileOf("app/Http/Controllers/PlayerController.php", `<?php
+namespace App\\Http\\Controllers;
+class PlayerController {
+  public function sync() { dispatch(new SyncClub(1)); }
+}`),
+      fileOf("app/Jobs/SyncClub.php", `<?php
+namespace App\\Jobs;
+class SyncClub { public function handle() {} }`),
+      fileOf("app/Legacy/SyncClub.php", `<?php
+namespace App\\Legacy;
+class SyncClub { public function handle() {} }`),
+    ]);
+    const links = new LaravelEventResolver().resolve(analyses);
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}`).sort()).toEqual([
+      "ClubController.full -> app/Legacy/SyncClub.php",
+      "ClubController.sync -> app/Jobs/SyncClub.php",
     ]);
   });
 });
