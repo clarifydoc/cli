@@ -54,8 +54,11 @@ function localClassesOf(root: Node): Map<string, boolean> {
   for (const n of root.descendantsOfType(["class_declaration", "abstract_class_declaration"])) {
     const name = n?.childForFieldName("name")?.text;
     if (!n || !name) continue;
+    // Only the function-local declarations count: a top-level namesake is another scope's class, which the
+    // linker keeps apart by the line span each one holds.
+    if (n.parent?.type !== "statement_block") continue;
     count.set(name, (count.get(name) ?? 0) + 1);
-    if (n.parent?.type === "statement_block") local.add(name);
+    local.add(name);
   }
   return new Map([...local].map((name) => [name, count.get(name) === 1]));
 }

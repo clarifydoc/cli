@@ -59,9 +59,9 @@ export function top() {
     expect(targets(summary, "plain", "Club")).toEqual(["club.ts:Club:1"]);
     expect(targets(summary, "plain", "c.rename")).toEqual(["club.ts:Club.rename:1"]);
   });
-  it("links nothing to a top-level namesake in the same file", () => {
-    expect(targets(summary, "local", "Table")).toEqual([]);
-    expect(targets(summary, "local", "t.sort")).toEqual([]);
+  it("links the local class inside its function and the top-level namesake outside it", () => {
+    expect(targets(summary, "local", "Table")).toEqual(["same.ts:Table:3"]);
+    expect(targets(summary, "local", "t.sort")).toEqual(["same.ts:Table.sort:3"]);
     expect(targets(summary, "top", "Table")).toEqual(["same.ts:Table:1"]);
     expect(targets(summary, "top", "t.sort")).toEqual(["same.ts:Table.sort:1"]);
   });

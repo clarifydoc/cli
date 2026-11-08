@@ -4394,7 +4394,34 @@ function isCallableSymbol(analysis: FileAnalysis, symbol: string): boolean {
  * Try to resolve a single call to its definition site.
  * Returns a SymbolLink if resolution succeeds, null otherwise.
  */
+/**
+ * `resolveCallUnscoped`, with a link into a same-named class of the caller's own file settled by scope (where names
+ * are lexical): a function may declare `class Club` beside the file's top-level `Club`, and a member looked up by
+ * the class NAME finds the later one. The call site's own scope decides — the class its function declares, else the
+ * top-level one — and a member the chosen class lacks is no link (it was the namesake's).
+ */
 function resolveCallToDefinition(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+  reference = false,
+): SymbolLink | null {
+  const link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
+  const dot = link.targetSymbol.indexOf(".");
+  if (dot <= 0) return link;
+  const className = link.targetSymbol.slice(0, dot);
+  if (analysis.classes.filter((c) => c.name === className).length < 2) return link;
+  const chosen = localClassDefinition(ctx, analysis, { name: className, kind: "internal", target: null, line: call.line });
+  if (!chosen || (link.targetLine >= chosen.line && link.targetLine <= chosen.endLine)) return link;
+  const member = link.targetSymbol.slice(dot + 1);
+  const method = chosen.methods.find((m) => m.name === member);
+  return method ? { ...link, targetLine: method.line } : null;
+}
+
+function resolveCallUnscoped(
   sourceFile: string,
   sourceSymbol: string,
   call: CallInfo,

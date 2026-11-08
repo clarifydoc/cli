@@ -1,4 +1,4 @@
-import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractParamsFromDeclaration, findEndLine, type ParamParser } from "../shared/regex-base.js";
 import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
@@ -65,7 +65,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
       // states its type where the shadowing is known (see `typeShadowedCalls`).
       const shadow = locals.findIndex((l) => l.name === receiver.name);
       if (shadow >= 0) locals.splice(shadow, 1);
-      if (shadow >= 0 || declared.has(receiver.name)) typeShadowedCalls(lines, fn, receiver.name!, receiver.type);
+      if (shadow >= 0 || declared.has(receiver.name)) typeShadowedCalls(lines, fn, receiver.name!, receiver.type, constructors);
       else locals.unshift({ name: receiver.name, type: receiver.type });
     }
     // A parameter the body redeclares in an inner block (`club := &Club{}` beside a `club *Car` parameter): each
@@ -73,7 +73,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     for (const param of fn.params) {
       const written = reading.paramTypes?.get(param.name) ?? param.type;
       if (param.isReceiver || !written || param.name === "_" || !declared.has(param.name) || goContainerResult(written)) continue;
-      typeShadowedCalls(lines, fn, param.name, written);
+      typeShadowedCalls(lines, fn, param.name, written, constructors);
     }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
@@ -93,7 +93,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
  * type assertion's value (`name, ok := x.(*Car)`). Null where it is not stated (a call's result, an index, a second
  * variable of a pair).
  */
-function statedDeclarationType(code: string, name: string): string | null {
+function statedDeclarationType(code: string, name: string, constructors?: GoConstructors): string | null {
   const v = new RegExp(`\\bvar\\s+${name}\\s+([*\\[\\]\\w.]+)\\s*(?:=|$)`).exec(code);
   if (v) return v[1]!;
   const d = new RegExp(`(?:^|[\\s(;])((?:[A-Za-z_]\\w*\\s*,\\s*)*${name}(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*:=\\s*([^;]+)`).exec(code);
@@ -102,7 +102,7 @@ function statedDeclarationType(code: string, name: string): string | null {
   const rhs = d[2]!.trim();
   const assertion = /^[A-Za-z_][\w.]*\.\(\s*(\*?[A-Za-z_][\w.]*)\s*\)$/.exec(rhs);
   if (assertion) return names[0] === name ? assertion[1]! : null;
-  return names.length === 1 ? initializerType(rhs, 0, 1) : null;
+  return names.length === 1 ? initializerType(rhs, 0, 1, constructors) : null;
 }
 
 /**
@@ -113,7 +113,7 @@ function statedDeclarationType(code: string, name: string): string | null {
  * element (`Part`); each states that type as its `receiverType`. A call in a
  * block whose local's type is not read here stays untyped.
  */
-function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: string, receiverType: string): void {
+function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: string, receiverType: string, constructors?: GoConstructors): void {
   const spans: Array<{ from: number; to: number; type: string | null }> = [];
   const open: Array<{ depth: number; from: number; type: string | null }> = [];
   const decl = new RegExp(`(?:^|[\\s,(;])${name}\\s*(?:,\\s*[A-Za-z_]\\w*\\s*)*:=|\\bvar\\s+${name}\\b|,\\s*${name}\\s*:=`);
@@ -126,7 +126,7 @@ function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: str
       const header = /^\s*(?:for|if|switch|select)\b/.test(code);
       const range = header ? new RegExp(`^\\s*for\\s+[A-Za-z_]\\w*\\s*,\\s*${name}\\s*:=\\s*range\\s+([A-Za-z_]\\w*)\\s*\\{`).exec(code) : null;
       const element = range ? new RegExp(`\\b${range[1]}\\s+\\[\\]\\*?([A-Za-z_][\\w.]*)`).exec(signature)?.[1] ?? null : null;
-      const stated = range ? null : statedDeclarationType(code, name);
+      const stated = range ? null : statedDeclarationType(code, name, constructors);
       // A header's local lives in the block it opens; any other in the block it stands in.
       open.push({ depth: header ? start : start - 1, from: ln, type: element ?? stated });
     }
@@ -142,16 +142,42 @@ function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: str
     }
   }
   for (const o of open) spans.push({ from: o.from, to: fn.endLine, type: o.type });
+  // What a call on `name` at a line sees: the written type outside every shadowing block, the innermost block's
+  // declared type, or null where that block's declaration states none (a call result).
+  const seenAt = (line: number): string | null => {
+    const inside = spans.filter((s) => line >= s.from && line <= s.to);
+    if (inside.length === 0) return receiverType;
+    return inside.reduce((a, b) => (b.from >= a.from ? b : a)).type;
+  };
+  const added: CallInfo[] = [];
   for (const call of fn.calls) {
     const parts = call.name.split(".");
     if (parts.length !== 2 || parts[0] !== name || call.receiverType) continue;
-    const inside = spans.filter((s) => call.line >= s.from && call.line <= s.to);
-    if (inside.length === 0) call.receiverType = receiverType;
-    else {
-      const innermost = inside.reduce((a, b) => (b.from >= a.from ? b : a));
-      if (innermost.type) call.receiverType = innermost.type;
+    const apply = (c: CallInfo, type: string | null): void => {
+      if (type) c.receiverType = type;
+      else c.boundLocally = true;
+    };
+    apply(call, seenAt(call.line));
+    // One row stands for every call of the name in the function, but the sites do not all see one declaration: a
+    // call outside the shadowing block and one inside it are two rows, each with the type it sees.
+    const site = new RegExp(`(?<![\\w.])${name}\\s*\\.\\s*${parts[1]}\\s*\\(`);
+    const have = new Set<string | null>([seenAt(call.line)]);
+    for (let ln = fn.line + 1; ln <= fn.endLine; ln++) {
+      if (ln === call.line) continue;
+      const code = stripGoComment(lines[ln - 1] ?? "").replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""');
+      const m = site.exec(code);
+      if (!m) continue;
+      const type = seenAt(ln);
+      if (have.has(type)) continue;
+      have.add(type);
+      const extra: CallInfo = { ...call, line: ln, column: m.index };
+      delete extra.receiverType;
+      delete extra.boundLocally;
+      apply(extra, type);
+      added.push(extra);
     }
   }
+  fn.calls.push(...added);
 }
 
 /** `func (s *Svc) Run(` / `func (Svc) Name(` / `func (s *Stack[T]) Push(` → receiver var, type, method. */
