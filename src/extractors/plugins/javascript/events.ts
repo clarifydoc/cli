@@ -10,6 +10,7 @@ export function extractEvents(
   language: Language,
 ): EventInfo[] {
   if (language !== "typescript" && language !== "javascript") return [];
+  sourceText = emitConstants(sourceText);
 
   const events: EventInfo[] = [];
   const seen = new Set<string>();
@@ -45,6 +46,23 @@ export function extractEvents(
   }
 
   return events;
+}
+
+/**
+ * `emit(UPLOAD)` with `const UPLOAD = "upload"` declared in the file: the call as the literal it names
+ * (line breaks kept, so every offset still falls on its own line). A name the file does not bind to a string
+ * literal, or binds twice, is left as written.
+ */
+function emitConstants(source: string): string {
+  if (!/\bemit\s*\(\s*[A-Za-z_$]/.test(source)) return source;
+  const consts = new Map<string, string | null>();
+  for (const m of source.matchAll(/^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:(['"])([\w:-]+)\2(?:\s+as\s+const)?\s*;?\s*$|[^\n]*)/gm)) {
+    consts.set(m[1]!, consts.has(m[1]!) ? null : m[3] ?? null);
+  }
+  return source.replace(/\bemit\s*\(\s*([A-Za-z_$][\w$]*)\s*(?=[,)])/g, (all, name: string) => {
+    const value = consts.get(name);
+    return value ? all.replace(name, `"${value}"`) : all;
+  });
 }
 
 /** An event name: `save`, `update:task`, `update:model-value`. */
