@@ -166,7 +166,7 @@ export function extractJsVariableAliases(
         // `const inbox = useInfiniteQuery(computed(() => inboxQuery(page.value)))`: a library query hook's
         // result is its request's own object — `inbox.fetchNextPage()` re-runs the project's query factory
         // the hook was given, so the receiver is bound to that factory (the library's module has no member to name).
-        const queried = !isCtor && QUERY_HOOKS.has(fnName) && !PROJECT_SPECIFIER.test(source) ? queryFactoryOf(valueNode, importMap) : undefined;
+        const queried = !isCtor && QUERY_HOOKS.has(fnName) && !isProjectSource(source) ? queryFactoryOf(valueNode, importMap) : undefined;
         if (queried) {
           if (nameNode.type === "identifier") bind(nameNode.text, queried.source, queried.name);
           else if (nameNode.type === "object_pattern") {
@@ -222,6 +222,15 @@ export function extractJsVariableAliases(
 /** A module specifier naming project code: relative, or a conventional source alias (`@/`, `~/`, `#/`). */
 const PROJECT_SPECIFIER = /^(?:\.|[@~#]\/)/;
 
+/**
+ * Whether an import's source is a file of the project: written relative or by an alias, or already resolved to the
+ * project's own path (`app/client/queries/clubs` — three segments or more, never a package's `lodash/fp`).
+ */
+function isProjectSource(source: string): boolean {
+  if (PROJECT_SPECIFIER.test(source) || source.startsWith("src/")) return true;
+  return source.split("/").length >= (source.startsWith("@") ? 4 : 3);
+}
+
 /** Library hooks that run a request described by a project's query factory. */
 const QUERY_HOOKS: ReadonlySet<string> = new Set(["useQuery", "useInfiniteQuery", "useSuspenseQuery", "useSuspenseInfiniteQuery"]);
 /** What a query result offers to run its request again. */
@@ -238,7 +247,7 @@ function queryFactoryOf(call: Node, importMap: ReadonlyMap<string, string>): { n
     if (n.type === "call_expression" && !top) {
       const callee = n.childForFieldName("function");
       const source = callee?.type === "identifier" ? importMap.get(callee.text) : undefined;
-      if (callee && source && PROJECT_SPECIFIER.test(source)) found.set(callee.text, source);
+      if (callee && source && isProjectSource(source)) found.set(callee.text, source);
     }
     for (const c of n.namedChildren) if (c) visit(c, false);
   };

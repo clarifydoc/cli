@@ -28,6 +28,9 @@ describe("query hook results", () => {
     expect(aliases.has("data")).toBe(false);
     // Two factories, or none: the library's own binding stays.
     expect(aliases.get("both")).toMatchObject({ source: "@tanstack/vue-query", factory: "useQuery" });
+    // A source already resolved to the project's own path is as much the project's as `@/…`.
+    const resolved = extractJsVariableAliases(tree, [imp("@tanstack/vue-query", "useInfiniteQuery", "useQuery"), imp("app/client/queries/inbox", "inboxQuery")]);
+    expect(resolved.get("inbox")).toMatchObject({ source: "app/client/queries/inbox", factory: "inboxQuery" });
     expect(aliases.get("none")).toMatchObject({ source: "@tanstack/vue-query", factory: "useQuery" });
   });
 });
