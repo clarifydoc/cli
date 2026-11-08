@@ -7,7 +7,8 @@ const EMPTY_TYPES = new Set(["null", "undefined"]);
 /**
  * Top-level `type Repo = ClubRepository` (exported or not) that names one
  * type — `Garage<T>`, `league.Club`, `Club | null` — never an object, function
- * or union of several types.
+ * or union of several types; and `type Kind = 'clubs' | 'players'`, a union of
+ * string literals, as written (a closed set of values a URL hole may take).
  */
 export function extractTsTypeAliases(tree: Tree): TypeAliasInfo[] {
   const out: TypeAliasInfo[] = [];
@@ -18,6 +19,7 @@ export function extractTsTypeAliases(tree: Tree): TypeAliasInfo[] {
     const value = decl.childForFieldName("value");
     const named = value ? namedType(value) : null;
     if (name && named) out.push({ name, type: named.text, line: decl.startPosition.row + 1 });
+    else if (name && value && isStringLiteralUnion(value)) out.push({ name, type: value.text.replace(/\s+/g, " ").replace(/^\|\s*/, ""), line: decl.startPosition.row + 1 });
   }
   return out;
 }
@@ -54,4 +56,20 @@ function namedType(node: Node): Node | null {
   };
   collect(node);
   return parts.length === 1 && NAMED_TYPES.has(parts[0]!.type) ? parts[0]! : null;
+}
+
+/** `'clubs' | 'players'` (null and undefined allowed beside them): at least two string literals and nothing else. */
+function isStringLiteralUnion(node: Node): boolean {
+  if (node.type !== "union_type") return false;
+  let strings = 0;
+  const walk = (n: Node): boolean => {
+    if (n.type === "union_type") return n.namedChildren.every(walk);
+    if (n.type === "predefined_type" && EMPTY_TYPES.has(n.text)) return true;
+    const lit = n.type === "literal_type" ? n.namedChild(0) : null;
+    if (lit && EMPTY_TYPES.has(lit.type)) return true;
+    if (lit?.type !== "string") return false;
+    strings++;
+    return true;
+  };
+  return walk(node) && strings >= 2;
 }

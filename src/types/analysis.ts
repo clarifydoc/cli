@@ -599,8 +599,10 @@ export interface FileAnalysis {
    * Go `type Repo = store.ClubRepo`, C# `using Repo = League.ClubRepository;`,
    * Rust `type Repo = Arc<dyn ClubStore>;`, Python `Repo = ClubRepository` /
    * `Repo: TypeAlias = …`), the aliased type as written. The symbol linker
-   * follows them where a receiver's declared type names the alias. Omitted
-   * when the file declares none.
+   * follows them where a receiver's declared type names the alias. A union of
+   * string literals (TypeScript `type Kind = 'clubs' | 'players'`) is one too:
+   * the values a URL hole of that type takes (core/typed-member-holes.ts).
+   * Omitted when the file declares none.
    */
   typeAliases?: TypeAliasInfo[];
   /**

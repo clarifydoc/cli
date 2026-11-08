@@ -152,6 +152,7 @@ import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
+import { expandTypedMemberHoles } from "./typed-member-holes.js";
 import { expandChannelFactories } from "./channel-factories.js";
 import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
 import { resolveQueueEnvTargets } from "./queue-env-targets.js";
@@ -1378,6 +1379,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (factoryCalls > 0 && verbose) progress.detail(`  request-factory calls: ${factoryCalls}`);
   // `${this.baseUrl}` / `${environment.apiUrl}`: values a class or a module states.
   resolveSymbolicTargets(allApiCalls, allAnalyses, projectContext);
+  // `${item.entityType}` with `item: Favorite` and `entityType: 'clubs' | 'players'`: one URL per value.
+  expandTypedMemberHoles(allApiCalls, allAnalyses, projectContext);
   // What no pass resolved is made explicit: a leading runtime base
   // (`${this.baseUrl}series/1`) is split off into `baseExpr`, so the linker
   // treats it as an unknown prefix instead of a path segment.
