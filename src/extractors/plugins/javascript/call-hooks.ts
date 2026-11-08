@@ -231,8 +231,30 @@ function handedArgs(node: Node): string[] | null {
   // its own parameter (`req.params.id`) is its caller's to say.
   const chain = (a: Node) => a.type === "member_expression" && /^[\w$]+(?:\.[\w$]+)+$/.test(a.text) && !a.text.startsWith("this.") && !param(a.text.slice(0, a.text.indexOf(".")));
   const isParam = (a: Node) => a.type === "identifier" && param(a.text);
+  // A hook / composable (`useTableSort(sortBy, resetPage)`): what it is handed is what its body calls by the
+  // parameter's name — a function or object named by an identifier, or a callback arrow that only calls one.
+  if (HOOK_NAME.test(fn.text)) {
+    const handed = args.map((a) => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" ? a.text : callbackTarget(a)));
+    return handed;
+  }
   if (!args.some((a) => chain(a) || isParam(a))) return null;
   return args.map((a) => (chain(a) || isParam(a) ? a.text : ""));
+}
+
+/** The name a hook is called by: `useX` (Vue composables, React hooks). */
+const HOOK_NAME = /^use[A-Z][\w$]*$/;
+
+/** `x => emit2(x)` / `() => save(club)`: `=>emit2` — a callback arrow whose body is one call of a plain name or member chain. */
+function callbackTarget(arg: Node): string {
+  if (arg.type !== "arrow_function") return "";
+  let body = arg.childForFieldName("body");
+  if (body?.type === "statement_block" && body.namedChildCount === 1) {
+    const only = body.namedChild(0);
+    body = only?.type === "expression_statement" ? only.namedChild(0) : only?.type === "return_statement" ? only.namedChild(0) : null;
+  }
+  if (body?.type === "await_expression") body = body.namedChild(0);
+  const callee = body?.type === "call_expression" ? body.childForFieldName("function") : null;
+  return callee && /^[\w$]+(?:\.[\w$]+)*$/.test(callee.text) ? `=>${callee.text}` : "";
 }
 
 /** Names the innermost enclosing function binds as parameters (`(key, api, { page })`). */
