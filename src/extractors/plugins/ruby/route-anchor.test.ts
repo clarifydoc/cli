@@ -384,27 +384,27 @@ end`;
 describe("rails-route-anchor — a concern's call through a reader typed by an instance variable", () => {
   it("calls the model's member when the reader's variable is typed (constant, association, alias); an untyped or ambiguous one keeps its name", () => {
     const router = `Rails.application.routes.draw do
-  post '/labels/matches', to: 'match_labels#create'
-  post '/labels/clubs', to: 'club_labels#create'
-  post '/labels/cars', to: 'car_labels#create'
+  post '/badges/matches', to: 'match_badges#create'
+  post '/badges/clubs', to: 'club_badges#create'
+  post '/badges/cars', to: 'car_badges#create'
 end`;
     const call = (name: string) => ({ name, kind: "internal", target: null, line: 3 }) as const;
-    const concern = cls("LabelConcern", null, [["create", 2]]);
-    concern.methods[0]!.calls = [call("model.update_labels")];
+    const concern = cls("BadgeConcern", null, [["create", 2]]);
+    concern.methods[0]!.calls = [call("model.update_badges")];
     const withValues = (c: ClassInfo, values: Record<string, string>, implementsModules: string[] = []) => ({ ...c, fieldValues: values, implements: implementsModules }) as ClassInfo;
     const out = [
       file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
-      file("app/controllers/concerns/label_concern.rb", [concern]),
+      file("app/controllers/concerns/badge_concern.rb", [concern]),
       file("app/controllers/base_match_controller.rb", [withValues(cls("BaseMatchController", "ActionController::Base", [["load", 3]]), { match: "Match.find(params[:id])" })]),
       // Typed through an alias of the base's variable.
-      file("app/controllers/match_labels_controller.rb", [withValues(cls("MatchLabelsController", "BaseMatchController", [["model", 4]]), { model: "@match" }, ["LabelConcern"])]),
+      file("app/controllers/match_badges_controller.rb", [withValues(cls("MatchBadgesController", "BaseMatchController", [["model", 4]]), { model: "@match" }, ["BadgeConcern"])]),
       // Typed through an association one model declares.
-      file("app/controllers/club_labels_controller.rb", [withValues(cls("ClubLabelsController", "ActionController::Base", [["model", 4]]), { model: "@club", club: "Current.league.clubs.find(params[:id])" }, ["LabelConcern"])]),
+      file("app/controllers/club_badges_controller.rb", [withValues(cls("ClubBadgesController", "ActionController::Base", [["model", 4]]), { model: "@club", club: "Current.league.clubs.find(params[:id])" }, ["BadgeConcern"])]),
       // `@car` is never assigned: nothing is guessed.
-      file("app/controllers/car_labels_controller.rb", [withValues(cls("CarLabelsController", "ActionController::Base", [["model", 4]]), { model: "@car" }, ["LabelConcern"])]),
-      file("app/models/match.rb", [cls("Match", "ApplicationRecord", []), ].map((c) => ({ ...c, implements: ["Labelable"] }) as ClassInfo)),
-      file("app/models/club.rb", [{ ...cls("Club", "ApplicationRecord", []), implements: ["Labelable"] } as ClassInfo]),
-      file("app/models/concerns/labelable.rb", [cls("Labelable", null, [["update_labels", 2]])]),
+      file("app/controllers/car_badges_controller.rb", [withValues(cls("CarBadgesController", "ActionController::Base", [["model", 4]]), { model: "@car" }, ["BadgeConcern"])]),
+      file("app/models/match.rb", [cls("Match", "ApplicationRecord", []), ].map((c) => ({ ...c, implements: ["Badgeable"] }) as ClassInfo)),
+      file("app/models/club.rb", [{ ...cls("Club", "ApplicationRecord", []), implements: ["Badgeable"] } as ClassInfo]),
+      file("app/models/concerns/badgeable.rb", [cls("Badgeable", null, [["update_badges", 2]])]),
     ];
     out[out.findIndex((a) => a.filePath === "app/models/club.rb")]!.entityRelations = [];
     // `Current.league.clubs` is the association `clubs` → Club.
@@ -412,10 +412,10 @@ end`;
     const importIndex = buildImportIndex(out);
     const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
     reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
-    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls.map((c) => c.name).filter((n) => /update_labels/.test(n));
-    expect(calls("/labels/matches")).toEqual(["Labelable.update_labels"]);
-    expect(calls("/labels/clubs")).toEqual(["Labelable.update_labels"]);
-    expect(calls("/labels/cars")).toEqual(["model.update_labels"]);
+    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls.map((c) => c.name).filter((n) => /update_badges/.test(n));
+    expect(calls("/badges/matches")).toEqual(["Badgeable.update_badges"]);
+    expect(calls("/badges/clubs")).toEqual(["Badgeable.update_badges"]);
+    expect(calls("/badges/cars")).toEqual(["model.update_badges"]);
   });
 });
 

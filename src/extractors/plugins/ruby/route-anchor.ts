@@ -144,7 +144,7 @@ export const railsRouteAnchor: RouteResolver = {
         const list = moved.get(target) ?? [];
         const row = withController(r, action.fn, guessOf.get(r.handler!));
         // An action runs its `before_action` filters first: what they load
-        // (`@conversation ||= Current.account.conversations.find_by!(…)`) is the
+        // (`@match ||= Current.league.matches.find_by!(…)`) is the
         // action's data too.
         const filters = filterCalls(ref!, m![2]!, byName, qualified, modules, row.line);
         if (filters.length > 0) {
@@ -305,8 +305,8 @@ function templateHookCalls(
   if (action.owner === ref || chainOf(ref, byName, qualified).includes(action.owner)) return calls;
   let changed = false;
   const out = calls.map((c) => {
-    // `model.update_labels` where the controller's own `def model; @model ||= @conversation; end`
-    // is typed by where `@conversation` is assigned: the call is the model's.
+    // `model.update_badges` where the controller's own `def model; @model ||= @match; end`
+    // is typed by where `@match` is assigned: the call is the model's.
     const reader = c.kind === "internal" ? /^([a-z_]\w*)\.([a-z_]\w*[?!]?)$/.exec(c.name) : null;
     if (reader) {
       const hook = definerOf(ref, reader[1]!, byName, qualified, modules);
@@ -330,10 +330,10 @@ function templateHookCalls(
 }
 
 /**
- * The model a memoizing reader (`def model; @model ||= @conversation; end`) returns: the type
+ * The model a memoizing reader (`def model; @model ||= @match; end`) returns: the type
  * its instance variable is assigned where the project states one — a model constant
- * (`@match = Match.find(…)`) or an association with one target (`Current.account.conversations.find_by!(…)`),
- * through other variables (`@model ||= @conversation`), in the controller or an ancestor. Several
+ * (`@match = Match.find(…)`) or an association with one target (`Current.league.matches.find_by!(…)`),
+ * through other variables (`@model ||= @match`), in the controller or an ancestor. Several
  * assignments must agree; anything else is no type.
  */
 function readerType(

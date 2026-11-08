@@ -805,7 +805,7 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
         // Several assignments: the model the resolvable ones agree on.
         const found = new Set<string>();
         for (const rhs of rhsAll.split("\n")) {
-          // `@model ||= @conversation`: typed where `@conversation` is, in this class or an ancestor.
+          // `@model ||= @match`: typed where `@match` is, in this class or an ancestor.
           const alias = /^@([a-z_]\w*)$/.exec(rhs)?.[1];
           if (alias) {
             const typed = lookup(chainOf(o), alias);

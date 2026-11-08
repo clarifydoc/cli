@@ -610,7 +610,7 @@ function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, str
       const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
       // Every chain assigned, one per line: the entity pass keeps the model they agree on.
       if (a && !(out[a[1]!] ?? "").split("\n").includes(a[2]!)) out[a[1]!] = out[a[1]!] ? `${out[a[1]!]}\n${a[2]}` : a[2]!;
-      // `@model ||= @conversation`: the variable is another variable's value, typed where that one is assigned.
+      // `@model ||= @match`: the variable is another variable's value, typed where that one is assigned.
       const alias = a ? null : /^\s*@([a-z_]\w*)\s*(?:\|\|)?=\s*(@[a-z_]\w*)\s*$/.exec(code);
       if (alias && !(out[alias[1]!] ?? "").split("\n").includes(alias[2]!)) out[alias[1]!] = out[alias[1]!] ? `${out[alias[1]!]}\n${alias[2]}` : alias[2]!;
     }
