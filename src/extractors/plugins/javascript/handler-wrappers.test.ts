@@ -34,3 +34,16 @@ describe("non-identity handler wrappers", () => {
     expect(names).not.toContain("plain");
   });
 });
+
+describe("VueUse debounced and throttled handlers", () => {
+  it("names the binding's function, as lodash's debounce does", async () => {
+    const src = `import { useDebounceFn, useThrottleFn } from "@vueuse/core";
+import { searchClubs, saveDraft } from "./clubs";
+const onSearch = useDebounceFn((term) => { searchClubs(term); }, 300);
+const onType = useThrottleFn(() => saveDraft(), 500);`;
+    const tree = await parseSource(src, "typescript" as never, "Clubs.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "onSearch")!.calls.map((c) => c.name)).toEqual(["searchClubs"]);
+    expect(fns.find((f) => f.name === "onType")!.calls.map((c) => c.name)).toEqual(["saveDraft"]);
+  });
+});

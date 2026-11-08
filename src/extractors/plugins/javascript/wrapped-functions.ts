@@ -7,11 +7,11 @@ export const FUNCTION_EXPRESSIONS: ReadonlySet<string> = new Set(["arrow_functio
  * Wrappers that return (a memoized, debounced, observing or ref-forwarding
  * version of) the function they are given: `useCallback(fn, deps)`,
  * `memo(Component)`, `forwardRef(render)`, mobx-react's `observer(Component)`,
- * lodash `debounce(fn, ms)` / `throttle(fn, ms)`. A member callee counts by
+ * lodash `debounce(fn, ms)` / `throttle(fn, ms)`, VueUse `useDebounceFn(fn, ms)` / `useThrottleFn(fn, ms)`. A member callee counts by
  * its leaf (`React.memo`, `React.forwardRef`).
  */
 const IDENTITY_WRAPPERS: ReadonlySet<string> = new Set([
-  "useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "memo", "forwardRef", "observer", "debounce", "throttle",
+  "useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "memo", "forwardRef", "observer", "debounce", "throttle", "useDebounceFn", "useThrottleFn",
 ]);
 
 /**
