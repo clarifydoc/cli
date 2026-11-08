@@ -490,6 +490,8 @@ export function buildSymbolLinks(
         // whose base list names the interface), or an extending interface's restatement
         // of it: no implementation to fan out to.
         if (!implMethod || family.some((f) => implMethod.file === f.interfaceFile && implMethod.symbol === `${f.interfaceName}.${ifaceMethod.name}`)) continue;
+        // A test double implementing a production interface is no implementation production code reaches.
+        if (testFileAt(ctx, implMethod.file) && !testFileAt(ctx, info.interfaceFile)) continue;
         links.push({
           sourceFile: info.interfaceFile,
           sourceSymbol: ifaceSymbol,
@@ -4097,6 +4099,11 @@ function resolvePassedName(
   return { ...link, relation: "passes" };
 }
 
+/** Whether a file is a test file or a test double's (`TEST_DOUBLE_PATH_RE`), by its language. */
+function testFileAt(ctx: LinkContext, file: string): boolean {
+  return TEST_DOUBLE_PATH_RE.test(file) || isTestFile(file, (ctx.languageOf.get(file) ?? "") as Language);
+}
+
 /** A factory the project declares whose returned object literal the source states (`FunctionInfo.returnedMembers`). */
 interface StatedFactory {
   file: string;
@@ -4125,11 +4132,14 @@ function statedFactoryOf(ctx: LinkContext, symbolIndex: Map<string, Map<string, 
  * The nested function a call on a stated factory's result names: the member's local function (`refresh`),
  * a method of the object literal it is (`actions.refresh`), or `"factory"` for a member written in place
  * (its calls are the factory's own). Undefined where the factory returns no such function — a plain value
- * (`items.toReversed()`), an unknown key.
+ * (`items.toReversed()`), an unknown key. `"open"` where the member is one the literal cannot describe, which
+ * leaves the call to the unstated-factory reading.
  */
-function statedFactoryMember(factory: StatedFactory, parts: readonly string[], headMember: string | undefined, bare: string | undefined): string | "factory" | undefined {
+function statedFactoryMember(factory: StatedFactory, parts: readonly string[], headMember: string | undefined, bare: string | undefined): string | "factory" | "open" | undefined {
   const find = (key: string) => factory.members.find((m) => m.key === key);
-  const named = (m: StatedFactory["members"][number], method: string | undefined): string | "factory" | undefined => {
+  const named = (m: StatedFactory["members"][number], method: string | undefined): string | "factory" | "open" | undefined => {
+    // Another object's member handed on, or an object that spreads one: the literal does not say what it holds.
+    if (m.kind === "open") return "open";
     if (method === undefined) return m.kind === "function" ? m.local ?? m.key : m.kind === "inline" || m.kind === "outer" ? "factory" : undefined;
     return m.kind === "object" ? `${m.local ?? m.key}.${method}` : undefined;
   };
@@ -4824,8 +4834,9 @@ function resolveCallToDefinition(
   // A factory whose returned object the source states (`returnedMembers`): the call names one of its members
   // or nothing — never the factory, never a builtin that merely shares a member's name on a plain value.
   const statedFactory = !def && call.kind === "cross-file" && call.via && targetFile ? statedFactoryOf(ctx, symbolIndex, targetFile, call.via) : null;
-  if (statedFactory) {
-    const member = statedFactoryMember(statedFactory, parts, call.headMember, !isQualified ? exported ?? call.name : undefined);
+  const statedMember = statedFactory ? statedFactoryMember(statedFactory, parts, call.headMember, !isQualified ? exported ?? call.name : undefined) : undefined;
+  if (statedFactory && statedMember !== "open") {
+    const member = statedMember;
     if (member === "factory") {
       return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", "factory-via");
     }

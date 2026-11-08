@@ -194,3 +194,68 @@ describe("dispatch into a module built by a project store factory", () => {
     expect(own.length).toBe(1);
   });
 });
+
+/**
+ * A factory whose returned object spreads another call (`return { setClub, ...useMenu() }`) hands back members its
+ * literal does not list: a call naming one of them is not dropped as "not returned". (real-repo shape: a Pinia setup
+ * store spreading a composable)
+ */
+describe("a returned object with a spread or a forwarded member", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-factory-spread-"));
+    const file = async (path: string, text: string) => {
+      await mkdir(join(dir, path, ".."), { recursive: true });
+      await writeFile(join(dir, path), text);
+    };
+    await file("package.json", '{"name":"league-web","dependencies":{"vue":"3.4.0","pinia":"2.1.0"}}');
+    await file("src/composables/use-backend.ts", "export function useBackend() {\n  async function signIn() { return fetch('/api/v2/session'); }\n  return { signIn };\n}\n");
+    await file(
+      "src/composables/use-session.ts",
+      "import { useBackend } from './use-backend';\nexport function useSession() {\n  const backend = useBackend();\n  return { signIn: backend.signIn };\n}\n",
+    );
+    await file("src/composables/use-menu.ts", "export function useMenu() {\n  function toggleMenu() { return 1; }\n  return { toggleMenu };\n}\n");
+    await file(
+      "src/stores/club.ts",
+      [
+        "import { defineStore } from 'pinia';",
+        "import { useMenu } from '../composables/use-menu';",
+        "export const useClubStore = defineStore('club', () => {",
+        "  function setClub(id: string) { return fetch(`/api/v2/clubs/${id}`); }",
+        "  return { setClub, ...useMenu() };",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    await file(
+      "src/pages/Club.vue",
+      [
+        '<script setup lang="ts">',
+        "import { useClubStore } from '../stores/club';",
+        "import { useSession } from '../composables/use-session';",
+        "const clubStore = useClubStore();",
+        "const session = useSession();",
+        "function onLogin() { session.signIn(); }",
+        "function onMenu() { clubStore.toggleMenu(); }",
+        "function onPick() { clubStore.setClub('1'); }",
+        "</script>",
+        '<template><button @click="onMenu">menu</button><button @click="onPick">pick</button><button @click="onLogin">in</button></template>',
+        "",
+      ].join("\n"),
+    );
+    await analyze({ projectRoot: dir, outputDir: join(dir, ".clarifydoc"), lsp: false, gitHistory: false });
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("keeps a link for a member the spread hands back", async () => {
+    const { loadReportSummary } = await import("./report-payload.js");
+    const summary = await loadReportSummary(join(dir, ".clarifydoc"));
+    const links = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === "src/pages/Club.vue" && l.relation !== "reference");
+    expect(links.some((l) => l.callName === "clubStore.toggleMenu")).toBe(true);
+    expect(links.some((l) => l.callName === "clubStore.setClub")).toBe(true);
+    // `signIn: backend.signIn` hands on another object's member: the call is not dropped as "not returned".
+    expect(links.some((l) => l.callName === "session.signIn")).toBe(true);
+  });
+});

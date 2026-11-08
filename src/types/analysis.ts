@@ -1360,12 +1360,13 @@ export interface FunctionInfo {
    * the body declares, an `object` literal (its methods are functions named `local.method`), a
    * `value` (a ref, a call result), `outer` (a name the body does not declare — an import, a parameter: what it
    * is, the factory does not say), or `inline` (an entry that is a function written
-   * in place, whose calls are the factory's own). Present only when the function returns an object
+   * in place, whose calls are the factory's own), or `open` (another object's member handed on — `signIn: auth.signIn` —
+   * or an object literal that spreads one: what it holds, the literal does not list). Present only when the function returns an object
    * literal, which makes its members the project's: a call on the result names one of them or
    * nothing, never the factory itself. Empty when it returns a value another object holds
    * (`return vm.proxy.$store`), which names none.
    */
-  returnedMembers?: Array<{ key: string; local?: string; kind: "function" | "object" | "value" | "inline" | "outer" }>;
+  returnedMembers?: Array<{ key: string; local?: string; kind: "function" | "object" | "value" | "inline" | "outer" | "open" }>;
   /**
    * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
    * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's

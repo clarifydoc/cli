@@ -113,6 +113,14 @@ describe("abstract-class dispatch", () => {
       .toContain("notifier.send -> EmailNotifier.send [interface-redirect/calls]");
   });
 
+  it("an interface fans out to production implementations only, never to a test double", () => {
+    const iface = file("league/Notifier.java", [cls("Notifier", { kind: "interface", methods: [method("send", 3)] })]);
+    const prod = file("league/MailNotifier.java", [cls("MailNotifier", { implements: ["Notifier"], methods: [method("send", 5)] })]);
+    const fake = file("src/test/java/league/FakeNotifier.java", [cls("FakeNotifier", { implements: ["Notifier"], methods: [method("send", 4)] })]);
+    const fanout = links([iface, prod, fake]).filter((l) => l.strategy === "interface-fanout").map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`);
+    expect(fanout).toEqual(["Notifier.send -> MailNotifier.send"]);
+  });
+
   it("a concrete base class is not dispatched through", () => {
     const concrete = file("league/AbstractNotifier.java", [cls("AbstractNotifier", { methods: [method("send", 4)] })]);
     expect(edges([concrete, email(), garage([call("notifier.send")])], "Garage.open")).toEqual([

@@ -119,7 +119,7 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
     while (n && (n.type === "parenthesized_expression" || n.type === "as_expression" || n.type === "satisfies_expression")) n = n.namedChild(0);
     return n ?? null;
   };
-  const kinds = new Map<string, "function" | "object" | "value">();
+  const kinds = new Map<string, "function" | "object" | "value" | "open">();
   let obj: Node | null = null;
   if (body.type === "statement_block") {
     for (const stmt of body.namedChildren) {
@@ -131,7 +131,12 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
           const n = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
           const v = unwrap(d.childForFieldName("value"));
           if (n?.type !== "identifier") continue;
-          kinds.set(n.text, v && (FUNCTION_EXPRESSIONS.has(v.type) || wrappedFunction(v)) ? "function" : v?.type === "object" ? "object" : "value");
+          kinds.set(
+            n.text,
+            v && (FUNCTION_EXPRESSIONS.has(v.type) || wrappedFunction(v)) ? "function"
+              : v?.type === "object" ? (v.namedChildren.some((e) => e.type === "spread_element") ? "open" : "object")
+              : "value",
+          );
         }
       } else if (stmt.type === "return_statement") {
         const r = unwrap(stmt.namedChild(0));
@@ -143,6 +148,8 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
     }
   } else obj = unwrap(body)?.type === "object" ? unwrap(body) : null;
   if (!obj) return undefined;
+  // `{ ...useMenu(), setClub }`: a spread hands back members the literal does not list, so it states no closed set.
+  if ((obj as Node).namedChildren.some((e) => e.type === "spread_element")) return undefined;
   const out: NonNullable<FunctionInfo["returnedMembers"]> = [];
   for (const e of obj.namedChildren) {
     if (e.type === "shorthand_property_identifier") out.push({ key: e.text, local: e.text, kind: kinds.get(e.text) ?? "outer" });
@@ -154,6 +161,8 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
       const v = unwrap(e.childForFieldName("value"));
       if (!key || !v) continue;
       if (v.type === "identifier") out.push({ key, local: v.text, kind: kinds.get(v.text) ?? "outer" });
+      // `signIn: auth.signIn`: another object's member, handed on.
+      else if (v.type === "member_expression") out.push({ key, kind: "open" });
       else out.push({ key, kind: FUNCTION_EXPRESSIONS.has(v.type) ? "inline" : "value" });
     }
   }

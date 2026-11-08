@@ -22,6 +22,18 @@ import { escapeRegex } from "../shared/path-utils.js";
  * `emit('save')` through exactly this callName. A child used by many parents
  * fans out to each bound handler (the runtime does too, one parent at a time).
  */
+
+/** Targets once each, in the order found: a handler two bindings reach takes one of the capped places, not two. */
+function distinctTargets<T extends { file: string; span: { symbol: string; line?: number } }>(targets: T[]): T[] {
+  const seen = new Set<string>();
+  return targets.filter((t) => {
+    const k = `${t.file}\0${t.span.symbol}\0${t.span.line ?? ""}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 export class JsComponentEmitResolver implements DispatchResolver {
   readonly id = "component-emit";
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -122,7 +134,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         // A child that emits by data (`$emit(btn.event)`) emits the events a parent states for it (`event: 'delete'`).
         const dynamic = sites.length === 0 && !markup && child.dynamicEmits?.length ? child.dynamicEmits : undefined;
         if (sites.length === 0 && !markup && !dynamic) continue; // child never emits this event (native fallthrough)
-        const targets = targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => !!b.parent.eventLiterals?.some((n) => tagKey(n) === key) : undefined).slice(0, 8);
+        const targets = distinctTargets(targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => !!b.parent.eventLiterals?.some((n) => tagKey(n) === key) : undefined)).slice(0, 8);
         if (targets.length === 0) continue;
         // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
         // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
@@ -418,7 +430,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (own) out.push({ file: b.parent.filePath, span: own });
         else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen));
       }
-      return out.slice(0, 8);
+      return distinctTargets(out).slice(0, 8);
     };
 
     const links: SymbolLink[] = [];
