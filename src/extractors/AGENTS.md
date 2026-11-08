@@ -210,3 +210,10 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
 - Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
   with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
   `componentCandidates`. Targets are deduplicated before the eight-target cap per emit.
+  The literals are the ones on THAT child's tag (`eventLiteralsByTag`: the `event:` strings of its bindings and of the
+  script declarations they name, three deep); only a tag with none falls back to the file's. A callback handed to a
+  composable whose one call is `emit` (`useDialog(x, (v) => emit('save', v))`, `onSave(v)` inside) reaches the parent's
+  handler from the calls the component makes on the local holding that composable's result (`dialog.confirm()`), never
+  from the composable's own function. A member destructured from a factory's result and passed on bare
+  (`const { actions } = useData(); useCrud(actions)`) is a `localTypes` entry marked `destructured` that only the argument
+  pass reads. `const onSearch = useDebounceFn(applySearch, 300)` is a function calling `applySearch`.

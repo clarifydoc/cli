@@ -6372,10 +6372,10 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true },
+  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true },
   depth: number,
 ): InjectionPoint | null {
-  if (!local.from || depth >= MAX_INITIALIZER_DEPTH) return null;
+  if (!local.from || local.destructured || depth >= MAX_INITIALIZER_DEPTH) return null;
   if (local.fromIndex !== undefined || local.element) {
     // A tuple unpacking (`a, b = repo.load()`) or a loop over a collection (`for c in self.clubs`): the element of
     // the declared type the call returns or the field states — read off the declaration, never inferred.

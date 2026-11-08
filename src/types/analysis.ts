@@ -421,6 +421,8 @@ export interface FileAnalysis {
   dynamicEmits?: number[];
   /** The strings a Vue file gives an `event` key (`{ icon, event: 'delete' }`): the events it states for a child that emits by data. */
   eventLiterals?: string[];
+  /** The `event` strings a Vue template's bindings give each component tag (`<ButtonGroup :buttons="buttons">`, through the script declaration it names): a child emitting by data is joined only to what its own tag states. */
+  eventLiteralsByTag?: Record<string, string[]>;
   /**
    * Values the component hands its descendants by key, and those it takes from an
    * ancestor (Vue `provide('k', fn)` / `const k = inject('k')`): the provide/inject
@@ -1344,8 +1346,11 @@ export interface FunctionInfo {
    * `element`: the name is bound by a loop or comprehension over `from` (a call, or a field read — `self.clubs`,
    * `repo.all()`): it holds the element of the collection type that call or field declares (the manifest's
    * `collectionElementOf`).
+   * `destructured`: the name is a member destructured from that call's result (`const { actions } = useClubData()`,
+   * `from` = `useClubData().actions`); only the argument pass reads it — to find the factory a local handed to a
+   * composable came from — and no receiver is typed by it.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

@@ -47,6 +47,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   componentSubscriptions: "optional",
   dynamicEmits: "optional",
   eventLiterals: "optional",
+  eventLiteralsByTag: "optional",
   contextValues: "optional",
   subComponents: "required",
   interactiveElements: "required",

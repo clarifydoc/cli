@@ -252,3 +252,56 @@ export function dynamicEmitFacts(source: string): { lines: number[]; literals: s
   const literals = [...new Set([...source.matchAll(/(?<![\w$])event\s*:\s*['"]([\w:-]+)['"]/g)].map((m) => m[1]!))];
   return { lines: [...new Set(lines)], literals };
 }
+
+/** The text a script gives `name` (`const buttons = [ … ]`, `const actions = computed(() => [ … ])`), through the end of its statement. */
+function declarationText(script: string, name: string): string {
+  const head = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\b[^=\\n]*=`).exec(script);
+  if (!head) return "";
+  const start = head.index + head[0].length;
+  let depth = 0;
+  let quote = "";
+  for (let i = start; i < script.length; i++) {
+    const c = script[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = "";
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (depth <= 0 && (c === ";" || (c === "\n" && !/(?:=>|[,=?:+|&(])\s*$/.test(script.slice(start, i))))) return script.slice(start, i);
+  }
+  return script.slice(start);
+}
+
+/**
+ * The strings a template gives each component tag through its bindings (`<ButtonGroup :buttons="buttons">`):
+ * the `event: 'x'` literals of the binding's expression and of the script declarations it names. A child
+ * that emits by data emits only these for that tag — never another tag's, nor an unrelated array in the file.
+ */
+export function tagEventLiterals(template: string, script: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!/(?:^|\s)(?::|v-bind)/.test(template)) return out;
+  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g;
+  for (let m = tagRegex.exec(template); m; m = tagRegex.exec(template)) {
+    const found = new Set<string>();
+    for (const b of (m[2] ?? "").matchAll(/(?:^|\s)(?::[\w.-]+|v-bind(?::[\w.-]+)?)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      // The expression, and the script declarations it names, followed through what they name (three deep).
+      const seen = new Set<string>();
+      const read = (text: string, depth: number): void => {
+        for (const l of text.matchAll(/(?<![\w$])event\s*:\s*['"]([\w:-]+)['"]/g)) found.add(l[1]!);
+        if (depth >= 3) return;
+        for (const id of new Set(text.replace(/\.\.\./g, " ").match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? [])) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const decl = declarationText(script, id);
+          if (decl) read(decl, depth + 1);
+        }
+      };
+      read(b[1] ?? b[2] ?? "", 0);
+    }
+    if (found.size > 0) out[m[1]!] = [...new Set([...(out[m[1]!] ?? []), ...found])];
+  }
+  return out;
+}

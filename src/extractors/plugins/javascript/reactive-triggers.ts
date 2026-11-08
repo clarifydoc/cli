@@ -19,7 +19,7 @@ export function addReactiveTriggers(analysis: FileAnalysis, raw: string): void {
 }
 
 /**
- * An inline template write (`@page="currentPage = $event"`, `@click="open = true"`) to a ref a query is
+ * An inline template write (`@page="currentPage = $event"`, `@click="open = true"`, `(p) => pages[id] = p`) to a ref a query is
  * built from is the same trigger a function body's write is: the element's own calls name the composable
  * or factory, and the component's `<setup>` calls it at the element's line (INFERRED, as the function's is).
  * A write that can only switch a gating `enabled` flag off triggers nothing.
@@ -28,7 +28,7 @@ function addTemplateTriggers(analysis: FileAnalysis, users: Users): void {
   for (const el of analysis.interactiveElements) {
     if (!el.handler) continue;
     for (const [r, composables] of users) {
-      const write = new RegExp(`(?<![\\w$.])${r}\\s*=(?![=>])([^;]*)`).exec(el.handler);
+      const write = new RegExp(`(?<![\\w$.])${r}(?:\\[[^\\]]*\\])?\\s*=(?![=>])([^;]*)`).exec(el.handler);
       if (!write) continue;
       for (const c of composables) {
         if (c.gate && DISABLING.test(write[1]!)) continue;
@@ -73,7 +73,7 @@ function reactiveUsers(analysis: FileAnalysis, raw: string): { lines: string[]; 
   const lines = raw.split("\n");
   const refs = new Set<string>();
   for (const line of lines) {
-    const m = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:ref|shallowRef)\s*(?:<[^>]*>)?\s*\(/.exec(line);
+    const m = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:ref|shallowRef)\s*(?:<[^(]*>)?\s*\(/.exec(line);
     if (m) refs.add(m[1]!);
   }
   if (refs.size === 0) return undefined;
@@ -104,7 +104,7 @@ function addScriptTriggers(analysis: FileAnalysis, lines: string[], users: Users
     if (fn.name === "<setup>") continue;
     for (let l = fn.line; l <= fn.endLine && l <= lines.length; l++) {
       for (const [r, composables] of users) {
-        const write = new RegExp(`(?<![\\w$.])${r}\\.value\\s*=(?!=)(.*)`).exec(lines[l - 1]!);
+        const write = new RegExp(`(?<![\\w$.])${r}\\.value(?:\\[[^\\]]*\\])?\\s*=(?!=)(.*)`).exec(lines[l - 1]!);
         if (!write) continue;
         for (const c of composables) {
           if (c.gate && DISABLING.test(write[1]!)) continue;
