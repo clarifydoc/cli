@@ -2944,6 +2944,11 @@ export interface InteractiveElementInfo {
    */
   component?: string;
   /**
+   * For a `<component :is="…">` tag: the components the tag may render, each a name the script states
+   * (a literal map's values, a ternary's two arms) — a child's emit reaches this binding on each.
+   */
+  componentCandidates?: string[];
+  /**
    * The HTTP request the element sends when used — a server-rendered form, a
    * `button_to`, a link: `method` and `target`, the target a literal app path
    * (`/users/42/edit`) or the framework's route helper (`edit_user_path`) that a

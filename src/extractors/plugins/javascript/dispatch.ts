@@ -55,7 +55,9 @@ export class JsComponentEmitResolver implements DispatchResolver {
       for (const sub of parent.subComponents ?? []) {
         if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       }
-      for (const el of els) {
+      // A `<component :is>` tag binds its events on each component it may render.
+      const bindingEls: Array<(typeof els)[number] & { tag?: string }> = els.flatMap((el) => (el.componentCandidates ? el.componentCandidates.map((component) => ({ ...el, component, tag: el.component })) : [el]));
+      for (const el of bindingEls) {
         const angular = el.event.startsWith("(");
         // An Angular tag is its component's selector, whichever module declares it.
         const childFile = angular
@@ -66,7 +68,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }) });
       }
     }
 

@@ -6,6 +6,7 @@ import { addReactiveTriggers } from "./reactive-triggers.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
 import { addTemplateRefs } from "./template-refs.js";
 import { boundListeners } from "./bound-listeners.js";
+import { addDynamicComponents } from "./dynamic-components.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 
 /**
@@ -63,6 +64,8 @@ export function vuePreprocess(
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
+      // `<component :is="Map[type]" @delete="remove">`: the components the script's map names.
+      if (sfc.template) addDynamicComponents(analysis, sfc.template, raw, sfc.script ?? "");
       // `userSearch.value = q` in a handler re-runs the composable built from that ref.
       addReactiveTriggers(analysis, raw);
       // `modal.open(ConfirmBox, { onConfirm: saveClub })`: callbacks the script hands a component it opens.

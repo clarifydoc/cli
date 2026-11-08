@@ -29,7 +29,7 @@ export function boundListeners(template: string, raw: string, script: string): I
 }
 
 /** The body of the object literal a script binds to `name` (`const name = { … }`, `computed(() => ({ … }))`, `reactive({ … })`). */
-function objectLiteral(script: string, name: string): string | undefined {
+export function objectLiteral(script: string, name: string): string | undefined {
   const decl = new RegExp(`(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*(?::[^=\\n]+)?=\\s*(?:computed\\s*\\(\\s*\\(\\s*\\)\\s*=>\\s*\\(?\\s*|reactive\\s*\\(\\s*)?\\{`).exec(script);
   if (!decl) return undefined;
   const open = decl.index + decl[0].length - 1;
@@ -49,8 +49,8 @@ function objectLiteral(script: string, name: string): string | undefined {
   return undefined;
 }
 
-/** `[event, handler]` of each `onX` entry: an arrow or function (as written), a bare name (`onSubmit: save`), or a shorthand (`onCancel`). */
-function listenersOf(body: string): Array<[string, string]> {
+/** The top-level entries of an object literal's body, as written. */
+export function objectEntries(body: string): string[] {
   const entries: string[] = [];
   let depth = 0;
   let quote: string | null = null;
@@ -69,8 +69,13 @@ function listenersOf(body: string): Array<[string, string]> {
     }
   }
   entries.push(body.slice(from));
+  return entries;
+}
+
+/** `[event, handler]` of each `onX` entry: an arrow or function (as written), a bare name (`onSubmit: save`), or a shorthand (`onCancel`). */
+function listenersOf(body: string): Array<[string, string]> {
   const out: Array<[string, string]> = [];
-  for (const entry of entries) {
+  for (const entry of objectEntries(body)) {
     const m = /^\s*(?:\/\/[^\n]*\n\s*)*(on[A-Z][\w$]*)\s*(?::\s*([\s\S]+?))?\s*$/.exec(entry);
     if (!m) continue;
     const value = m[2] ?? m[1]!;
