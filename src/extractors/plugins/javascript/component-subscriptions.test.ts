@@ -49,10 +49,10 @@ describe("a dialog's own outcome, handled by the code that opened it", () => {
 }`;
     const tree = await parseSource(src, "typescript" as never, "squad.component.ts");
     expect(componentSubscriptions(tree, src)).toEqual([
-      { component: "EditClubModalComponent", event: "closed", line: 4, result: "close" },
+      { component: "EditClubModalComponent", event: "closed", line: 4, result: "close", takesResult: true },
       { component: "EditClubModalComponent", event: "dismissed", line: 5, result: "dismiss" },
-      { component: "RatingModalComponent", event: "result", line: 9, result: "close" },
-      { component: "TransferDialogComponent", event: "afterClosed", line: 13, result: "close" },
+      { component: "RatingModalComponent", event: "result", line: 9, result: "close", takesResult: true },
+      { component: "TransferDialogComponent", event: "afterClosed", line: 13, result: "close", takesResult: true },
     ]);
   });
 });

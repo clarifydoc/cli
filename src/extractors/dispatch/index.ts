@@ -1,6 +1,7 @@
 import { relationForStrategy, type FileAnalysis, type SymbolLink } from "../../types/analysis.js";
 import type { DispatchResolver } from "./base.js";
 import { allPluginMetas } from "../registry.js";
+import { isTestFile } from "../../core/test-file-detector.js";
 
 /**
  * Run every plugin-contributed dispatch resolver (`meta.dispatchResolvers`)
@@ -38,7 +39,26 @@ export function resolveProjectDispatch(analyses: FileAnalysis[]): SymbolLink[] {
       out.push({ ...link, strategy, relation });
     }
   }
-  return out;
+  return dropProductionToTestLinks(out, analyses);
+}
+
+/**
+ * A synthetic link (dispatch, message queue) never leads from production code into a test or
+ * story harness: a spec's `beforeEach` that subscribes to a channel, or a story that renders a
+ * component with a stub handler, is no consumer of what production publishes or emits. A link
+ * from a test file to a test file (or to production) stays. One place for every resolver, so a
+ * new one cannot forget it.
+ */
+export function dropProductionToTestLinks(links: SymbolLink[], analyses: readonly FileAnalysis[]): SymbolLink[] {
+  const languageOf = new Map<string, FileAnalysis["language"]>();
+  for (const a of analyses) languageOf.set(a.filePath, a.language);
+  const verdicts = new Map<string, boolean>();
+  const testFile = (file: string): boolean => {
+    let v = verdicts.get(file);
+    if (v === undefined) verdicts.set(file, (v = isTestFile(file, languageOf.get(file))));
+    return v;
+  };
+  return links.filter((l) => testFile(l.sourceFile) || !testFile(l.targetFile));
 }
 
 export type { DispatchResolver } from "./base.js";

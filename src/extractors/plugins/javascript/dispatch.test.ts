@@ -258,6 +258,47 @@ describe("JsPropCallbackResolver — React callback props", () => {
   });
 });
 
+describe("JsPropCallbackResolver — a callback prop handed down under another name", () => {
+  it("links the child's props.follow() to the creator connect() bound to the parent's onFollow, and not to a namesake (real-repo FP)", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const call = (name: string, line: number, over: object = {}) => ({ name, kind: "internal" as const, target: null, line, ...over });
+    const parent = fa("src/Profile.js", {
+      functions: [fn("mapDispatchToProps.onFollow", 5, 7)],
+      classes: [{ name: "Profile", extends: null, implements: [], decorators: [], isExported: false, line: 8, endLine: 14, properties: [],
+        methods: [{ ...fn("render", 9, 13), calls: [call("this.props.onFollow", 10, { passed: "attribute" }), call("mapDispatchToProps.onFollow", 10)] }] }] as never,
+      propBindings: [{ component: "FollowButton", prop: "follow", line: 10, origin: { kind: "prop", name: "onFollow" } }],
+      subComponents: [{ name: "FollowButton", importSource: "./FollowButton", props: [], line: 10 }],
+    });
+    const button = fa("src/FollowButton.js", { functions: [{ ...fn("handleClick", 3, 5), calls: [call("props.follow", 4)] }] });
+    // A namesake component in another file takes a `follow` prop too, but nothing binds it.
+    const decoy = fa("src/FollowLink.js", { functions: [{ ...fn("handleClick", 3, 5), calls: [call("props.follow", 4)] }] });
+    const links = new JsPropCallbackResolver().resolve([parent, button, decoy]);
+    expect(links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "src/FollowButton.js::handleClick -props.follow-> src/Profile.js::mapDispatchToProps.onFollow",
+    ]);
+  });
+});
+
+describe("JsPropCallbackResolver — a component declared beside its user", () => {
+  it("joins the prop its own body calls, and not a same-named call elsewhere in the file (real-repo FP)", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line });
+    const file = fa("src/Profile.js", {
+      functions: [
+        fn("mapDispatchToProps.onFollow", 5, 7),
+        { ...fn("FollowButton", 10, 20), calls: [] },
+        { ...fn("handleClick", 12, 14), calls: [call("props.follow", 13)] },
+        { ...fn("unrelated", 40, 44), calls: [call("props.follow", 41)] },
+      ],
+      classes: [{ name: "Profile", extends: null, implements: [], decorators: [], isExported: false, line: 22, endLine: 38, properties: [],
+        methods: [{ ...fn("render", 24, 36), calls: [call("this.props.onFollow", 30), call("mapDispatchToProps.onFollow", 30)] }] }] as never,
+      propBindings: [{ component: "FollowButton", prop: "follow", line: 30, origin: { kind: "prop", name: "onFollow" } }],
+    });
+    const links = new JsPropCallbackResolver().resolve([file]);
+    expect(links.map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetSymbol}`)).toEqual(["handleClick -props.follow-> mapDispatchToProps.onFollow"]);
+  });
+});
+
 describe("JsPropCallbackResolver — Vue function props", () => {
   it("links a child's props.x() call to the inline function the parent's markup binds (real-repo FP)", async () => {
     const { JsPropCallbackResolver } = await import("./dispatch.js");
@@ -591,6 +632,23 @@ describe("a dialog closing itself runs the opener's result handler", () => {
       ["EditClubModalComponent.save", 42, "this.modal.close", "src/app/club/club-detail.component.ts", "ClubDetailComponent.openEdit"],
       ["EditClubModalComponent.cancel", 53, "this.modal.dismiss", "src/app/club/club-detail.component.ts", "ClubDetailComponent.other"],
     ]);
+  });
+
+  it("leaves out a close() that hands a result-reading callback nothing, keeping one that hands a result (real-repo FP)", () => {
+    const calls = (a: number, b: number, c: number) => [{ name: "this.modal.close", kind: "internal", target: null, line: a, column: 4, argCount: b }, { name: "this.modal.dismiss", kind: "internal", target: null, line: c, column: 4, argCount: 0 }];
+    const club = cls("PickClubModalComponent", [], [["modal", "NgbActiveModal"]]);
+    const modal = fa("src/app/club/pick-club-modal.component.ts", {
+      classes: [{ ...club, methods: [{ ...fn("choose", 40, 44), calls: calls(41, 1, 43).slice(0, 1) }, { ...fn("cancel", 50, 54), calls: calls(51, 0, 53).slice(0, 1) }] }] as never,
+    });
+    const opener = (takesResult: boolean) => fa("src/app/club/club-detail.component.ts", {
+      classes: [cls("ClubDetailComponent", [["openPick", 20, 30, []]])] as never,
+      imports: [{ source: "./pick-club-modal.component", specifiers: ["PickClubModalComponent"], line: 2 }] as never,
+      componentSubscriptions: [{ component: "PickClubModalComponent", event: "closed", line: 24, result: "close", ...(takesResult ? { takesResult } : {}) }],
+    });
+    const names = (takesResult: boolean) => new JsComponentEmitResolver().resolve([modal, opener(takesResult)]).map((l) => l.sourceSymbol);
+    expect(names(true)).toEqual(["PickClubModalComponent.choose"]);
+    // A callback that reads no result runs on any close.
+    expect(names(false)).toEqual(["PickClubModalComponent.choose", "PickClubModalComponent.cancel"]);
   });
 
   it("links nothing for a component that holds no active-dialog reference", () => {

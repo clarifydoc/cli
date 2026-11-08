@@ -71,7 +71,12 @@ function outcomeOf(source: Node | null, call: Node): ComponentSubscription | nul
   const event = member.childForFieldName("property")?.text ?? "";
   const result = OUTCOMES[event];
   const component = result ? openedComponent(member.childForFieldName("object"), call) : null;
-  return result && component ? { component, event, line: call.startPosition.row + 1, result } : null;
+  if (!result || !component) return null;
+  // A callback that declares a parameter reads what `close(x)` handed over.
+  const callback = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+  const params = callback && /^(?:arrow_function|function_expression|function)$/.test(callback.type) ? callback.childForFieldName("parameters") ?? callback.childForFieldName("parameter") : null;
+  const takesResult = !!params && (params.type === "identifier" || params.namedChildren.length > 0);
+  return { component, event, line: call.startPosition.row + 1, result, ...(takesResult ? { takesResult } : {}) };
 }
 
 /** The component class the reference holding the dialog was opened with: `modal = this.modalService.open(ConfirmDialogComponent, …)`, in the enclosing function. */
