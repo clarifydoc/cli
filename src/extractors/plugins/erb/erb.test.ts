@@ -65,4 +65,12 @@ describe("ERB views", () => {
       "patch_player_path -> PlayersController.update:9",
     ]);
   });
+
+  it("reads no clicks from a mail's links, and a method call on a record is no route helper", () => {
+    const mail = view("app/views/devise/mailer/_confirm_body.html.erb", `<%= link_to("Confirm", action_url) %>\n<a href="<%= unlock_url %>">Unlock</a>`);
+    expect(mail.interactiveElements).toEqual([]);
+    expect(mail.screens).toEqual([]);
+    const page = view("app/views/fields/_show.html.erb", `<%= link_to attachment.filename, field.blob_url(attachment) %>\n<%= link_to 'Club', club_path(@club) %>`);
+    expect(page.interactiveElements.map((e) => e.handler)).toEqual(["club_path"]);
+  });
 });

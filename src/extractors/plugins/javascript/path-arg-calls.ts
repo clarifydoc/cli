@@ -137,7 +137,25 @@ function localUrl(call: Node, name: string): string | null {
   };
   flatten(value);
   if (!pieces.some((p) => p.type === "string" || p.type === "template_string")) return null;
-  return pieces.map((p) => literalArg(p) ?? `\${${p.text.replace(/\s+/g, " ")}}`).join("");
+  const url = pieces.map((p) => literalArg(p) ?? `\${${p.text.replace(/\s+/g, " ")}}`).join("");
+  // A hole naming a plain string `const` of the same function (`const kind = "club"`) is that string.
+  return url.replace(/\$\{([A-Za-z_$][\w$]*)\}/g, (hole, id: string) => localString(fn!, call, id) ?? hole);
+}
+
+/** The text of a `const id = "text"` (no substitutions) declared directly in `fn` before `call`, else null. */
+function localString(fn: Node, call: Node, id: string): string | null {
+  let found: string | null = null;
+  let count = 0;
+  for (const d of fn.descendantsOfType("variable_declarator")) {
+    if (!d || d.childForFieldName("name")?.text !== id) continue;
+    count++;
+    const v = d.childForFieldName("value");
+    let owner: Node | null = d.parent;
+    while (owner && !FUNCTION_NODE.test(owner.type)) owner = owner.parent;
+    const plain = v?.type === "string" || (v?.type === "template_string" && !v.text.includes("${"));
+    if (plain && d.startIndex < call.startIndex && owner?.id === fn.id && d.parent?.firstChild?.type === "const") found = stripQuotes(v!.text);
+  }
+  return count === 1 ? found : null;
 }
 
 const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration)$/;

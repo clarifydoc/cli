@@ -42,7 +42,7 @@ import { extractHtmlInteractiveElements } from "../html/index.js";
 /** Every ERB tag: `<%= … %>`, `<% … %>`, `<%- … -%>`, comments `<%# … %>`. */
 const ERB_TAG_RE = /<%(=|-|#)?([\s\S]*?)-?%>/g;
 /** A Rails route helper named in the arguments: `edit_user_path`, `users_url`. */
-const ROUTE_HELPER_RE = /\b([a-z_][a-z0-9_]*_(?:path|url))\b/;
+const ROUTE_HELPER_RE = /(?<![.\w])([a-z_][a-z0-9_]*_(?:path|url))\b/;
 /** A literal app path as an argument: `"/super_admin/sign_in"`. */
 const LITERAL_PATH_RE = /["'](\/[^"'\s#?]*)[^"']*["']/;
 /** `method: :delete`, `method: "patch"`, `data: { turbo_method: :delete }`, `"data-turbo-method": "delete"`. */
@@ -98,6 +98,11 @@ function modelFormRequest(model: string, view: { key: string } | null): Request 
 function handlerOf(request: Request): string {
   const base = request.target.replace(/^\//, "").replace(/[^\w]+/g, "_") || "root";
   return request.method === "GET" ? base : `${request.method.toLowerCase()}_${base}`;
+}
+
+/** A view a mailer renders: `…/mailers/…`, `…/mailer/…` (Devise) or `…_mailer/…`. */
+function isMailerView(view: { key: string } | null): boolean {
+  return view !== null && /(?:^|\/)mailers?\/|_mailer\//.test(view.key);
 }
 
 export function extractErbView(analysis: FileAnalysis, source: string): void {
@@ -168,13 +173,15 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
   }
   caption ??= /<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup)?.[1]?.trim() || null;
 
+  // A mail's links are addresses the recipient opens outside the app (`link_to "Confirm", action_url`
+  // names a local, not a route): no click of the application's own UI.
   elements.sort((a, b) => a.line - b.line);
-  analysis.interactiveElements = elements;
+  analysis.interactiveElements = isMailerView(view) ? [] : elements;
   analysis.subComponents = subComponents;
   analysis.imports = [...analysis.imports, ...imports];
 
   const base = filePath.slice(filePath.lastIndexOf("/") + 1);
-  const isScreen = view !== null && !base.startsWith("_") && !/(?:^|\/)(?:layouts|mailers?)\//.test(view.key) && !/_mailer\//.test(view.key);
+  const isScreen = view !== null && !base.startsWith("_") && !/(?:^|\/)layouts\//.test(view.key) && !isMailerView(view);
   if (isScreen) {
     const parts = view.key.split("/");
     const action = parts.pop()!;

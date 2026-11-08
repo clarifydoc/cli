@@ -12,6 +12,12 @@ const THYMELEAF_TEMPLATE_RE = /\bxmlns:th\s*=|\sth:[a-z][\w-]*\s*=/;
 const DJANGO_TEMPLATE_RE = /\{%-?\s*(?:extends|block|load|url|include|csrf_token|endblock|trans|blocktrans|for|endfor|if|endif|set|macro)\b/;
 
 /**
+ * A web server's canned status page (`public/404.html`, `errors/500.html`): the server answers a failed
+ * request with it, the app never navigates to it, so it is no route, screen or click of the app.
+ */
+const STATUS_PAGE_RE = /(?:^|\/)(?:public|static|errors?|www)\/(?:[\w-]+\/)*[45]\d\d\.html?$/i;
+
+/**
  * Plain HTML pages (vanilla multi-page static sites). Each `.html` page becomes a
  * routed screen; its `<script src>` includes link it to the JS call graph. The
  * page's behaviour is in those JS files (owned by the JS plugin), so this plugin
@@ -49,6 +55,12 @@ export const htmlMeta: LanguagePluginMeta = {
             analysis.routes = [];
             readTemplate(analysis, raw, "thymeleaf");
           }
-          : (analysis) => materializeElementRequests(analysis),
+          : STATUS_PAGE_RE.test(relativePath)
+            ? (analysis) => {
+              analysis.routes = [];
+              analysis.screens = [];
+              analysis.interactiveElements = [];
+            }
+            : (analysis) => materializeElementRequests(analysis),
     },
 };
