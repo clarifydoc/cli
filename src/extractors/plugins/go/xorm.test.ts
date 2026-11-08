@@ -217,3 +217,34 @@ func dropOrphans(x *xorm.Engine) error {
     ]);
   });
 });
+
+describe("xorm: a DTO struct overriding TableName() (real-repo FP)", () => {
+  it("reads the table the override returns through a slice literal, and keeps a tagged model's own name", () => {
+    expect(rows(`package models
+
+import "xorm.io/xorm"
+
+type Team struct {
+	ID int64 \`xorm:"bigint pk"\`
+}
+
+func (*Team) TableName() string { return "squads" }
+
+func (ClubTeam) TableName() string { return "teams" }
+
+func ListClubTeams(s *xorm.Session, cond string) ([]ClubTeam, error) {
+	teams := []ClubTeam{}
+	_, err := s.Where(cond).FindAndCount(&teams)
+	return teams, err
+}
+
+func ListSquads(s *xorm.Session) {
+	squads := []Team{}
+	s.Find(&squads)
+}
+`)).toEqual([
+      "15 xorm: FindAndCount teams read",
+      "21 xorm: Find Team read",
+    ]);
+  });
+});
