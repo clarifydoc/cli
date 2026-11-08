@@ -1232,3 +1232,37 @@ describe("Java and Kotlin MQTT clients", () => {
     expect(await rows(`    client.subscribe("stadium/+/score");`, "java", "")).toEqual([]);
   });
 });
+
+describe("Java and Kotlin MQTT topics held in constants", () => {
+  const rows = async (src: string, lang: "java" | "kotlin") => {
+    const tree = await parseSource(src, lang as any, lang === "kotlin" ? "A.kt" : "A.java");
+    return new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => `${d.kind} ${d.target}${d.targetRef ? " (" + d.targetRef + ")" : ""}`);
+  };
+  it("reads a static final String and a String[] of them", async () => {
+    expect(await rows(`package x;
+import org.eclipse.paho.client.mqttv3.*;
+class A {
+  private static final String SCORES = "league/scores";
+  void m() throws Exception {
+    client.subscribe(new String[]{SCORES, "league/+/cards"}, qos);
+    client.publish(SCORES, msg);
+    client.subscribe(topic);
+    client.publish(Topics.CARDS, msg);
+  }
+}`, "java")).toEqual(["queue-consume league/scores", "queue-consume league/+/cards", "queue-publish league/scores", "queue-publish null (Topics.CARDS)"]);
+  });
+  it("reads a Kotlin const val, in a companion object or at the top of the file, and arrayOf", async () => {
+    expect(await rows(`package x
+import org.eclipse.paho.client.mqttv3.*
+class A {
+  companion object { const val SCORES = "league/scores" }
+  fun m() {
+    client.subscribe(arrayOf(SCORES, CARDS))
+    client.publish(SCORES, msg)
+    client.subscribe(topic)
+    client.publish(Topics.CARDS, msg)
+  }
+}
+const val CARDS = "league/cards"`, "kotlin")).toEqual(["queue-consume league/scores", "queue-consume league/cards", "queue-publish league/scores", "queue-publish null (Topics.CARDS)"]);
+  });
+});

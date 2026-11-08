@@ -58,6 +58,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
 
   // One module per directory: its blocks, by address.
   const modules = new Map<string, Array<{ block: HclBlock; file: string }>>();
+  const scopes = new Map<string, ModuleScope>();
   for (const rel of found) {
     let text: string;
     try {
@@ -65,13 +66,29 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
     } catch {
       continue;
     }
-    if (text.length > 1_000_000 || !/\baws_(?:lambda_function|sqs_queue|sns_topic|dynamodb_table|db_instance|rds_cluster|elasticache)/.test(text)) continue;
+    if (text.length > 1_000_000 || !/\baws_(?:lambda_function|sqs_queue|sns_topic|dynamodb_table|db_instance|rds_cluster|elasticache)|\bmodule\s+"/.test(text)) continue;
     const dir = posix.dirname(rel) === "." ? "" : posix.dirname(rel);
     const list = modules.get(dir) ?? modules.set(dir, []).get(dir)!;
-    for (const block of parseHcl(text)) if (block.type === "resource" || block.type === "data") list.push({ block, file: rel });
+    const scope = scopes.get(dir) ?? scopes.set(dir, newScope()).get(dir)!;
+    for (const block of parseHcl(text)) {
+      if (block.type === "resource" || block.type === "data") list.push({ block, file: rel });
+      else if (block.type === "variable" && block.labels[0]) {
+        const d = block.attrs.get("default");
+        if (d !== undefined) scope.defaults.set(block.labels[0], d);
+      } else if (block.type === "locals") for (const [k, v] of block.attrs) scope.locals.set(k, v);
+      else if (block.type === "output" && block.labels[0]) {
+        const v = block.attrs.get("value");
+        if (v !== undefined) scope.outputs.set(block.labels[0], v);
+      } else if (block.type === "module" && block.labels[0]) {
+        const source = hclString(block.attrs.get("source"));
+        if (source && /^\.\.?\//.test(source)) scope.calls.set(block.labels[0], { source: posix.normalize(posix.join(dir, source)).replace(/\/$/, "").replace(/^\.$/, ""), args: block.attrs });
+      }
+    }
   }
 
   const out: TerraformDeployment = { files: [], groups: [], edges: [] };
+  const nameOfAll = new Map<string, string>(); // `<dir>|<type>.<label>` → service name
+  const pending: PendingEdge[] = [];
   for (const [dir, list] of modules) {
     const addr = new Map(list.map((x) => [`${x.block.type === "data" ? "data." : ""}${x.block.labels[0]}.${x.block.labels[1]}`, x]));
     const services: RawService[] = [];
@@ -84,7 +101,6 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
       return name;
     };
     const files = new Set<string>();
-    const edges: TerraformDeployment["edges"] = [];
     // Functions first, so a table sharing a function's name is the one renamed.
     const ordered = [...list].sort((a, b) => Number(b.block.labels[0] === "aws_lambda_function") - Number(a.block.labels[0] === "aws_lambda_function"));
     for (const { block, file } of ordered) {
@@ -118,40 +134,96 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
         services.push(svc);
         nameOf.set(`${type}.${label}`, name);
         files.add(file);
-        // Edges from what its env references.
-        for (const [k, v] of Object.entries(env)) {
-          for (const r of hclRefs(v)) {
-            const target = INFRA[r.type] ? `${r.type}.${r.name}` : r.type === "aws_lambda_function" || r.type === "aws_lambda_function_url" ? `aws_lambda_function.${r.name}` : null;
-            if (target) edges.push({ from: `${type}.${label}`, to: target, kind: INFRA[r.type]?.kind === "queue" ? "bus" : INFRA[r.type] ? "db" : "http", via: k });
-          }
-        }
+        // Edges from what its env references (resolved once every module is read).
+        for (const m of (vars ?? "").matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) pending.push({ dir, from: `${type}.${label}`, expr: m[2]!, via: m[1]!, how: "env" });
         continue;
       }
       const infra = INFRA[type];
       if (!infra) {
         if (type === "aws_lambda_event_source_mapping") {
-          const source = hclRefs(block.attrs.get("event_source_arn"))[0];
           const fn = hclRefs(block.attrs.get("function_name")).find((r) => r.type === "aws_lambda_function");
-          if (source && fn && INFRA[source.type]) edges.push({ from: `aws_lambda_function.${fn.name}`, to: `${source.type}.${source.name}`, kind: "bus", via: "event source" });
+          if (fn) pending.push({ dir, from: `aws_lambda_function.${fn.name}`, expr: block.attrs.get("event_source_arn") ?? "", via: "event source", how: "event" });
         }
         continue;
       }
       const family = infra.family(block);
       const preferred = hclString(block.attrs.get("name")) ?? hclString(block.attrs.get("identifier")) ?? hclString(block.attrs.get("db_name")) ?? hclString(block.attrs.get("cluster_identifier")) ?? label;
       const name = named(preferred, family);
-      services.push({ name, file, env: {}, dependsOn: [], ports: [], kind: infra.kind, family });
+      services.push({ name, file, env: {}, dependsOn: [], ports: [], kind: infra.kind, family, ...(infra.kind === "queue" ? { destination: true } : {}) });
       nameOf.set(`${type}.${label}`, name);
       files.add(file);
     }
     if (services.length === 0) continue;
-    // Edges by address → by service name; one the module cannot name is dropped.
-    for (const e of edges) {
-      const from = nameOf.get(e.from);
-      const to = nameOf.get(e.to);
-      if (from && to) out.edges.push({ ...e, from, to });
-    }
+    for (const [a, n] of nameOf) nameOfAll.set(`${dir}|${a}`, n);
     out.groups.push(services);
     out.files.push([...files].sort(byOrdinal)[0]!);
   }
+  // Edges by address → by service name; one no module can name is dropped.
+  for (const e of pending) {
+    const from = nameOfAll.get(`${e.dir}|${e.from}`);
+    if (!from) continue;
+    const refs = resolveRefs(scopes, e.dir, e.expr, 0);
+    for (const r of e.how === "event" ? refs.slice(0, 1) : refs) {
+      const infra = INFRA[r.type];
+      const lambda = r.type === "aws_lambda_function" || r.type === "aws_lambda_function_url";
+      if (e.how === "event" && !infra) continue;
+      if (!infra && !lambda) continue;
+      const to = nameOfAll.get(`${r.dir}|${lambda ? "aws_lambda_function" : r.type}.${r.name}`);
+      if (to) out.edges.push({ from, to, kind: e.how === "event" || infra?.kind === "queue" ? "bus" : infra ? "db" : "http", via: e.via });
+    }
+  }
   return out.groups.length ? out : undefined;
+}
+
+interface ModuleScope {
+  defaults: Map<string, string>;
+  locals: Map<string, string>;
+  outputs: Map<string, string>;
+  calls: Map<string, { source: string; args: Map<string, string> }>;
+}
+const newScope = (): ModuleScope => ({ defaults: new Map(), locals: new Map(), outputs: new Map(), calls: new Map() });
+interface PendingEdge { dir: string; from: string; expr: string; via: string; how: "env" | "event" }
+interface GlobalRef { dir: string; type: string; name: string }
+
+/**
+ * The resources an expression written in module directory `dir` refers to — a direct
+ * `aws_sqs_queue.jobs.arn`, a `local.x`, a `module.queue.url` (the output expression of the module that
+ * block calls) and a `var.x` (the argument every `module` block calling `dir` hands over, else the
+ * variable's default). A variable the callers disagree on, a module no block names and a chain deeper
+ * than eight links refer to nothing.
+ */
+function resolveRefs(scopes: Map<string, ModuleScope>, dir: string, expr: string, depth: number): GlobalRef[] {
+  if (depth > 8 || !expr) return [];
+  const out: GlobalRef[] = hclRefs(expr).map((r) => ({ dir, type: r.type, name: r.name }));
+  const scope = scopes.get(dir);
+  for (const m of expr.matchAll(/(?<![\w.])(var|local)\.([A-Za-z_][\w-]*)|(?<![\w.])module\.([A-Za-z_][\w-]*)\.([A-Za-z_][\w-]*)/g)) {
+    if (m[1] === "local") {
+      const v = scope?.locals.get(m[2]!);
+      if (v) out.push(...resolveRefs(scopes, dir, v, depth + 1));
+    } else if (m[1] === "var") {
+      const sites: string[] = [];
+      const results: GlobalRef[][] = [];
+      for (const [callerDir, caller] of scopes) {
+        for (const call of caller.calls.values()) {
+          if (call.source !== dir) continue;
+          const arg = call.args.get(m[2]!);
+          sites.push(callerDir);
+          results.push(arg === undefined ? resolveDefault(scopes, dir, m[2]!, depth) : resolveRefs(scopes, callerDir, arg, depth + 1));
+        }
+      }
+      const keyOf = (rs: GlobalRef[]) => rs.map((r) => `${r.dir}|${r.type}.${r.name}`).sort(byOrdinal).join(",");
+      if (sites.length === 0) out.push(...resolveDefault(scopes, dir, m[2]!, depth));
+      else if (results.every((r) => keyOf(r) === keyOf(results[0]!))) out.push(...results[0]!);
+    } else {
+      const call = scope?.calls.get(m[3]!);
+      const v = call ? scopes.get(call.source)?.outputs.get(m[4]!) : undefined;
+      if (call && v) out.push(...resolveRefs(scopes, call.source, v, depth + 1));
+    }
+  }
+  return out;
+}
+
+function resolveDefault(scopes: Map<string, ModuleScope>, dir: string, name: string, depth: number): GlobalRef[] {
+  const d = scopes.get(dir)?.defaults.get(name);
+  return d ? resolveRefs(scopes, dir, d, depth + 1) : [];
 }

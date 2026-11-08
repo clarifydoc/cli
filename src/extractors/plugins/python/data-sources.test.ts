@@ -717,4 +717,15 @@ describe("Python MQTT clients", () => {
     ]);
     expect(await rows(["c = Decoy()", 'c.publish("stadium/home/score", "2")'].join("\n"))).toEqual([]);
   });
+  it("reads topics held in constants and paho's list form, and never takes a variable's name for a topic", async () => {
+    const head = ["import paho.mqtt.client as mqtt", 'SCORES = "league/scores"', "class Topics:", '    CARDS = "league/+/cards"', "c = mqtt.Client()"];
+    expect(await rows([...head, "c.subscribe(SCORES)", "c.publish(Topics.CARDS, 'x')", 'c.subscribe([("league/a", 0), (SCORES, 1)])', 'c.subscribe(("league/solo", 1))'].join("\n"))).toEqual([
+      ["queue-consume", "league/scores", "mqtt"],
+      ["queue-publish", "league/+/cards", "mqtt"],
+      ["queue-consume", "league/a", "mqtt"],
+      ["queue-consume", "league/scores", "mqtt"],
+      ["queue-consume", "league/solo", "mqtt"],
+    ]);
+    expect(await rows([...head, "c.subscribe(topic)", 'c.subscribe([("league/a", 0), (build(x), 1)])', 'c.publish(f"league/{id}", "x")'].join("\n"))).toEqual([]);
+  });
 });

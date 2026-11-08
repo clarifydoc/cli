@@ -542,6 +542,12 @@ function queueTarget(node: Node | null): string | null {
   return node.type === "identifier" || node.type === "member_expression" ? node.text.split(".").pop()! : null;
 }
 
+/** An MQTT topic: its text, or (when a project module defines it) the name the project pass resolves. */
+interface MqttTopic {
+  target: string | null;
+  ref?: string;
+}
+
 function mqEvidence(src: string): MqEvidence {
   let bullQueues: Map<string, string> | null = null;
   if (BULL_IMPORT_RE.test(src)) {
@@ -596,13 +602,52 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
   /** The literal topics a client subscribes to in this file (`client.subscribe('a/+')`, `client.subscribe(['a', 'b'])`). */
-  private subscribedTopics(client: string): string[] {
-    const out: string[] = [];
-    const re = new RegExp(String.raw`(?<![\w$])${escapeRegex(client)}\s*\.\s*subscribe\s*\(\s*(\[[^\]]*\]|(['"\x60])[^'"\x60]*\2)`, "g");
+  private subscribedTopics(client: string): MqttTopic[] {
+    const out: MqttTopic[] = [];
+    const re = new RegExp(String.raw`(?<![\w$])${escapeRegex(client)}\s*\.\s*subscribe\s*\(\s*(\[[^\]]*\]|(['"\x60])[^'"\x60]*\2|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)`, "g");
     for (const m of this.sourceText.matchAll(re)) {
-      for (const t of m[1]!.matchAll(/(['"\x60])([^'"\x60]*)\1/g)) if (t[2] && !out.includes(t[2])) out.push(t[2]);
+      // Each element of a list: a quoted literal, a constant the file declares or one a project module exports.
+      for (const t of m[1]!.replace(/^\[|\]$/g, "").split(",")) {
+        const el = t.trim();
+        const quoted = /^(['"\x60])([^'"\x60]*)\1$/.exec(el);
+        const topic: MqttTopic | null = quoted ? { target: quoted[2]! } : this.namedTopic(el);
+        if (topic && !out.some((o) => o.target === topic.target && o.ref === topic.ref)) out.push(topic);
+      }
     }
     return out;
+  }
+
+  /** A name as an MQTT topic: this file's constant, else a name a project module exports (the project pass reads its value). */
+  private namedTopic(ref: string): MqttTopic | null {
+    const value = this.constantString(ref);
+    if (value) return { target: value };
+    const head = ref.split(".")[0]!;
+    return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(ref) && (this.imports ??= importEvidence(this.sourceText)).projectNames.has(head) ? { target: null, ref } : null;
+  }
+
+  /**
+   * The string a name the file declares once stands for: `const TOPIC = 'league/scores'`, or a
+   * key of a `const TOPICS = { score: 'league/scores' }` object (`TOPICS.score`). Null when the name
+   * is declared twice, assigned something else or not a plain literal.
+   */
+  private constantString(ref: string): string | null {
+    const [head, key] = ref.split(".") as [string, string | undefined];
+    if (!/^[A-Za-z_$][\w$]*$/.test(head) || (key !== undefined && !/^[A-Za-z_$][\w$]*$/.test(key))) return null;
+    const decl = new RegExp(String.raw`(?<![\w$.])(?:const|let|var)\s+${escapeRegex(head)}\s*(?::[^=;]+)?=\s*([^;\n]*)`, "g");
+    const found = [...this.sourceText.matchAll(decl)];
+    if (found.length !== 1 || new RegExp(String.raw`(?<![\w$.])${escapeRegex(head)}\s*=[^=]`).test(this.sourceText.replace(decl, ""))) return null;
+    if (!/(?<![\w$.])const\s/.test(found[0]![0])) return null;
+    const init = found[0]![1]!.trim();
+    if (key === undefined) return /^(['"\x60])([^'"\x60$]*)\1(?:\s+as\s+const)?[,;]?$/.exec(init)?.[2] ?? null;
+    const body = new RegExp(String.raw`${escapeRegex(head)}\s*(?::[^=;]+)?=\s*\{([^}]*)\}`).exec(this.sourceText)?.[1];
+    return body ? new RegExp(String.raw`(?:^|[,{\s])${escapeRegex(key)}\s*:\s*(['"\x60])([^'"\x60$]*)\1`).exec(body)?.[2] ?? null : null;
+  }
+
+  /** An MQTT topic argument: a literal, a constant the file declares, or an imported name. */
+  private mqttTopic(node: Node | null): MqttTopic | null {
+    const lit = literalString(node);
+    if (lit) return { target: lit };
+    return node && (node.type === "identifier" || node.type === "member_expression") && !declaredParamInScope(node.text.split(".")[0]!, node) ? this.namedTopic(node.text) : null;
   }
 
   /**
@@ -1770,9 +1815,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           // MQTT: `client.publish("stadium/score", msg)` / `client.subscribe("stadium/+" | [topics])`, in a file that imports a client.
           if (mqev.mqtt && (fnName === "publish" || fnName === "subscribe")) {
             const first = mqArgs[0];
-            const topics = first?.type === "array" ? first.namedChildren.map((t) => literalString(t)) : [literalString(first ?? null)];
-            if (topics.length > 0 && topics.every((t) => !!t)) {
-              for (const topic of topics) sources.push({ ...this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic, line }), topicSyntax: "mqtt" });
+            const topics = first?.type === "array" ? first.namedChildren.map((t) => this.mqttTopic(t)) : [this.mqttTopic(first ?? null)];
+            if (topics.length > 0 && topics.every((t): t is MqttTopic => !!t)) {
+              for (const topic of topics) sources.push({ ...this.ds({ kind: fnName === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${fnName}`, target: topic.target, line }), ...(topic.ref ? { targetRef: topic.ref } : {}), topicSyntax: "mqtt" });
               return;
             }
           }
@@ -1784,7 +1829,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               const handlerNode = mqArgs[1]!;
               const handler = handlerNode.type === "identifier" ? handlerNode.text : undefined;
               const at = (fn.childForFieldName("property")?.startPosition.row ?? line - 1) + 1;
-              for (const topic of topics) sources.push({ ...this.ds({ kind: "queue-consume", name: "MQTT: message", target: topic, line: at }), topicSyntax: "mqtt", ...(handler ? { handler } : {}) });
+              for (const topic of topics) sources.push({ ...this.ds({ kind: "queue-consume", name: "MQTT: message", target: topic.target, line: at }), ...(topic.ref ? { targetRef: topic.ref } : {}), topicSyntax: "mqtt", ...(handler ? { handler } : {}) });
               return;
             }
           }

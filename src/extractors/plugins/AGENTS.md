@@ -142,3 +142,5 @@ like `knownPackages`. Notes:
   publish to the `+`/`#` filters that cover it.
 - **Line numbers are 1-based** in all output.
 - **No cross-plugin imports** — if two plugins need the same logic, extract it to `../shared/` or `shared/regex-base.ts`.
+
+- MQTT topics held in names: a topic argument that is a constant of the file (declared once) reads as its value; a name a project module exports (JS imports, Python `from … import`, Go exported `pkg.Name`, Java/Kotlin `Type.NAME`, C# `Type.Name`) is a row with `target: null` + `targetRef`, which core's module-value pass fills; a lowercase variable or parameter names no topic. Python's `subscribe([("a", 0)])`, Go `SubscribeMultiple(map…)`, Java `new String[]{…}` and Kotlin `arrayOf` give one row per topic.

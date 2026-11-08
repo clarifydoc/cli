@@ -154,6 +154,7 @@ import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
 import { expandChannelFactories } from "./channel-factories.js";
 import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
+import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
@@ -1973,6 +1974,10 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // An MQTT publish meets the wildcard filters (`league/+/score`) that cover its topic.
   const filterRows = joinMqttTopicFilters(allAnalyses);
   if (filterRows > 0 && verbose) progress.detail(`  MQTT publishes joined to topic filters: ${filterRows} row(s)`);
+
+  // A publish on `process.env.JOBS_URL` meets the queue the deployment gives that variable.
+  const envQueueRows = resolveQueueEnvTargets(allAnalyses, deployment);
+  if (envQueueRows > 0 && verbose) progress.detail(`  Queue rows named by an env var: ${envQueueRows} row(s)`);
 
   const hasDbAccess = allAnalyses.some((a) =>
     a.dataSources?.some((ds) => ds.kind === "database"),

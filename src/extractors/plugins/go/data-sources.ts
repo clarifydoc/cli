@@ -294,11 +294,30 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
 
     // MQTT (paho): `client.Subscribe("stadium/+/score", 0, cb)` / `client.Publish("stadium/home/score", 0, false, msg)`;
     // the filter is kept as written and its syntax marked for the topic join.
-    const mqttCall = /\b\w+\.(Publish|Subscribe)\s*\(\s*"([^"]+)"/.exec(line);
+    const mqttCall = /\b\w+\.(Publish|Subscribe|SubscribeMultiple)\s*\(\s*(?:"([^"]+)"|([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*[,)]|(map\[string\]byte\s*\{))/.exec(line);
     if (mqttCall && (mqttPaho ??= lines.some((l) => /["/]eclipse\/paho\.mqtt\.golang["/]|\bmqtt\.NewClient\b/.test(l)))) {
       const publishes = mqttCall[1] === "Publish";
-      sources.push({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: mqttCall[2]!, topicSyntax: "mqtt", calls: [], line: lineNo });
-      continue;
+      const named: Array<{ target: string | null; ref?: string }> = [];
+      const add = (literal: string | undefined, name: string | undefined): void => {
+        if (literal !== undefined) named.push({ target: literal });
+        else if (name) {
+          // This file's constant; else an exported name another file or package declares (`topics.Scores`) for the project pass.
+          const local = (constants ??= stringConstants(lines)).get(name);
+          if (local !== undefined) named.push({ target: local });
+          else if (/^(?:[A-Za-z_]\w*\.)?[A-Z]\w*$/.test(name)) named.push({ target: null, ref: name });
+        }
+      };
+      if (mqttCall[4]) {
+        // `SubscribeMultiple(map[string]byte{"league/a": 0, TopicCards: 1}, cb)`: one filter per key, over lines.
+        let text = line.slice(line.indexOf(mqttCall[4]) + mqttCall[4].length);
+        for (let k = i + 1; k < Math.min(lines.length, i + 40) && !text.includes("}"); k++) text += "\n" + lines[k]!;
+        for (const entry of text.slice(0, Math.max(0, text.indexOf("}"))).split(/[,\n]/)) {
+          const key = /^\s*(?:"([^"]+)"|([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?))\s*:/.exec(entry);
+          if (key) add(key[1], key[2]);
+        }
+      } else add(mqttCall[2], mqttCall[3]);
+      for (const t of named) sources.push({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: t.target, ...(t.ref ? { targetRef: t.ref } : {}), topicSyntax: "mqtt", calls: [], line: lineNo });
+      if (named.length > 0) continue;
     }
 
     const env = line.match(ENV_RE);

@@ -344,6 +344,19 @@ function urlExpression(expr: Node, at: Node, depth: number): string | null {
   }
 }
 
+/** The elements of an inline array argument (`new String[]{A, B}`, Kotlin `arrayOf(A, B)` / `listOf(…)`); null for any other expression. */
+function mqttTopicItems(arg: Node): Node[] | null {
+  if (arg.type === "array_creation_expression") {
+    const init = arg.namedChildren.find((c) => c.type === "array_initializer");
+    return init ? init.namedChildren.filter((c) => c.type !== "comment") : null;
+  }
+  if (arg.type === "call_expression" && /^(?:arrayOf|listOf|setOf|mutableListOf)\s*\(/.test(arg.text)) {
+    const args = arg.namedChildren.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "value_arguments");
+    return args ? args.namedChildren.filter((c) => c.type === "value_argument").flatMap((c) => c.namedChildren.filter((x) => x.type !== "comment").slice(-1)) : null;
+  }
+  return null;
+}
+
 /** The operands of a `+` chain, left to right; null when another operator is involved. */
 function concatParts(expr: Node): Node[] | null {
   if (expr.type !== "additive_expression" && expr.type !== "binary_expression") return [expr];
@@ -1105,10 +1118,18 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const hive = (method === "topic" && /\bpublishWith\s*\(/.test(receiver)) || (method === "topicFilter" && /\bsubscribeWith\s*\(/.test(receiver));
       const paho = (method === "publish" || method === "subscribe") && /^[\w$.]+$/.test(receiver.trim());
       if (hive || paho) {
-        const topic = urlExpression(call.firstArg, node, 0);
-        if (topic && /^[\w$.:+#/{}-]+$/.test(topic)) {
+        // One topic, or the array Paho's `subscribe(String[] filters, int[] qos)` takes (`new String[]{A, B}`, Kotlin `arrayOf(A, B)`).
+        const items = mqttTopicItems(call.firstArg);
+        const topics = (items ?? [call.firstArg]).map((t): { target: string | null; ref?: string } | null => {
+          const text = urlExpression(t, node, 0);
+          if (text !== null) return /^[\w$.:+#/{}-]+$/.test(text) ? { target: text } : null;
+          // A constant another class declares (`Topics.SCORES`): the project pass reads its value.
+          const hole = /^\$\{([^{}]+)\}$/.exec(constantString(t) ?? "");
+          return hole ? { target: null, ref: hole[1]! } : null;
+        });
+        if (topics.length > 0 && topics.every((t): t is { target: string | null; ref?: string } => !!t)) {
           const publishes = method === "publish" || method === "topic";
-          sources.push({ ...this.ds({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: topic, line }), topicSyntax: "mqtt" });
+          for (const topic of topics) sources.push({ ...this.ds({ kind: publishes ? "queue-publish" : "queue-consume", name: `MQTT: ${publishes ? "publish" : "subscribe"}`, target: topic.target, line }), ...(topic.ref ? { targetRef: topic.ref } : {}), topicSyntax: "mqtt" });
           return;
         }
       }
@@ -2314,6 +2335,8 @@ function buildFilePrepass(root: Node): {
       nameNode =
         findChild(n, "variable_declaration")?.children.find((c) => c.type === "simple_identifier") ?? null;
       initNode = initializerAfterEquals(n);
+      // `const val SCORES = "league/scores"`, in a companion object or at the top of the file.
+      if (initNode?.type === "string_literal" && !initNode.text.includes("$") && /^(?:[@\w()"=,\s]*\s)?const\s+val\b/.test(n.text) && nameNode?.text) stringFields.push({ name: nameNode.text, value: initNode });
     } else if (n.type === "field_declaration" || n.type === "local_variable_declaration") {
       const vd = findChild(n, "variable_declarator");
       nameNode = vd?.childForFieldName("name") ?? null;
