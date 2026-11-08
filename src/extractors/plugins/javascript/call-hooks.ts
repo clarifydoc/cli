@@ -3,6 +3,7 @@ import { boundAtSite } from "./block-scope.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
+import { signalReceiverTypeOfCall } from "./signal-receivers.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
 import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember } from "./dispatch-maps.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
@@ -164,7 +165,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // (`this.moduleRef.get(ReportService).buildReport()`,
   // `container.get<IUserRepo>(TYPES.UserRepo).fetchUserById(1)`,
   // `(this.gadget as GadgetService).buffGadget()`) names its receiver's type.
-  receiverTypeOf: receiverTypeOfCall,
+  receiverTypeOf: (node) => receiverTypeOfCall(node) ?? signalReceiverTypeOfCall(node),
   boundAt: boundAtSite,
   argsOf: handedArgs,
   argOriginsOf,
