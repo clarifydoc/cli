@@ -274,7 +274,7 @@ end`;
     const out = [
       file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
       file("app/controllers/admin/application_controller.rb", [cls("Admin::ApplicationController", "Administrate::ApplicationController", [])]),
-      file("app/controllers/admin/clubs_controller.rb", [cls("Admin::ClubsController", "Admin::ApplicationController", [])]),
+      file("app/controllers/admin/clubs_controller.rb", [cls("Admin::ClubsController", "Admin::ApplicationController", [["scoped_resource", 4]])]),
       file("app/controllers/admin/match_reports_controller.rb", [cls("Admin::MatchReportsController", "Admin::ApplicationController", [["resource_class", 3]])]),
       // No `Garage` model in the project: nothing is invented.
       file("app/controllers/admin/garages_controller.rb", [cls("Admin::GaragesController", "Admin::ApplicationController", [])]),
@@ -283,6 +283,8 @@ end`;
       file("app/models/club.rb", [cls("Club", "ApplicationRecord", [])]),
       file("app/models/match_report.rb", [cls("MatchReport", "ApplicationRecord", [])]),
       file("app/models/car.rb", [cls("Car", "ApplicationRecord", [])]),
+      // A namesake in another namespace is not the model the gem resolves.
+      file("app/models/premium/club.rb", [cls("Premium::Club", null, [])]),
     ];
     const importIndex = buildImportIndex(out);
     const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;

@@ -189,8 +189,9 @@ const INHERITED_CRUD_BASES: ReadonlyArray<{ base: RegExp; actions: Readonly<Reco
   {
     base: /^(?:::)?Administrate::ApplicationController$/,
     actions: { index: "read", show: "read", new: null, edit: "read", create: "write", update: "write", destroy: "write" },
-    // A project that states the model itself no longer gets it from the name.
-    overrides: ["resource_class", "resource_name", "scoped_resource", "find_resource"],
+    // A project that states the model itself no longer gets it from the name (`scoped_resource`
+    // and `find_resource` narrow which records, never which model).
+    overrides: ["resource_class", "resource_name"],
   },
 ];
 
@@ -222,7 +223,8 @@ function inheritedGemActions(
       const leaf = (qualified.get(ref) ?? ref.cls.name).split("::").pop()!.replace(/Controller$/, "");
       const words = leaf.match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) ?? [leaf];
       const model = [...words.slice(0, -1), singularize(words[words.length - 1]!)].join("");
-      const hits = (byLeaf.get(model) ?? []).filter((c) => c.cls.name === model || c.cls.name.endsWith(`::${model}`));
+      // The gem resolves the model as a top-level constant (`Club`), whatever namespace the controller sits in.
+      const hits = (byLeaf.get(model) ?? []).filter((c) => c.cls.name === model);
       if (hits.length !== 1) continue;
       const handler = `route:${r.httpMethod ?? "USE"} ${r.path}`;
       const verb = access === "write" ? m![2]! : m![2] === "index" ? "all" : "find";
