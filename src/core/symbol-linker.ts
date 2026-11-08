@@ -3970,7 +3970,7 @@ function statedFactoryOf(ctx: LinkContext, symbolIndex: Map<string, Map<string, 
 function statedFactoryMember(factory: StatedFactory, parts: readonly string[], headMember: string | undefined, bare: string | undefined): string | "factory" | undefined {
   const find = (key: string) => factory.members.find((m) => m.key === key);
   const named = (m: StatedFactory["members"][number], method: string | undefined): string | "factory" | undefined => {
-    if (method === undefined) return m.kind === "function" ? m.local ?? m.key : m.kind === "inline" ? "factory" : undefined;
+    if (method === undefined) return m.kind === "function" ? m.local ?? m.key : m.kind === "inline" || m.kind === "outer" ? "factory" : undefined;
     return m.kind === "object" ? `${m.local ?? m.key}.${method}` : undefined;
   };
   if (bare !== undefined) {

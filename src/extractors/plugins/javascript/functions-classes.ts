@@ -145,7 +145,7 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
   if (!obj) return undefined;
   const out: NonNullable<FunctionInfo["returnedMembers"]> = [];
   for (const e of obj.namedChildren) {
-    if (e.type === "shorthand_property_identifier") out.push({ key: e.text, local: e.text, kind: kinds.get(e.text) ?? "value" });
+    if (e.type === "shorthand_property_identifier") out.push({ key: e.text, local: e.text, kind: kinds.get(e.text) ?? "outer" });
     else if (e.type === "method_definition") {
       const key = objectKeyName(e.childForFieldName("name"));
       if (key) out.push({ key, kind: "inline" });
@@ -153,7 +153,7 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
       const key = objectKeyName(e.childForFieldName("key"));
       const v = unwrap(e.childForFieldName("value"));
       if (!key || !v) continue;
-      if (v.type === "identifier") out.push({ key, local: v.text, kind: kinds.get(v.text) ?? "value" });
+      if (v.type === "identifier") out.push({ key, local: v.text, kind: kinds.get(v.text) ?? "outer" });
       else out.push({ key, kind: FUNCTION_EXPRESSIONS.has(v.type) ? "inline" : "value" });
     }
   }
