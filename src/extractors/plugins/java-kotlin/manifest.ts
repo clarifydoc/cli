@@ -127,6 +127,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   family: "jvm",
   // A package's top-level functions need no import in its other files.
   directoryScope: true,
+  // ...by `package`, not by folder: `src/a/Club.kt` and `src/b/Use.kt` of one package see each other.
+  packageScope: true,
   bareMembersHideFunctions: true,
   indexerMethod: "get",
   importsDeclaredPackages: true,

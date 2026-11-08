@@ -28,7 +28,7 @@ describe("C++ edge cases: contextual keywords as names", () => {
   final.play(override);
 }
 `;
-    expect(read(source)).toEqual({ errors: 0, functions: [["host", ["findCar", "override.park", "final.play"]]] });
+    expect(read(source)).toEqual({ errors: 0, functions: [["host", ["Garage.OverrideCar", "findCar", "override.park", "final.play"]]] });
   });
 
   it("still takes them as specifiers after a declarator, a trailing return type and a class's name", () => {

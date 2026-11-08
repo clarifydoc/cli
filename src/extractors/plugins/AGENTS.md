@@ -142,3 +142,5 @@ like `knownPackages`. Notes:
   publish to the `+`/`#` filters that cover it.
 - **Line numbers are 1-based** in all output.
 - **No cross-plugin imports** — if two plugins need the same logic, extract it to `../shared/` or `shared/regex-base.ts`.
+
+- **A parser front end misses declarations that construct; a package can be the scope.** `RegexLangSpec.declarationCallPatterns` lists call patterns read over each PARSED function's lines (after the grammar's own calls, never the baseline `name(`), adding what the parse did not name there — C++ `Rank::Iterator it(2);` is a declaration to the grammar and the constructor call to the linker; without a front end `callPatterns` carries the same pattern. A C++ class path keeps its lowercase namespace on the call's `receiverType` (`league::Table::make()`), which core resolves against `ClassInfo.namespace`, so a namesake in another namespace is never taken. The manifest's `packageScope` (Kotlin, with `directoryScope`) makes the declared `package`, not the folder, the scope: same-package files in any folder of the sub-project share top-level functions, and a bare class name is the one its own package declares.

@@ -1526,6 +1526,12 @@ export interface LanguagePluginManifest {
    */
   directoryScope?: boolean;
   /**
+   * With `directoryScope`: the scope is the DECLARED package, not the folder (Kotlin) — the files of one `package`
+   * in any directory of the sub-project share their top-level functions, and a class name written bare in one of
+   * them is the class its own package declares before any namesake of another package.
+   */
+  packageScope?: boolean;
+  /**
    * Fields are only reached through the instance — `this.x`, `self.x`,
    * `$this->x` — and the call extractor keeps that head (JS/TS, Python,
    * PHP): a bare `repo.find()` names a local, parameter or global, never a

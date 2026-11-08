@@ -192,6 +192,12 @@ export interface RegexLangSpec {
   deferredBlocks?: (lines: string[]) => Array<[number, number]>;
   /** Extra call patterns (e.g. PHP `$this->x->y`, Python `self.x.y`). */
   callPatterns?: CallPattern[];
+  /**
+   * Calls a parser front end does not see as calls — a declaration whose initializer constructs (`Rank::Iterator it(2);`).
+   * The patterns read them in a parsed function's lines and add those the parse did not name on that line; without a
+   * front end `callPatterns` already carries them.
+   */
+  declarationCallPatterns?: CallPattern[];
   /** Extra property detectors (e.g. PHP `$name`, VB `As Type`). */
   propertyPatterns?: PropertyPattern[];
   /** Parse a single param "token" (e.g. `String $name`, `name: Type`, `users As UserService`). */

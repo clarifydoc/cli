@@ -37,6 +37,7 @@ export function extractWithRegex(
   const lines = presplit ?? splitLines(sourceText);
 
   analysis.functions = parsed ? extractFunctionsFromParse(lines, spec, parsed.functions) : extractFunctionsWithSpec(lines, spec);
+  if (parsed && spec.declarationCallPatterns) addDeclarationCalls(spec.callSourceLines?.(lines) ?? lines, spec, analysis.functions);
   analysis.classes = spec.extractClasses
     ? spec.extractClasses(lines, analysis.functions)
     : extractClassesWithSpec(lines, spec);
@@ -133,6 +134,19 @@ export function extractWithRegex(
   if (entityResult.schemaOps && entityResult.schemaOps.length > 0) analysis.schemaOps = entityResult.schemaOps;
 
   return analysis;
+}
+
+/** The calls `spec.declarationCallPatterns` read in each parsed function's lines that the parse did not name there. */
+function addDeclarationCalls(lines: readonly string[], spec: RegexLangSpec, functions: FunctionInfo[]): void {
+  // Only these patterns: the baseline `name(` would read every signature as a call.
+  const patterns = (spec.declarationCallPatterns ?? []).map((p) => ({ ...p, replacesBaseline: true }));
+  for (const fn of functions) {
+    const read = extractCallsFromBody([...lines], fn.line - 1, fn.endLine, spec.lineCommentPrefixes, patterns);
+    const added = read.filter((c) => !fn.calls.some((k) => k.name === c.name && k.line === c.line));
+    if (added.length === 0) continue;
+    fn.calls.push(...added);
+    fn.calls.sort((a, b) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0));
+  }
 }
 
 /**

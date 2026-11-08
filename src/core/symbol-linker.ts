@@ -1919,6 +1919,8 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {
   filePathMap: Map<string, string>;
+  /** Files of one declared package (sub-project + language + package), built on first use by `packageScope` languages. */
+  samePackageIndex?: Map<string, string[]>;
   /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
   directoryFiles?: Map<string, string[]>;
   /** Names some project function or method bears, built on first use. */
@@ -5951,7 +5953,12 @@ function directoryFunction(
   const sourceIsTest = isTestFile(sourceFile, analysis.language);
   const family = extensionFamily(sourceFile);
   let found: { file: string; def: SymbolDef } | null = null;
-  for (const file of ctx.directoryFiles.get(dir) ?? []) {
+  // Where the package is the scope (`packageScope`), the files of the caller's declared package in any folder of its
+  // sub-project join the folder's own.
+  const candidates = pluginFor(analysis.language)?.packageScope && analysis.packageName
+    ? [...new Set([...(ctx.directoryFiles.get(dir) ?? []), ...samePackageFiles(ctx, analysis)])]
+    : ctx.directoryFiles.get(dir) ?? [];
+  for (const file of candidates) {
     if (file === sourceFile || extensionFamily(file) !== family) continue;
     if (!sourceIsTest && isTestFile(file, (ctx.languageOf.get(file) ?? analysis.language) as Language)) continue;
     // A file that declares another package than the caller's shares no scope with it, whatever the folder.
@@ -5963,6 +5970,18 @@ function directoryFunction(
     found = { file, def };
   }
   return found;
+}
+
+/** The other files of `analysis`'s sub-project that declare its package (`packageScope`), whatever their folder. */
+function samePackageFiles(ctx: LinkContext, analysis: FileAnalysis): string[] {
+  ctx.samePackageIndex ??= new Map();
+  const key = `${analysis.projectId}\0${analysis.language}\0${analysis.packageName}`;
+  let files = ctx.samePackageIndex.get(key);
+  if (!files) {
+    files = ctx.analyses.filter((a) => a.projectId === analysis.projectId && a.language === analysis.language && a.packageName === analysis.packageName).map((a) => a.filePath);
+    ctx.samePackageIndex.set(key, files);
+  }
+  return files.filter((f) => f !== analysis.filePath);
 }
 
 /** Every directory (with trailing slash) → the files directly inside it. */
@@ -6036,10 +6055,15 @@ function resolveThroughDeclaredType(
     // `MatchEvent::HashScore(…)` inside `MatchLog`, which nests `MatchLog::MatchEvent`.
     const nested = !imported && typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile, false) : null;
     if (nested) typeName = nested.typeName;
-    let typeFile = imported ? imported.typeFile : nested?.typeFile ?? (typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null);
+    const written = call.receiverType?.trim().replace(/^::/, "");
+    // A type written through its namespace (`league::Table`) is the declaration in that namespace, whichever
+    // namesake (`rally::Table`) the bare name could also reach; a path no declaration bears out falls back to the name.
+    const throughNamespace = !imported && !nested && typeName && written && written !== typeName && /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(written)
+      ? namespacedTypeRef(ctx, written, sourceFile, undefined) : undefined;
+    let typeFile = imported ? imported.typeFile : nested?.typeFile ?? (throughNamespace ? throughNamespace.typeFile : typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null);
+    if (throughNamespace === null) return null;
     // A language that names a class by its qualified path (`Billing::InvoiceService`)
     // declares it under that name, which the bare name does not find.
-    const written = call.receiverType?.trim().replace(/^::/, "");
     if (typeName && !typeFile && written && written !== typeName && /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(written)) {
       const qualified = typeFileFor(ctx, written, sourceFile, analysis.projectId);
       if (qualified) { typeName = written; typeFile = qualified; }
@@ -7209,6 +7233,16 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
     const declared = fs.filter((f) => !declOf(f, typeName)?.extension);
     return declared.length > 0 ? declared : fs;
   };
+  // Where the package is the scope (`packageScope`), a bare name is the class the caller's own package declares — in
+  // any folder, and before a namesake of another package that happens to sit nearer.
+  if (source?.packageName && manifestFor(source.language as Language)?.packageScope) {
+    const sourceIsTest = isTestFile(sourceFile, source.language);
+    const inPackage = declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
+      sameTypeSpace(sourceFile, ctx.languageOf.get(sourceFile) ?? "", f, ctx.languageOf.get(f) ?? "") && reachable(f)
+      && ctx.analysisByFile!.get(f)?.packageName === source.packageName && ctx.analysisByFile!.get(f)?.projectId === projectId
+      && (sourceIsTest || !isTestFile(f, (ctx.languageOf.get(f) ?? source.language) as Language))));
+    if (inPackage.length === 1) return inPackage[0]!;
+  }
   // A language whose types live in nested namespaces finds the name the compiler would.
   if (source && manifestFor(source.language as Language)?.nestedPackageLookup) {
     const srcLang = ctx.languageOf.get(sourceFile) ?? "";

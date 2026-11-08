@@ -1,6 +1,6 @@
 import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import type { RegexLangSpec } from "../shared/regex-base.js";
+import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
@@ -11,6 +11,24 @@ import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
+
+/**
+ * A nested class constructed by direct initialisation, `Rank::Iterator it(2);` or `Table::Iterator it{2};`: the
+ * constructor call `Rank::Iterator(2)` names, read the same way (the owner is the receiver, or the whole path when it
+ * has several segments). A statement ending in `;` only, so a method definition's `Club::Player pick(int id) {` is none.
+ * The grammar reads the statement as a declaration, so the spec also lists it as a `declarationCallPatterns` entry.
+ */
+const DIRECT_INIT_CALL: CallPattern = {
+  pattern: /(?<![\w:])((?:[a-z_]\w*\s*::\s*)*)((?:[A-Z]\w*\s*::\s*)+[A-Z]\w*)(?:<[^<>;()]*>)?\s+[A-Za-z_]\w*\s*[({][^;]*[)}]\s*;/g,
+  buildName: (m) => {
+    const segments = m[2]!.replace(/\s+/g, "").split("::");
+    const leaf = segments.pop()!;
+    const owner = segments.join("::");
+    return segments.length > 1
+      ? { name: `${owner}::${leaf}`, leafName: leaf }
+      : { name: `${owner}.${leaf}`, leafName: leaf, receiverType: m[1]!.replace(/\s+/g, "") + owner };
+  },
+};
 
 /** A chain's head: a function or a `ns::Type::function` path — never the tail of a longer path, selector or `->`. */
 const CPP_CHAIN_HEAD = String.raw`(?<![\w.:>])((?:[A-Za-z_]\w*\s*::\s*)*[A-Za-z_]\w*)`;
@@ -137,6 +155,7 @@ export const cppSpec: RegexLangSpec = {
   // CUDA kernel launch `vecAdd<<<grid, block>>>(a, b, n)` (or
   // `scale<float><<<…>>>(…)`): the call the baseline `name(` never sees.
   // Kernel definitions need nothing — `__global__` reads as part of the type.
+  declarationCallPatterns: [DIRECT_INIT_CALL],
   callPatterns: [
     {
       pattern: /\b([A-Za-z_]\w*)\s*(?:<[^<>]*>)?\s*<<<[^;]*?>>>\s*\(/,
@@ -149,15 +168,18 @@ export const cppSpec: RegexLangSpec = {
       // A one-letter head is a template parameter (`T::create()`), whose type only the instantiation says.
       // A class path (`Away::Club::create()`, `Table::Iterator::next()`) keeps its capitalized segments: the namespace
       // a capitalized project writes is part of which `Club` is meant, and two of them in one function stay two calls.
-      pattern: /(?<![\w:])(?:[a-z_]\w*\s*::\s*)*((?:[A-Z]\w+\s*::\s*)*[A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
+      pattern: /(?<![\w:])((?:[a-z_]\w*\s*::\s*)*)((?:[A-Z]\w+\s*::\s*)*[A-Z]\w+)(?:<[^<>;()]*>)?\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       buildName: (m, line) => {
-        const path = m[1]!.replace(/\s+/g, "");
+        const namespaces = m[1]!.replace(/\s+/g, "");
+        const path = m[2]!.replace(/\s+/g, "");
         // `new Home::Table::Iterator(…)` constructs the nested class at that path, as `new Club(` constructs `Club`. A one-segment
         // scope (`new Rank::Iterator(…)`, an alias maybe) keeps the owner as the receiver, which the alias follows.
-        if (/\bnew\s+(?:::\s*)?$/.test((line ?? "").slice(0, m.index)) && path.includes("::") && /^[A-Z]/.test(m[2]!)) return { name: `${path}::${m[2]}`, leafName: m[2]! };
-        return { name: `${path.includes("::") ? path : m[1]}.${m[2]}`, leafName: m[2]!, receiverType: path };
+        if (/\bnew\s+(?:::\s*)?$/.test((line ?? "").slice(0, m.index)) && path.includes("::") && /^[A-Z]/.test(m[3]!)) return { name: `${path}::${m[3]}`, leafName: m[3]! };
+        // A lowercase namespace in front (`league::Table::make()`) stays on the receiver, so the namesake `rally::Table` is not taken.
+        return { name: `${path.includes("::") ? path : m[2]}.${m[3]}`, leafName: m[3]!, receiverType: namespaces + path };
       },
     },
+    DIRECT_INIT_CALL,
     // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`,
     // `Router::instance()->addPath(p)` too (`?.` is how the call scan's lines spell `->`, see c-family-code.ts).
     ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead, 3, String.raw`(?:\??\.|->)`),
