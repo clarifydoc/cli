@@ -158,9 +158,9 @@ function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<st
   return fields;
 }
 
-/** `this.read.emit(` — where an Angular output held in `field` is emitted. */
+/** `this.read.emit(` (or `.next(`, an EventEmitter being a Subject) — where an Angular output held in `field` is emitted. */
 function outputEmitRe(field: string): RegExp {
-  return new RegExp(String.raw`\b(?:this\.)?` + escapeRegex(field) + String.raw`\.emit\s*\(`, "g");
+  return new RegExp(String.raw`\b(?:this\.)?` + escapeRegex(field) + String.raw`\.(?:emit|next)\s*\(`, "g");
 }
 
 /**

@@ -60,6 +60,22 @@ export class MatchCardComponent {
   });
 });
 
+describe("Angular outputs fired with next", () => {
+  it("places an EventEmitter output at its .next( call as it does at .emit(", () => {
+    const src = `import { Component, EventEmitter, Output } from '@angular/core';
+
+@Component({ selector: 'app-club-filter', template: '' })
+export class ClubFilterComponent {
+  @Output() rulesChange = new EventEmitter<string[]>();
+
+  update(rules: string[]) {
+    this.rulesChange.next(rules);
+  }
+}`;
+    expect(extractEvents(src, "typescript").map((e) => `${e.name} @${e.line}`)).toEqual(["rulesChange @8"]);
+  });
+});
+
 describe("an event emitted from several functions", () => {
   it("keeps every line it is emitted at, so each emitting function reaches the parent's handler (real-repo FP)", () => {
     const src = `<script setup>

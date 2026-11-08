@@ -8,6 +8,7 @@ import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
+import { withSubjectTriggers } from "./rxjs-subjects.js";
 import { contextValues } from "./provide-inject.js";
 import { busEvents, JsEventBusResolver } from "./bus-events.js";
 import { extractCdkResources } from "./cdk-resources.js";
@@ -308,7 +309,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
   preprocess: (raw, path) =>
-    withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"),
+    withSubjectTriggers(withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
