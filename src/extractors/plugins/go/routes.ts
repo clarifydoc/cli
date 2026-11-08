@@ -93,6 +93,38 @@ const STRING_RE = /^["'`]([^"'`]*)["'`]$/;
 const BASE_WRAPPED_RE = /^[A-Za-z_][\w.]*\.(?:Base\w*|\w*Prefix\w*)\s*\(\s*["'`](\/[^"'`]*)["'`]\s*\)$/;
 /** `"/folders/" + root` — a literal path ending in `/`, then a variable. */
 const PATH_PLUS_VAR_RE = /^["'`](\/[^"'`]*\/)["'`]\s*\+\s*([A-Za-z_]\w*)$/;
+/**
+ * A path written as a `+` chain that starts with a literal (`"/"+m.Name()+"/auth"`, `"/x/"+id+"/y"`): each value
+ * is a segment the caller fills, kept as `{name}` (a call's own name, parentheses dropped). Null for a chain that
+ * begins with a value (a configured base) or holds anything but literals, names and argument-less calls.
+ */
+function concatenatedPath(arg: string | undefined): string | null {
+  if (!arg || !arg.includes("+")) return null;
+  const parts: string[] = [];
+  let quote = "";
+  let depth = 0;
+  let current = "";
+  for (const ch of arg) {
+    if (quote) { if (ch === quote) quote = ""; current += ch; continue; }
+    if (ch === '"' || ch === "`" || ch === "'") { quote = ch; current += ch; continue; }
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "+" && depth === 0) { parts.push(current.trim()); current = ""; continue; }
+    current += ch;
+  }
+  parts.push(current.trim());
+  if (parts.length < 2 || !/^["'`]\//.test(parts[0]!)) return null;
+  let path = "";
+  for (const part of parts) {
+    const lit = part.match(STRING_RE);
+    if (lit) { path += lit[1]!; continue; }
+    const value = /^[A-Za-z_][\w.]*?(?:\.([A-Za-z_]\w*))?(?:\(\))?$/.exec(part);
+    if (!value) return null;
+    path += `{${value[1] ?? part.replace(/\(\)$/, "")}}`;
+  }
+  return path;
+}
+
 /** gin `r.Match(methods, "/p", h)` / `r.Any("/p", h)`. */
 const MATCH_RE = /(\w+|\))\.\s*(Match|Any)\s*\(/;
 /** `baseUrl+"/cart"`, `cfg.BasePath + "/x"`: a path under a base the deployment sets — the base is not part of the route. */
@@ -421,7 +453,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     if (m) return m[1]!;
     // `"/folders/" + root`: the variable is a segment the caller fills.
     const tail = arg?.match(PATH_PLUS_VAR_RE);
-    return tail ? `${tail[1]}{${tail[2]}}` : null;
+    return tail ? `${tail[1]}{${tail[2]}}` : concatenatedPath(arg);
   };
 
   for (let i = 0; i < lines.length; i++) {

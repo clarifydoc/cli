@@ -516,6 +516,18 @@ export function collectionParams(params: readonly ParamInfo[]): Map<string, { el
   return out;
 }
 
+/** `dict[K, type[Base]]` (any spacing, `Dict`/`Mapping`/`Type`): the registry's stated base class. */
+const REGISTRY_TYPE = /^(?:typing\.)?(?:dict|Dict|Mapping|MutableMapping)\[[^,\]]+(?:\[[^\]]*\])?,(?:typing\.)?(?:type|Type)\[([A-Za-z_][\w.]*)\]\]$/;
+
+/** `table.get(k, …)` or `table[k]` where `table` is a registry of classes: the registry's base. */
+function registryPick(right: Node, registries: ReadonlyMap<string, string>): string | null {
+  if (right.type === "subscript") return registries.get(right.childForFieldName("value")?.text ?? "") ?? null;
+  if (right.type !== "call") return null;
+  const fn = right.childForFieldName("function");
+  if (fn?.type !== "attribute" || fn.childForFieldName("attribute")?.text !== "get") return null;
+  return registries.get(fn.childForFieldName("object")?.text ?? "") ?? null;
+}
+
 export function collectLocalTypes(
   body: Node,
   params: readonly ParamInfo[],
@@ -528,6 +540,10 @@ export function collectLocalTypes(
   const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number; element?: true }>>();
   // Also assigned something other than a call (or `None`): hides its `from` calls.
   const untyped = new Set<string>();
+  // Class-valued registries the body annotates (`table: dict[Kind, type[Base]] = {...}`) and the locals picked
+  // out of one (`ctor = table.get(kind)`, `ctor = table[kind]`): calling such a local constructs the stated base.
+  const registries = new Map<string, string>();
+  const classValued = new Map<string, string>();
   const scope = (name: string): Fact => {
     if (paramNames.has(name)) return paramFact(params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
@@ -609,6 +625,8 @@ export function collectLocalTypes(
       const name = left.text;
       const annotation = a.childForFieldName("type");
       if (annotation) {
+        const registry = REGISTRY_TYPE.exec(annotation.text.replace(/\s+/g, ""));
+        if (registry) registries.set(name, registry[1]!);
         table.declare(name, { type: collapse(annotation.text) });
         const stated = collectionElement(annotation.text);
         if (stated) collections.set(name, stated);
@@ -620,6 +638,22 @@ export function collectLocalTypes(
         return;
       }
       const right = a.childForFieldName("right");
+      // `ctor = table.get(kind, Default)` / `ctor = table[kind]` out of a registry of classes: a class-valued local.
+      const picked = right && registries.size > 0 ? registryPick(right, registries) : null;
+      if (picked) {
+        classValued.set(name, picked);
+        table.assign(name, UNKNOWN);
+        untyped.add(name);
+        return;
+      }
+      // `obj = ctor(**args)`: an instance of the registry's stated base.
+      const built = right && classValued.size > 0 && right.type === "call" ? classValued.get(right.childForFieldName("function")?.text ?? "") : undefined;
+      if (built) {
+        classValued.delete(name);
+        table.declare(name, { type: built });
+        return;
+      }
+      classValued.delete(name);
       const fact = right ? valueFact(right, scope) : UNKNOWN;
       table.assign(name, fact);
       if (fact !== UNKNOWN) {

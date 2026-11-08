@@ -163,7 +163,9 @@ function extractOrmChains(lines: string[], spec: OrmChainSpec): DataSourceInfo[]
       if (spec === XORM && /^db$/.test(chain)) continue;
       const arg = firstArg(line.slice(m.index! + m[0].length));
       const modelArg = spec.model?.exec(chain)?.[1] ?? held ?? undefined;
-      const entity = (modelArg ? entityOfArg(modelArg.trim(), lines, i) : null) ?? (arg ? entityOfArg(arg, lines, i) : null);
+      const named = (modelArg ? entityOfArg(modelArg.trim(), lines, i) : null) ?? (arg ? entityOfArg(arg, lines, i) : null);
+      // A DTO/view struct that is no registered model but overrides `TableName()` reads the table that returns.
+      const entity = named ? (tableNameOverride(lines, named) ?? named) : null;
       out.push(row(m[1]!, entity, i + 1, arg));
     }
   }
@@ -265,6 +267,27 @@ function chainBefore(lines: string[], i: number, col: number): string {
   return text.slice(k + 1).replace(/("[^"]*"|`[^`]*`)|\s+/g, (_m, str: string | undefined) => str ?? "");
 }
 
+/**
+ * The table a struct's `func (X) TableName() string { return "t" }` returns, when this file declares it — and
+ * the file does not also declare X with column tags (a model the ER graph already knows by its own name).
+ */
+function tableNameOverride(lines: string[], struct: string): string | null {
+  const name = escapeRegex(struct);
+  const method = new RegExp(String.raw`^func\s*\(\s*(?:\w+\s+)?\*?\s*${name}\s*\)\s*TableName\s*\(\s*\)\s*string\s*\{`);
+  for (let i = 0; i < lines.length; i++) {
+    if (!method.test(lines[i]!)) continue;
+    const body = lines.slice(i, i + 4).join("\n").replace(/\/\/.*$/gm, "");
+    const table = /\{\s*return\s+"([^"\\]+)"\s*\}/.exec(body)?.[1];
+    if (!table) return null;
+    const start = lines.findIndex((l) => new RegExp(String.raw`^type\s+${name}\s+struct\b`).test(l));
+    if (start >= 0) {
+      for (let j = start + 1; j < lines.length && !/^\}/.test(lines[j]!); j++) if (/`[^`]*\b(?:xorm|gorm):"/.test(lines[j]!)) return null;
+    }
+    return table;
+  }
+  return null;
+}
+
 /** The first argument's text: `&labels`, `issue`, `&Comment{`, `new(Issue)`. */
 function firstArg(rest: string): string | null {
   // `new(Match)` before a bare name, which would stop at `new`.
@@ -297,7 +320,7 @@ const TYPE = String.raw`(?:\[\]|\*|\[\]\*)*(?:[a-z_]\w*\.)?([A-Z]\w*)`;
 function declaredType(line: string, name: string): string | null {
   const n = escapeRegex(name);
   const forms = [
-    new RegExp(String.raw`\b${n}\s*:=\s*&?(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{`),
+    new RegExp(String.raw`\b${n}\s*:=\s*&?(?:\[\]\*?)?(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\{`),
     new RegExp(String.raw`\b${n}\s*:=\s*new\(\s*(?:[a-z_]\w*\.)?([A-Z]\w*)\s*\)`),
     new RegExp(String.raw`\b${n}\s*:=\s*make\(\s*${TYPE}`),
     new RegExp(String.raw`\bvar\s+${n}\s+${TYPE}`),

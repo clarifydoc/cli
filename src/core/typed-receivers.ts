@@ -54,7 +54,8 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   const scopeOf = (fn: FunctionInfo, members: ReadonlySet<string>): Set<string> => {
     const names = new Set(members);
     for (const p of fn.params) if (declared(p.type) || p.qualifier) names.add(fold(p.name));
-    for (const l of fn.localTypes ?? []) if (declared(l.type) || l.qualifier) names.add(fold(l.name));
+    // A local typed only by its initializer call (`from`) counts too: the linker types it by that call's declared return type.
+    for (const l of fn.localTypes ?? []) if (declared(l.type) || l.qualifier || (!l.type && l.from)) names.add(fold(l.name));
     return names;
   };
 
