@@ -39,7 +39,7 @@ export function addDescriptorCalls(analysis: FileAnalysis, raw: string): void {
         if (!held) continue;
         for (const value of held.values()) {
           if (fn.calls.some((x) => x.name === value.name)) continue;
-          fn.calls.push({ ...value, line: site.line, confidence: held.size > 1 ? "AMBIGUOUS" : "INFERRED" });
+          fn.calls.push({ ...value, line: site.line, confidence: held.size > 1 ? "AMBIGUOUS" : "INFERRED", ...(held.size > 1 ? { alternative: true as const } : {}) });
         }
       }
     }

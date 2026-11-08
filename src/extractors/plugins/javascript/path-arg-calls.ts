@@ -53,11 +53,16 @@ export function extractPathArgCalls(tree: Tree, sourceText: string): PathArgCall
       literalArg(a) ?? (a.type === "identifier" ? (forwarded.has(a.text) ? `\${${a.text}}` : localUrl(call, a.text)) : urlMember(a, urlObjects)),
     );
     if (!args.some((a) => a !== null && (PATH_SHAPED.test(a) || /^\$\{[\w$]+(?:\.[\w$]+)?\}$/.test(a)))) continue;
+    // `` `…/download/${endpoint}` `` where `const endpoint = a ? Kind.Club : 'player'`: one URL per value, the site's own choice.
+    const argAlternatives = args.map((a, i) => (argNodes[i]?.type === "identifier" && a ? choiceUrls(call, a) : undefined));
+    argAlternatives.forEach((alts, i) => {
+      if (alts) args[i] = alts[0]!;
+    });
     // `send(url, { method: "POST", … })`: the verb the site's options state — or a verb handed positionally (`_fetch("POST", url)`).
     const options = argNodes.find((a) => a.type === "object");
     const positional = args.find((a) => a !== null && VERB.test(a));
     const method = (options ? methodOf(options) : null) ?? (positional ? positional.toUpperCase() : null);
-    out.push({ callee, args, line: call.startPosition.row + 1, ...(method ? { method } : {}), ...(ownMethod ? { receiver: object!.text } : {}) });
+    out.push({ callee, args, ...(argAlternatives.some((x) => x) ? { argAlternatives: argAlternatives.map((x) => x?.slice(1) ?? null) } : {}), line: call.startPosition.row + 1, ...(method ? { method } : {}), ...(ownMethod ? { receiver: object!.text } : {}) });
   }
   return out;
 }
@@ -140,6 +145,39 @@ function localUrl(call: Node, name: string): string | null {
   const url = pieces.map((p) => literalArg(p) ?? `\${${p.text.replace(/\s+/g, " ")}}`).join("");
   // A hole naming a plain string `const` of the same function (`const kind = "club"`) is that string.
   return url.replace(/\$\{([A-Za-z_$][\w$]*)\}/g, (hole, id: string) => localString(fn!, call, id) ?? hole);
+}
+
+/**
+ * A URL whose one hole is a `const` of the same function set by a ternary over strings and member reads
+ * (`const kind = a ? Kind.Club : "player"`): the URL for each value, the member read left as a `${Kind.Club}` hole.
+ * Only the path's holes count (a query string never picks a route); null for a hole that is anything else, or when several qualify.
+ */
+function choiceUrls(call: Node, url: string): string[] | null {
+  let fn: Node | null = call.parent;
+  while (fn && !FUNCTION_NODE.test(fn.type)) fn = fn.parent;
+  if (!fn) return null;
+  const found: Array<{ hole: string; values: string[] }> = [];
+  for (const id of new Set([...url.split("?")[0]!.matchAll(/\$\{([A-Za-z_$][\w$]*)\}/g)].map((m) => m[1]!))) {
+    const decls = fn.descendantsOfType("variable_declarator").filter((d) => d?.childForFieldName("name")?.text === id);
+    if (decls.length !== 1) continue;
+    const d = decls[0]!;
+    let owner: Node | null = d.parent;
+    while (owner && !FUNCTION_NODE.test(owner.type)) owner = owner.parent;
+    if (owner?.id !== fn.id || d.startIndex > call.startIndex || d.parent?.firstChild?.type !== "const") continue;
+    const values: string[] = [];
+    const arms = (n: Node | null): boolean => {
+      if (!n) return false;
+      if (n.type === "parenthesized_expression") return arms(n.namedChild(0));
+      if (n.type === "ternary_expression") return arms(n.childForFieldName("consequence")) && arms(n.childForFieldName("alternative"));
+      if (n.type === "string" && !values.includes(stripQuotes(n.text))) values.push(stripQuotes(n.text));
+      else if (n.type === "member_expression" && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(n.text)) values.push(`\${${n.text}}`);
+      else if (n.type !== "string") return false;
+      return true;
+    };
+    const init = d.childForFieldName("value");
+    if (init?.type === "ternary_expression" && arms(init) && values.length > 1) found.push({ hole: `\${${id}}`, values });
+  }
+  return found.length === 1 ? found[0]!.values.map((v) => url.split(found[0]!.hole).join(v)) : null;
 }
 
 /** The text of a `const id = "text"` (no substitutions) declared directly in `fn` before `call`, else null. */

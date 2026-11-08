@@ -138,6 +138,15 @@ describe("expandRequestFactories", () => {
     expect(calls[2]!.target).toBe("/health");
   });
 
+  it("a site's URL that is one of several values becomes alternatives of one choice", () => {
+    const calls: Array<DataSourceInfo & { filePath: string }> = [{ ...factoryRow(), targetAlternatives: undefined }];
+    const site = analysis("Store/Actions/exportActions.js", [], [
+      { callee: "createFetchHandler", args: ["export", "/export/club"], argAlternatives: [null, ["/export/player", "/export/match"]], line: 9 },
+    ]);
+    expect(expandRequestFactories(calls, [factoryFile, site], index({ createFetchHandler: factoryFile.filePath }))).toBe(1);
+    expect(calls[1]).toMatchObject({ target: "/export/club", targetAlternatives: ["/export/player", "/export/match"], targetChoice: true });
+  });
+
   it("follows a default export imported under another name", () => {
     const calls: Array<DataSourceInfo & { filePath: string }> = [factoryRow()];
     const exporting = { ...factoryFile, exports: [{ name: "default", kind: "default", line: 5 }] } as unknown as FileAnalysis;
