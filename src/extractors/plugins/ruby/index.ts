@@ -304,6 +304,56 @@ function addOwnMethodCalls(lines: readonly string[], cls: ClassInfo, fn: Functio
   }
 }
 
+/** `NAMES = %i[a b]` / `NAMES = [:a, :b]` constants of a class body → their symbols (a list of anything else is none). */
+function symbolListConstants(lines: readonly string[], cls: ClassInfo): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+    const head = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(%i[\[({]|\[)(.*)$/.exec(lines[i] ?? "");
+    if (!head) continue;
+    const percent = head[2]!.startsWith("%");
+    const close = percent ? /[\])}]/ : /\]/;
+    let text = head[3]!;
+    for (let j = i + 1; !close.test(text) && j < Math.min(cls.endLine, lines.length, i + 40); j++) text += ` ${lines[j] ?? ""}`;
+    const end = text.search(close);
+    if (end < 0) continue;
+    const body = text.slice(0, end).replace(/#.*$/, "");
+    const names = percent ? body.split(/\s+/).filter(Boolean) : body.split(",").map((t) => t.trim()).filter(Boolean).map((t) => (/^:([a-z_]\w*[?!]?)$/.exec(t) ?? [])[1] ?? "");
+    if (names.length > 0 && names.every((n) => /^[a-z_]\w*[?!]?$/.test(n))) out.set(head[1]!, names);
+  }
+  return out;
+}
+
+/**
+ * `send(name)` where the class gates `name` by a constant list of symbols
+ * (`EVENTS.include?(name)`, in the sending method or in the method `name`
+ * that yields it): the call is to each listed method the class defines.
+ */
+function addSymbolListDispatchCalls(lines: readonly string[], code: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
+  const body = bodyLines(code, fn);
+  const sends: Array<{ arg: string; line: number }> = [];
+  for (const [i, text] of body) {
+    const m = /(?<![\w.@$:])(?:self\.)?(?:public_send|__send__|send)\(?\s*([a-z_]\w*[?!]?)\s*(?:[,)]|$)/.exec(text);
+    if (m) sends.push({ arg: m[1]!, line: i + 1 });
+  }
+  if (sends.length === 0) return;
+  const constants = symbolListConstants(lines, cls);
+  if (constants.size === 0) return;
+  const own = new Set(cls.methods.map((x) => x.name));
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  for (const send of sends) {
+    const yielder = cls.methods.find((x) => x.name === send.arg);
+    const text = [...body, ...(yielder ? bodyLines(code, yielder) : [])].map(([, t]) => t).join("\n");
+    for (const [name, symbols] of constants) {
+      if (!new RegExp(`\\b${name}\\.(?:include|member)\\?|\\.in\\?\\(\\s*${name}\\b`).test(text)) continue;
+      for (const sym of symbols) {
+        if (!own.has(sym) || have.has(`${sym}@${send.line}`)) continue;
+        have.add(`${sym}@${send.line}`);
+        fn.calls.push({ name: sym, kind: "internal", target: null, line: send.line });
+      }
+    }
+  }
+}
+
 /**
  * `def look a, b` — parameters written without parentheses, up to a `;` or
  * comment. The shared reader takes a list only in parentheses.
@@ -1124,6 +1174,7 @@ export const rubySpec: RegexLangSpec = {
         addMemberChainCalls(code, m, associations, bound);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m, bound);
+        addSymbolListDispatchCalls(lines, code, cls, m);
         addBareStatementCalls(code, cls, m, bound);
       }
       // A controller's filters, for the project pass that runs them before each action.

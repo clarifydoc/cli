@@ -244,7 +244,9 @@ export function attributeDataAccessToSymbols(
         }
       }
     }
-    if (fns.length === 0 && inlineRouteAt.size === 0 && (a.classes ?? []).length === 0) continue;
+    // A file of routes alone (a router) holds a route's own access (`DataSourceInfo.handler`) with no function around it.
+    const ownsRouteAccess = (a.dataSources ?? []).some((d) => d.handler?.startsWith("route:"));
+    if (fns.length === 0 && inlineRouteAt.size === 0 && (a.classes ?? []).length === 0 && !ownsRouteAccess) continue;
     const setupFn = (a.functions ?? []).find((f) => f.name === "<setup>");
     const setup = setupFn ? { symbol: "<setup>", line: setupFn.line } : null;
 
