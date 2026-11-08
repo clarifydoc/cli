@@ -82,8 +82,8 @@ function svelteExpressions(raw: string): Span[] {
 /**
  * An Astro component's markup: every `{expression}` outside the frontmatter, scripts and styles
  * (`{fmtScore(n)}`, `<Crest src={crestUrl(club)} />`, `{clubs.map((c) => <li>{label(c)}</li>)}`).
- * An expression that holds markup of its own is not TypeScript: its nested `{…}` are read instead,
- * the callback around them left out.
+ * An expression that holds markup of its own is not TypeScript: its nested `{…}` are read, and
+ * the head before the first element (`getClubs().map((c) => `) is read with `null` for the markup.
  */
 function astroExpressions(raw: string): Span[] {
   const fence = astroFrontmatter(raw);
@@ -98,7 +98,11 @@ function astroExpressions(raw: string): Span[] {
       const open = i;
       i = end;
       const inner = t.slice(open + 1, end);
-      if (/<[A-Za-z][\w.:-]*[\s/>]/.test(inner)) {
+      const markup = inner.search(/<[A-Za-z][\w.:-]*[\s/>]/);
+      if (markup >= 0) {
+        // The callback's head (`getClubs().map((c) => `) is evaluated too: read it with `null` for the markup.
+        const head = headExpression(inner.slice(0, markup));
+        if (head && !NOT_VALUE.test(t.slice(Math.max(0, open - 60), open))) spans.push({ start: open, end: open + 1 + markup, expr: head });
         scan(open + 1, end);
         continue;
       }
@@ -109,6 +113,24 @@ function astroExpressions(raw: string): Span[] {
   };
   scan(0, t.length);
   return spans;
+}
+
+/** `getClubs().map((c) => ` → `getClubs().map((c) => null)`: the text before markup, its open brackets closed; null when it is no call. */
+function headExpression(head: string): string | null {
+  const stack: string[] = [];
+  for (let i = 0; i < head.length; i++) {
+    const ch = head[i]!;
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const stop = head.indexOf(ch, i + 1);
+      if (stop < 0) return null;
+      i = stop;
+    } else if (ch === "(" || ch === "[" || ch === "{") stack.push(ch === "(" ? ")" : ch === "[" ? "]" : "}");
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (stack.pop() !== ch) return null;
+    }
+  }
+  const text = head;
+  return stack.length === 0 && !/\(/.test(text) ? null : `${text}null${stack.reverse().join("")}`;
 }
 
 /** The index of the `}` closing the `{` at `open`, strings and nested braces aware; -1 when none. */

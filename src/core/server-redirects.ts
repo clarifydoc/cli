@@ -72,7 +72,20 @@ export function attachServerRedirects(
     return out;
   };
 
-  const resolveName = (name: string, controller: string | undefined, route: RouteInfo & { filePath: string; projectId?: string }, file: string): string | null => {
+  // The name the framework registered a route under (`RouteInfo.name`), per route's sub-project.
+  const byName = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
+  for (const r of api) if (r.name) (byName.get(r.name) ?? byName.set(r.name, []).get(r.name)!).push(r);
+
+  const resolveName = (name: string, controller: string | undefined, route: RouteInfo & { filePath: string; projectId?: string }, file: string, helper = false): string | null => {
+    // A name a route states (`as:`, `->name()`, `name=`, `Name = `) is exactly that route: a verb-less name joins the GET row.
+    const named = (byName.get(name) ?? []).filter((r) => (r.projectId ?? "root") === (route.projectId ?? "root"));
+    if (named.length > 0) {
+      const gets = named.filter((r) => !r.httpMethod || r.httpMethod === "GET");
+      const paths = new Set((gets.length > 0 ? gets : named).map((r) => r.path));
+      return paths.size === 1 ? [...paths][0]! : null;
+    }
+    // A URL helper names a route only through its registered name, never a handler's leaf.
+    if (helper) return null;
     const parts = name.split(/[.:]/);
     const leaf = parts.pop()!;
     const qualifier = (controller ?? parts.join(".")).toLowerCase();
@@ -98,7 +111,7 @@ export function attachServerRedirects(
         if (!REDIRECT_LINE.test(line)) continue;
         for (const p of redirectPaths(line)) if (p !== route.path) out.add(p);
         for (const n of redirectNames(line)) {
-          const p = resolveName(n.name, n.controller, route, file);
+          const p = resolveName(n.name, n.controller, route, file, n.helper);
           if (p && p !== route.path) out.add(p);
         }
       }
@@ -151,21 +164,27 @@ function appPath(raw: string): string | null {
 
 /** A route named rather than spelled: `url_for("table")`, `RedirectToAction("Index", "Clubs")`, `action: "list"`. */
 const NAMED = [
-  /\b(?:url_for|reverse|reverse_lazy)\s*\(\s*["']([\w.:]+)["']/g,
+  /\b(?:url_for|reverse|reverse_lazy|toRoute|to_route|RedirectToRoute|RedirectToRoutePermanent)\s*\(\s*["']([\w.:-]+)["']/g,
+  /\bredirect\s*\(\s*\)\s*->\s*route\s*\(\s*["']([\w.:-]+)["']/g,
   /\bRedirectToAction\s*\(\s*(?:"(\w+)"|nameof\(\s*(?:\w+\.)*(\w+)\s*\))(?:\s*,\s*(?:"(\w+)"|nameof\(\s*(\w+)\s*\)))?/g,
   /\baction\s*(?::|=>|=)\s*[:"']?(\w+)/g,
 ];
 const CONTROLLER_ARG = /\bcontroller\s*(?::|=>|=)\s*[:"']?(\w+)/;
 
-export function redirectNames(line: string): Array<{ name: string; controller?: string }> {
-  const out: Array<{ name: string; controller?: string }> = [];
+/** A Rails-style URL helper handed to a redirect: `redirect_to league_table_path`, `redirect_to(edit_club_url(club))`. */
+const REDIRECT_HELPER = /\bredirect_to\s*\(?\s*([a-z_]\w*?)_(?:path|url)\b/g;
+
+export function redirectNames(line: string): Array<{ name: string; controller?: string; helper?: true }> {
+  const out: Array<{ name: string; controller?: string; helper?: true }> = [];
+  REDIRECT_HELPER.lastIndex = 0;
+  for (const m of line.matchAll(REDIRECT_HELPER)) out.push({ name: m[1]!, helper: true });
   const keyed = CONTROLLER_ARG.exec(line)?.[1];
   for (const re of NAMED) {
     re.lastIndex = 0;
     for (const m of line.matchAll(re)) {
       const name = m[1] ?? m[2];
       if (!name) continue;
-      const controller = (m[3] ?? m[4] ?? (re === NAMED[2] ? keyed : undefined))?.replace(/Controller$/, "");
+      const controller = (m[3] ?? m[4] ?? (re === NAMED[3] ? keyed : undefined))?.replace(/Controller$/, "");
       out.push(controller ? { name, controller } : { name });
     }
   }

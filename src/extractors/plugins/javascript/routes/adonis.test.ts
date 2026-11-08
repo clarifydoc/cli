@@ -75,5 +75,24 @@ router.get('/cars/:code', [CarsController, 'show']).where('code', /^[0-9]+$/)
 router.get('/players/:slug', [PlayersController, 'show']).where('slug', router.matchers.slug())`);
     expect(routes.map((r) => `${r.path} ${r.params?.map((p) => `${p.name}:${p.type}`).join()}`)).toEqual(["/clubs/:id id:number", "/cars/:code code:number", "/players/:slug slug:slug"]);
   });
+
+  it("names routes: `.as()` on a route, a group's prefix, a resource's rows", async () => {
+    const routes = await routesOf(`${head}
+router.get('/standings', [ClubsController, 'table']).as('league.table')
+router.group(() => {
+  router.get('/fixtures', [ClubsController, 'fixtures']).as('fixtures')
+}).prefix('/admin').as('admin')
+router.resource('clubs', ClubsController).apiOnly().only(['index', 'show'])
+router.resource('clubs.players', ClubsController).only(['index']).as('squad')
+router.get('/plain', [ClubsController, 'plain'])`);
+    expect(routes.map((r) => `${r.path} ${r.name}`).sort()).toEqual([
+      "/admin/fixtures admin.fixtures",
+      "/clubs clubs.index",
+      "/clubs/:club_id/players squad.index",
+      "/clubs/:id clubs.show",
+      "/plain undefined",
+      "/standings league.table",
+    ].sort());
+  });
 });
 

@@ -325,3 +325,27 @@ public class ClubsController : ControllerBase {
     expect(routes.sort()).toEqual(["GET /api/Clubs/FetchAsync", "GET /api/Clubs/List"]);
   });
 });
+
+describe("ASP.NET routes — names", () => {
+  it("reads `Name = ` of a verb attribute or of the [Route] beside it", async () => {
+    const tree = await parseSource(`namespace X;
+[ApiController]
+[Route("api/clubs")]
+public class ClubsController : ControllerBase {
+    [HttpGet("{id}", Name = "GetClub")]
+    public IActionResult Get(int id) => Ok();
+    [HttpPost]
+    [Route("sign", Name = "SignPlayer")]
+    public IActionResult Sign() => Ok();
+    [HttpGet("plain")]
+    public IActionResult Plain() => Ok();
+}`, "csharp" as any, "C.cs");
+    const routes: RouteInfo[] = [];
+    extractAspnetRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.name}`)).toEqual([
+      "GET /api/clubs/{id} GetClub",
+      "POST /api/clubs/sign SignPlayer",
+      "GET /api/clubs/plain undefined",
+    ]);
+  });
+});

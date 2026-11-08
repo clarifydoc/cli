@@ -12,8 +12,7 @@ const RESTFUL = new Set(["index", "create", "show", "update", "destroy", "new", 
  * `account_conversations`, `/super_admin/accounts/:id/seed` seed →
  * `seed_super_admin_account`. A static segment followed by a parameter is a
  * member (singular); parameters drop out; a custom member or collection action
- * prefixes the name. An explicit `as:` is not visible here — those routes keep
- * the derived name and may not match.
+ * prefixes the name. A route's own `name` (an explicit `as:`) wins over it.
  */
 export function railsRouteHelper(path: string, action: string): string {
   const segs = path.replace(/\(\.:format\)$/, "").split("/").filter(Boolean);
@@ -77,6 +76,9 @@ export class RailsViewResolver implements DispatchResolver {
       return null;
     };
 
+    // A helper a route names itself (`as:`) belongs to that route alone: a path-derived namesake yields.
+    const named = new Set<string>();
+    for (const a of ruby) for (const r of a.routes) if (r.name && r.handler?.includes("#")) named.add(r.name);
     const byHelper = new Map<string, Array<{ verb: string | null; handler: string }>>();
     const byPath: Array<{ verb: string | null; re: RegExp; handler: string }> = [];
     const seen = new Set<string>();
@@ -87,9 +89,10 @@ export class RailsViewResolver implements DispatchResolver {
         if (seen.has(key)) continue;
         seen.add(key);
         const action = r.handler.split("#")[1]!;
-        const helper = railsRouteHelper(r.path, action);
+        // The name the Ruby plugin read (`as:`, a resource's `as:`), else the one path and action derive.
+        const helper = r.name ?? railsRouteHelper(r.path, action);
         // `root to:` inside a namespace is named `<namespace>_root` (top level: `root`).
-        const helpers = action === "index" && r.httpMethod === "GET" ? [helper, helper ? `${helper}_root` : "root"] : [helper];
+        const helpers = r.name ? [helper] : named.has(helper) ? [] : action === "index" && r.httpMethod === "GET" ? [helper, helper ? `${helper}_root` : "root"] : [helper];
         for (const h of helpers) {
           const list = byHelper.get(h) ?? [];
           list.push({ verb: r.httpMethod, handler: r.handler });
