@@ -44,3 +44,18 @@ class ClubsApi {
     expect(sites.map((s) => [s.callee, s.args])).toEqual([["stream", ["${routes.clubImport}", null]]]);
   });
 });
+
+describe("a local URL's constant holes", () => {
+  it("names a plain string const of the caller, never a reassigned or computed one", async () => {
+    const sites = await sitesOf(`class Matches {
+  start(item) {
+    const kind = "club";
+    const side = item.side;
+    let round = "one";
+    const url = \`\${this.baseUrl}download/\${kind}/\${side}/\${round}\` + "?t=1";
+    this.fetchMatch(item, url);
+  }
+}`);
+    expect(sites.map((s) => s.args[1])).toEqual(["${this.baseUrl}download/club/${side}/${round}?t=1"]);
+  });
+});

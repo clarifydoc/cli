@@ -260,3 +260,28 @@ describe("HTML pages under a test directory", () => {
     expect(htmlPreprocess(page, "contests/index.html")).toBeNull();
   });
 });
+
+describe("a web server's canned status page", () => {
+  it("is no route, screen or click, while a page of the app keeps its link", async () => {
+    const { analyzeFile } = await import("../../../core/file-analyzer.js");
+    const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const run = async (rel: string) => {
+      const root = await mkdtemp(join(tmpdir(), "html-status-"));
+      await mkdir(join(root, dirname(rel)), { recursive: true });
+      await writeFile(join(root, rel), `<html><head><title>Not found</title></head><body><a href="/">Back to the league</a></body></html>`);
+      const r = await analyzeFile({
+        file: { absolutePath: join(root, rel), relativePath: rel, language: "html" },
+        frameworkIds: [], projectId: "root",
+        outputOpts: { outputDir: await mkdtemp(join(tmpdir(), "html-status-out-")), pretty: false },
+        verbose: false, projectRoot: root, tsconfigAliases: new Map(),
+      } as never);
+      return r!.analysis;
+    };
+    const status = await run("public/404.html");
+    expect([status.routes.length, status.interactiveElements.length]).toEqual([0, 0]);
+    const page = await run("public/standings.html");
+    expect(page.interactiveElements.length).toBe(1);
+  });
+});
