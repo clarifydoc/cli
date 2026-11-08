@@ -16,6 +16,14 @@ recorded in the git history only.
   - A subclass overriding its REST client's `url` getter gets its own URLs, not the base class's.
   - A route moved onto a Rails concern's action calls the including controller's hook, not the concern's placeholder.
   - Mailer views and static error pages no longer count as clicks.
+- **Wrong facts corrected (extractor 1.625.0).**
+  - A URL segment that is one of several values (a ternary, a typed union) linked only the first value's route, as
+    EXTRACTED; it now links each route a value reaches, AMBIGUOUS. Calls held by several descriptors are AMBIGUOUS too.
+  - C++ `league::Table::make()` keeps its namespace: a `rally::Table` elsewhere no longer wins.
+  - Kotlin takes the class of the caller's own package before a nearer namesake of another package.
+  - A Go local declared from a call no longer takes the type of the parameter it shadows.
+  - A Rails view helper named by a route's `as:` reaches that route, not a route whose path spells the helper.
+  - Python `subscribe(TOPIC)` no longer reports the name `TOPIC` as the topic.
 
 ### Added
 
@@ -38,6 +46,20 @@ recorded in the git history only.
     - ASP.NET Identity `UserManager`/`RoleManager`/`SignInManager` calls are data access.
   - Rails: Administrate controllers' inherited CRUD routes reach the model's table. `send(name)` over a guarded constant
     symbol list links each listed method.
+- **More reads (extractor 1.625.0):**
+  - Route names: Rails `as:`, Adonis `.as()` (routes, groups, resources) and ASP.NET `Name =`; redirects resolve by name
+    (`redirect_to x_path`, `redirect()->route('x')`, `toRoute('x')`, `RedirectToRoute("x")`).
+  - Topics held in constants, imported names and arrays for MQTT in JS/TS, Python, Go, Java/Kotlin and C#; paho's list form.
+  - Terraform `module` blocks followed through variables, locals and outputs; a Lambda's `QUEUE_URL = aws_sqs_queue.x.url`
+    sends its publish and consume to that queue.
+  - C++ direct initialisation (`Rank::Iterator it(2);`) is a constructor call; Kotlin same-package files in other
+    folders link; a function-local class links inside its function beside a top-level namesake.
+  - Vue: a dynamic emit joins the events its own tag states; a member destructured from a composable result binds where
+    it is handed on; a callback whose one call is `emit` reaches the parent; index writes to a query key; named
+    functions wrapped by `useDebounceFn`/`debounce`/`useCallback` and kin.
+  - Rails: an admin override calling `super` and devise_token_auth's mounted actions reach their model; an `@x ||= @y`
+    alias and a model-constant assignment type the variable.
+  - Astro: the head call of a `{list().map(…)}` block with markup.
 
 ## 0.12.1 — 2026-11-06
 
