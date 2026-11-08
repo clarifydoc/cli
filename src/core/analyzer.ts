@@ -144,7 +144,7 @@ import { clientProxyCalls, dropProxiedDatabaseRows, markConsumedContracts, proxi
 import { grpcClientCalls } from "./grpc-clients.js";
 import { attachHandlerParams, attachRequestSchemas, attachResponseSchemas } from "./request-schemas.js";
 import { attachWebhookRoutes } from "./webhook-routes.js";
-import { resolveProjectDispatch } from "../extractors/dispatch/index.js";
+import { dropProductionToTestLinks, resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { applyAutoImports } from "../extractors/imports-exports/auto-imports.js";
 import { applyModuleSearchPaths } from "./module-search-paths.js";
 import { loadCompilationDatabase, macrosOf, macrosStamp, placeIncludes } from "./compilation-database.js";
@@ -2030,7 +2030,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     patterns.push(...loops, ...blocking);
     if (loops.length || blocking.length) progress.detail(`  Performance patterns: ${loops.length} query-in-loop, ${blocking.length} blocking-in-async`);
   }
-  const queueSymbolLinks = synthesizeQueueSymbolLinks(symbolDataAccess);
+  const queueSymbolLinks = dropProductionToTestLinks(synthesizeQueueSymbolLinks(symbolDataAccess), allAnalyses);
   if (queueSymbolLinks.length > 0) {
     symbolLinks = dedupSymbolLinksAppend(symbolLinks, queueSymbolLinks);
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);

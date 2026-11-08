@@ -164,7 +164,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         if (!child || !target) continue;
         if (sub.result) {
           // The dialog's own outcome: each method closing it through its active-dialog reference.
-          for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap)) {
+          for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap, sub.takesResult)) {
             const k = `${closer.file}\u0000${closer.symbol}\u0000${closer.callName}\u0000${parent.filePath}\u0000${target.symbol}`;
             if (seenLink.has(k)) continue;
             seenLink.add(k);
@@ -234,8 +234,11 @@ function dialogClosers(
   result: "close" | "dismiss",
   byPath: Map<string, FileAnalysis>,
   filePathMap: Map<string, string>,
+  takesResult = false,
 ): Array<{ file: string; symbol: string; line: number; callName: string }> {
   const out: Array<{ file: string; symbol: string; line: number; callName: string }> = [];
+  // A `close()` with no argument hands a result-reading callback nothing: a Cancel button.
+  const needsResult = takesResult && result === "close";
   let owner: FileAnalysis | undefined = file;
   let name: string | undefined = component;
   for (let depth = 0; owner && name && depth < 3; depth++) {
@@ -248,7 +251,7 @@ function dialogClosers(
       if (verb) verbs.add(`this.${p.name}.${verb}`);
     }
     for (const m of cls.methods ?? []) {
-      const call = m.calls.find((c) => verbs.has(c.name));
+      const call = m.calls.find((c) => verbs.has(c.name) && !(needsResult && c.argCount === 0));
       if (call) out.push({ file: owner.filePath, symbol: `${cls.name}.${m.name}`, line: call.line, callName: call.name });
     }
     if (out.length) break;
@@ -335,21 +338,25 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
     // `bound`: the function a Vue template's inline prop function is extracted as.
-    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string }>>>();
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string }>>>();
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
         (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event)),
       );
-      if (els.length === 0 && !parent.functionProps?.length) continue;
+      // A callback prop the parent hands down under ANOTHER name (`<FollowButton follow={this.props.onFollow} />`).
+      const renamed = (parent.propBindings ?? []).filter((pb) => pb.origin.kind === "prop" && PROP_CALLBACK.test(pb.origin.name) && !PROP_CALLBACK.test(pb.prop));
+      if (els.length === 0 && !parent.functionProps?.length && renamed.length === 0) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      const bind = (component: string, prop: string, handler: string, bound?: string, importSource?: string) => {
+      const bind = (component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string) => {
         const src = importSource ?? subByKey.get(tagKey(component));
-        const childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
-        if (!childFile || !byPath.has(childFile)) return;
+        let childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+        // A component the parent's own file declares (`const FollowButton = props => …`, beside its user): keyed by the pair.
+        if (!childFile && !src && /^[A-Z]/.test(component) && spansOf(parent).some((sp) => sp.symbol === component)) childFile = `${parent.filePath}\u0000${component}`;
+        if (!childFile || !byPath.has(childFile.split("\u0000")[0]!)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
         const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
-        list.push({ parent, handler, ...(bound ? { bound } : {}) });
+        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}) });
       };
       for (const el of els) {
         const bound = propFunctionName(el.component!, el.event, el.line);
@@ -358,6 +365,19 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (VUE_PROP.test(el.event)) bind(el.component!, camelProp(el.event.slice(1)), el.handler!, bound);
         else if (VUE_LISTENER.test(el.event)) bind(el.component!, listenerProp(el.event), el.handler!, bound);
         else bind(el.component!, el.event, el.handler!);
+      }
+      // The handed-down prop is the parent's own prop: whatever the parent's callers bind to it, or the creator
+      // `connect(…)` bound to that name, which the parent's call at the same line names (`mapDispatchToProps.onFollow`).
+      for (const pb of renamed) {
+        if (pb.origin.kind !== "prop") continue;
+        const propName = pb.origin.name;
+        const at = new Set<string>();
+        for (const fn of [...parent.functions, ...parent.classes.flatMap((c) => c.methods)]) {
+          if (pb.line < fn.line || pb.line > fn.endLine) continue;
+          for (const c of fn.calls) if (c.line === pb.line && !c.passed && !c.read) at.add(c.name);
+        }
+        const creators = parent.functions.concat(parent.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))).filter((f) => at.has(f.name) && f.name.endsWith(`.${propName}`));
+        bind(pb.component, pb.prop, propName, undefined, undefined, creators.length === 1 ? creators[0]!.name : undefined);
       }
       // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
       for (const fp of parent.functionProps ?? []) bind(fp.component, fp.prop, fp.handler, undefined, fp.importSource);
@@ -379,6 +399,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
           out.push({ file: b.parent.filePath, span: inline });
           continue;
         }
+        const creator = b.creator ? spans(b.parent).find((sp) => sp.symbol === b.creator) : undefined;
+        if (creator) {
+          out.push({ file: b.parent.filePath, span: creator });
+          continue;
+        }
         const name = cleanHandler(b.handler);
         if (!name) continue;
         const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
@@ -389,21 +414,25 @@ export class JsPropCallbackResolver implements DispatchResolver {
     };
 
     const links: SymbolLink[] = [];
-    for (const [childFile, byProp] of bindings) {
+    for (const [childKey, byProp] of bindings) {
+      const [childFile, localName] = childKey.split("\u0000") as [string, string | undefined];
       const child = byPath.get(childFile)!;
+      // A component declared beside its user: only the calls inside its own body are the child's.
+      const within = localName ? spans(child).find((sp) => sp.symbol === localName) : undefined;
       const defined = new Set(spans(child).map((sp) => sp.symbol.split(".").pop()!));
       for (const prop of byProp.keys()) {
         if (defined.has(prop)) continue; // the child's own function of that name
-        const targets = targetsOf(childFile, prop, 0, new Set());
+        const targets = targetsOf(childKey, prop, 0, new Set());
         if (targets.length === 0) continue;
         const callers: Array<{ symbol: string; line: number; callName: string }> = [];
         for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
+          if (within && (fn.line < within.line || fn.line > within.endLine)) continue;
           // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
           // Invoked, never a value read or handed on (`return this.isNote`).
           const call = fn.calls.find((c) => !c.passed && !c.read && (c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}` || c.name === `this.${prop}`));
           if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
         }
-        const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop);
+        const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop && (!within || (el.line >= within.line && el.line <= within.endLine)));
         if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line, callName: prop });
         for (const c of callers) {
           for (const t of targets) {

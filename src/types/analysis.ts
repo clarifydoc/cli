@@ -2817,6 +2817,8 @@ export interface ComponentSubscription {
    * closes itself (`close`), `ref.dismissed` when it is dismissed (`dismiss`).
    */
   result?: "close" | "dismiss";
+  /** The callback declares a parameter: it reads what `close(x)` handed over, so a `close()` with no argument hands it nothing. */
+  takesResult?: boolean;
 }
 
 /** A value bound to a child component's prop (`FileAnalysis.propBindings`). */
