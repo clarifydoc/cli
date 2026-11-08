@@ -27,7 +27,8 @@ describe("calls on a project factory's result", () => {
         "  const items = ref<string[]>([]);",
         '  async function load() { await fetch("/api/v2/clubs"); }',
         "  const actions = {",
-        "    async refresh() { await load(); },",
+        "    async refresh() { await load(); await this.archive(); },",
+        '    async archive() { await fetch("/api/v2/clubs/archive"); },',
         '    async rename() { await fetch("/api/v2/clubs/rename"); },',
         "  };",
         "  return { items, actions, load };",
@@ -97,6 +98,9 @@ describe("calls on a project factory's result", () => {
     expect(shown).toContain("clubActions.refresh -> use-clubs.ts::actions.refresh");
     expect(shown).toContain("clubActions.rename -> use-clubs.ts::actions.rename");
     expect(shown).toContain("load -> use-clubs.ts::load");
+    // Inside a method of the returned object, `this` is that object: its sibling method.
+    const inner = (await linksOf("src/composables/use-clubs.ts")).map(row);
+    expect(inner).toContain("actions.archive -> use-clubs.ts::actions.archive");
     // A method the returned object lacks, and an Array builtin on a returned value: no link, above all not the factory.
     expect(links.filter((l) => l.callName === "clubActions.vanish")).toEqual([]);
     expect(links.filter((l) => /toReversed/.test(l.callName))).toEqual([]);

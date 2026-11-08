@@ -1761,7 +1761,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             }
             // `const actions = { async refresh() {…}, rename: async () => {…} }` inside a factory: the object is
             // what the factory hands back, its members functions of their own (`actions.refresh`).
-            if (!moduleLevel && name && /^[A-Za-z_$][\w$]*$/.test(name) && value?.type === "object" && handedBack(decl, name)) this.extractObjectMembers(name, value, functions, false, 1);
+            if (!moduleLevel && name && /^[A-Za-z_$][\w$]*$/.test(name) && value?.type === "object" && handedBack(decl, name)) this.extractObjectMembers(name, value, functions, false, 1, true);
             const wrapped = value ? wrappedFunction(value) ?? (moduleLevel ? handlerOf(value, isExported) : null) : null;
             const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
             if (store) {
@@ -2106,7 +2106,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     functions: FunctionInfo[],
     isExported: boolean,
     depth: number,
+    /** The object is a local the function hands back: in its non-arrow methods `this` is the object itself. */
+    thisIsObject = false,
   ): void {
+    const siblings = thisIsObject && prefix ? new Set(obj.namedChildren.map((m) => objectKeyName(m.childForFieldName(m.type === "pair" ? "key" : "name"))).filter((k): k is string => !!k)) : null;
+    // `async setType(p) { await this.updateOne(p); }`: the sibling method, named as the object's members are.
+    const ownThis = (fn: FunctionInfo): FunctionInfo => {
+      if (!siblings) return fn;
+      for (const c of fn.calls) {
+        const m = /^this\.([A-Za-z_$][\w$]*)$/.exec(c.name);
+        if (m && siblings.has(m[1]!)) c.name = `${prefix}.${m[1]}`;
+      }
+      return fn;
+    };
     for (const member of obj.namedChildren) {
       if (member.type === "pair") {
         const key = objectKeyName(member.childForFieldName("key"));
@@ -2114,7 +2126,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (!key || !value) continue;
         const name = prefix ? `${prefix}.${key}` : key;
         if (value.type === "arrow_function" || value.type === "function_expression") {
-          functions.push(this.parseJsArrowOrExpr(name, value, isExported));
+          const fn = this.parseJsArrowOrExpr(name, value, isExported);
+          functions.push(value.type === "function_expression" ? ownThis(fn) : fn);
         } else if (value.type === "object" && depth < MAX_NAMESPACE_DEPTH) {
           this.extractObjectMembers(name, value, functions, isExported, depth + 1);
         } else if (key === "actions" && depth < MAX_NAMESPACE_DEPTH) {
@@ -2126,7 +2139,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (!key) continue;
         const fn = this.parseJsFunction(member, isExported);
         fn.name = prefix ? `${prefix}.${key}` : key;
-        functions.push(fn);
+        functions.push(ownThis(fn));
       }
     }
   }
