@@ -260,3 +260,67 @@ end`;
     expect(run(false)).toEqual(["ClubsController#index", "ReportsController#index"]);
   });
 });
+
+describe("rails-route-anchor — CRUD an admin gem's base class supplies", () => {
+  it("gives a routed, unwritten action the access of the model its controller is named for; a namesake decoy and an unknown model get none", () => {
+    const router = `Rails.application.routes.draw do
+  namespace :admin do
+    resources :clubs, only: [:index, :new, :create, :destroy]
+    resources :match_reports, only: [:index]
+    resources :garages, only: [:index]
+  end
+  resources :cars, only: [:index]
+end`;
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/admin/application_controller.rb", [cls("Admin::ApplicationController", "Administrate::ApplicationController", [])]),
+      file("app/controllers/admin/clubs_controller.rb", [cls("Admin::ClubsController", "Admin::ApplicationController", [])]),
+      file("app/controllers/admin/match_reports_controller.rb", [cls("Admin::MatchReportsController", "Admin::ApplicationController", [["resource_class", 3]])]),
+      // No `Garage` model in the project: nothing is invented.
+      file("app/controllers/admin/garages_controller.rb", [cls("Admin::GaragesController", "Admin::ApplicationController", [])]),
+      // Same shape on Rails' own base: no gem supplies anything.
+      file("app/controllers/cars_controller.rb", [cls("CarsController", "ActionController::Base", [])]),
+      file("app/models/club.rb", [cls("Club", "ApplicationRecord", [])]),
+      file("app/models/match_report.rb", [cls("MatchReport", "ApplicationRecord", [])]),
+      file("app/models/car.rb", [cls("Car", "ApplicationRecord", [])]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    for (const a of out) a.dataSources = [];
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const rows = out.flatMap((a) => a.dataSources.map((d) => `${d.handler} -> ${d.name} ${d.access}`));
+    expect(rows.sort()).toEqual([
+      "route:DELETE /admin/clubs/:id -> Club.destroy write",
+      "route:GET /admin/clubs -> Club.all read",
+      "route:POST /admin/clubs -> Club.create write",
+    ]);
+  });
+});
+
+describe("rails-route-anchor — a concern's action calling a hook the including controller defines", () => {
+  it("points each route's row at its own controller's hook, not the concern's placeholder", () => {
+    const router = `Rails.application.routes.draw do
+  post '/hooks/home', to: 'hooks/home#verify'
+  post '/hooks/away', to: 'hooks/away#verify'
+  post '/hooks/friendly', to: 'hooks/friendly#verify'
+end`;
+    const call = (name: string) => ({ name, kind: "internal", target: null, line: 3 }) as const;
+    const concern = cls("VerifyConcern", null, [["verify", 2], ["valid_token?", 10]]);
+    concern.methods[0]!.calls = [call("valid_token?"), call("render")];
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/concerns/verify_concern.rb", [concern]),
+      file("app/controllers/hooks/home_controller.rb", [{ ...cls("Hooks::HomeController", "ApplicationController", [["valid_token?", 6]]), implements: ["VerifyConcern"] } as ClassInfo]),
+      file("app/controllers/hooks/away_controller.rb", [{ ...cls("Hooks::AwayController", "ApplicationController", [["valid_token?", 6]]), implements: ["VerifyConcern"] } as ClassInfo]),
+      // Defines no hook: the concern's own method is what runs.
+      file("app/controllers/hooks/friendly_controller.rb", [{ ...cls("Hooks::FriendlyController", "ApplicationController", []), implements: ["VerifyConcern"] } as ClassInfo]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls.map((c) => c.name);
+    expect(calls("/hooks/home")).toEqual(["Hooks::HomeController.valid_token?", "render"]);
+    expect(calls("/hooks/away")).toEqual(["Hooks::AwayController.valid_token?", "render"]);
+    expect(calls("/hooks/friendly")).toEqual(["valid_token?", "render"]);
+  });
+});

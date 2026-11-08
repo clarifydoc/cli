@@ -5,6 +5,7 @@ import { enclosingModules } from "./index.js";
 import { railsUnderscore } from "./schema.js";
 import { guardForFilter } from "./route-meta.js";
 import { withInheritedGuards } from "../../shared/route-metadata.js";
+import { singularize } from "../shared/inflection.js";
 
 const HANDLER_RE = /^((?:[A-Z]\w*::)*[A-Z]\w*Controller)#(\w+)$/;
 
@@ -146,12 +147,18 @@ export const railsRouteAnchor: RouteResolver = {
           row.calls = [...row.calls, ...filters];
           if (action.file === ref!.filePath && !action.fn.calls.some((c) => filters.some((f) => f.name === c.name))) action.fn.calls.push(...filters);
         }
+        // An action a module (a concern) defines calls, by bare name, methods the controller
+        // including it supplies (`valid_token?`, `model`): THIS controller's own, not the
+        // concern's placeholder of that name, is what this route runs.
+        row.calls = templateHookCalls(row.calls, action, ref!, byName, qualified, modules);
         list.push(row);
         moved.set(target, list);
       }
       if (kept.length !== a.routes.length) a.routes = kept;
     }
     for (const [a, rows] of moved) a.routes = [...a.routes, ...rows];
+
+    inheritedGemActions(analyses, byName, qualified, byLeaf);
 
     // An ancestor's guard filter (`before_action :authenticate_user!` on an
     // `Api::BaseController`) runs before every action of each subclass, unless
@@ -171,6 +178,85 @@ export const railsRouteAnchor: RouteResolver = {
     }
   },
 };
+
+/**
+ * Controllers built on a gem whose base class supplies the CRUD actions and
+ * names the model after the controller (an admin framework: `Clubs` →
+ * `Club`). The base is a stated fact of the class (`extends`), the actions
+ * and what each does to the model are the gem's documented convention.
+ */
+const INHERITED_CRUD_BASES: ReadonlyArray<{ base: RegExp; actions: Readonly<Record<string, "read" | "write" | null>>; overrides: readonly string[] }> = [
+  {
+    base: /^(?:::)?Administrate::ApplicationController$/,
+    actions: { index: "read", show: "read", new: null, edit: "read", create: "write", update: "write", destroy: "write" },
+    // A project that states the model itself no longer gets it from the name.
+    overrides: ["resource_class", "resource_name", "scoped_resource", "find_resource"],
+  },
+];
+
+/**
+ * A route the router declares for an action nobody in the tree writes, on a
+ * controller whose gem base supplies it, reaches the model the controller's
+ * name implies: the row stays on the router and carries the model's access as
+ * its own (`DataSourceInfo.handler`). The model must be a class of the project;
+ * an unknown one is never invented.
+ */
+function inheritedGemActions(
+  analyses: FileAnalysis[],
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  byLeaf: ReadonlyMap<string, ClassRef[]>,
+): void {
+  for (const a of analyses) {
+    for (const r of a.routes) {
+      const m = r.handler ? HANDLER_RE.exec(r.handler) : null;
+      const ref = m ? byName.get(m[1]!) : null;
+      if (!ref || ref.filePath === a.filePath) continue;
+      if (definerOf(ref, m![2]!, byName, qualified, new Map())) continue;
+      const end = chainEnd(ref, byName, qualified);
+      const rule = INHERITED_CRUD_BASES.find((b) => b.base.test(end.cls.extends ?? ""));
+      const access = rule?.actions[m![2]!];
+      if (!rule || !access) continue;
+      const chain = chainOf(ref, byName, qualified);
+      if (chain.some((c) => c.cls.methods.some((f) => rule.overrides.includes(f.name)))) continue;
+      const leaf = (qualified.get(ref) ?? ref.cls.name).split("::").pop()!.replace(/Controller$/, "");
+      const words = leaf.match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) ?? [leaf];
+      const model = [...words.slice(0, -1), singularize(words[words.length - 1]!)].join("");
+      const hits = (byLeaf.get(model) ?? []).filter((c) => c.cls.name === model || c.cls.name.endsWith(`::${model}`));
+      if (hits.length !== 1) continue;
+      const handler = `route:${r.httpMethod ?? "USE"} ${r.path}`;
+      const verb = access === "write" ? m![2]! : m![2] === "index" ? "all" : "find";
+      if (a.dataSources.some((d) => d.handler === handler && d.entity === model)) continue;
+      a.dataSources.push({ kind: "database", name: `${model}.${verb}`, target: null, calls: [], line: r.line, entity: model, access, handler });
+    }
+  }
+}
+
+/**
+ * The calls of a concern's action, each bare-named one the controller (or an
+ * ancestor, or another module) supplies in place of the concern's own
+ * placeholder pointed at that definition. The concern keeps its own links
+ * (it serves every includer); only this route's row is specific.
+ */
+function templateHookCalls(
+  calls: CallInfo[],
+  action: { fn: FunctionInfo; owner: ClassRef },
+  ref: ClassRef,
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  modules: Map<string, ClassRef | null>,
+): CallInfo[] {
+  if (action.owner === ref || chainOf(ref, byName, qualified).includes(action.owner)) return calls;
+  let changed = false;
+  const out = calls.map((c) => {
+    if (c.kind !== "internal" || !/^[a-z_]\w*[?!]?$/.test(c.name) || c.name === action.fn.name) return c;
+    const hook = definerOf(ref, c.name, byName, qualified, modules);
+    if (!hook || hook.owner === action.owner || hook.fn === action.fn) return c;
+    changed = true;
+    return { ...c, name: `${hook.owner.cls.name}.${c.name}`, target: null };
+  });
+  return changed ? out : calls;
+}
 
 /**
  * The declared row on its action: the action's calls (what the request runs),
@@ -209,18 +295,18 @@ function definerOf(
   byName: Map<string, ClassRef | null>,
   qualified: Map<ClassRef, string>,
   modules: Map<string, ClassRef | null>,
-): { file: string; fn: FunctionInfo } | null {
+): { file: string; fn: FunctionInfo; owner: ClassRef } | null {
   const seen = new Set<ClassRef>();
   for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
     seen.add(c);
     const fn = c.cls.methods.find((f) => f.name === action);
-    if (fn) return { file: c.filePath, fn };
+    if (fn) return { file: c.filePath, fn, owner: c };
     // Ruby looks in the included modules next, the last included first.
     const scope = (qualified.get(c) ?? c.cls.name).split("::").slice(0, -1);
     for (const written of [...(c.cls.implements ?? [])].reverse()) {
       const mod = lookup(written, scope, modules);
       const mfn = mod?.cls.methods.find((f) => f.name === action);
-      if (mfn) return { file: mod!.filePath, fn: mfn };
+      if (mfn) return { file: mod!.filePath, fn: mfn, owner: mod! };
     }
   }
   return null;
