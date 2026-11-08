@@ -1017,3 +1017,35 @@ public class H { public async Task M(IMqttClient c) {
     expect(await rows(`public class H { void M(Other o) { o.WithTopic("stadium/x"); } }`)).toEqual([]);
   });
 });
+
+describe("C# ASP.NET Core Identity managers are data access", () => {
+  it("reads the user and role tables through UserManager / RoleManager / SignInManager, not a namesake", async () => {
+    const src = `namespace X;
+public class Accounts {
+  private readonly UserManager<AppUser> _users;
+  private readonly RoleManager<AppRole> roles;
+  private readonly SignInManager<AppUser> signIn;
+  private readonly Garage _garage;
+  public async Task M(string name, ClaimsPrincipal who) {
+    var u = await _users.FindByNameAsync(name);
+    await this._users.CreateAsync(u, "x");
+    var r = await _users.GetRolesAsync(u);
+    var id = _users.GetUserId(who);
+    var all = _users.Users.Where(x => x.Active).ToList();
+    await roles.CreateAsync(new AppRole());
+    await signIn.PasswordSignInAsync(name, "x", false, false);
+    await _garage.FindByNameAsync(name);
+  }
+}`;
+    const tree = await parseSource(src, "csharp" as any, "Accounts.cs");
+    const rows = new CSharpDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.line} ${d.name} ${d.entity} ${d.access}`);
+    expect(rows).toEqual([
+      "8 Identity: FindByNameAsync AppUser read",
+      "9 Identity: CreateAsync AppUser write",
+      "10 Identity: GetRolesAsync AppUser read",
+      "12 Identity: Users AppUser read",
+      "13 Identity: CreateAsync AppRole write",
+      "14 Identity: PasswordSignInAsync AppUser read",
+    ]);
+  });
+});

@@ -187,6 +187,18 @@ const HTTP_AMBIGUOUS_METHODS = new Set([
 /** Receiver names that identify an HttpClient (`_http`, `httpClient`, `_accountClient`, …). */
 const HTTP_RECEIVER_RE = /http|client/i;
 
+/**
+ * What an Identity manager's method does to the identity tables: the `Async` store calls only (`GetUserId` and
+ * `GetUserName` read the principal's claims). Null for what touches no table (`GenerateUserTokenAsync`).
+ */
+function identityAccess(kind: "user" | "role" | "signin", method: string): "read" | "write" | null {
+  if (!/Async$/.test(method)) return null;
+  if (kind === "signin") return /^(?:PasswordSignIn|CheckPasswordSignIn|CanSignIn|TwoFactor\w*SignIn)Async$/.test(method) ? "read" : null;
+  if (/^(?:Create|Update|Delete|AddTo|RemoveFrom|Add|Remove|Set|Change|Reset|Confirm|Replace)\w*Async$/.test(method)) return "write";
+  if (/^(?:Find|Get|Is|Check|Has|Verify|Role)\w*Async$/.test(method) && !/^(?:GetUserId|GetUserName|GetRoleName|GetRoleId)Async$/.test(method)) return "read";
+  return null;
+}
+
 /** Detect EF DbContext "owner" patterns — names ending with Context/DbContext. */
 const DBCONTEXT_SUFFIX = /Context$/;
 
@@ -262,6 +274,11 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * about EF — the declared type does.
    */
   private dbSetNames = new Map<string, string | null>();
+  /**
+   * Names declared as an ASP.NET Core Identity manager (`UserManager<AppUser> _users`, `RoleManager<AppRole> roles`,
+   * `SignInManager<AppUser> signIn`) → the entity type argument and which manager it is.
+   */
+  private identityManagers = new Map<string, { entity: string; kind: "user" | "role" | "signin" }>();
   /** The file talks to Redis through StackExchange.Redis (`IDatabase`). */
   private usesRedis = false;
   /** The file uses Refit: an interface's verb attributes declare requests. */
@@ -305,6 +322,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       for (const m of sourceText.matchAll(/\bI?DbSet<\s*([\w.]+)\s*>\??\s+(\w+)\b/g)) {
         const type = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
         if (!this.dbSetNames.has(m[2]!)) this.dbSetNames.set(m[2]!, typeParams.has(type) ? null : type);
+      }
+    }
+    this.identityManagers = new Map();
+    if (sourceText.includes("Manager<")) {
+      for (const m of sourceText.matchAll(/\b(UserManager|RoleManager|SignInManager)<\s*(?:[\w]+\.)*(\w+)\s*>\??\s+(\w+)\b/g)) {
+        this.identityManagers.set(m[3]!, { entity: m[2]!, kind: m[1] === "UserManager" ? "user" : m[1] === "RoleManager" ? "role" : "signin" });
       }
     }
     this.usesRedis = /\bStackExchange\.Redis\b|\bIDatabase\b/.test(sourceText);
@@ -971,6 +994,25 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const method = parts[parts.length - 1]!.replace(/<.*$/, "");
     const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
     const root = parts[0]!;
+
+    // ASP.NET Core Identity: a manager's `FindByNameAsync` / `CreateAsync` / `GetRolesAsync` runs on the identity
+    // tables of the project's `IdentityDbContext<TUser>`, which `TUser` / `TRole` name.
+    if (this.identityManagers.size > 0) {
+      const at = parts[0] === "this" ? 1 : 0;
+      const manager = this.identityManagers.get(parts[at] ?? "");
+      if (manager && parts.length === at + 2) {
+        const hit = identityAccess(manager.kind, method);
+        if (hit) {
+          sources.push(this.ds({ kind: "database", name: `Identity: ${method}`, target: manager.entity, entity: manager.entity, access: hit, line: node.startPosition.row + 1 }));
+          return;
+        }
+      } else if (manager && parts.length > at + 2 && (parts[at + 1] === "Users" || parts[at + 1] === "Roles")) {
+        // One row per query: the outermost call of the chain.
+        if (node.parent?.type === "member_access_expression") return;
+        sources.push(this.ds({ kind: "database", name: `Identity: ${parts[at + 1]}`, target: manager.entity, entity: manager.entity, access: "read", line: node.startPosition.row + 1 }));
+        return;
+      }
+    }
 
     // A set handed to a join reads that table too: `.Join(context.Chapters, …)`.
     if ((method === "Join" || method === "GroupJoin") && parts.length >= 2) {
