@@ -53,7 +53,7 @@ export function extractEvents(
  * (line breaks kept, so every offset still falls on its own line). A name the file does not bind to a string
  * literal, or binds twice, is left as written.
  */
-function emitConstants(source: string): string {
+export function emitConstants(source: string): string {
   if (!/\bemit\s*\(\s*[A-Za-z_$]/.test(source)) return source;
   const consts = new Map<string, string | null>();
   for (const m of source.matchAll(/^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:(['"])([\w:-]+)\2(?:\s+as\s+const)?\s*;?\s*$|[^\n]*)/gm)) {
@@ -235,4 +235,20 @@ function lineAt(source: string, offset: number): number {
     if (source[i] === "\n") line++;
   }
   return line;
+}
+
+/**
+ * The lines where a component emits an event it does not name by a literal (`$emit(btn.event)`,
+ * `emit(item.event)`, `(childEvent) => $emit(childEvent)`) — after the constants a file binds to strings
+ * (`emit(UPLOAD)`) are read as those strings — and the strings it gives an `event` key.
+ */
+export function dynamicEmitFacts(source: string): { lines: number[]; literals: string[] } {
+  const text = emitConstants(source);
+  const lines: number[] = [];
+  if (/\bemit\s*\(/.test(text)) {
+    const starts = lineIndex(text);
+    for (const m of text.matchAll(/(?:\$emit|(?<![\w$.])emit)\s*\(\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*[,)]/g)) lines.push(lineOf(starts, m.index!));
+  }
+  const literals = [...new Set([...source.matchAll(/(?<![\w$])event\s*:\s*['"]([\w:-]+)['"]/g)].map((m) => m[1]!))];
+  return { lines: [...new Set(lines)], literals };
 }

@@ -5,6 +5,7 @@ import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
 import { addTemplateRefs } from "./template-refs.js";
+import { dynamicEmitFacts } from "./events.js";
 import { boundListeners } from "./bound-listeners.js";
 import { addDynamicComponents } from "./dynamic-components.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
@@ -64,6 +65,10 @@ export function vuePreprocess(
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
+      // `$emit(btn.event)`: a child that emits by data, and the events a parent states for it.
+      const dynamic = dynamicEmitFacts(raw);
+      if (dynamic.lines.length > 0) analysis.dynamicEmits = dynamic.lines;
+      if (dynamic.literals.length > 0) analysis.eventLiterals = dynamic.literals;
       // `<component :is="Map[type]" @delete="remove">`: the components the script's map names.
       if (sfc.template) addDynamicComponents(analysis, sfc.template, raw, sfc.script ?? "");
       // `userSearch.value = q` in a handler re-runs the composable built from that ref.
