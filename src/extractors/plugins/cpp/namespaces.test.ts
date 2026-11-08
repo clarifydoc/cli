@@ -252,3 +252,55 @@ describe.each(Object.entries(readers))("C++ using-directive in a header (%s)", (
     expect(links.some((l) => l.includes("decoy.cpp"))).toBe(false);
   });
 });
+
+describe.each(Object.entries(readers))("C++ class written through a lowercase namespace (%s)", (_reader, read) => {
+  const files = {
+    "src/a_rally.h": "#pragma once\nnamespace rally {\nclass Table { public: static int make(); static int build(int n); };\n}\n",
+    "src/a_rally.cpp": "#include \"a_rally.h\"\nnamespace rally {\nint Table::make() { return 9; }\nint Table::build(int n) { return n; }\n}\n",
+    "src/table.h": "#pragma once\nnamespace league {\nclass Table { public: static int make(); static int build(int n); };\n}\n",
+    "src/table.cpp": "#include \"table.h\"\nnamespace league {\nint Table::make() { return 1; }\n}\nint league::Table::build(int n) { return n; }\n",
+    "src/main.cpp": "#include \"table.h\"\n#include \"a_rally.h\"\nint main() {\n  int a = league::Table::make();\n  int b = rally::Table::build(2);\n  return a + b;\n}\n",
+  };
+  it("takes the namespace the call names, not the namesake class", () => {
+    const links = linksOf(read, files).filter((l) => l.startsWith("src/main.cpp:main "));
+    expect(links).toContain("src/main.cpp:main Table.make -> src/table.cpp:Table.make");
+    expect(links).toContain("src/main.cpp:main Table.build -> src/a_rally.cpp:Table.build");
+    expect(links.some((l) => l.includes("Table.make -> src/a_rally.cpp"))).toBe(false);
+  });
+});
+
+describe.each(Object.entries(readers))("C++ one class's methods defined in two source files (%s)", (_reader, read) => {
+  const files = {
+    "src/table.h": "#pragma once\nclass Table { public: int rank(); void load(); };\n",
+    "src/table_rank.cpp": "#include \"table.h\"\nint Table::rank() { return 2; }\n",
+    "src/table_load.cpp": "#include \"table.h\"\nvoid Table::load() { }\n",
+    "src/main.cpp": "#include \"table.h\"\nint main() {\n  Table t;\n  t.rank();\n  t.load();\n  return 0;\n}\n",
+  };
+  it("sends each call to the file that defines the method", () => {
+    const links = linksOf(read, files).filter((l) => l.startsWith("src/main.cpp:main "));
+    expect(links).toEqual([
+      "src/main.cpp:main t.load -> src/table_load.cpp:Table.load",
+      "src/main.cpp:main t.rank -> src/table_rank.cpp:Table.rank",
+    ]);
+  });
+});
+
+describe.each(Object.entries(readers))("C++ nested class constructed by direct initialisation (%s)", (_reader, read) => {
+  const files = {
+    "src/rank.h": "#pragma once\nclass Rank { public: class Iterator { public: Iterator(int n); int next(); }; };\n",
+    "src/rank.cpp": "#include \"rank.h\"\nRank::Iterator::Iterator(int n) {}\nint Rank::Iterator::next() { return 0; }\n",
+    "src/chart.h": "#pragma once\nclass Chart { public: class Iterator { public: Iterator(int n); }; };\n",
+    "src/chart.cpp": "#include \"chart.h\"\nChart::Iterator::Iterator(int n) {}\n",
+    "src/main.cpp": "#include \"rank.h\"\nint main() {\n  Rank::Iterator it(2);\n  it.next();\n  return 0;\n}\n",
+  };
+  it("reads `Rank::Iterator it(2);` as the constructor call, never the namesake's", () => {
+    const links = linksOf(read, files).filter((l) => l.startsWith("src/main.cpp:main "));
+    expect(links).toContain("src/main.cpp:main Rank.Iterator -> src/rank.cpp:Rank::Iterator.Iterator");
+    expect(links.some((l) => l.includes("chart.cpp"))).toBe(false);
+  });
+  it("does not read a method definition with a qualified return type as a construction", () => {
+    const defs = { ...files, "src/pick.cpp": "#include \"rank.h\"\nRank::Iterator pick(int id) {\n  return Rank::Iterator(id);\n}\n" };
+    const links = linksOf(read, defs).filter((l) => l.startsWith("src/pick.cpp:pick "));
+    expect(links.filter((l) => l.includes("Rank.Iterator"))).toHaveLength(1);
+  });
+});
