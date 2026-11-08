@@ -31,6 +31,19 @@ const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf
 
 const isMethod = (key: string): boolean => key.slice(key.indexOf("#") + 1).includes(".");
 
+/** The one type a local of the caller is declared (or built) as, by bare name; null when none or several differ. */
+function declaredTypeOf(caller: FileAnalysis, name: string): string | null {
+  const types = new Set<string>();
+  const scopes = [...caller.functions, ...caller.classes.flatMap((c) => c.methods)];
+  for (const fn of scopes) {
+    for (const l of fn.localTypes ?? []) {
+      if (l.name !== name || !l.type) continue;
+      types.add(l.type.replace(/^[*&\[\]]+/, "").replace(/\{.*$/, "").split(".").pop()!);
+    }
+  }
+  return types.size === 1 ? [...types][0]! : null;
+}
+
 function targetOf(callee: string, caller: FileAnalysis, keysNamed: (fn: string) => string[]): string | null {
   const parts = callee.split(".");
   const fn = parts.pop()!;
@@ -42,7 +55,13 @@ function targetOf(callee: string, caller: FileAnalysis, keysNamed: (fn: string) 
   // A method on a value (`h.RegisterRoutes(api)`): some type's method of that name when one is declared — never
   // the caller's own package's free function, which the value cannot be.
   if (!imp) {
-    const methods = all.filter(isMethod);
+    let methods = all.filter(isMethod);
+    // The value's declared type (`h := &users.Handler{}`, `h := users.Handler{…}`) names whose method it is.
+    const type = declaredTypeOf(caller, parts[0]!);
+    if (type && methods.length > 1) {
+      const typed = methods.filter((k) => k.endsWith(`#${type}.${fn}`));
+      if (typed.length > 0) methods = typed;
+    }
     const pool = methods.length > 0 ? methods : all.filter((k) => k !== own);
     return pool.length === 1 ? pool[0]! : nearestPackage(pool, dirOf(caller.filePath));
   }

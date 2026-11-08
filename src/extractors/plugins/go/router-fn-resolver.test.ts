@@ -157,6 +157,29 @@ func (h *FileMigratorWeb) RegisterRoutes(g *echo.Group) {
   });
 });
 
+describe("two types with a RegisterRoutes method", () => {
+  it("joins the call to the method of the value's declared type (real-repo FP: a second type lost the first one's prefix)", () => {
+    const routes = file("pkg/routes/routes.go", `package routes
+
+func registerMigrations(m *echo.Group) {
+\tcsvImporter.RegisterRoutes(m.Group("/migration"))
+}`);
+    routes.functions.push({ name: "registerMigrations", localTypes: [{ name: "csvImporter", type: "csvpkg.ClubImporter" }] } as never);
+    const csv = file("pkg/csv/handler.go", `package csv
+
+func (c *ClubImporter) RegisterRoutes(g *echo.Group) {
+\tg.GET("/csv/status", c.Status)
+}`);
+    const generic = file("pkg/handler/handler_file.go", `package handler
+
+func (h *FileImporter) RegisterRoutes(g *echo.Group) {
+\tg.GET("/"+h.Name()+"/status", h.Status)
+}`);
+    goRouterFnResolver.resolve([routes, csv, generic], {} as ProjectContext);
+    expect(csv.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /migration/csv/status"]);
+  });
+});
+
 describe("Go route prefixes held in another package", () => {
   it("serves routes under a package-level router another file sets from another package's constant", () => {
     const consts = { ...createEmptyAnalysis("internal/config/const.go", "go"), moduleValues: { ApiUri: "/api/v1", DownloadUri: "${ApiUri}/dl" } };
