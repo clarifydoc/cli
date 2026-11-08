@@ -444,3 +444,33 @@ class NotifyModule(Module):
     ]);
   });
 });
+
+describe("Python class-valued registries", () => {
+  it("types an instance built from a registry local by the registry's stated base", async () => {
+    const { functions } = await extract(`
+def start(kind, args):
+    table: dict[Kind, type[BaseImporter]] = {Kind.club: ClubImporter, Kind.player: PlayerImporter}
+    ctor = table.get(kind, None)
+    obj = ctor(**args)
+    other = table[kind]
+    second = other(**args)
+    obj.migrate("x")
+`);
+    const locals = functions.find((f) => f.name === "start")!.localTypes ?? [];
+    expect(locals.find((l) => l.name === "obj")?.type).toBe("BaseImporter");
+    expect(locals.find((l) => l.name === "second")?.type).toBe("BaseImporter");
+    expect(locals.find((l) => l.name === "ctor")).toBeUndefined();
+  });
+
+  it("refuses to guess a base for an unannotated registry", async () => {
+    const { functions } = await extract(`
+def start(kind, args):
+    table = {1: ClubImporter, 2: PlayerImporter}
+    ctor = table.get(kind, ClubImporter)
+    obj = ctor(**args)
+    obj.migrate("x")
+`);
+    const locals = functions.find((f) => f.name === "start")!.localTypes ?? [];
+    expect(locals.find((l) => l.name === "obj")?.type ?? "").toBe("");
+  });
+});
