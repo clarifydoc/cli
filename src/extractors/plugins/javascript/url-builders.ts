@@ -356,14 +356,40 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
     if (call.kind !== "api-call" || !call.target) continue;
     // A helper call always has `(`; a getter read is `${this.x}`.
     if (!call.target.includes("(") && !(lookup.method && call.target.includes("${this."))) continue;
+    const original = call.target;
     const [primary, ...rest] = resolveTargets(call.target, lookup, { file: call.filePath, line: call.line });
     if (primary !== undefined && primary !== call.target) {
+      // A getter read a subclass overrides: what this class's getter says is not the value for the
+      // subclass, which states its own — the written text is kept for `resolveSymbolicTargets`.
+      if (ctx && lookup.method) {
+        const below = overridingClasses(ctx, call.filePath, call.line, original);
+        if (below.length > 0) {
+          const by: Record<string, { target: string; alternatives?: string[] }> = {};
+          for (const d of below) {
+            const [t, ...alts] = resolveTargets(original, { ...lookup, method: methodResolver(ctx, d) }, { file: call.filePath, line: call.line });
+            if (t !== undefined) by[d.cls.name] = { target: t, ...(alts.length > 0 ? { alternatives: alts } : {}) };
+          }
+          call.getterReads = { text: original, by };
+        }
+      }
       call.target = primary;
       if (rest.length > 0) call.targetAlternatives = rest;
       count++;
     }
   }
   return count;
+}
+
+/** The classes below the one holding the call, when one of them states a getter `text` reads (`${this.url}`). */
+function overridingClasses(ctx: ProjectContext, file: string, line: number, text: string): ClassRef[] {
+  let cls: ClassRef | null = null;
+  for (const ref of ctx.classes.classesIn(file)) {
+    if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
+  }
+  if (!cls) return [];
+  const names = [...text.matchAll(GETTER_READ_RE)].map((m) => m[1]!);
+  const below = ctx.classes.descendants(cls);
+  return names.length > 0 && below.some((d) => names.some((n) => d.cls.methods.some((x) => x.name === n) || d.cls.fieldValues?.[n] !== undefined)) ? below : [];
 }
 
 /**
@@ -411,11 +437,13 @@ function localHelpers(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuil
  * the URL losing its prefix. `getterOnly` answers a property read (`this.url`):
  * only a getter is read that way.
  */
-function methodResolver(ctx: ProjectContext): (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null {
+function methodResolver(ctx: ProjectContext, fixed?: ClassRef): (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null {
   return (file, line, name, getterOnly) => {
-    let cls: ClassRef | null = null;
-    for (const ref of ctx.classes.classesIn(file)) {
-      if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
+    let cls: ClassRef | null = fixed ?? null;
+    if (!fixed) {
+      for (const ref of ctx.classes.classesIn(file)) {
+        if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
+      }
     }
     if (!cls) return null;
     for (const c of [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))]) {

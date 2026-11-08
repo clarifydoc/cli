@@ -140,7 +140,10 @@ export function synthesizeApiRouteSymbolLinks(
     const files = (classes.get(link.viaSubclass) ?? []).filter((a) => a.projectId === project);
     if (files.length !== 1) return null;
     const cls = files[0]!.classes.find((c) => c.name === link.viaSubclass)!;
-    return { file: files[0]!.filePath, symbol: `${link.viaSubclass}.${baseSymbol.split(".").pop()}`, line: cls.line };
+    // The subclass's own override when it has one (it calls `super.<name>`): the trace starts there.
+    const name = baseSymbol.split(".").pop()!;
+    const own = cls.methods.find((m) => m.name === name);
+    return { file: files[0]!.filePath, symbol: `${link.viaSubclass}.${name}`, line: own?.line ?? cls.line };
   };
 
   const out: SymbolLink[] = [];

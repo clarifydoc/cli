@@ -2476,6 +2476,12 @@ export interface DataSourceInfo {
    * is inherited, not necessarily called.
    */
   viaSubclass?: string;
+  /**
+   * Transient (never in the output): the target as written when it reads a getter a subclass overrides
+   * (`${this.url}`), and what the URL-builder pass made of it for each class below — kept between that
+   * pass and the symbolic pass that finishes it per subclass.
+   */
+  getterReads?: { text: string; by: Record<string, { target: string; alternatives?: string[] }> };
   targetAlternatives?: string[];
   /**
    * For `kind === "database"`: whether the op reads or writes, when the plugin's
