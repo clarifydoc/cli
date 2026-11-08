@@ -55,7 +55,9 @@ export class JsComponentEmitResolver implements DispatchResolver {
       for (const sub of parent.subComponents ?? []) {
         if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
       }
-      for (const el of els) {
+      // A `<component :is>` tag binds its events on each component it may render.
+      const bindingEls: Array<(typeof els)[number] & { tag?: string }> = els.flatMap((el) => (el.componentCandidates ? el.componentCandidates.map((component) => ({ ...el, component, tag: el.component })) : [el]));
+      for (const el of bindingEls) {
         const angular = el.event.startsWith("(");
         // An Angular tag is its component's selector, whichever module declares it.
         const childFile = angular
@@ -66,7 +68,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.component!, el.event, el.line) }) });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }) });
       }
     }
 
@@ -75,12 +77,12 @@ export class JsComponentEmitResolver implements DispatchResolver {
      * where the parent only passes it on (`@save="(car) => $emit('save', car)"`),
      * the handlers its own parents bind to that event, up to four levels.
      */
-    const targetsOf = (file: string, key: string, depth: number, seen: Set<string>): Array<{ file: string; span: SymbolSpan }> => {
+    const targetsOf = (file: string, key: string, depth: number, seen: Set<string>, only?: (b: Binding) => boolean): Array<{ file: string; span: SymbolSpan }> => {
       const at = `${file}#${key}`;
       if (depth > 4 || seen.has(at)) return [];
       seen.add(at);
       const out: Array<{ file: string; span: SymbolSpan }> = [];
-      for (const b of bindings.get(file)?.get(key) ?? []) {
+      for (const b of (bindings.get(file)?.get(key) ?? []).filter((x) => !only || only(x))) {
         // Each event the binding passes on, wherever it spells it: `(car) => $emit('save', car)`,
         // `editing = false; $emit('cancel')`, `full ? $emit('reject') : $emit('swap')`.
         const handler = b.handler.trim();
@@ -117,12 +119,14 @@ export class JsComponentEmitResolver implements DispatchResolver {
         // Declared or emitted in the child's script, or emitted straight from its markup (`@click="$emit('delete')"`).
         const markup = markupEmit(child, list[0]!.event);
         const sites = (child.events ?? []).filter((e) => tagKey(e.name) === key);
-        if (sites.length === 0 && !markup) continue; // child never emits this event (native fallthrough)
-        const targets = targetsOf(childFile, key, 0, new Set()).slice(0, 8);
+        // A child that emits by data (`$emit(btn.event)`) emits the events a parent states for it (`event: 'delete'`).
+        const dynamic = sites.length === 0 && !markup && child.dynamicEmits?.length ? child.dynamicEmits : undefined;
+        if (sites.length === 0 && !markup && !dynamic) continue; // child never emits this event (native fallthrough)
+        const targets = targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => !!b.parent.eventLiterals?.some((n) => tagKey(n) === key) : undefined).slice(0, 8);
         if (targets.length === 0) continue;
         // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
         // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
-        const callName = `emit:${markup?.name ?? sites[0]!.name}`;
+        const callName = `emit:${markup?.name ?? sites[0]?.name ?? list[0]!.event}`;
         // Anchor the child side at each function that emits it; a template-inline or
         // setup-level emit has no span — a synthetic `<template>` symbol keeps the edge
         // (the report joins by callName), also beside the functions emitting it elsewhere.
@@ -132,6 +136,10 @@ export class JsComponentEmitResolver implements DispatchResolver {
             const symbol = innermostAt(spans(child), line)?.symbol ?? (site.sites ? "<template>" : null);
             if (symbol && !anchors.has(symbol)) anchors.set(symbol, line);
           }
+        }
+        for (const line of dynamic ?? []) {
+          const symbol = innermostAt(spans(child), line)?.symbol ?? "<template>";
+          if (!anchors.has(symbol)) anchors.set(symbol, line);
         }
         if (anchors.size === 0) anchors.set("<template>", sites[0]?.line ?? markup!.line);
         for (const [symbol, line] of anchors) {

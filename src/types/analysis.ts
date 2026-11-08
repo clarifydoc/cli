@@ -414,6 +414,14 @@ export interface FileAnalysis {
    */
   componentSubscriptions?: ComponentSubscription[];
   /**
+   * Lines where a Vue component emits an event whose name is no literal (`$emit(btn.event)`,
+   * `emit(item.event)`): the names it can take are the ones a parent states. The component-emit
+   * resolver joins them to the bindings of a parent that states the name (`eventLiterals`).
+   */
+  dynamicEmits?: number[];
+  /** The strings a Vue file gives an `event` key (`{ icon, event: 'delete' }`): the events it states for a child that emits by data. */
+  eventLiterals?: string[];
+  /**
    * Values the component hands its descendants by key, and those it takes from an
    * ancestor (Vue `provide('k', fn)` / `const k = inject('k')`): the provide/inject
    * resolver joins a call of the injected value to the provided function.
@@ -2962,6 +2970,11 @@ export interface InteractiveElementInfo {
    * without the tag, two children used in one template are indistinguishable.
    */
   component?: string;
+  /**
+   * For a `<component :is="…">` tag: the components the tag may render, each a name the script states
+   * (a literal map's values, a ternary's two arms) — a child's emit reaches this binding on each.
+   */
+  componentCandidates?: string[];
   /**
    * The HTTP request the element sends when used — a server-rendered form, a
    * `button_to`, a link: `method` and `target`, the target a literal app path

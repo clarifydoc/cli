@@ -163,6 +163,18 @@ export function extractJsVariableAliases(
         if (!isCtor && containerLookup(valueNode)) continue;
         const source = importMap.get(fnName)!;
 
+        // `const inbox = useInfiniteQuery(computed(() => inboxQuery(page.value)))`: a library query hook's
+        // result is its request's own object — `inbox.fetchNextPage()` re-runs the project's query factory
+        // the hook was given, so the receiver is bound to that factory (the library's module has no member to name).
+        const queried = !isCtor && QUERY_HOOKS.has(fnName) && !isProjectSource(source) ? queryFactoryOf(valueNode, importMap) : undefined;
+        if (queried) {
+          if (nameNode.type === "identifier") bind(nameNode.text, queried.source, queried.name);
+          else if (nameNode.type === "object_pattern") {
+            for (const prop of nameNode.namedChildren) if (prop.type === "shorthand_property_identifier_pattern" && QUERY_RESULT_METHODS.has(prop.text)) bind(prop.text, queried.source, queried.name, prop.text);
+          }
+          continue;
+        }
+
         if (nameNode.type === "identifier") {
           bind(nameNode.text, source, fnName);
         } else if (nameNode.type === "object_pattern") {
@@ -266,6 +278,41 @@ function bindSetupReturns(
 
 /** A module specifier naming project code: relative, or a conventional source alias (`@/`, `~/`, `#/`). */
 const PROJECT_SPECIFIER = /^(?:\.|[@~#]\/)/;
+
+/**
+ * Whether an import's source is a file of the project: written relative or by an alias, or already resolved to the
+ * project's own path (`app/client/queries/clubs` — three segments or more, never a package's `lodash/fp`).
+ */
+function isProjectSource(source: string): boolean {
+  if (PROJECT_SPECIFIER.test(source) || source.startsWith("src/")) return true;
+  return source.split("/").length >= (source.startsWith("@") ? 4 : 3);
+}
+
+/** Library hooks that run a request described by a project's query factory. */
+const QUERY_HOOKS: ReadonlySet<string> = new Set(["useQuery", "useInfiniteQuery", "useSuspenseQuery", "useSuspenseInfiniteQuery"]);
+/** What a query result offers to run its request again. */
+const QUERY_RESULT_METHODS: ReadonlySet<string> = new Set(["refetch", "fetchNextPage", "fetchPreviousPage"]);
+
+/**
+ * The ONE project function a query hook's arguments call (`useQuery(computed(() => inboxQuery(page.value)))`,
+ * `useQuery({ ...inboxQuery(), enabled })`, `useQuery(inboxQuery())`): its name and module. None when the
+ * arguments call none, or two different ones.
+ */
+function queryFactoryOf(call: Node, importMap: ReadonlyMap<string, string>): { name: string; source: string } | undefined {
+  const found = new Map<string, string>();
+  const visit = (n: Node, top: boolean): void => {
+    if (n.type === "call_expression" && !top) {
+      const callee = n.childForFieldName("function");
+      const source = callee?.type === "identifier" ? importMap.get(callee.text) : undefined;
+      if (callee && source && isProjectSource(source)) found.set(callee.text, source);
+    }
+    for (const c of n.namedChildren) if (c) visit(c, false);
+  };
+  visit(call, true);
+  if (found.size !== 1) return undefined;
+  const [name, source] = [...found][0]!;
+  return { name, source };
+}
 
 /** The key a `{ key: local }` pattern destructures. */
 function memberKey(pair: Node, local: string): string | undefined {

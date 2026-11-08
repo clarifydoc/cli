@@ -117,3 +117,18 @@ export class SquadListComponent {
     expect(extractEvents(src, "typescript").map((e) => [e.name, e.line, e.sites])).toEqual([["selected", 8, [8, 12]]]);
   });
 });
+
+describe("an event named by a constant", () => {
+  it("is the string the constant holds, where it is emitted", () => {
+    const source = `const UPLOAD = "upload";
+const SIZE = "big" + suffix;
+const emit = defineEmits();
+function send(file) {
+  emit(UPLOAD, file);
+  emit(SIZE);
+  emit(other);
+}`;
+    const events = extractEvents(source, "typescript");
+    expect(events.map((e) => `${e.name}@${e.line}`)).toEqual(["upload@5"]);
+  });
+});

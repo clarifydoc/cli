@@ -509,6 +509,8 @@ const INLINE_FUNCTION = /^(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>|^(?:
 function resolveVueElementType(tagName: string): InteractiveElementInfo["element"] {
   const lower = tagName.toLowerCase();
   if (INTERACTIVE_TAGS[lower]) return INTERACTIVE_TAGS[lower]!;
+  // `<component :is="…">` renders a component, whichever one `:is` names.
+  if (tagName === "component") return "custom";
   // PascalCase, kebab-case, or camelCase (dtpBtn) tags are components. The
   // camelCase case was previously misread as a raw <button>, so its @click
   // never matched the component in the screen tree.
