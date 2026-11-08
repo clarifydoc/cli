@@ -4403,6 +4403,19 @@ function resolveCallToDefinition(
   /** A name that REFERS to a callable (a route's handler), not a call written in a body. */
   reference = false,
 ): SymbolLink | null {
+  const link = resolveCallToDefinitionBody(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  // One of several values a descriptor holds under a key (`CallInfo.alternative`): whichever strategy found it, never surer than a guess.
+  return link && call.alternative && link.confidence !== "AMBIGUOUS" ? { ...link, confidence: "AMBIGUOUS" } : link;
+}
+
+function resolveCallToDefinitionBody(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+  reference = false,
+): SymbolLink | null {
   if (call.passed) return resolvePassedName(sourceFile, sourceSymbol, call, analysis, ctx);
   if (call.read) return resolveReadName(sourceFile, sourceSymbol, call, analysis, ctx);
   if (call.withSubjects && !reference) {

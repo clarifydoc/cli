@@ -1003,6 +1003,12 @@ export interface CallInfo {
   column?: number;
   confidence?: Confidence;
   /**
+   * One of several calls the source offers for the same place (a descriptor key two literals hold with
+   * different values, so `task.api.subscribe()` runs either): every link it yields is AMBIGUOUS, whichever
+   * strategy found the definition. Never read as the Python module-level AMBIGUOUS, which is a different fact.
+   */
+  alternative?: boolean;
+  /**
    * The FACTORY function this call's receiver was bound from, when the
    * binding is visible (`const m = useAddLicenseMutation(...)` →
    * `m.mutateAsync(...)` carries via:"useAddLicenseMutation"). When the call's
@@ -1983,6 +1989,12 @@ export interface PathArgCall {
    * the function making the call, that function is itself a factory.
    */
   argNames?: Array<string | null>;
+  /**
+   * Per argument: the other URLs a local URL argument takes when a hole of it is a ternary over strings and
+   * member reads (`args[i]` is the first); the expanded request then carries them as `targetAlternatives`
+   * with `targetChoice`, so each route they reach links AMBIGUOUS.
+   */
+  argAlternatives?: Array<string[] | null>;
   line: number;
   /**
    * The project class the call is made on, as written (`ApiConnection` in
@@ -2509,6 +2521,12 @@ export interface DataSourceInfo {
    */
   getterReads?: { text: string; by: Record<string, { target: string; alternatives?: string[] }> };
   targetAlternatives?: string[];
+  /**
+   * `targetAlternatives` are values one local takes under the source's own condition
+   * (a ternary or branch over enum members or strings), any of which the call may request:
+   * the route linker links each route they reach as AMBIGUOUS instead of the first.
+   */
+  targetChoice?: boolean;
   /**
    * For `kind === "database"`: whether the op reads or writes, when the plugin's
    * ORM knowledge can tell (e.g. `findMany` → read, `create`/`save` → write).

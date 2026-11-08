@@ -396,12 +396,12 @@ function expandSite(calls: Array<{ row: ApiCall; onward: boolean }>, filePath: s
   for (const f of chosen) {
     // A hole handed the caller's own parameter (`argNames`) stays a hole of that name: the row is the next level's factory.
     let onward = false;
-    const fill = (url: string): string | null => {
+    const fill = (url: string, swap?: { index: number; value: string }): string | null => {
       let ok = true;
       const out = url.replace(HOLE, (whole, js: string | undefined, php: string | undefined) => {
         const i = f.params.get((js ?? php)!);
         if (i === undefined) return whole;
-        const arg = site.args[i];
+        const arg = swap?.index === i ? swap.value : site.args[i];
         if (arg === null || arg === undefined) {
           const name = site.argNames?.[i];
           if (name) {
@@ -424,10 +424,20 @@ function expandSite(calls: Array<{ row: ApiCall; onward: boolean }>, filePath: s
     seen.add(key);
     // A site already read as that request (a configured client pattern) is not a second one.
     if (known.has(`${filePath}:${site.line}:${target}`)) continue;
-    const alternatives = (f.row.targetAlternatives ?? []).map(fill).filter((u): u is string => u !== null);
+    const alternatives = (f.row.targetAlternatives ?? []).map((u) => fill(u)).filter((u): u is string => u !== null);
+    // A site argument that is one of several values: each is a request of this row, any of which the site may make.
+    const chosen: string[] = [];
+    (site.argAlternatives ?? []).forEach((alts, index) => {
+      for (const value of alts ?? []) {
+        const u = fill(f.row.target!, { index, value });
+        if (u !== null && u !== target && !chosen.includes(u)) chosen.push(u);
+      }
+    });
+    alternatives.push(...chosen.filter((u) => !alternatives.includes(u)));
     calls.push({
       row: {
         ...f.row,
+        ...(chosen.length > 0 ? { targetChoice: true as const } : {}),
         // A row named by its verb is what the route linker reads the method from.
         ...(method ? { name: method } : {}),
         filePath,

@@ -25,9 +25,14 @@ interface ResolvedUrl {
   url: string;
   /** The other values the URL can take (a local set by a ternary or in each branch of an `if`). */
   alternatives?: string[];
+  /** The alternatives are values one condition picks between (any may be the request), not a helper's branches. */
+  choice?: boolean;
   baseEnv?: string;
   confidence: Confidence;
 }
+
+/** A hole that reads a member (`${ExportKind.Club}`, `${item.kind}`), never a bare name. */
+const MEMBER_HOLE = /^\$\{[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\}$/;
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
 const HTTP_ROOTS = new Set(["fetch", "axios", "http", "request", "ajax", "needle", "got"]);
@@ -903,7 +908,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const urls = [...new Set(arms.flatMap((r) => [r.url, ...(r.alternatives ?? [])]))];
       const paths = [...new Set(urls.map((u) => u.split("?")[0]!))];
       if (paths.length === 1) return { ...(arms.find((r) => !r.url.includes("?")) ?? arms[0]!), confidence: "INFERRED" };
-      return { url: urls[0]!, alternatives: urls.slice(1), confidence: "INFERRED" };
+      return { url: urls[0]!, alternatives: urls.slice(1), choice: true, confidence: "INFERRED" };
     }
     // `fetch(url.toString())`, `fetch(url.href)`, `fetch(url)` with `const url = new URL(path, origin)`:
     // the request is the URL's path argument — a parameter of a request factory
@@ -923,7 +928,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       if (multi.length === 1) {
         const { n, values } = multi[0]!;
         const urls = [...new Set(values!.map((v) => resolveTemplateUrl(arg, (name) => (name === n ? { url: v, confidence: "INFERRED" } : this.lookupUrl(name, arg)))))];
-        return { url: urls[0]!, ...(urls.length > 1 ? { alternatives: urls.slice(1) } : {}), confidence: "INFERRED" };
+        return { url: urls[0]!, ...(urls.length > 1 ? { alternatives: urls.slice(1), choice: true } : {}), confidence: "INFERRED" };
       }
       const url = resolveTemplateUrl(arg, (name) => this.lookupUrl(name, arg));
       // A leftover `${…}` means the template couldn't be fully resolved.
@@ -931,7 +936,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
     if (arg.type === "identifier") {
       const values = this.localUrls(arg.text, arg);
-      if (values) return { url: values[0]!, alternatives: values.slice(1), confidence: "INFERRED" };
+      if (values) return { url: values[0]!, alternatives: values.slice(1), choice: true, confidence: "INFERRED" };
       const found = this.lookupUrl(arg.text, arg);
       if (found) return found;
       // `const url = requestUri('x', 'v3'); axios.get(url)`: the builder call,
@@ -1122,7 +1127,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     while (value && (value.type === "parenthesized_expression" || value.type === "as_expression")) value = value.namedChild(0);
     const sources = assigned.length > 0 ? [...(value ? [value] : []), ...assigned] : value?.type === "ternary_expression" ? [value] : [];
     // A placeholder initializer (`let url = ""`) is no request.
-    const urls = [...new Set(sources.flatMap((v) => this.urlsOf(v)))].filter((u) => u.trim() !== "" && !/^\$\{[^}]*\}$/.test(u));
+    // A member read (`Kind.Club`, `item.kind`) is kept as a hole: the project pass names an enum's value, and the rest stays a wildcard.
+    const urls = [...new Set(sources.flatMap((v) => this.urlsOf(v, true)))].filter((u) => u.trim() !== "" && (!/^\$\{[^}]*\}$/.test(u) || MEMBER_HOLE.test(u)));
     return urls.length > 1 || (looped && urls.length === 1) ? urls : null;
   }
 
@@ -1193,15 +1199,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return [this.lookupUrl(key, shorthand)?.url ?? "${" + key + "}"];
   }
 
-  private urlsOf(v: Node): string[] {
+  private urlsOf(v: Node, members = false): string[] {
     let n: Node | null = v;
     while (n && (n.type === "parenthesized_expression" || n.type === "as_expression" || n.type === "non_null_expression")) {
       n = n.namedChild(0);
     }
     if (!n) return [];
     if (n.type === "ternary_expression") {
-      return [...this.urlsOf(n.childForFieldName("consequence")!), ...this.urlsOf(n.childForFieldName("alternative")!)];
+      return [...this.urlsOf(n.childForFieldName("consequence")!, members), ...this.urlsOf(n.childForFieldName("alternative")!, members)];
     }
+    if (members && n.type === "member_expression" && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(n.text)) return [`\${${n.text}}`];
     if (n.type === "template_string") return [resolveTemplateUrl(n, (name) => this.lookupUrl(name, n!))];
     if (n.type === "identifier") return [this.lookupUrl(n.text, n)?.url ?? `\${${n.text}}`];
     if (n.type === "binary_expression") {
@@ -1428,6 +1435,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           name: loader.verb,
           target: resolved.url,
           ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
+          ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
           line: node.startPosition.row + 1,
         }));
         return;
@@ -1619,6 +1627,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               name: callName,
               target: resolved.url,
               ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
+              ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
               line: node.startPosition.row + 1,
               // Recovered env base (display only; `target` stays app-relative).
               ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
