@@ -3,6 +3,42 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## Unreleased
+
+### Changed
+
+- **Wrong facts corrected (extractor 1.624.0).**
+  - A call on what a project factory returns (a composable, hook or store factory) now lands on the member it names, or
+    on nothing; it no longer lands on the factory itself. This includes an Array method on a returned value.
+  - Production code no longer links into test or story files through component events, prop callbacks, queues or
+    interface fan-out.
+  - A write that can only turn a query's `enabled` flag off no longer counts as triggering the query.
+  - A subclass overriding its REST client's `url` getter gets its own URLs, not the base class's.
+  - A route moved onto a Rails concern's action calls the including controller's hook, not the concern's placeholder.
+  - Mailer views and static error pages no longer count as clicks.
+
+### Added
+
+- **Reads that reach more of the chain (extractor 1.624.0):**
+  - Angular: `EventEmitter.next()` reaches the parent like `.emit()`. A Subject's `.next()` reaches the subscriber in the
+    same class. Calls on `signal()`/`input()` values are typed. Functions held in a class's descriptor literals link.
+  - Vue: `setup()` returns used through `this`, callbacks handed to composables, hook-result parameter defaults, inline
+    template writes to query keys, `useDebounceFn`/`useThrottleFn` handlers, `refetch()`/`fetchNextPage()` on query
+    results, `emit(CONSTANT)`, `v-bind` listener objects, `<component :is>` maps and `$emit(btn.event)`.
+  - Store factories: Pinia-style `createStore({ actions })` and Vuex modules built by a project factory get one function
+    per action, and `dispatch('module/action')` lands on it.
+  - REST base classes: an override calling `super.create()` (and `update`, `delete`, `save`) keeps the inherited request
+    under the subclass's URL.
+  - React: a callback prop handed on under another name reaches its `mapDispatchToProps` creator.
+  - Backends:
+    - a local typed only by its initializer's return type keeps its held calls;
+    - Python `dict[K, type[Base]]` registries type what they build;
+    - Go xorm structs with a `TableName()` override name their table;
+    - Go routes built by `+` keep a placeholder segment;
+    - ASP.NET Identity `UserManager`/`RoleManager`/`SignInManager` calls are data access.
+  - Rails: Administrate controllers' inherited CRUD routes reach the model's table. `send(name)` over a guarded constant
+    symbol list links each listed method.
+
 ## 0.12.1 — 2026-11-06
 
 ### Fixed

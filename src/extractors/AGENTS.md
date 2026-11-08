@@ -201,3 +201,12 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
 - Line numbers are **1-based** in output (tree-sitter is 0-based — convert: `node.startPosition.row + 1`)
 - Extractors should never call each other directly; they communicate via `FileAnalysis` fields
 - Noise filtering (skip `console.log`, `.map`, `.filter`, etc.) is centralized in `call-graph.ts` `NOISE_CALLS`
+- Dispatch resolvers' output passes `dropProductionToTestLinks` (`dispatch/index.ts`), and so do queue links: production
+  code never links into a test or story file. The linker's interface fan-out skips test doubles the same way.
+- A factory's returned object literal is stated as `FunctionInfo.returnedMembers` (kinds `function`, `object`, `value`,
+  `inline`, `outer`, `open`): a call on the factory's result names a stated member or nothing — never the factory. An
+  `open` member (the literal spreads a call, or hands on another object's member: `signIn: backend.signIn`) leaves the
+  call to the unstated-factory reading. Inside a non-arrow method of a returned local object, `this.x` names its sibling.
+- Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
+  with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
+  `componentCandidates`. Targets are deduplicated before the eight-target cap per emit.

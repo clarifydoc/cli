@@ -28,10 +28,10 @@ export abstract class AbstractClubService<T> {
   delete(o: T) { return this.http.delete(this.getResourceUrl(1)) }
 }
 `,
-  "web/src/saved-view.service.ts": `import { AbstractClubService } from './base.service'
+  "web/src/lineup.service.ts": `import { AbstractClubService } from './base.service'
 import { tap } from 'rxjs'
-export class SavedViewService extends AbstractClubService<any> {
-  constructor() { super(); this.resourceName = 'saved_views' }
+export class LineupService extends AbstractClubService<any> {
+  constructor() { super(); this.resourceName = 'lineups' }
   create(o: any) { return super.create(o).pipe(tap(() => this.reload())) }
   delete(o: any) { return super.delete(o).pipe(tap(() => this.reload())) }
   reload() {}
@@ -48,9 +48,9 @@ export class LeagueService extends AbstractClubService<any> {
   create(o: any) { return this.http.post('/custom/leagues', o) }
 }
 `,
-  "web/src/comp.ts": `import { SavedViewService } from './saved-view.service'
+  "web/src/comp.ts": `import { LineupService } from './lineup.service'
 export class ViewsComponent {
-  constructor(private svc: SavedViewService) {}
+  constructor(private svc: LineupService) {}
   remove(v: any) { this.svc.delete(v).subscribe() }
   add(v: any) { this.svc.create(v).subscribe() }
 }
@@ -66,7 +66,7 @@ export class ApiClient {
   get url() { return \`\${this.baseUrl()}/\${this.resource}\` }
   baseUrl() {
     let url = this.apiVersion
-    if (this.options.enterprise) { url = \`/enterprise\${url}\` }
+    if (this.options.academy) { url = \`/academy\${url}\` }
     return url
   }
   get() { return axios.get(this.url) }
@@ -97,11 +97,11 @@ export function remove(id, n) { return notes.delete(id, n) }
 `,
   "api/routes.py": `from fastapi import APIRouter
 router = APIRouter()
-@router.post("/api/saved_views/")
+@router.post("/api/lineups/")
 def c(): pass
-@router.delete("/api/saved_views/{id}/")
+@router.delete("/api/lineups/{id}/")
 def d(id): pass
-@router.get("/api/saved_views/")
+@router.get("/api/lineups/")
 def l(): pass
 @router.get("/api/v1/clubs/{id}/notes")
 def ng(id): pass
@@ -144,11 +144,11 @@ describe("a REST base class and the subclasses that override its methods", () =>
 
   it("keeps the inherited request of a method an override reaches with super.<name>(...)", () => {
     const r = rows();
-    expect(r).toContain("base.service.ts:12 post /api/saved_views/ SavedViewService");
-    expect(r).toContain("base.service.ts:14 delete /api/saved_views/{}/ SavedViewService");
+    expect(r).toContain("base.service.ts:12 post /api/lineups/ LineupService");
+    expect(r).toContain("base.service.ts:14 delete /api/lineups/{}/ LineupService");
     // the decoy subclass keeps its own URL, not the other's
     expect(r).toContain("base.service.ts:12 post /api/matches/ MatchService");
-    expect(r.filter((x) => x.includes("saved_views") && x.includes("MatchService"))).toEqual([]);
+    expect(r.filter((x) => x.includes("lineups") && x.includes("MatchService"))).toEqual([]);
     // an override that does not call super replaces the inherited request
     expect(r.filter((x) => x.endsWith(" LeagueService")).map((x) => x.split(" ")[0])).not.toContain("base.service.ts:12");
     expect(r).toContain("base.service.ts:11 get /api/leagues/ LeagueService");
@@ -156,8 +156,8 @@ describe("a REST base class and the subclasses that override its methods", () =>
 
   it("links super.create / super.delete in an override to the inherited member", () => {
     const l = summary.symbolLinks.filter((x) => x.callName.startsWith("super.") && x.strategy === "inheritance").map((x) => `${x.sourceSymbol} -> ${x.targetSymbol}`);
-    expect(l).toContain("SavedViewService.create -> AbstractClubService.create");
-    expect(l).toContain("SavedViewService.delete -> AbstractClubService.delete");
+    expect(l).toContain("LineupService.create -> AbstractClubService.create");
+    expect(l).toContain("LineupService.delete -> AbstractClubService.delete");
     expect(l).toContain("ClubNotes.create -> ApiClient.create");
     expect(l).toContain("ClubNotes.delete -> ApiClient.delete");
   });
@@ -177,8 +177,8 @@ describe("a REST base class and the subclasses that override its methods", () =>
     expect(hit(17, "Players")).toEqual([]);
     // the trace starts at the subclass's override, which reaches the handler through the inherited request
     const http = summary.symbolLinks.filter((x) => x.relation === "http").map((x) => `${x.sourceSymbol} -> ${x.targetSymbol}`);
-    expect(http).toContain("SavedViewService.delete -> d");
-    expect(http).toContain("SavedViewService.create -> c");
+    expect(http).toContain("LineupService.delete -> d");
+    expect(http).toContain("LineupService.create -> c");
     expect(http).toContain("MatchService.create -> mc");
   });
 });
