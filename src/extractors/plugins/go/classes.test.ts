@@ -72,6 +72,43 @@ func (s *Svc) Run() {
     expect(classes["Svc"]!.methods[0]!.localTypes).toBeUndefined();
   });
 
+  it("keeps one call row per declaration a shadowed parameter's name sees", () => {
+    const a = extractWithRegex(`
+package league
+
+type Club struct{}
+
+func (c *Club) Sign() {}
+
+type Rival struct{}
+
+func (r *Rival) Sign() {}
+
+func loadRival() *Rival { return &Rival{} }
+
+func Inner(club *Club, open bool) {
+	if open {
+		club := loadRival()
+		club.Sign()
+	}
+	club.Sign()
+}
+
+func Unknown(club *Club, open bool) {
+	if open {
+		club := other.Load()
+		club.Sign()
+	}
+}
+`, "league.go", "go");
+    const sign = (fn: string) => a.functions.find((f) => f.name === fn)!.calls.filter((c) => c.name === "club.Sign")
+      .map((c) => [c.line, c.receiverType ?? null, c.boundLocally ?? false]);
+    // The shadowing block's own call takes the initializer's result; the call after it takes the parameter's type.
+    expect(sign("Inner")).toEqual([[17, "*Rival", false], [19, "*Club", false]]);
+    // A shadowing declaration that states no type hides the parameter's: the call is marked, never typed `*Club`.
+    expect(sign("Unknown")).toEqual([[25, null, true]]);
+  });
+
   it("reads generic receivers and generic functions", () => {
     const a = extractWithRegex(`
 type Stack[T any] struct {
