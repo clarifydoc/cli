@@ -1884,7 +1884,7 @@ export interface RouteInfo {
   /**
    * The name the framework registers the route under, which templates and code build its
    * URL from: Laravel `->name('clubs.show')` / `'as' => …` (group prefixes included,
-   * `clubs.index` for a resource action), Django `name=` under its `app_name`, and a client
+   * `clubs.index` for a resource action), Django `name=` under its `app_name`, Rails `as:` (a resource's `as:` renames its helpers; a route nothing names has none, its helper is derived from path and action by the view resolver), Adonis `.as('x')` (a resource's rows `clubs.index` …), ASP.NET `Name = "x"` on a verb attribute or `[Route]`, and a client
    * router's — Vue Router's `name: 'clubs'`, unplugin-vue-router's file-based name
    * (`index/clubs/index.vue` → `//clubs/`). A link by name (`route('clubs.show')`,
    * `{% url 'clubs:detail' %}`, `{ name: 'clubs' }`) is read as `route:<name>` and reaches it.

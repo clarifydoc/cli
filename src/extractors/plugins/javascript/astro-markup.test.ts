@@ -63,3 +63,15 @@ const first = await getEntry('players', 'p1');
     expect(a.dataSources.filter((d) => d.kind === "database").map((d) => `${d.target} ${d.access}`)).toEqual(["clubs read", "players read"]);
   });
 });
+
+describe("Astro markup: a callback head around nested markup", () => {
+  it("keeps the call the callback hangs on (`getClubs().map(…)`) beside the calls inside it", async () => {
+    const a = await analyze(`---
+import { getClubs, getPlayers, label, tag } from '../lib/clubs';
+---
+<ul>{getClubs().map((c) => <li>{label(c)}</li>)}</ul>
+<ul>{(await getPlayers()).filter((p) => p.ok).map((p) => <li>{tag(p)}</li>)}</ul>
+`);
+    expect(setupCalls(a)).toEqual(["getClubs@4", "getPlayers@5", "label@4", "tag@5"]);
+  });
+});

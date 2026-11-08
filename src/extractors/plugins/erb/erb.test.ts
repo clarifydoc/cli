@@ -73,4 +73,16 @@ describe("ERB views", () => {
     const page = view("app/views/fields/_show.html.erb", `<%= link_to attachment.filename, field.blob_url(attachment) %>\n<%= link_to 'Club', club_path(@club) %>`);
     expect(page.interactiveElements.map((e) => e.handler)).toEqual(["club_path"]);
   });
+
+  it("joins a helper named by `as:` to that route, not to a route whose path spells the same name", () => {
+    const page = view("app/views/home/index.html.erb", `<%= link_to 'Table', league_table_path %>`);
+    const route = (path: string, handler: string, name?: string) => ({ httpMethod: "GET", path, handler, kind: "api", calls: [], middleware: [], line: 1, ...(name ? { name } : {}) });
+    const controller = {
+      filePath: "app/controllers/clubs_controller.rb", language: "ruby", interactiveElements: [],
+      routes: [route("/standings", "ClubsController#table", "league_table"), route("/league_table", "ClubsController#decoy")],
+      classes: [{ name: "ClubsController", methods: [{ name: "table", line: 3 }, { name: "decoy", line: 6 }] }],
+    } as unknown as FileAnalysis;
+    const links = new RailsViewResolver().resolve([page, controller]);
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`)).toEqual(["league_table_path -> ClubsController.table"]);
+  });
 });

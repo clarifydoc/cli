@@ -315,7 +315,8 @@ function parseMethodRoutes(
   let routeAttrConstant: string | null = null;
   let routeAttrLine = 0;
   let actionName: string | null = null;
-  const verbAttrs: { verb: string | null; template: string | null; constant?: string | null; line: number }[] = [];
+  let routeAttrName: string | null = null;
+  const verbAttrs: { verb: string | null; template: string | null; constant?: string | null; line: number; name?: string | null }[] = [];
   const mapToVersions: string[] = [];
 
   for (const attr of attrs) {
@@ -325,6 +326,7 @@ function parseMethodRoutes(
         routeAttrTemplate = attributeRouteTemplate(attr);
         routeAttrConstant = routeAttrTemplate === null ? attributeConstantTemplate(attr) : null;
         routeAttrLine = attr.startPosition.row + 1;
+        routeAttrName = namedArguments(attr).get("Name") ?? null;
       }
     } else if (name === "ActionName") {
       actionName = positionalString(attr);
@@ -335,6 +337,7 @@ function parseMethodRoutes(
         template,
         constant: template === null ? attributeConstantTemplate(attr) : null,
         line: attr.startPosition.row + 1,
+        name: namedArguments(attr).get("Name") ?? null,
       });
     } else if (name === "AcceptVerbs") {
       // `[AcceptVerbs("POST", "PUT", Route = "archive")]`: one row per verb, the template a named argument.
@@ -347,7 +350,7 @@ function parseMethodRoutes(
   }
   // `[Route("x")]` alone routes every verb — Web API 2 picks the one the name starts with.
   if (verbAttrs.length === 0 && (routeAttrTemplate !== null || routeAttrConstant !== null)) {
-    verbAttrs.push({ verb: scope.webApi && methodName ? webApiVerb(methodName) : null, template: routeAttrTemplate, constant: routeAttrConstant, line: routeAttrLine });
+    verbAttrs.push({ verb: scope.webApi && methodName ? webApiVerb(methodName) : null, template: routeAttrTemplate, constant: routeAttrConstant, line: routeAttrLine, name: routeAttrName });
   }
   if (verbAttrs.length === 0) {
     if (conventional && methodName && isPlainAction(methodNode, attrs)) {
@@ -377,7 +380,7 @@ function parseMethodRoutes(
   const auth = buildAuth(scope.guards, methodGuards);
   const versions = resolveVersions(scope, mapToVersions);
 
-  for (const { verb, template: own, constant, line } of verbAttrs) {
+  for (const { verb, template: own, constant, line, name: routeName } of verbAttrs) {
     actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
     const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
     const params = parameterBindings(methodNode, path, scope.apiController);
@@ -391,6 +394,8 @@ function parseMethodRoutes(
       middleware: guards.map((g) => g.text),
       line,
       ...(shorter && shorter !== path ? { aliases: [shorter] } : {}),
+      // `[HttpGet("{id}", Name = "GetClub")]` (or on the `[Route]` beside it): what `CreatedAtRoute` / `Url.RouteUrl` name.
+      ...((routeName ?? routeAttrName) ? { name: (routeName ?? routeAttrName)! } : {}),
     };
     // A template (or class template) that is a constant declared elsewhere: the project pass reads it.
     const methodConstant = constant ?? (own === null ? routeAttrConstant : null);

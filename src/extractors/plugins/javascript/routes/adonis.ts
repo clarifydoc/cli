@@ -12,11 +12,13 @@ import { adoptExpressRoute, addExpressRouteGuards, joinPrefix, receiverName } fr
  * - `router.resource('clubs', ClubsController).apiOnly()` — the seven CRUD routes (`.apiOnly()`
  *   drops `create` and `edit`, `.only([…])` / `.except([…])` choose), `clubs.players` nesting
  *   under `/clubs/:club_id`;
- * - `router.get(…).use(middleware.auth())` — the route's own guard.
+ * - `router.get(…).use(middleware.auth())` — the route's own guard;
+ * - `.as('clubs.show')` — the name `route('clubs.show')` and `toRoute` build the URL from (`RouteInfo.name`),
+ *   a group's `.as('admin')` prefixing the names inside, a resource's rows `clubs.index` … `clubs.destroy`.
  */
 
 export function mayDeclareAdonisRoutes(sourceText: string): boolean {
-  return /adonis/i.test(sourceText) && /\.(?:group|resource|shallowResource)\s*\(|\)\s*\.\s*(?:use|middleware|where)\s*\(/.test(sourceText);
+  return /adonis/i.test(sourceText) && /\.(?:group|resource|shallowResource)\s*\(|\)\s*\.\s*(?:use|middleware|where|as)\s*\(/.test(sourceText);
 }
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "any", "route"]);
@@ -103,6 +105,17 @@ export function extractAdonisChains(root: Node, routes: RouteInfo[]): void {
             for (const p of r.params) if (p.name === name) p.type = type;
           }
         }
+      } else if (mod.prop === "as") {
+        // `.as('clubs.show')` names a route; on a resource it replaces the resource's name; on a group it prefixes the names inside.
+        const arg = mod.args[0];
+        if (arg?.type !== "string") continue;
+        const as = stripQuotes(arg.text);
+        for (const r of rows) {
+          if (chain.rootProp === "group") {
+            if (r.name) r.name = `${as}.${r.name}`;
+          } else if (chain.rootProp === "resource" || chain.rootProp === "shallowResource") r.name = `${as}.${r.name?.split(".").pop() ?? ""}`;
+          else r.name = as;
+        }
       } else if (mod.prop === "use" || mod.prop === "middleware") {
         for (const r of rows) addExpressRouteGuards(r, mod.args.flatMap((a) => (a.type === "array" ? a.namedChildren : [a])));
       }
@@ -131,7 +144,8 @@ function resourceRoutes(chain: Chain, routes: RouteInfo[]): RouteInfo[] {
     if (only && !stringList(only.args[0]).includes(a.action)) continue;
     if (except && stringList(except.args[0]).includes(a.action)) continue;
     for (const method of a.methods) {
-      const route: RouteInfo = { path: `${base}${a.suffix}`, httpMethod: method, kind: "api", handler: `${controller}.${a.action}`, calls: [], middleware: [], line: lineOf(chain.root) };
+      // `router.resource('clubs.players', …)` names its rows `clubs.players.index`, … `destroy`.
+      const route: RouteInfo = { path: `${base}${a.suffix}`, httpMethod: method, kind: "api", handler: `${controller}.${a.action}`, name: `${names.join(".")}.${a.action}`, calls: [], middleware: [], line: lineOf(chain.root) };
       adoptExpressRoute(route, receiverName(chain.root.childForFieldName("function")!));
       routes.push(route);
       out.push(route);

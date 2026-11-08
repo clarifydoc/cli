@@ -409,3 +409,15 @@ describe("rubySpec.extractRoutes — controllers handed to a gem's routing DSL",
     ]);
   });
 });
+
+describe("rubySpec.extractRoutes — helper names (`as:`)", () => {
+  it("names a verb route by its `as:`, under the namespaces that enclose it", () => {
+    const out = routes(draw(`  get 'standings', to: 'clubs#table', as: :league_table\n  namespace :admin do\n    get 'fixtures/:round', to: 'matches#round', as: 'round_fixtures'\n  end\n  get 'plain', to: 'clubs#plain'`));
+    expect(out.map((r) => `${r.path} ${r.name}`)).toEqual(["/standings league_table", "/admin/fixtures/:round admin_round_fixtures", "/plain undefined"]);
+  });
+
+  it("renames a resource's helpers with `as:`", () => {
+    const out = routes(draw(`  resources :clubs, as: :teams, only: [:index, :show, :new, :edit]`));
+    expect(out.map((r) => `${r.path} ${r.name}`)).toEqual(["/clubs teams", "/clubs/:id team", "/clubs/new new_team", "/clubs/:id/edit edit_team"]);
+  });
+});

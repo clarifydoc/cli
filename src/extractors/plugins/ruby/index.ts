@@ -42,6 +42,15 @@ import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 
+/** The helper name of a `resources … as: :teams` route: `teams`, `team`, `new_team`, `edit_team`. */
+function resourceHelper(prefix: string, as: string, action: string, singular: boolean): string {
+  const member = singular ? as : railsSingularize(as);
+  if (action === "new") return `new_${prefix}${member}`;
+  if (action === "edit") return `edit_${prefix}${member}`;
+  const collection = action === "index" || action === "create";
+  return prefix + (singular ? as : collection ? as : member);
+}
+
 /** Rails RESTful action → HTTP method + URL shape (plural `resources`). */
 const RAILS_ACTION_MAP: Record<string, { method: string; suffix: string }> = {
   index:   { method: "GET",    suffix: "" },
@@ -1482,6 +1491,10 @@ export const rubySpec: RegexLangSpec = {
     // Parallel to `blockStack`: true for a `collection do` / `member do` block,
     // where a canonical action (`delete :destroy`) is the scope's path itself.
     const scopeStack: boolean[] = [];
+    // Parallel to `blockStack`: the prefix a `namespace :admin` block puts on its route names (`admin_`).
+    const nameStack: string[] = [];
+    const currentNamePrefix = (): string => nameStack.join("");
+    let nextNamePrefix = "";
     const pushBlock = (
       prefix: string,
       guard: GuardAttr | null = null,
@@ -1490,6 +1503,8 @@ export const rubySpec: RegexLangSpec = {
       absolute = false,
     ): void => {
       blockStack.push(absolute ? { prefix, absolute } : { prefix });
+      nameStack.push(nextNamePrefix);
+      nextNamePrefix = "";
       scopeStack.push(absolute);
       guardStack.push(guard);
       moduleStack.push(module);
@@ -1497,6 +1512,7 @@ export const rubySpec: RegexLangSpec = {
     };
     const popBlock = (): void => {
       blockStack.pop();
+      nameStack.pop();
       scopeStack.pop();
       guardStack.pop();
       moduleStack.pop();
@@ -1526,6 +1542,7 @@ export const rubySpec: RegexLangSpec = {
       // namespace :x do / scope '/x' do — open a block that prefixes child paths.
       const nsMatch = line.match(/^namespace\s+:(\w+)/);
       if (nsMatch && opensDoBlock) {
+        nextNamePrefix = nsMatch[1] + "_";
         pushBlock("/" + nsMatch[1], null, railsCamelize(nsMatch[1]));
         continue;
       }
@@ -1599,6 +1616,8 @@ export const rubySpec: RegexLangSpec = {
         const beforeOpts = stmt.slice(resourcesMatch[1].length).split(/\b(?:only|except|controller|module|path|as|param)\b|=>/)[0];
         // `param: :inbox_id` renames the member's `:id`.
         const memberParam = stmt.match(/\bparam:\s*:(\w+)/)?.[1] ?? "id";
+        // `as: :teams` renames the helpers (`teams_path`, `team_path`, `edit_team_path`).
+        const asName = stmt.match(/\bas:\s*(?::(\w+)|['"](\w+)['"])/)?.slice(1).find(Boolean) ?? null;
         // `resources :inboxes, module: :assignment_policies` puts its controller in that module.
         const optionModule = stmt.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
         // `resources :children, controller: 'children'` names the class explicitly.
@@ -1624,6 +1643,7 @@ export const rubySpec: RegexLangSpec = {
             if (except.has(action)) continue;
             // Rails routes `update` on PATCH and on PUT alike.
             for (const method of action === "update" ? ["PATCH", info.method] : [info.method]) {
+              const helper = asName ? resourceHelper(currentNamePrefix(), asName, action, singular) : null;
               routes.push(withGuards({
                 path: base + info.suffix.replace("/:id", memberPath),
                 httpMethod: method,
@@ -1632,6 +1652,7 @@ export const rubySpec: RegexLangSpec = {
                 calls: [],
                 middleware: [],
                 line: i + 1,
+                ...(helper ? { name: helper } : {}),
               }));
             }
           }
@@ -1708,6 +1729,8 @@ export const rubySpec: RegexLangSpec = {
             ? resource.base + (on === "member" ? resource.memberPath : "") + relPath
             : currentPrefix() + relPath;
 
+        // `as: :league_table` names the helper `league_table_path` (under a namespace, `admin_league_table`).
+        const asName = line.match(/(?:\bas:|:as\s*=>)\s*(?::(\w+)|['"](\w+)['"])/)?.slice(1).find(Boolean);
         routes.push(withGuards({
           path,
           httpMethod: verbMatch[1].toUpperCase(),
@@ -1716,6 +1739,7 @@ export const rubySpec: RegexLangSpec = {
           calls: [],
           middleware: [],
           line: i + 1,
+          ...(asName ? { name: currentNamePrefix() + asName } : {}),
         }));
         continue;
       }
