@@ -4453,6 +4453,13 @@ function resolveCallToDefinition(
   // So does a call on a class the project declares (`ClubStore.save(…)`, a static method): the
   // class's own or inherited member, whatever its name says.
   if (call.kind === "api-call" || call.kind === "database") {
+    // `super.create(o)` in a subclass override: the method name made it look like an HTTP or
+    // database call, but its receiver is the parent class — the project's own when it declares
+    // the member (the inherited call then carries the request), else the name-based reading stays.
+    if (parts.length === 2 && SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, ""))) {
+      const viaParent = resolveCallToDefinition(sourceFile, sourceSymbol, { ...call, kind: "internal" }, analysis, ctx, reference);
+      if (viaParent?.strategy === "inheritance") return viaParent;
+    }
     return throughDeclaredType() ?? (parts.length === 2 && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line) : null);
   }
 
@@ -4731,7 +4738,8 @@ function resolveCallToDefinition(
               ? mkLink(own.file, own.symbol, own.line, "INFERRED", "inheritance")
               : mkLink(parentInfo.parentFile, parentDef.name, parentDef.line, "INFERRED", "inheritance");
             // Called on the enclosing class's own instance: say which (see `SymbolLink.viaType`).
-            if (sourceSymbol.startsWith(`${cls.name}.`)) Object.assign(link, { viaType: cls.name, viaTypeFile: sourceFile });
+            // (`super.x()` is on the parent, not on the class's own instance.)
+            if (sourceSymbol.startsWith(`${cls.name}.`) && !(parts.length === 2 && SUPER_HEADS.has(parts[0]!.replace(/\(.*\)$/, "")))) Object.assign(link, { viaType: cls.name, viaTypeFile: sourceFile });
             return link;
           }
         }

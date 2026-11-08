@@ -560,7 +560,8 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     const literal = /^(['"`])([\w.\-/]*)\1$/.exec(expr);
     if (literal) return literal[2]!;
     const field = /^this\.([\w$]+)$/.exec(expr);
-    if (field) return cls ? resolveMember(field[1]!, cls, depth) : null;
+    // A read of a getter (`this.url`) no field states: the URL its method builds, seen from this class.
+    if (field) return cls ? resolveMember(field[1]!, cls, depth) ?? resolveThisCall(field[1]!, "", cls, depth) : null;
     // `this.matches.resourceName`: a member of the class a field of `this` is declared as.
     const fieldMember = /^this\.([\w$]+)\.([\w$]+)$/.exec(expr);
     if (fieldMember && cls) {
@@ -728,19 +729,36 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
    */
   const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass: string }> => {
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
-    if (!method || ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.") || THIS_METHOD.test(t))) return [];
+    if (!method || (call.getterReads === undefined && ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.") || THIS_METHOD.test(t)))) return [];
     const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
     const below = ctx.classes.descendants(cls);
     for (const d of [...below, ...[cls, ...below].flatMap(instancesOf)]) {
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
-      const definer = chainOf(d).find(({ c }) => c.cls.methods.some((m) => m.name === method.name))?.c;
-      if (definer !== cls) continue;
-      const t = collapseEmptySegments(resolveValue(call.target!, call.filePath, d, 0));
+      // Overrides on the way that call `super.<name>(…)` keep the inherited request (under `d`'s URL);
+      // one that does not replaces it.
+      const up = chainOf(d);
+      const reached = up.findIndex(({ c }) => c === cls);
+      if (reached < 0) continue;
+      const callsSuper = (m: { calls: Array<{ name: string }> }): boolean => m.calls.some((c) => new RegExp(`^(?:super|parent|base)(?:\\(\\))?(?:\\.|::)${method.name}$`).test(c.name));
+      const replaced = up.slice(0, reached).some(({ c }) => {
+        const own = c.cls.methods.find((m) => m.name === method.name);
+        return own !== undefined && !callsSuper(own);
+      });
+      if (replaced) continue;
+      // A subclass that states the getter the base reads (`get url()`): the URL its own getter builds.
+      const reads = call.getterReads;
+      const names = reads ? [...reads.text.matchAll(/\$\{\s*this\s*\.\s*([\w$]+)\s*\}/g)].map((g) => g[1]!) : [];
+      const owner = up.slice(0, reached).find(({ c }) => names.some((n) => c.cls.methods.some((m) => m.name === n) || c.cls.fieldValues?.[n] !== undefined));
+      const stated = owner ? reads!.by[owner.c.cls.name] : undefined;
+      const source = stated?.target ?? call.target!;
+      const t = collapseEmptySegments(resolveValue(source, call.filePath, d, 0));
       // An abstract middle class (`CacheEnabledApiClient`) leaves a field its own
       // subclasses state through `super(…)`, or a method they override: it requests nothing itself.
-      if (awaitsSubclass(t, d) || t.includes("${this.") || THIS_METHOD.test(t)) continue;
-      const alternatives = call.targetAlternatives?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
-      if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives![i])) continue;
+      // A leaf class's own runtime field (`${this.clubId}`, set before each call) stays a hole the URL's
+      // wildcard fills; a class with subclasses may leave it to them.
+      if (awaitsSubclass(t, d) || (t.includes("${this.") && ctx.classes.descendants(d).length > 0) || THIS_METHOD.test(t)) continue;
+      const alternatives = (stated ? stated.alternatives : call.targetAlternatives)?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
+      if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives?.[i])) continue;
       // One row per subclass even when two request the same URL: each is its
       // own subclass's request (`DocumentService` and `DocumentNotesService`
       // both under `documents/`), and the trace starts at that subclass.
@@ -758,7 +776,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (call.kind === "api-call" && call.target && /\bthis\.(?!constructor\.)[\w$]+(?![\w$(])/.test(call.target) && !call.target.includes("${this.")) {
       call.target = call.target.replace(/(?<![{\w$.])this\.(?!constructor\.)([\w$]+)(?![\w$(])/g, "${this.$1}");
     }
-    if (call.kind !== "api-call" || !call.target || !(call.target.includes("${") || THIS_METHOD.test(call.target))) continue;
+    if (call.kind !== "api-call" || !call.target || !(call.target.includes("${") || THIS_METHOD.test(call.target) || call.getterReads !== undefined)) continue;
     const cls = classAt(call.filePath, call.line);
     const variants = cls ? perSubclass(call, cls) : [];
     if (variants.length > 0) {
@@ -778,6 +796,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     changed++;
   }
   calls.push(...fanned);
+  for (const call of calls) delete call.getterReads;
   // A project helper that takes a URL first and states no template of its own
   // (`route(rest, params)` adding a query string through `new URL`): the
   // request goes to that URL.
