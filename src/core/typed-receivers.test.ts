@@ -39,6 +39,18 @@ class Svc {
     expect(callsOf(a, "Svc", "run")).toEqual(["this.repo.find", "this.notifier.send", "parser.parse"]);
   });
 
+  it("Python: a local typed only by its initializer call keeps a noise-named call", async () => {
+    const a = await analyze(`
+def run(text):
+    parser = get_parser()
+    parser.parse(text)
+    other.find("x")
+`, "python", "svc.py");
+    const calls = a.functions.find((f) => f.name === "run")!.calls.map((c) => c.name);
+    expect(calls).toContain("parser.parse");
+    expect(calls).not.toContain("other.find");
+  });
+
   it("TypeScript: Array#find on an array-typed field stays noise; a repository's find does not", async () => {
     const a = await analyze(`
 class Svc {
