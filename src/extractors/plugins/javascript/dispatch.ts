@@ -49,7 +49,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
 
     // Every binding of a child's event on its tag: child file → event key → bindings.
     // `bound`: the function a Vue binding is extracted as when it calls anything but one of the file's own functions (`markupFunctions`).
-    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string }
+    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string; tag?: string }
     const bindings = new Map<string, Map<string, Binding[]>>();
     const selectors = angularSelectors(analyses);
     for (const parent of analyses) {
@@ -80,7 +80,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }) });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }), tag: el.tag ?? el.component });
       }
     }
 
@@ -123,6 +123,12 @@ export class JsComponentEmitResolver implements DispatchResolver {
       return out;
     };
 
+    // The events a parent states for the child on this tag: those its bindings on the tag give, else (no tag-level
+    // reading: a destructured composable result, a prop passed through) every `event:` string of the file.
+    const statesEvent = (b: Binding, key: string): boolean => {
+      const own = b.tag ? Object.entries(b.parent.eventLiteralsByTag ?? {}).find(([t]) => tagKey(t) === tagKey(b.tag!))?.[1] : undefined;
+      return (own ?? b.parent.eventLiterals ?? []).some((n) => tagKey(n) === key);
+    };
     const links: SymbolLink[] = [];
     const seenLink = new Set<string>();
     for (const [childFile, byEvent] of bindings) {
@@ -134,7 +140,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         // A child that emits by data (`$emit(btn.event)`) emits the events a parent states for it (`event: 'delete'`).
         const dynamic = sites.length === 0 && !markup && child.dynamicEmits?.length ? child.dynamicEmits : undefined;
         if (sites.length === 0 && !markup && !dynamic) continue; // child never emits this event (native fallthrough)
-        const targets = distinctTargets(targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => !!b.parent.eventLiterals?.some((n) => tagKey(n) === key) : undefined)).slice(0, 8);
+        const targets = distinctTargets(targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => statesEvent(b, key) : undefined)).slice(0, 8);
         if (targets.length === 0) continue;
         // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
         // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
@@ -227,6 +233,49 @@ export class JsComponentEmitResolver implements DispatchResolver {
             targetLine: target.line,
             confidence: "INFERRED",
           });
+        }
+      }
+    }
+    // `useDialog("match", (v) => emit("save", v))`: the composable calls its parameter, which emits.
+    // The function of the composable that calls the parameter stands where the emit would.
+    for (const file of analyses) {
+      for (const e of file.events ?? []) {
+        const key = tagKey(e.name);
+        if (!bindings.get(file.filePath)?.has(key)) continue;
+        for (const line of e.sites ?? [e.line]) {
+          const hand = file.functions
+            .flatMap((f) => f.calls.filter((c) => c.kind === "cross-file" && c.target && c.line <= line && line - c.line <= 8).map((c) => ({ c, f })))
+            .filter(({ c }) => c.args?.some((x) => /^=>(?:[\w$]+\.)?\$?emit$/.test(x)))
+            .sort((x, y) => y.c.line - x.c.line)[0];
+          if (!hand) continue;
+          const index = hand.c.args!.findIndex((x) => /^=>(?:[\w$]+\.)?\$?emit$/.test(x));
+          const targetFile = resolveTarget(hand.c.target!, file.filePath, filePathMap);
+          const lib = targetFile ? byPath.get(targetFile) : undefined;
+          const leaf = hand.c.name.split(".").pop()!;
+          const owner = lib?.functions.filter((f) => f.name === leaf);
+          const param = owner?.length === 1 ? owner[0]!.params[index]?.name : undefined;
+          if (!lib || !param) continue;
+          const own = owner![0]!;
+          const callers = lib.functions.filter((f) => f.name !== "<setup>" && f.line >= own.line && f.endLine <= own.endLine && f.calls.some((c) => c.name === param && c.kind === "internal"));
+          const targets = distinctTargets(targetsOf(file.filePath, key, 0, new Set())).slice(0, 8);
+          // Per instance: the calls this file makes on the local holding that composable's result
+          // (`const dialog = useDialog(…)` → `dialog.confirm()`), never the composable's function for every user of it.
+          const locals = new Set(file.functions.flatMap((f) => (f.localTypes ?? []).filter((l) => !l.type && l.from?.replace(/\(.*$/s, "") === leaf).map((l) => l.name)));
+          for (const f of callers) {
+            const member = f.name.split(".").pop()!;
+            for (const user of file.functions) {
+              for (const at of user.calls) {
+                const [head, ...rest] = at.name.split(".");
+                if (!locals.has(head!) || rest.join(".") !== member) continue;
+                for (const t of targets) {
+                  const k = `${file.filePath}\u0000${user.name}\u0000${at.line}\u0000emit:${e.name}\u0000${t.file}\u0000${t.span.symbol}`;
+                  if (seenLink.has(k)) continue;
+                  seenLink.add(k);
+                  links.push({ sourceFile: file.filePath, sourceSymbol: user.name, sourceLine: at.line, callName: at.name, targetFile: t.file, targetSymbol: t.span.symbol, targetLine: t.span.line, confidence: "INFERRED" });
+                }
+              }
+            }
+          }
         }
       }
     }

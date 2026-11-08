@@ -21,7 +21,7 @@ import {
   type InjectedType,
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
-import { FUNCTION_EXPRESSIONS, handlerOf, wrappedFunction } from "./wrapped-functions.js";
+import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
@@ -245,13 +245,41 @@ function scanBody(
     if (list) list.push(null);
     else bindings.set(name, [null]);
   };
-  const bindPattern = (pattern: Node | null): void => {
+  const bindPattern = (pattern: Node | null, skip?: ReadonlySet<string>): void => {
     if (!pattern) return;
     if (pattern.type === "identifier" || pattern.type === "shorthand_property_identifier_pattern") {
-      bindUntyped(pattern.text);
+      if (!skip?.has(pattern.text)) bindUntyped(pattern.text);
       return;
     }
-    for (const child of pattern.namedChildren) bindPattern(child);
+    for (const child of pattern.namedChildren) bindPattern(child, skip);
+  };
+
+  /**
+   * `const { itemActions } = useClubData()`: each member the pattern names, as a local that came from that call
+   * (`from` = `useClubData().itemActions`), kept only when the body hands the name on as an argument — what the
+   * argument pass needs to find the factory behind a composable's collaborator.
+   */
+  const bindDestructured = (pattern: Node | null, declarator: readonly Node[]): Set<string> => {
+    const bound = new Set<string>();
+    if (pattern?.type !== "object_pattern") return bound;
+    const eq = declarator.findIndex((c) => c.type === "=");
+    let value = eq >= 0 ? declarator[eq + 1] ?? null : null;
+    if (value?.type === "await_expression") value = value.namedChild(0);
+    const callee = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+    if (!value || callee?.type !== "identifier") return bound;
+    const call = callChainText(value, "typescript");
+    if (!call) return bound;
+    for (const p of pattern.namedChildren) {
+      const local = p.type === "shorthand_property_identifier_pattern" ? p.text : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? p.childForFieldName("value")!.text : null;
+      const member = p.type === "shorthand_property_identifier_pattern" ? p.text : p.childForFieldName("key")?.text;
+      if (!local || !member || !/^[\w$]+$/.test(member) || !new RegExp(`[(,]\\s*${local.replace(/\$/g, "\\$")}\\s*[,)]`).test(body.text)) continue;
+      const entry = { local: { name: local, type: "", from: `${call}.${member}`, destructured: true as const }, annotated: false };
+      const list = bindings.get(local);
+      if (list) list.push(entry);
+      else bindings.set(local, [entry]);
+      bound.add(local);
+    }
+    return bound;
   };
 
   // Collections whose element type the source states (a parameter or an annotated local), by name; the
@@ -426,7 +454,7 @@ function scanBody(
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
         } else {
-          bindPattern(name ?? null);
+          bindPattern(name ?? null, bindDestructured(name ?? null, children));
         }
       } else if (type === "catch_clause") {
         bindPattern(node.childForFieldName("parameter"));
@@ -1793,6 +1821,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // `const Row = memo((props) => …)` — the wrapper returns the
               // function it is given, so the binding names that function.
               functions.push(this.parseJsArrowOrExpr(name, wrapped, isExported));
+            } else if (name && value && /^[A-Za-z_$][\w$]*$/.test(name) && wrappedCalleeName(value)) {
+              // `const onSearch = useDebounceFn(applySearch, 300)`: the binding runs the function it names.
+              functions.push({
+                name,
+                params: [],
+                returnType: null,
+                isAsync: false,
+                isExported,
+                decorators: [],
+                calls: [{ name: wrappedCalleeName(value)!, kind: "internal", target: null, line: value.startPosition.row + 1 }],
+                line: decl.startPosition.row + 1,
+                endLine: decl.endPosition.row + 1,
+              });
             } else if (name && value?.type === "object" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
               // `const Profile = { get: (u) => requests.get(…) }` — an API client
               // or service written as a namespace object. Its members are what

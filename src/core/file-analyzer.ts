@@ -655,7 +655,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const receiverOrigins = (fn: FunctionInfo): Map<string, string> | undefined => {
       let out: Map<string, string> | undefined;
       for (const l of fn.localTypes ?? []) {
-        if (l.type || !l.from || l.fromIndex !== undefined || l.element) continue;
+        if (l.type || !l.from || l.fromIndex !== undefined || l.element || l.destructured) continue;
         // One binding with two initializers says nothing.
         if (out?.has(l.name)) out.set(l.name, "");
         else (out ??= new Map()).set(l.name, l.from.replace(/\(\)$/, ""));

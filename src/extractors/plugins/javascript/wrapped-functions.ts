@@ -14,6 +14,21 @@ const IDENTITY_WRAPPERS: ReadonlySet<string> = new Set([
   "useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "memo", "forwardRef", "observer", "debounce", "throttle", "useDebounceFn", "useThrottleFn",
 ]);
 
+/** The wrappers of a function that run it unchanged, later or limited (not the ones of components). */
+const CALLBACK_WRAPPERS: ReadonlySet<string> = new Set(["useCallback", "useEvent", "useEffectEvent", "useMemoizedFn", "debounce", "throttle", "useDebounceFn", "useThrottleFn"]);
+
+/**
+ * The function a wrapper is given BY NAME (`const onSearch = useDebounceFn(applySearch, 300)`,
+ * `useCallback(saveClub, [])`): the binding runs it, so it is a function whose one call is that name.
+ */
+export function wrappedCalleeName(value: Node): string | null {
+  if (value.type !== "call_expression") return null;
+  const name = wrapperName(value);
+  if (!name || !CALLBACK_WRAPPERS.has(name)) return null;
+  const first = value.childForFieldName("arguments")?.namedChildren[0];
+  return first && (first.type === "identifier" || (first.type === "member_expression" && /^[\w$]+(?:\.[\w$]+)+$/.test(first.text))) ? first.text : null;
+}
+
 /**
  * Wrappers whose binding runs the function they are given LAST: Redux
  * Toolkit's `createAsyncThunk("posts/fetch", async () => …)` — dispatching
