@@ -598,3 +598,21 @@ func main() {
     ]);
   });
 });
+
+describe("Go routes: a path built by concatenation with values (real-repo FP)", () => {
+  it("keeps the route with a placeholder segment per value, and still drops a configured base", () => {
+    const routes = extractGoRoutes(lines(`
+func (w *LeagueWeb) Register(g *echo.Group) {
+	season := w.Season()
+	g.GET("/"+season.Name()+"/table", w.Table)
+	g.POST("/"+season.Name()+"/fixtures/"+id, w.Fixture)
+	g.GET(baseUrl+"/standings", w.Standings)
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual([
+      "GET /{Name}/table",
+      "POST /{Name}/fixtures/{id}",
+      "GET /standings",
+    ]);
+  });
+});
