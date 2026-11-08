@@ -204,7 +204,64 @@ export function extractJsVariableAliases(
       }
     }
   }
+  bindSetupReturns(tree.rootNode, aliases, conflicted, bind);
   return aliases;
+}
+
+/**
+ * A Vue Options-API `setup()` hands what it returns to the component: `return { session, save }` makes
+ * `this.session.save()` in `methods` and `session.save()` / `save` in the template the composable's.
+ * A returned name that holds a factory's result (or a member of one) is bound as `this.<name>` too — the
+ * key a call on `this.session.x` is looked up by; a returned pair `{ doReset: session.reset }` is the
+ * bare name `doReset` bound to that member. Only what the file's own bindings already say; nothing guessed.
+ */
+function bindSetupReturns(
+  root: Node,
+  aliases: Map<string, VariableAliasBinding>,
+  conflicted: ReadonlySet<string>,
+  bind: (name: string, source: string, factory: string | undefined, member?: string) => void,
+): void {
+  if (!/\bsetup\b/.test(root.text)) return;
+  const held = (name: string): VariableAliasBinding | undefined => (conflicted.has(name) ? undefined : aliases.get(name));
+  const returned = (body: Node): Node | null => {
+    let found: Node | null = null;
+    for (const stmt of body.namedChildren) if (stmt.type === "return_statement") found = stmt.namedChild(0);
+    return found?.type === "parenthesized_expression" ? found.namedChild(0) : found;
+  };
+  const visit = (node: Node): void => {
+    let fn: Node | null = null;
+    if (node.type === "method_definition" && node.childForFieldName("name")?.text === "setup") fn = node;
+    else if (node.type === "pair" && node.childForFieldName("key")?.text === "setup") {
+      const v = node.childForFieldName("value");
+      if (v && (v.type === "function_expression" || v.type === "arrow_function")) fn = v;
+    }
+    const body = fn?.childForFieldName("body");
+    const obj = body?.type === "statement_block" ? returned(body) : null;
+    if (obj?.type === "object") {
+      for (const prop of obj.namedChildren) {
+        if (prop.type === "shorthand_property_identifier") {
+          const a = held(prop.text);
+          if (a && (a.member === undefined || a.member === prop.text)) bind(`this.${prop.text}`, a.source, a.factory, a.member);
+        } else if (prop.type === "pair") {
+          const key = prop.childForFieldName("key");
+          const value = prop.childForFieldName("value");
+          if (key?.type !== "property_identifier" || !value) continue;
+          if (value.type === "identifier") {
+            const a = held(value.text);
+            if (a && (a.member === undefined || a.member === key.text)) bind(`this.${key.text}`, a.source, a.factory, a.member);
+            if (a && a.member !== undefined) bind(key.text, a.source, a.factory, a.member);
+          } else if (value.type === "member_expression") {
+            const object = value.childForFieldName("object");
+            const member = value.childForFieldName("property")?.text;
+            const a = object?.type === "identifier" ? held(object.text) : undefined;
+            if (a && a.member === undefined && member) bind(key.text, a.source, a.factory, member);
+          }
+        }
+      }
+    }
+    for (const child of node.namedChildren) visit(child);
+  };
+  visit(root);
 }
 
 /** A module specifier naming project code: relative, or a conventional source alias (`@/`, `~/`, `#/`). */

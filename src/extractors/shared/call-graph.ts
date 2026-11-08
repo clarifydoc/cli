@@ -459,11 +459,16 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
     if (callTypes.has(node.type)) {
       const name = resolveCallName(node, language);
       const key = name ? keyOf?.(node, name) : null;
+      // A call handing on values is its own claim beside the same call handing on others (`useFilter(a, onA)`, `useFilter(a, onB)`).
+      const handedKey = (n: Node, nm: string): string => {
+        const handed = hooks!.argsOf?.(n);
+        return handed ? `${nm}\0(${handed.join(",")})` : nm;
+      };
       if (name && key && !seen.has(`${name}\0${key}`)) {
         seen.add(`${name}\0${key}`);
         results.push({ name, kind: "internal", target: null, line: node.startPosition.row + 1, column: node.startPosition.column, key });
-      } else if (name && !key && !seen.has(name)) {
-        seen.add(name);
+      } else if (name && !key && !seen.has(handedKey(node, name))) {
+        seen.add(handedKey(node, name));
         const call: CallInfo = {
           name,
           kind: "internal",
@@ -475,6 +480,9 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
         // its receiver; a noise-named member call is held for the
         // typed-receiver pass rather than dropped.
         const receiver = receiverTypeOf?.(node);
+        // What a module-level call hands on (`useTableSort(sortBy, resetPage)`), as `extractCalls` reports it.
+        const handed = hooks!.argsOf?.(node);
+        if (handed) call.args = handed;
         if (receiver && (receiver.type || receiver.qualifier)) {
           if (receiver.type) call.receiverType = receiver.type;
           if (receiver.qualifier) call.receiverQualifier = receiver.qualifier;
@@ -632,7 +640,7 @@ export function classifyCalls(
       const shadowed = ownBindings?.has(call.name.includes(".") ? root : call.name);
       // A member path bound as a whole (a typed prop read off the props object, `props.actions`) before its root.
       const parts = call.name.split(".");
-      const alias = ownFunction || shadowed ? undefined : (parts.length > 2 ? variableAliases.get(`${parts[0]}.${parts[1]}`) : undefined) ?? variableAliases.get(call.name.includes(".") ? root : call.name);
+      const alias = ownFunction || shadowed ? undefined : (parts.length > 2 || (parts.length === 2 && root === "this") ? variableAliases.get(`${parts[0]}.${parts[1]}`) : undefined) ?? variableAliases.get(call.name.includes(".") ? root : call.name);
       // A binding from a factory the file does not import (no source): only the factory is
       // remembered, for a project pass that knows where the framework imports it from.
       // A renamed destructured member (`{ remove: removeCar }`) is called by its local name.

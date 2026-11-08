@@ -439,6 +439,7 @@ export function buildSymbolLinks(
   links.push(...inheritedHandlerLinks(analyses, ctx));
   links.push(...fieldHandlerLinks(analyses, ctx));
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));
+  links.push(...handedParameterLinks(links, ctx));
   const handed = handedClientLinks(links, ctx);
   if (handed.length > 0) {
     // The factory stood in for a member it could not name; once the member is found, the stand-in goes —
@@ -662,6 +663,165 @@ function parameterDispatchLinks(
         }
         frontier = next;
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * A composable / hook takes its collaborators as parameters and calls them by the parameter's name:
+ * `useCrud(actions, refresh)` runs `actions.updateItem()` and `refresh()`, `useDialog(items, onSave)` runs
+ * `onSave(items)`, and the screen wrote what they are (`useCrud(playerActions, resetPage)`,
+ * `useDialog([], x => save(x))`). The parameter states no type of its own (untyped, `any`), so the
+ * receiver resolved nowhere; the argument is what the call site STATES. Every call site of the function
+ * the parameter belongs to (`CallInfo.args`) must resolve its argument — a function, a member of a local
+ * holding a factory's result, a callback arrow's one call — to the same target, else nothing is linked.
+ * A parameter whose DEFAULT names a binding (`mutation = updateMutation`) states that binding too, which
+ * joins the call sites' arguments: the parameter is whichever of them a caller picks.
+ * The link leaves the function that makes the call, so a trace reaches the screen's own function.
+ */
+function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolLink[] {
+  const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const NAME = /^[\w$]+$/;
+  type Candidate = { analysis: FileAnalysis; fn: FunctionInfo; owner: FunctionInfo; index: number; call: CallInfo };
+  // What each call made in a function resolved to — a call that resolved is not this pass's.
+  const resolved = new Set<string>();
+  for (const l of links) if (l.relation !== "reference") resolved.add(`${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`);
+
+  const wanted: Candidate[] = [];
+  for (const analysis of ctx.analyses) {
+    const language = analysis.language as Language;
+    const untyped = (type: string | null | undefined): boolean => !type || receiverTypeName(type, language) === null;
+    for (const fn of analysis.functions) {
+      if (fn.name === "<setup>") continue;
+      for (const call of fn.calls) {
+        if (call.kind !== "internal") continue;
+        if (resolved.has(`${analysis.filePath}\0${fn.name}\0${call.line}\0${call.name}`)) continue;
+        const head = call.name.split(".")[0]!;
+        if (!NAME.test(head) || head === "this") continue;
+        // The function itself, or one it is nested in, whose parameter the call is made on; an own parameter shadows.
+        const own = fn.params.findIndex((p) => p.name === head);
+        const owners = own >= 0 ? [fn] : analysis.functions.filter((g) => g !== fn && g.name !== "<setup>" && g.line <= fn.line && g.endLine >= fn.endLine && g.params.some((p) => p.name === head));
+        if (owners.length !== 1) continue;
+        const owner = owners[0]!;
+        const index = owner.params.findIndex((p) => p.name === head);
+        const param = owner.params[index]!;
+        if (!untyped(param.type) || param.variadic) continue;
+        // `(x) => …` style callbacks only matter where something is called on / as the parameter.
+        wanted.push({ analysis, fn, owner, index, call });
+      }
+    }
+  }
+  if (wanted.length === 0) return [];
+
+  // The call sites of each owner, with the call as written.
+  type Site = { file: string; symbol: string; call: CallInfo };
+  const sitesOf = new Map<string, Site[]>();
+  const owners = new Set(wanted.map((w) => `${w.analysis.filePath}\0${w.owner.name}`));
+  for (const l of links) {
+    if (l.relation === "reference" || l.navigational) continue;
+    const key = `${l.targetFile}\0${l.targetSymbol}`;
+    if (!owners.has(key)) continue;
+    const site = analysisAt.get(l.sourceFile)?.functions.find((f) => f.name === l.sourceSymbol)?.calls.find((c) => c.line === l.sourceLine && c.name === l.callName);
+    if (!site) continue;
+    const list = sitesOf.get(key) ?? sitesOf.set(key, []).get(key)!;
+    if (!list.some((x) => x.file === l.sourceFile && x.symbol === l.sourceSymbol && x.call === site)) list.push({ file: l.sourceFile, symbol: l.sourceSymbol, call: site });
+  }
+
+  /** What `text` (an argument, or a default) stands for with `rest` called on it, in the scope of `symbol` of `file`. */
+  const resolveStated = (file: string, symbol: string, text: string, rest: string, line: number): SymbolLink | null => {
+    const analysis = analysisAt.get(file);
+    if (!analysis) return null;
+    const callback = text.startsWith("=>");
+    if (callback && rest) return null;
+    const name = callback ? text.slice(2) : rest ? `${text}.${rest}` : text;
+    const head = name.split(".")[0]!;
+    const scopes = [analysis.functions.find((f) => f.name === symbol), analysis.functions.find((f) => f.name === "<setup>")];
+    let synth: CallInfo = { name, kind: "internal", target: null, line };
+    const imported = analysis.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined));
+    if (imported) synth = { ...synth, kind: "cross-file", target: imported.source };
+    else {
+      // A local holding a factory's result (`const playerActions = usePlayers()`): the call is on that factory's module.
+      const from = scopes.flatMap((f) => f?.localTypes ?? []).find((l) => l.name === head && !l.type && l.from)?.from?.replace(/\(.*$/s, "");
+      const factory = from && NAME.test(from) ? analysis.imports.find((i) => !i.isType && !i.executes && i.specifiers.includes(from)) : undefined;
+      if (factory) synth = { ...synth, kind: "cross-file", target: factory.source, via: from! };
+    }
+    const link = resolveCallToDefinition(file, symbol, synth, analysis, ctx);
+    if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
+    const target = analysisAt.get(link.targetFile);
+    if (!target || !isCallableSymbol(target, link.targetSymbol)) return null;
+    if (isTestFile(link.targetFile, target.language as Language) && !isTestFile(file, analysis.language as Language)) return null;
+    return link;
+  };
+
+  const out: SymbolLink[] = [];
+  const seen = new Set<string>();
+  const instanceLinks = (w: Candidate, rest: string, dflt: string | undefined): void => {
+    if (dflt) return;
+    const ownerKey = `${w.analysis.filePath}\0${w.owner.name}`;
+    for (const into of links) {
+      if (into.relation === "reference" || into.navigational || `${into.targetFile}\0${into.targetSymbol}` !== `${w.analysis.filePath}\0${w.fn.name}`) continue;
+      // The calls of the composable made in the file the nested function was reached from.
+      const made = (sitesOf.get(ownerKey) ?? []).filter((x) => x.file === into.sourceFile);
+      if (made.length !== 1) continue;
+      const arg = made[0]!.call.args?.[w.index];
+      const hit = arg ? resolveStated(made[0]!.file, made[0]!.symbol, arg, rest, w.call.line) : null;
+      if (!hit) continue;
+      const key = `${into.sourceFile}\0${into.sourceSymbol}\0${into.sourceLine}\0${into.callName}\0${hit.targetFile}\0${hit.targetSymbol}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        sourceFile: into.sourceFile, sourceSymbol: into.sourceSymbol, sourceLine: into.sourceLine, callName: into.callName,
+        targetFile: hit.targetFile, targetSymbol: hit.targetSymbol, targetLine: hit.targetLine,
+        confidence: "INFERRED", strategy: "dispatch:param-arg", relation: "dispatch",
+      });
+    }
+  };
+  for (const w of wanted) {
+    const head = w.call.name.split(".")[0]!;
+    const rest = w.call.name.slice(head.length + 1);
+    const stated: Array<{ file: string; symbol: string; text: string }> = [];
+    const sites = sitesOf.get(`${w.analysis.filePath}\0${w.owner.name}`) ?? [];
+    let complete = sites.length > 0;
+    for (const site of sites) {
+      const arg = site.call.args?.[w.index];
+      if (arg) stated.push({ file: site.file, symbol: site.symbol, text: arg });
+      else complete = false;
+    }
+    const param = w.owner.params[w.index]!;
+    const dflt = param.defaultValue && /^[\w$]+$/.test(param.defaultValue) ? param.defaultValue : undefined;
+    if (dflt) stated.push({ file: w.analysis.filePath, symbol: "<setup>", text: dflt });
+    // Without a default, every call site must state it; with one, the sites that do and the default.
+    if (stated.length === 0 || (!dflt && !complete)) {
+      if (w.fn !== w.owner) instanceLinks(w, rest, dflt);
+      continue;
+    }
+    const found = stated.map((st) => resolveStated(st.file, st.symbol, st.text, rest, w.call.line));
+    const targets = new Map<string, SymbolLink>();
+    for (const f of found) if (f) targets.set(`${f.targetFile}\0${f.targetSymbol}`, f);
+    if (found.some((f) => !f) || (targets.size > 1 && !dflt)) {
+      // The call sites disagree (`useTableSort(a, onA)` in one screen, `useTableSort(b, onB)` in another):
+      // each screen's own instance is what ITS call of the nested function (`sort(…)`) runs. When the
+      // file holds one call of the composable, that call's arguments are the instance's.
+      if (w.fn !== w.owner) instanceLinks(w, rest, dflt);
+      continue;
+    }
+    for (const t of targets.values()) {
+      const key = `${w.analysis.filePath}\0${w.fn.name}\0${w.call.line}\0${w.call.name}\0${t.targetFile}\0${t.targetSymbol}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        sourceFile: w.analysis.filePath,
+        sourceSymbol: w.fn.name,
+        sourceLine: w.call.line,
+        callName: w.call.name,
+        targetFile: t.targetFile,
+        targetSymbol: t.targetSymbol,
+        targetLine: t.targetLine,
+        confidence: "INFERRED",
+        strategy: "dispatch:param-arg",
+        relation: "dispatch",
+      });
     }
   }
   return out;
