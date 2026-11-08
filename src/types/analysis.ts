@@ -1012,6 +1012,11 @@ export interface CallInfo {
    */
   member?: string;
   /**
+   * The member of the factory's result the call's receiver was destructured from under another name
+   * (`const { actions: clubActions } = useClubs()` → `clubActions.refresh()` carries headMember:"actions").
+   */
+  headMember?: string;
+  /**
    * `member` is an item of the MODULE `target` names, called through its path
    * (Rust `store::sweep()`): one of the module's free functions or types, or a
    * name it imports, never a method some type of that module declares.
@@ -1341,6 +1346,18 @@ export interface FunctionInfo {
    * local's initializer (`localTypes[].from`).
    */
   returnedSpreads?: string[];
+  /**
+   * What the object a factory returns holds, by key (`return { items, actions: clubActions }`): the
+   * local each entry names (when an identifier) and what that local is in the body — a `function`
+   * the body declares, an `object` literal (its methods are functions named `local.method`), a
+   * `value` (a ref, a call result), `outer` (a name the body does not declare — an import, a parameter: what it
+   * is, the factory does not say), or `inline` (an entry that is a function written
+   * in place, whose calls are the factory's own). Present only when the function returns an object
+   * literal, which makes its members the project's: a call on the result names one of them or
+   * nothing, never the factory itself. Empty when it returns a value another object holds
+   * (`return vm.proxy.$store`), which names none.
+   */
+  returnedMembers?: Array<{ key: string; local?: string; kind: "function" | "object" | "value" | "inline" | "outer" }>;
   /**
    * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
    * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's

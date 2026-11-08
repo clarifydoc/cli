@@ -524,7 +524,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     analysis.imports = extractImports(tree, sourceText, language, embedded);
     // Rewrite tsconfig path aliases (e.g. "@/utils/foo" → "src/utils/foo")
     // BEFORE classifyCalls so the importMap it builds uses resolved paths.
+    const writtenSources = analysis.imports.map((i) => i.source);
     applyTsconfigAliasesToImports(analysis);
+    // The modules this file names by a path of the project (relative, or an alias the project's own configuration rewrote).
+    const projectSources = new Set(analysis.imports.filter((i, n) => i.source.startsWith(".") || i.source !== writtenSources[n]).map((i) => i.source));
     analysis.exports = extractExports(tree, sourceText, language, file.relativePath);
     analysis.functions = extractFunctions(tree, sourceText, language);
     analysis.classes = extractClasses(tree, sourceText, language);
@@ -586,7 +589,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // Member calls held back as noise by their leaf name (`repo.find`) come
     // back when their receiver has a declared type — before classification,
     // so they are classified like every other call.
-    restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true);
+    // A receiver bound from a factory of the project (`const store = useClubStore()`) is the factory's product,
+    // whose members the project states: a call on it is held back no longer.
+    const factoryHeads = new Set<string>();
+    for (const [name, binding] of variableAliases) if (!name.includes(".") && typeof binding !== "string" && binding.factory && projectSources.has(binding.source)) factoryHeads.add(name);
+    restoreTypedReceiverCalls(analysis, pluginFor(analysis.language)?.caseInsensitiveNames === true, factoryHeads);
 
     // Dependency-injection registrations this file makes (project-level
     // linking joins them to injection points).

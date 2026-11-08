@@ -199,11 +199,13 @@ describe("vuex-action dispatch into a module a project factory builds", () => {
       "save -dispatch:clubs/update-> src/api/ApiClient.js#ApiClient.update (on Clubs)",
       "load -dispatch:clubs/get-> src/store/factoryHelpers.js#getRecords",
       "load -dispatch:clubs/get-> src/api/ApiClient.js#ApiClient.get (on Clubs)",
-      // `players` overrides `get` with its own action: never the factory's.
+      // `players` overrides `get` with its own action: never the factory's (its function, an action of its own).
+      "loadPlayers -dispatch:players/get-> src/store/modules/players.js#actions.get",
       "editPlayer -dispatch:players/update-> src/store/factoryHelpers.js#updateRecord",
       "editPlayer -dispatch:players/update-> src/api/ApiClient.js#ApiClient.update (on Clubs)",
-      // An action written in place in the factory call is no function of its own: the methods it calls.
-      "transferPlayer -dispatch:players/transfer-> src/api/clubs.js#Clubs.transfer",
+      // An action written in place in the factory call is a function of its own: the dispatch lands on it,
+      // and the API method it calls is its own link.
+      "transferPlayer -dispatch:players/transfer-> src/store/modules/players.js#actions.transfer",
     ]);
   });
 });

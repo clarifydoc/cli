@@ -30,7 +30,7 @@ export function isConstructor(method: FunctionInfo, cls: ClassInfo): boolean {
  * class's own method (`this.send(…)`, and a bare `send(…)` where members need
  * no `this.`) — declared by it or a base class in the same file — comes back too.
  */
-export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitive = false): void {
+export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitive = false, factoryHeads: ReadonlySet<string> = new Set()): void {
   const language = analysis.language;
   const bareIsMember = pluginFor(language)?.explicitSelfMembers !== true;
   const fold = (n: string): string => (caseInsensitive ? n.toLowerCase() : n);
@@ -94,7 +94,7 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     const params = new Set(fn.params.map((p) => fold(p.name)));
     restoreHeldCalls(
       fn.calls,
-      (call) => (!call.name.includes(".") && importedFns.has(fold(call.name)) && !params.has(fold(call.name))) || receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
+      (call) => (!call.name.includes(".") && importedFns.has(fold(call.name)) && !params.has(fold(call.name))) || factoryProduct(call.name, factoryHeads, params) || receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
     );
   };
 
@@ -105,6 +105,12 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     const own = methodsOf(cls);
     for (const m of cls.methods) restore(m, members, own);
   }
+}
+
+/** `store.get` on a local a project factory's call bound (`factoryHeads`): a member of what the factory returns, never `Map#get`. */
+function factoryProduct(callName: string, factoryHeads: ReadonlySet<string>, params: ReadonlySet<string>): boolean {
+  const parts = callName.split(".");
+  return parts.length === 2 && factoryHeads.has(parts[0]!) && !params.has(parts[0]!);
 }
 
 /** `send` / `this.send` naming a method of the enclosing class (a bare name only where members need no `this.`). */

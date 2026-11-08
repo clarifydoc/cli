@@ -637,6 +637,7 @@ export function classifyCalls(
       // remembered, for a project pass that knows where the framework imports it from.
       // A renamed destructured member (`{ remove: removeCar }`) is called by its local name.
       if (alias && typeof alias !== "string" && alias.member && !call.name.includes(".")) call.member = alias.member;
+      else if (alias && typeof alias !== "string" && alias.member && parts.length === 2 && !/^\[\d+\]$/.test(alias.member)) call.headMember = alias.member;
       if (alias && typeof alias !== "string" && alias.source === "") {
         if (alias.factory) call.via = alias.factory;
       } else if (alias) {
