@@ -3937,6 +3937,56 @@ function resolvePassedName(
   return { ...link, relation: "passes" };
 }
 
+/** A factory the project declares whose returned object literal the source states (`FunctionInfo.returnedMembers`). */
+interface StatedFactory {
+  file: string;
+  def: SymbolDef;
+  analysis: FileAnalysis;
+  members: NonNullable<FunctionInfo["returnedMembers"]>;
+}
+
+function statedFactoryOf(ctx: LinkContext, symbolIndex: Map<string, Map<string, SymbolDef>>, targetFile: string, via: string): StatedFactory | null {
+  let file = targetFile;
+  let def = symbolIndex.get(file)?.get(via);
+  // A barrel forwarding the factory: the factory is where the re-export leads.
+  if (!def || def.reexport) {
+    const fwd = forwardedDefinition(ctx, file, via, 0, new Set());
+    if (!fwd) return null;
+    file = fwd.file;
+    def = fwd.def;
+  }
+  const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
+  const fn = analysis?.functions.find((f) => f.name === def!.name && f.line === def!.line);
+  if (!analysis || !fn?.returnedMembers || fn.returnedSpreads?.length) return null;
+  return { file, def, analysis, members: fn.returnedMembers };
+}
+
+/**
+ * The nested function a call on a stated factory's result names: the member's local function (`refresh`),
+ * a method of the object literal it is (`actions.refresh`), or `"factory"` for a member written in place
+ * (its calls are the factory's own). Undefined where the factory returns no such function — a plain value
+ * (`items.toReversed()`), an unknown key.
+ */
+function statedFactoryMember(factory: StatedFactory, parts: readonly string[], headMember: string | undefined, bare: string | undefined): string | "factory" | undefined {
+  const find = (key: string) => factory.members.find((m) => m.key === key);
+  const named = (m: StatedFactory["members"][number], method: string | undefined): string | "factory" | undefined => {
+    if (method === undefined) return m.kind === "function" ? m.local ?? m.key : m.kind === "inline" ? "factory" : undefined;
+    return m.kind === "object" ? `${m.local ?? m.key}.${method}` : undefined;
+  };
+  if (bare !== undefined) {
+    const m = find(bare);
+    return m ? named(m, undefined) : undefined;
+  }
+  // `actions.refresh()` on `const { actions } = useClubs()` (or renamed: `headMember`), the receiver being that member.
+  const own = find(headMember ?? parts[0]!);
+  if (own) return parts.length === 2 ? named(own, parts[1]) : undefined;
+  // `club.actions.refresh()` / `club.load()` on the whole result.
+  const m = find(parts[1] ?? "");
+  if (!m) return undefined;
+  if (parts.length === 2) return named(m, undefined);
+  return parts.length === 3 ? named(m, parts[2]) : undefined;
+}
+
 /**
  * The function a factory hands back under `member` through the result of a sub-factory it spreads
  * (`const crud = useSquadCrud(); return { ...crud }`): the sub-factory is what the spread local's
@@ -4603,7 +4653,19 @@ function resolveCallToDefinition(
   // receiver is a plain value the factory RETURNED — a string, an array — not
   // a library object standing in for the factory's own code; the factory call
   // is already linked where it is made.
-  if (
+  // A factory whose returned object the source states (`returnedMembers`): the call names one of its members
+  // or nothing — never the factory, never a builtin that merely shares a member's name on a plain value.
+  const statedFactory = !def && call.kind === "cross-file" && call.via && targetFile ? statedFactoryOf(ctx, symbolIndex, targetFile, call.via) : null;
+  if (statedFactory) {
+    const member = statedFactoryMember(statedFactory, parts, call.headMember, !isQualified ? exported ?? call.name : undefined);
+    if (member === "factory") {
+      return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", "factory-via");
+    }
+    if (member) {
+      const at = statedFactory.analysis.functions.filter((f) => f.name === member && f.line > statedFactory.def.line && f.endLine <= statedFactory.def.endLine);
+      if (at.length === 1) return mkLink(statedFactory.file, at[0]!.name, at[0]!.line, "INFERRED", "direct");
+    }
+  } else if (
     !def && call.kind === "cross-file" && call.via && targetFile &&
     !BUILTIN_MEMBERS_BY_LANGUAGE.get(analysis.language)?.has(leafName)
   ) {

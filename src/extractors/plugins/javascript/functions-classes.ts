@@ -90,15 +90,76 @@ function finishBody(
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
-): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[] } {
+): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]> } {
   const scan = scanBody(body, paramNames, ctx, params);
+  const returnedMembers = returnedMembersOf(body);
   calls.push(...scan.extraCalls);
   return {
     calls,
     ...(scan.localTypes.length > 0 ? { localTypes: scan.localTypes } : {}),
     ...(scan.returnedSpreads.length > 0 ? { returnedSpreads: scan.returnedSpreads } : {}),
+    ...(returnedMembers ? { returnedMembers } : {}),
   };
 }
+
+/** Whether the function enclosing `decl` returns the object literal bound to `name` as a member of what it hands back. */
+function handedBack(decl: Node, name: string): boolean {
+  let fn: Node | null = decl.parent;
+  while (fn && !FUNCTION_EXPRESSIONS.has(fn.type) && fn.type !== "function_declaration" && fn.type !== "generator_function_declaration" && fn.type !== "method_definition") fn = fn.parent;
+  return !!returnedMembersOf(fn?.childForFieldName("body") ?? null)?.some((m) => m.local === name && m.kind === "object");
+}
+
+/**
+ * What the object a function returns holds, by key (`FunctionInfo.returnedMembers`): read from the body's own
+ * statements — the declarations that say what each returned local is, and the one `return { … }` of an object literal.
+ */
+function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returnedMembers"]> | undefined {
+  if (!body) return undefined;
+  const unwrap = (n: Node | null | undefined): Node | null => {
+    while (n && (n.type === "parenthesized_expression" || n.type === "as_expression" || n.type === "satisfies_expression")) n = n.namedChild(0);
+    return n ?? null;
+  };
+  const kinds = new Map<string, "function" | "object" | "value">();
+  let obj: Node | null = null;
+  if (body.type === "statement_block") {
+    for (const stmt of body.namedChildren) {
+      if (stmt.type === "function_declaration" || stmt.type === "generator_function_declaration") {
+        const n = stmt.childForFieldName("name")?.text;
+        if (n) kinds.set(n, "function");
+      } else if (stmt.type === "lexical_declaration" || stmt.type === "variable_declaration") {
+        for (const d of stmt.namedChildren) {
+          const n = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
+          const v = unwrap(d.childForFieldName("value"));
+          if (n?.type !== "identifier") continue;
+          kinds.set(n.text, v && (FUNCTION_EXPRESSIONS.has(v.type) || wrappedFunction(v)) ? "function" : v?.type === "object" ? "object" : "value");
+        }
+      } else if (stmt.type === "return_statement") {
+        const r = unwrap(stmt.namedChild(0));
+        // `return vm.proxy.$store`: a value another object holds, which states no member of the project's.
+        if (r?.type === "member_expression") return [];
+        if (r?.type !== "object") return undefined;
+        obj = r;
+      }
+    }
+  } else obj = unwrap(body)?.type === "object" ? unwrap(body) : null;
+  if (!obj) return undefined;
+  const out: NonNullable<FunctionInfo["returnedMembers"]> = [];
+  for (const e of obj.namedChildren) {
+    if (e.type === "shorthand_property_identifier") out.push({ key: e.text, local: e.text, kind: kinds.get(e.text) ?? "value" });
+    else if (e.type === "method_definition") {
+      const key = objectKeyName(e.childForFieldName("name"));
+      if (key) out.push({ key, kind: "inline" });
+    } else if (e.type === "pair") {
+      const key = objectKeyName(e.childForFieldName("key"));
+      const v = unwrap(e.childForFieldName("value"));
+      if (!key || !v) continue;
+      if (v.type === "identifier") out.push({ key, local: v.text, kind: kinds.get(v.text) ?? "value" });
+      else out.push({ key, kind: FUNCTION_EXPRESSIONS.has(v.type) ? "inline" : "value" });
+    }
+  }
+  return out;
+}
+
 
 /** The locals a returned object spreads: `{ ...crud, benchAll }` → `crud`. */
 function spreadLocals(value: Node | null | undefined, into: string[]): void {
@@ -1668,7 +1729,30 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           if (decl.type === "variable_declarator") {
             const name = decl.childForFieldName("name")?.text;
             const value = decl.childForFieldName("value");
-            if (moduleLevel && (value?.type === "call_expression" || value?.type === "new_expression")) this.extractStoreCallActions(value, functions);
+            if (moduleLevel && (value?.type === "call_expression" || value?.type === "new_expression")) {
+              const before = functions.length;
+              this.extractStoreCallActions(value, functions);
+              // `export const useClubsStore = createStore({ actions: () => ({ get() {…} }) })`: the binding is what a
+              // screen calls for the store, whose members are those actions (`store.get()`).
+              const actions = functions.slice(before).map((f) => f.name);
+              if (actions.length > 0 && name && /^[A-Za-z_$][\w$]*$/.test(name) && decl.parent) {
+                functions.push({
+                  name,
+                  params: [],
+                  returnType: null,
+                  isAsync: false,
+                  isExported,
+                  decorators: [],
+                  calls: [],
+                  line: decl.startPosition.row + 1,
+                  endLine: decl.endPosition.row + 1,
+                  returnedMembers: actions.map((a) => ({ key: a.slice("actions.".length), local: a, kind: "function" as const })),
+                });
+              }
+            }
+            // `const actions = { async refresh() {…}, rename: async () => {…} }` inside a factory: the object is
+            // what the factory hands back, its members functions of their own (`actions.refresh`).
+            if (!moduleLevel && name && /^[A-Za-z_$][\w$]*$/.test(name) && value?.type === "object" && handedBack(decl, name)) this.extractObjectMembers(name, value, functions, false, 1);
             const wrapped = value ? wrappedFunction(value) ?? (moduleLevel ? handlerOf(value, isExported) : null) : null;
             const store = moduleLevel && this.pinia && name ? piniaStoreOf(decl) : null;
             if (store) {
@@ -1748,7 +1832,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -1761,6 +1845,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
+      ...(returnedMembers ? { returnedMembers } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -1810,7 +1895,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -1823,6 +1908,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
+      ...(returnedMembers ? { returnedMembers } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -1980,7 +2066,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * `new Vuex.Store({ actions: { reset() {…} } })`): each action written as a method is a
    * function `actions.<key>`, the name a module's own `actions` object gives it. A method's
    * body is a scope of its own, so its calls belonged to no function at all; an action
-   * written as an arrow is read in place by the dispatch resolver and is left as it is.
+   * written as `k: function () {…}` or an arrow is read the same way.
    */
   private extractStoreCallActions(call: Node, functions: FunctionInfo[]): void {
     // A Pinia store's actions are the methods of the class its binding returns (`piniaStoreFunction`).
@@ -1992,9 +2078,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const value = pair.childForFieldName("value");
         const actions = value?.type === "object" ? value : value ? returnedObject(value) : null;
         for (const member of actions?.namedChildren ?? []) {
-          const key = member.type === "method_definition" ? objectKeyName(member.childForFieldName("name")) : null;
+          const key = member.type === "method_definition" ? objectKeyName(member.childForFieldName("name")) : member.type === "pair" ? objectKeyName(member.childForFieldName("key")) : null;
           if (!key) continue;
-          const fn = this.parseJsFunction(member, false);
+          // `k: async function k() {…}` / `k: async ({ commit }) => {…}`: a function written as the entry's value.
+          const written = member.type === "pair" ? member.childForFieldName("value") : null;
+          if (member.type === "pair" && !(written && (written.type === "function_expression" || written.type === "arrow_function"))) continue;
+          const fn = written ? this.parseJsArrowOrExpr(`actions.${key}`, written, false) : this.parseJsFunction(member, false);
           fn.name = `actions.${key}`;
           functions.push(fn);
         }
