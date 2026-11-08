@@ -92,6 +92,39 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   }
 
   /** An argument as written, or the string a constant it names holds (`Queues.TRANSFERS`). */
+  /**
+   * The topics an MQTT call's topic argument names: a literal, a module/class constant, or a list of them
+   * (`subscribe([("a", 0), ("b", 1)])` — each tuple's first element is the topic, the rest its QoS). Null when any
+   * element is built at run time: a name that is neither a constant here nor imported is never a topic.
+   */
+  private mqttTopics(arg: Node | null): Array<{ target: string | null; ref?: string }> | null {
+    if (!arg) return null;
+    const one = (n: Node): { target: string | null; ref?: string } | null => {
+      if (n.type === "string") {
+        if (/^[rbu]*f/i.test(n.text) && n.text.includes("{")) return null;
+        const t = n.text.replace(/^[rbu]*['"]{1,3}|['"]{1,3}$/gi, "");
+        return /^[\w$.:+#/-]+$/.test(t) ? { target: t } : null;
+      }
+      if (n.type === "identifier" || n.type === "attribute") {
+        const v = this.constants.get(n.text);
+        if (v) return /^[\w$.:+#/-]+$/.test(v) ? { target: v } : null;
+        // A name another module defines (`from .topics import SCORES`): the project pass reads its value.
+        const head = n.text.split(".")[0]!;
+        const imported = new RegExp(String.raw`^\s*(?:from\s+[\w.]+\s+import\s+(?:\([^)]*|[^\n]*)\b${head}\b|import\s+[\w.,\s]*\b${head}\b)`, "m");
+        return /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(n.text) && imported.test(this.sourceText) ? { target: null, ref: n.text } : null;
+      }
+      return null;
+    };
+    const topicOf = (n: Node) => (n.type === "tuple" ? (n.namedChildren[0] ? one(n.namedChildren[0]) : null) : one(n));
+    if (arg.type === "list" || (arg.type === "tuple" && arg.namedChildren[0]?.type === "tuple")) {
+      const items = arg.namedChildren.filter((c) => c.type !== "comment");
+      const topics = items.map(topicOf);
+      return items.length > 0 && topics.every((t): t is { target: string | null; ref?: string } => !!t) ? topics : null;
+    }
+    const t = topicOf(arg);
+    return t ? [t] : null;
+  }
+
   private constantOr(text: string | null): string | null {
     return text === null ? null : this.constants.get(text) ?? text;
   }
@@ -203,9 +236,9 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         }
         // MQTT (paho, aiomqtt): `client.publish("stadium/score", msg)` / `client.subscribe("stadium/+")`, topic filters kept as written.
         if (this.mqtt && (leaf === "publish" || leaf === "subscribe") && fnName.includes(".")) {
-          const topic = pyArg(node, "topic", 0);
-          if (topic && /^[\w$.:+#/-]+$/.test(topic)) {
-            sources.push({ ...this.ds({ kind: leaf === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${leaf}`, target: topic, line: node.startPosition.row + 1 }), topicSyntax: "mqtt" });
+          const topics = this.mqttTopics(pyArgNode(node, "topic", 0));
+          if (topics) {
+            for (const topic of topics) sources.push({ ...this.ds({ kind: leaf === "publish" ? "queue-publish" : "queue-consume", name: `MQTT: ${leaf}`, target: topic.target, line: node.startPosition.row + 1 }), ...(topic.ref ? { targetRef: topic.ref } : {}), topicSyntax: "mqtt" });
             return;
           }
         }
@@ -797,6 +830,16 @@ function stringConstants(root: Node): Map<string, string> {
 }
 
 function pyArg(call: Node, keyword: string, index: number): string | null {
+  const value = pyArgNode(call, keyword, index);
+  if (!value) return null;
+  const text = value.type === "string"
+    ? value.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "")
+    : value.text.replace(/\s+/g, " ");
+  return text && text.length <= 64 ? text : null;
+}
+
+/** The node of a call's argument: the keyword's value, else the positional one at `index`. */
+function pyArgNode(call: Node, keyword: string, index: number): Node | null {
   const args = call.childForFieldName("arguments");
   if (!args) return null;
   let value: Node | null = null;
@@ -812,11 +855,7 @@ function pyArg(call: Node, keyword: string, index: number): string | null {
       positional++;
     }
   }
-  if (!value) return null;
-  const text = value.type === "string"
-    ? value.text.replace(/^[rbfu]*['"]{1,3}|['"]{1,3}$/gi, "")
-    : value.text.replace(/\s+/g, " ");
-  return text && text.length <= 64 ? text : null;
+  return value;
 }
 
 /**

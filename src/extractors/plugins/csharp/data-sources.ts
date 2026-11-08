@@ -968,10 +968,19 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (up.type === "invocation_expression") { inFilter = /\.WithTopicFilter$/.test(up.childForFieldName("function")?.text ?? ""); break; }
       }
       if (mqttMethod === "WithTopicFilter" || mqttMethod === "WithTopic") {
-        const topic = /^\$?@?"([^"{}]+)"$/.exec(argumentNodes(node)[0]?.text.trim() ?? "")?.[1];
+        const argText = argumentNodes(node)[0]?.text.trim() ?? "";
+        let topic: string | null = /^\$?@?"([^"{}]+)"$/.exec(argText)?.[1] ?? null;
+        let ref: string | undefined;
+        if (topic === null && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(argText)) {
+          // A constant: this file's (declared once), else a PascalCase or `Type.Name` one another class declares, for the project pass.
+          const declared = [...node.tree.rootNode.text.matchAll(new RegExp(String.raw`\b(?:const|static\s+readonly|readonly\s+static)\s+string\s+${argText.replace(/\./g, "\\.")}\s*=\s*"([^"\\]*)"\s*;`, "g"))];
+          const bare = argText.includes(".") ? [] : declared;
+          if (bare.length === 1) topic = bare[0]![1]!;
+          else if (bare.length === 0 && /^(?:[A-Z]\w*\.)*[A-Z]\w*$/.test(argText)) ref = argText;
+        }
         const subscribes = mqttMethod === "WithTopicFilter" || inFilter || /TopicFilterBuilder|\bSubscribe/.test(fn.childForFieldName("expression")?.text ?? "");
-        if (topic && /^[\w./+#-]+$/.test(topic)) {
-          sources.push({ ...this.ds({ kind: subscribes ? "queue-consume" : "queue-publish", name: `MQTT: ${subscribes ? "subscribe" : "publish"}`, target: topic, line: node.startPosition.row + 1 }), topicSyntax: "mqtt" });
+        if ((topic !== null && /^[\w./+#-]+$/.test(topic)) || ref) {
+          sources.push({ ...this.ds({ kind: subscribes ? "queue-consume" : "queue-publish", name: `MQTT: ${subscribes ? "subscribe" : "publish"}`, target: ref ? null : topic, line: node.startPosition.row + 1 }), ...(ref ? { targetRef: ref } : {}), topicSyntax: "mqtt" });
           return;
         }
       }

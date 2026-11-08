@@ -4680,6 +4680,8 @@ export interface DeployedService {
   kind: DeployedServiceKind;
   /** Infra family for merging instances (postgres, firebird, rabbitmq, redis…). */
   family?: string;
+  /** One named queue or topic (a Terraform `aws_sqs_queue`), not a broker: what an env var holding its URL names. */
+  destination?: boolean;
   /** Short tech label: entrypoint artifact or image tail. */
   tech?: string;
   /**

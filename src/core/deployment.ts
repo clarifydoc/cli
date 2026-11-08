@@ -275,6 +275,8 @@ export interface RawService {
   /** Kind and family stated by the source itself (a Terraform `aws_sqs_queue`), over the image-based guess. */
   kind?: DeployedServiceKind;
   family?: string;
+  /** The source declares ONE queue or topic (not a broker): `DeployedService.destination`. */
+  destination?: boolean;
   /** The entry file the source states (a Lambda's handler module), over the command-based one. */
   entryFile?: string;
   /** The project a code-declared resource runs, by name (`League_Api`) — `DeployedResourceFact.runs`. */
@@ -896,6 +898,7 @@ export async function detectDeployment(
       tech: artifact ?? imageTail(svc.image),
     };
     if (svc.docker) s.dockerfile = svc.docker.dockerfile;
+    if (svc.destination) s.destination = true;
     if (svc.env && Object.keys(svc.env).length) s.envKeys = Object.keys(svc.env).sort(byOrdinal);
     if (kind === "app") {
       // The build context is the strongest evidence of what a service runs.

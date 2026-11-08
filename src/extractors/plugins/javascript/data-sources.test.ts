@@ -1488,6 +1488,40 @@ describe("JS MQTT topics", () => {
   });
 });
 
+describe("JS MQTT topics held in constants", () => {
+  const rowsOf = async (src: string) => {
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    return new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue")).map((d) => `${d.kind} ${d.name} ${d.target}${d.handler ? " " + d.handler : ""}`);
+  };
+  it("reads a const, a key of a const object and a list of them, in the call and in the message handler", async () => {
+    expect(await rowsOf(`
+      import mqtt from 'mqtt';
+      const SCORES = 'league/scores';
+      const TOPICS = { cards: "league/+/cards" } as const;
+      const client = mqtt.connect('mqtt://broker');
+      client.on('message', onMessage);
+      client.subscribe([SCORES, TOPICS.cards]);
+      function send() { client.publish(SCORES, '1-0'); }`)).toEqual([
+      "queue-consume MQTT: message league/scores onMessage",
+      "queue-consume MQTT: message league/+/cards onMessage",
+      "queue-consume MQTT: subscribe league/scores",
+      "queue-consume MQTT: subscribe league/+/cards",
+      "queue-publish MQTT: publish league/scores",
+    ]);
+  });
+  it("names no topic for a name declared twice, reassigned or built at run time", async () => {
+    expect(await rowsOf(`
+      import mqtt from 'mqtt';
+      const client = mqtt.connect('mqtt://broker');
+      let live = 'league/live';
+      live = 'league/other';
+      const dup = 'a/b';
+      function f() { const dup = 'c/d'; client.subscribe(dup); }
+      client.subscribe(live);
+      client.subscribe(topicFor(id));`)).toEqual([]);
+  });
+});
+
 describe("JS MQTT message handlers", () => {
   it("gives `client.on('message', …)` a consume row on each topic the client subscribes to, with a named handler", async () => {
     const src = `
