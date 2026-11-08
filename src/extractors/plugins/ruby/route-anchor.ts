@@ -117,6 +117,10 @@ export const railsRouteAnchor: RouteResolver = {
       }
     }
 
+    // Association name → the one model it points at, for typing what a reader returns.
+    const assoc = new Map<string, Set<string>>();
+    for (const a of analyses) for (const rel of a.entityRelations ?? []) (assoc.get(rel.fromField) ?? assoc.set(rel.fromField, new Set()).get(rel.fromField)!).add(rel.toEntity.split("::").pop()!);
+
     const moved = new Map<FileAnalysis, RouteInfo[]>();
     for (const a of analyses) {
       if (a.routes.length === 0) continue;
@@ -150,7 +154,7 @@ export const railsRouteAnchor: RouteResolver = {
         // An action a module (a concern) defines calls, by bare name, methods the controller
         // including it supplies (`valid_token?`, `model`): THIS controller's own, not the
         // concern's placeholder of that name, is what this route runs.
-        row.calls = templateHookCalls(row.calls, action, ref!, byName, qualified, modules);
+        row.calls = templateHookCalls(row.calls, action, ref!, byName, qualified, modules, assoc);
         list.push(row);
         moved.set(target, list);
       }
@@ -159,6 +163,7 @@ export const railsRouteAnchor: RouteResolver = {
     for (const [a, rows] of moved) a.routes = [...a.routes, ...rows];
 
     inheritedGemActions(analyses, byName, qualified, byLeaf);
+    deviseModelActions(analyses, byName, qualified, modules);
 
     // An ancestor's guard filter (`before_action :authenticate_user!` on an
     // `Api::BaseController`) runs before every action of each subclass, unless
@@ -212,8 +217,15 @@ function inheritedGemActions(
     for (const r of a.routes) {
       const m = r.handler ? HANDLER_RE.exec(r.handler) : null;
       const ref = m ? byName.get(m[1]!) : null;
-      if (!ref || ref.filePath === a.filePath) continue;
-      if (definerOf(ref, m![2]!, byName, qualified, new Map())) continue;
+      if (!ref) continue;
+      const defined = definerOf(ref, m![2]!, byName, qualified, new Map());
+      if (defined) {
+        // An override that calls `super` also runs what the gem's action does to the model —
+        // unless a project class above it defines the action (then that one is what `super` reaches).
+        if (!defined.fn.calls.some((c) => c.name === "super")) continue;
+        const up = superOf(defined.owner, byName, qualified);
+        if (up && definerOf(up, m![2]!, byName, qualified, new Map())) continue;
+      } else if (ref.filePath === a.filePath) continue;
       const end = chainEnd(ref, byName, qualified);
       const rule = INHERITED_CRUD_BASES.find((b) => b.base.test(end.cls.extends ?? ""));
       const access = rule?.actions[m![2]!];
@@ -235,6 +247,47 @@ function inheritedGemActions(
 }
 
 /**
+ * A route a devise_token_auth mount draws (`rails-devise-model` fact: the model the mount
+ * names, the access the gem's action has on it) carries that access as its own — when the
+ * controller serving it is the gem's, or a project class whose action calls `super` into
+ * the gem. An action the project writes without `super` is its own code, read as written.
+ * The model must be one class of the project, by exact name.
+ */
+function deviseModelActions(
+  analyses: FileAnalysis[],
+  byName: Map<string, ClassRef | null>,
+  qualified: Map<ClassRef, string>,
+  modules: Map<string, ClassRef | null>,
+): void {
+  for (const a of analyses) {
+    for (const f of a.routeFacts ?? []) {
+      if (f.kind !== "rails-devise-model") continue;
+      const d = f.data as { model: string; method: string; path: string; handler: string; action: string; access: "read" | "write" };
+      // `modules` holds every non-controller class by qualified name, a name two files declare as null.
+      if (!modules.get(d.model)) continue;
+      const model = d.model.split("::").pop()!;
+      const m = HANDLER_RE.exec(d.handler);
+      const ref = m ? byName.get(m[1]!) : null;
+      if (ref) {
+        const defined = definerOf(ref, d.action, byName, qualified, modules);
+        if (defined && !defined.fn.calls.some((c) => c.name === "super")) continue;
+        // Under a project override the chain must end in the gem, not in another base.
+        if (!/^(?:::)?DeviseTokenAuth::\w+Controller$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "")) continue;
+      }
+      for (const b of analyses) {
+        const row = b.routes.find((r) => r.httpMethod === d.method && r.path === d.path && r.handler === d.handler);
+        if (!row) continue;
+        const handler = `route:${d.method} ${d.path}`;
+        if (b.dataSources.some((s) => s.handler === handler && s.entity === model)) break;
+        const verb = d.access === "write" ? d.action : d.action === "edit" ? "find" : "find_for_authentication";
+        b.dataSources.push({ kind: "database", name: `${model}.${verb}`, target: null, calls: [], line: row.line, entity: model, access: d.access, handler });
+        break;
+      }
+    }
+  }
+}
+
+/**
  * The calls of a concern's action, each bare-named one the controller (or an
  * ancestor, or another module) supplies in place of the concern's own
  * placeholder pointed at that definition. The concern keeps its own links
@@ -247,10 +300,26 @@ function templateHookCalls(
   byName: Map<string, ClassRef | null>,
   qualified: Map<ClassRef, string>,
   modules: Map<string, ClassRef | null>,
+  assoc: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): CallInfo[] {
   if (action.owner === ref || chainOf(ref, byName, qualified).includes(action.owner)) return calls;
   let changed = false;
   const out = calls.map((c) => {
+    // `model.update_labels` where the controller's own `def model; @model ||= @conversation; end`
+    // is typed by where `@conversation` is assigned: the call is the model's.
+    const reader = c.kind === "internal" ? /^([a-z_]\w*)\.([a-z_]\w*[?!]?)$/.exec(c.name) : null;
+    if (reader) {
+      const hook = definerOf(ref, reader[1]!, byName, qualified, modules);
+      const type = hook && hook.owner !== action.owner ? readerType(chainOf(ref, byName, qualified), reader[1]!, assoc, modules, 0) : null;
+      // The member is found on the model or a module it includes: that class's own name is the callee.
+      const model = type ? modules.get(type) : null;
+      const member = model ? definerOf(model, reader[2]!, byName, qualified, modules) : null;
+      if (member) {
+        changed = true;
+        return { ...c, name: `${member.owner.cls.name}.${reader[2]}`, target: null };
+      }
+      return c;
+    }
     if (c.kind !== "internal" || !/^[a-z_]\w*[?!]?$/.test(c.name) || c.name === action.fn.name) return c;
     const hook = definerOf(ref, c.name, byName, qualified, modules);
     if (!hook || hook.owner === action.owner || hook.fn === action.fn) return c;
@@ -258,6 +327,44 @@ function templateHookCalls(
     return { ...c, name: `${hook.owner.cls.name}.${c.name}`, target: null };
   });
   return changed ? out : calls;
+}
+
+/**
+ * The model a memoizing reader (`def model; @model ||= @conversation; end`) returns: the type
+ * its instance variable is assigned where the project states one — a model constant
+ * (`@match = Match.find(…)`) or an association with one target (`Current.account.conversations.find_by!(…)`),
+ * through other variables (`@model ||= @conversation`), in the controller or an ancestor. Several
+ * assignments must agree; anything else is no type.
+ */
+function readerType(
+  chain: ClassRef[],
+  ivar: string,
+  assoc: ReadonlyMap<string, ReadonlySet<string>>,
+  modules: Map<string, ClassRef | null>,
+  depth: number,
+): string | null {
+  if (depth > 4) return null;
+  const owner = chain.find((c) => c.cls.fieldValues?.[ivar] !== undefined);
+  if (!owner) return null;
+  const found = new Set<string>();
+  for (const rhs of owner.cls.fieldValues![ivar]!.split("\n")) {
+    const alias = /^@([a-z_]\w*)$/.exec(rhs)?.[1];
+    if (alias) {
+      const t = alias === ivar ? null : readerType(chain, alias, assoc, modules, depth + 1);
+      if (t) found.add(t);
+      continue;
+    }
+    const segs = rhs.replace(/\([^()]*\)/g, "").replace(/\([^()]*\)/g, "").split(".");
+    let type: string | null = null;
+    for (let k = segs.length - 2; k >= 1 && !type; k--) {
+      const targets = assoc.get(segs[k]!);
+      if (targets?.size === 1) type = [...targets][0]!;
+    }
+    const head = segs[0]!.replace(/^::/, "");
+    if (!type && segs.length >= 2 && /^[A-Z]/.test(head) && modules.get(head)) type = head.split("::").pop()!;
+    if (type) found.add(type);
+  }
+  return found.size === 1 ? [...found][0]! : null;
 }
 
 /**

@@ -115,6 +115,25 @@ const DEVISE_TOKEN_AUTH_ROUTES: ReadonlyArray<{ path: string; method: string; gr
   { path: "/confirmation", method: "POST", group: "confirmations", action: "create" },
 ];
 
+/**
+ * What a mounted devise_token_auth action does to the model the mount names, as the gem
+ * documents it: sessions authenticate (read), registrations change the account (write),
+ * password and confirmation requests store a token (write), the password form and
+ * `validate_token` look the account up (read). `omniauth_success` is left out: it varies by provider.
+ */
+const DEVISE_TOKEN_AUTH_ACCESS: Readonly<Record<string, "read" | "write">> = {
+  "sessions#create": "read",
+  "sessions#destroy": "read",
+  "registrations#create": "write",
+  "registrations#update": "write",
+  "registrations#destroy": "write",
+  "token_validations#validate_token": "read",
+  "passwords#create": "write",
+  "passwords#update": "write",
+  "passwords#edit": "read",
+  "confirmations#create": "write",
+};
+
 const FRAMEWORK_CONTROLLER_RE = /^(rails|active_admin|action_cable|action_mailbox|active_storage)\b/;
 
 /** `supervision_time_schedules` / `reports/positions` → `SupervisionTimeSchedules` / `Positions` */
@@ -403,6 +422,22 @@ function addBareStatementCalls(lines: readonly string[], cls: ClassInfo, fn: Fun
   }
 }
 
+/**
+ * A bare `super` / `super(args)` is a call of the method's own name on the ancestor — the
+ * way an override reaches what a gem's base class does (`def update; …; super; end`).
+ * Recorded as a call named `super`; core and the route pass decide what it reaches.
+ */
+function addSuperCalls(lines: readonly string[], fn: FunctionInfo): void {
+  if (fn.calls.some((c) => c.name === "super")) return;
+  for (const [i, text] of bodyLines(lines, fn)) {
+    const code = text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
+    if (/(?<![\w.@$:])super(?![\w?!:])/.test(code)) {
+      fn.calls.push({ name: "super", kind: "internal", target: null, line: i + 1 });
+      return;
+    }
+  }
+}
+
 /** A chain off a class through a model finder or query (`Club.find()`, `Club.where().first()`). */
 const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.members.map(escapeRegex).join("|")})\\(\\)`);
 
@@ -566,6 +601,9 @@ function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, str
       const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
       // Every chain assigned, one per line: the entity pass keeps the model they agree on.
       if (a && !(out[a[1]!] ?? "").split("\n").includes(a[2]!)) out[a[1]!] = out[a[1]!] ? `${out[a[1]!]}\n${a[2]}` : a[2]!;
+      // `@model ||= @conversation`: the variable is another variable's value, typed where that one is assigned.
+      const alias = a ? null : /^\s*@([a-z_]\w*)\s*(?:\|\|)?=\s*(@[a-z_]\w*)\s*$/.exec(code);
+      if (alias && !(out[alias[1]!] ?? "").split("\n").includes(alias[2]!)) out[alias[1]!] = out[alias[1]!] ? `${out[alias[1]!]}\n${alias[2]}` : alias[2]!;
     }
   }
   return out;
@@ -1176,6 +1214,7 @@ export const rubySpec: RegexLangSpec = {
         addOwnMethodCalls(code, cls, m, bound);
         addSymbolListDispatchCalls(lines, code, cls, m);
         addBareStatementCalls(code, cls, m, bound);
+        addSuperCalls(code, m);
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
@@ -1564,7 +1603,14 @@ export const rubySpec: RegexLangSpec = {
           if (skip.has(r.group)) continue;
           const own = named.get(r.group);
           const handler = r.action ? `${own ? railsControllerClass(own, currentModules()) : `DeviseTokenAuth::${railsCamelize(r.group)}Controller`}#${r.action}` : null;
-          routes.push(withGuards({ path: base + r.path || "/", httpMethod: r.method, kind: "api", handler, calls: [], middleware: [], line: i + 1 }));
+          const row = withGuards({ path: base + r.path || "/", httpMethod: r.method, kind: "api", handler, calls: [], middleware: [], line: i + 1 });
+          routes.push(row);
+          // The mount names the model (`'User'`): the gem's actions work on it.
+          const model = /^mount_devise_token_auth_for\s*\(?\s*['"]([\w:]+)['"]/.exec(line)?.[1];
+          const access = r.action ? DEVISE_TOKEN_AUTH_ACCESS[`${r.group}#${r.action}`] : undefined;
+          if (routeFacts && model && handler && access) {
+            routeFacts.push({ kind: "rails-devise-model", line: i + 1, data: { model: model.replace(/^::/, ""), method: r.method, path: row.path, handler, action: r.action, access } });
+          }
         }
         continue;
       }

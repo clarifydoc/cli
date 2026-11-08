@@ -299,6 +299,126 @@ end`;
   });
 });
 
+describe("rails-route-anchor — an override that calls super on an admin gem's action", () => {
+  it("adds the gem action's model access to the overriding route; an override without super, a project base and a decoy get none", () => {
+    const router = `Rails.application.routes.draw do
+  namespace :admin do
+    resources :clubs, only: [:update]
+    resources :players, only: [:update]
+    resources :matches, only: [:update]
+    resources :garages, only: [:update]
+  end
+end`;
+    const withSuper = (c: ClassInfo, name: string, calls: string[]) => {
+      c.methods.find((m) => m.name === name)!.calls = calls.map((n) => ({ name: n, kind: "internal", target: null, line: 5 })) as never;
+      return c;
+    };
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/admin/application_controller.rb", [cls("Admin::ApplicationController", "Administrate::ApplicationController", [])]),
+      file("app/controllers/admin/clubs_controller.rb", [withSuper(cls("Admin::ClubsController", "Admin::ApplicationController", [["update", 5]]), "update", ["super"])]),
+      // The override never calls super: it does its own thing.
+      file("app/controllers/admin/players_controller.rb", [withSuper(cls("Admin::PlayersController", "Admin::ApplicationController", [["update", 5]]), "update", ["render"])]),
+      // A project base defines `update` and `super` reaches that one.
+      file("app/controllers/admin/base_matches_controller.rb", [cls("Admin::BaseMatchesController", "Admin::ApplicationController", [["update", 3]])]),
+      file("app/controllers/admin/matches_controller.rb", [withSuper(cls("Admin::MatchesController", "Admin::BaseMatchesController", [["update", 5]]), "update", ["super"])]),
+      // super on Rails' own base: no gem supplies a model.
+      file("app/controllers/admin/garages_controller.rb", [withSuper(cls("Admin::GaragesController", "ActionController::Base", [["update", 5]]), "update", ["super"])]),
+      file("app/models/club.rb", [cls("Club", "ApplicationRecord", [])]),
+      file("app/models/player.rb", [cls("Player", "ApplicationRecord", [])]),
+      file("app/models/match.rb", [cls("Match", "ApplicationRecord", [])]),
+      file("app/models/garage.rb", [cls("Garage", "ApplicationRecord", [])]),
+    ];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    for (const a of out) a.dataSources = [];
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const rows = out.flatMap((a) => a.dataSources.map((d) => `${d.handler} -> ${d.name} ${d.access}`));
+    expect(rows.sort()).toEqual(["route:PATCH /admin/clubs/:id -> Club.update write", "route:PUT /admin/clubs/:id -> Club.update write"]);
+  });
+});
+
+describe("rails-route-anchor — devise_token_auth mounts reach the model they name", () => {
+  it("sessions read and registrations write the mounted model; an override without super, an unknown model and a duplicated model get none", () => {
+    const router = `Rails.application.routes.draw do
+  mount_devise_token_auth_for 'Player', at: 'auth', controllers: {
+    sessions: 'league_overrides/sessions',
+    passwords: 'league_overrides/passwords'
+  }, skip: [:omniauth_callbacks, :token_validations, :confirmations]
+  mount_devise_token_auth_for 'Referee', at: 'referee_auth', skip: [:omniauth_callbacks, :token_validations, :confirmations, :passwords]
+  mount_devise_token_auth_for 'Coach', at: 'coach_auth', skip: [:omniauth_callbacks, :token_validations, :confirmations, :passwords, :registrations]
+end`;
+    const facts: NonNullable<FileAnalysis["routeFacts"]> = [];
+    const withSuper = (c: ClassInfo, name: string, calls: string[]) => {
+      c.methods.find((m) => m.name === name)!.calls = calls.map((n) => ({ name: n, kind: "internal", target: null, line: 5 })) as never;
+      return c;
+    };
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb", [], facts)),
+      // `create` calls super into the gem; the password override never does.
+      file("app/controllers/league_overrides/sessions_controller.rb", [withSuper(cls("LeagueOverrides::SessionsController", "DeviseTokenAuth::SessionsController", [["create", 5]]), "create", ["super"])]),
+      file("app/controllers/league_overrides/passwords_controller.rb", [cls("LeagueOverrides::PasswordsController", "DeviseTokenAuth::PasswordsController", [["create", 5], ["update", 9]])]),
+      file("app/models/player.rb", [cls("Player", "ApplicationRecord", [])]),
+      // Two classes named Referee: the mount does not say which.
+      file("app/models/referee.rb", [cls("Referee", "ApplicationRecord", [])]),
+      file("app/models/legacy/referee.rb", [cls("Referee", "ApplicationRecord", [])]),
+      // No Coach class in the project: nothing is invented.
+    ];
+    out[0]!.routeFacts = facts;
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    for (const a of out) a.dataSources = [];
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const rows = out.flatMap((a) => a.dataSources.map((d) => `${d.handler} -> ${d.name} ${d.access}`));
+    expect(rows.sort()).toEqual([
+      "route:DELETE /auth -> Player.destroy write",
+      "route:DELETE /auth/sign_out -> Player.find_for_authentication read",
+      "route:GET /auth/password/edit -> Player.find read",
+      "route:POST /auth -> Player.create write",
+      "route:POST /auth/sign_in -> Player.find_for_authentication read",
+      "route:PUT /auth -> Player.update write",
+    ].sort());
+  });
+});
+
+describe("rails-route-anchor — a concern's call through a reader typed by an instance variable", () => {
+  it("calls the model's member when the reader's variable is typed (constant, association, alias); an untyped or ambiguous one keeps its name", () => {
+    const router = `Rails.application.routes.draw do
+  post '/labels/matches', to: 'match_labels#create'
+  post '/labels/clubs', to: 'club_labels#create'
+  post '/labels/cars', to: 'car_labels#create'
+end`;
+    const call = (name: string) => ({ name, kind: "internal", target: null, line: 3 }) as const;
+    const concern = cls("LabelConcern", null, [["create", 2]]);
+    concern.methods[0]!.calls = [call("model.update_labels")];
+    const withValues = (c: ClassInfo, values: Record<string, string>, implementsModules: string[] = []) => ({ ...c, fieldValues: values, implements: implementsModules }) as ClassInfo;
+    const out = [
+      file("config/routes.rb", [], rubySpec.extractRoutes!(router.split("\n"), [], "config/routes.rb")),
+      file("app/controllers/concerns/label_concern.rb", [concern]),
+      file("app/controllers/base_match_controller.rb", [withValues(cls("BaseMatchController", "ActionController::Base", [["load", 3]]), { match: "Match.find(params[:id])" })]),
+      // Typed through an alias of the base's variable.
+      file("app/controllers/match_labels_controller.rb", [withValues(cls("MatchLabelsController", "BaseMatchController", [["model", 4]]), { model: "@match" }, ["LabelConcern"])]),
+      // Typed through an association one model declares.
+      file("app/controllers/club_labels_controller.rb", [withValues(cls("ClubLabelsController", "ActionController::Base", [["model", 4]]), { model: "@club", club: "Current.league.clubs.find(params[:id])" }, ["LabelConcern"])]),
+      // `@car` is never assigned: nothing is guessed.
+      file("app/controllers/car_labels_controller.rb", [withValues(cls("CarLabelsController", "ActionController::Base", [["model", 4]]), { model: "@car" }, ["LabelConcern"])]),
+      file("app/models/match.rb", [cls("Match", "ApplicationRecord", []), ].map((c) => ({ ...c, implements: ["Labelable"] }) as ClassInfo)),
+      file("app/models/club.rb", [{ ...cls("Club", "ApplicationRecord", []), implements: ["Labelable"] } as ClassInfo]),
+      file("app/models/concerns/labelable.rb", [cls("Labelable", null, [["update_labels", 2]])]),
+    ];
+    out[out.findIndex((a) => a.filePath === "app/models/club.rb")]!.entityRelations = [];
+    // `Current.league.clubs` is the association `clubs` → Club.
+    out[0]!.entityRelations = [{ fromEntity: "League", fromField: "clubs", toEntity: "Club" } as never];
+    const importIndex = buildImportIndex(out);
+    const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
+    reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
+    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls.map((c) => c.name).filter((n) => /update_labels/.test(n));
+    expect(calls("/labels/matches")).toEqual(["Labelable.update_labels"]);
+    expect(calls("/labels/clubs")).toEqual(["Labelable.update_labels"]);
+    expect(calls("/labels/cars")).toEqual(["model.update_labels"]);
+  });
+});
+
 describe("rails-route-anchor — a concern's action calling a hook the including controller defines", () => {
   it("points each route's row at its own controller's hook, not the concern's placeholder", () => {
     const router = `Rails.application.routes.draw do

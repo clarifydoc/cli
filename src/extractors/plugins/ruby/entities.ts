@@ -805,8 +805,17 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
         // Several assignments: the model the resolvable ones agree on.
         const found = new Set<string>();
         for (const rhs of rhsAll.split("\n")) {
+          // `@model ||= @conversation`: typed where `@conversation` is, in this class or an ancestor.
+          const alias = /^@([a-z_]\w*)$/.exec(rhs)?.[1];
+          if (alias) {
+            const typed = lookup(chainOf(o), alias);
+            if (typed) found.add(typed);
+            continue;
+          }
           const before = beforeOf(rhs);
-          const entity = before ? direct(before) ?? lookup(chainOf(o), before) : null;
+          // A model constant states its own type (`@match = Match.find(…)`).
+          const stated = before && /^[A-Z]/.test(before) && modelNames.has(before.replace(/^::/, "").split("::").pop()!) ? before.replace(/^::/, "").split("::").pop()! : null;
+          const entity = before ? stated ?? direct(before) ?? lookup(chainOf(o), before) : null;
           if (entity) found.add(entity);
         }
         if (found.size === 1) setMemo(o.cls, ivar, [...found][0]!);
