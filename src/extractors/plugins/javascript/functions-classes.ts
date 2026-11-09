@@ -93,16 +93,63 @@ function finishBody(
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
-): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]> } {
+): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]>; returnedFrom?: string[] } {
   const scan = scanBody(body, paramNames, ctx, params);
   const returnedMembers = returnedMembersOf(body);
+  // A concise arrow returns its body.
+  const returnedFrom = body && body.type !== "statement_block" ? resultChains(body, []) : scan.returnedFrom;
   calls.push(...scan.extraCalls);
   return {
     calls,
     ...(scan.localTypes.length > 0 ? { localTypes: scan.localTypes } : {}),
     ...(scan.returnedSpreads.length > 0 ? { returnedSpreads: scan.returnedSpreads } : {}),
     ...(returnedMembers ? { returnedMembers } : {}),
+    ...(returnedFrom?.length ? { returnedFrom } : {}),
   };
+}
+
+/** A call chain off a name: `useClubApi()`, `api.clubs.list()`, `usePublicClubApi(slug).clubs`. */
+const RESULT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^()]*\))*$/;
+
+/** Wrappers that leave the value as it is: parentheses, `as T`, `satisfies T`, `x!`. */
+const VALUE_WRAPPERS: ReadonlySet<string> = new Set(["parenthesized_expression", "as_expression", "satisfies_expression", "non_null_expression"]);
+
+/**
+ * A returned value spelled as the linker reads an initializer (`localTypes[].from`): a call (`useClubApi()`), a
+ * construction (`new ClubApi()`), a member read off a call (`usePublicClubApi(slug).clubs`) or, where `names`,
+ * a local's name. Null for anything else.
+ */
+function resultChainText(value: Node | null, names: boolean): string | null {
+  while (value && VALUE_WRAPPERS.has(value.type)) value = value.namedChild(0);
+  if (!value) return null;
+  if (value.type === "call_expression") {
+    const chain = callChainText(value, "typescript");
+    // A chain off an expression (`(await fetch(…)).json()`) names no receiver the linker can type.
+    return chain && RESULT_CHAIN.test(chain) ? chain : null;
+  }
+  if (value.type === "new_expression") {
+    const ctor = value.childForFieldName("constructor");
+    return ctor && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(ctor.text) ? `new ${ctor.text}()` : null;
+  }
+  if (value.type === "member_expression") {
+    const object = value.childForFieldName("object");
+    const property = value.childForFieldName("property");
+    const call = object?.type === "call_expression" ? callChainText(object, "typescript") : null;
+    return call && RESULT_CHAIN.test(call) && property?.type === "property_identifier" && !value.children.some((c) => c.type === "?.") ? `${call}.${property.text}` : null;
+  }
+  return names && value.type === "identifier" && value.text !== "undefined" ? value.text : null;
+}
+
+/** `into` with the chain each arm of a returned value is (`FunctionInfo.returnedFrom`); null when one is none. */
+function resultChains(value: Node | null, into: string[]): string[] | null {
+  while (value && VALUE_WRAPPERS.has(value.type)) value = value.namedChild(0);
+  if (value?.type === "ternary_expression") {
+    return resultChains(value.childForFieldName("consequence"), into) && resultChains(value.childForFieldName("alternative"), into);
+  }
+  const chain = resultChainText(value, true);
+  if (!chain) return null;
+  if (!into.includes(chain)) into.push(chain);
+  return into;
 }
 
 /** Whether the function enclosing `decl` returns the object literal bound to `name` as a member of what it hands back. */
@@ -166,7 +213,12 @@ function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returne
       if (v.type === "identifier") out.push({ key, local: v.text, kind: kinds.get(v.text) ?? "outer" });
       // `signIn: auth.signIn`: another object's member, handed on.
       else if (v.type === "member_expression") out.push({ key, kind: "open" });
-      else out.push({ key, kind: FUNCTION_EXPRESSIONS.has(v.type) ? "inline" : "value" });
+      else if (FUNCTION_EXPRESSIONS.has(v.type)) out.push({ key, kind: "inline" });
+      else {
+        // `clubs: useClubApi()`: the call the member is, for the linker to type it by.
+        const from = resultChainText(v, false);
+        out.push(from ? { key, kind: "value", from } : { key, kind: "value" });
+      }
     }
   }
   return out;
@@ -231,10 +283,12 @@ function scanBody(
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
-): { extraCalls: CallInfo[]; localTypes: LocalType[]; returnedSpreads: string[] } {
+): { extraCalls: CallInfo[]; localTypes: LocalType[]; returnedSpreads: string[]; returnedFrom: string[] | null } {
   const extraCalls: CallInfo[] = [];
   const returnedSpreads: string[] = [];
-  if (!body) return { extraCalls, localTypes: [], returnedSpreads };
+  // What each of the body's own `return`s hands back (`FunctionInfo.returnedFrom`); null once one is no chain.
+  let returnedFrom: string[] | null = [];
+  if (!body) return { extraCalls, localTypes: [], returnedSpreads, returnedFrom: null };
   // A concise arrow returns its body: `() => ({ ...crud })`.
   spreadLocals(body, returnedSpreads);
   const seenImports = new Set<string>();
@@ -390,7 +444,10 @@ function scanBody(
       return;
     }
     const children = node.children;
-    if (ownBody && type === "return_statement") spreadLocals(node.namedChildren[0], returnedSpreads);
+    if (ownBody && type === "return_statement") {
+      spreadLocals(node.namedChildren[0], returnedSpreads);
+      if (returnedFrom) returnedFrom = resultChains(node.namedChildren.find((c) => c.type !== "comment") ?? null, returnedFrom);
+    }
 
     // `useMutation({ mutationFn: service.update })`: the library calls the
     // function it is handed, on this body's behalf — a call of it here.
@@ -507,7 +564,7 @@ function scanBody(
     if (hiddenTypes.has(first.local.type)) continue;
     localTypes.push(first.local);
   }
-  return { extraCalls, localTypes, returnedSpreads };
+  return { extraCalls, localTypes, returnedSpreads, returnedFrom };
 }
 
 /**
@@ -1885,7 +1942,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads, returnedMembers } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -1899,6 +1956,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
+      ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -1948,7 +2006,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads, returnedMembers } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     return {
       name,
       params,
@@ -1962,6 +2020,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
+      ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
       ...(responses ? { responses } : {}),
@@ -2459,7 +2518,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
-          const { calls, localTypes, returnedSpreads } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
+          const { calls, localTypes, returnedSpreads, returnedFrom } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
           methods.push({
             name: methodName,
             params,
@@ -2472,6 +2531,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             endLine: member.endPosition.row + 1,
             ...(localTypes ? { localTypes } : {}),
             ...(returnedSpreads ? { returnedSpreads } : {}),
+            ...(returnedFrom && !returnType ? { returnedFrom } : {}),
             ...urlTemplateRecord(templates, stripped),
             ...(requestAccess ? { requestAccess } : {}),
             ...(responses ? { responses } : {}),

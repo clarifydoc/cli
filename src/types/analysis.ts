@@ -1377,9 +1377,19 @@ export interface FunctionInfo {
    * or an object literal that spreads one: what it holds, the literal does not list). Present only when the function returns an object
    * literal, which makes its members the project's: a call on the result names one of them or
    * nothing, never the factory itself. Empty when it returns a value another object holds
-   * (`return vm.proxy.$store`), which names none.
+   * (`return vm.proxy.$store`), which names none. `from`: a `value` entry written as a call or a construction
+   * (`clubs: useClubApi()`, `clubs: new ClubApi()`), spelled as `localTypes[].from` is — the linker types the
+   * member as it would a local initialized by it.
    */
-  returnedMembers?: Array<{ key: string; local?: string; kind: "function" | "object" | "value" | "inline" | "outer" | "open" }>;
+  returnedMembers?: Array<{ key: string; local?: string; kind: "function" | "object" | "value" | "inline" | "outer" | "open"; from?: string }>;
+  /**
+   * What the function returns where it declares no return type, one entry per `return` (and per arm of a
+   * conditional one): a call or a construction spelled as `localTypes[].from` is (`useClubApi()`,
+   * `new ClubApi()`), or a local's name. The linker types the result only when every entry types the same
+   * class, each read in the function's own scope. Absent when any return is something else (a literal, an
+   * object, a bare `return`), and wherever the source declares the return type.
+   */
+  returnedFrom?: string[];
   /**
    * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
    * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's

@@ -4885,6 +4885,16 @@ function resolveCallToDefinitionBody(
     if (member) {
       const at = statedFactory.analysis.functions.filter((f) => f.name === member && f.line > statedFactory.def.line && f.endLine <= statedFactory.def.endLine);
       if (at.length === 1) return mkLink(statedFactory.file, at[0]!.name, at[0]!.line, "INFERRED", "direct");
+    } else if (isQualified) {
+      // A member holding another factory's result or a construction (`clubs: useClubApi()`): the call is on
+      // that value's class — `clubs.getAll()` on `const { clubs } = useLeague()`, or `league.clubs.getAll()`.
+      const own = statedFactory.members.some((m) => m.key === (call.headMember ?? parts[0]));
+      const held = own ? (parts.length === 2 ? call.headMember ?? parts[0]! : undefined) : parts.length === 3 ? parts[1]! : undefined;
+      const dot = sourceSymbol.lastIndexOf(".");
+      const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+      const point = held ? returnedMemberPoint(ctx, statedFactory.file, statedFactory.def, held, consumer) : null;
+      const link = point ? linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink) : null;
+      if (link) return link;
     }
   } else if (
     !def && call.kind === "cross-file" && call.via && targetFile &&
@@ -6192,6 +6202,12 @@ function chainPoint(
       ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1)
       ?? passThroughResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head, depth);
     rest = receiver.slice(1);
+    // `useLeague().clubs.getAll()`: a member of the object literal the function returns, typed by what it holds.
+    if (!point && rest[0] && !rest[0].call) {
+      const called = calledFunction(ctx, analysis, sourceFile, sourceSymbol, head.name);
+      point = called ? returnedMemberPoint(ctx, called.file, called.def, rest[0].name, consumer) : null;
+      if (point) rest = rest.slice(1);
+    }
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
     rest = receiver.slice(1);
@@ -6275,7 +6291,90 @@ function importedFunctionResult(
 ): InjectionPoint | null {
   const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, name);
   if (!link) return null;
-  return returnedPoint(ctx, instanceReturn(symbolIn(ctx, link.targetFile, link.targetSymbol)), link.targetFile, { typeName: "", typeFile: null, consumer }, awaited);
+  const def = symbolIn(ctx, link.targetFile, link.targetSymbol);
+  return returnedPoint(ctx, instanceReturn(def), link.targetFile, { typeName: "", typeFile: null, consumer }, awaited)
+    ?? statedResultPoint(ctx, link.targetFile, def, consumer, awaited);
+}
+
+/** Functions whose returned value is being typed — a factory returning its own call would recurse. */
+const typingResults = new Set<string>();
+
+/** Longest run of factories followed to type what one returns (`useA()` returning `useB()` returning `new A()`). */
+const MAX_RESULT_DEPTH = 4;
+
+/** The function a symbol definition names, with the file analysis declaring it. */
+function functionOfDef(ctx: LinkContext, file: string, def: SymbolDef): { analysis: FileAnalysis; fn: FunctionInfo; owner: string } | null {
+  const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
+  if (!analysis) return null;
+  const fn = analysis.functions.find((f) => f.name === def.name && f.line === def.line) ?? findEnclosingCallable(analysis, def.name);
+  if (!fn) return null;
+  const dot = def.name.lastIndexOf(".");
+  const owner = dot > 0 && ctx.classAt.has(memberKey(file, def.name.slice(0, dot))) ? def.name.slice(0, dot) : "";
+  return { analysis, fn, owner };
+}
+
+/**
+ * A value a function hands back, spelled as a local's initializer is (`FunctionInfo.returnedFrom`,
+ * `returnedMembers[].from`), typed in the function's own scope — or a local of it by name.
+ */
+function heldValuePoint(ctx: LinkContext, file: string, def: SymbolDef, at: { analysis: FileAnalysis; owner: string }, value: { from?: string; local?: string }, consumer: string): InjectionPoint | null {
+  const key = `${file}\0${def.name}\0${def.line}`;
+  if (typingResults.has(key) || typingResults.size >= MAX_RESULT_DEPTH) return null;
+  typingResults.add(key);
+  try {
+    let point: InjectionPoint | null = null;
+    if (value.from) {
+      const chain = receiverChain(`${value.from}.x`, manifestFor(at.analysis.language as Language)?.indexerMethod);
+      if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
+      point = chainPoint(ctx, at.analysis, file, def.name, at.owner, chain, 1, false);
+    } else if (value.local) {
+      point = scopedName(ctx, at.analysis, file, def.name, at.owner, value.local, 1);
+    }
+    return point?.typeFile ? { typeName: point.typeName, typeFile: point.typeFile, member: "", consumer, container: false } : null;
+  } finally {
+    typingResults.delete(key);
+  }
+}
+
+/**
+ * What a function that declares no return type hands back, read off its returns (`FunctionInfo.returnedFrom`:
+ * `return new ClubApi()`, `return useClubApi()`): one class, when every return types the same one. An async
+ * function's result is that class only awaited. A library's object (`return useI18n()`) types nothing.
+ */
+function statedResultPoint(ctx: LinkContext, file: string, def: SymbolDef | undefined, consumer: string, awaited: boolean): InjectionPoint | null {
+  if (!def || def.returnType || def.declaredReturn) return null;
+  const at = functionOfDef(ctx, file, def);
+  if (!at?.fn.returnedFrom?.length || (at.fn.isAsync && !awaited)) return null;
+  let typed: InjectionPoint | null = null;
+  for (const returned of at.fn.returnedFrom) {
+    const p = heldValuePoint(ctx, file, def, at, /[(.]/.test(returned) ? { from: returned } : { local: returned }, consumer);
+    if (!p || (typed && (typed.typeFile !== p.typeFile || typed.typeName !== p.typeName))) return null;
+    typed = p;
+  }
+  return typed;
+}
+
+/**
+ * The class a member of the object literal a function returns holds (`FunctionInfo.returnedMembers`): an entry
+ * written as a call or a construction (`clubs: useClubApi()`), or a local or outer name that is one
+ * (`clubs: api`). Null for a function, an object of functions, or a literal that spreads another object.
+ */
+function returnedMemberPoint(ctx: LinkContext, file: string, def: SymbolDef | undefined, key: string, consumer: string): InjectionPoint | null {
+  if (!def) return null;
+  const at = functionOfDef(ctx, file, def);
+  if (!at?.fn.returnedMembers || at.fn.returnedSpreads?.length) return null;
+  const member = at.fn.returnedMembers.find((m) => m.key === key);
+  if (!member || (member.kind !== "value" && member.kind !== "outer")) return null;
+  return heldValuePoint(ctx, file, def, at, member, consumer);
+}
+
+/** The definition a bare call reaches: a function of the caller's file, else the one it imports. */
+function calledFunction(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string, name: string): { file: string; def: SymbolDef } | null {
+  const own = symbolIn(ctx, sourceFile, name);
+  if (own && own.name === name) return { file: sourceFile, def: own };
+  const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, name);
+  const def = link ? symbolIn(ctx, link.targetFile, link.targetSymbol) : undefined;
+  return link && def ? { file: link.targetFile, def } : null;
 }
 
 /** The definition a bare call of an imported function (or one an include puts in scope) reaches, in another file. */
@@ -6632,7 +6731,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
   }
   if (!hit) return frameworkSelfMember(ctx, point, method);
   const def = symbolIn(ctx, hit.file, hit.symbol);
-  const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited);
+  const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
   // class-level methods answer next.
   return next && def?.classLevel && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;
@@ -6718,7 +6817,8 @@ function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string,
   }
   const def = symbolIn(ctx, sourceFile, name);
   if (!def || def.name !== name) return null;
-  return returnedPoint(ctx, instanceReturn(def), sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited);
+  return returnedPoint(ctx, instanceReturn(def), sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited)
+    ?? statedResultPoint(ctx, sourceFile, def, consumer, awaited);
 }
 
 /** `Task<User>` → `User` when `Task` is one of the language's async result types; otherwise as written. */

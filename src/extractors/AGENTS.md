@@ -207,6 +207,10 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
   `inline`, `outer`, `open`): a call on the factory's result names a stated member or nothing — never the factory. An
   `open` member (the literal spreads a call, or hands on another object's member: `signIn: backend.signIn`) leaves the
   call to the unstated-factory reading. Inside a non-arrow method of a returned local object, `this.x` names its sibling.
+  A `value` member written as a call or construction carries it as `from` (`clubs: useClubApi()`), and a function
+  declaring no return type states what each `return` is (`FunctionInfo.returnedFrom`: `new ClubApi()`, `useClubApi()`,
+  a local's name); the linker types both as it types a local's initializer, in the factory's own scope, so
+  `const { clubs } = useLeague(); clubs.getAll()` lands on `ClubApi.getAll`. A library's object types nothing.
 - Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
   with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
   `componentCandidates`. Targets are deduplicated before the eight-target cap per emit.
