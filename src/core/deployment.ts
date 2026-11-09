@@ -15,6 +15,7 @@ import type {
 import { collectK8sManifests } from "./deployment-k8s.js";
 import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./dockerfiles.js";
 import { collectTerraform } from "./deployment-terraform.js";
+import { collectCloudFormation } from "./deployment-cloudformation.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -812,6 +813,11 @@ export async function detectDeployment(
   if (terraform) {
     for (let i = 0; i < terraform.groups.length; i++) mergeGroup(terraform.groups[i]!, terraform.files[i]!);
   }
+  // CloudFormation / SAM templates, the same facts (deployment-cloudformation.ts).
+  const cloudformation = await collectCloudFormation(absRoot, IGNORE);
+  if (cloudformation) {
+    for (let i = 0; i < cloudformation.groups.length; i++) mergeGroup(cloudformation.groups[i]!, cloudformation.files[i]!);
+  }
 
   // Infrastructure code declares (a CDK stack): one stack scope per file, its wiring as edges.
   const codeEdges: Array<{ from: string; to: string; kind: "bus" | "db" | "http"; via: string }> = [];
@@ -1127,7 +1133,7 @@ export async function detectDeployment(
   }
 
   // ── k8s Ingress edges: front door → the workload each rule routes to ──
-  for (const e of [...(terraform?.edges ?? []), ...codeEdges]) {
+  for (const e of [...(terraform?.edges ?? []), ...(cloudformation?.edges ?? []), ...codeEdges]) {
     if (svcByLower.has(e.from.toLowerCase()) && svcByLower.has(e.to.toLowerCase())) addEdge({ from: canon(e.from), to: canon(e.to), kind: e.kind, via: e.via });
   }
   for (const e of k8s?.ingressEdges ?? []) {
