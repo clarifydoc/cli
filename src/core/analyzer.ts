@@ -64,6 +64,7 @@ import {
   isStandardImport,
   ACTIVATION_FILE_LANGUAGES,
   ensureLanguagesLoaded,
+  pluginScopeOf,
   classifyKnownPackage,
   pluginFor,
   manifestFor,
@@ -747,6 +748,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
   await ensureLanguagesLoaded(activationLangs);
+  // The plugins this analysis consults where a pass reads every plugin's data (package tables): the
+  // ones it loaded, never what an earlier analysis in the same process loaded besides.
+  let pluginScope = pluginScopeOf(activationLangs);
 
   // Step 2b: Detect frameworks at the root AND inside each sub-project root.
   progress.step("Detecting frameworks...");
@@ -767,6 +771,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const externalPackages = await collectExternalPackages(
     projectRoot,
     subProjects.map((sp) => sp.root),
+    pluginScope,
   );
   // A declared package that is a sub-project of this repository is no
   // third-party dependency: marked `local`, and an edge between the two.
@@ -784,7 +789,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   );
   const frameworks = mergeFrameworkDetections(
     ruleFrameworks,
-    deriveFrameworksFromPackages(externalPackages),
+    deriveFrameworksFromPackages(externalPackages, pluginScope),
   );
   const frameworkIds = frameworks.map((f) => f.id);
 
@@ -1130,6 +1135,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A file a plugin handed to another language's reader (a WSDL saved as `.xml`) carries a language
   // discovery did not load here; the project passes below ask its plugin.
   await ensureLanguagesLoaded(new Set(allAnalyses.map((a) => a.language)));
+  pluginScope = pluginScopeOf([...pluginScope, ...allAnalyses.map((a) => a.language)]);
 
   // One project-wide import index, shared across the router mount resolver and
   // every serial builder that resolves cross-file references (screens, type
@@ -1205,7 +1211,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const typeOnlyImports: Record<string, string[]> = {};
   // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
   const dynamicImportEdges: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source), subProjects);
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source), subProjects, pluginScope);
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -1765,7 +1771,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Which concerns each file mixes (database, http, queue, auth, …) — from
   // classified imports plus data sources/routes/screens. Generated and vendored
   // code is excluded like every other quality signal.
-  const responsibilityProfiles = buildResponsibilityProfiles(allAnalyses).filter((r) => !isUnauthored(r.filePath));
+  const responsibilityProfiles = buildResponsibilityProfiles(allAnalyses, pluginScope).filter((r) => !isUnauthored(r.filePath));
   if (responsibilityProfiles.length > 0) {
     const mixed = responsibilityProfiles.filter((r) => r.concernCount >= 3).length;
     progress.detail(`  Responsibilities: ${responsibilityProfiles.length} file(s) touch a boundary, ${mixed} mix 3+ concerns`);
@@ -3581,6 +3587,8 @@ export function buildComponentGraph(
   namesRepoPackage?: (source: string) => boolean,
   /** The repository's sub-projects: a language's own import resolver finds a package by its manifest name. */
   subProjects?: readonly SubProject[],
+  /** The analysis's plugins (`pluginScopeOf`): only their package tables say an import is a third party's. */
+  packageScope?: ReadonlySet<Language>,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -3853,8 +3861,8 @@ export function buildComponentGraph(
         EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) ||
         isExternalPackage(imp.source) ||
         isStandardImport(a.filePath, imp.source, (p) => byPath.has(p)) ||
-        classifyKnownPackage(imp.source) !== undefined ||
-        classifyKnownPackage(packageRoot) !== undefined;
+        classifyKnownPackage(imp.source, packageScope) !== undefined ||
+        classifyKnownPackage(packageRoot, packageScope) !== undefined;
       if (isExternal) continue;
       // A package of the repository its rewrite (step 1b) did not reach: which
       // file it means is unknown, and a namesake elsewhere is a decoy.
@@ -3877,12 +3885,18 @@ export function buildComponentGraph(
           continue;
         }
       }
+      // Such a resolver's miss on a module path (`from cloudvendor.docs.models import Report`,
+      // `use serde::Serialize`) means the module is not the project's: no name it binds and no
+      // leaf of its path is matched below — the guesses gave it the project's own `league/models.py`.
+      // A bare name (`import helpers`) may still be a module on a search path the resolver
+      // does not know.
+      const guessNames = !ownResolver || !/[.:/\\]/.test(imp.source);
 
       // 2. Resolve non-relative imports via specifier names → exported names
       // Works for Java (import com.example.api.service.UserService → specifier "UserService")
       // Works for Python (from app.services import UserService → specifier "UserService")
       // Works for C# (using MyApp.Services → specifier matching)
-      for (const local of imp.specifiers) {
+      for (const local of guessNames ? imp.specifiers : []) {
         // An aliased import names the module's own export.
         const spec = imp.aliases?.[local] ?? local;
         if (!spec) continue;
@@ -3943,7 +3957,7 @@ export function buildComponentGraph(
 
       // 4. Resolve by matching the last segment of the import source to a file name
       // e.g. "com.example.api.service.UserService" → "UserService" → UserService.java
-      const lastSegment = imp.source.split(/[./\\]/).filter(Boolean).pop();
+      const lastSegment = guessNames ? imp.source.split(/[./\\]/).filter(Boolean).pop() : undefined;
       if (lastSegment) {
         const candidates = baseNameToFiles.get(lastSegment.toLowerCase());
         const target = candidates ? pickScoped(candidates, a.filePath) : null;

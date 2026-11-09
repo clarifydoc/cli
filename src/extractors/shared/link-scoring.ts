@@ -21,6 +21,12 @@ let standardImportRule: (importingFile: string, source: string, hasFile: (path: 
 /** Languages whose imports name the package a file declares (`LanguagePluginManifest.importsDeclaredPackages`). */
 let declaredPackageLanguages: ReadonlySet<string> = new Set();
 
+/**
+ * The importing file's language resolves its own imports (`LanguagePluginManifest.resolveImport`): a
+ * dotted import is the module at the path it spells, never a file named like its last segment.
+ */
+let ownModuleRules: (importingFile: string) => boolean = () => false;
+
 /** Called once by the registry after aggregating every plugin's data. */
 export function registerLinkScoringData(
   prefixes: readonly string[],
@@ -29,8 +35,10 @@ export function registerLinkScoringData(
   platformSuffixes: ReadonlyMap<string, readonly string[]> = new Map(),
   standardImport?: (importingFile: string, source: string, hasFile: (path: string) => boolean) => boolean,
   declaredPackages: ReadonlySet<string> = new Set(),
+  ownImportRules?: (importingFile: string) => boolean,
 ): void {
   declaredPackageLanguages = declaredPackages;
+  if (ownImportRules) ownModuleRules = ownImportRules;
   if (standardImport) standardImportRule = standardImport;
   externalModulePrefixes = prefixes;
   stripSourceExtensionReSlot = stripRe;
@@ -384,7 +392,7 @@ export function resolveTarget(importSource: string, sourceFile: string, filePath
   // Relative imports resolve against the importer's directory, and bare-name
   // (basename) matches pick by path affinity to the importer and keep to its
   // language family — the cache key must always carry the directory and family.
-  const cacheKey = `${posix.dirname(sourceFile)}\u0000${extensionFamily(sourceFile) ?? ""}\u0000${importSource}`;
+  const cacheKey = `${posix.dirname(sourceFile)}\u0000${extensionFamily(sourceFile) ?? ""}\u0000${ownModuleRules(sourceFile) ? "own" : ""}\u0000${importSource}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -458,6 +466,10 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     // a file of its own package not named after it.
     const segs = importSource.split(".");
     const lastSegment = segs.pop()!;
+    // A language with module rules of its own (`from cloudvendor.docs.models import Report`):
+    // only a file whose directories spell the whole package is that module — a `league/models.py`
+    // is a namesake, the import a package's.
+    if (ownModuleRules(sourceFile)) return packagedCandidate(segs, lastSegment, filePathMap, sourceFile, true) ?? null;
     const packaged = packagedCandidate(segs, lastSegment, filePathMap, sourceFile);
     if (packaged !== undefined) {
       if (packaged) return packaged;
@@ -525,7 +537,7 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
  * packages; `undefined` when no file bears the name, or nothing says
  * (decide by the name alone).
  */
-function packagedCandidate(pkg: string[], name: string, filePathMap: Map<string, string>, sourceFile: string): string | null | undefined {
+function packagedCandidate(pkg: string[], name: string, filePathMap: Map<string, string>, sourceFile: string, wholePackage = false): string | null | undefined {
   if (pkg.length === 0) return undefined;
   const family = extensionFamily(sourceFile);
   const lower = name.toLowerCase();
@@ -552,6 +564,7 @@ function packagedCandidate(pkg: string[], name: string, filePathMap: Map<string,
     return { file, k };
   });
   const best = Math.max(...scored.map((c) => c.k));
+  if (wholePackage && best < pkg.length) return null;
   if (best === 0) {
     if (candidates.length === 1) return candidates[0]!;
     return directoryNames(filePathMap).has(pkg[pkg.length - 1]!) ? null : undefined;

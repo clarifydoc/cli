@@ -149,6 +149,22 @@ describe("resolveTarget — Python relative modules", () => {
   });
 });
 
+describe("resolveTarget — Python dotted modules", () => {
+  const map = buildFilePathMap([
+    { filePath: "src/league/__init__.py" },
+    { filePath: "src/league/models.py" },
+    { filePath: "src/cups/reports.py" },
+  ] as any[]);
+
+  it("never takes a package's module for a project file named like its last segment", () => {
+    expect(resolveTarget("cloudvendor.ai.docs.models", "src/cups/reports.py", map)).toBeNull();
+  });
+
+  it("finds the module whose directories spell the whole path, under any source root", () => {
+    expect(resolveTarget("league.models", "src/cups/reports.py", map)).toBe("src/league/models.py");
+  });
+});
+
 describe("resolveTarget — a file path written without ./", () => {
   const map = buildFilePathMap([
     { filePath: "site/index.php", language: "php" },

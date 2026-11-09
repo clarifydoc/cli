@@ -2,6 +2,7 @@ import type {
   BoundaryEvidence,
   BoundaryKind,
   FileAnalysis,
+  Language,
   PackageCategory,
   ResponsibilityProfile,
   WorkflowRole,
@@ -92,18 +93,18 @@ const RELATIVE_IMPORT_RE = /^(\.|\/|~|@\/)/;
  * and finally the trailing path segment (`gorm.io/gorm` → `gorm`). Returns the
  * first hit; relative and alias imports are never classified.
  */
-export function classifyImportSource(source: string): KnownPackageEntry | undefined {
+export function classifyImportSource(source: string, scope?: ReadonlySet<Language>): KnownPackageEntry | undefined {
   const s = source.trim();
   if (!s || RELATIVE_IMPORT_RE.test(s)) return undefined;
   const lower = s.toLowerCase();
 
-  const direct = classifyKnownPackage(lower);
+  const direct = classifyKnownPackage(lower, scope);
   if (direct) return direct;
 
   if (lower.startsWith("@")) {
     const parts = lower.split("/");
     if (parts.length >= 2) {
-      const scoped = classifyKnownPackage(`${parts[0]}/${parts[1]}`);
+      const scoped = classifyKnownPackage(`${parts[0]}/${parts[1]}`, scope);
       if (scoped) return scoped;
     }
     return undefined;
@@ -114,7 +115,7 @@ export function classifyImportSource(source: string): KnownPackageEntry | undefi
   if (sep) {
     const parts = lower.split(sep);
     for (let n = parts.length - 1; n >= 1; n--) {
-      const hit = classifyKnownPackage(parts.slice(0, n).join(sep));
+      const hit = classifyKnownPackage(parts.slice(0, n).join(sep), scope);
       if (hit) return hit;
     }
   }
@@ -122,11 +123,11 @@ export function classifyImportSource(source: string): KnownPackageEntry | undefi
   // Path-style: root segment, then trailing segment (Go module tails, Maven artifactIds).
   if (lower.includes("/")) {
     const segs = lower.split("/");
-    const head = classifyKnownPackage(segs[0]!);
+    const head = classifyKnownPackage(segs[0]!, scope);
     if (head) return head;
     const tail = segs[segs.length - 1]!;
     if (tail && tail !== lower) {
-      const byTail = classifyKnownPackage(tail);
+      const byTail = classifyKnownPackage(tail, scope);
       if (byTail) return byTail;
     }
   }
@@ -194,7 +195,7 @@ function attributeToSymbols(
 }
 
 /** Build the responsibility profile for every file that touches at least one boundary. */
-export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): ResponsibilityProfile[] {
+export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[], scope?: ReadonlySet<Language>): ResponsibilityProfile[] {
   const out: ResponsibilityProfile[] = [];
 
   for (const a of analyses) {
@@ -213,7 +214,7 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[]): 
     for (const imp of a.imports) {
       const root = externalRoot(imp.source);
       if (root) externals.add(root);
-      const entry = classifyImportSource(imp.source);
+      const entry = classifyImportSource(imp.source, scope);
       const kind = entry ? CATEGORY_BOUNDARY[entry.category] : undefined;
       if (!kind) continue;
       // One import row per (boundary, package root) keeps a file that imports

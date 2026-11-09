@@ -96,8 +96,10 @@ resolver runs). `analyzeFile` self-activates per file as a safety net.
 would quietly degrade extraction); vitest loads everything via
 `src/test-setup.ts`. Lazy-tier accessors: `pluginFor`, `astHooksFor`,
 `complexityFor`, `regexSpecFor`, `securityRulesFor`, `classifyKnownPackage`
-(rebuilt from loaded metas in manifest order), `allPluginMetas` (loaded metas,
-manifest order).
+(rebuilt from loaded metas in manifest order; the analyzer passes its
+`pluginScopeOf` — the languages it loaded — so a process that analyzed another
+repository first, with more plugins loaded, classifies this one's packages the
+same), `allPluginMetas` (loaded metas, manifest order).
 
 The registry also pushes data into the leaf modules plugin code itself
 imports (`shared/builtin-types.ts`, `shared/call-patterns.ts`,

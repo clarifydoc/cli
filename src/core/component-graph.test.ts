@@ -266,12 +266,25 @@ describe("buildComponentGraph — Python absolute imports", () => {
     expect(graph["cup/replay.py"]).toEqual(["league/sub/fixtures.py"]);
   });
 
-  it("leaves an import no project module answers to the name heuristics", () => {
+  it("leaves a bare module name no project module answers to the name heuristics", () => {
     const graph = buildComponentGraph([
       py("vendor/whistle_kit.py", [], ["Whistle"]),
       py("cup/referee.py", [{ source: "whistle_kit_shim", specifiers: ["Whistle"], isNamespace: false }]),
     ]);
     expect(graph["cup/referee.py"]).toEqual(["vendor/whistle_kit.py"]);
+  });
+
+  it("gives a package's dotted module no project file by its last segment or the names it binds", () => {
+    const graph = buildComponentGraph([
+      py("league/__init__.py"),
+      py("league/models.py", [], ["Club", "Report"]),
+      py("cups/__init__.py"),
+      py("cups/reports.py", [
+        { source: "cloudvendor.ai.docs.models", specifiers: ["Report"], isNamespace: false },
+        { source: "cloudvendor.ai.docs", specifiers: ["models"], isNamespace: false },
+      ]),
+    ]);
+    expect(graph["cups/reports.py"]).toBeUndefined();
   });
 });
 

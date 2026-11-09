@@ -7,6 +7,7 @@ import type {
   PackageEcosystem,
   FrameworkDetection,
   FileAnalysis,
+  Language,
   SubProject,
 } from "../types/analysis.js";
 import type { DeclaredPackage, PackageManifestSpec } from "../types/language-plugin.js";
@@ -48,14 +49,14 @@ import {
  * trailing coordinate segment so `gorm.io/gorm` / `group:artifact` resolve),
  * then generic name-shape heuristics, else "other". Carries the framework too.
  */
-function classify(name: string): KnownPackageEntry {
+function classify(name: string, scope?: ReadonlySet<Language>): KnownPackageEntry {
   const lower = name.toLowerCase();
   // `@types/*` are TypeScript stubs — never the framework they shadow
   // (`@types/express` must not become "express"/framework). Check before the
   // segment fallback below, which would otherwise split off the tail name.
   if (lower.startsWith("@types/")) return { category: "types" };
 
-  const direct = classifyKnownPackage(lower);
+  const direct = classifyKnownPackage(lower, scope);
   if (direct) return direct;
 
   // Try the trailing coordinate segment (Maven group:artifact, Go host/path,
@@ -64,7 +65,7 @@ function classify(name: string): KnownPackageEntry {
   if (!lower.startsWith("@")) {
     const seg = lower.split(/[/:]/).pop();
     if (seg && seg !== lower) {
-      const bySeg = classifyKnownPackage(seg);
+      const bySeg = classifyKnownPackage(seg, scope);
       if (bySeg) return bySeg;
     }
   }
@@ -185,6 +186,8 @@ async function collectAtRoot(absRoot: string, rel: string, projectRoot: string):
 export async function collectExternalPackages(
   projectRoot: string,
   subRoots: readonly string[],
+  /** The analysis's plugins (`pluginScopeOf`): only their package tables classify. */
+  scope?: ReadonlySet<Language>,
 ): Promise<ExternalPackage[]> {
   const root = resolve(projectRoot);
   const roots = ["", ...subRoots].filter((r, i, a) => a.indexOf(r) === i);
@@ -211,7 +214,7 @@ export async function collectExternalPackages(
         }
         continue;
       }
-      const { category } = classify(raw.name);
+      const { category } = classify(raw.name, scope);
       byKey.set(key, { ...raw, category });
     }
   }
@@ -422,11 +425,11 @@ export function attachPackageUsage(
  * the dependency is consumed: a prod/peer dependency that's also imported is a
  * "high" signal; a dev-only or declared-but-unused one is "medium".
  */
-export function deriveFrameworksFromPackages(packages: readonly ExternalPackage[]): FrameworkDetection[] {
+export function deriveFrameworksFromPackages(packages: readonly ExternalPackage[], scope?: ReadonlySet<Language>): FrameworkDetection[] {
   const byId = new Map<string, FrameworkDetection>();
   for (const pkg of packages) {
     if (pkg.local !== undefined) continue; // this repository's own package is no framework
-    const known = classify(pkg.name);
+    const known = classify(pkg.name, scope);
     if (!known.framework) continue;
     const strong = (pkg.scope === "prod" || pkg.scope === "peer") && pkg.used !== false;
     const detection: FrameworkDetection = {

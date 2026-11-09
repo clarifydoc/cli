@@ -5,6 +5,7 @@ import { join } from "path";
 import { analyze } from "./analyzer.js";
 import { glob } from "./glob.js";
 import { denormalizeProject } from "./element-registry.js";
+import { classifyKnownPackage, pluginScopeOf } from "../extractors/registry.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 /**
@@ -96,5 +97,30 @@ describe("output is deterministic", () => {
         expect(rows[i - 1]!.filePath < rows[i]!.filePath).toBe(true);
       }
     }
+  }, 120_000);
+
+  // Every plugin is loaded in this process, as in one that analyzed a .NET repository before: the
+  // C# tables answer `azure.*` (NuGet's `Azure.Storage.Queues`), and a Python project's imports
+  // were classified by them — its profiles and graph changed with what the process did before.
+  it("classifies a project's imports by its own plugins, whatever else the process loaded", async () => {
+    expect(classifyKnownPackage("azure.storage.queue")?.category).toBe("cloud");
+    expect(classifyKnownPackage("azure.storage.queue", pluginScopeOf(["python"]))).toBeUndefined();
+
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-det-scope-"));
+    dirs.push(dir);
+    const root = join(dir, "garage");
+    await mkdir(join(root, "workshop"), { recursive: true });
+    await writeFile(join(root, "workshop", "__init__.py"), "");
+    await writeFile(join(root, "workshop", "queue.py"), "class QueueClient:\n    pass\n");
+    await writeFile(
+      join(root, "workshop", "service.py"),
+      "from azure.storage.queue import QueueClient\n\n\ndef book_service(car):\n    return QueueClient().send(car)\n",
+    );
+    await analyze({ projectRoot: root, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    const summary: ProjectAnalysis = denormalizeProject(JSON.parse(await readFile(join(dir, "out", "project-summary.json"), "utf8")));
+    const profile = summary.responsibilityProfiles?.find((p) => p.filePath === "workshop/service.py");
+    expect(profile?.boundaries ?? []).not.toContain("cloud");
+    // A package's `queue` module, never the project's own `workshop/queue.py`.
+    expect(summary.componentGraph["workshop/service.py"] ?? []).toEqual([]);
   }, 120_000);
 });

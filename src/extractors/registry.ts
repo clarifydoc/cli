@@ -577,6 +577,13 @@ export const BUILTIN_MEMBERS_BY_LANGUAGE: ReadonlyMap<Language, ReadonlySet<stri
   return m;
 })();
 
+/** Whether the importing file's language resolves its own imports (`LanguagePluginManifest.resolveImport`). */
+export function hasOwnImportRules(importingFile: string): boolean {
+  const dot = importingFile.lastIndexOf(".");
+  const language = dot >= 0 ? EXTENSION_TO_LANGUAGE[importingFile.slice(dot).toLowerCase()] : undefined;
+  return !!language && !!manifestFor(language)?.resolveImport;
+}
+
 /**
  * Whether an import names the standard library of the importing file's
  * language rather than a project module (`LanguagePluginManifest.standardImport`).
@@ -610,7 +617,7 @@ export const EXTERNAL_NAMESPACE_ROOT_RE: RegExp = (() => {
 // Push the aggregates into link-scoring (it cannot import the registry: it is
 // imported by plugin code, and metas are imported by the registry — a static
 // import here would close an ESM cycle and TDZ plugin classes).
-registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE, isStandardImport, DECLARED_PACKAGE_LANGUAGES);
+registerLinkScoringData(ALL_EXTERNAL_MODULE_PREFIXES, STRIP_SOURCE_EXTENSION_RE, PARTIAL_PREFIX_BY_LANGUAGE, PLATFORM_SUFFIXES_BY_LANGUAGE, isStandardImport, DECLARED_PACKAGE_LANGUAGES, hasOwnImportRules);
 
 // ─── Framework detection rules ───────────────────────────────────────────
 
@@ -807,21 +814,28 @@ export interface KnownPackageEntry {
 }
 
 /**
- * Third-party package classification from every LOADED plugin's
- * `knownPackages` (lazy tier — the analyzer activates ecosystem plugins via
- * source files or `activationFiles` before the dependency inventory runs).
- * Keyed by lowercased package name; framework-bearing rules take precedence
- * over plain-category ones on a collision (two-pass build over the loaded
- * metas in manifest order, so the result is independent of load order).
+ * Third-party package classification from the LOADED plugins' `knownPackages`
+ * (lazy tier — the analyzer activates ecosystem plugins via source files or
+ * `activationFiles` before the dependency inventory runs). Keyed by lowercased
+ * package name; framework-bearing rules take precedence over plain-category
+ * ones on a collision (two-pass build over the metas in manifest order, so the
+ * result is independent of load order). One table per plugin scope
+ * (`pluginScopeOf`): a process that analyzed another repository first has that
+ * repository's plugins loaded too, and an analysis reading their tables would
+ * classify its imports by what the process did before.
  */
+interface KnownPackageTable {
+  exact: Map<string, KnownPackageEntry>;
+  patterns: Array<{ match: RegExp; entry: KnownPackageEntry }>;
+}
+let knownPackageTables = new WeakMap<ReadonlySet<Language>, KnownPackageTable>();
+let allKnownPackages: KnownPackageTable | undefined;
 let knownPackagesDirty = true;
-let KNOWN_PACKAGES = new Map<string, KnownPackageEntry>();
-let KNOWN_PACKAGE_PATTERNS: Array<{ match: RegExp; entry: KnownPackageEntry }> = [];
 
-function rebuildKnownPackages(): void {
+function buildKnownPackages(scope: ReadonlySet<Language> | undefined): KnownPackageTable {
   const exact = new Map<string, KnownPackageEntry>();
   const patterns: Array<{ match: RegExp; entry: KnownPackageEntry }> = [];
-  const metas = allPluginMetas();
+  const metas = allPluginMetas().filter((m) => !scope || scope.has(m.language));
   // Pass 1: framework-bearing rules win (exact names + family patterns).
   for (const meta of metas) {
     for (const rule of meta.knownPackages ?? []) {
@@ -843,21 +857,48 @@ function rebuildKnownPackages(): void {
       if (rule.match) patterns.push({ match: rule.match, entry });
     }
   }
-  KNOWN_PACKAGES = exact;
-  KNOWN_PACKAGE_PATTERNS = patterns;
-  knownPackagesDirty = false;
+  return { exact, patterns };
+}
+
+/**
+ * The languages whose plugins an analysis of `languages` loads: each one's
+ * loader with every meta it brings, plus the `dispatchLanguages` couplings —
+ * as `ensureLanguagesLoaded` expands them. A project pass that reads plugin
+ * data by scope sees the same plugins whatever else the process has loaded.
+ */
+export function pluginScopeOf(languages: Iterable<Language>): ReadonlySet<Language> {
+  const out = new Set<Language>();
+  for (const lang of languages) {
+    out.add(lang);
+    const loader = LOADER_BY_LANGUAGE.get(lang);
+    for (const l of loader?.languages ?? []) out.add(l);
+    for (const coupled of DISPATCH_COUPLED_LOADERS.get(lang) ?? []) for (const l of coupled.languages) out.add(l);
+  }
+  return out;
 }
 
 /**
  * Classify a package by name: exact plugin hit first, then family patterns
  * (framework-bearing patterns before plain-category ones; first match wins).
+ * `scope` (`pluginScopeOf`) limits the tables to the plugins one analysis
+ * loaded; without it every loaded plugin answers.
  */
-export function classifyKnownPackage(name: string): KnownPackageEntry | undefined {
-  if (knownPackagesDirty) rebuildKnownPackages();
+export function classifyKnownPackage(name: string, scope?: ReadonlySet<Language>): KnownPackageEntry | undefined {
+  if (knownPackagesDirty) {
+    knownPackageTables = new WeakMap();
+    allKnownPackages = undefined;
+    knownPackagesDirty = false;
+  }
+  let table = scope ? knownPackageTables.get(scope) : allKnownPackages;
+  if (!table) {
+    table = buildKnownPackages(scope);
+    if (scope) knownPackageTables.set(scope, table);
+    else allKnownPackages = table;
+  }
   const key = name.toLowerCase();
-  const exact = KNOWN_PACKAGES.get(key);
+  const exact = table.exact.get(key);
   if (exact) return exact;
-  for (const p of KNOWN_PACKAGE_PATTERNS) {
+  for (const p of table.patterns) {
     if (p.match.test(key)) return p.entry;
   }
   return undefined;
