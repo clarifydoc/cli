@@ -2865,8 +2865,12 @@ function addViewCodeNavigation(screens: ScreenInfo[], analyses: FileAnalysis[], 
   }
 }
 
-/** A link or navigation call handed a function's result: `href="@ItemHelper.Url(Item)"`, `NavigateTo(Club.Url(id))`. */
-const LINK_HELPER_CALL = /(?:\s:?href\s*=\s*["{]\s*@?|\bgoto\(\s*|\bNavigateTo(?:Async)?\(\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bto\s*=\s*\{\s*)(?:(?:[A-Z][\w$]*\.)*([A-Z][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/;
+/**
+ * A link or navigation call handed a function's result: `href="@ItemHelper.Url(Item)"`, `NavigateTo(Club.Url(id))`,
+ * `navigate(paths.app.club.getHref(id))`, or a nav item's `to: paths.app.clubs.getHref()` its link binds. Group 1 is
+ * the owner chain (`paths.app.club`), group 2 the function.
+ */
+const LINK_HELPER_CALL = /(?:\s:?href\s*=\s*["{]\s*@?|\bgoto\(\s*|\bNavigateTo(?:Async)?\(\s*|\b(?:router|history)\.(?:push|replace)\(\s*|\bnavigate\(\s*|\bto\s*=\s*\{\s*|[{,\s](?:to|href|link)\s*:\s*)(?:((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/;
 
 /**
  * A link whose target is what a project function returns — `href="@ItemHelper.Url(Item)"` (Razor),
@@ -2889,6 +2893,15 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
     const key = `${file}:${fn.line}:${fromBase}`;
     const hit = cache.get(key);
     if (hit) return hit;
+    // The URL the function builds, as the url-builder pass read it (`/clubs/{id}?tab={}` → `/clubs/{id}`):
+    // a template literal's holes are parameters there, not text to cut at.
+    const built = [fn.urlTemplate, ...(fn.urlTemplateAlternatives ?? [])]
+      .map((t) => t?.split(/[?#]/)[0]!.trim())
+      .filter((t): t is string => !!t && t.startsWith("/") && !t.startsWith("//"));
+    if (built.length > 0) {
+      cache.set(key, built);
+      return built;
+    }
     const body = (rawSources.get(file) ?? "").split("\n").slice(fn.line - 1, fn.endLine).join("\n");
     const out: string[] = [];
     for (const m of body.matchAll(/\$?@?["'`]([^"'`\n]*)["'`]/g)) {
@@ -2908,9 +2921,22 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
     const fromBase = manifestFor(a.language as Language)?.linksFromBase === true;
     const add = new Set(sc.navigatesTo);
     for (const m of source.matchAll(LINK_CALL)) {
-      const [, owner, name] = m;
+      const [, chain, name] = m;
       let found: { file: string; fn: FunctionInfo } | null = null;
-      if (owner) {
+      const segments = chain?.split(".") ?? [];
+      if (chain && !segments.every((seg) => /^[A-Z]/.test(seg))) {
+        // `paths.app.club.getHref(id)`: the member function of the object its head names, recorded under its
+        // qualified name in the file that head is imported from — else in this file, else in the sub-project.
+        const head = segments[0]!;
+        const objectFile = importIndex.localFor(sc.filePath, head);
+        const cands = (functions.get(`${chain}.${name}`) ?? []).filter((f) =>
+          objectFile ? f.file === objectFile : f.file === sc.filePath || byPath.get(f.file)?.projectId === a.projectId,
+        );
+        const own = cands.filter((f) => f.file === sc.filePath);
+        if (own.length === 1) found = own[0]!;
+        else if (cands.length === 1) found = cands[0]!;
+      } else if (chain) {
+        const owner = segments[segments.length - 1]!;
         const cls = classes.get(owner) ?? [];
         const fn = cls.length === 1 ? cls[0]!.methods.find((x) => x.name === name) : undefined;
         if (fn) found = { file: cls[0]!.file, fn };

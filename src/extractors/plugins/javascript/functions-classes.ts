@@ -114,6 +114,12 @@ const RESULT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^()]*\))*$/;
 /** Wrappers that leave the value as it is: parentheses, `as T`, `satisfies T`, `x!`. */
 const VALUE_WRAPPERS: ReadonlySet<string> = new Set(["parenthesized_expression", "as_expression", "satisfies_expression", "non_null_expression"]);
 
+/** The value under its wrappers: `{ … } as const` is the object. */
+function unwrapValue(value: Node | null | undefined): Node | null {
+  while (value && VALUE_WRAPPERS.has(value.type)) value = value.namedChild(0);
+  return value ?? null;
+}
+
 /**
  * A returned value spelled as the linker reads an initializer (`localTypes[].from`): a call (`useClubApi()`), a
  * construction (`new ClubApi()`), a member read off a call (`usePublicClubApi(slug).clubs`) or, where `names`,
@@ -1894,12 +1900,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
                 line: decl.startPosition.row + 1,
                 endLine: decl.endPosition.row + 1,
               });
-            } else if (name && value?.type === "object" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
+            } else if (name && unwrapValue(value)?.type === "object" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
               // `const Profile = { get: (u) => requests.get(…) }` — an API client
               // or service written as a namespace object. Its members are what
               // callers invoke (`agent.Profile.get`), and the api-calls inside
-              // them need an enclosing symbol to belong to.
-              this.extractObjectMembers(name, value, functions, isExported, 0);
+              // them need an enclosing symbol to belong to. `{ … } as const`
+              // (a typed path table) is the same object.
+              this.extractObjectMembers(name, unwrapValue(value)!, functions, isExported, 0);
             } else if (name === "actions" && value?.type === "call_expression" && moduleLevel && decl.childForFieldName("name")?.type === "identifier") {
               // `const actions = defineActions({ async load({ commit }) {…} })` — a module's `actions`
               // object handed through a helper: the object passed to the call holds the actions,
@@ -2225,7 +2232,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     for (const member of obj.namedChildren) {
       if (member.type === "pair") {
         const key = objectKeyName(member.childForFieldName("key"));
-        const value = member.childForFieldName("value");
+        const value = unwrapValue(member.childForFieldName("value"));
         if (!key || !value) continue;
         const name = prefix ? `${prefix}.${key}` : key;
         if (value.type === "arrow_function" || value.type === "function_expression") {

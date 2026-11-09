@@ -80,8 +80,11 @@ export const reactRouterResolver: RouteResolver = {
       if (!a.routes.some((r) => r.kind === "frontend" && r.path.includes("${"))) continue;
       a.routes = a.routes.flatMap((r) => {
         if (r.kind !== "frontend" || !r.path.includes("${")) return [r];
-        const path = fill(r.path, a.filePath);
-        return path === null ? [] : [{ ...r, path }];
+        const filled = fill(r.path, a.filePath);
+        if (filled === null) return [];
+        // A hole that filled to "" (`path: paths.app.dashboard.path` under `/app`) leaves no trailing "/".
+        const path = filled.startsWith("/") ? filled.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1") : filled;
+        return [{ ...r, path }];
       });
     }
 

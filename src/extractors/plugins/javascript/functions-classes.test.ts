@@ -711,3 +711,23 @@ class Garage {
     expect(garage.methods.map((m) => [m.name, m.returnType])).toEqual([["open", "Promise<Car>"], ["close", null]]);
   });
 });
+
+describe("a namespace object written `as const`", () => {
+  it("records its members under their qualified names, with the URL each builds (real-repo FP: paths.ts)", async () => {
+    const SRC = `export const paths = {
+  app: {
+    club: {
+      path: 'clubs/:clubId',
+      getHref: (id: string) => \`/app/clubs/\${id}\`,
+    },
+  },
+} as const;
+export const links = { players: () => '/players' } satisfies Record<string, () => string>;`;
+    const tree = await parseSource(SRC, "typescript" as any, "x.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, SRC);
+    expect(fns.map((f) => [f.name, f.urlTemplate])).toEqual([
+      ["paths.app.club.getHref", "/app/clubs/{id}"],
+      ["links.players", "/players"],
+    ]);
+  });
+});

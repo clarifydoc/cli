@@ -194,7 +194,9 @@ function parentPath(obj: Node): string | null {
   // A pathless layout route (`{ element: <Layout />, children: [...] }`) adds
   // no segment; one at the top level is the root ("").
   if (!value) return parentPath(parent) ?? (isNested(parent) ? null : "");
-  const own = literalPath(value) ?? helperHole(value);
+  // A parent named by an imported constant (`path: paths.app.root.path`) composes as its
+  // `${…}` hole, which the project pass fills: `${paths.app.root.path}/clubs`.
+  const own = literalPath(value) ?? helperHole(value) ?? pathHole(value);
   if (own === null) return null;
   if (own.startsWith("/") || isHelperHole(own)) return own;
   const above = parentPath(parent);

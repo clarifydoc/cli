@@ -93,8 +93,9 @@ export function extractModuleValues(tree: Tree, sourceText: string): Record<stri
   let kept = 0;
   for (const [key, value] of raw) {
     const resolved = resolve(value, 0);
-    // An endpoint table: URL-shaped values, API versions (`'v1'`) that URLs splice in, and route paths a member names.
-    const routePath = PATH_MEMBER.test(key) && /^[\w\-:.*]+$/.test(resolved);
+    // An endpoint table: URL-shaped values, API versions (`'v1'`) that URLs splice in, and route paths a member
+    // names — `''` too, an index route's (`dashboard: { path: '' }` under `/app`).
+    const routePath = PATH_MEMBER.test(key) && /^[\w\-:.*]*$/.test(resolved);
     if ((!resolved.includes("/") && !/^v?\d+(?:\.\d+)*$/.test(resolved) && !routePath) || kept >= 200) continue;
     out[key] = resolved;
     kept++;

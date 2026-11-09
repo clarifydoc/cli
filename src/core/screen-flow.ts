@@ -89,7 +89,7 @@ export function buildScreenFlow(input: {
   };
   for (const s of screens) if (pageOf(s) || DIALOGISH.test(s.formType)) addScreen(s);
 
-  const { screenAtPath, writtenAs } = screenPathMatcher(screens, projectOf, related);
+  const { screenAtPath, writtenAs } = screenPathMatcher(screens, projectOf, related, outlets);
   const byName = new Map<string, ScreenInfo[]>();
   for (const s of screens) (byName.get(s.name) ?? byName.set(s.name, []).get(s.name)!).push(s);
   /** The one screen file among `xs` — two files answering to one target name neither. */
@@ -396,6 +396,8 @@ export function screenPathMatcher(
   screens: readonly ScreenInfo[],
   projectOf: (file: string) => string | undefined,
   related: (a: string | undefined, b: string | undefined) => boolean = () => true,
+  /** Files rendering their router's outlet: a layout route, which yields to the index page at its own path. */
+  frames: ReadonlySet<string> = new Set(),
 ): {
   screenAtPath(p: string, project: string | undefined): ScreenInfo | null;
   /** Every screen at the path (a nested route's layout and its index page alike), when they are of one sub-project. */
@@ -444,8 +446,17 @@ export function screenPathMatcher(
     const same = hits.filter((s) => projectOf(s.filePath) === project);
     return same.length > 0 ? same : hits.filter((s) => related(project, projectOf(s.filePath)));
   };
+  /** A screen with nothing on it — a SPA's mount document, an empty `<div id="root">` and a script — at a path a real screen is routed at too. */
+  const hollow = (s: ScreenInfo) => s.components.length === 0 && s.navigatesTo.length === 0;
   return {
-    screenAtPath: (p, project) => one(hitsAt(p, project)),
+    screenAtPath: (p, project) => {
+      const hits = hitsAt(p, project);
+      // `/app` is both the layout (`<Outlet />`) and its index page (`dashboard`): a link opens the page.
+      const pages = hits.filter((s) => !frames.has(s.filePath));
+      const shown = pages.length > 0 ? pages : hits;
+      const full = shown.filter((s) => !hollow(s));
+      return one(full.length > 0 ? full : shown);
+    },
     screensAtPath(p, project) {
       const hits = hitsAt(p, project);
       return new Set(hits.map((s) => projectOf(s.filePath))).size === 1 ? hits : [];

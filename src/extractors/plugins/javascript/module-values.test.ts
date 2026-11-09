@@ -59,4 +59,11 @@ export const REPORTS: Record<ReportKey, ReportConfig> = {
       "REPORTS.fixtures.detailsPath": "fixtures/upcoming",
     });
   });
+
+  it("keeps an index route's empty path (real-repo FP: paths.ts)", async () => {
+    expect(await valuesOf(`export const paths = { app: { root: { path: '/app' }, dashboard: { path: '' } } } as const;`)).toEqual({
+      "paths.app.root.path": "/app",
+      "paths.app.dashboard.path": "",
+    });
+  });
 });
