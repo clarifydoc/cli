@@ -20,6 +20,7 @@ export const csharpManifest: LanguagePluginManifest = {
   testCommand: dotnetTestCommand,
   projectCommands: dotnetProjectCommands,
   language: "csharp",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   // Blazor code-behind's `Nav.NavigateTo("orders")` and MAUI Shell's `GoToAsync("Basket")` name app-root routes.
   linksFromBase: true,

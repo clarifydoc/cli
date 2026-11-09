@@ -1045,7 +1045,7 @@ export type CallRecorder = (
   shortName: string,
   line: number,
   column: number,
-  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string },
+  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean },
 ) => void;
 
 /**
@@ -1055,6 +1055,9 @@ export type CallRecorder = (
  */
 export function callRecorder(calls: CallInfo[]): CallRecorder {
   const seen = new Set<string>();
+  // The call kept under each name: one whose receiver a later occurrence spells only in part (`receiverCut`) is
+  // marked, since the one record stands for both.
+  const kept = new Map<string, CallInfo>();
   return (name, shortName, line, column, receiver) => {
     // A pattern returns no name for a match that calls nothing (a CSS built-in).
     // A keyword names no call (`if (x)`); after a dot it is a member name (`cond.And(`, `p.then(`).
@@ -1063,27 +1066,36 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
     // of one name on types the name does not spell (`new.perform` on two classes a block constructs).
     const unspelled = receiver?.receiverType && !name.includes(receiver.receiverType) ? receiver.receiverType : undefined;
     const seenKey = receiver?.key ? `${name}\0${receiver.key}` : unspelled ? `${name}\0${unspelled}` : name;
-    if (seen.has(seenKey)) return;
+    if (seen.has(seenKey)) {
+      const first = receiver?.receiverCut ? kept.get(seenKey) : undefined;
+      if (first) first.receiverCut = true;
+      return;
+    }
     seen.add(seenKey);
+    const keep = (call: CallInfo): void => {
+      if (receiver?.receiverCut) call.receiverCut = true;
+      kept.set(seenKey, call);
+      calls.push(call);
+    };
     if (receiver?.key) {
-      calls.push({ name, kind: "internal", target: null, line, column, key: receiver.key });
+      keep({ name, kind: "internal", target: null, line, column, key: receiver.key });
       return;
     }
     if (receiver?.receiverType || receiver?.receiverQualifier) {
       const call: CallInfo = { name, kind: "internal", target: null, line, column };
       if (receiver.receiverType) call.receiverType = receiver.receiverType;
       if (receiver.receiverQualifier) call.receiverQualifier = receiver.receiverQualifier;
-      calls.push(call);
+      keep(call);
       return;
     }
     if (CALL_NOISE.has(shortName)) {
       // `repo.delete(id)` on a declared repository is a project call, not
       // stdlib noise — held back until the receiver's type is known (see
       // `holdNoiseCall`). A bare `delete(x)` / `print(x)` stays dropped.
-      if (name.includes(".")) holdNoiseCall(calls, { name, kind: "internal", target: null, line, column });
+      if (name.includes(".")) holdNoiseCall(calls, { name, kind: "internal", target: null, line, column, ...(receiver?.receiverCut ? { receiverCut: true as const } : {}) });
       return;
     }
-    calls.push({ name, kind: "internal", target: null, line, column });
+    keep({ name, kind: "internal", target: null, line, column });
   };
 }
 
@@ -1136,7 +1148,9 @@ export function extractCallsFromBody(
       if (m.index > 0 && /[.:$]/.test(line[m.index - 1]!) && matched.some(([a, b]) => m!.index > a && m!.index < b)) continue;
       const name = m[1].replace(/[?!]\./, ".");
       const shortName = name.includes(".") ? name.split(".").pop()! : name;
-      add(name, shortName, i + 1, m.index + offset);
+      // `club.league.relegate(` read from `league`: the receiver goes on before the name the match starts with.
+      const cut = name.includes(".") && m.index > 0 && line[m.index - 1] === ".";
+      add(name, shortName, i + 1, m.index + offset, cut ? { receiverCut: true } : undefined);
     }
   };
 

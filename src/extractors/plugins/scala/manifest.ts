@@ -11,6 +11,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const scalaManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "scala",
+  callPathsFromHead: true,
   family: "jvm",
   packageManagers: [sbtPackageManager],
   packageEcosystems: ["maven"],

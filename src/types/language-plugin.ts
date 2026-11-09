@@ -1551,6 +1551,14 @@ export interface LanguagePluginManifest {
    */
   explicitSelfMembers?: boolean;
   /**
+   * Every member call is named by its receiver from the head the source writes (`club.league.relegate`,
+   * `items[0].league.relegate`, `this.club.x`), or says it is not (`CallInfo.receiverCut`): a name's first part is
+   * then the receiver's own head, and a field of the caller's class or a module binding of that name types the
+   * receiver for the name guesses' veto, as a local or a parameter does. Unset where a front end names a path by
+   * its last names without saying so (the brace scans' `league.relegate` for `club.league.relegate(`).
+   */
+  callPathsFromHead?: boolean;
+  /**
    * Inside a method, a bare call names the enclosing class's member (or a base's) before a free function
    * of the same name in the file: the implicit receiver's scope comes first (Kotlin). Outside the class
    * body the free function stays. Unset where a bare name in a method is the free function (Rust,

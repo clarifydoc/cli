@@ -138,3 +138,20 @@ describe("ruby bare calls of the class's own methods", () => {
     expect(own.sort()).toEqual(["create_contract@5", "find_or_sign_player@4", "room?@3"]);
   });
 });
+
+describe("ruby calls whose receiver the name spells only in part", () => {
+  const cut = (src: string) => {
+    const lines = src.split("\n");
+    return extractCallsFromBody(lines, 0, lines.length, rubySpec.lineCommentPrefixes, rubySpec.callPatterns)
+      .filter((c) => c.receiverCut).map((c) => c.name);
+  };
+
+  it("marks a name read past something no name spells, and never a path named from its head", () => {
+    expect(cut("    { club: 1 }.league.relegate(1)")).toEqual(["league.relegate"]);
+    expect(cut("    club.league.relegate(1)\n    @club.league.relegate(2)")).toEqual([]);
+  });
+
+  it("marks the one record of a name when a later occurrence is cut", () => {
+    expect(cut("    league.relegate(1)\n    { club: 1 }.league.relegate(2)")).toEqual(["league.relegate"]);
+  });
+});

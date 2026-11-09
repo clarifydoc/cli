@@ -16,12 +16,13 @@ export type CalleeStep =
 
 type IdStep = Extract<CalleeStep, { kind: "id" }>;
 
-const named = (name: string, leafName: string, at: IdStep, receiverType?: string): PatternCallName => ({
+const named = (name: string, leafName: string, at: IdStep, receiverType?: string, receiverCut?: boolean): PatternCallName => ({
   name,
   leafName,
   line: at.line,
   column: at.column,
   ...(receiverType ? { receiverType } : {}),
+  ...(receiverCut ? { receiverCut: true as const } : {}),
 });
 
 /** The steps of a call's own callee: a single capitalized name builds that type. */
@@ -83,7 +84,8 @@ const OWN_HEADS: ReadonlySet<string> = new Set(["self", "this", "super"]);
 /**
  * `nameCall` with `paths`: the receiver spelled from its head — names joined by dots, a call's result as its
  * callee's name and `()` (`repo.find().league.relegate`, `club.league.table().first`). A receiver no name spells
- * (`items[0].league.relegate(`, a construction's field) keeps the name before the method alone, as before.
+ * (`items[0].league.relegate(`, a construction's field) keeps the name before the method alone, as before, and
+ * says so (`receiverCut`): `league` there is no name the caller binds.
  */
 function namePathCall(steps: readonly CalleeStep[], depth: number): PatternCallName | null {
   const leaf = steps.at(-1);
@@ -97,7 +99,7 @@ function namePathCall(steps: readonly CalleeStep[], depth: number): PatternCallN
   }
   const spelled = receiverPath(receiver, depth, 0);
   if (spelled) return named(`${spelled.text}.${leaf.name}`, leaf.name, spelled.head);
-  return prev.kind === "id" ? named(`${prev.name}.${leaf.name}`, leaf.name, prev) : null;
+  return prev.kind === "id" ? named(`${prev.name}.${leaf.name}`, leaf.name, prev, undefined, steps.length > 2) : null;
 }
 
 /**

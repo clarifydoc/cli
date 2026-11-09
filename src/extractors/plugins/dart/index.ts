@@ -28,6 +28,7 @@ import { dartRequestBody } from "./request-body.js";
 import { goRoutes, materialRoutes } from "./go-router.js";
 import { extractDartImports, extractDartReExports } from "./imports.js";
 import { applyDartExtensionReceivers } from "./extensions.js";
+import { dartModuleBindings } from "./module-bindings.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
@@ -1148,6 +1149,7 @@ export const dartSpec: RegexLangSpec = {
 
   parseParam: parseDartParam,
   parseReturnType: parseDartReturnType,
+  extractModuleBindings: (lines) => dartModuleBindings(lines),
 
   /**
    * Fields: `final int id;`, `String? name;`, `late List<String> tags;`,

@@ -1108,6 +1108,14 @@ export interface CallInfo {
   /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */
   receiverQualifier?: string;
   /**
+   * The name spells only the receiver's last names: it goes on to the left through something no name spells
+   * (`items[0].league.relegate(`, `{…}.league.relegate(` named `league.relegate`), so its first name is not the
+   * receiver's head — never the caller's field or module binding of that name. Set by the regex scan's baseline
+   * and the tree-sitter front ends that name a path from its head; the linker reads it in the languages whose
+   * manifest says their names spell a receiver from its head (`callPathsFromHead`).
+   */
+  receiverCut?: true;
+  /**
    * The string a call dispatches by, when the callee routes on a name rather
    * than calling it (`store.dispatch('contacts/get')`). A dispatch resolver
    * joins it to the handler registered under that name. Set by the plugin's

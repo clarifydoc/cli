@@ -138,6 +138,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   projectCommands: jsProjectCommands,
   language: "typescript",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
@@ -180,6 +181,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   routerOutlet: JS_ROUTER_OUTLET,
   testCommand: jsTestCommand,
   language: "javascript",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.

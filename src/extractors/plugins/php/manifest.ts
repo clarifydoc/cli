@@ -18,6 +18,7 @@ export const phpManifest: LanguagePluginManifest = {
   testCommand: phpTestCommand,
   projectCommands: phpProjectCommands,
   language: "php",
+  callPathsFromHead: true,
   family: "php",
   // A userland function ignores arguments past its parameters; too few is the error.
   callArity: { extraAllowed: true },

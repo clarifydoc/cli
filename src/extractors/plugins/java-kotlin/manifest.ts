@@ -93,6 +93,7 @@ export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -123,6 +124,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   testCommand: jvmTestCommand,
   language: "kotlin",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "jvm",
   // A package's top-level functions need no import in its other files.

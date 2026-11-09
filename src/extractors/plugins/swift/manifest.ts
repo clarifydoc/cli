@@ -13,6 +13,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const swiftManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "swift",
+  callPathsFromHead: true,
   family: "swift",
   // One module's files share their top-level scope; a directory is the closest evidence.
   directoryScope: true,

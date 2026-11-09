@@ -20,6 +20,7 @@ export const rubyManifest: LanguagePluginManifest = {
   testCommand: rubyTestCommand,
   projectCommands: rubyProjectCommands,
   language: "ruby",
+  callPathsFromHead: true,
   family: "ruby",
   // `Foo.new(…)` runs `initialize`.
   constructorCalls: ["new"],

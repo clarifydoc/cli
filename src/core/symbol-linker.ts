@@ -6238,21 +6238,24 @@ function receiverTypeRefuses(
   if (call.receiverType || call.receiverQualifier) return false;
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return false;
-  // Only a head the callable itself binds — a local (typed as written or by its initializer) or a parameter —
-  // or its own instance's member chain (`this.club.x`). A bare name read as some field or module binding is a
-  // weak typing, and where a call's name keeps only its last two segments (`Club.shared.load()` read as
-  // `shared.load`) it may not be the receiver at all.
+  // A head the callable itself binds — a local (typed as written or by its initializer) or a parameter —, its
+  // own instance's member chain (`this.club.x`), or, where the name spells the receiver from its head
+  // (`callPathsFromHead`, the call not `receiverCut`), a typed field of the caller's class or a module binding the
+  // name reaches. Where a name keeps only its last segments (`items[0].league.relegate(` read as
+  // `league.relegate`), a field of that name is not the receiver at all.
   const head = receiver[0]!;
   if (head.ctor || head.call) return false;
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   const key = nameKey(analysis.language, head.name);
-  const bound = SELF_HEADS.has(head.name)
-    ? receiver.length >= 2
-    : !!callable && (callable.localTypes?.some((l) => nameKey(analysis.language, l.name) === key) || callable.params.some((p) => nameKey(analysis.language, p.name) === key));
-  if (!bound) return false;
-  if (call.boundLocally && callable?.params.some((p) => p.name === head.name)) return false;
   const dot = sourceSymbol.indexOf(".");
   const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+  const bound = SELF_HEADS.has(head.name)
+    ? receiver.length >= 2
+    : (!!callable && (callable.localTypes?.some((l) => nameKey(analysis.language, l.name) === key) || callable.params.some((p) => nameKey(analysis.language, p.name) === key))) ||
+      (!!pluginFor(analysis.language)?.callPathsFromHead && !call.receiverCut && !callable?.untypedLocals?.includes(head.name) &&
+        !!scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, 0));
+  if (!bound) return false;
+  if (call.boundLocally && callable?.params.some((p) => p.name === head.name)) return false;
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
   if (!point?.typeFile || !point.typeName || point.qualifier) return false;
   const typeName = declaredTypeName(ctx, point.typeFile, point.typeName);

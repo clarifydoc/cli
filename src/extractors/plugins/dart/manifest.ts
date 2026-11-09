@@ -13,6 +13,7 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const dartManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "dart",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "dart",
   packageManagers: [pubPackageManager],

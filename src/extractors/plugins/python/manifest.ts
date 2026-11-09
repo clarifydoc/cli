@@ -25,6 +25,7 @@ export const pythonManifest: LanguagePluginManifest = {
   projectCommands: pythonProjectCommands,
   testSetupRuns: djangoTestSetupRuns,
   language: "python",
+  callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   tupleElementsOf(returnType) {
     const m = /^(?:typing\.)?(?:tuple|Tuple)\[([\s\S]+)\]$/.exec(returnType.trim());

@@ -25,6 +25,8 @@ export interface PatternCallName {
   receiverType?: string;
   /** The registration a container lookup names (`Container.shared.repo()` → `repo`), as a call pattern states it. */
   receiverQualifier?: string;
+  /** The name spells only the receiver's last names (`CallInfo.receiverCut`): `league.relegate` for `items[0].league.relegate(`. */
+  receiverCut?: true;
   /** A bare name the function binds itself — a parameter or a local it calls (`CallInfo.boundLocally`). */
   boundLocally?: true;
   /** The name is handed on, not called here (`CallInfo.passed`): Qt's `&ClubWindow::saveClub` slot argument. */
@@ -133,8 +135,12 @@ export function recordPatternCalls(
       for (const b of bound.slice(at)) calls.push({ ...b, boundLocally: true });
       continue;
     }
-    const receiver = c.receiverType || c.receiverQualifier
-      ? { ...(c.receiverType ? { receiverType: c.receiverType } : {}), ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}) }
+    const receiver = c.receiverType || c.receiverQualifier || c.receiverCut
+      ? {
+        ...(c.receiverType ? { receiverType: c.receiverType } : {}),
+        ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}),
+        ...(c.receiverCut ? { receiverCut: true } : {}),
+      }
       : undefined;
     add(c.name, c.leafName, c.line, c.column, receiver);
   }
