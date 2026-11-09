@@ -19,6 +19,7 @@ import { GENERATED_CLIENT_MARKER, generatedClientCall } from "./generated-client
 import { joinedTableRows, tableFrom } from "../shared/sql-string-sources.js";
 import { sqlVerbAccess } from "../shared/db-access.js";
 import { filterOrigins } from "./arg-origins.js";
+import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
@@ -495,6 +496,8 @@ interface MqEvidence {
   phoenixChannels: Map<string, string | null> | null;
   /** The file imports NestJS's event emitter (`@nestjs/event-emitter`). */
   nestEvents: boolean;
+  /** The file imports the Dapr SDK (`@dapr/dapr`). */
+  dapr: boolean;
   /** Receivers the file creates as an in-process emitter (`new EventEmitter()`, `mitt()`), or `this` in a class extending one. */
   emitters: Set<string>;
   /** The file imports a Redis client (`redis`, `ioredis`). */
@@ -572,6 +575,7 @@ function mqEvidence(src: string): MqEvidence {
     emitters: emitterReceivers(src),
     redis: /(?:from\s*|require\(\s*)['"](?:redis|ioredis|@redis\/client)['"]/.test(src),
     mqtt: /(?:from\s*|require\(\s*)['"](?:mqtt|async-mqtt|precompiled-mqtt)['"]/.test(src),
+    dapr: /(?:from\s*|require\(\s*)['"]@dapr\/dapr['"]/.test(src),
   };
 }
 
@@ -1704,6 +1708,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const mqArgs = node.childForFieldName("arguments")?.namedChildren ?? [];
           const line = node.startPosition.row + 1;
           const channelish = MQ_CHANNEL_RECEIVER_RE.test(recv);
+
+          // Dapr SDK: `client.pubsub.publish("pubsub", "club-created", data)` publishes on the topic;
+          // `server.pubsub.subscribe("pubsub", "club-created", handler)` consumes it.
+          if ((fnName === "publish" || fnName === "subscribe") && /(?:^|\.)pubsub$/.test(recv) && (this.mq ??= mqEvidence(this.sourceText)).dapr) {
+            const topic = literalString(mqArgs[1] ?? null);
+            if (topic && DAPR_TOPIC_RE.test(topic)) {
+              sources.push(this.ds(daprRow(fnName === "publish", fnName, topic, line)));
+              return;
+            }
+          }
 
           // amqplib: ch.sendToQueue("tasks", buf) / ch.publish("ex", "key", buf)
           // / ch.consume("tasks", handler).

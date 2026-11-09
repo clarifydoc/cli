@@ -7,6 +7,7 @@ import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-
 import { pythonResponseReads } from "./response-reads.js";
 import { pythonWhereFields } from "./arg-origins.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -58,6 +59,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private boto3 = false;
   private redis = false;
   private mqtt = false;
+  /** The file imports the Dapr SDK (`dapr.clients`, `dapr.ext.grpc`, `dapr.ext.fastapi`). */
+  private dapr = false;
   /** The file names urllib: a bare `urlopen(…)` is `urllib.request.urlopen`. */
   private urllib = false;
 
@@ -68,6 +71,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.constants = /^\s*[A-Za-z_]\w*\s*(?::[^=\n]+)?=\s*[rbu]*['"]/m.test(sourceText) ? stringConstants((tree as { rootNode: Node }).rootNode) : new Map();
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
+    this.dapr = /^\s*(?:from\s+dapr\b|import\s+dapr\b)/m.test(sourceText);
     this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
     this.mqtt = /^\s*(?:import\s+paho\.mqtt|from\s+paho(?:\.mqtt)?(?:\.\w+)*\s+import|import\s+(?:asyncio_mqtt|aiomqtt)|from\s+(?:asyncio_mqtt|aiomqtt)\s+import)\b/m.test(sourceText);
     this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
@@ -217,6 +221,19 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           const task = pyArg(node, "name", 0);
           if (task && /^[\w.]+$/.test(task)) {
             sources.push(this.ds({ kind: "queue-publish", name: "Celery: send_task", target: task.split(".").pop()!, line: node.startPosition.row + 1 }));
+            return;
+          }
+        }
+        // Dapr SDK: `DaprClient().publish_event(pubsub_name=…, topic_name="club-created", data=…)` publishes;
+        // `@app.subscribe(pubsub_name=…, topic=…)` (ext.grpc) / `@dapr_app.subscribe(pubsub=…, topic=…)` (ext.fastapi)
+        // makes the decorated handler consume. Literal topics only.
+        if (this.dapr && fnName.includes(".") && (leaf === "publish_event" || leaf === "subscribe")) {
+          const publish = leaf === "publish_event";
+          const topic = pyArg(node, publish ? "topic_name" : "topic", 1);
+          if (topic && DAPR_TOPIC_RE.test(this.constantOr(topic) ?? "") && (publish || node.parent?.type === "decorator")) {
+            const handler = node.parent?.parent?.type === "decorated_definition" ? node.parent.parent.childForFieldName("definition") : null;
+            const row = daprRow(publish, leaf, this.constantOr(topic)!, (handler ?? node).startPosition.row + 1);
+            sources.push(this.ds({ kind: row.kind, name: row.name, target: row.target, entity: row.target ?? undefined, line: row.line }));
             return;
           }
         }

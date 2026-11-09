@@ -1266,3 +1266,46 @@ class A {
 const val CARDS = "league/cards"`, "kotlin")).toEqual(["queue-consume league/scores", "queue-consume league/cards", "queue-publish league/scores", "queue-publish null (Topics.CARDS)"]);
   });
 });
+
+describe("Java and Kotlin Dapr pub/sub", () => {
+  async function rows(src: string, lang: Language) {
+    const tree = await parseSource(src, lang as any, lang === "kotlin" ? "Clubs.kt" : "Clubs.java");
+    return new JavaKotlinDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => `${d.kind} ${d.name} ${d.target} ${d.entity} ${d.line}`);
+  }
+  it("reads publishEvent and a @Topic handler", async () => {
+    expect(await rows(`package league;
+import io.dapr.Topic;
+import io.dapr.client.DaprClient;
+class Clubs {
+  private static final String PLAYER_TOPIC = "player-signed";
+  void create(DaprClient daprClient, Club club) {
+    daprClient.publishEvent("pubsub", "club-created", club).block();
+    daprClient.publishEvent("pubsub", PLAYER_TOPIC, club).block();
+  }
+  @Topic(name = "club-created", pubsubName = "pubsub")
+  @PostMapping("/clubs")
+  public void onClub(Club club) {}
+}`, "java")).toEqual([
+      "queue-publish Dapr: publishEvent club-created club-created 7",
+      "queue-publish Dapr: publishEvent player-signed player-signed 8",
+      "queue-consume Dapr: Topic club-created club-created 10",
+    ]);
+  });
+  it("reads publishEvent in Kotlin", async () => {
+    expect(await rows(`package league
+import io.dapr.client.DaprClient
+class Clubs(val daprClient: DaprClient) {
+  fun create(club: Club) {
+    daprClient.publishEvent("pubsub", "club-created", club).block()
+  }
+}`, "kotlin")).toEqual(["queue-publish Dapr: publishEvent club-created club-created 5"]);
+  });
+  it("reads nothing without the Dapr SDK", async () => {
+    expect(await rows(`package league;
+class Garages {
+  @Topic(name = "car-parked")
+  void on() {}
+  void f(Bus garageBus) { garageBus.publishEvent("pubsub", "car-parked", car); }
+}`, "java")).toEqual([]);
+  });
+});

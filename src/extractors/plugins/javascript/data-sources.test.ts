@@ -1571,3 +1571,27 @@ describe("AdonisJS Lucid model statics", () => {
     ]);
   });
 });
+
+describe("JS Dapr pub/sub", () => {
+  async function rows(src: string) {
+    const tree = await parseSource(src, "typescript" as any, "clubs.ts");
+    return new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => `${d.kind} ${d.name} ${d.target} ${d.entity} ${d.line}`);
+  }
+  it("reads pubsub.publish and pubsub.subscribe", async () => {
+    expect(await rows(`import { DaprClient, DaprServer } from "@dapr/dapr";
+const client = new DaprClient();
+const server = new DaprServer();
+export async function create(club) {
+  await client.pubsub.publish("pubsub", "club-created", club);
+}
+export async function serve() {
+  await server.pubsub.subscribe("pubsub", "car-parked", async (car) => {});
+}`)).toEqual([
+      "queue-publish Dapr: publish club-created club-created 5",
+      "queue-consume Dapr: subscribe car-parked car-parked 8",
+    ]);
+  });
+  it("reads nothing without the SDK imported", async () => {
+    expect(await rows(`export async function f(garage) { await garage.pubsub.publish("pubsub", "car-parked", 1); }`)).toEqual([]);
+  });
+});

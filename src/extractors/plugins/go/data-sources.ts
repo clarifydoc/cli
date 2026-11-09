@@ -5,6 +5,7 @@ import { goFunctions, goRequestFactoryRows, servedInProcess } from "./path-arg-c
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
+import { daprRow } from "../shared/dapr-pubsub.js";
 
 
 /** A destination named by a constant or variable: `Topic`, `kafka.Topic`. */
@@ -176,6 +177,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   let constants: Map<string, string> | undefined;
   let kvClient: boolean | undefined;
   let mqttPaho: boolean | undefined;
+  const dapr = lines.some((l) => /"github\.com\/dapr\/go-sdk\b/.test(l));
   const awsMessaging = lines.some((l) => /"github\.com\/aws\/aws-sdk-go-v2\/service\/(?:sqs|sns)"/.test(l));
   const hasResty = lines.some((l) => /go-resty|resty\.New/.test(l));
   let functions: ReturnType<typeof goFunctions> | undefined;
@@ -356,6 +358,30 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       if (v === null && a !== undefined && NAME_REF_RE.test(a.trim())) ref = a.trim();
       return v;
     };
+    // Dapr go-sdk: `client.PublishEvent(ctx, "pubsub", "club-created", data)` publishes on the topic (third
+    // argument); `s.AddTopicEventHandler(&common.Subscription{PubsubName: …, Topic: "club-created", Route: …}, h)` consumes it.
+    if (dapr) {
+      const publish = /\b\w+\.\s*(PublishEvent|PublishEventfromCustomContent)\s*\(/.exec(line);
+      if (publish) {
+        const topic = value(callArgs(lines, i, publish.index + publish[0].length - 1)[2]);
+        if (topic) {
+          sources.push(daprRow(true, publish[1]!, topic, lineNo));
+          continue;
+        }
+      }
+      const subscribe = /\bAddTopicEventHandler\s*\(/.exec(line);
+      if (subscribe) {
+        let topic: string | null = null;
+        for (let k = i; k < Math.min(lines.length, i + 8) && topic === null; k++) {
+          const t = /\bTopic\s*:\s*(?:"([^"]+)"|([A-Za-z_]\w*))/.exec(lines[k]!);
+          if (t) topic = t[1] ?? value(t[2]);
+        }
+        if (topic) {
+          sources.push(daprRow(false, "AddTopicEventHandler", topic, lineNo));
+          continue;
+        }
+      }
+    }
     // AWS SDK v2: the queue or topic the call's `sqs.`/`sns.` input struct names, whatever the client is called.
     if (awsMessaging) {
       const aws = awsMessagingCall(lines, i, value);

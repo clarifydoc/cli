@@ -6,6 +6,7 @@ import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-
 import type { CallBaseRef, DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
+import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 import { kotlinNameAndType } from "./functions-classes.js";
 
 /**
@@ -701,6 +702,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private fieldTypes = new Map<string, string>();
   /** The file uses the plain Kafka client (`KafkaConsumer`, `KafkaProducer`). */
   private isKafkaClientFile = false;
+  /** The file imports the Dapr SDK (`io.dapr.client`, `io.dapr.Topic`). */
+  private isDaprFile = false;
   private topicDefaults = new Map<string, string>();
   /** Fields and parameters `@Value` fills: the configuration key each holds. */
   private configFields = new Map<string, { key: string; fallback?: string }>();
@@ -759,6 +762,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.feignBase = this.isFeignFile ? feignBaseRef(feignArgs) : null;
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
+    this.isDaprFile = /\bio\.dapr\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
@@ -877,6 +881,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           target: configKey ?? null,
           line: node.startPosition.row + 1,
         }));
+      }
+
+      // Dapr's `@Topic(name = "club-created", pubsubName = "pubsub")` on a handler: it consumes the topic.
+      if (this.isDaprFile && /^@(?:io\.dapr\.)?Topic\s*\(/.test(text)) {
+        const raw = /\bname\s*=\s*("(?:[^"\\]|\\.)*"|[A-Za-z_][\w.]*)/.exec(text)?.[1];
+        const topic = raw === undefined ? null : raw.startsWith('"') ? raw.slice(1, -1) : this.stringConsts.get(raw.split(".").pop()!) ?? null;
+        if (topic && DAPR_TOPIC_RE.test(topic)) sources.push(this.ds(daprRow(false, "Topic", topic, node.startPosition.row + 1)));
       }
 
       // Listener annotations mark the consume side of a message flow:
@@ -1286,6 +1297,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         sources.push(...joinedTableRows(constant, own, method, line, { lastPart: true }).filter((r) => r.target?.toLowerCase() !== entity.toLowerCase()));
       }
       return;
+    }
+
+    // Dapr: `daprClient.publishEvent("pubsub", "club-created", data)` publishes on the topic (second argument).
+    if (this.isDaprFile && method === "publishEvent" && receiver) {
+      const args = callArguments(node);
+      const arg = args[1];
+      const topic = args.length >= 3 && arg ? (stringArgText(arg) ?? constantText(arg, this.stringConsts)) : null;
+      if (topic && DAPR_TOPIC_RE.test(topic)) {
+        sources.push(this.ds(daprRow(true, method, topic, line)));
+        return;
+      }
     }
 
     // 4b) The plain Kafka client: `consumer.subscribe(listOf(topic))` (in a

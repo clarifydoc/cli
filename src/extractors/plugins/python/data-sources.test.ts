@@ -772,3 +772,36 @@ describe("Python MQTT clients", () => {
     expect(await rows([...head, "c.subscribe(topic)", 'c.subscribe([("league/a", 0), (build(x), 1)])', 'c.publish(f"league/{id}", "x")'].join("\n"))).toEqual([]);
   });
 });
+
+describe("Python Dapr pub/sub", () => {
+  async function rows(src: string) {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue-")).map((d) => [d.kind, d.name, d.target, d.entity, d.line]);
+  }
+  it("reads publish_event and both subscribe decorators", async () => {
+    expect(await rows([
+      "from dapr.clients import DaprClient",
+      "from dapr.ext.grpc import App",
+      "from dapr.ext.fastapi import DaprApp",
+      "TOPIC = 'player-signed'",
+      "def create(club):",
+      "    with DaprClient() as d:",
+      "        d.publish_event(pubsub_name='pubsub', topic_name='club-created', data=club)",
+      "        d.publish_event('pubsub', TOPIC, club)",
+      "@app.subscribe(pubsub_name='pubsub', topic='club-created')",
+      "def on_club(event):",
+      "    pass",
+      "@dapr_app.subscribe(pubsub='pubsub', topic='car-parked')",
+      "def on_car(event):",
+      "    pass",
+    ].join("\n"))).toEqual([
+      ["queue-publish", "Dapr: publish_event", "club-created", "club-created", 7],
+      ["queue-publish", "Dapr: publish_event", "player-signed", "player-signed", 8],
+      ["queue-consume", "Dapr: subscribe", "club-created", "club-created", 10],
+      ["queue-consume", "Dapr: subscribe", "car-parked", "car-parked", 13],
+    ]);
+  });
+  it("reads nothing without the Dapr SDK imported", async () => {
+    expect(await rows(["def create(garage):", "    garage.publish_event(pubsub_name='p', topic_name='car-parked', data=1)"].join("\n"))).toEqual([]);
+  });
+});

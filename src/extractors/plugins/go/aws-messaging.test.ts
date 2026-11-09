@@ -58,3 +58,32 @@ func a() {
     ]);
   });
 });
+
+describe("Go Dapr pub/sub (go-sdk)", () => {
+  const dapr = (src: string) => extractGoDataSources(src.split("\n")).filter((d) => d.kind.startsWith("queue")).map((d) => `${d.kind} ${d.name} ${d.target} ${d.entity} ${d.line}`);
+  it("reads PublishEvent and AddTopicEventHandler", () => {
+    expect(dapr(`import (
+	dapr "github.com/dapr/go-sdk/client"
+	"github.com/dapr/go-sdk/service/common"
+)
+const playerTopic = "player-signed"
+func create(ctx context.Context, client dapr.Client) {
+	client.PublishEvent(ctx, "pubsub", "club-created", data)
+	client.PublishEvent(ctx, "pubsub", playerTopic, data)
+}
+func serve(s common.Service) {
+	s.AddTopicEventHandler(&common.Subscription{
+		PubsubName: "pubsub",
+		Topic:      "club-created",
+		Route:      "/clubs",
+	}, onClub)
+}`)).toEqual([
+      "queue-publish Dapr: PublishEvent club-created club-created 7",
+      "queue-publish Dapr: PublishEvent player-signed player-signed 8",
+      "queue-consume Dapr: AddTopicEventHandler club-created club-created 11",
+    ]);
+  });
+  it("reads nothing without the go-sdk imported", () => {
+    expect(dapr(`func f() { garage.PublishEvent(ctx, "pubsub", "car-parked", data) }`)).toEqual([]);
+  });
+});
