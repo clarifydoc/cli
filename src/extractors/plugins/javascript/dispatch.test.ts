@@ -663,3 +663,30 @@ describe("a dialog closing itself runs the opener's result handler", () => {
     expect(new JsComponentEmitResolver().resolve([card, opener])).toEqual([]);
   });
 });
+
+describe("JsComponentEmitResolver — declared emits", () => {
+  const listener = (event: string, handler: string) => fa("src/pages/Squad.vue", {
+    functions: [fn("onSave", 20, 30), fn("onCancel", 31, 35)],
+    interactiveElements: [{ element: "custom", event, handler, line: 4, component: "SaveDialog" }],
+    subComponents: [{ name: "SaveDialog", importSource: "../components/SaveDialog.vue", props: [], line: 4 }],
+  });
+  const emitter = (declaredEmits?: string[]) => fa("src/components/SaveDialog.vue", {
+    functions: [fn("confirm", 10, 15)],
+    events: [{ name: "save", params: [], line: 12 }],
+    ...(declaredEmits ? { declaredEmits } : {}),
+  });
+
+  it("states the link when the child declares the event the parent listens to", () => {
+    const [link] = new JsComponentEmitResolver().resolve([listener("@save", "onSave"), emitter(["save"])]);
+    expect(link).toMatchObject({ callName: "emit:save", targetSymbol: "onSave", confidence: "EXTRACTED" });
+  });
+
+  it("does not link a listener for an event the child's declaration leaves out", () => {
+    expect(new JsComponentEmitResolver().resolve([listener("@save", "onSave"), emitter(["cancel"])])).toEqual([]);
+  });
+
+  it("stays INFERRED where the child declares nothing", () => {
+    const [link] = new JsComponentEmitResolver().resolve([listener("@save", "onSave"), emitter()]);
+    expect(link!.confidence).toBe("INFERRED");
+  });
+});

@@ -46,6 +46,8 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   busEvents: "optional",
   componentSubscriptions: "optional",
   dynamicEmits: "optional",
+  declaredProps: "optional",
+  declaredEmits: "optional",
   eventLiterals: "optional",
   eventLiteralsByTag: "optional",
   contextValues: "optional",

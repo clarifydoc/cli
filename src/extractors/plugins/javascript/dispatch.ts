@@ -135,6 +135,9 @@ export class JsComponentEmitResolver implements DispatchResolver {
       const child = byPath.get(childFile)!;
       for (const [key, list] of byEvent) {
         // Declared or emitted in the child's script, or emitted straight from its markup (`@click="$emit('delete')"`).
+        // A child that declares its emits states which events it has: one it leaves out is a native listener.
+        const declared = child.declaredEmits;
+        if (declared && !declared.some((n) => tagKey(n) === key)) continue;
         const markup = markupEmit(child, list[0]!.event);
         const sites = (child.events ?? []).filter((e) => tagKey(e.name) === key);
         // A child that emits by data (`$emit(btn.event)`) emits the events a parent states for it (`event: 'delete'`).
@@ -144,6 +147,8 @@ export class JsComponentEmitResolver implements DispatchResolver {
         if (targets.length === 0) continue;
         // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
         // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
+        // The child declares the event and each parent binds it to a handler directly: both sides state it.
+        const stated = !dynamic && !!declared && list.every((x) => !REEMIT.test(x.handler.trim()) && [...x.handler.matchAll(EMIT_ANYWHERE)].length === 0);
         const callName = `emit:${markup?.name ?? sites[0]?.name ?? list[0]!.event}`;
         // Anchor the child side at each function that emits it; a template-inline or
         // setup-level emit has no span — a synthetic `<template>` symbol keeps the edge
@@ -173,7 +178,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
               targetFile: t.file,
               targetSymbol: t.span.symbol,
               targetLine: t.span.line,
-              confidence: "INFERRED",
+              confidence: stated ? "EXTRACTED" : "INFERRED",
             });
           }
         }

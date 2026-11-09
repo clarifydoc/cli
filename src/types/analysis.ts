@@ -419,6 +419,16 @@ export interface FileAnalysis {
    * resolver joins them to the bindings of a parent that states the name (`eventLiterals`).
    */
   dynamicEmits?: number[];
+  /**
+   * The props a Vue component declares (`defineProps([...])`, `defineProps({...})`, `defineProps<{...}>()`,
+   * `withDefaults(…)`, the Options API `props:` key), by name as written. Absent where it declares none.
+   */
+  declaredProps?: string[];
+  /**
+   * The events a Vue component declares it emits (`defineEmits`, the Options API `emits:` key). Present, it is
+   * the whole list: a parent's listener for an event it leaves out is a native one. Absent where nothing is declared.
+   */
+  declaredEmits?: string[];
   /** The strings a Vue file gives an `event` key (`{ icon, event: 'delete' }`): the events it states for a child that emits by data. */
   eventLiterals?: string[];
   /** The `event` strings a Vue template's bindings give each component tag (`<ButtonGroup :buttons="buttons">`, through the script declaration it names): a child emitting by data is joined only to what its own tag states. */
@@ -2858,6 +2868,8 @@ export interface SubComponentInfo {
   name: string;
   importSource: string | null;
   props: string[];
+  /** The events the tag listens to (Vue `@save` / `v-on:save`), by name as written — not props. */
+  listeners?: string[];
   line: number;
   /**
    * Registered app-wide by this file rather than used in it — Vue's
@@ -2994,6 +3006,8 @@ export interface CustomElementDef {
 export interface TemplateComponent {
   name: string;
   props: string[];
+  /** The events the tag listens to (Vue `@save` / `v-on:save`), kept out of `props`. */
+  listeners?: string[];
   line: number;
 }
 

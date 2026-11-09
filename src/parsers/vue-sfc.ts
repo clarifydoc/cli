@@ -110,13 +110,23 @@ const VUE_DIALECT: TemplateDialect = {
   hasBinding: (attrs) =>
     /@[a-zA-Z]/.test(attrs) || /\bv-on:/.test(attrs) || /\bv-model\b/.test(attrs),
   extractProps: extractVueProps,
+  extractListeners: extractVueListeners,
 };
+
+/** A `@save` / `v-on:save` attribute: group 1 is the event, modifiers dropped. */
+const LISTENER_RE = /(?:^|\s)(?:@|v-on:)([a-zA-Z][\w:-]*)(?:\.[\w.-]+)?\s*=/g;
+
+/** The events a tag listens to, in order, once each. */
+function extractVueListeners(attrs: string): string[] {
+  return [...new Set([...attrs.matchAll(LISTENER_RE)].map((m) => m[1]!))];
+}
 
 /** Extract prop names from Vue template attributes */
 function extractVueProps(attrs: string): string[] {
   const props: string[] = [];
-  // Match: prop-name, :prop-name, v-bind:prop-name, @event-name, v-model
-  const propRegex = /(?::|v-bind:)?([a-zA-Z][a-zA-Z0-9-]*)\s*=/g;
+  attrs = attrs.replace(/"[^"]*"|'[^']*'/g, '""'); // a value's own `a = b` is no attribute
+  // Match: prop-name, :prop-name, v-bind:prop-name, v-model — a listener (`@save`, `v-on:save`) is no prop
+  const propRegex = /(?<![@\w:.-])(?::|v-bind:)?([a-zA-Z][a-zA-Z0-9-]*)\s*=/g;
   let m: RegExpExecArray | null;
   while ((m = propRegex.exec(attrs)) !== null) {
     const name = m[1];

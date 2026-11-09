@@ -8,6 +8,7 @@ import { addTemplateRefs } from "./template-refs.js";
 import { dynamicEmitFacts, tagEventLiterals } from "./events.js";
 import { boundListeners } from "./bound-listeners.js";
 import { addDynamicComponents } from "./dynamic-components.js";
+import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 
 /**
@@ -65,6 +66,10 @@ export function vuePreprocess(
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
+      // `defineProps` / `defineEmits` / `props:` / `emits:`: what the component states about itself.
+      const declared = readVueDeclarations(sfc.script ?? "");
+      if (declared.props) analysis.declaredProps = declared.props;
+      if (declared.emits) analysis.declaredEmits = declared.emits;
       // `$emit(btn.event)`: a child that emits by data, and the events a parent states for it.
       const dynamic = dynamicEmitFacts(raw);
       if (dynamic.lines.length > 0) analysis.dynamicEmits = dynamic.lines;
@@ -90,6 +95,7 @@ export function vuePreprocess(
             name: comp.name,
             importSource,
             props: comp.props,
+            ...(comp.listeners ? { listeners: comp.listeners } : {}),
             line: comp.line,
           });
         }
