@@ -75,3 +75,31 @@ export function renderUsage(calls: ToolCallRecord[]): string {
     ),
   ].join("\n");
 }
+
+/** Nearest-rank percentile (`p` in 0–100) of numbers; 0 for none. */
+export function percentile(values: readonly number[], p: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.max(1, Math.ceil((p / 100) * sorted.length));
+  return sorted[Math.min(rank, sorted.length) - 1]!;
+}
+
+/** Per tool: calls and p50/p90 of `ms`, the slowest p90 first. */
+export function toolLatency(calls: readonly ToolCallRecord[]): Array<{ tool: string; calls: number; p50: number; p90: number }> {
+  const times = new Map<string, number[]>();
+  for (const c of calls) (times.get(c.tool) ?? times.set(c.tool, []).get(c.tool)!).push(c.ms);
+  return [...times.entries()]
+    .map(([tool, ms]) => ({ tool, calls: ms.length, p50: percentile(ms, 50), p90: percentile(ms, 90) }))
+    .sort((a, b) => b.p90 - a.p90 || b.calls - a.calls || byOrdinal(a.tool, b.tool));
+}
+
+/** A compact "tool latency" markdown section (at most 10 tools); empty when nothing was called. */
+export function latencySection(calls: readonly ToolCallRecord[]): string[] {
+  if (!calls.length) return [];
+  const rows = toolLatency(calls);
+  return [
+    "## Tool latency (this session)",
+    ...rows.slice(0, 10).map((r) => `- ${short(r.tool)} ×${r.calls} — p50 ${r.p50} ms, p90 ${r.p90} ms`),
+    rows.length > 10 ? `  … ${rows.length - 10} more tools` : "",
+  ].filter(Boolean);
+}

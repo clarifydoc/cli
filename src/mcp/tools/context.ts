@@ -7,10 +7,13 @@ import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
 import { nearNames } from "../validate.js";
 import { contextIndex } from "./decisions.js";
+import type { ToolCallRecord } from "../usage.js";
 import { isTestFile } from "../../core/test-file-detector.js";
 
 export interface ToolContext {
   store: AnalysisStore;
+  /** The session's tool calls so far (the server wires it); absent in a bare context. */
+  usage?: () => readonly ToolCallRecord[];
 }
 
 /** The loaded analysis, or a thrown message the model can act on. */

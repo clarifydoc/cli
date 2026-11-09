@@ -164,7 +164,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     analyzeSettings: config.analyzeSettings,
     log,
   });
-  const ctx: ToolContext = { store };
+  const ctx: ToolContext = { store, usage: () => server?.usage() ?? [] };
   const banner = freshnessBanner(store);
 
   const tools: McpTool[] = [

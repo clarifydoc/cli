@@ -37,6 +37,7 @@ import {
   pageFooter,
 } from "../format.js";
 import { isTestPath, projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
+import { latencySection } from "../usage.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
 
 const NO_ARGS = { type: "object", properties: {}, additionalProperties: false } as const;
@@ -58,13 +59,15 @@ export function statusTool(ctx: ToolContext): McpTool {
       }
       const loaded = await requireAnalysis(ctx);
       const report = await statusReport(loaded, ctx.store);
-      if (!booleanArg(args, "lint")) return { text: report };
+      const latency = latencySection(ctx.usage?.() ?? []);
+      const withLatency = latency.length ? joinLines([report, "", ...latency]) : report;
+      if (!booleanArg(args, "lint")) return { text: withLatency };
       // `clarifydoc lint`: what the analysis says about itself that cannot all be true — reads every per-file JSON.
       const { countByRule, lintAnalysis, loadFileAnalyses } = await import("../../core/analysis-lint.js");
       const found = lintAnalysis(loaded.summary, await loadFileAnalyses(loaded.analysisDir, loaded.summary.files ?? []));
       return {
         text: joinLines([
-          report,
+          withLatency,
           "",
           `## Lint: ${found.length === 0 ? "no contradictions in the analysis's own facts" : `${plural(found.length, "contradiction")} (${Object.entries(countByRule(found)).map(([r, n]) => `${r} ${n}`).join(", ")})`}`,
           ...found.slice(0, 40).map((f) => `- ${f.rule}${f.file ? ` ${loc(f.file, f.line)}` : ""} — ${f.message}`),

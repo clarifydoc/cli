@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { CORE_TOOLS, buildMcpServer } from "./server.js";
-import { renderUsage, usageLine } from "./usage.js";
+import { latencySection, percentile, renderUsage, toolLatency, usageLine } from "./usage.js";
 
 const config = {
   projectRoot: join("test-fixtures", "sample-backend"),
@@ -73,5 +73,42 @@ describe("session usage", () => {
     expect(text).toContain("## In order (the last 50 of 60)");
     expect(text).toContain("\n11. t3 — 1.5k chars");
     expect(text).not.toContain("\n10. ");
+  });
+});
+
+describe("tool latency percentiles", () => {
+  it("takes the nearest rank", () => {
+    expect(percentile([], 50)).toBe(0);
+    expect(percentile([7], 90)).toBe(7);
+    expect(percentile([30, 10, 20], 50)).toBe(20);
+    expect(percentile([10, 20], 50)).toBe(10);
+    expect(percentile([10, 20], 90)).toBe(20);
+    const ten = [1, 2, 3, 4, 5, 6, 7, 8, 9, 100];
+    expect(percentile(ten, 50)).toBe(5);
+    expect(percentile(ten, 90)).toBe(9);
+    expect(percentile(ten, 100)).toBe(100);
+  });
+
+  it("sums per tool, slowest first, and stays silent with no calls", () => {
+    const rec = (tool: string, ms: number) => ({ tool, chars: 1, ms, isError: false, empty: false });
+    const calls = [rec("clarifydoc_a", 5), rec("clarifydoc_b", 50), rec("clarifydoc_a", 15), rec("clarifydoc_a", 10)];
+    expect(toolLatency(calls)).toEqual([
+      { tool: "clarifydoc_b", calls: 1, p50: 50, p90: 50 },
+      { tool: "clarifydoc_a", calls: 3, p50: 10, p90: 15 },
+    ]);
+    expect(latencySection(calls)).toEqual(["## Tool latency (this session)", "- b ×1 — p50 50 ms, p90 50 ms", "- a ×3 — p50 10 ms, p90 15 ms"]);
+    expect(latencySection([])).toEqual([]);
+    const many = Array.from({ length: 13 }, (_, i) => rec(`clarifydoc_t${i}`, i));
+    expect(latencySection(many)).toHaveLength(12);
+    expect(latencySection(many).at(-1)).toBe("  … 3 more tools");
+  });
+
+  it("shows in clarifydoc_status once tools were called", async () => {
+    const { server } = buildMcpServer(config);
+    const callTool = async (id: number, name: string, args: Record<string, unknown> = {}) =>
+      ((await server.handleMessage({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text;
+    expect(await callTool(1, "clarifydoc_status")).not.toContain("Tool latency");
+    await callTool(2, "clarifydoc_routes", { limit: 2 });
+    expect(await callTool(3, "clarifydoc_status")).toMatch(/## Tool latency \(this session\)\n- (status|routes) ×1 — p50 \d+ ms, p90 \d+ ms/);
   });
 });
