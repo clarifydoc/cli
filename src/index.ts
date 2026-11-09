@@ -76,6 +76,13 @@ export {
   type ElementId,
   type NormalizedProjectAnalysis,
 } from "./core/element-registry.js";
+// The context gate the data-flow reach walks the symbol links through: a walk
+// that entered a shared component from one user leaves through its emits,
+// callback props and dialog closes only to that user's bindings
+// (`SymbolLink.viaUsage`). A walk over a stored summary's links keys its
+// visited set by `stateNode(key, state)` and asks `forward`/`reverse` per step;
+// keys are `file::symbol`.
+export { usageGate, stateNode, nodeKey, type UsageGate } from "./core/symbol-graph.js";
 export { computeComplexity, aggregateComplexity } from "./core/complexity-analyzer.js";
 export { computeRefactorPressure, DEFAULT_REFACTOR_PRESSURE_CONFIG, type RefactorPressureConfig, type RefactorPressureInput } from "./core/refactor-pressure.js";
 export {
