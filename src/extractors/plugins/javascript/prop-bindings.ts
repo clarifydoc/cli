@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { PropBinding } from "../../../types/analysis.js";
+import type { FunctionPropBinding, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
 
 /**
@@ -32,6 +32,44 @@ export function propBindings(tree: Tree, sourceText: string, rawSource: string, 
   };
   visit(tree.rootNode);
   return out;
+}
+
+/**
+ * One of the file's own functions a JSX tag hands a child under a prop no event name marks (`<KitRow order={orderKit} />`,
+ * `<SquadDialog handleRelease={this.releasePlayer} />`): the child runs it when it calls the prop. An `on…` prop is an
+ * interactive element already; a value that is no function the file declares (a state variable, a constant) is data.
+ */
+export function jsxFunctionProps(tree: Tree, sourceText: string, declared: ReadonlySet<string>): FunctionPropBinding[] {
+  if (!/<[A-Z][\w.]*[\s/>]/.test(sourceText)) return [];
+  const out: FunctionPropBinding[] = [];
+  for (const n of tree.rootNode.descendantsOfType(["jsx_opening_element", "jsx_self_closing_element"])) {
+    const tag = n?.childForFieldName("name")?.text ?? "";
+    if (!n || !/^[A-Z][\w$]*$/.test(tag)) continue;
+    for (const attr of n.namedChildren) {
+      if (attr?.type !== "jsx_attribute") continue;
+      const name = attr.namedChild(0);
+      const value = attr.namedChild(1);
+      if (name?.type !== "property_identifier" || /^on[A-Z]/.test(name.text) || value?.type !== "jsx_expression") continue;
+      const expr = value.namedChild(0);
+      // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
+      const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
+      if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });
+    }
+  }
+  return out;
+}
+
+/** A function named by an identifier or `this.member`, as written. */
+function handedFunction(n: Node | null): string | null {
+  if (n?.type === "identifier") return n.text;
+  return n?.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(n.text) ? n.text : null;
+}
+
+/** The callee of the first call an arrow's body makes (`(size) => orderKit(size)`, `() => { void this.orderKit(); }`). */
+function firstCallee(fn: Node): Node | null {
+  const body = fn.childForFieldName("body");
+  const call = body?.type === "call_expression" ? body : body?.descendantsOfType("call_expression")[0] ?? null;
+  return call?.childForFieldName("function") ?? null;
 }
 
 /** `:club-id="clubId"` / `v-bind:club-id="…"` on a component tag (PascalCase or kebab-case with a hyphen). */

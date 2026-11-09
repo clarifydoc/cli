@@ -4580,7 +4580,10 @@ function resolveCallToDefinitionBody(
   // A bare name an import binds as a member of a module or type (`import static
   // a.Scores.tally`, Kotlin `import a.Config.limit`): that member, before the
   // import's own path is read as a file.
-  if (!isQualified && !reference && call.kind === "cross-file") {
+  // A name another import of the file binds (`import { formatDate } from "./dates"` beside a mixin's in-scope
+  // members) is that import's, never a namesake the scope holds.
+  const boundElsewhere = !!call.target && analysis.imports.some((i) => i.source === call.target && !i.inScope);
+  if (!isQualified && !reference && call.kind === "cross-file" && !boundElsewhere) {
     const hit = inScopeMember(ctx, analysis, call.name);
     if (hit) return mkLink(hit.file, hit.def.name, hit.def.line, hit.named ? "EXTRACTED" : "INFERRED", "import-file");
   }
@@ -4779,6 +4782,12 @@ function resolveCallToDefinitionBody(
         return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: consumer, viaTypeFile: sourceFile });
       }
       def = hit ? symbolIn(ctx, sourceFile, hit.symbol) : symbolIn(ctx, targetFile, leafName);
+      // No class around the caller (an options-object component's method): `this` is the object the file's own
+      // functions and the modules its imports put in scope make up (a Vue mixin's methods, `mixins: [stadiumActions]`).
+      if (!def && !consumer && head === "this") {
+        const scoped = inScopeMember(ctx, analysis, leafName);
+        if (scoped) return mkLink(scoped.file, scoped.def.name, scoped.def.line, "INFERRED", "import-file");
+      }
     }
   }
 

@@ -705,6 +705,11 @@ export interface AstExtractorHooks {
    */
   propBindings?(tree: Tree, sourceText: string, rawSource: string, filePath: string): import("./analysis.js").PropBinding[];
   /**
+   * The file's own functions its markup hands a child by name as a prop, where no event binding says so
+   * (`<KitRow order={orderKit} />`): `FileAnalysis.functionProps`. `declared` names the file's functions and methods.
+   */
+  functionProps?(tree: Tree, sourceText: string, declared: ReadonlySet<string>): import("./analysis.js").FunctionPropBinding[];
+  /**
    * Reactive cells the file writes and the callbacks a change re-runs (`FileAnalysis.reactiveCells`),
    * given the functions extracted so far so a write is named by the function it sits in.
    */

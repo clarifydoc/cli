@@ -8,6 +8,8 @@
 export interface VueDeclarations {
   props?: string[];
   emits?: string[];
+  /** The Options API `mixins: [clubActions, squadActions]`: the names of the objects whose options the component takes on. */
+  mixins?: string[];
 }
 
 const OPEN = "([{<";
@@ -131,5 +133,8 @@ export function readVueDeclarations(script: string): VueDeclarations {
   const emits = names(callBody(script, "defineEmits"), true) ?? names(optionsKey(script, "emits"), true);
   if (props) out.props = [...new Set(props)];
   if (emits) out.emits = [...new Set(emits)];
+  const mixins = optionsKey(script, "mixins");
+  const named = mixins?.kind === "array" ? topLevel(mixins.body).filter((m) => /^[A-Za-z_$][\w$]*$/.test(m)) : [];
+  if (named.length > 0) out.mixins = [...new Set(named)];
   return out;
 }

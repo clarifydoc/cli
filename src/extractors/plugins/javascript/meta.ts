@@ -6,7 +6,7 @@ import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
-import { propBindings } from "./prop-bindings.js";
+import { jsxFunctionProps, propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
 import { reactiveCells } from "./reactive-cells.js";
 import { withSubjectTriggers } from "./rxjs-subjects.js";
@@ -252,6 +252,7 @@ function astHooks(language: Language): AstExtractorHooks {
     markupCalls,
     markupFunctions,
     propBindings,
+    functionProps: jsxFunctionProps,
     componentSubscriptions,
     reactiveCells,
     contextValues,

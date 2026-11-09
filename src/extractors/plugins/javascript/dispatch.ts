@@ -513,6 +513,18 @@ export class JsPropCallbackResolver implements DispatchResolver {
 
     const spanCache = new Map<FileAnalysis, SymbolSpan[]>();
     const spans = (a: FileAnalysis) => spanCache.get(a) ?? spanCache.set(a, spansOf(a)).get(a)!;
+    /** A name the parent leaves to a module its import puts in scope (a Vue mixin's method, `mixins: [stadiumActions]`): the ONE function of that name there. */
+    const scopeMember = (parent: FileAnalysis, name: string): { file: string; span: SymbolSpan } | null => {
+      const hits: Array<{ file: string; span: SymbolSpan }> = [];
+      for (const imp of parent.imports) {
+        if (!imp.inScope || imp.inScope.names?.includes(name) === false) continue;
+        const file = resolveTarget(imp.inScope.module, parent.filePath, filePathMap);
+        const lib = file ? byPath.get(file) : undefined;
+        const span = lib ? spans(lib).find((sp) => sp.symbol === name) : undefined;
+        if (span && !hits.some((h) => h.file === lib!.filePath)) hits.push({ file: lib!.filePath, span });
+      }
+      return hits.length === 1 ? hits[0]! : null;
+    };
 
     /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props — with the binding site on the child's own tag. */
     const targetsOf = (file: string, prop: string, depth: number, seen: Set<string>, via?: Usage): Array<{ file: string; span: SymbolSpan; usage: Usage[] }> => {
@@ -541,8 +553,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const name = cleanHandler(b.handler);
         if (!name) continue;
         const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+        const fromMixin = own ? null : scopeMember(b.parent, name);
         if (own) out.push({ file: b.parent.filePath, span: own, usage });
-        else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen, usage[0]));
+        else if (fromMixin) out.push({ file: fromMixin.file, span: fromMixin.span, usage });
+        // A prop of the parent handed on (`onConfirm={handleRelease}`, `handleRelease` the parent's own destructured prop).
+        else if (PROP_CALLBACK.test(name) || takesProp(b.parent, name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen, usage[0]));
       }
       return distinctTargets(out);
     };
@@ -564,6 +579,9 @@ export class JsPropCallbackResolver implements DispatchResolver {
           // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
           // Invoked, never a value read or handed on (`return this.isNote`).
           const call = fn.calls.find((c) => !c.passed && !c.read && (c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}` || c.name === `this.${prop}`));
+          // A bare call of a prop no `on…` name marks is the prop's only where the component takes it under that name
+          // (`function KitRow({ order })`): elsewhere it is a function of the same name in scope.
+          if (call && call.name === prop && !PROP_CALLBACK.test(prop) && !childFile.endsWith(".vue") && !takesProp(child, prop, call.line)) continue;
           if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
         }
         const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop && (!within || (el.line >= within.line && el.line <= within.endLine)));
@@ -587,6 +605,20 @@ export class JsPropCallbackResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/**
+ * Whether a component of `file` takes `name` as a prop: a Vue component declaring it, a component destructuring
+ * it from its props (`function KitRow({ order })`, `({ handleClose }: Props) =>`), or binding it on onward as one
+ * (`propBindings` origin `prop`) — at `line` when given, the component around it.
+ */
+function takesProp(file: FileAnalysis, name: string, line?: number): boolean {
+  if (file.declaredProps?.includes(name)) return true;
+  if (line === undefined && file.propBindings?.some((pb) => pb.origin.kind === "prop" && pb.origin.name === name)) return true;
+  const pattern = new RegExp(`^\\{(?:[^]*[{,])?\\s*${escapeRegex(name)}\\s*(?:[,}=]|$)`);
+  return [...file.functions, ...file.classes.flatMap((c) => c.methods)].some(
+    (f) => (line === undefined || (line >= f.line && line <= f.endLine)) && pattern.test(f.params[0]?.name.trim() ?? ""),
+  );
 }
 
 /**

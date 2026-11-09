@@ -156,7 +156,8 @@ function extractEmitCalls(
 }
 
 /**
- * An Angular component's outputs — `read = output<Chapter>()`,
+ * An Angular component's outputs — `read = output<Chapter>()` (a type argument may span lines and nest:
+ * `output<{ page: number; part: string }>()`, `output<Array<Club>>()`),
  * `@Output() deleted = new EventEmitter<number>()`, `@Output('removed') remove = …`
  * (the alias is the event a parent binds) — each placed where the class first
  * emits it (`this.read.emit(…)`), else at its declaration.
@@ -164,7 +165,7 @@ function extractEmitCalls(
 function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<string>): Map<string, string> {
   const fields = new Map<string, string>();
   if (!/from\s+['"]@angular\/core['"]/.test(source)) return fields;
-  const re = /(?:@Output\(\s*(?:['"]([\w-]+)['"])?\s*\)\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*(?:[!?]?\s*:[^=;\n]+)?=?|(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*=\s*(?:output|outputFromObservable)\s*(?:<[^>\n]*>)?\s*\()/g;
+  const re = /(?:@Output\(\s*(?:['"]([\w-]+)['"])?\s*\)\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*(?:[!?]?\s*:[^=;\n]+)?=?|(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*=\s*(?:output|outputFromObservable)\s*(?:<[\s\S]{0,600}?>)?\s*\()/g;
   for (const m of source.matchAll(re)) {
     const field = m[2] ?? m[3]!;
     const name = m[1] ?? field;

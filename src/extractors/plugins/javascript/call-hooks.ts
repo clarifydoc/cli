@@ -137,13 +137,20 @@ export const javascriptCallHooks: CallExtractionHooks = {
   statedMember: (node, name) => dispatchMapMember(name, node),
   importedMapMember: (node, name) => importedMapMember(name, node),
 
-  // `addEventListener("resize", this.onResize)`: the instance's own method, handed on.
+  // `addEventListener("resize", this.onResize)`: the instance's own method, handed on — also bound first
+  // (`saved.subscribe(this.reload.bind(this))`, `setTimeout(refresh.bind(null, id))`).
   passedArguments(call) {
     if (call.type !== "call_expression") return [];
     const args = call.childForFieldName("arguments");
-    return (args?.namedChildren ?? [])
-      .filter((a) => a.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(a.text))
-      .map((a) => ({ name: a.text, node: a, ownMember: true }));
+    const out: Array<{ name: string; node: Node; ownMember?: boolean }> = [];
+    for (const a of args?.namedChildren ?? []) {
+      if (a.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(a.text)) out.push({ name: a.text, node: a, ownMember: true });
+      const fn = a.type === "call_expression" ? a.childForFieldName("function") : null;
+      const bound = fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "bind" ? fn.childForFieldName("object") : null;
+      if (bound?.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(bound.text)) out.push({ name: bound.text, node: bound, ownMember: true });
+      else if (bound?.type === "identifier") out.push({ name: bound.text, node: bound });
+    }
+    return out;
   },
 
   destructuredFromCall(node) {

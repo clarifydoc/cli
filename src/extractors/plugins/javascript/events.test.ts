@@ -60,6 +60,27 @@ export class MatchCardComponent {
   });
 });
 
+describe("Angular signal outputs whose type argument spans lines or nests", () => {
+  it("reads each output, placed where the class emits it", () => {
+    const src = `import { Component, output } from '@angular/core';
+
+@Component({ selector: 'app-fixture-list', template: '' })
+export class FixtureListComponent {
+  readonly loadRound = output<{
+    round: number;
+    venue: string;
+  }>();
+  readonly picked = output<Array<Club>>();
+  readonly scored = output<{ minute: number; done: () => void }>();
+
+  open(round: number) {
+    this.loadRound.emit({ round, venue: '' });
+  }
+}`;
+    expect(extractEvents(src, "typescript").map((e) => `${e.name} @${e.line}`)).toEqual(["loadRound @13", "picked @9", "scored @10"]);
+  });
+});
+
 describe("Angular outputs fired with next", () => {
   it("places an EventEmitter output at its .next( call as it does at .emit(", () => {
     const src = `import { Component, EventEmitter, Output } from '@angular/core';

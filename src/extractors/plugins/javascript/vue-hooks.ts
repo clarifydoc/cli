@@ -48,15 +48,25 @@ export function vuePreprocess(
       // `analysis.templateTree`.
       analysis.templateTree = sfc.templateTree;
 
+      // `defineProps` / `defineEmits` / `props:` / `emits:` / `mixins:`: what the component states about itself.
+      const declared = readVueDeclarations(sfc.script ?? "");
+      // `mixins: [stadiumActions]`: the mixin's methods are the component's own (`this.saveStadium()`, `@click="saveStadium"`),
+      // so its import puts them in scope by bare name.
+      const mixinImports = analysis.imports.filter((imp) => !imp.isType && imp.specifiers.some((n) => declared.mixins?.includes(n)));
+      for (const imp of mixinImports) imp.inScope ??= { module: imp.source };
       if (sfc.template) {
         analysis.interactiveElements.push(
           ...extractVueInteractiveElements(sfc.template, raw),
           // `<Dialog v-bind="bindings">`: the `onConfirm` keys of a literal object are `@confirm` bindings.
           ...boundListeners(sfc.template, raw, sfc.script ?? ""),
         );
-        // `:on-confirm="confirmDeletion"`: one of the script's functions handed to a child, or an `on…` callback passed on.
+        // `:on-confirm="confirmDeletion"`: one of the script's functions handed to a child, or an `on…` callback passed on —
+        // or, in a component taking on mixins, a name it leaves to them (`:on-save="saveStadium"`, the mixin's method).
         const own = new Set([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].map((f) => f.name.split(".").pop()!));
-        const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name));
+        // Never a name the component's own script keys (`pageTitle: 'Stadium'` in `data()`): that is its data.
+        const leftToMixins = (name: string) =>
+          mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${name.replace(/\$/g, "\\$")}\\s*:`).test(sfc.script ?? "");
+        const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name) || leftToMixins(name));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
         // `<slot :save="saveAll" />`: what a parent's scoped slot calls.
         const slotFunctions = extractSlotFunctions(sfc.template, raw, (name) => own.has(name));
@@ -66,8 +76,6 @@ export function vuePreprocess(
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
-      // `defineProps` / `defineEmits` / `props:` / `emits:`: what the component states about itself.
-      const declared = readVueDeclarations(sfc.script ?? "");
       if (declared.props) analysis.declaredProps = declared.props;
       if (declared.emits) analysis.declaredEmits = declared.emits;
       // `$emit(btn.event)`: a child that emits by data, and the events a parent states for it.
