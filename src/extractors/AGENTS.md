@@ -218,7 +218,8 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
   useClub(() => props.clubId)`, `club.value.id`) states a `returned` derivation step, and `paramOrigins` follows it.
 - Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
   with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
-  `componentCandidates`. Targets are deduplicated before the eight-target cap per emit.
+  `componentCandidates`. Targets are deduplicated (one per handler, with the binding sites of each) and never capped:
+  every parent's binding is a link, and core's usage gate keeps a walk entering the child to its own parent's.
   The literals are the ones on THAT child's tag (`eventLiteralsByTag`: the `event:` strings of its bindings and of the
   script declarations they name, three deep); only a tag with none falls back to the file's. A callback handed to a
   composable whose one call is `emit` (`useDialog(x, (v) => emit('save', v))`, `onSave(v)` inside) reaches the parent's

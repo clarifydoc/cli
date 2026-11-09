@@ -23,7 +23,12 @@ import { escapeRegex } from "../shared/path-utils.js";
  * fans out to each bound handler (the runtime does too, one parent at a time).
  */
 
-/** Targets once each, in the order found: a handler two bindings reach takes one of the capped places, not two — with the binding sites of both. */
+/**
+ * Targets once each, in the order found: a handler two bindings reach is one target, with the binding sites of both.
+ * Every binding is kept, however many parents bind the child: each link stands for one tag a parent wrote (times
+ * each function of the child emitting the event), so their number is bounded by the source, and a walk entering the
+ * child from one parent leaves it only through that parent's bindings (`viaUsage`, core's usage gate).
+ */
 function distinctTargets<T extends { file: string; span: { symbol: string; line?: number }; usage?: Usage[] }>(targets: T[]): T[] {
   const seen = new Map<string, T>();
   const out: T[] = [];
@@ -157,7 +162,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
         // A child that emits by data (`$emit(btn.event)`) emits the events a parent states for it (`event: 'delete'`).
         const dynamic = sites.length === 0 && !markup && child.dynamicEmits?.length ? child.dynamicEmits : undefined;
         if (sites.length === 0 && !markup && !dynamic) continue; // child never emits this event (native fallthrough)
-        const targets = distinctTargets(targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => statesEvent(b, key) : undefined)).slice(0, 8);
+        const targets = distinctTargets(targetsOf(childFile, key, 0, new Set(), dynamic ? (b) => statesEvent(b, key) : undefined));
         if (targets.length === 0) continue;
         // Spelled as the child emits it (`emit('cancelSelection')`), however the parent's tag writes it
         // (`@cancel-selection`): the report joins the child's element to this link by that spelling.
@@ -285,7 +290,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
           if (!lib || !param) continue;
           const own = owner![0]!;
           const callers = lib.functions.filter((f) => f.name !== "<setup>" && f.line >= own.line && f.endLine <= own.endLine && f.calls.some((c) => c.name === param && c.kind === "internal"));
-          const targets = distinctTargets(targetsOf(file.filePath, key, 0, new Set())).slice(0, 8);
+          const targets = distinctTargets(targetsOf(file.filePath, key, 0, new Set()));
           // Per instance: the calls this file makes on the local holding that composable's result
           // (`const dialog = useDialog(…)` → `dialog.confirm()`), never the composable's function for every user of it.
           const locals = new Set(file.functions.flatMap((f) => (f.localTypes ?? []).filter((l) => !l.type && l.from?.replace(/\(.*$/s, "") === leaf).map((l) => l.name)));
@@ -539,7 +544,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (own) out.push({ file: b.parent.filePath, span: own, usage });
         else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen, usage[0]));
       }
-      return distinctTargets(out).slice(0, 8);
+      return distinctTargets(out);
     };
 
     const links: SymbolLink[] = [];

@@ -244,3 +244,90 @@ describe("an emit returns to the usage it came in by (Vue template refs)", () =>
     expect(tablesOf(summary, "web/src/pages/MatchPage.vue")).toEqual([]);
   });
 });
+
+describe("an emit returns to the usage it came in by (a dialog twelve pages bind)", () => {
+  // Each page binds its own handler on the shared dialog and calls into it through its ref; each handler
+  // deletes from its own table. Every page reaches its own table — however many pages share the dialog —
+  // and never another page's.
+  const pages = ["Clubs", "Players", "Matches", "Leagues", "Stadiums", "Coaches", "Referees", "Transfers", "Fixtures", "Trophies", "Sponsors", "Injuries"];
+  const table = (p: string) => p.toLowerCase();
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    const api = [
+      'const express = require("express");',
+      'const { Pool } = require("pg");',
+      "const app = express();",
+      "const pool = new Pool();",
+      ...pages.flatMap((p) => [
+        `app.delete("/api/${table(p)}/:id", async (req, res) => {`,
+        `  await pool.query("DELETE FROM ${table(p)} WHERE id = $1", [req.params.id]);`,
+        "  res.sendStatus(204);",
+        "});",
+      ]),
+      "app.listen(3000);",
+    ].join("\n");
+    const files: Record<string, string> = {
+      "api/server.js": api,
+      "web/package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "3.4.0", axios: "1.6.0" } }),
+      "web/src/components/ConfirmDialog.vue": [
+        "<template>",
+        '  <button @click="onConfirm">OK</button>',
+        "</template>",
+        "",
+        '<script setup lang="ts">',
+        'const emit = defineEmits<{ (e: "confirm"): void }>();',
+        "function onConfirm() {",
+        '  emit("confirm");',
+        "}",
+        "defineExpose({ onConfirm });",
+        "</script>",
+      ].join("\n"),
+    };
+    for (const p of pages) {
+      files[`web/src/pages/${p}Page.vue`] = [
+        "<template>",
+        "  <div>",
+        '    <button @click="quickRemove">Remove</button>',
+        `    <ConfirmDialog ref="dialog" @confirm="remove${p}" />`,
+        "  </div>",
+        "</template>",
+        "",
+        '<script setup lang="ts">',
+        'import { ref } from "vue";',
+        'import axios from "axios";',
+        'import ConfirmDialog from "../components/ConfirmDialog.vue";',
+        "const dialog = ref<InstanceType<typeof ConfirmDialog>>();",
+        "function quickRemove() {",
+        "  dialog.value?.onConfirm();",
+        "}",
+        `async function remove${p}() {`,
+        `  await axios.delete("/api/${table(p)}/7");`,
+        "}",
+        "</script>",
+      ].join("\n");
+    }
+    ({ dir, summary } = await project(files));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("links the dialog's emit to every page's handler", () => {
+    const bound = summary.symbolLinks.filter((l) => l.callName === "emit:confirm");
+    expect(bound.map((l) => l.targetSymbol).sort()).toEqual(pages.map((p) => `remove${p}`).sort());
+  });
+
+  it("returns each page's call into the dialog to its own handler's table, and lets the dialog alone reach all of them", () => {
+    const tables = (file: string, symbol: string) =>
+      [...new Set(summary.symbolReach?.find((r) => r.file === file && r.symbol === symbol)?.effects.filter((e) => e.kind.startsWith("db")).map((e) => e.resource))].sort();
+    for (const p of pages) expect(tables(`web/src/pages/${p}Page.vue`, "quickRemove")).toEqual([table(p)]);
+    expect(tables("web/src/components/ConfirmDialog.vue", "onConfirm")).toEqual(pages.map(table).sort());
+  });
+
+  it("keeps the emits out of the dependency graph: the dialog depends on no page, and closes no cycle with them", () => {
+    expect(summary.componentGraph["web/src/components/ConfirmDialog.vue"] ?? []).toEqual([]);
+    expect(summary.componentGraph["web/src/pages/ClubsPage.vue"]).toContain("web/src/components/ConfirmDialog.vue");
+    expect(summary.healthScore?.penalties?.some((p) => /circular/.test(p.reason)) ?? false).toBe(false);
+  });
+});

@@ -690,3 +690,38 @@ describe("JsComponentEmitResolver — declared emits", () => {
     expect(link!.confidence).toBe("INFERRED");
   });
 });
+
+describe("a child many parents bind", () => {
+  // Twelve pages each bind their own handler on one shared dialog: every binding is one instance's,
+  // and each page's handler is reached — none dropped past a fixed number of parents.
+  const pages = ["Clubs", "Players", "Matches", "Leagues", "Stadiums", "Coaches", "Referees", "Transfers", "Fixtures", "Trophies", "Sponsors", "Injuries"];
+
+  it("joins the child's emit to every parent's handler, each with its own binding site", () => {
+    const parents = pages.map((p) => fa(`src/pages/${p}Page.vue`, {
+      functions: [fn(`remove${p}`, 10, 12)],
+      interactiveElements: [{ element: "custom", event: "@confirm", handler: `remove${p}`, line: 3, component: "ConfirmDialog" }],
+      subComponents: [{ name: "ConfirmDialog", importSource: "../components/ConfirmDialog.vue", props: [], line: 3 }],
+    }));
+    const dialog = fa("src/components/ConfirmDialog.vue", {
+      functions: [fn("onConfirm", 9, 11)],
+      events: [{ name: "confirm", params: [], line: 10 }],
+    });
+    const links = new JsComponentEmitResolver().resolve([...parents, dialog]);
+    expect(links.map((l) => l.targetSymbol).sort()).toEqual(pages.map((p) => `remove${p}`).sort());
+    for (const l of links) expect(l.viaUsage).toEqual([{ file: l.targetFile, line: 3 }]);
+  });
+
+  it("joins the child's callback prop to every parent's handler", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const parents = pages.map((p) => fa(`src/pages/${p}Page.tsx`, {
+      functions: [fn(`remove${p}`, 10, 12)],
+      interactiveElements: [{ element: "custom", event: "onConfirm", handler: `remove${p}`, line: 4, component: "ConfirmDialog" }],
+      subComponents: [{ name: "ConfirmDialog", importSource: "../components/ConfirmDialog", props: [], line: 4 }],
+    }));
+    const dialog = fa("src/components/ConfirmDialog.tsx", {
+      functions: [{ ...fn("ConfirmDialog", 1, 9), calls: [{ name: "props.onConfirm", kind: "internal" as const, target: null, line: 5 }] }],
+    });
+    const links = new JsPropCallbackResolver().resolve([...parents, dialog]);
+    expect(links.map((l) => l.targetSymbol).sort()).toEqual(pages.map((p) => `remove${p}`).sort());
+  });
+});

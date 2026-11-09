@@ -114,3 +114,31 @@ describe("clarifydoc_trace walk through a shared component's emit", () => {
     expect(text).toContain("deletePlayer()");
   });
 });
+
+describe("clarifydoc_trace to= through a shared component's emit", () => {
+  // Two pages call into the confirm dialog, each binding its own handler to its confirm.
+  const DIALOG: SymbolLink[] = [
+    link("src/ClubPage.tsx", "quickSave", 7, "dialog.onConfirm", "src/ConfirmDialog.tsx", "onConfirm", 5),
+    link("src/PlayerPage.tsx", "quickRelease", 8, "dialog.onConfirm", "src/ConfirmDialog.tsx", "onConfirm", 5),
+    { ...link("src/ConfirmDialog.tsx", "onConfirm", 6, "emit:confirm", "src/ClubPage.tsx", "saveClub", 4, "dispatch"), viaUsage: [{ file: "src/ClubPage.tsx", line: 3 }] },
+    { ...link("src/ConfirmDialog.tsx", "onConfirm", 6, "emit:confirm", "src/PlayerPage.tsx", "deletePlayer", 5, "dispatch"), viaUsage: [{ file: "src/PlayerPage.tsx", line: 3 }] },
+  ];
+
+  it("finds the path from a page through the dialog to its own handler", async () => {
+    const { pathReport } = await import("./code.js");
+    const text = pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "saveClub" }, 10, "AMBIGUOUS");
+    expect(text).toContain("1 shortest path of 2 hops");
+    expect(text).toContain("saveClub()");
+  });
+
+  it("finds no path from a page through the dialog to another page's handler", async () => {
+    const { pathReport } = await import("./code.js");
+    const text = pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS");
+    expect(text).toContain("No call path between them");
+  });
+
+  it("finds the path from the dialog itself to every page's handler", async () => {
+    const { pathReport } = await import("./code.js");
+    expect(pathReport(DIALOG, { symbol: "onConfirm" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS")).toContain("1 shortest path of 1 hop");
+  });
+});

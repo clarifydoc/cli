@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildFormLaunches, markStartupScreens } from "./component-launches.js";
-import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type ScreenInfo } from "../types/analysis.js";
+import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
+import { createEmptyAnalysis, type FileAnalysis, type FunctionInfo, type ScreenInfo, type SymbolLink } from "../types/analysis.js";
 
 /** A .dfm as the parser reports it: root class + root instance variable. */
 function form(path: string, cls: string, instance: string): FileAnalysis {
@@ -209,5 +209,21 @@ Application.CreateForm(TMainForm, MainForm);`);
     const main = screen("Main.dfm", "MainForm");
     markStartupScreens([form("Main.dfm", "TMainForm", "MainForm")], [main], new Map());
     expect(main.startup).toBeUndefined();
+  });
+});
+
+describe("component launches", () => {
+  const link = (sourceFile: string, sourceSymbol: string, callName: string, targetFile: string, targetSymbol: string, viaUsage?: SymbolLink["viaUsage"]): SymbolLink =>
+    ({ sourceFile, sourceSymbol, sourceLine: 3, callName, targetFile, targetSymbol, targetLine: 1, ...(viaUsage ? { viaUsage } : {}) });
+
+  it("credits the callers of a launcher, but not a shared child whose emit the launcher handles", () => {
+    const launches = buildComponentLaunches([
+      // The club page opens the transfer dialog lazily, from the handler it binds to the confirm dialog's confirm.
+      link("src/pages/ClubPage.vue", "openTransfer", "default", "src/dialogs/TransferDialog.vue", "default"),
+      link("src/pages/ClubPage.vue", "onRowClick", "openTransfer", "src/pages/ClubPage.vue", "openTransfer"),
+      link("src/menus/ClubMenu.vue", "pick", "openTransfer", "src/pages/ClubPage.vue", "openTransfer"),
+      link("src/components/ConfirmDialog.vue", "onConfirm", "emit:confirm", "src/pages/ClubPage.vue", "openTransfer", [{ file: "src/pages/ClubPage.vue", line: 4 }]),
+    ]);
+    expect(launches.map((l) => l.sourceFile).sort()).toEqual(["src/menus/ClubMenu.vue", "src/pages/ClubPage.vue"]);
   });
 });

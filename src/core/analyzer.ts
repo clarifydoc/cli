@@ -4029,6 +4029,10 @@ export function enrichGraphFromSymbolLinks(
     // Navigational fan-out (interface→impl) is not a real dependency — skip it
     // so it doesn't fabricate cycles across every implementor of an interface.
     if (link.navigational) continue;
+    // Nor is a dispatch back to the user that bound it (`viaUsage`: a child's emit reaching the handler
+    // its parent bound on its tag): the parent depends on the child, which it imports, not the reverse —
+    // a shared dialog would otherwise close a cycle with, and count as a dependent of, every page using it.
+    if (link.viaUsage?.length) continue;
 
     let edgeSet = edgeSets.get(link.sourceFile);
     if (!edgeSet) {

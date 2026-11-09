@@ -7,7 +7,7 @@ import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
 import { describeDerivation } from "../../core/param-origins.js";
-import { keyOf, stateNode, usageGate } from "../../core/symbol-graph.js";
+import { keyOf, nodeKey, stateNode, usageGate } from "../../core/symbol-graph.js";
 import { fileTestVerdict, testVerdictContext, type TestVerdictContext } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
@@ -1394,13 +1394,16 @@ const PATH_MAX_LISTED = 5;
  * leads the other way (the target calls the seed), that is said instead of
  * "no path".
  */
-function pathReport(
+export function pathReport(
   links: SymbolLink[],
   from: { symbol?: string; file?: string },
   target: { symbol: string; file?: string },
   limit: number,
   minConfidence: string,
 ): string {
+  // A path that enters a shared component from one user leaves through its emits only back to that user
+  // (`usageGate`), as the callers/callees walk does: its nodes are (symbol, state) pairs (`stateNode`).
+  const gate = usageGate(links);
   const search = (src: { symbol?: string; file?: string }, dst: { symbol?: string; file?: string }) => {
     const out = new Map<string, SymbolLink[]>();
     for (const l of links) push(out, symbolKey(l.sourceFile, l.sourceSymbol), l);
@@ -1421,8 +1424,8 @@ function pathReport(
         if (named(dst, f, s)) targets.add(symbolKey(f, s));
       }
     }
-    // node → the edges that reach it at its shortest distance.
-    const via = new Map<string, SymbolLink[]>();
+    // node → the edges that reach it at its shortest distance, each with the node it leaves.
+    const via = new Map<string, Array<{ edge: SymbolLink; from: string }>>();
     const dist = new Map<string, number>();
     let frontier = [...seeds];
     for (const s of frontier) dist.set(s, 0);
@@ -1430,30 +1433,33 @@ function pathReport(
     for (let d = 1; d <= PATH_MAX_HOPS && frontier.length > 0 && found.length === 0; d++) {
       const next: string[] = [];
       for (const node of frontier) {
-        for (const e of out.get(node) ?? []) {
-          const t = symbolKey(e.targetFile, e.targetSymbol);
+        const key = nodeKey(node);
+        const state = node.slice(key.length + 1);
+        for (const e of out.get(key) ?? []) {
+          const to = gate.active ? gate.forward(state, keyOf(e.sourceFile, e.sourceSymbol), keyOf(e.targetFile, e.targetSymbol)) : "";
+          if (to === null) continue;
+          const t = stateNode(symbolKey(e.targetFile, e.targetSymbol), to);
           const seen = dist.get(t);
           if (seen !== undefined && seen < d) continue;
           if (seen === undefined) { dist.set(t, d); next.push(t); }
-          push(via, t, e);
+          push(via, t, { edge: e, from: node });
         }
       }
-      found = next.filter((n) => targets.has(n) && !seeds.has(n));
+      found = next.filter((n) => targets.has(nodeKey(n)) && !seeds.has(nodeKey(n)));
       frontier = next;
     }
     return { found, via, dist, seeds, targets };
   };
 
   // Rebuild the shortest paths into `end`, edge lists from a seed.
-  const rebuild = (end: string, via: Map<string, SymbolLink[]>, dist: Map<string, number>, cap: number): SymbolLink[][] => {
+  const rebuild = (end: string, via: Map<string, Array<{ edge: SymbolLink; from: string }>>, dist: Map<string, number>, cap: number): SymbolLink[][] => {
     const out: SymbolLink[][] = [];
     const step = (node: string, tail: SymbolLink[]): void => {
       if (out.length >= cap) return;
       if ((dist.get(node) ?? 0) === 0) { out.push(tail); return; }
-      for (const e of via.get(node) ?? []) {
-        const prev = symbolKey(e.sourceFile, e.sourceSymbol);
-        if (dist.get(prev) !== (dist.get(node) ?? 0) - 1) continue;
-        step(prev, [e, ...tail]);
+      for (const { edge, from } of via.get(node) ?? []) {
+        if (dist.get(from) !== (dist.get(node) ?? 0) - 1) continue;
+        step(from, [edge, ...tail]);
         if (out.length >= cap) return;
       }
     };
@@ -1486,7 +1492,9 @@ function pathReport(
     });
   }
   if (fwd.found.length > 0) {
-    const paths = fwd.found.flatMap((end) => rebuild(end, fwd.via, fwd.dist, PATH_MAX_LISTED));
+    // One path once, though the gate reached its end in more than one state.
+    const spelled = (path: SymbolLink[]) => path.map((e) => `${e.sourceFile}\0${e.sourceSymbol}\0${e.sourceLine}\0${e.targetFile}\0${e.targetSymbol}`).join("\n");
+    const paths = [...new Map(fwd.found.flatMap((end) => rebuild(end, fwd.via, fwd.dist, PATH_MAX_LISTED)).map((p) => [spelled(p), p])).values()];
     paths.sort((a, b) => rank[weakestOf(b)]! - rank[weakestOf(a)]!);
     const { shown, hidden } = cap(paths, Math.min(limit, PATH_MAX_LISTED));
     return joinLines([

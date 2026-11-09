@@ -26,8 +26,11 @@ export function buildComponentLaunches(symbolLinks: SymbolLink[]): ComponentLaun
 
   // Index every link by the (file::symbol) it points AT, so we can find the
   // callers of a launcher function in O(1).
+  // A child's emit reaching the launcher its parent bound (`viaUsage`) is no caller opening it: the parent
+  // opens it, as the launcher's own file, and the child's other users never do.
   const callersOf = new Map<string, SymbolLink[]>();
   for (const l of symbolLinks) {
+    if (l.viaUsage?.length) continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
     let arr = callersOf.get(key);
     if (!arr) callersOf.set(key, (arr = []));
