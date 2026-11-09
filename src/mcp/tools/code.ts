@@ -6,6 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { describeDerivation } from "../../core/param-origins.js";
 import { keyOf, stateNode, usageGate } from "../../core/symbol-graph.js";
 import { fileTestVerdict, testVerdictContext, type TestVerdictContext } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
@@ -1804,7 +1805,7 @@ export function contractTool(ctx: ToolContext): McpTool {
         if (o.route?.file !== route.filePath || o.route.line !== route.line) continue;
         const from = o.origin.kind === "unknown" ? `unknown (${loc(o.origin.file, o.origin.line)})`
           : o.origin.kind === "literal" ? `literal "${o.origin.value}" (${loc(o.origin.file, o.origin.line)})`
-          : `${o.origin.kind === "route-param" ? "route parameter" : "query value"} \`${o.origin.name}\`${o.origin.screen ? ` of screen ${o.origin.screen}` : ""}${o.origin.routePath ? ` (${o.origin.routePath}${o.origin.inRoutePath === false ? ", which does not declare it" : ""})` : ""} at ${loc(o.origin.file, o.origin.line)}`;
+          : `${o.origin.kind === "route-param" ? "route parameter" : "query value"} \`${o.origin.name}\`${o.origin.screen ? ` of screen ${o.origin.screen}` : ""}${o.origin.routePath ? ` (${o.origin.routePath}${o.origin.inRoutePath === false ? ", which does not declare it" : ""})` : ""} at ${loc(o.origin.file, o.origin.line)}${o.derivation?.length ? `, ${describeDerivation(o.derivation)}` : ""}`;
         const list = fedBy.get(o.route.param) ?? fedBy.set(o.route.param, []).get(o.route.param)!;
         if (!list.includes(from)) list.push(from);
       }

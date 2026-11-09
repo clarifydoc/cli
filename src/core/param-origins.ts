@@ -1,4 +1,4 @@
-import type { ApiRouteLink, CallArgOrigin, CallInfo, Confidence, FileAnalysis, FunctionInfo, ParamOrigin, PropBinding, RouteInfo, ScreenInfo, SymbolLink } from "../types/analysis.js";
+import type { ApiRouteLink, CallArgOrigin, CallInfo, Confidence, FileAnalysis, FunctionInfo, ParamOrigin, PropBinding, RouteInfo, ScreenInfo, SymbolLink, ValueStep } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -13,8 +13,13 @@ import { byOrdinal } from "./ordinal.js";
  *
  * Language-agnostic: the plugins report where each call's arguments come from
  * (`CallInfo.argOrigins`); this joins them over the symbol links. Value-flow
- * lite, not taint analysis: no tracking through object fields or reassigned
- * variables, a call the linker did not resolve ends the walk as `unknown`.
+ * lite, not taint analysis: no tracking through reassigned variables, a call
+ * the linker did not resolve ends the walk as `unknown`. A value the plugin
+ * states is derived from a known one (`CallArgOrigin.derivation`: a property
+ * of a record read off a store the value keys, what a function returns for
+ * it) keeps that origin, the steps named (`ParamOrigin.derivation`, INFERRED)
+ * — a function step only when it links to a project function, and a record
+ * only when a property of it is read; otherwise the origin is `unknown`.
  */
 
 const MAX_DEPTH = 8;
@@ -25,6 +30,8 @@ interface Fn {
   symbol: string;
   fn: FunctionInfo;
 }
+
+type Step = NonNullable<ParamOrigin["derivation"]>[number];
 
 const RANK: Record<Confidence, number> = { EXTRACTED: 2, INFERRED: 1, AMBIGUOUS: 0 };
 const weakest = (a: Confidence, b: Confidence): Confidence => (RANK[a] <= RANK[b] ? a : b);
@@ -119,9 +126,91 @@ export function computeParamOrigins(input: {
       ?? src?.fn.calls.find((c) => c.line === link.sourceLine);
   };
 
-  type Leaf = { origin: ParamOrigin["origin"]; hops: ParamOrigin["hops"]; confidence: Confidence };
+  // The function a call at a line links to: what a derivation's function step names (`helper(props.id)` inside `computed(…)`).
+  const callTargets = new Map<string, Set<string>>();
+  for (const l of input.symbolLinks) {
+    if ((l.relation ?? "calls") !== "calls" || !l.callName || l.sourceSymbol.startsWith("(")) continue;
+    const k = `${l.sourceFile}\0${l.sourceLine}\0${l.callName.split(".").pop()}`;
+    (callTargets.get(k) ?? callTargets.set(k, new Set()).get(k)!).add(`${l.targetFile}\0${l.targetSymbol}`);
+  }
+  const targetOf = (file: string, line: number, name: string): { file: string; symbol: string } | undefined => {
+    const hits = callTargets.get(`${file}\0${line}\0${name.split(".").pop()}`);
+    if (hits?.size !== 1) return undefined;
+    const [target, symbol] = [...hits][0]!.split("\0") as [string, string];
+    return { file: target, symbol };
+  };
+  /**
+   * The steps of an argument's derivation in `file`, resolved: a function step
+   * names the project function its call links to — null when it links to none
+   * (a library's function proves nothing) — and a lookup the store its head holds.
+   */
+  const resolveSteps = (steps: readonly ValueStep[] | undefined, file: string): Step[] | null => {
+    const out: Step[] = [];
+    for (const step of steps ?? []) {
+      if (step.kind === "helper") {
+        const target = targetOf(file, step.line, step.name);
+        if (!target) return null;
+        out.push({ ...step, file, target });
+      } else {
+        const target = step.from && step.fromLine ? targetOf(file, step.fromLine, step.from) : undefined;
+        out.push({ ...step, file, ...(target ? { target } : {}) });
+      }
+    }
+    return out;
+  };
+
+  type Leaf = { origin: ParamOrigin["origin"]; hops: ParamOrigin["hops"]; via: Step[]; confidence: Confidence };
+
+  /**
+   * The argument a call hands for parameter `field` of what it is asked about:
+   * the argument (or its property) itself, else a whole record looked up by a
+   * known value whose property this is (`mutateAsync(club.value)` for `id`).
+   */
+  const argFor = (args: readonly CallArgOrigin[] | undefined, lands: (a: CallArgOrigin) => boolean, field: string | undefined): CallArgOrigin | undefined => {
+    const own = args?.find((a) => lands(a) && a.field === field);
+    if (own || !field || field.includes(".")) return own;
+    const whole = args?.find((a) => lands(a) && a.field === undefined && fieldless(a.derivation));
+    if (!whole) return undefined;
+    const last = whole.derivation![whole.derivation!.length - 1] as Extract<ValueStep, { kind: "lookup" }>;
+    return { ...whole, derivation: [...whole.derivation!.slice(0, -1), { ...last, field }] };
+  };
+
+  /**
+   * Where argument `arg` of the call at `site` (in function `caller`) comes
+   * from: a leaf, or on up through the caller's own callers. `wholeField`:
+   * the property asked for of a whole parameter the argument is (`club` for `club.id`).
+   */
+  const follow = (arg: CallArgOrigin, site: { file: string; line: number }, caller: Fn | undefined, wholeField: string | undefined, nestedInvoke: boolean, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], via: Step[], confidence: Confidence, out: Leaf[]): void => {
+    const unknown = (): void => void out.push({ origin: { kind: "unknown", file: site.file, line: site.line }, hops, via, confidence });
+    const steps = resolveSteps(arg.derivation, site.file);
+    if (!steps) return unknown();
+    const v = [...steps, ...via];
+    const conf = steps.length ? weakest(confidence, "INFERRED") : confidence;
+    const o = arg.origin;
+    switch (o.kind) {
+      case "param": {
+        const at = caller ? caller.fn.params.findIndex((p) => p.name === o.name) : -1;
+        if (!caller || at < 0 || depth >= MAX_DEPTH) return unknown();
+        return walk(caller, at, wholeField, depth + 1, seen, hops, v, conf, out);
+      }
+      case "literal":
+        return void out.push({ origin: { kind: "literal", value: o.value, file: site.file, line: site.line }, hops, via: v, confidence: conf });
+      case "prop":
+        return propOrigins(site.file, o.name, site.line, depth + 1, seen, hops, v, conf, out);
+      case "invoked":
+        if (!caller || nestedInvoke || depth >= MAX_DEPTH) return unknown();
+        return invoked(caller, o.via, o.index, o.field, 0, depth + 1, seen, hops, v, conf, out);
+      case "route-param":
+      case "query-param":
+        return void out.push({ origin: urlOrigin(o.kind, o.name, site.file, site.line), hops, via: v, confidence: conf });
+      default:
+        // A server's merged request value, or an object's field, is no screen's URL.
+        return unknown();
+    }
+  };
+
   /** Every origin of parameter `index` of `target` — or of its property `field` — through its callers. */
-  const walk = (target: Fn, index: number, field: string | undefined, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
+  const walk = (target: Fn, index: number, field: string | undefined, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], via: Step[], confidence: Confidence, out: Leaf[]): void => {
     const key = `${target.file}::${target.symbol}#${index}${field ? `.${field}` : ""}`;
     if (seen.has(key) || out.length >= MAX_PER_SLOT * 4) return;
     seen.add(key);
@@ -133,41 +222,13 @@ export function computeParamOrigins(input: {
       const dispatched = link.strategy?.startsWith("dispatch:") ?? false;
       // An argument handed by name lands on the parameter of that name.
       const lands = (a: CallArgOrigin) => (a.param !== undefined ? a.param === target.fn.params[index]?.name : a.index === index);
-      const arg: CallArgOrigin | undefined = dispatched ? undefined : call?.argOrigins?.find((a) => lands(a) && a.field === field);
+      const arg = dispatched ? undefined : argFor(call?.argOrigins, lands, field);
+      const site = { file: link.sourceFile, line: link.sourceLine };
       if (!arg) {
-        out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        out.push({ origin: { kind: "unknown", ...site }, hops: [hop, ...hops], via, confidence: conf });
         continue;
       }
-      const o = arg.origin;
-      if (o.kind === "param") {
-        const caller = fnNamed(link.sourceFile, link.sourceSymbol);
-        const at = caller ? caller.fn.params.findIndex((p) => p.name === o.name) : -1;
-        if (!caller || at < 0 || depth >= MAX_DEPTH) {
-          out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-          continue;
-        }
-        walk(caller, at, undefined, depth + 1, seen, [hop, ...hops], conf, out);
-        continue;
-      }
-      if (o.kind === "literal") {
-        out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-        continue;
-      }
-      if (o.kind === "prop") {
-        propOrigins(link.sourceFile, o.name, link.sourceLine, depth + 1, seen, [hop, ...hops], conf, out);
-        continue;
-      }
-      if (o.kind === "invoked") {
-        const caller = fnNamed(link.sourceFile, link.sourceSymbol);
-        if (!caller || depth >= MAX_DEPTH) {
-          out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-          continue;
-        }
-        invoked(caller, o.via, o.index, o.field, 0, depth + 1, seen, [hop, ...hops], conf, out);
-        continue;
-      }
-      // A server's merged request value, or an object's field, is no screen's URL.
-      out.push({ origin: o.kind === "route-param" || o.kind === "query-param" ? urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine) : { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+      follow(arg, site, fnNamed(link.sourceFile, link.sourceSymbol), undefined, false, depth, seen, [hop, ...hops], via, conf, out);
     }
   };
 
@@ -178,12 +239,12 @@ export function computeParamOrigins(input: {
    * returns what `owner` builds, up the callers with no such call of their own
    * (`deleteClubOptions` → `useDeleteClub` → the screen) — then on as any argument.
    */
-  const invoked = (owner: Fn, via: readonly string[], index: number, field: string | undefined, up: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
+  const invoked = (owner: Fn, invokers: readonly string[], index: number, field: string | undefined, up: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], via: Step[], confidence: Confidence, out: Leaf[]): void => {
     const key = `${owner.file}::${owner.symbol}!${index}${field ? `.${field}` : ""}`;
     if (seen.has(key) || up > 3 || out.length >= MAX_PER_SLOT * 4) return;
     seen.add(key);
     const callers = (callersOf.get(`${owner.file}::${owner.symbol}`) ?? []).slice().sort((a, b) => byOrdinal(a.sourceFile, b.sourceFile) || a.sourceLine - b.sourceLine);
-    const invokes = (l: SymbolLink) => via.includes((l.callName ?? "").split(".").pop() ?? "");
+    const invokes = (l: SymbolLink) => invokers.includes((l.callName ?? "").split(".").pop() ?? "");
     const invokingCallers = new Set(callers.filter(invokes).map((l) => `${l.sourceFile}::${l.sourceSymbol}`));
     for (const link of callers) {
       const conf = weakest(confidence, link.confidence ?? "INFERRED");
@@ -191,31 +252,23 @@ export function computeParamOrigins(input: {
         // The invoker's argument at `index` (or its property `field`) is the callback's.
         const call = callOf(link);
         const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) };
+        const site = { file: link.sourceFile, line: link.sourceLine };
         // The property itself, else the whole argument it is read off (`mutateAsync(club)` for `club.id`).
-        const own = call?.argOrigins?.find((a) => a.index === index && a.field === field);
+        const own = argFor(call?.argOrigins, (a) => a.index === index, field);
         const whole = own || !field ? undefined : call?.argOrigins?.find((a) => a.index === index && a.field === undefined && a.origin.kind === "param");
         const arg = own ?? whole;
         const caller = fnNamed(link.sourceFile, link.sourceSymbol);
         if (!arg || !caller) {
-          out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+          out.push({ origin: { kind: "unknown", ...site }, hops: [hop, ...hops], via, confidence: conf });
           continue;
         }
-        const o = arg.origin;
-        if (o.kind === "param") {
-          const at = caller.fn.params.findIndex((p) => p.name === o.name);
-          if (at >= 0 && depth < MAX_DEPTH) walk(caller, at, whole ? field : undefined, depth + 1, seen, [hop, ...hops], conf, out);
-          else out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-        } else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-        else if (o.kind === "prop") propOrigins(link.sourceFile, o.name, link.sourceLine, depth + 1, seen, [hop, ...hops], conf, out);
-        else if (o.kind === "invoked") out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
-        else if (o.kind === "route-param" || o.kind === "query-param") out.push({ origin: urlOrigin(o.kind, o.name, link.sourceFile, link.sourceLine), hops: [hop, ...hops], confidence: conf });
-        else out.push({ origin: { kind: "unknown", file: link.sourceFile, line: link.sourceLine }, hops: [hop, ...hops], confidence: conf });
+        follow(arg, site, caller, whole ? field : undefined, true, depth, seen, [hop, ...hops], via, conf, out);
         continue;
       }
       // A caller that only builds or hands on what `owner` returns: its own callers invoke it.
       if (invokingCallers.has(`${link.sourceFile}::${link.sourceSymbol}`)) continue;
       const caller = fnNamed(link.sourceFile, link.sourceSymbol);
-      if (caller) invoked(caller, via, index, field, up + 1, depth, seen, [{ file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) }, ...hops], conf, out);
+      if (caller) invoked(caller, invokers, index, field, up + 1, depth, seen, [{ file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) }, ...hops], via, conf, out);
     }
   };
 
@@ -224,8 +277,9 @@ export function computeParamOrigins(input: {
    * it hands that prop (Vue Router `props`), and the value each parent's markup
    * binds to it — followed further up when that is the parent's own prop.
    */
-  const propOrigins = (file: string, prop: string, line: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], confidence: Confidence, out: Leaf[]): void => {
-    const key = `${file}::prop:${prop}`;
+  const propOrigins = (file: string, prop: string, line: number, depth: number, seen: Set<string>, hops: ParamOrigin["hops"], via: Step[], confidence: Confidence, out: Leaf[]): void => {
+    // Per read: two calls of one function in a component each reach the prop (`<setup>` and `handleUpdate`).
+    const key = `${file}::prop:${prop}@${line}`;
     if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_SLOT * 4) return;
     seen.add(key);
     let found = false;
@@ -239,22 +293,20 @@ export function computeParamOrigins(input: {
       out.push({
         origin: { kind: given.kind, name: given.name, file, line, ...(screen ? { screen: screen.name } : {}), routePath: r.path, ...(given.kind === "route-param" ? { inRoutePath: namesParam(r.path, given.name) } : {}) },
         hops: [{ file: r.filePath ?? file, symbol: `route:${r.path}`, line: r.line, arg: 0, field: prop }, ...hops],
+        via,
         confidence,
       });
     }
     for (const { file: parent, binding } of (boundTo.get(`${file}\0${prop}`) ?? []).slice().sort((a, b) => byOrdinal(a.file, b.file) || a.binding.line - b.binding.line)) {
       found = true;
       const hop = { file: parent, symbol: `<${binding.component}>`, line: binding.line, arg: 0, field: prop };
-      const conf = weakest(confidence, "INFERRED");
       const o = binding.origin;
-      if (o.kind === "prop") propOrigins(parent, o.name, binding.line, depth + 1, seen, [hop, ...hops], conf, out);
-      else if (o.kind === "literal") out.push({ origin: { kind: "literal", value: o.value, file: parent, line: binding.line }, hops: [hop, ...hops], confidence: conf });
-      else if (o.kind === "route-param" || o.kind === "query-param") out.push({ origin: urlOrigin(o.kind, o.name, parent, binding.line), hops: [hop, ...hops], confidence: conf });
-      else out.push({ origin: { kind: "unknown", file: parent, line: binding.line }, hops: [hop, ...hops], confidence: conf });
+      // A markup binding's value is the parent's prop, a literal or a URL value: no function hands it on.
+      if (o.kind === "prop" || o.kind === "literal" || o.kind === "route-param" || o.kind === "query-param") follow({ index: 0, origin: o, ...(binding.derivation ? { derivation: binding.derivation } : {}) }, { file: parent, line: binding.line }, undefined, undefined, true, depth, seen, [hop, ...hops], via, weakest(confidence, "INFERRED"), out);
+      else out.push({ origin: { kind: "unknown", file: parent, line: binding.line }, hops: [hop, ...hops], via, confidence: weakest(confidence, "INFERRED") });
     }
-    if (!found) out.push({ origin: { kind: "unknown", file, line }, hops, confidence });
+    if (!found) out.push({ origin: { kind: "unknown", file, line }, hops, via, confidence });
   };
-
   /** A route or query value read in `file`, with the screen that file is and whether its route path names it. */
   const urlOrigin = (kind: "route-param" | "query-param", name: string, file: string, line: number): ParamOrigin["origin"] => {
     const own = screensOf.get(file) ?? [];
@@ -267,11 +319,15 @@ export function computeParamOrigins(input: {
   const rows: ParamOrigin[] = [];
   const emit = (sink: ParamOrigin["sink"], leaves: Leaf[], route: ParamOrigin["route"] | undefined, link: ApiRouteLink | undefined): void => {
     if (leaves.length === 0) return;
-    for (const leaf of dedupe(leaves).slice(0, MAX_PER_SLOT)) {
+    for (const found of dedupe(leaves).slice(0, MAX_PER_SLOT)) {
+      // A record looked up by the value, handed whole into the URL, is not the value.
+      const last = found.via[found.via.length - 1];
+      const leaf = last?.kind === "lookup" && !last.field ? { ...found, origin: { kind: "unknown" as const, file: last.file, line: last.line }, via: [] } : found;
       rows.push({
         sink,
         origin: leaf.origin,
         hops: leaf.hops,
+        ...(leaf.via.length ? { derivation: leaf.via } : {}),
         ...(route ? { route } : {}),
         confidence: link ? weakest(leaf.confidence, link.confidence) : leaf.confidence,
       });
@@ -294,13 +350,13 @@ export function computeParamOrigins(input: {
         const direct = DIRECT.exec(slot) ?? DIRECT_QUERY.exec(slot);
         const ownProp = direct ? null : DIRECT_PROP.exec(slot);
         if (ownProp) {
-          propOrigins(a.filePath, ownProp[1]!, ds.line, 0, new Set(), [], "EXTRACTED", leaves);
+          propOrigins(a.filePath, ownProp[1]!, ds.line, 0, new Set(), [], [], "EXTRACTED", leaves);
         } else if (direct) {
-          leaves.push({ origin: urlOrigin(DIRECT.test(slot) ? "route-param" : "query-param", direct[1]!, a.filePath, ds.line), hops: [], confidence: "EXTRACTED" });
+          leaves.push({ origin: urlOrigin(DIRECT.test(slot) ? "route-param" : "query-param", direct[1]!, a.filePath, ds.line), hops: [], via: [], confidence: "EXTRACTED" });
         } else {
           const at = fn && !slot.includes(".") ? fn.fn.params.findIndex((p) => p.name === slot) : -1;
           if (!fn || at < 0) continue; // a local or a member: not followed
-          walk(fn, at, undefined, 0, new Set(), [], "EXTRACTED", leaves);
+          walk(fn, at, undefined, 0, new Set(), [], [], "EXTRACTED", leaves);
         }
         emit(sink, leaves, link ? routeParam(link, ds.target, m[0]!, routeAt) : undefined, link);
       }
@@ -309,7 +365,7 @@ export function computeParamOrigins(input: {
         for (const m of ds.target.matchAll(BRACE_SLOT)) {
           const slot = m[1]!;
           const leaves: Leaf[] = [];
-          walk(fn, ds.pathValues.index, `${ds.pathValues.field}.${slot}`, 0, new Set(), [], "EXTRACTED", leaves);
+          walk(fn, ds.pathValues.index, `${ds.pathValues.field}.${slot}`, 0, new Set(), [], [], "EXTRACTED", leaves);
           emit({ file: a.filePath, line: ds.line, url: ds.target, slot }, leaves, link ? routeParam(link, ds.target, m[0]!, routeAt) : undefined, link);
         }
       }
@@ -335,16 +391,22 @@ function childFile(a: FileAnalysis, tag: string, imported: readonly string[]): s
   return named.length === 1 ? named[0]! : null;
 }
 
+/** A derivation ending in a record looked up whole (`clubStore.clubs[props.clubId]`, no property read). */
+function fieldless(steps: readonly ValueStep[] | undefined): boolean {
+  const last = steps?.[steps.length - 1];
+  return last?.kind === "lookup" && !last.field;
+}
+
 function hasOrigins(a: FileAnalysis): boolean {
   return a.functions.some((f) => f.calls.some((c) => c.argOrigins)) || a.classes.some((c) => c.methods.some((m) => m.calls.some((x) => x.argOrigins)));
 }
 
-/** One row per origin: the shortest hop chain kept. */
-function dedupe<T extends { origin: ParamOrigin["origin"]; hops: unknown[] }>(leaves: T[]): T[] {
+/** One row per origin (and derivation): the shortest hop chain kept. */
+function dedupe<T extends { origin: ParamOrigin["origin"]; hops: unknown[]; via: Step[] }>(leaves: T[]): T[] {
   const best = new Map<string, T>();
   for (const l of leaves) {
     const o = l.origin;
-    const k = `${o.kind}|${"name" in o ? o.name : "value" in o ? o.value : ""}|${o.file}|${o.line}`;
+    const k = `${o.kind}|${"name" in o ? o.name : "value" in o ? o.value : ""}|${o.file}|${o.line}|${l.via.map((s) => `${s.kind}:${s.line}:${s.kind === "lookup" ? s.field ?? "" : s.name}`).join(",")}`;
     const prev = best.get(k);
     if (!prev || l.hops.length < prev.hops.length) best.set(k, l);
   }
@@ -390,4 +452,12 @@ function routeParam(link: ApiRouteLink, url: string, slotText: string, routeAt: 
     ...(declared?.binding ? { binding: declared.binding } : {}),
     ...(declared?.type ? { type: declared.type } : {}),
   };
+}
+
+/**
+ * How a derived value comes from its origin, in words: `as clubStore.clubs[…].id`
+ * for a store record's field, `through getSeasonIdFromClubId()` for a helper's result.
+ */
+export function describeDerivation(steps: ReadonlyArray<{ kind: string; object?: string; field?: string; name?: string }> | undefined): string {
+  return (steps ?? []).map((s) => (s.kind === "lookup" ? `as ${s.object}[…]${s.field ? `.${s.field}` : ""}` : `through ${s.name}()`)).join(", ");
 }

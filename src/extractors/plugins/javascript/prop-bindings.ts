@@ -24,7 +24,7 @@ export function propBindings(tree: Tree, sourceText: string, rawSource: string, 
           const expr = value.namedChild(0);
           const found = expr ? expressionOrigin(expr) : null;
           if (!found || found.origin.kind === "literal") continue;
-          out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: found.origin, ...(found.transform ? { transform: found.transform } : {}) });
+          out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: found.origin, ...(found.transform ? { transform: found.transform } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
         }
       }
     }
@@ -56,9 +56,9 @@ function vueBindings(tree: Tree, raw: string): PropBinding[] {
       const wrapped = /^(Number|String|parseInt|encodeURIComponent)\(\s*(.*?)\s*\)$/.exec(value);
       const chain = wrapped ? wrapped[2]! : value;
       if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(chain)) continue;
-      const origin = templateValueOrigin(anchor, chain.split("."), declared);
-      if (!origin || origin.kind === "literal") continue;
-      out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin, ...(wrapped ? { transform: wrapped[1]! } : {}) });
+      const found = templateValueOrigin(anchor, chain.split("."), declared);
+      if (!found || found.origin.kind === "literal") continue;
+      out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: found.origin, ...(wrapped ? { transform: wrapped[1]! } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
     }
   }
   return out;

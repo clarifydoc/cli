@@ -1,6 +1,7 @@
 import type { ParamColumn, ParamOrigin, Summary } from "./types.js";
 import { at, byDesc, cell, codeCell, commentLine, plural, share } from "./text.js";
 import { buildDiagram, routeChains, type Diagram } from "./mermaid.js";
+import { describeDerivation } from "../core/param-origins.js";
 
 /**
  * The markdown exports — the artifacts that make the tool's name literal.
@@ -511,7 +512,7 @@ function paramOriginLines(rows: readonly ParamOrigin[]): string[] {
         ["Parameter", "Value", "From", "Through"],
         unique.slice(0, ROW_CAP).map((row) => [
           codeCell(row.route!.param),
-          originValue(row.origin),
+          `${originValue(row.origin)}${row.derivation?.length ? `, ${cell(describeDerivation(row.derivation))}` : ""}`,
           at(row.origin.file, row.origin.line),
           cell((row.hops ?? []).map((hop) => hop.symbol).join(" → ") || "—"),
         ]),

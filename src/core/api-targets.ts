@@ -649,7 +649,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
           const outer = splitArgs(argsText);
           if (inner) {
             const handed = inner.params.map((_, i) => {
-              const o = only.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform)?.origin;
+              const o = only.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform && !a.derivation)?.origin;
               return o?.kind === "param" ? outer[o.index] ?? "" : o?.kind === "literal" ? JSON.stringify(o.value) : "";
             });
             return resolveThisCallWith(inner, source, handed, cls, depth);
@@ -665,7 +665,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
           const outer = splitArgs(argsText);
           const arrowParams = arrow[1]!.split(",").map((x) => x.split(":")[0]!.trim());
           const handedTo = (i: number): string => {
-            const o = only!.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform)?.origin;
+            const o = only!.argOrigins?.find((a) => a.index === i && a.field === undefined && !a.transform && !a.derivation)?.origin;
             return o?.kind === "param" ? outer[o.index] ?? "" : o?.kind === "literal" ? JSON.stringify(o.value) : "";
           };
           const args = splitArgs(arrow[3]!).map((x) => (arrowParams.includes(x.trim()) ? handedTo(arrowParams.indexOf(x.trim())) : x));

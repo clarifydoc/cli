@@ -1230,7 +1230,29 @@ export interface CallArgOrigin {
    * by name (a dependency's parameter named like the route parameter).
    */
   param?: string;
+  /**
+   * The argument is not the origin's value itself but derived from it, step by
+   * step as the source states it (from the origin towards the argument): read
+   * off a collection the value keys (`clubStore.clubs[props.clubId].id`), or
+   * returned by a function called with it (`getSeasonIdFromClubId(props.clubId)`).
+   */
+  derivation?: ValueStep[];
 }
+
+/**
+ * One step between a value's origin and the argument it ends up as
+ * (`CallArgOrigin.derivation`, `PropBinding.derivation`), as written.
+ */
+export type ValueStep =
+  /**
+   * Read off the collection `object` under the value as its key
+   * (`clubStore.clubs[props.clubId]`), then its property `field` when one is
+   * read (`.id`, dotted when deeper). `from` names the call the collection's
+   * head holds (`clubStore = useClubStore()`, at `fromLine`): the store.
+   */
+  | { kind: "lookup"; object: string; field?: string; line: number; from?: string; fromLine?: number }
+  /** Returned by the function `name`, called at `line` with the value as its argument `index` (the call's other arguments are literals). */
+  | { kind: "helper"; name: string; line: number; index: number };
 
 /**
  * Which value feeds a parameter of an API call's URL (`ProjectAnalysis.paramOrigins`):
@@ -1247,6 +1269,14 @@ export interface ParamOrigin {
     | { kind: "unknown"; file: string; line: number };
   /** The functions the value is handed through, from the origin towards the call, each with the argument position (and the property of it, for an object argument). */
   hops: Array<{ file: string; symbol: string; line: number; arg: number; field?: string }>;
+  /**
+   * The value is derived from the origin rather than handed on as it is: the
+   * steps, from the origin towards the call — a collection it keys (with the
+   * store the collection is read from, when the analysis resolves it) or a
+   * project function that returns it (`target`, the function the call links to).
+   * Such a row is at most INFERRED.
+   */
+  derivation?: Array<ValueStep & { file: string; target?: { file: string; symbol: string } }>;
   /** The backend route parameter the slot binds, when the call is joined to a route. */
   route?: { file: string; line: number; method: string | null; path: string; param: string; binding?: string; type?: string };
   confidence: Confidence;
@@ -2950,6 +2980,8 @@ export interface PropBinding {
   line: number;
   origin: CallArgOrigin["origin"];
   transform?: string;
+  /** The bound value is derived from the origin (`:club-id="club.id"`, `club` read off a store by a prop): `CallArgOrigin.derivation`. */
+  derivation?: ValueStep[];
 }
 
 /** A function a component's markup hands a child by name as a prop (`FileAnalysis.functionProps`). */

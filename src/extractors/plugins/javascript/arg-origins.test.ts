@@ -196,5 +196,32 @@ export function other(params: Record<string, string>) {
     // A parameter called params is no request's: a property read off it says nothing.
     expect(fns.find((f) => f.name === "other")?.calls.find((c) => c.name === "findMatch")?.argOrigins).toBeUndefined();
   });
-});
 
+  it("reads a value derived from a prop: a record a store keys by it, a helper's result for it, a getter", async () => {
+    const src = `const props = defineProps<{ clubId: number; date: string }>();
+const route = useRoute();
+const clubStore = useClubStore();
+const club = computed(() => clubStore.clubs[props.clubId]);
+const rival = clubStore.clubs[Number(route.params.rivalId)];
+const seasonId = computed(() => getSeasonIdFromClubId(props.clubId));
+const kit = computed(() => kitFor(props.clubId, "home"));
+const fixture = computed(() => pairOf(props.clubId, props.date));
+const current = computed(() => clubStore.current);
+const first = computed(() => clubStore.clubs[0]);
+function load() {
+  fetchClub(club.value.id, rival?.id, seasonId.value, kit.value, fixture.value, current.value.id, first.value.id, club.value);
+  useSeason(() => props.clubId);
+}`;
+    const lookup = { kind: "lookup", object: "clubStore.clubs", line: 4, from: "useClubStore", fromLine: 3 };
+    expect(await originsOf(src, "load", "fetchClub")).toEqual([
+      { index: 0, origin: { kind: "prop", name: "clubId" }, derivation: [{ ...lookup, field: "id" }] },
+      { index: 1, origin: { kind: "route-param", name: "rivalId" }, derivation: [{ ...lookup, line: 5, field: "id" }] },
+      { index: 2, origin: { kind: "prop", name: "clubId" }, derivation: [{ kind: "helper", name: "getSeasonIdFromClubId", line: 6, index: 0 }] },
+      { index: 3, origin: { kind: "prop", name: "clubId" }, derivation: [{ kind: "helper", name: "kitFor", line: 7, index: 0 }] },
+      // Two values in, one out: no single origin. A store field no value keys, a literal index: none either.
+      // The record itself is a lookup with no field read.
+      { index: 7, origin: { kind: "prop", name: "clubId" }, derivation: [lookup] },
+    ]);
+    expect(await originsOf(src, "load", "useSeason")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" }, transform: "getter" }]);
+  });
+});

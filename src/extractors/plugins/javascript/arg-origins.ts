@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { CallArgOrigin } from "../../../types/analysis.js";
+import type { CallArgOrigin, ValueStep } from "../../../types/analysis.js";
 
 /**
  * Where a call's arguments come from (`CallInfo.argOrigins`), for the
@@ -14,7 +14,11 @@ import type { CallArgOrigin } from "../../../types/analysis.js";
  *
  * A query-string read is its own kind (`query-param`), never a route
  * parameter. One wrapper is unwrapped and named (`Number(id)`,
- * `encodeURIComponent(slug)`, `` `${id}` ``, `id!`, `id as string`).
+ * `encodeURIComponent(slug)`, `` `${id}` ``, `id!`, `id as string`; a getter
+ * `() => props.clubId` handed to a composable that reads it with `toValue`).
+ * A value derived from a known one says how (`derivation`): read off a
+ * collection it keys (`clubStore.clubs[props.clubId].id`), or returned by a
+ * function called with it and literals only (`getSeasonIdFromClubId(props.clubId)`).
  * Reported only when at least one argument's origin is known.
  */
 export function argOriginsOf(node: Node): CallArgOrigin[] | null {
@@ -30,12 +34,28 @@ export function argOriginsOf(node: Node): CallArgOrigin[] | null {
       fieldOrigins(arg, index, "", invokes ? 1 : 0, out);
       return;
     }
-    const { node: value, transform } = unwrap(arg);
-    const origin = originOf(value, 0);
-    if (origin) out.push({ index, origin, ...(transform ? { transform } : {}) });
+    // `useSquad(() => props.clubId)`: a getter the composable reads with `toValue`.
+    const getter = getterBody(arg);
+    const { node: value, transform } = getter ? { node: unwrap(getter).node, transform: "getter" } : unwrap(arg);
+    const found = originOf(value, 0);
+    if (found) out.push({ index, ...split(found), ...(transform ? { transform } : {}) });
   });
   // Literals alone say nothing a URL slot needs: kept only beside a parameter or a URL value.
   return out.some((a) => a.origin.kind !== "literal") ? out : null;
+}
+
+/** A found origin as an argument's: the origin, and the steps it was derived by. */
+function split(found: Found): { origin: Origin; derivation?: ValueStep[] } {
+  const { steps, ...origin } = found;
+  return { origin: origin as Origin, ...(steps?.length ? { derivation: steps } : {}) };
+}
+
+/** The body of a getter argument — an arrow with no parameters returning an expression (`() => props.clubId`). */
+function getterBody(arg: Node): Node | null {
+  if (arg.type !== "arrow_function" || arg.childForFieldName("parameter")) return null;
+  if ((arg.childForFieldName("parameters")?.namedChildren.filter((p) => p?.type !== "comment").length ?? 0) > 0) return null;
+  const body = arg.childForFieldName("body");
+  return body && body.type !== "statement_block" ? body : null;
 }
 
 /**
@@ -97,8 +117,8 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
       continue;
     }
     if (prop.type === "shorthand_property_identifier") {
-      const origin = identifierOrigin(prop, prop.text, 0);
-      if (origin) out.push({ index, origin, field: prefix + prop.text });
+      const found = identifierOrigin(prop, prop.text, 0);
+      if (found) out.push({ index, ...split(found), field: prefix + prop.text });
       continue;
     }
     if (prop.type !== "pair") continue;
@@ -111,8 +131,8 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
       continue;
     }
     const { node: value, transform } = unwrap(raw);
-    const origin = originOf(value, 0);
-    if (origin) out.push({ index, origin, field: prefix + keyText, ...(transform ? { transform } : {}) });
+    const found = originOf(value, 0);
+    if (found) out.push({ index, ...split(found), field: prefix + keyText, ...(transform ? { transform } : {}) });
   }
 }
 
@@ -124,7 +144,8 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
 export function filterOrigins(obj: Node): Array<{ field: string; origin: Origin; transform?: string }> | null {
   const out: CallArgOrigin[] = [];
   fieldOrigins(obj, 0, "", 1, out);
-  const known = out.filter((o) => o.origin.kind !== "literal" && o.field);
+  // A value derived from a request value (a lookup, a helper's result) is not the value a filter compares.
+  const known = out.filter((o) => o.origin.kind !== "literal" && o.field && !o.derivation);
   return known.length > 0 ? known.map((o) => ({ field: o.field!, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) })) : null;
 }
 
@@ -160,8 +181,8 @@ export function unwrap(n: Node): { node: Node; transform?: string } {
         node = inner[0]!;
         continue;
       }
-      // Vue's reactive wrappers: `computed(() => Number(route.params.id))`, `ref(id)`, `toRef(…)`.
-      if (fn?.type === "identifier" && (fn.text === "computed" || fn.text === "ref" || fn.text === "toRef" || fn.text === "unref") && inner.length === 1) {
+      // Vue's reactive wrappers: `computed(() => Number(route.params.id))`, `ref(id)`, `toRef(…)`, `toValue(clubId)`.
+      if (fn?.type === "identifier" && (fn.text === "computed" || fn.text === "ref" || fn.text === "toRef" || fn.text === "unref" || fn.text === "toValue") && inner.length === 1) {
         const body = inner[0]!.type === "arrow_function" ? inner[0]!.childForFieldName("body") : inner[0]!;
         if (body && body.type !== "statement_block") {
           transform ??= fn.text;
@@ -185,8 +206,10 @@ export function unwrap(n: Node): { node: Node; transform?: string } {
 }
 
 type Origin = CallArgOrigin["origin"];
+/** An origin, and the steps the value at hand was derived from it by (`CallArgOrigin.derivation`). */
+type Found = Origin & { steps?: ValueStep[] };
 
-function originOf(n: Node, depth: number): Origin | null {
+function originOf(n: Node, depth: number): Found | null {
   if (depth > 4) return null;
   switch (n.type) {
     case "string": {
@@ -222,7 +245,13 @@ function originOf(n: Node, depth: number): Origin | null {
       }
       // `props.clubId`: a prop of the component the read sits in.
       if (n.type === "member_expression" && obj && prop && /^[\w$]+$/.test(prop) && readsUrl(n) && propsObject(obj, depth + 1)) return { kind: "prop", name: prop };
-      return paramRead(n, depth);
+      const direct = paramRead(n, depth);
+      if (direct || !obj) return direct;
+      // `clubStore.clubs[props.clubId]`: the key, read off the collection.
+      if (n.type === "subscript_expression") return lookupOf(n, obj, depth);
+      // `club.value.id`, `club.id`: a property of what a known value looked up.
+      if (prop && /^[\w$]+$/.test(prop) && readsUrl(n)) return readOffLookup(originOf(obj, depth + 1), prop);
+      return null;
     }
     case "call_expression": {
       // `searchParams.get("q")`, `route.snapshot.paramMap.get("id")`.
@@ -241,6 +270,8 @@ function originOf(n: Node, depth: number): Origin | null {
         if (obj.type === "member_expression" && obj.childForFieldName("property")?.text === "paramMap") return { kind: "route-param", name: key };
         if (obj.type === "member_expression" && obj.childForFieldName("property")?.text === "queryParamMap") return { kind: "query-param", name: key };
       }
+      // `getSeasonIdFromClubId(props.clubId)`: what a function returns for the value.
+      if (fn?.type === "identifier") return helperOf(n, fn.text, depth);
       return null;
     }
     case "identifier":
@@ -249,8 +280,57 @@ function originOf(n: Node, depth: number): Origin | null {
   return null;
 }
 
+/**
+ * `obj[key]` where the key's origin is known and `obj` is a member chain
+ * (`clubStore.clubs[props.clubId]`): the key's origin, read off that
+ * collection — and the call the chain's head holds (`useClubStore()`), the store.
+ */
+function lookupOf(n: Node, obj: Node, depth: number): Found | null {
+  const index = n.childForFieldName("index");
+  const object = obj.text.replace(/\s+/g, "").replace(/\?\.$/, "").replace(/\?\./g, ".");
+  if (!index || !/^(?:this\.)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(object) || !readsUrl(n)) return null;
+  if (paramsObject(obj, depth + 1) || propsObject(obj, depth + 1)) return null;
+  const key = originOf(unwrap(index).node, depth + 1);
+  if (!key || key.kind === "literal") return null;
+  const head = object.startsWith("this.") ? null : object.split(".")[0]!;
+  const bound = head && head !== object && !paramOf(n, head) ? bindingOf(n, head) : null;
+  const held = bound?.kind === "value" ? unwrap(bound.value).node : null;
+  const factory = held?.type === "call_expression" ? held.childForFieldName("function") : null;
+  const from = factory?.type === "identifier" ? { from: factory.text, fromLine: held!.startPosition.row + 1 } : {};
+  return { ...key, steps: [...(key.steps ?? []), { kind: "lookup", object, line: n.startPosition.row + 1, ...from }] };
+}
+
+/** Property `prop` of a record a lookup found (`club.value.id`): the lookup's field. Null for anything else. */
+function readOffLookup(base: Found | null, prop: string): Found | null {
+  const last = base?.steps?.[base.steps.length - 1];
+  if (!base || last?.kind !== "lookup") return null;
+  return { ...base, steps: [...base.steps!.slice(0, -1), { ...last, field: last.field ? `${last.field}.${prop}` : prop }] };
+}
+
+/**
+ * `helper(value, "literal", …)`: one argument of known origin, the others
+ * literals — the function's result derives from that value. Wrappers
+ * (`Number`, `encodeURIComponent`) are unwrapped before this.
+ */
+function helperOf(n: Node, name: string, depth: number): Found | null {
+  if (WRAPPERS.has(name) || name === "defineProps" || name === "withDefaults") return null;
+  const args = n.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+  if (args.length === 0 || args.length > 4 || !readsUrl(n)) return null;
+  let found: { index: number; origin: Found } | null = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i]!.type === "spread_element") return null;
+    const origin = originOf(unwrap(args[i]!).node, depth + 1);
+    if (!origin) return null;
+    if (origin.kind === "literal") continue;
+    if (found) return null;
+    found = { index: i, origin };
+  }
+  if (!found) return null;
+  return { ...found.origin, steps: [...(found.origin.steps ?? []), { kind: "helper", name, line: n.startPosition.row + 1, index: found.index }] };
+}
+
 /** A name read at `n`: a parameter of an enclosing function, or a local the router fills. */
-function identifierOrigin(n: Node, name: string, depth: number): Origin | null {
+function identifierOrigin(n: Node, name: string, depth: number): Found | null {
   const param = paramOf(n, name);
   if (param) return param;
   if (!readsUrl(n)) return null;
@@ -525,10 +605,10 @@ function literalArg(call: Node): string | null {
 }
 
 /** Where an expression's value comes from, one wrapper unwrapped: what a markup binding hands a child's prop. */
-export function expressionOrigin(n: Node): { origin: Origin; transform?: string } | null {
+export function expressionOrigin(n: Node): { origin: Origin; transform?: string; derivation?: ValueStep[] } | null {
   const { node, transform } = unwrap(n);
-  const origin = originOf(node, 0);
-  return origin ? { origin, ...(transform ? { transform } : {}) } : null;
+  const found = originOf(node, 0);
+  return found ? { ...split(found), ...(transform ? { transform } : {}) } : null;
 }
 
 /**
@@ -538,7 +618,12 @@ export function expressionOrigin(n: Node): { origin: Origin; transform?: string 
  * script's program. A bare name the script does not bind is the component's
  * own prop when it declares one of that name (`declared`).
  */
-export function templateValueOrigin(anchor: Node, chain: readonly string[], declared: ReadonlySet<string>): Origin | null {
+export function templateValueOrigin(anchor: Node, chain: readonly string[], declared: ReadonlySet<string>): { origin: Origin; derivation?: ValueStep[] } | null {
+  const found = templateValue(anchor, chain, declared);
+  return found ? split(found) : null;
+}
+
+function templateValue(anchor: Node, chain: readonly string[], declared: ReadonlySet<string>): Found | null {
   const [head, ...rest] = chain;
   if (!head) return null;
   if (head === "props" && rest.length === 1) return { kind: "prop", name: rest[0]! };
@@ -553,6 +638,8 @@ export function templateValueOrigin(anchor: Node, chain: readonly string[], decl
   if (bound.kind !== "value") return null;
   const value = unwrap(bound.value).node;
   if (rest.length === 1 && propsObject(value, 1)) return { kind: "prop", name: rest[0]! };
+  // `club.id`, the template unwrapping `club = computed(() => clubStore.clubs[props.clubId])`.
+  if (rest.length === 1) return readOffLookup(identifierOrigin(anchor, head, 0), rest[0]!);
   if (rest.length === 2 && rest[0] === "params" && routeObject(value, 1)) return { kind: "route-param", name: rest[1]! };
   if (rest.length === 2 && rest[0] === "query" && (routeObject(value, 1) || routerObject(value))) return { kind: "query-param", name: rest[1]! };
   return null;

@@ -500,6 +500,9 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
         // What a module-level call hands on (`useTableSort(sortBy, resetPage)`), as `extractCalls` reports it.
         const handed = hooks!.argsOf?.(node);
         if (handed) call.args = handed;
+        // Where its arguments come from (`useClub(() => props.clubId)` in a Vue `<script setup>`), as `extractCalls` reports it.
+        const origins = hooks!.argOriginsOf?.(node);
+        if (origins) call.argOrigins = origins;
         if (receiver && (receiver.type || receiver.qualifier)) {
           if (receiver.type) call.receiverType = receiver.type;
           if (receiver.qualifier) call.receiverQualifier = receiver.qualifier;

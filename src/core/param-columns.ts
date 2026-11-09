@@ -171,6 +171,8 @@ export function computeParamColumns(input: {
     }
     for (const call of calls) {
       for (const arg of call.argOrigins ?? []) {
+        // A value derived from the parameter (a record it keys, a function's result) is not the parameter.
+        if (arg.derivation) continue;
         // What the callee receives the value as: its parameter, a field of its parameter (a
         // property of an object argument, or the object itself handed on), or — for a call made
         // on the object (`index` -1) — a field of its own receiver.

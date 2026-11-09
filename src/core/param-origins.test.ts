@@ -141,4 +141,62 @@ describe("paramOrigins", () => {
     ]);
     expect(rows[0]!.confidence).toBe("INFERRED");
   });
+
+  it("keeps a route parameter as the origin of a value derived from it — a store record's field, a project helper's result — and names the steps", () => {
+    // ClubView: `club = computed(() => clubStore.clubs[route.params.clubId])`, `seasonId = computed(() => getSeasonIdFromClubId(route.params.clubId))`.
+    const lookup = { kind: "lookup", object: "clubStore.clubs", line: 4, from: "useClubStore", fromLine: 3 };
+    const at = (line: number, index = 0) => ({ index, origin: { kind: "route-param", name: "clubId" } });
+    const view = file("web/views/ClubView.vue", [
+      fn("<setup>", 1, 20, [], [
+        { name: "useClubStore", kind: "cross-file", target: null, line: 3 },
+        { name: "getSeasonIdFromClubId", kind: "cross-file", target: null, line: 5 },
+        { name: "formatKit", kind: "cross-file", target: null, line: 6 },
+      ]),
+      fn("load", 10, 18, [], [
+        { name: "getClub", kind: "cross-file", target: null, line: 11, argOrigins: [{ ...at(11), derivation: [{ ...lookup, field: "id" }] }] },
+        { name: "getClub", kind: "cross-file", target: null, line: 12, argOrigins: [{ ...at(12), derivation: [{ kind: "helper", name: "getSeasonIdFromClubId", line: 5, index: 0 }] }] },
+        // A library's function (no link): what it returns proves nothing.
+        { name: "getClub", kind: "cross-file", target: null, line: 13, argOrigins: [{ ...at(13), derivation: [{ kind: "helper", name: "formatKit", line: 6, index: 0 }] }] },
+        // The record itself in a URL slot is not the value.
+        { name: "getClub", kind: "cross-file", target: null, line: 14, argOrigins: [{ ...at(14), derivation: [lookup] }] },
+      ]),
+    ]);
+    const store = file("web/stores/clubs.ts", [fn("useClubStore", 1, 5, [])]);
+    const helpers = file("web/helpers/seasons.ts", [fn("getSeasonIdFromClubId", 1, 3, ["clubId"])]);
+    const dLinks = [
+      link("web/views/ClubView.vue", "<setup>", 3, "useClubStore", "web/stores/clubs.ts", "useClubStore"),
+      link("web/views/ClubView.vue", "<setup>", 5, "getSeasonIdFromClubId", "web/helpers/seasons.ts", "getSeasonIdFromClubId"),
+      link("web/views/ClubView.vue", "load", 11, "getClub", "web/api/clubs.ts", "getClub"),
+    ];
+    const vScreens = [{ name: "ClubView", filePath: "web/views/ClubView.vue", routePath: "/clubs/:clubId" }] as unknown as ScreenInfo[];
+    const rows = computeParamOrigins({ analyses: [view, store, helpers, api], symbolLinks: dLinks, apiRouteLinks: [apiLink], routes, screens: vScreens });
+    expect(rows.map((r) => [r.origin.kind, r.origin.line, r.confidence, (r.derivation ?? []).map((d) => `${d.kind}:${d.kind === "lookup" ? `${d.object}.${d.field}` : d.name}>${d.target?.file ?? "-"}`).join(",")])).toEqual([
+      ["route-param", 11, "INFERRED", "lookup:clubStore.clubs.id>web/stores/clubs.ts"],
+      ["route-param", 12, "INFERRED", "helper:getSeasonIdFromClubId>web/helpers/seasons.ts"],
+      ["unknown", 13, "EXTRACTED", ""],
+      ["unknown", 4, "INFERRED", ""],
+    ]);
+  });
+
+  it("reads a whole record a value keys, handed to a mutation, as the property its callback takes", () => {
+    const sdk = file("web/client/sdk.gen.ts", [fn("deleteClub", 1, 3, ["options"])], [
+      { kind: "api-call", name: "del", target: "/clubs/{id}", line: 2, calls: [], pathValues: { index: 0, field: "path" } },
+    ]);
+    const queries = file("web/client/queries/clubs.ts", [
+      fn("useDeleteClub", 1, 5, [], [{ name: "deleteClub", kind: "cross-file", target: null, line: 3, argOrigins: [{ index: 0, field: "path.id", origin: { kind: "invoked", via: ["mutate", "mutateAsync"], index: 0, field: "id" } }] }]),
+    ]);
+    // `remove.mutateAsync(club.value)`, `club = computed(() => clubs.value[props.clubId])`.
+    const view = file("web/views/ClubView.vue", [
+      fn("<setup>", 1, 9, [], [{ name: "remove.mutateAsync", kind: "cross-file", target: null, line: 6, argOrigins: [{ index: 0, origin: { kind: "prop", name: "clubId" }, derivation: [{ kind: "lookup", object: "clubs.value", line: 4 }] }] }]),
+    ]);
+    const rows = computeParamOrigins({
+      analyses: [sdk, queries, view],
+      symbolLinks: [link("web/client/queries/clubs.ts", "useDeleteClub", 3, "deleteClub", "web/client/sdk.gen.ts", "deleteClub"), link("web/views/ClubView.vue", "<setup>", 6, "remove.mutateAsync", "web/client/queries/clubs.ts", "useDeleteClub")],
+      apiRouteLinks: [],
+      routes,
+      screens: [],
+    });
+    // No route renders the view and no parent binds the prop: unknown at the view, but the derivation got that far.
+    expect(rows.map((r) => [r.origin.kind, r.origin.file, r.derivation?.[0]?.kind === "lookup" ? r.derivation[0].field : null])).toEqual([["unknown", "web/views/ClubView.vue", "id"]]);
+  });
 });
