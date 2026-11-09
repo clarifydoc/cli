@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
+import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { editedFile, fileStem, framed, normalizeHookInput, runHook, searchTerm } from "./hooks.js";
@@ -321,7 +322,7 @@ describe("git hooks", () => {
       mkdirSync(hooksDir);
       writeFileSync(join(hooksDir, "post-merge"), "#!/bin/bash\necho mine\n");
       const first = planGitHooks(root, { hooksDir }, self);
-      expect(first.map((p) => p.file.split("/").pop())).toEqual(["post-commit", "post-merge", "post-checkout"]);
+      expect(first.map((p) => p.file.split("/").pop())).toEqual(["post-commit", "post-merge", "post-checkout", "post-rewrite"]);
       applyPlans(first, false);
       const commit = readFileSync(join(hooksDir, "post-commit"), "utf8");
       expect(commit.startsWith("#!/bin/sh\n# clarifydoc:start")).toBe(true);
@@ -330,10 +331,52 @@ describe("git hooks", () => {
       // The block goes after the hook's shebang, before its own lines.
       expect(readFileSync(join(hooksDir, "post-merge"), "utf8")).toMatch(/^#!\/bin\/bash\n# clarifydoc:start[\s\S]*# clarifydoc:end\necho mine\n$/);
       // A file checkout does not refresh.
-      expect(readFileSync(join(hooksDir, "post-checkout"), "utf8")).toContain('if [ "$3" = "1" ]; then');
+      expect(readFileSync(join(hooksDir, "post-checkout"), "utf8")).toContain('if [ "$3" = "1" ] && [ ! -d "$(git rev-parse --git-path rebase-merge)" ]');
+      expect(commit).toContain('rebase-apply');
+      expect(readFileSync(join(hooksDir, "post-rewrite"), "utf8")).toContain('if [ "$1" = "rebase" ]; then');
       // A second install replaces its block and nothing else.
       const again = planGitHooks(root, { hooksDir }, self);
       expect(again.map((p) => p.content)).toEqual(first.map((p) => readFileSync(p.file, "utf8")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("git hooks in a real rebase", () => {
+  const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@e.x", "-c", "commit.gpgsign=false", ...a], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  let hasGit = true;
+  try { execFileSync("git", ["--version"], { stdio: "ignore" }); } catch { hasGit = false; }
+  it.skipIf(!hasGit)("refreshes once for a rebase, not per intermediate checkout", () => {
+    const root = mkdtempSync(join(tmpdir(), "rebase-hooks-"));
+    try {
+      git(root, "init", "-q", "-b", "main");
+      const stub = join(root, "stub.sh");
+      writeFileSync(stub, `#!/bin/sh\necho x >> "${join(root, "count.log")}"\n`, { mode: 0o755 });
+      writeFileSync(join(root, "a.txt"), "a\n");
+      git(root, "add", "a.txt");
+      git(root, "commit", "-qm", "a");
+      git(root, "checkout", "-qb", "feature");
+      for (const n of ["f1", "f2"]) { writeFileSync(join(root, `${n}.txt`), n); git(root, "add", `${n}.txt`); git(root, "commit", "-qm", n); }
+      git(root, "checkout", "-q", "main");
+      writeFileSync(join(root, "m.txt"), "m");
+      git(root, "add", "m.txt");
+      git(root, "commit", "-qm", "m");
+      git(root, "checkout", "-q", "feature");
+      const hooksDir = join(root, ".git", "hooks");
+      // The refresh command is `<stub> analyze …`, run in the background.
+      applyPlans(planGitHooks(root, { hooksDir }, { command: stub, args: [] }), false);
+      git(root, "rebase", "main");
+      const wait = Date.now() + 3000;
+      let n = 0;
+      while (Date.now() < wait) {
+        n = existsSync(join(root, "count.log")) ? readFileSync(join(root, "count.log"), "utf8").trim().split("\n").length : 0;
+        if (n >= 1) break;
+        execFileSync("sleep", ["0.1"]);
+      }
+      execFileSync("sleep", ["0.5"]);
+      n = readFileSync(join(root, "count.log"), "utf8").trim().split("\n").length;
+      expect(n).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

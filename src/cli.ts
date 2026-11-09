@@ -842,7 +842,7 @@ program
   .option("--hooks", "Also add the hooks of the clients named: Claude Code (.claude/settings.json: before searches, after edits, at session and subagent start), Codex (shell searches) and GitHub Copilot — `copilot` or `vscode` (after searches)", false)
   .option("--skills", "Also write .claude/skills/clarifydoc-* from the MCP workflow prompts", false)
   .option("--guidance [file]", "Also add or update the ClarifyDoc section of AGENTS.md (or the file named)")
-  .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout) that refresh the analysis in the background", false)
+  .option("--git-hooks", "Also add git hooks (post-commit, post-merge, post-checkout, post-rewrite) that refresh the analysis in the background", false)
   .option("-o, --output <dir>", "Analysis output directory, for the project facts in the guidance", ".clarifydoc")
   .option("--print", "Print what would be written instead of writing it", false)
   .option("--command <launcher>", "Start ClarifyDoc with this command in the entries and hooks written (default: the way this CLI was started)")

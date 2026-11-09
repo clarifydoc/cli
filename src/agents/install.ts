@@ -413,11 +413,16 @@ const HOOK_START = "# clarifydoc:start";
 const HOOK_END = "# clarifydoc:end";
 
 /** The git events that move the working tree, and when each should refresh. */
+const NOT_REBASING = '[ ! -d "$(git rev-parse --git-path rebase-merge)" ] && [ ! -d "$(git rev-parse --git-path rebase-apply)" ]';
+
 const GIT_EVENTS: Array<{ name: string; when?: string }> = [
-  { name: "post-commit" },
-  { name: "post-merge" },
+  // A rebase commits and checks out as it replays; post-rewrite refreshes once at its end.
+  { name: "post-commit", when: NOT_REBASING },
+  { name: "post-merge", when: NOT_REBASING },
   // `$3` is 1 for a branch checkout, 0 for a file checkout.
-  { name: "post-checkout", when: '[ "$3" = "1" ]' },
+  { name: "post-checkout", when: `[ "$3" = "1" ] && ${NOT_REBASING}` },
+  // `$1` is `amend` (post-commit already ran) or `rebase`.
+  { name: "post-rewrite", when: '[ "$1" = "rebase" ]' },
 ];
 
 /** Where this repository's hooks live: `core.hooksPath` when set, else `.git/hooks` (worktrees included). */
@@ -427,7 +432,7 @@ export function gitHooksDir(root: string): string {
 }
 
 /**
- * Git hooks that refresh the analysis after a commit, a merge or a branch
+ * Git hooks that refresh the analysis after a commit, a merge, a rebase or a branch
  * checkout: an incremental analysis in the background, so git never waits
  * and a failure never fails git. Only this repository's hooks directory is
  * touched, never global config. The block sits between markers right after
