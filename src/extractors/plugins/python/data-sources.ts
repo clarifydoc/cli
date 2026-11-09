@@ -583,8 +583,15 @@ function rootStatement(expr: Node): { model?: string; attribute?: string; access
   return model ? { ...model, access: verb === "select" ? "read" : "write" } : null;
 }
 
-/** `Club`, `models.Club`, `Club.id` → the class; `self.model` / `self.model.id` → the attribute. */
+/**
+ * `Club`, `models.Club`, `Club.id` → the class; `self.model` / `self.model.id` → the attribute;
+ * an SQL function over a column (`func.count(Club.id)`) → that column's class.
+ */
 function modelExpression(node: Node): { model?: string; attribute?: string } | null {
+  if (node.type === "call" && /^(?:sqlalchemy\.)?func\.\w+$/.test(node.childForFieldName("function")?.text ?? "")) {
+    const column = positional(node)[0];
+    return column ? modelExpression(column) : null;
+  }
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(node.text)) return null;
   const parts = node.text.split(".");
   if ((parts[0] === "self" || parts[0] === "cls") && parts.length >= 2 && parts.length <= 3 && /^[a-z_]/.test(parts[1]!)) return { attribute: parts[1]! };

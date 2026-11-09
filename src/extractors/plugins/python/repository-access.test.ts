@@ -279,3 +279,75 @@ describe("Django's signed-in user saved", () => {
   });
 });
 
+
+/** A repository method outside the CRUD verbs, reached through the typed chain: the entity when its body works on the instance's model. */
+describe("Python repository methods outside the verb list", () => {
+  const at = (m: any, line: number, endLine: number) => Object.assign(m, { line, endLine });
+  const onModel = (name: string, line: number, access: "read" | "write" = "read"): any => ({ kind: "database", name, target: null, entityAttribute: "model", access, calls: [], line });
+
+  it("reaches the type argument's model through a method on `self.model`, a same-instance helper, or a subclass override", () => {
+    const models = file("db/models.py", [
+      cls("ClubModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+      cls("PlayerModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] }),
+    ]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric", { methods: [
+      at(method("_query_one", []), 10, 12),
+      at(method("league_table", []), 14, 17),
+      at(method("relegate", ["self._query_one"]), 19, 23),
+      at(method("statistics", []), 25, 27),
+    ] })]);
+    generic.dataSources = [
+      onModel("self.session.get", 11),
+      onModel("self.session.execute", 16),
+      { kind: "database", name: "self.session.delete", target: null, access: "write", calls: [], line: 21 } as any,
+      onModel("self.session.scalar", 26),
+    ];
+    // The subclass's own `statistics` reads another model by name: not the instance's.
+    const clubs = file("repos/repository_clubs.py", [cls("RepositoryClubs", { extends: "RepositoryGeneric[ClubOut, ClubModel]", methods: [at(method("statistics", []), 5, 8)] })]);
+    clubs.dataSources = [{ kind: "database", name: "self.session.scalar", target: "PlayerModel", entity: "PlayerModel", access: "read", calls: [], line: 7 } as any];
+    const factory = file("repos/factory.py", [cls("AllRepositories", { methods: [
+      method("clubs", [], "RepositoryClubs"),
+      method("players", [], "RepositoryGeneric[PlayerOut, PlayerModel]"),
+    ] })]);
+    const service = file("services/club_service.py", [cls("ClubService", {
+      props: [["repos", "AllRepositories"]],
+      methods: [method("work", [
+        "self.repos.players.league_table",
+        "self.repos.clubs.relegate",
+        "self.repos.players.statistics",
+        "self.repos.clubs.statistics",
+        "self.repos.clubs.rename",
+      ])],
+    })]);
+
+    new PythonEntityExtractor().reconcileProject([models, generic, clubs, factory, service]);
+
+    expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
+      ["self.repos.players.league_table", "PlayerModel", "read"],
+      ["self.repos.clubs.relegate", "ClubModel", "write"],
+      ["self.repos.players.statistics", "PlayerModel", "read"],
+      // `RepositoryClubs.statistics` overrides the base's and names its own model; `rename` is declared nowhere.
+    ]);
+  });
+
+  it("follows a wrapper whose method calls such a repository method", () => {
+    const models = file("db/models.py", [cls("ClubModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric", { methods: [at(method("league_table", []), 14, 17)] })]);
+    generic.dataSources = [onModel("self.session.execute", 16)];
+    const factory = file("repos/factory.py", [cls("AllRepositories", { methods: [method("clubs", [], "RepositoryGeneric[ClubOut, ClubModel]")] })]);
+    const wrapper = file("routes/mixins.py", [cls("HttpRepo", { methods: [
+      method("__init__", [], null, [{ name: "repo", type: "RepositoryGeneric", defaultValue: null }]),
+      method("get_one", ["self.repo.league_table"]),
+    ] })]);
+    const mixins = method("_mixins", [], "HttpRepo", [{ name: "league_id", type: null, defaultValue: null }]);
+    mixins.constructedWith = ["self.repos.clubs"];
+    const controller = file("routes/clubs.py", [cls("ClubController", {
+      props: [["repos", "AllRepositories"]],
+      methods: [mixins, method("standings", ["self._mixins(league_id).get_one"])],
+    })]);
+
+    new PythonEntityExtractor().reconcileProject([models, generic, factory, wrapper, controller]);
+
+    expect(controller.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([["self._mixins(league_id).get_one", "ClubModel", "read"]]);
+  });
+});

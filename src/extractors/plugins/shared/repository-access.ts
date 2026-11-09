@@ -206,6 +206,69 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     return null;
   };
   /**
+   * A method of the repository outside the verb list (`self.repos.clubs.league_table(season)`)
+   * reaches the repository's entity when its body works on the model the
+   * instance holds — a statement on `self.model` (`DataSourceInfo.entityAttribute`),
+   * here or in a method of the same instance it calls (`self._query()`), looked
+   * up on `type` itself so a subclass's override is the one read. A statement
+   * naming a model of its own (`select(Player)`) says nothing of the instance's,
+   * and is left to the method's own rows. Writes when a statement on the
+   * instance's model, or one naming no model (`self.session.delete(row)`), writes.
+   */
+  const rowsByFn = new Map<FunctionInfo, DataSourceInfo[]>();
+  for (const a of own) {
+    const rows = (a.dataSources ?? []).filter((d) => d.kind === "database");
+    if (rows.length === 0) continue;
+    for (const cls of a.classes ?? []) {
+      for (const m of cls.methods ?? []) {
+        const inside = rows.filter((d) => d.line >= m.line && d.line <= m.endLine);
+        if (inside.length) rowsByFn.set(m, inside);
+      }
+    }
+  }
+  /** Names of methods whose body, or a same-instance method it calls, states an access on the instance's model. */
+  const onModelNames = new Set<string>();
+  for (const [m, rows] of rowsByFn) if (rows.some((d) => d.entityAttribute)) onModelNames.add(m.name);
+  for (let round = 0; round < 3 && onModelNames.size; round++) {
+    for (const list of classes.values()) {
+      for (const cls of list) {
+        for (const m of cls.methods ?? []) {
+          if (onModelNames.has(m.name)) continue;
+          const reaches = (m.calls ?? []).some((c) => {
+            const segs = chainSegments(c.name);
+            return segs?.length === 2 && knobs.selfHeads.has(segs[0]!) && onModelNames.has(segs[1]!);
+          });
+          if (reaches) onModelNames.add(m.name);
+        }
+      }
+    }
+  }
+  const modelAccesses = new Map<string, { write: boolean } | null>();
+  const modelAccess = (type: string | null, leaf: string, depth = 0): { write: boolean } | null => {
+    const owner = bare(type);
+    if (!owner || !onModelNames.has(leaf) || depth > 4) return null;
+    const key = `${owner}\0${leaf}`;
+    if (modelAccesses.has(key)) return modelAccesses.get(key)!;
+    modelAccesses.set(key, null); // cycle guard
+    const method = findOn(owner, (cls) => cls.methods.find((m) => m.name === leaf));
+    let found: { write: boolean } | null = null;
+    if (method) {
+      const rows = rowsByFn.get(method) ?? [];
+      const ownModel = (d: DataSourceInfo) => !!d.entityAttribute || (!d.entity && !d.target);
+      if (rows.some((d) => d.entityAttribute)) found = { write: rows.some((d) => ownModel(d) && d.access === "write") };
+      for (const call of method.calls ?? []) {
+        const segs = chainSegments(call.name);
+        if (segs?.length !== 2 || !knobs.selfHeads.has(segs[0]!) || segs[1] === leaf) continue;
+        const inner = modelAccess(owner, segs[1]!, depth + 1);
+        if (!inner) continue;
+        found = { write: (found?.write ?? false) || inner.write || rows.some((d) => ownModel(d) && d.access === "write") };
+      }
+    }
+    modelAccesses.set(key, found);
+    return found;
+  };
+
+  /**
    * A wrapper handed the repository when it is built (`return HttpRepo(self.repo,
    * self.logger)`): its method `leaf` calls `self.repo.<verb>` on the field its
    * constructor takes under that name, so the call reaches the entity of the
@@ -228,14 +291,19 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
     let write = false;
     for (const inner of method.calls ?? []) {
       const segs = inner.name.split(".");
-      if (segs.length !== 3 || !knobs.selfHeads.has(segs[0]!) || !knobs.verbs.test(segs[2]!)) continue;
+      if (segs.length !== 3 || !knobs.selfHeads.has(segs[0]!)) continue;
+      const verb = knobs.verbs.test(segs[2]!);
+      if (!verb && !onModelNames.has(segs[2]!)) continue;
       const at = ctor.params.findIndex((p) => knobs.memberKey(p.name) === knobs.memberKey(segs[1]!));
       const arg = chainSegments(at >= 0 ? prop.constructedWith![at] : undefined);
       if (!arg || !knobs.selfHeads.has(arg[0]!)) continue;
-      const found = repoEntity(resolveChain(arg.slice(1), owner));
+      const repoType = resolveChain(arg.slice(1), owner);
+      const onModel = verb ? null : modelAccess(repoType, segs[2]!);
+      if (!verb && !onModel) continue;
+      const found = repoEntity(repoType);
       if (!found || (entity && found !== entity)) return null;
       entity = found;
-      if (knobs.writeVerbs.test(segs[2]!)) write = true;
+      if (verb ? knobs.writeVerbs.test(segs[2]!) : onModel!.write) write = true;
     }
     return entity ? { entity, write } : null;
   };
@@ -251,12 +319,15 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
         const parts = chainSegments(call.name);
         if (!parts || call.name.startsWith(`${parts[0]}(`)) continue;
         const leaf = parts[parts.length - 1]!;
-        if (!knobs.verbs.test(leaf)) continue;
+        const verb = knobs.verbs.test(leaf);
+        if (!verb && !onModelNames.has(leaf)) continue;
         // A typed parameter or local, else a member of the enclosing class named without `this`.
         const start = headType(parts[0]!, fn, owner);
         const type = start ? resolveChain(parts.slice(1, -1), start) : null;
-        let entity = repoEntity(type);
-        let write = knobs.writeVerbs.test(leaf);
+        // Outside the verb list: only a method the repository declares that works on its model.
+        const onModel = verb ? null : modelAccess(type, leaf);
+        let entity = verb || onModel ? repoEntity(type) : null;
+        let write = verb ? knobs.writeVerbs.test(leaf) : !!onModel?.write;
         // A wrapper's type arguments that name no entity (`HttpRepo[ClubCreate, ClubOut]`, schemas): the
         // repository it was built with names the entity, when it does.
         if ((!entity || !entities.has(entity)) && start && parts.length >= 3) {

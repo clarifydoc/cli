@@ -620,6 +620,23 @@ describe("Python SQLAlchemy statements", () => {
       ["db.query", "model", "read"],
     ]);
   });
+
+  it("names the model whose column an SQL function counts", async () => {
+    expect(await rowsOf([
+      "class ClubRepository:",
+      "    def squad_size(self, club_id):",
+      "        stmt = select(func.count(Player.id)).filter_by(club_id=club_id)",
+      "        return self.session.scalar(stmt)",
+      "    def size(self):",
+      "        return self.session.scalar(select(sqlalchemy.func.count(self.model.id)))",
+      "    def unknown(self, model):",
+      "        return self.session.scalar(select(func.count(model.id)))",
+    ].join("\n")).then((rows) => rows.filter((r) => /scalar/.test(r[0]!)))).toEqual([
+      ["self.session.scalar", "Player", "read"],
+      ["self.session.scalar", "model", "read"],
+      ["self.session.scalar", null, null],
+    ]);
+  });
 });
 
 describe("Python api-call — a TestClient handed to a test (real-repo FP)", () => {
