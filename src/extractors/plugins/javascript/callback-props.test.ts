@@ -379,3 +379,118 @@ describe("functions handed down under any prop name, from a mixin, or bound", ()
     expect(edit.map((l) => l.callName)).toEqual(["this.refreshSquad"]);
   });
 });
+
+/**
+ * The same in plain JSX, where a component destructures its props without a type: `function BootRow({ boot, order })`
+ * reads as a parameter named by its pattern, as TypeScript's does. A prop taken under another name is called by that
+ * name (`{ onRemove: remove }` → `remove()`), one with a default by its own (`{ onSave = () => {} }`), and a middle
+ * component hands on what it took under another name (`{ onRelease: handleRelease }`). The decoy `refresh()` is the
+ * shop's import: the component takes the `refresh` prop as `again`. Labels written by hand from the sources below.
+ */
+const JSX_FILES: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-shop", dependencies: { react: "^18.2.0", axios: "^1.6.0" } }),
+  "src/shop.js": `import axios from 'axios';
+
+export function refresh() {
+  return axios.get('/api/v2/boots');
+}
+`,
+  "src/BootRow.jsx": `import React from 'react';
+import { refresh } from './shop';
+
+export default function BootRow({ boot, order, onRemove: remove, onSave = () => {}, refresh: again, ...rest }) {
+  return (
+    <div {...rest}>
+      <button onClick={() => order(boot)}>Order</button>
+      <button onClick={() => remove(boot.id)}>Remove</button>
+      <button onClick={() => onSave(boot)}>Save</button>
+      <button onClick={() => again()}>Reload</button>
+      <button onClick={() => refresh()}>Refresh</button>
+    </div>
+  );
+}
+`,
+  "src/PromptBox.jsx": `import React from 'react';
+
+export function PromptBox({ onConfirm }) {
+  return <button onClick={onConfirm}>OK</button>;
+}
+`,
+  "src/ShinPad.jsx": `import React from 'react';
+
+export function ShinPad(props) {
+  return <button onClick={props.order}>Order pads</button>;
+}
+`,
+  "src/GloveDialog.jsx": `import React from 'react';
+import { PromptBox } from './PromptBox';
+
+export const GloveDialog = ({ onRelease: handleRelease }) => {
+  return <PromptBox onConfirm={handleRelease} />;
+};
+`,
+  "src/BootList.jsx": `import React from 'react';
+import axios from 'axios';
+import BootRow from './BootRow';
+import { GloveDialog } from './GloveDialog';
+import { ShinPad } from './ShinPad';
+
+export default function BootList({ boots }) {
+  const orderBoots = (boot) => axios.post('/api/v2/boots', boot);
+  const dropBoots = (id) => axios.delete('/api/v2/boots/' + id);
+  const saveBoots = (boot) => axios.put('/api/v2/boots/' + boot.id, boot);
+  const reloadBoots = () => axios.get('/api/v2/boots?fresh=1');
+  const releaseKeeper = () => axios.post('/api/v2/keepers/release');
+  return (
+    <div>
+      {boots.map((b) => (
+        <BootRow key={b.id} boot={b} order={orderBoots} onRemove={dropBoots} onSave={saveBoots} refresh={reloadBoots} />
+      ))}
+      <GloveDialog onRelease={releaseKeeper} />
+      <ShinPad order={orderBoots} />
+    </div>
+  );
+}
+`,
+};
+
+describe("plain-JS components that destructure their props", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-jsx-props-"));
+    for (const [path, text] of Object.entries(JSX_FILES)) {
+      await mkdir(dirname(join(dir, "app", path)), { recursive: true });
+      await writeFile(join(dir, "app", path), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const linksFrom = (file: string) =>
+    summary.symbolLinks
+      .filter((l) => l.sourceFile === file && l.relation !== "reference" && l.targetFile !== file)
+      .map((l) => `${l.sourceSymbol}:${l.sourceLine} -${l.callName}-> ${l.targetFile}:${l.targetSymbol}`)
+      .sort();
+
+  it("joins each prop the child calls — by its own name, its default's, or the name it renames it to — and keeps the import's namesake", () => {
+    expect(linksFrom("src/BootRow.jsx")).toEqual([
+      "BootRow:10 -again-> src/BootList.jsx:reloadBoots",
+      "BootRow:11 -refresh-> src/shop.js:refresh",
+      "BootRow:7 -order-> src/BootList.jsx:orderBoots",
+      "BootRow:8 -remove-> src/BootList.jsx:dropBoots",
+      "BootRow:9 -onSave-> src/BootList.jsx:saveBoots",
+    ]);
+  });
+
+  it("follows a prop the middle component takes under another name up to the page's function", () => {
+    expect(linksFrom("src/PromptBox.jsx")).toEqual(["<template>:4 -onConfirm-> src/BootList.jsx:releaseKeeper"]);
+  });
+
+  it("keeps a handler that names the prop through the props object it never destructures", () => {
+    expect(linksFrom("src/ShinPad.jsx")).toEqual(["<template>:4 -order-> src/BootList.jsx:orderBoots"]);
+  });
+});

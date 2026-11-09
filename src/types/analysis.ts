@@ -970,6 +970,7 @@ export interface TypeAliasInfo {
 }
 
 export interface ParamInfo {
+  /** The parameter's name; a destructuring parameter's is its pattern as written (`{ table, onSave = noop }`, `[first, second]`). */
   name: string;
   type: string | null;
   defaultValue: string | null;

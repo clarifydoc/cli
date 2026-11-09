@@ -1,9 +1,10 @@
-import type { ClassInfo, ComponentSubscription, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
+import type { ClassInfo, ComponentSubscription, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
 import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { destructuredProps } from "../../shared/destructuring.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -556,8 +557,12 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const fromMixin = own ? null : scopeMember(b.parent, name);
         if (own) out.push({ file: b.parent.filePath, span: own, usage });
         else if (fromMixin) out.push({ file: fromMixin.file, span: fromMixin.span, usage });
-        // A prop of the parent handed on (`onConfirm={handleRelease}`, `handleRelease` the parent's own destructured prop).
-        else if (PROP_CALLBACK.test(name) || takesProp(b.parent, name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen, usage[0]));
+        // A prop of the parent handed on (`onConfirm={handleRelease}`, `handleRelease` the parent's own destructured prop),
+        // under the name the parent takes it by (`{ onRelease: handleRelease }` hands on `onRelease`).
+        else {
+          const handed = propKeyOf(b.parent, name, b.line) ?? (PROP_CALLBACK.test(name) || takesProp(b.parent, name) ? name : null);
+          if (handed) out.push(...targetsOf(b.parent.filePath, handed, depth + 1, seen, usage[0]));
+        }
       }
       return distinctTargets(out);
     };
@@ -573,20 +578,44 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (defined.has(prop)) continue; // the child's own function of that name
         const targets = targetsOf(childKey, prop, 0, new Set());
         if (targets.length === 0) continue;
+        const head = prop.split(".")[0]!;
+        const member = prop.slice(head.length);
+        // A bare call of a prop no `on…` name marks is the prop's only where the component takes it
+        // (`function KitRow({ order })`): elsewhere it is a function of the same name in scope. A component destructuring
+        // it under another name calls it by that name (`{ onRemove: remove }` → `remove()`). A member of an object prop
+        // (`table.nextPage`, a library object handed down) is the prop's when the component takes its head.
+        const freeName = PROP_CALLBACK.test(prop) || childFile.endsWith(".vue") || !!child.declaredProps?.includes(head);
+        const callsProp = (name: string, line: number): boolean => {
+          const local = propLocalOf(child, head, line);
+          if (local !== undefined) return local !== null && name === local + member;
+          return name === prop && freeName;
+        };
         const callers: Array<{ symbol: string; line: number; callName: string }> = [];
         for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
           if (within && (fn.line < within.line || fn.line > within.endLine)) continue;
           // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
-          // Invoked, never a value read or handed on (`return this.isNote`).
-          const call = fn.calls.find((c) => !c.passed && !c.read && (c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}` || c.name === `this.${prop}`));
-          // A bare call of a prop no `on…` name marks is the prop's only where the component takes it under that name
-          // (`function KitRow({ order })`): elsewhere it is a function of the same name in scope.
-          // A member of an object prop (`table.nextPage`, a library object handed down) is the prop's when the component takes its head.
-          if (call && call.name === prop && !PROP_CALLBACK.test(prop) && !childFile.endsWith(".vue") && !takesProp(child, prop.split(".")[0]!, call.line)) continue;
-          if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
+          // Invoked, never a value read or handed on (`return this.isNote`). Each call site is one link (several pager buttons).
+          const sites = new Set<number>();
+          for (const c of fn.calls) {
+            if (c.passed || c.read || sites.has(c.line)) continue;
+            if (c.name !== `props.${prop}` && c.name !== `this.props.${prop}` && c.name !== `this.${prop}` && !callsProp(c.name, c.line)) continue;
+            sites.add(c.line);
+            callers.push({ symbol: fn.name, line: c.line, callName: c.name });
+          }
         }
-        const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop && (!within || (el.line >= within.line && el.line <= within.endLine)));
-        if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line, callName: prop });
+        // Markup's own handler (a template the script holds no call for): the prop's under the same rule —
+        // a Svelte component's markup is its own.
+        const inMarkup = (child.interactiveElements ?? []).find((el) => {
+          if (!el.handler || (within && (el.line < within.line || el.line > within.endLine))) return false;
+          const handler = cleanHandler(el.handler);
+          if (!handler) return false;
+          if (childFile.endsWith(".svelte")) return handler === prop;
+          const local = propLocalOf(child, head, el.line);
+          if (local !== undefined) return !member && handler === local;
+          // Markup names a prop of a component taking its props whole by the prop's name (`onClick={props.order}`).
+          return handler === prop && (freeName || !destructuresProps(child, el.line));
+        });
+        if (callers.length === 0 && inMarkup) callers.push({ symbol: "<template>", line: inMarkup.line, callName: cleanHandler(inMarkup.handler!) ?? prop });
         for (const c of callers) {
           for (const t of targets) {
             links.push({
@@ -609,17 +638,47 @@ export class JsPropCallbackResolver implements DispatchResolver {
 }
 
 /**
- * Whether a component of `file` takes `name` as a prop: a Vue component declaring it, a component destructuring
- * it from its props (`function KitRow({ order })`, `({ handleClose }: Props) =>`), or binding it on onward as one
- * (`propBindings` origin `prop`) — at `line` when given, the component around it.
+ * Whether a component of `file` takes `name` as a prop under that name: a Vue component declaring it, a component
+ * destructuring it from its props (`function KitRow({ order })`, `({ handleClose }: Props) =>`), or binding it on
+ * onward as one (`propBindings` origin `prop`).
  */
-function takesProp(file: FileAnalysis, name: string, line?: number): boolean {
+function takesProp(file: FileAnalysis, name: string): boolean {
   if (file.declaredProps?.includes(name)) return true;
-  if (line === undefined && file.propBindings?.some((pb) => pb.origin.kind === "prop" && pb.origin.name === name)) return true;
-  const pattern = new RegExp(`^\\{(?:[^]*[{,])?\\s*${escapeRegex(name)}\\s*(?:[,}=]|$)`);
-  return [...file.functions, ...file.classes.flatMap((c) => c.methods)].some(
-    (f) => (line === undefined || (line >= f.line && line <= f.endLine)) && pattern.test(f.params[0]?.name.trim() ?? ""),
-  );
+  if (file.propBindings?.some((pb) => pb.origin.kind === "prop" && pb.origin.name === name)) return true;
+  return [...file.functions, ...file.classes.flatMap((c) => c.methods)].some((f) => destructuredProps(f.params[0]?.name ?? "").get(name) === name);
+}
+
+/** The functions of `file` around `line`, innermost first. */
+function enclosingFunctions(file: FileAnalysis, line: number): FunctionInfo[] {
+  return [...file.functions, ...file.classes.flatMap((c) => c.methods)]
+    .filter((f) => line >= f.line && line <= f.endLine)
+    .sort((a, b) => a.endLine - a.line - (b.endLine - b.line));
+}
+
+/**
+ * The name a component around `line` binds its prop `prop` to by destructuring its first parameter
+ * (`{ order }` → `order`, `{ onRemove: remove }` → `remove`, `{ onSave = noop }` → `onSave`); `null` when a nested
+ * pattern takes it apart (`{ club: { id } }`), `undefined` when no such component takes it.
+ */
+function propLocalOf(file: FileAnalysis, prop: string, line: number): string | null | undefined {
+  for (const f of enclosingFunctions(file, line)) {
+    const props = destructuredProps(f.params[0]?.name ?? "");
+    if (props.has(prop)) return props.get(prop)!;
+  }
+  return undefined;
+}
+
+/** Whether the component around `line` destructures its props (`function KitRow({ order })`), rather than taking them whole. */
+function destructuresProps(file: FileAnalysis, line: number): boolean {
+  return enclosingFunctions(file, line).some((f) => f.params[0]?.name.trimStart().startsWith("{"));
+}
+
+/** The prop a component around `line` destructures into the local `local` (`{ onRelease: handleRelease }` → `onRelease`). */
+function propKeyOf(file: FileAnalysis, local: string, line: number): string | null {
+  for (const f of enclosingFunctions(file, line)) {
+    for (const [prop, bound] of destructuredProps(f.params[0]?.name ?? "")) if (bound === local) return prop;
+  }
+  return null;
 }
 
 /**

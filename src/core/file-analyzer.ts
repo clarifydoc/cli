@@ -14,6 +14,7 @@ import { extractDataAccess } from "../extractors/data-access.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { classifyCalls, extractTopLevelCalls } from "../extractors/shared/call-graph.js";
 import { hasDbRootTypes } from "../extractors/shared/call-patterns.js";
+import { patternBindings } from "../extractors/shared/destructuring.js";
 import { dirname, relative } from "path";
 import { applyAliases, type AliasMap, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages, type WorkspacePackage } from "../extractors/shared/workspace-packages.js";
@@ -638,9 +639,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       }
     }
     for (const [holder, own] of mapHolders) if (own) localSymbols.add(holder);
-    // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`).
+    // A parameter shadows a file-level alias of the same name (`function second(club)` vs another function's `const club = useClub()`);
+    // a destructuring one binds the names its pattern does (`{ refresh: again }` binds `again`, never `refresh`).
     const paramNames = (fn: FunctionInfo): Set<string> | undefined =>
-      fn.params.length > 0 ? new Set(fn.params.flatMap((p) => p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
+      fn.params.length > 0 ? new Set(fn.params.flatMap((p) => patternBindings(p.name) ?? p.name.match(/[A-Za-z_$][\w$]*/g) ?? [])) : undefined;
     // Declared receiver types, for a language whose DB roots are constrained by type (`dbRootTypes`).
     const typed = hasDbRootTypes(language);
     const receiverTypes = (fn: FunctionInfo, cls?: ClassInfo): Map<string, string> | undefined => {

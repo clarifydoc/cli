@@ -2377,9 +2377,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         child.type === "optional_parameter" ||
         child.type === "identifier" ||
         child.type === "rest_pattern" ||
-        child.type === "assignment_pattern"
+        child.type === "assignment_pattern" ||
+        child.type === "object_pattern" ||
+        child.type === "array_pattern"
       ) {
         // Plain JS `repo = defaultRepo` is an `assignment_pattern` (left/right).
+        // A plain-JS destructuring parameter (`function Pager({ table, onSave = noop })`) is named by its pattern as
+        // written, as TypeScript's `({ table }: Props)` is.
         const isAssignment = child.type === "assignment_pattern";
         const name =
           (isAssignment ? child.childForFieldName("left")?.text : null) ??
