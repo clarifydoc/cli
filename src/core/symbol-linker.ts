@@ -5210,8 +5210,13 @@ function resolveCallToDefinitionBody(
         // the OCaml module `Printexc`, a container lookup) counts first.
         // A builtin one (`String`) normalizes to nothing, and contradicts any
         // app class all the more: it is kept as written.
+        // The head's declared type is the receiver's only when the method is called on the head. On a chain
+        // (`club.league.relegate`) the receiver is what the chain types to: a library type contradicts any
+        // project member, while a project type that lacks the member does not — a Dart `extension … on` it, read
+        // as a class of its own, may serve it. A chain the linker cannot type keeps the head's type as before.
+        const chainType = parts.length > 2 && !call.receiverType ? chainReceiverType(ctx, analysis, sourceFile, sourceSymbol, call) : null;
         const declared = (call.receiverType ? receiverTypeName(call.receiverType, analysis.language) || call.receiverType : null)
-          ?? receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""));
+          ?? (chainType ? (chainType.project ? null : chainType.name) : receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")));
         const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
         const declEntry = declared ? classEntryFor(classCatalog.get(declared), sourceFile) : undefined;
         // An extension method is called on a type that does not declare it
@@ -5219,8 +5224,10 @@ function resolveCallToDefinitionBody(
         // method): the receiver's type cannot contradict it.
         // A call on a class the project declares (`ClubMailer.with(…)`) is that class's: another class's
         // method of the name is coincidence (a member the class has would have linked by class name).
+        // Only the class the method is called on: `PlayerService.instance.sync()` is called on what `instance` holds, which
+        // an extension of another name may serve.
         const headEntry = /^[A-Z]/.test(head) ? classEntryFor(classCatalog.get(head), sourceFile) : undefined;
-        const classHead = !!headEntry && extensionFamily(headEntry.file) === extensionFamily(sourceFile) && !shadowedLocally(analysis, sourceSymbol, head);
+        const classHead = !!headEntry && parts.length === 2 && extensionFamily(headEntry.file) === extensionFamily(sourceFile) && !shadowedLocally(analysis, sourceSymbol, head);
         // Where a capitalized name is a constant looked up lexically (`lexicalConstants`: Ruby `I18n.t`),
         // one no class or module of the project spells is a library's: its methods are never a project
         // method of the same name.
@@ -6176,6 +6183,27 @@ function resolveThroughDeclaredType(
 }
 
 /**
+ * The type a call's receiver chain (`club.manager` in `club.manager.notify()`) resolves to through
+ * declared members and return types, and whether the project declares it; null when the chain cannot be typed.
+ */
+function chainReceiverType(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+): { name: string; project: boolean } | null {
+  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
+  if (!receiver || receiver.length < 2 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
+  const dot = sourceSymbol.indexOf(".");
+  const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+  const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
+  if (!point?.typeName) return null;
+  const project = !!point.typeFile && ctx.classAt.has(memberKey(point.typeFile, declaredTypeName(ctx, point.typeFile, point.typeName)));
+  return { name: point.typeName, project };
+}
+
+/**
  * Whether the receiver's type, where the linker can type it, refuses a member a name guess picked
  * (`unique-global`, `deep-qualified`). The type is what Strategy 2 reads — a stated type, a local typed by
  * the call initializing it (`localTypes[].from`), each hop of a chain through declared field and return
@@ -6296,8 +6324,9 @@ function chainPoint(
       point = { ...path, member: "", consumer, container: false };
       rest = receiver.slice(names);
     }
-    // `Factory::getInstance()->run()` — a call on a project class itself.
-    if (!point && rest[0]?.call && /^[A-Z]/.test(head.name)) {
+    // `Factory::getInstance()->run()` — a call on a project class itself; `PlayerService.instance.add()` — a
+    // static member of one.
+    if (!point && rest[0] && /^[A-Z]/.test(head.name)) {
       const imported = importedTypeRef(ctx, head.name, sourceFile, analysis.projectId);
       const typeFile = imported ? imported.typeFile : typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
       if (typeFile) point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };

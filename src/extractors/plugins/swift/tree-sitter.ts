@@ -216,7 +216,7 @@ function callName(node: TSNode, text: string): PatternCallName | null {
     if (NOT_A_CALL.has(ids[0]!.name) || /^[A-Z]/.test(leaf.name)) return null;
     return { name: ids.map((s) => s.name).join("."), leafName: leaf.name, line: ids[0]!.line, column: ids[0]!.column };
   }
-  return nestedConstruction(steps) ?? fieldPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH);
+  return nestedConstruction(steps) ?? fieldPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH, { paths: true });
 }
 
 /**
@@ -235,7 +235,8 @@ function nestedConstruction(steps: readonly CalleeStep[]): PatternCallName | nul
 /**
  * A call through a stored property of a lowercase receiver — `car.radio.start(`, `self.car.radio.start(` — keeps
  * its whole path (`car.radio.start`), so the linker types it field by field: `car` by its declaration, `radio` by
- * the property's. A type's static member (`URLSession.shared.dataTask(`) and `self.repo.find(` stay the last two names.
+ * the property's. `self.repo.find(` stays `repo.find`; a type's static member (`PlayerService.shared.add(`) keeps its
+ * path too, through `nameCall`'s `paths`.
  */
 function fieldPathCall(steps: readonly CalleeStep[]): PatternCallName | null {
   if (!steps.every((s) => s.kind === "id")) return null;

@@ -128,7 +128,8 @@ const GENERIC = String.raw`<[^<>()]*(?:<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>[^<>()]*
  * returning something else.
  */
 export function constructionOf(text: string): { type: string; impl: string } | null {
-  const head = text.match(new RegExp(String.raw`^\s*(?:const\s+|new\s+)?(?:[a-z_]\w*\s*\.\s*)?([A-Z]\w*)\s*(${GENERIC})?\s*(?:\.\s*new\s*)?\(`));
+  // A library-private class (`_SquadFixture()`) is constructed the same way.
+  const head = text.match(new RegExp(String.raw`^\s*(?:const\s+|new\s+)?(?:[a-z_]\w*\s*\.\s*)?(_?[A-Z]\w*)\s*(${GENERIC})?\s*(?:\.\s*new\s*)?\(`));
   if (!head) return null;
   const end = closeOf(text, head[0].length - 1);
   if (end < 0) return null;

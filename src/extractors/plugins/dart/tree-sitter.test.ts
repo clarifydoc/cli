@@ -70,8 +70,8 @@ describe("Dart through tree-sitter", () => {
       "getIt<Coach>",
       "squad.players.forEach",
       "note",
-      // A field read after a call ends the chain; the method is named by the last two names, as the patterns name it.
-      "players.toList",
+      // A field read after a call goes on from the chain: `players` is the result's, not the caller's own.
+      "repo.find().players.toList",
     ]);
     expect(fns.find((f) => f.name === "load")!.calls.find((c) => c.name === "getIt<Coach>().brief")).toMatchObject({ receiverType: "Coach" });
     // A cascade's method is read bare (`write` is stdlib noise, dropped as the patterns drop it).

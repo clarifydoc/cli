@@ -33,10 +33,12 @@ interface Walk {
  * an argument list in parentheses or a block (`Action.async { implicit request => … }`); a parameterless
  * member (`.toList`) and an infix call (`list map f`) are none, as the patterns read them; a constructor pattern
  * (`case Goal(minute) =>`) calls its extractor, and is named by its type. A call is named by the
- * Scala spec's call patterns where one reads its callee's text (`injector.instanceOf[Repo].save(`), else by its last
- * two names (`this.repo.cache.size()` is `cache.size`); where the patterns name nothing the parser still can: a
- * method on a call's result is the chain from its first call (`repo.find(id).map`), one on a construction the
- * type's (`Club(1).save()` is `Club.save` on `Club`), and calls written over several lines are read whole.
+ * Scala spec's call patterns where one reads its callee's text (`injector.instanceOf[Repo].save(`), else by every
+ * name back to its head (`this.repo.cache.size()`, `PlayerService.instance.add(`), so the linker types the receiver
+ * from the head where the patterns name the last two; a package before a type is left off (`java.util.UUID.x(` is
+ * `UUID.x`). Where the patterns name nothing the parser still can: a method on a call's result is the chain from its
+ * first call (`repo.find(id).map`), one on a construction the type's (`Club(1).save()` is `Club.save` on `Club`),
+ * and calls written over several lines are read whole.
  */
 export function readScalaTree(root: TSNode, text: string): ParsedStructure {
   const topLevel: PatternCallName[] = [];
@@ -116,6 +118,8 @@ function stepsOf(node: TSNode): CalleeStep[] {
       const value = node.childForFieldName("value");
       const field = node.childForFieldName("field");
       if (!value || field?.type !== "identifier") return [{ kind: "other", bare: false }];
+      // `body.validate[CreateCar].fold(`: only a method takes type arguments, so the receiver is its result.
+      if (value.type === "generic_function") return [...stepsOf(value), { kind: "call" }, idStep(field.text, field)];
       return [...stepsOf(value), idStep(field.text, field)];
     }
     case "generic_function": {
@@ -140,7 +144,7 @@ function callName(node: TSNode, text: string): PatternCallName | null {
   const at = fn.startPosition;
   const byPattern = patternNamedCall(`${text.slice(fn.startIndex, args.startIndex)}(`, scalaDiCallPatterns, at.row + 1, at.column);
   if (byPattern !== undefined) return byPattern;
-  return nameCall(stepsOf(fn), CHAIN_DEPTH);
+  return nameCall(stepsOf(fn), CHAIN_DEPTH, { paths: true });
 }
 
 /** `new PgRepo(db)`: the type built, by its last two names, as the patterns read `PgRepo(`. */

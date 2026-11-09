@@ -35,7 +35,8 @@ interface Walk {
  * list except those of a function declared inside it; a closure's calls are its owner's. Getters, setters and
  * operators are no functions, as the patterns read them. A call is named by the Dart spec's call patterns where one
  * reads its callee's text (a field path `this.squad.coach.brief(`, a container lookup `getIt<Repo>().find(`, a
- * generic call `context.read<Repo>(`), else as the patterns name a path (`repo.find(`, a cascade's bare `..add(`);
+ * generic call `context.read<Repo>(`), else as the patterns name a path (`repo.find(`, a cascade's bare `..add(`),
+ * and one through a type's static member by every name (`PlayerService.instance.addPlayer(`), not its last two;
  * where they name nothing the parser still can: a method on a call's result is the chain from its first call, one
  * on a construction the type's (`Club(id: 1).save(` is `Club.save` on `Club`).
  */
@@ -161,7 +162,7 @@ function readRun(children: TSNode[], start: number, owner: PatternCallName[] | n
         const source = `${walk.text.slice(primary.startIndex, args?.startIndex ?? part.startIndex)}(`;
         const at = primary.startPosition;
         const byPattern = patternNamedCall(source, dartDiCallPatterns, at.row + 1, at.column);
-        const named = byPattern === undefined ? nameCall(steps, CHAIN_DEPTH) : byPattern;
+        const named = byPattern === undefined ? nameCall(steps, CHAIN_DEPTH, { paths: true }) : byPattern;
         if (named) owner.push(named);
       }
       steps.push(callStep(steps));

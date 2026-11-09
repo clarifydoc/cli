@@ -54,8 +54,8 @@ describe("Scala through tree-sitter", () => {
   it("names calls as the Scala patterns do, and the chains and constructions they cannot read", () => {
     const calls = (name: string) => readScala(CLUBS).functions.find((f) => f.name === name)!.calls.map((c) => c.name);
     // `map` on a chain and `Ok` are stdlib noise, held back as the patterns hold them.
-    expect(calls("show")).toEqual(["Action.async", "repo.find", "html.club"]);
-    expect(calls("size")).toEqual(["cache.size"]);
+    expect(calls("show")).toEqual(["Action.async", "repo.find", "views.html.club"]);
+    expect(calls("size")).toEqual(["this.repo.cache.size"]);
     expect(calls("squad")).toEqual(["Roster", "Club.players().starters", "Club.players", "Club"]);
     const move = readScala(CLUBS).functions.find((f) => f.name === "switch")!.calls.find((c) => c.name.endsWith(".move"));
     expect(move).toMatchObject({ name: "injector.instanceOf[TransferApi].move", receiverType: "TransferApi" });
@@ -98,7 +98,9 @@ describe("Scala through tree-sitter", () => {
  */
 const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
   "test-fixtures/sample-scala-play/app/controllers/CarController.scala": {
-    "CarController.create": [[], ["validate.fold"]],
+    "CarController.create": [[], ["request.body.validate().fold"]],
+    // A path keeps every name, so the linker types the receiver from its head; the patterns name the last two.
+    "CarController.list": [["headers.get"], ["request.headers.get"]],
     "CarController.update": [[], ["toCar().copy"]],
   },
 };

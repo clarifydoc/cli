@@ -295,6 +295,33 @@ function mentionsInstanceVariable(line: string, name: string): boolean {
   return false;
 }
 
+/**
+ * `self.class.empty_counts` in an instance method calls the class method of the class it is written in: named
+ * through that class (`Counter.empty_counts`), as a call written on the class is, and the step it reads first
+ * (`self.class.empty_counts.except(…)`) is a call of its own. Only a class method the class itself declares: one
+ * it inherits or a library adds (`self.class.get` through HTTParty) is not the instance method of that name. A
+ * module's `self.class` is its includer's, which the module does not name, and a class method's `self.class` is
+ * `Class`: both are left as written.
+ */
+function addOwnClassCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
+  if (fn.classLevel || !/^\s*class\b/.test(lines[cls.line - 1] ?? "")) return;
+  const classMethods = new Set(cls.methods.filter((x) => x.classLevel).map((x) => x.name));
+  if (classMethods.size === 0) return;
+  const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
+  const extra: CallInfo[] = [];
+  for (const c of fn.calls) {
+    const m = /^(?:self\.)?class\.([a-z_]\w*[?!]?)((?:\.[a-z_]\w*[?!]?)*)$/.exec(c.name);
+    if (!m || !classMethods.has(m[1]!)) continue;
+    c.name = `${cls.name}.${m[1]}${m[2]}`;
+    const first = `${cls.name}.${m[1]}`;
+    if (m[2] && !have.has(`${first}@${c.line}`)) {
+      have.add(`${first}@${c.line}`);
+      extra.push({ name: first, kind: "internal", target: null, line: c.line, ...(c.column !== undefined ? { column: c.column } : {}) });
+    }
+  }
+  fn.calls.push(...extra);
+}
+
 const IMPLICIT_RECEIVER_SKIP = new Set(["self", "params", "request", "response", "session", "cookies", "flash", "headers", "super", "nil", "true", "false", "logger", "render", "redirect_to", "head", "it", "yield"]);
 function addImplicitReceiverCalls(lines: readonly string[], fn: FunctionInfo, bound: ReadonlySet<string>): void {
   const have = new Set(fn.calls.map((c) => c.name));
@@ -1143,6 +1170,14 @@ export const rubySpec: RegexLangSpec = {
     ...RUBY_DI_CALL_PATTERNS,
     ...RAILS_RENDER_CALL_PATTERNS,
     {
+      // A call through a path of readers — `club.league.relegate(`, `@club.league.relegate(`,
+      // `self.club.league.relegate(` — is named by every name, so the linker types the receiver from its
+      // head: the baseline names the last two (`league.relegate`), which would type it by whatever `league`
+      // is in the caller. `self.repo.find(` is the reader pattern's (`repo.find`).
+      pattern: /(?<![\w.@$:])@?(?!self\.\w+&?\.\w+[?!]?\s*\()((?:self\.)?[a-z_]\w*(?:&?\.[a-z_]\w*){1,6})&?\.([a-z_]\w*[?!]?)\s*\(/,
+      buildName: (m) => ({ name: `${m[1]!.replace(/&\./g, ".")}.${m[2]}`, leafName: m[2] }),
+    },
+    {
       // Never the tail of a constant path: `League::Club.find(` is `League::Club.find` (below), not `Club.find`.
       pattern: /(?<![\w:])([A-Z]\w+)\.(\w+)\s*\(/,
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
@@ -1270,6 +1305,7 @@ export const rubySpec: RegexLangSpec = {
       const mayFilter = /Controller$/.test(cls.name) || /^\s*module\b/.test(lines[cls.line - 1] ?? "");
       for (const m of cls.methods) {
         const bound = boundOf.get(m)!;
+        addOwnClassCalls(lines, cls, m);
         addImplicitReceiverCalls(code, m, bound);
         // `@club = Club.find(…)` types `@club.update_honours` in the method.
         const fields = assignedFieldTypes(lines, m, bound, mayFilter);

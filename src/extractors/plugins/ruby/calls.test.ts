@@ -48,8 +48,16 @@ describe("ruby paren-less calls", () => {
     expect(calls("    Rails.logger.info Time.now.to_s")).toEqual([]);
   });
 
-  it("skips a receiver that is itself a call result", () => {
-    expect(calls("    matched = u.name.downcase.include?(query)")).toEqual([]);
+  it("names a call through a path of readers by every name, never by the last two", () => {
+    // Read as `league.relegate`, the linker would type the receiver by the caller's own `league`.
+    expect(calls("    club.league.relegate(season)")).toEqual(["club.league.relegate"]);
+    expect(calls("    @club.league.relegate(season)")).toEqual(["club.league.relegate"]);
+    expect(calls("    self.club.league.relegate(season)")).toEqual(["self.club.league.relegate"]);
+    expect(calls("    club&.league&.relegate!(season)")).toEqual(["club.league.relegate!"]);
+    expect(calls("    matched = u.name.downcase.include?(query)")).toEqual(["u.name.downcase.include?"]);
+    // One reader on the caller's own instance stays the reader pattern's.
+    expect(calls("    self.repo.find(id)")).toEqual(["repo.find"]);
+    expect(calls("    repo.find(id)")).toEqual(["repo.find"]);
   });
 });
 

@@ -160,6 +160,10 @@ describe("dart locals", () => {
     ]);
   });
 
+  it("types a local built from a library-private class, a cascade after it included (real-repo FP)", () => {
+    expect(locals("final squad = _SquadFixture();", "final squad = _SquadFixture()..captain = Player();")).toEqual([{ name: "squad", type: "_SquadFixture" }]);
+  });
+
   it("drops a name declared with two different types", () => {
     expect(locals("final r = PgRepo();", "final r = MemRepo();", "final s = PgRepo();")).toEqual([{ name: "s", type: "PgRepo" }]);
   });
