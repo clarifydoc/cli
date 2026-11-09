@@ -618,3 +618,121 @@ func (w *LeagueWeb) Register(g *echo.Group) {
     ]);
   });
 });
+
+describe("Go routes: the handler's place is the router's (real-repo FP)", () => {
+  const show = (src: string) => extractGoRoutes(lines(src)).map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.middleware.join(", ")}]`);
+
+  it("takes Echo's handler first and the rest as middleware, a middleware that is a method value too", () => {
+    expect(show(`
+import "github.com/labstack/echo/v4"
+
+func main() {
+	e := echo.New()
+	e.GET("/clubs/:club/players/:n", h.ReadPlayer, ResolveClub())
+	e.GET("/players/:id", h.ReadPlayer, h.Auth)
+	api := e.Group("/api/v2", h.Auth)
+	api.POST("/players", h.CreatePlayer, ResolveClub())
+	api.PUT("/players/:id/transfer", h.TransferPlayer,
+		ResolveClub(),
+	)
+	e.Match([]string{"GET", "HEAD"}, "/table", h.Table, h.Auth)
+	e.GET("/fixtures", func(c echo.Context) error {
+		return c.NoContent(200)
+	}, h.Auth)
+}
+
+func registerTransfers(g *echo.Group) {
+	g.PATCH("/transfers/:id", h.TransferPlayer, h.Auth)
+}
+`)).toEqual([
+      "GET /clubs/:club/players/:n -> h.ReadPlayer [ResolveClub()]",
+      "GET /players/:id -> h.ReadPlayer [h.Auth]",
+      "POST /api/v2/players -> h.CreatePlayer [h.Auth, ResolveClub()]",
+      "PUT /api/v2/players/:id/transfer -> h.TransferPlayer [h.Auth, ResolveClub()]",
+      "GET /table -> h.Table [h.Auth]",
+      "HEAD /table -> h.Table [h.Auth]",
+      // An inline closure is Echo's handler; what follows its close is middleware.
+      "GET /fixtures -> null []",
+      "PATCH /transfers/:id -> h.TransferPlayer [h.Auth]",
+    ]);
+  });
+
+  it("keeps gin's and fiber's handler last, and reads each router by its own type in a file importing both", () => {
+    expect(show(`
+import "github.com/gin-gonic/gin"
+
+func main() {
+	r := gin.Default()
+	r.GET("/garages/:id", h.Auth, h.ReadGarage)
+	r.GET("/fixtures", func(c *gin.Context) {
+		c.Status(200)
+	}, h.Fixtures)
+}
+`)).toEqual([
+      "GET /garages/:id -> h.ReadGarage [h.Auth]",
+      "GET /fixtures -> h.Fixtures []",
+    ]);
+    expect(show(`
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
+)
+
+func serve(e *echo.Echo, r *gin.Engine) {
+	e.GET("/cars/:id", h.ReadCar, h.Auth)
+	r.GET("/cars/:id", h.Auth, h.ReadCar)
+	g := e.Group("/garage")
+	g.DELETE("/cars/:id", h.SellCar, h.Auth)
+	s.router.GET("/cars", h.Auth, h.ListCars)
+}
+`)).toEqual([
+      "GET /cars/:id -> h.ReadCar [h.Auth]",
+      "GET /cars/:id -> h.ReadCar [h.Auth]",
+      "DELETE /garage/cars/:id -> h.SellCar [h.Auth]",
+      // A receiver of unstated type, with two router libraries imported: the order most routers use.
+      "GET /cars -> h.ListCars [h.Auth]",
+    ]);
+    expect(show(`
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+	app := fiber.New()
+	app.Get("/players", h.Auth, h.ListPlayers)
+}
+`)).toEqual(["GET /players -> h.ListPlayers [h.Auth]"]);
+  });
+});
+
+describe("Go routes: a handler wrapped in a call (real-repo FP)", () => {
+  it("unwraps the one function value a wrapper holds, nested calls included, and keeps the wrapper as middleware", () => {
+    const routes = extractGoRoutes(lines(`
+import (
+	"github.com/gin-contrib/timeout"
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	r := gin.Default()
+	r.GET("/ping", timeout.New(
+		timeout.WithTimeout(5*time.Second),
+		timeout.WithHandler(h.Ping),
+		timeout.WithResponse(timeoutResponse),
+	))
+	r.GET("/cars", timeout.New(timeout.WithTimeout(time.Second), timeout.WithHandler(h.ListCars)))
+	mux.Handle("GET /stats", otelhttp.NewHandler(http.HandlerFunc(h.Stats), "stats"))
+	mux.HandleFunc("GET /table", middleware.Cache(h.Table))
+	mux.HandleFunc("GET /fixtures", chain(h.Fixtures, h.Table))
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+}
+`));
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.middleware.join(", ")}]`)).toEqual([
+      "GET /ping -> h.Ping [timeout.New(timeout.WithTimeout(5*time.Second), timeout.WithHandler(h.Ping), timeout.WithResponse(timeoutResponse))]",
+      "GET /cars -> h.ListCars [timeout.New(timeout.WithTimeout(time.Second), timeout.WithHandler(h.ListCars))]",
+      'GET /stats -> h.Stats [otelhttp.NewHandler(http.HandlerFunc(h.Stats), "stats")]',
+      "GET /table -> h.Table [middleware.Cache(h.Table)]",
+      // Two function values and no call saying which is the handler: none is chosen.
+      "GET /fixtures -> null [chain(h.Fixtures, h.Table)]",
+      "GET /metrics -> null []",
+    ]);
+  });
+});

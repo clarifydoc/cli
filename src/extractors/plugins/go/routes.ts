@@ -28,8 +28,11 @@ import { extractGoImports } from "./imports.js";
  * copy the parent's chain at `Group` time, which is what line order models);
  * `r.Group("/admin", auth())` and chi `With(mw)` / block-scoped `Use` attach
  * to their group; extra arguments between the path and the handler
- * (`r.GET("/x", AuthRequired(), h)`) and wrappers around the handler
- * (`mux.Handle("/x", auth(h))`) are the route's own guards. Every guard text
+ * (`r.GET("/x", AuthRequired(), h)` — on Echo, after it: `e.GET("/x", h, mw)`,
+ * as an Echo router's declared type or constructor, or a file importing no
+ * other router library, says) and wrappers around the handler
+ * (`mux.Handle("/x", auth(h))`, `timeout.New(timeout.WithHandler(h))`) are the
+ * route's own guards. Every guard text
  * lands in `middleware`; the ones whose name reads as an auth check
  * (`AuthRequired`, `jwtauth.Verifier`, `RequireRole("admin")`) also fill
  * `auth` — a scheme when the name says how (jwt/bearer/basic/oauth), roles
@@ -84,6 +87,11 @@ const ROUTER_METHODS = new Set(["Group", "Use", "Route", "Mount", "With", "Handl
 /** Handing a router to the standard library or a server start is serving it, not registering on it. */
 const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|slog|httptest)\.|(?:^|\.)(?:ListenAndServe(?:TLS)?|Serve(?:TLS)?|Run(?:TLS)?|Start(?:TLS)?|Listen|Handler|ServeHTTP|Shutdown)$/;
 
+
+/** Echo's import path. */
+const ECHO_IMPORT_RE = /(?:^|\/)labstack\/echo(?:\/v\d+)?$/;
+/** Router libraries other than Echo: with one imported, a receiver of unstated type may be theirs. */
+const OTHER_ROUTER_IMPORT_RE = /(?:^|\/)(?:gin-gonic\/gin|gofiber\/fiber|go-chi\/chi|gorilla\/mux|julienschmidt\/httprouter|kataras\/iris|beego|macaron|hertz)(?:\/|$)/;
 
 /** `r.Use(a, b)` — router-level middleware. */
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
@@ -255,25 +263,46 @@ function isAuthGuard(g: GuardAttr): boolean {
   return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
 }
 
+/** A call that says its argument IS the handler: gin-contrib/timeout's `timeout.WithHandler(h)`, `http.HandlerFunc(h)`. */
+const STATES_HANDLER_RE = /(?:^|\.)(?:With)?Handler(?:Func)?$/;
+/** A name that is a value, never a function: `nil`, `true`. */
+const NOT_A_FUNCTION = new Set(["nil", "true", "false", "iota"]);
+const CALL_SHAPE_RE = /^([\w.]+)\s*\(([\s\S]*)\)$/;
+
 /**
  * The handler an argument names, unwrapping middleware applied inline:
- * `auth(h)` → handler `h` guarded by `auth`; `http.HandlerFunc(h)` → `h`.
+ * `auth(h)` → handler `h` guarded by `auth`; `http.HandlerFunc(h)` → `h`;
+ * `timeout.New(timeout.WithTimeout(5*time.Second), timeout.WithHandler(h.Ping))` → `h.Ping` guarded by
+ * `timeout.New(…)`. Inside a wrapper the handler is the one function value its arguments hold, searched through
+ * nested calls (`otelhttp.NewHandler(http.HandlerFunc(h), "x")`); an option that says it takes the handler
+ * (`WithHandler`) names it among several values. Two candidates and none stated (`chain(h.A, h.B)`) is no handler.
  * An inline closure (`func(c *gin.Context) {`) has no name.
  */
 function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr[] } {
-  const guards: GuardAttr[] = [];
-  let cur = arg.trim();
-  for (let i = 0; i < 4; i++) {
-    if (/^[\w.]+$/.test(cur)) return { handler: cur, guards };
-    const wrap = cur.match(/^([\w.]+)\s*\(([\s\S]*)\)$/);
-    if (!wrap) break;
-    const inner = parseArgs(`(${wrap[2]!})`, 0).args;
-    if (!TRANSPARENT_WRAPPERS.has(wrap[1]!)) guards.push(classifyGuard(cur));
-    const next = inner.find((a) => /^[\w.]+$/.test(a) || /^[\w.]+\s*\(/.test(a));
-    if (!next) break;
-    cur = next;
-  }
-  return { handler: null, guards };
+  const cur = arg.trim();
+  if (/^[\w.]+$/.test(cur)) return { handler: cur, guards: [] };
+  const top = CALL_SHAPE_RE.exec(cur);
+  if (!top) return { handler: null, guards: [] };
+  /** Function values found, with the calls wrapping each (outermost first) and whether a call says it is the handler. */
+  const found: Array<{ name: string; wrappers: Array<{ callee: string; text: string }>; stated: boolean }> = [];
+  const visit = (inner: string, wrappers: Array<{ callee: string; text: string }>, stated: boolean, depth: number): void => {
+    for (const a of parseArgs(`(${inner})`, 0).args) {
+      if (STRING_RE.test(a)) continue;
+      if (/^[A-Za-z_][\w.]*$/.test(a)) {
+        if (!NOT_A_FUNCTION.has(a)) found.push({ name: a, wrappers, stated });
+        continue;
+      }
+      const call = depth < 4 ? CALL_SHAPE_RE.exec(a) : null;
+      if (call) visit(call[2]!, [...wrappers, { callee: call[1]!, text: a }], stated || STATES_HANDLER_RE.test(call[1]!), depth + 1);
+    }
+  };
+  visit(top[2]!, [{ callee: top[1]!, text: cur }], STATES_HANDLER_RE.test(top[1]!), 1);
+  const stated = found.filter((f) => f.stated);
+  const pick = stated.length > 0 ? (stated.length === 1 ? stated[0]! : null) : found.length === 1 ? found[0]! : null;
+  // The wrappers around the handler are middleware; a transparent conversion or an option naming the handler is not.
+  const isGuard = (w: { callee: string }): boolean => !TRANSPARENT_WRAPPERS.has(w.callee) && !(STATES_HANDLER_RE.test(w.callee) && w.callee !== top[1]);
+  const guards = (pick ? pick.wrappers : [{ callee: top[1]!, text: cur }]).filter(isGuard).map((w) => classifyGuard(w.text));
+  return { handler: pick?.name ?? null, guards };
 }
 
 /** `h := &handler.WebHandler{` / `h = pkg.Handler{` — a local assigned a composite literal (match ends at its `{`). */
@@ -342,6 +371,9 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
   /** Routes an inline closure handles. */
   const inlineRoutes: RouteInfo[] = [];
   let lastInline = false;
+  /** Inline routes whose router takes the handler first (Echo): what follows the closure is middleware. */
+  const handlerFirstRoutes = new Set<RouteInfo>();
+  let lastHandlerFirst = false;
   /** Router variables in scope; those rooted at the function's router parameter map to true. */
   const routerVars = new Map<string, boolean>();
   /** Router variable → composed path prefix (Group / PathPrefix chains). */
@@ -385,20 +417,26 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     if (auth) route.auth = auth;
     routes.push(route);
     if (lastInline) inlineRoutes.push(route);
+    if (lastInline && lastHandlerFirst) handlerFirstRoutes.add(route);
   };
 
-  /** Registration args after the path: middleware in the middle, the handler last. */
-  const splitHandler = (rest: string[]): { handler: string | null; guards: GuardAttr[] } => {
+  /**
+   * Registration args after the path. Most routers run them in order, so the handler is the last and the rest is
+   * middleware (gin, fiber, a forge's macaron); Echo declares `GET(path, h, m...)`, the handler first
+   * (`handlerFirst`).
+   */
+  const splitHandler = (rest: string[], handlerFirst = false): { handler: string | null; guards: GuardAttr[] } => {
+    lastHandlerFirst = handlerFirst;
     if (rest.length === 0) return { handler: null, guards: [] };
+    const handlerArg = handlerFirst ? rest[0]! : rest[rest.length - 1]!;
     // A string literal between path and handler is a client call's content
     // type, not middleware (`client.Post("/api", "application/json", body)`).
-    const guards = rest.slice(0, -1).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
-    const lastArg = rest[rest.length - 1]!;
-    const last = unwrapHandler(lastArg);
+    const guards = (handlerFirst ? rest.slice(1) : rest.slice(0, -1)).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
+    const own = unwrapHandler(handlerArg);
     // An inline closure (`router.GET("/albums/:uid", func(c *gin.Context) {`)
     // has no name of its own: the route carries its body's calls (below).
-    lastInline = !last.handler && /^func\s*\(/.test(lastArg.trim());
-    return { handler: last.handler, guards: [...guards, ...last.guards] };
+    lastInline = !own.handler && /^func\s*\(/.test(handlerArg.trim());
+    return { handler: own.handler, guards: [...guards, ...own.guards] };
   };
   /** The top-level function the current line is in (`func GetAlbum(router *gin.RouterGroup) {`). */
   let currentFn: string | null = null;
@@ -435,12 +473,46 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     const m = /^([A-Za-z_]\w*)\.([A-Za-z_]\w*)(?:\s*\+\s*["'`](\/[^"'`]*)["'`])?$/.exec(a);
     return m && packages.has(m[1]!) ? `\${${m[1]}.${m[2]}}${m[3] ?? ""}` : null;
   };
+  /** The names the file binds to Echo: `echo`, for `github.com/labstack/echo/v4` (its last segment is the version). */
+  const echoPackages = new Set(imports.filter((i) => ECHO_IMPORT_RE.test(i.source)).flatMap((i) =>
+    i.specifiers.map((name) => (/^v\d+$/.test(name) ? i.source.split("/").slice(-2)[0]! : name))));
+  /** Router variable → whether it is an Echo router, as its declared type or constructor states. */
+  const echoVars = new Map<string, boolean>();
+  /** A router type or constructor text (`*echo.Group`, `echo.New(`) → whether its package is Echo. */
+  const echoTyped = (text: string): boolean => echoPackages.has(/(\w+)\s*\.\s*\w+\s*\(?$/.exec(text.trim())?.[1] ?? "");
+  // A receiver whose type the file does not state is Echo's only when Echo is the one router library imported.
+  const echoOnly = echoPackages.size > 0 && !imports.some((i) => OTHER_ROUTER_IMPORT_RE.test(i.source));
+  /** Echo takes the handler first: `e.GET(path, h, m...)`. */
+  const isEchoRouter = (recv: string): boolean => echoVars.get(recv) ?? echoOnly;
   /** Package-level router variables: `var APIv1 *gin.RouterGroup`, set in one file and handed on in another. */
   const packageRouters = new Set<string>();
   for (const l of lines) {
-    const v = /^var\s+([A-Za-z_]\w*)\s+\*?(?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router))\b/.exec(l);
-    if (v) packageRouters.add(v[1]!);
+    const v = /^var\s+([A-Za-z_]\w*)\s+\*?((?:gin\.(?:RouterGroup|Engine|IRoutes|IRouter)|echo\.(?:Echo|Group)|chi\.(?:Router|Mux)|mux\.Router|fiber\.(?:App|Router)))\b/.exec(l);
+    if (v) {
+      packageRouters.add(v[1]!);
+      echoVars.set(v[1]!, echoTyped(v[2]!));
+    }
   }
+  /**
+   * The arguments of the call whose `(` sits at `open` on row `row`, read on over the next lines when the call
+   * spans them (`r.GET("/ping", timeout.New(` … `))`). An inline closure's body is never read as arguments.
+   */
+  const callArgs = (row: number, open: number): string[] => {
+    const first = parseArgs(lines[row]!, open);
+    const opensClosure = (args: string[]): boolean => /^func\s*\(/.test(args[args.length - 1] ?? "");
+    if (first.closed || opensClosure(first.args)) return first.args;
+    let call = lines[row]!.slice(open).trimEnd();
+    for (let k = row + 1; k < Math.min(lines.length, row + 12); k++) {
+      const next = lines[k]!.trim();
+      // Joined as written on one line: no space after `(`, no trailing comma before `)`.
+      if (/^\)/.test(next)) call = call.replace(/,$/, "") + next;
+      else call += (/\($/.test(call) ? "" : " ") + next;
+      const joined = parseArgs(call, 0);
+      if (joined.closed) return joined.args;
+      if (opensClosure(joined.args)) return joined.args;
+    }
+    return first.args;
+  };
   const literal = (arg: string | undefined): string | null => {
     // `apiBase + "/matches"` / `apiBase` on a constant the file declares: the constant is part of the path.
     const onConst = arg?.trim().match(CONST_PLUS_PATH_RE);
@@ -457,6 +529,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     const line = lines[i]!;
     const lineNo = i + 1;
     lastInline = false;
+    lastHandlerFirst = false;
 
     const fnDecl = line.match(/^func\s+(?:\((?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
     if (fnDecl) {
@@ -469,6 +542,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const params = line.slice(fnDecl.index! + fnDecl[0].length - 1);
       for (const m of params.slice(0, params.indexOf(")") + 1 || undefined).matchAll(ROUTER_PARAM_RE)) {
         routerVars.set(m[1]!, true);
+        echoVars.set(m[1]!, echoTyped(m[0].slice(m[1]!.length)));
         varPrefix.delete(m[1]!);
         varGuards.delete(m[1]!);
       }
@@ -480,8 +554,13 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       else builtTypes.delete(composite[1]!);
     }
 
-    const engine = line.match(ENGINE_RE) ?? line.match(PROJECT_ROUTER_RE);
-    if (engine) routerVars.set(engine[1]!, returnsRouter);
+    const builtEngine = line.match(ENGINE_RE);
+    const engine = builtEngine ?? line.match(PROJECT_ROUTER_RE);
+    if (engine) {
+      routerVars.set(engine[1]!, returnsRouter);
+      // A project's own router (`web.NewRouter()`) is not Echo's.
+      echoVars.set(engine[1]!, builtEngine ? echoTyped(engine[0].slice(engine[0].indexOf("=") + 1)) : false);
+    }
 
     // `r.Mount("/api/v1", apiv1.Routes())`: the routes the callee's returned router holds, served under the prefix.
     const mount = facts ? line.match(MOUNT_CALL_RE) : null;
@@ -504,6 +583,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const prefix = packageValue(args[0]) ?? literal(args[0]);
       if (prefix !== null) {
         if (routerVars.has(group[2]!)) routerVars.set(group[1]!, routerVars.get(group[2]!)!);
+        echoVars.set(group[1]!, isEchoRouter(group[2]!));
         varPrefix.set(group[1]!, (varPrefix.get(group[2]!) ?? "") + prefix);
         varGuards.set(group[1]!, [...(varGuards.get(group[2]!) ?? []), ...args.slice(1).map(classifyGuard)]);
         // `APIv1 = router.Group(…)` assigning a package-level variable: other files of the package hand it on.
@@ -617,11 +697,11 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     if (match) {
       // gin `Match(methods, path, h…)` and `Any(path, h…)`: verbs as a literal list, else every one.
       const recv = receiver(match[1]!);
-      const { args } = parseArgs(line, match.index! + match[0].length - 1);
+      const args = callArgs(i, match.index! + match[0].length - 1);
       const any = match[2] === "Any";
       const path = literal(args[any ? 0 : 1]);
       if (path !== null && path.startsWith("/") && args.length >= (any ? 2 : 3)) {
-        const { handler, guards } = splitHandler(args.slice(any ? 1 : 2));
+        const { handler, guards } = splitHandler(args.slice(any ? 1 : 2), isEchoRouter(recv));
         const verbs = any ? [] : [...(args[0] ?? "").matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => VERBS.has(v));
         if (verbs.length > 0) for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         else push(joinPrefix(prefixOf(recv), path), null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
@@ -631,13 +711,14 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     } else if (verb) {
       const recv = receiver(verb[1]!);
       const method = caps ? caps[2]! : HTTP_VERBS_TITLE[title![2]!]!;
-      const { args } = parseArgs(line, verb.index! + verb[0].length - 1);
+      const args = callArgs(i, verb.index! + verb[0].length - 1);
       const path = literal(args[0]);
       // Title-case verbs must carry an absolute path — `s.Get("key")` is not a route — except inside
       // a router group's block, where `m.Get("", h)` is the group's own URL and `m.Get(".rss", h)` a suffix.
       const inBlock = routeStack.length > 0 && (path === "" || /^\.\w+$/.test(path ?? "") || /^[A-Za-z][\w-]*$/.test(path ?? ""));
       if (args.length >= 2 && path !== null && (caps || path.startsWith("/") || inBlock)) {
-        const { handler, guards } = splitHandler(args.slice(1));
+        // Echo's verbs are ALL-CAPS; Title-case ones (chi, fiber) take the handler last.
+        const { handler, guards } = splitHandler(args.slice(1), caps !== null && isEchoRouter(recv));
         const glued = echoFile && caps !== null && /^[A-Za-z][\w-]*$/.test(path) && prefixOf(recv) !== "";
         push(glued ? joinPrefix(prefixOf(recv) + path, "") : joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }
@@ -646,7 +727,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const handle = chiMethod ? null : line.match(HANDLE_RE);
       if (chiMethod) {
         const recv = receiver(chiMethod[1]!);
-        const { args } = parseArgs(line, chiMethod.index! + chiMethod[0].length - 1);
+        const args = callArgs(i, chiMethod.index! + chiMethod[0].length - 1);
         const method = literal(args[0])?.toUpperCase();
         const path = literal(args[1]);
         if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
@@ -655,7 +736,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         }
       } else if (handle) {
         const recv = receiver(handle[1]!);
-        const { args } = parseArgs(line, handle.index! + handle[0].length - 1);
+        const args = callArgs(i, handle.index! + handle[0].length - 1);
         const first = args.length >= 2 ? literal(args[0]) : null;
         // `[METHOD ][HOST]/[PATH]`: the host (`api.league.example/clubs`) restricts who is served and is not
         // part of the URL a client calls, so it is dropped; a pattern without a method serves every verb.
@@ -730,7 +811,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
   // reach whatever else that function does. The route carries its own
   // closure's calls instead.
   // A closure followed by more arguments is middleware (`m.Get("/code", func(ctx) {…}, explore.Code)`):
-  // the handler is the last argument after its close.
+  // the handler is the last argument after its close — except on Echo, whose handler comes first.
   const spans = new Map<RouteInfo, ReturnType<typeof closureSpan>>();
   for (const route of inlineRoutes) {
     const span = closureSpan(lines, route.line - 1);
@@ -738,7 +819,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     const after = span ? lines[span.endRow]!.slice(span.endColumn + 1) : "";
     const rest = /^\s*,(.*)$/.exec(after);
     const trailing = rest ? parseArgs(`(${rest[1]!}`, 0).args : [];
-    const named = trailing.length > 0 ? unwrapHandler(trailing[trailing.length - 1]!).handler : null;
+    const named = trailing.length > 0 && !handlerFirstRoutes.has(route) ? unwrapHandler(trailing[trailing.length - 1]!).handler : null;
     if (named) {
       route.handler = named;
       spans.delete(route);
