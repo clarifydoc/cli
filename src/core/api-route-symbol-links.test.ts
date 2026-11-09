@@ -115,6 +115,26 @@ describe("synthesizeApiRouteSymbolLinks", () => {
     expect(out.map((l) => l.targetSymbol)).toEqual(["route:GET /tasks/{task}"]);
   });
 
+  it("targets the route's symbol for a route with no handler registered inside a function, and the function a route is declared on", () => {
+    // `r.GET("/ping", timeout.New(…))` in a `main` that migrates: the plugin read no handler, and `main` is no part
+    // of the request. A route on a method's first line (a decorator with no handler named) is that method's.
+    const backend = fa("cmd/main.go", {
+      functions: [fn("main", 10, 60), fn("ping", 70, 75)],
+      routes: [
+        { path: "/ping", httpMethod: "GET", kind: "api", handler: null, calls: [], middleware: [], line: 30 },
+        { path: "/health", httpMethod: "GET", kind: "api", handler: null, calls: [], middleware: [], line: 70 },
+      ],
+    } as any);
+    const out = synthesizeApiRouteSymbolLinks(
+      [
+        link({ target: "cmd/main.go", targetLine: 30, handler: null, routePath: "/ping" }),
+        link({ target: "cmd/main.go", targetLine: 70, handler: null, routePath: "/health" }),
+      ],
+      [frontend, backend],
+    );
+    expect(out.map((l) => l.targetSymbol)).toEqual(["route:GET /ping", "ping"]);
+  });
+
   it("targets the route serving the call's method among routes sharing the line and the path", () => {
     // A framework-supplied CRUD set anchored on its class's line: one path, four methods.
     const backend = fa("league/views.py", {

@@ -73,6 +73,17 @@ export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | nul
   return best;
 }
 
+/**
+ * Whether the route at `line` is declared ON the function `span` encloses it
+ * with (an annotation, a decorator — the handler names that function, or the
+ * route sits on its first line) rather than registered inside its body
+ * (`r.GET("/clubs", h.ListClubs)` in `main`, a closure the plugin could not
+ * read): only then is that function the route's handler.
+ */
+export function declaredOn(span: SymbolSpan, handler: string | null | undefined, line: number): boolean {
+  return handler ? span.symbol.split(".").pop() === handler.split(".").pop() : line === span.line;
+}
+
 /** Spans in `spans` matching a bare handler name (`login` or `Auth.login`). */
 export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
   return spans.filter((s) => s.symbol === name || s.symbol.endsWith(`.${name}`));
@@ -185,8 +196,9 @@ export function synthesizeApiRouteSymbolLinks(
     // handler. The route's own `route:<METHOD> <path>` symbol links to what it
     // runs, so anchor there.
     // A route with no handler that carries its own body's calls (an inline
-    // closure among several a registrar declares) is that route symbol too.
-    if (tgt && (link.handler ? tgt.symbol.split(".").pop() !== link.handler.split(".").pop() : (routeRow()?.calls?.length ?? 0) > 0)) {
+    // closure), or sits below the first line of the function around it, is
+    // that route symbol too.
+    if (tgt && (!declaredOn(tgt, link.handler, link.targetLine) || (!link.handler && (routeRow()?.calls?.length ?? 0) > 0))) {
       const route = routeRow();
       if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
     }

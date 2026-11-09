@@ -318,6 +318,51 @@ describe("computeDataFlows", () => {
     expect(flows).toHaveLength(1);
     expect(flows[0]).toMatchObject({ entryLabel: "GET /cars", resource: "cars" });
   });
+
+  // `main` opens the database, runs the season migration, prunes old fixtures,
+  // then registers `r.GET("/clubs", h.ListClubs)`: a handler that answers from
+  // memory. The route runs ListClubs, never main.
+  const registrar = (): SymbolReachInput => ({
+    symbolLinks: [link("cmd/main.go", "route:GET /clubs", "api/clubs.go", "Handler.ListClubs", "h.ListClubs")],
+    symbolDataAccess: [dbRow("cmd/main.go", "main", "seasons"), dbRow("cmd/main.go", "main", "fixtures")],
+    apiCallAccess: [],
+    dbAccessByLine: new Map(),
+  });
+  const mainGo = fns("cmd/main.go", ["main", 10, 60]);
+
+  it("gives a route whose resolved handler reaches nothing nothing, not the reach of the function registering it", () => {
+    const reach = computeSymbolReach(registrar());
+    expect(computeDataFlows(reach, [route("cmd/main.go", "/clubs", "GET", "h.ListClubs", 30)], [mainGo], [], undefined, [], registrar().symbolLinks)).toEqual([]);
+  });
+
+  it("never takes the registrar for a route whose named handler did not resolve, nor for an unread inline handler", () => {
+    const reach = computeSymbolReach({ ...registrar(), symbolLinks: [] });
+    const routes = [
+      route("cmd/main.go", "/clubs", "GET", "h.ListClubs", 30),
+      // `r.GET("/ping", timeout.New(…))`: no handler the plugin could name, no calls of its own.
+      route("cmd/main.go", "/ping", "GET", null, 31),
+    ];
+    expect(computeDataFlows(reach, routes, [mainGo])).toEqual([]);
+  });
+
+  it("still takes the function a route is declared on (an annotation, a decorator) when the linker named nothing", () => {
+    const reach = computeSymbolReach({
+      symbolLinks: [],
+      symbolDataAccess: [dbRow("app/matches.py", "list_matches", "matches"), dbRow("app/matches.py", "health", "referees")],
+      apiCallAccess: [],
+      dbAccessByLine: new Map(),
+    });
+    const flows = computeDataFlows(
+      reach,
+      [
+        // `@app.route("/matches")` on its first line; a C# action whose attributes sit inside its span.
+        route("app/matches.py", "/matches", "GET", null, 18),
+        route("app/matches.py", "/health", "GET", "health", 26),
+      ],
+      [fns("app/matches.py", ["list_matches", 18, 22], ["health", 24, 30])],
+    );
+    expect(flows.map((f) => `${f.entryLabel} ${f.resource}`)).toEqual(["GET /health referees", "GET /matches matches"]);
+  });
 });
 
 describe("attributeApiCallsToSymbols", () => {

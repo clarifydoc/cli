@@ -309,19 +309,21 @@ cache.Find(&results)
 });
 
 describe("Go routes: inline closures", () => {
-  it("anchors a closure-handled route at the function declaring it", () => {
-    const routes = extractGoRoutes(lines(`
-func GetAlbum(router *gin.RouterGroup) {
-	router.GET("/albums/:uid", func(c *gin.Context) {
-		a, err := query.AlbumByUID(c.Param("uid"))
-		c.JSON(http.StatusOK, a)
+  it("gives the one closure a function registers its own calls, never that function as handler", async () => {
+    // `main` also migrates and prunes: anchored there, the route reached every table `main` touches.
+    const { goSpec } = await import("./index.js");
+    const src = `func main() {
+	db.Exec("DELETE FROM fixtures WHERE played_at < now()")
+	router.GET("/clubs/:uid", func(c *gin.Context) {
+		club, err := query.ClubByUID(c.Param("uid"))
+		c.JSON(http.StatusOK, club)
 	})
-	router.POST("/albums", CreateAlbum)
-}
-`));
-    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler}`)).toEqual([
-      "GET /albums/:uid -> GetAlbum",
-      "POST /albums -> CreateAlbum",
+	router.POST("/clubs", CreateClub)
+}`;
+    const routes = goSpec.extractRoutes!(lines(src), [], "cmd/main.go", [], []);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => c.name).join(", ")}]`)).toEqual([
+      "GET /clubs/:uid -> null [query.ClubByUID, c.Param, c.JSON]",
+      "POST /clubs -> CreateClub []",
     ]);
   });
 });

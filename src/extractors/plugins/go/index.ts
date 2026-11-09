@@ -194,10 +194,10 @@ export const goSpec: RegexLangSpec = {
   // test sample spells (`` const sample = `r.GET("/x", h)` ``), serves nothing.
   extractRoutes: (lines, classes, _file, fns, facts, parsed) => {
     const code = blankCodeInStrings(GO_CODE.commentFreeLines(lines));
-    // A closure handling one of several routes a function registers carries its own body's calls.
+    // A route handled by an inline closure carries its own body's calls.
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
-    const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts)];
+    const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts, closureCalls)];
     const members = [...(fns ?? []), ...classes.flatMap((c) => c.methods)];
     // The ANTLR front end reads method values handed on itself; the regex reading does it here — also for a file
     // that front end gave up on (syntax errors), whose functions the patterns read.

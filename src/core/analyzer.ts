@@ -2176,7 +2176,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
       } : {}),
     });
     symbolReach = reached.reach;
-    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness, allEntryPoints);
+    dataFlows = computeDataFlows(symbolReach, allRoutes, allAnalyses, allScreens, reached.witness, allEntryPoints, reachLinks);
     if (symbolReach.length > 0) {
       progress.detail(
         `  Data-flow reach: ${symbolReach.length} symbol(s), ${dataFlows.length} route/screen→data flow(s)`,

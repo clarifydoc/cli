@@ -1,4 +1,5 @@
-import type { RouteFact, RouteInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteFact, RouteInfo } from "../../../types/analysis.js";
+import type { ClosureCalls } from "./routes.js";
 
 /**
  * Huma (github.com/danielgtaylor/huma) operations as routes.
@@ -44,20 +45,31 @@ const CALL_HEAD_RE = /([\w.]+)\s*(?:\[[^\]\n]*\])?\s*\(\s*[\w.]+\s*,\s*(?:[\w.]+
 const VERB_RE = /\bhuma\.(Get|Post|Put|Patch|Delete|Head|Options)\s*(?:\[[^\]\n]*\])?\s*\(/g;
 const SERVER_RE = /huma\.Server\s*\{[^}]*?\bURL\s*:\s*([^,}\n]+)/g;
 
-export function extractHumaRoutes(lines: string[], facts?: RouteFact[]): RouteInfo[] {
+export function extractHumaRoutes(lines: string[], facts?: RouteFact[], closureCalls?: ClosureCalls): RouteInfo[] {
   const text = lines.join("\n");
   if (!text.includes("huma")) return [];
   const lineAt = lineIndex(text);
   const consts = stringConsts(text);
   const routes: RouteInfo[] = [];
 
-  const push = (method: string, path: string, handler: string | null, offset: number): void => {
+  // An inline `func(…) {…}` handler is the route's own body: its calls, never the function registering it.
+  const closureOf = (arg: string, end: number): CallInfo[] => {
+    const open = /^func\s*\([^)]*\)[^{]*\{/.exec(arg.trim());
+    const at = open ? text.lastIndexOf(arg.trim(), end) : -1;
+    if (!open || at < 0 || !closureCalls) return [];
+    const brace = at + open[0].length - 1;
+    const row = lineAt(brace) - 1;
+    const column = brace - (text.lastIndexOf("\n", brace - 1) + 1);
+    return closureCalls(row + 1, lineAt(at + arg.trim().length - 1), { line: row, column: column + 1 });
+  };
+  const push = (method: string, path: string, handlerArg: string, offset: number, end: number): void => {
+    const inline = /^func\s*\(/.test(handlerArg.trim());
     routes.push({
       path,
       httpMethod: method,
       kind: "api",
-      handler,
-      calls: [],
+      handler: inline ? null : handlerOf(handlerArg),
+      calls: inline ? closureOf(handlerArg, end) : [],
       middleware: [],
       line: lineAt(offset),
       owner: HUMA_OWNER,
@@ -80,14 +92,15 @@ export function extractHumaRoutes(lines: string[], facts?: RouteFact[]): RouteIn
     const method = fieldMethod(op);
     const path = pathValue(field(op, "Path"), consts);
     if (!method || !path?.startsWith("/")) continue;
-    push(method, path, handlerOf(args[2]!, text, at), at);
+    push(method, path, args[2]!, at, matching(text, callStart));
   }
   for (const m of text.matchAll(VERB_RE)) {
-    const args = callArgs(text, m.index! + m[0].length - 1);
+    const open = m.index! + m[0].length - 1;
+    const args = callArgs(text, open);
     if (!args || args.length < 3) continue;
     const path = pathValue(args[1], consts);
     if (!path?.startsWith("/")) continue;
-    push(VERB_FUNCS[m[1]!]!, path, handlerOf(args[2]!, text, m.index!), m.index!);
+    push(VERB_FUNCS[m[1]!]!, path, args[2]!, m.index!, matching(text, open));
   }
 
   if (facts) {
@@ -179,16 +192,10 @@ function stringValue(expr: string | null | undefined, consts: Map<string, string
   return null;
 }
 
-/** The handler as written; an inline `func(…)` anchors on the function declaring it. */
-function handlerOf(arg: string, text: string, offset: number): string | null {
+/** The handler as written, when it is a name. */
+function handlerOf(arg: string): string | null {
   const a = arg.trim();
-  if (/^[\w.]+$/.test(a)) return a;
-  if (/^func\s*\(/.test(a)) {
-    const before = text.slice(0, offset);
-    const decls = [...before.matchAll(/^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[[(]/gm)];
-    return decls.length > 0 ? decls[decls.length - 1]![1]! : null;
-  }
-  return null;
+  return /^[\w.]+$/.test(a) ? a : null;
 }
 
 /** `const X = "…"` and `X = "…"` inside a `const (…)` block. */

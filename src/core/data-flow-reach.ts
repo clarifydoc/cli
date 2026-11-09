@@ -11,7 +11,7 @@ import type { EntryPointInfo,
   SymbolReachSummary,
 } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf, nodeKey, stateNode, strongerFirst, usageGate } from "./symbol-graph.js";
-import { byName, innermostAt, spansOf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { byName, declaredOn, innermostAt, spansOf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -513,9 +513,11 @@ const FLOWS_CAP = 20_000;
  * Deduped by (entry, effect, resource) keeping the shortest distance.
  *
  * Route-handler resolution takes the route's own synthetic `route:<METHOD>
- * <path>` symbol when the reach summary has one, and otherwise mirrors
+ * <path>` symbol when the reach summary has one; a route symbol that links
+ * somewhere but reaches nothing reaches nothing. Otherwise it mirrors
  * trace-impact / synthesizeApiRouteSymbolLinks: innermost span at the route
- * line, else the handler name in the declaring file, else a project-wide
+ * line when the route is declared on it (never the function registering it),
+ * else the handler name in the declaring file, else a project-wide
  * unique-or-nothing name lookup.
  */
 /** How an entry point reads in a data flow's label. */
@@ -536,6 +538,8 @@ export function computeDataFlows(
   witness?: ReachWitness,
   /** MCP tools, editor and CLI commands (`ProjectAnalysis.entryPoints`): entries when they name their handler. */
   entryPoints: ReadonlyArray<EntryPointInfo & { filePath: string }> = [],
+  /** The symbol links: a route whose own symbol links somewhere runs what those links reach, nothing else. */
+  symbolLinks: readonly SymbolLink[] = [],
 ): DataFlowPath[] {
   // The hop list when it says more than the entry itself (distance ≥ 1).
   const viaOf = (key: string, e: ReachedEffect): { via?: FlowHop[] } => {
@@ -577,6 +581,12 @@ export function computeDataFlows(
     return candidates.length === 1 ? candidates[0]! : null;
   };
 
+  // Route symbols that link to something: the handler the linker resolved, the calls of an inline body.
+  const linkedRoutes = new Set<string>();
+  for (const l of symbolLinks) {
+    if (l.sourceSymbol.startsWith("route:") && l.relation !== "reference" && !l.navigational) linkedRoutes.add(keyOf(l.sourceFile, l.sourceSymbol));
+  }
+
   const seen = new Set<string>();
   const out: DataFlowPath[] = [];
   for (const route of routes) {
@@ -598,6 +608,12 @@ export function computeDataFlows(
     const synthetic = keyOf(route.filePath, `route:${route.httpMethod ?? "USE"} ${route.path}`);
     if (reachByKey.has(synthetic)) {
       key = synthetic;
+    } else if (linkedRoutes.has(synthetic)) {
+      // The route's symbol links to what it runs — its resolved handler, its
+      // inline body's calls — and none of that reaches data: neither does the
+      // route. The function around its line registers it (a `main` that also
+      // runs migrations and crons) and is no part of a request.
+      continue;
     } else if (!route.handler && (route.calls?.length ?? 0) > 0) {
       // A route carrying its own body's calls (an inline closure among several
       // a registrar declares) reaches what those calls reach, or nothing: the
@@ -606,6 +622,8 @@ export function computeDataFlows(
     } else {
       const at = innermostAt(spans, route.line);
       if (at) {
+        // Never the function registering the route: only the one it is declared on.
+        if (!declaredOn(at, route.handler, route.line)) continue;
         key = keyOf(route.filePath, at.symbol);
       } else if (route.handler) {
         const local = byName(spans, route.handler);

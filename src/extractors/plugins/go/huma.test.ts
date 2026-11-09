@@ -70,7 +70,7 @@ func registerMigrationAuth(api huma.API, name string) {
 describe("Huma operations", () => {
   it("reads any wrapper's Operation literal, a path built around a runtime name, past a comment's apostrophe", () => {
     expect(sig(file("pkg/v2/migration.go", MIGRATION))).toEqual([
-      "GET /migration/{name}/auth registerMigrationAuth @4 ?",
+      "GET /migration/{name}/auth null @4 ?",
       "PUT /time-entries/{id} timeEntriesUpdate @10 ?",
       "POST /migration/csv/detect csvDetect @11 ?",
     ]);
@@ -81,7 +81,7 @@ describe("Huma operations", () => {
       "GET /labels labelsList @4 ?",
       "GET /labels/{id} labelsRead @5 ?",
       "PUT /labels/{id} labelsUpdate @10 ?",
-      "DELETE /labels/{id} RegisterLabels @16 ?",
+      "DELETE /labels/{id} null @16 ?",
     ]);
   });
 
@@ -92,8 +92,29 @@ describe("Huma operations", () => {
       "GET /api/v2/labels labelsList @4",
       "GET /api/v2/labels/{id} labelsRead @5",
       "PUT /api/v2/labels/{id} labelsUpdate @10",
-      "DELETE /api/v2/labels/{id} RegisterLabels @16",
+      "DELETE /api/v2/labels/{id} null @16",
       "PATCH /api/v2/labels/{id} labelsUpdate @10",
+    ]);
+  });
+
+  it("gives an inline handler its own body's calls, not the function registering it (real-repo FP)", async () => {
+    // One registrar, two operations: anchored on it, the status route reached what the transfer route writes.
+    const { goSpec } = await import("./index.js");
+    const src = `package v2
+
+func registerTransfer(api huma.API, name string) {
+	Register(api, huma.Operation{
+		Method: http.MethodGet,
+		Path:   "/transfer/" + name + "/status",
+	}, func(ctx context.Context, _ *struct{}) (*statusBody, error) {
+		return transferStatus(ctx, name)
+	})
+	huma.Post(api, "/transfer/run", func(ctx context.Context, in *runInput) (*struct{}, error) { return runTransfer(ctx, in) })
+}`;
+    const routes = goSpec.extractRoutes!(src.split("\\n"), [], "pkg/v2/transfer.go", [], []);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} -> ${r.handler} [${r.calls.map((c) => `${c.name}@${c.line}`).join(", ")}]`)).toEqual([
+      "GET /transfer/{name}/status -> null [transferStatus@8]",
+      "POST /transfer/run -> null [runTransfer@10]",
     ]);
   });
 
