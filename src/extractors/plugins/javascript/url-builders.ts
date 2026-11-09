@@ -440,7 +440,7 @@ function replaceText(parts: Part[], search: string, edit: UrlEdit): Part[] | nul
 
 /** A builder's templates with a call's arguments in; null when a bare-variable argument leaves one unresolved. */
 function rewriteWith(builder: UrlBuilder, args: string[]): string[] | null {
-  // A builder taking one object it destructures (`({ host, portalSlug }) => …`) is handed its values by name.
+  // A builder taking one object it destructures (`({ host, clubSlug }) => …`) is handed its values by name.
   const destructures = builder.params.length === 0 || (builder.params.length === 1 && builder.params[0]!.name.trimStart().startsWith("{"));
   const named = destructures && args.length === 1 ? objectArgument(args[0]!) : null;
   const rewrites = named
