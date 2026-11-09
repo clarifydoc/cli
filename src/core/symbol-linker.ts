@@ -4583,6 +4583,12 @@ function resolveCallToDefinitionBody(
       const subDef = isModule && sub !== sourceFile && sub !== targetFile ? symbolIndex.get(sub!)?.get(leafName) : undefined;
       // The module's own top-level name — a method of a class in it is no `module.name`.
       if (subDef && subDef.name === leafName) return mkLink(sub!, subDef.name, subDef.line, "INFERRED", "import-file");
+      // A module that stands for another (`sys.modules[__name__] = real_club`) forwards its members to it.
+      ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+      if (isModule && !subDef && sub !== sourceFile && sub !== targetFile && ctx.analysisByFile?.get(sub!)?.exports.some((e) => e.kind === "re-export" && e.name === "*")) {
+        const fwd = forwardedDefinition(ctx, sub!, leafName, 0, new Set());
+        if (fwd && !fwd.namespace && fwd.def.name === leafName) return mkLink(fwd.file, fwd.def.name, fwd.def.line, "INFERRED", "import-file");
+      }
     }
     // `import league` … `league._make.s()`: the dotted name walks the package's modules down to the
     // one defining, aliasing (`s = attrs`) or forwarding the called name.

@@ -189,7 +189,11 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
    */
   private packageDirs: ReadonlySet<string> | null = null;
 
+  /** The file being read, for a module that names itself in `sys.modules`. */
+  private currentFile: string | undefined;
+
   override extractExports(tree: Tree, sourceText: string, filePath?: string): ExportInfo[] {
+    this.currentFile = filePath;
     this.packageDirs = filePath && /(?:^|\/)__init__\.pyi?$/.test(filePath)
       ? new Set(filePath.split("/").slice(0, -1))
       : null;
@@ -197,6 +201,7 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       return super.extractExports(tree, sourceText, filePath);
     } finally {
       this.packageDirs = null;
+      this.currentFile = undefined;
     }
   }
 
@@ -236,6 +241,9 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
         }
       }
     }
+    // `sys.modules[__name__] = other`: the module IS `other`, so its members are forwarded as `from other import *` does.
+    const shim = moduleShimOf(node, this.currentFile);
+    if (shim) exports.push({ name: "*", kind: "re-export", line: shim.line, source: shim.source });
     // `__all__` is the module's public API: what `from m import *` forwards
     // and the names it means to export. A literal list narrows the exports to
     // it (a re-export of a name it lists stays, under that name).
@@ -245,6 +253,73 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
       exports.splice(start, exports.length - start, ...keep);
     }
   }
+}
+
+/** The dotted module a top-level import binds `local` to: `from league import club` → `league.club`, `import a.b as c` → `a.b`. */
+function importedModules(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const stmt of root.namedChildren) {
+    if (stmt.type === "import_statement") {
+      for (const part of stmt.namedChildren) {
+        if (part.type === "aliased_import") {
+          const name = part.childForFieldName("name")?.text;
+          const alias = part.childForFieldName("alias")?.text;
+          if (name && alias) out.set(alias, name);
+        } else if (part.type === "dotted_name" && !part.text.includes(".")) out.set(part.text, part.text);
+      }
+    } else if (stmt.type === "import_from_statement") {
+      const moduleNode = stmt.childForFieldName("module_name");
+      const base = moduleNode?.text;
+      if (!moduleNode || !base) continue;
+      for (const part of stmt.namedChildren) {
+        if (part.startIndex < moduleNode.endIndex) continue;
+        const aliased = part.type === "aliased_import";
+        const name = (aliased ? part.childForFieldName("name") : part)?.text;
+        const local = aliased ? part.childForFieldName("alias")?.text : name;
+        if (name && local && (part.type === "dotted_name" || aliased)) out.set(local, base.endsWith(".") ? base + name : `${base}.${name}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * A module that replaces itself in `sys.modules` at its top level — `sys.modules[__name__] = real_club`,
+ * `sys.modules["league.shim"] = importlib.import_module("league.real_club")` — stands for the module it installs: a
+ * caller's `shim.sign()` is a call of `real_club.sign`. The key is `__name__` or a literal naming this file's own
+ * module; the value an imported module's name or `importlib.import_module` of a literal. Under a function, a
+ * condition or a try block it is not the module's identity, so it counts for nothing.
+ */
+function moduleShimOf(root: Node, filePath: string | undefined): { source: string; line: number } | null {
+  const text = root.text;
+  if (!text.includes("sys.modules")) return null;
+  const stem = filePath?.replace(/\.pyi?$/, "").split("/").filter(Boolean);
+  if (stem && stem[stem.length - 1] === "__init__") stem.pop();
+  const own = stem?.[stem.length - 1];
+  let imports: Map<string, string> | undefined;
+  for (const stmt of root.namedChildren) {
+    if (stmt.type !== "expression_statement") continue;
+    const assignment = stmt.namedChild(0);
+    if (assignment?.type !== "assignment") continue;
+    const left = assignment.childForFieldName("left");
+    const right = assignment.childForFieldName("right");
+    if (left?.type !== "subscript" || left.childForFieldName("value")?.text !== "sys.modules" || !right) continue;
+    const key = left.childForFieldName("subscript");
+    if (key?.text !== "__name__") {
+      const literal = key?.type === "string" ? key.text.slice(1, -1) : null;
+      if (!literal || !own || literal.split(".").pop() !== own) continue;
+    }
+    let source: string | undefined;
+    if (right.type === "identifier") {
+      imports ??= importedModules(root);
+      source = imports.get(right.text);
+    } else if (right.type === "call" && /^(?:importlib\.)?import_module$/.test(right.childForFieldName("function")?.text ?? "")) {
+      const arg = right.childForFieldName("arguments")?.namedChildren[0];
+      if (arg?.type === "string" && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(arg.text.slice(1, -1))) source = arg.text.slice(1, -1);
+    }
+    if (source) return { source, line: stmt.startPosition.row + 1 };
+  }
+  return null;
 }
 
 /**

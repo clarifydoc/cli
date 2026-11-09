@@ -41,6 +41,42 @@ function callsFrom(analyses: FileAnalysis[], from: string): string[] {
     .sort();
 }
 
+/** A Python module that replaces itself in `sys.modules` stands for the module it installs. */
+const REAL = "def sign(club):\n    return club\n";
+const MAIN_FROM = "from league import shim\n\n\ndef transfer():\n    shim.sign(1)\n";
+
+describe("Python module shims", () => {
+  it("resolves a call through a module that installs another in sys.modules", async () => {
+    const analyses = await analyzeAll({
+      "league/__init__.py": "",
+      "league/real_club.py": REAL,
+      "league/shim.py": "import sys\nfrom league import real_club\n\nsys.modules[__name__] = real_club\n",
+      "main.py": MAIN_FROM,
+    }, "python");
+    expect(callsFrom(analyses, "main.py")).toEqual(["shim.sign -> league/real_club.py::sign"]);
+  });
+
+  it("follows the aliased import form and a literal import_module", async () => {
+    const analyses = await analyzeAll({
+      "league/__init__.py": "",
+      "league/real_club.py": REAL,
+      "league/shim.py": "import sys\nimport importlib\n\nsys.modules['league.shim'] = importlib.import_module('league.real_club')\n",
+      "main.py": "import league.shim as s\n\n\ndef transfer():\n    s.sign(1)\n",
+    }, "python");
+    expect(callsFrom(analyses, "main.py")).toEqual(["s.sign -> league/real_club.py::sign"]);
+  });
+
+  it("ignores a replacement under a function or for another module's name", async () => {
+    const analyses = await analyzeAll({
+      "league/__init__.py": "",
+      "league/real_club.py": REAL,
+      "league/shim.py": "import sys\nfrom league import real_club\n\nsys.modules['league.other'] = real_club\n\n\ndef install():\n    sys.modules[__name__] = real_club\n",
+      "main.py": MAIN_FROM,
+    }, "python");
+    expect(callsFrom(analyses, "main.py")).toEqual([]);
+  });
+});
+
 describe("module-level function aliases", () => {
   it("Python: follows a chained alias and a plain one, in the package and in the defining module", async () => {
     const analyses = await analyzeAll({
