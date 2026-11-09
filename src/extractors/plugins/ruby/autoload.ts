@@ -117,6 +117,8 @@ export const rubyModelFinders = {
     "find", "find_by", "find_by!", "first", "first!", "last", "last!", "take", "take!", "sole", "find_sole_by",
     "create", "create!", "find_or_create_by", "find_or_create_by!", "find_or_initialize_by", "create_or_find_by",
     "create_or_find_by!", "first_or_create", "first_or_create!", "first_or_initialize",
+    // A record's own, returning itself: `@club.reload.award_honours` stays on the club.
+    "reload", "lock!", "tap",
   ],
   // A relation of the model.
   queries: [

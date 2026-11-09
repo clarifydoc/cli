@@ -390,6 +390,150 @@ export function collectIvarProperties(lines: readonly string[], cls: ClassInfo, 
   return out;
 }
 
+/** `a(b(c)).d(e)` → `a().d()`: a chain's arguments dropped, however nested, so only its steps are read. */
+function withoutArguments(text: string): string | null {
+  let out = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") {
+      if (depth++ === 0) out += "(";
+    } else if (ch === ")") {
+      if (--depth < 0) return null;
+      if (depth === 0) out += ")";
+    } else if (depth === 0) out += ch;
+  }
+  return depth === 0 ? out : null;
+}
+
+/** Heads of a chain that are the request, the framework or a keyword — never a method of the class to follow. */
+const FRAMEWORK_HEADS = new Set(["params", "request", "response", "session", "cookies", "flash", "headers", "self", "super", "nil", "true", "false", "yield", "it"]);
+
+/**
+ * `current_league.clubs.find(id)` — a chain whose head is a method of the instance itself (Ruby calls an unbound
+ * name on `self`), spelled as `rubyCallChain` spells one, the head a call: `current_league().clubs().find()`. Only
+ * where the head is no local or parameter of the method: a chain off one means something else in any other method.
+ */
+function selfCallChain(text: string, bound: ReadonlySet<string>): string | null {
+  const m = /^(?:self\.)?([a-z_]\w*[?!]?)((?:\.[a-z_]\w*[?!]?(?:\(\))?)+)$/.exec(text.trim());
+  if (!m || bound.has(m[1]!) || FRAMEWORK_HEADS.has(m[1]!)) return null;
+  return `${m[1]}()${m[2]!.replace(/\.([a-z_]\w*[?!]?)(?:\(\))?/g, ".$1()")}`;
+}
+
+/** What one `@x = rhs` states, as the method's own scope reads it; arguments may nest. */
+function fieldValueFact(raw: string, code: string, at: number, bound: ReadonlySet<string>, scope: (name: string) => Fact): Fact {
+  const fact = valueFact(rhsOf(raw, code, at), scope);
+  if (fact !== UNKNOWN) return fact;
+  const eq = code.indexOf("=", at);
+  const flat = eq < 0 ? null : withoutArguments(code.slice(eq + 1).trim());
+  if (!flat) return UNKNOWN;
+  const from = rubyCallChain(flat) ?? selfCallChain(flat, bound);
+  return from ? { type: "", from } : UNKNOWN;
+}
+
+/**
+ * The instance variables a method assigns itself — `@club = Club.find(params[:id])`, `@club ||=
+ * current_league.clubs.find(id)`, `@club = Club.new(…)` — each typed for the method's own body by what it is
+ * assigned (`localTypes` marked `field`, named without the `@` as Ruby call names are: `club.update_honours`). Every
+ * assignment is one entry; the linker types the name only where they agree. A variable one assignment of which
+ * states nothing (`@club = params[:club]`, `@club = x if y`) gets one untyped entry, which keeps whatever a filter
+ * assigns it from typing it here — where the method calls something on it, or may itself be a filter (`mayFilter`: a
+ * method of a controller or a module), whose untyped assignment keeps another filter's from typing the action. A name the method also uses bare — a local, a block parameter, a reader method
+ * (`club.name`) — is left alone: its calls would be named alike.
+ */
+export function assignedFieldTypes(lines: readonly string[], fn: FunctionInfo, bound: ReadonlySet<string>, mayFilter = false): LocalType[] {
+  if (fn.classLevel || fn.endLine <= fn.line) return [];
+  const params = new Map(fn.params.map((p) => [p.name, p]));
+  const locals = new Map((fn.localTypes ?? []).filter((l) => !l.field).map((l) => [l.name, l]));
+  const scope = (name: string): Fact => {
+    if (params.has(name)) return paramFact(params.get(name));
+    const l = locals.get(name);
+    if (!l || (!l.type && !l.qualifier)) return UNKNOWN;
+    return l.qualifier ? { type: l.type, qualifier: l.qualifier } : { type: l.type };
+  };
+  const facts = new Map<string, ValueFact[] | null>();
+  const put = (name: string, fact: Fact): void => {
+    if (fact === NONE) return;
+    if (fact === UNKNOWN) {
+      facts.set(name, null);
+      return;
+    }
+    const list = facts.get(name);
+    if (list === null) return;
+    if (!list) facts.set(name, [fact]);
+    else if (!list.some((f) => sameFact(f, fact))) list.push(fact);
+  };
+  const last = Math.min(fn.endLine, lines.length);
+  const bareUses = new Set<string>();
+  // The variables the method calls something on: an untyped one is recorded only there, where it hides a filter's type.
+  const receivers = new Set<string>();
+  for (let i = fn.line; i < last; i++) {
+    let raw = lines[i]!;
+    if (raw.trimStart().startsWith("#")) continue;
+    let code = codeOf(raw);
+    for (const w of code.matchAll(/(?<![\w@$:.])([a-z_]\w*)\b(?![?!:(]|\s*=[^=~>])/g)) bareUses.add(w[1]!);
+    if (!code.includes("@")) continue;
+    for (const r of code.matchAll(/(?<![\w@])@([a-z_]\w*)\s*&?\./g)) receivers.add(r[1]!);
+    const multi = IVAR_MULTI_RE.exec(code);
+    if (multi) {
+      for (const n of multi[1]!.split(",")) put(n.trim().slice(1), UNKNOWN);
+      continue;
+    }
+    const one = IVAR_ASSIGN_RE.exec(code);
+    if (!one) continue;
+    // `@club = Club.find_by(` with its arguments on the lines below: read the whole statement.
+    let open = 0;
+    for (const ch of code) open += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    for (let j = i + 1; open > 0 && j < last && j - i <= 20; j++) {
+      const part = codeOf(lines[j]!);
+      for (const ch of part) open += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+      raw += " " + lines[j]!.trim();
+      code += " " + part.trim();
+      i = j;
+    }
+    put(one[1]!, fieldValueFact(raw, code, code.indexOf("@" + one[1]!) + one[1]!.length + 1, bound, scope));
+  }
+  const bareCalls = new Set(fn.calls.filter((c) => !c.name.includes(".")).map((c) => c.name));
+  const out: LocalType[] = [];
+  for (const [name, list] of facts) {
+    if (bound.has(name) || bareUses.has(name) || bareCalls.has(name)) continue;
+    if (!list) {
+      if (receivers.has(name) || mayFilter) out.push({ name, type: "", field: true });
+      continue;
+    }
+    for (const f of list) {
+      const local: LocalType = { name, type: f.type, field: true };
+      if (f.qualifier) local.qualifier = f.qualifier;
+      if (f.from) local.from = f.from;
+      out.push(local);
+    }
+  }
+  return out;
+}
+
+/**
+ * A memoizing reader — `def club; @club ||= Club.find(params[:id]); end`, the body's last statement the
+ * assignment, whose value the method returns — hands back what it assigns: `returnedFrom` (`Club.find()`), so
+ * `club.award_honours` is typed through the reader. A method returning a value elsewhere (`return x`) is left alone,
+ * and so is a construction, which already types the variable the reader returns.
+ */
+export function memoizedReturn(lines: readonly string[], fn: FunctionInfo, bound: ReadonlySet<string>): string | null {
+  if (fn.classLevel || fn.endLine <= fn.line + 1 || fn.returnType || fn.returnedFrom) return null;
+  const endIdx = Math.min(fn.endLine, lines.length) - 1;
+  if (!/^\s*end\b/.test(codeOf(lines[endIdx] ?? ""))) return null;
+  let at = endIdx - 1;
+  while (at >= fn.line && !codeOf(lines[at]!).trim()) at--;
+  if (at < fn.line) return null;
+  for (let i = fn.line; i < at; i++) if (/(?:^|[;\s])return\s+(?!if\b|unless\b)\S/.test(codeOf(lines[i]!))) return null;
+  const raw = lines[at]!;
+  const code = codeOf(raw);
+  const one = IVAR_ASSIGN_RE.exec(code);
+  if (!one || IVAR_MULTI_RE.test(code)) return null;
+  const params = new Map(fn.params.map((p) => [p.name, p]));
+  const fact = fieldValueFact(raw, code, code.indexOf("@" + one[1]!) + one[1]!.length + 1, bound, (n) => paramFact(params.get(n)));
+  // A construction (`@repo ||= ClubRepo.new`) types the instance variable itself (`collectIvarProperties`).
+  return typeof fact === "object" && fact.from ? fact.from : null;
+}
+
 /** `include Import[…]` / `include Deps[…]` / `include MyApp::Import.kwargs[…]`. */
 const AUTO_INJECT_RE = new RegExp(String.raw`^\s*include\s+(${CONST})(?:\.(?:kwargs|args|hash))?\s*\[`);
 

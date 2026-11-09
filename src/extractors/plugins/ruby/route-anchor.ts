@@ -53,6 +53,8 @@ export const railsRouteAnchor: RouteResolver = {
     }
     if (byName.size === 0) return;
 
+    filterAssignedFields(byName, qualified, modules);
+
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     // A row in its controller's own file is the plugin's guess from the action
     // name (`def show` → `GET /mfa/:id`); one in a router file is declared.
@@ -508,6 +510,57 @@ function activeFilters(chain: readonly ClassRef[], action: string): string[] {
     }
   }
   return active;
+}
+
+/**
+ * What the `before_action` filters an action runs assign, typing the action's own reads: `set_club` assigning
+ * `@club = Club.find(params[:id])` types `@club.update_honours` in each action it runs before — `only:`/`except:`
+ * respected, an ancestor's filters included, `skip_before_action` honoured (`activeFilters`). The filter's own
+ * `field` entries (`assignedFieldTypes`) are handed on. An action that assigns the variable itself keeps its own
+ * reading; a variable a filter assigns with nothing stated (an untyped entry) is typed by no filter; a name the
+ * action binds or calls bare is left alone. Only public actions: a private helper may run from anywhere.
+ */
+function filterAssignedFields(byName: Map<string, ClassRef | null>, qualified: Map<ClassRef, string>, modules: Map<string, ClassRef | null>): void {
+  for (const ref of qualified.keys()) {
+    const chain = chainOf(ref, byName, qualified);
+    const filtered = chain.some((c) => c.cls.decorators?.some((d) => d.startsWith("before_action ")));
+    for (const fn of filtered ? ref.cls.methods : []) {
+      if (fn.synthetic || fn.classLevel || !fn.isExported) continue;
+      const filters = activeFilters(chain, fn.name);
+      if (filters.length === 0) continue;
+      const own = new Set((fn.localTypes ?? []).filter((l) => l.field).map((l) => l.name));
+      const shadowed = (name: string): boolean =>
+        own.has(name) || fn.params.some((p) => p.name === name) || !!fn.localTypes?.some((l) => !l.field && l.name === name)
+        || fn.calls.some((c) => c.name === name);
+      const handed = new Map<string, NonNullable<FunctionInfo["localTypes"]>>();
+      const untyped = new Set<string>();
+      for (const name of filters) {
+        const def = definerOf(ref, name, byName, qualified, modules);
+        if (!def || def.fn === fn) continue;
+        for (const l of def.fn.localTypes ?? []) {
+          if (!l.field || shadowed(l.name)) continue;
+          if (!l.type && !l.from && !l.qualifier) untyped.add(l.name);
+          const list = handed.get(l.name) ?? handed.set(l.name, []).get(l.name)!;
+          if (!list.some((x) => x.type === l.type && x.from === l.from && x.qualifier === l.qualifier)) list.push({ ...l });
+        }
+      }
+      for (const [name, list] of handed) {
+        if (untyped.has(name)) continue;
+        (fn.localTypes ??= []).push(...list);
+      }
+    }
+    // `club.update_honours` where `club` is an ancestor's memoizing reader (`@club ||= …`):
+    // the head is the reader's result, as for a reader of the class's own (the per-file pass).
+    for (const fn of ref.cls.methods) {
+      for (const c of fn.calls) {
+        const x = c.name;
+        if (x.includes(".") || x === fn.name || !fn.calls.some((d) => d.name.startsWith(`${x}.`))) continue;
+        if (fn.params.some((p) => p.name === x) || fn.localTypes?.some((l) => l.name === x)) continue;
+        const def = definerOf(ref, x, byName, qualified, modules);
+        if (def?.fn.returnedFrom && !def.fn.classLevel) (fn.localTypes ??= []).push({ name: x, type: "", from: `self.${x}()` });
+      }
+    }
+  }
 }
 
 /** The filters an action of `ref` runs that an ANCESTOR declares — its own were applied per file. */

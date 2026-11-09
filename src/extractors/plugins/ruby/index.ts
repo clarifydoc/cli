@@ -27,6 +27,8 @@ import {
 import {
   RUBY_DI_CALL_PATTERNS,
   applyDeclaredParamTypes,
+  assignedFieldTypes,
+  memoizedReturn,
   autoInjectProperties,
   collectIvarProperties,
   dropDetachedMemberCalls,
@@ -458,14 +460,18 @@ const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.mem
  */
 function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo, elementHeads: ReadonlySet<string> = new Set()): void {
   // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`), or the element of a typed collection a block iterates.
-  const typed = (fn.localTypes ?? []).filter((l) => l.type || MODEL_FINDER_CHAIN.test(l.from ?? "") || elementHeads.has(l.name));
+  // An instance variable typed by what assigns it (`field`) is written `@club.promote`.
+  const typed = (fn.localTypes ?? []).filter((l) => (l.field ? l.type || l.from : l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) || elementHeads.has(l.name));
   if (typed.length === 0) return;
+  const fields = new Set(typed.filter((l) => l.field).map((l) => l.name));
+  const plain = new Set(typed.filter((l) => !l.field).map((l) => l.name));
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
-  const re = new RegExp(`(?<![\\w.@$:])(${typed.map((l) => l.name).join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
+  const re = new RegExp(`(?<![\\w.@$:])(@?)(${[...new Set(typed.map((l) => l.name))].join("|")})\\.([a-z_]\\w*[?!]?)(?![\\w(]|\\s*=[^=~>])`, "g");
   for (const [i, text] of bodyLines(lines, fn)) {
     const code = text.replace(/\s#.*$/, "");
     for (const m of code.matchAll(re)) {
-      const name = `${m[1]}.${m[2]}`;
+      if (!(m[1] === "@" ? fields : plain).has(m[2]!)) continue;
+      const name = `${m[2]}.${m[3]}`;
       if (have.has(`${name}@${i + 1}`)) continue;
       have.add(`${name}@${i + 1}`);
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
@@ -495,6 +501,23 @@ function addBlockParamTypes(lines: readonly string[], fn: FunctionInfo, associat
   return elements;
 }
 
+/** A head read off a reader method of the class's own (`self.club()`), which the linker types by what it returns. */
+const SELF_READER = /^self\.[a-z_]\w*[?!]?\(\)$/;
+
+/**
+ * `club.award_honours` where `club` is no local but a memoizing reader of the class (`readers`, each with its
+ * `returnedFrom`): the head is the reader's result, a local typed from `self.club()` as an association reader's is.
+ * Only a name the method binds nowhere.
+ */
+function addReaderHeads(lines: readonly string[], fn: FunctionInfo, readers: ReadonlySet<string>, bound: ReadonlySet<string>): void {
+  for (const x of readers) {
+    if (x === fn.name || bound.has(x) || fn.localTypes?.some((l) => l.name === x)) continue;
+    const head = new RegExp(`(?<![\\w@$:.])${escapeRegex(x)}\\.[a-z_]`);
+    if (!fn.calls.some((d) => d.name.startsWith(`${x}.`)) && !bodyLines(lines, fn).some(([, t]) => head.test(t))) continue;
+    (fn.localTypes ??= []).push({ name: x, type: "", from: `self.${x}()` });
+  }
+}
+
 /** The association readers a model class declares: `has_many :players` → `players` (a chain off it is typed by the reader). */
 const ASSOCIATION_READER = new RegExp(String.raw`^\s*(?:${ACTIVE_RECORD_ASSOCIATION_MACROS.join("|")})\s*\(?\s*:([a-z_]\w*)`);
 function associationNames(lines: readonly string[], cls: ClassInfo): Set<string> {
@@ -516,16 +539,39 @@ function associationNames(lines: readonly string[], cls: ClassInfo): Set<string>
 function addMemberChainCalls(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>, bound: ReadonlySet<string>): void {
   const members = [...associations].filter((n) => !bound.has(n));
   const heads = new Set<string>(members);
-  for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
+  // An instance variable typed by what assigns it (`field`) heads a chain as `@club.reload.award_honours`.
+  const fields = new Set<string>();
+  const plain = new Set<string>(members);
+  for (const l of fn.localTypes ?? []) {
+    if (!(l.field ? l.type || l.from : l.type || MODEL_FINDER_CHAIN.test(l.from ?? "") || SELF_READER.test(l.from ?? ""))) continue;
+    heads.add(l.name);
+    (l.field ? fields : plain).add(l.name);
+  }
+  // An instance variable the method does not type, reloaded or locked before the call (`@club.reload.award_honours`):
+  // a filter that runs before the method may type it (the plugin's project pass), and the call named without its
+  // head (`reload.award_honours`) could not be followed. Only through a step that returns the record itself — any other
+  // chain off an untyped head is left as it was. A name the method also binds or calls bare is left alone.
+  const bare = new Set(fn.calls.filter((c) => !c.name.includes(".")).map((c) => c.name));
+  const selfSteps = new Set<string>();
+  for (const [, text] of bodyLines(lines, fn)) {
+    if (!text.includes("@")) continue;
+    for (const m of text.matchAll(/(?<![\w@$:.])@([a-z_]\w*)\.(?:reload|lock!)(?:\(\))?\.[a-z_]/g)) {
+      const n = m[1]!;
+      if (fields.has(n) || bound.has(n) || bare.has(n) || plain.has(n) || fn.localTypes?.some((l) => l.name === n && !l.field)) continue;
+      heads.add(n);
+      selfSteps.add(n);
+    }
+  }
   if (heads.size === 0) return;
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   // A step may carry arguments (`players.find_by(id: 1).injure!`): they are dropped from the name, as the steps' types
   // do not depend on them. One level of nested parentheses is read.
-  const re = new RegExp(`(?<![\\w.@$:])(${[...heads].join("|")})((?:\\.[a-z_]\\w*[?!]?(?:\\((?:[^()]|\\([^()]*\\))*\\))?){2,4})(?![\\w?!]|\\s*=[^=~>])`, "g");
+  const re = new RegExp(`(?<![\\w.@$:])(@?)(${[...heads].join("|")})((?:\\.[a-z_]\\w*[?!]?(?:\\((?:[^()]|\\([^()]*\\))*\\))?){2,4})(?![\\w?!]|\\s*=[^=~>])`, "g");
   for (const [i, text] of bodyLines(lines, fn)) {
     const code = text.replace(/\s#.*$/, "");
     for (const m of code.matchAll(re)) {
-      const name = `${m[1]}${m[2]!.replace(/\((?:[^()]|\([^()]*\))*\)/g, "")}`;
+      if (!(m[1] === "@" ? fields : plain).has(m[2]!) && !(m[1] === "@" && selfSteps.has(m[2]!) && /^\.(?:reload|lock!)\b/.test(m[3]!))) continue;
+      const name = `${m[2]}${m[3]!.replace(/\((?:[^()]|\([^()]*\))*\)/g, "")}`;
       if (have.has(`${name}@${i + 1}`)) continue;
       have.add(`${name}@${i + 1}`);
       fn.calls.push({ name, kind: "internal", target: null, line: i + 1 });
@@ -1212,10 +1258,23 @@ export const rubySpec: RegexLangSpec = {
       // Read from code only: a word in a heredoc or `%w[]` is no call.
       const code = rubyCodeLinesOf(lines);
       const associations = associationNames(lines, cls);
+      // The method's locals, read once for the passes that tell a local from a call.
+      const boundOf = new Map(cls.methods.map((m) => [m, boundLocals(code, m)]));
+      // A memoizing reader (`def club; @club ||= Club.find(…); end`) returns what it assigns.
       for (const m of cls.methods) {
-        // The method's locals, read once for the passes that tell a local from a call.
-        const bound = boundLocals(code, m);
+        const memo = memoizedReturn(lines, m, boundOf.get(m)!);
+        if (memo) m.returnedFrom = [memo];
+      }
+      const readers = new Set(cls.methods.filter((m) => m.returnedFrom && !m.classLevel).map((m) => m.name));
+      // A controller's or a module's (a concern's) methods may be `before_action` filters.
+      const mayFilter = /Controller$/.test(cls.name) || /^\s*module\b/.test(lines[cls.line - 1] ?? "");
+      for (const m of cls.methods) {
+        const bound = boundOf.get(m)!;
         addImplicitReceiverCalls(code, m, bound);
+        // `@club = Club.find(…)` types `@club.update_honours` in the method.
+        const fields = assignedFieldTypes(lines, m, bound, mayFilter);
+        if (fields.length > 0) (m.localTypes ??= []).push(...fields);
+        addReaderHeads(code, m, readers, bound);
         addAnonymousClassCalls(code, m);
         const elements = addBlockParamTypes(code, m, associations, bound);
         addTypedLocalCalls(code, m, elements);
