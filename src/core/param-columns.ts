@@ -11,7 +11,10 @@ import { byOrdinal } from "./ordinal.js";
  *
  * Language-agnostic: the plugins report where each call's arguments come from
  * (`CallInfo.argOrigins`) and which fields a statement's filter compares with
- * a value of known origin (`DataSourceInfo.whereFields`); this follows a
+ * a value of known origin (`DataSourceInfo.whereFields`) — or which object it
+ * filters on whole, a condition handed in or a struct used as its own
+ * condition (`DataSourceInfo.whereObjects`), whose fields the walk carries in
+ * from the caller (`builder.Eq{"id": clubID}`, `&Club{ID: id}`); this follows a
  * route's parameter forward over the symbol links — from the route's own
  * calls (an inline handler reading the request), or from the handler
  * function's parameter of the same name — to each statement filtering on it.
@@ -62,7 +65,7 @@ export function computeParamColumns(input: {
   routes: ReadonlyArray<RouteInfo & { filePath?: string }>;
 }): ParamColumn[] {
   const { analyses } = input;
-  if (!analyses.some((a) => a.dataSources.some((d) => d.whereFields))) return [];
+  if (!analyses.some((a) => a.dataSources.some((d) => d.whereFields || d.whereObjects))) return [];
   const byFile = new Map(analyses.map((a) => [a.filePath, a]));
   const fnsOf = new Map<string, Fn[]>();
   const fnsIn = (file: string): Fn[] => {
@@ -98,7 +101,7 @@ export function computeParamColumns(input: {
   const statementsOf = new Map<string, DataSourceInfo[]>();
   for (const a of analyses) {
     for (const d of a.dataSources) {
-      if (d.kind !== "database" || !d.whereFields) continue;
+      if (d.kind !== "database" || (!d.whereFields && !d.whereObjects)) continue;
       const owner = innermost(a.filePath, d.line);
       if (!owner) continue;
       // Keyed by the declaration's line too: overloads share a name.
@@ -152,14 +155,18 @@ export function computeParamColumns(input: {
     if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_ROUTE) return;
     seen.add(key);
     for (const d of statementsOf.get(`${file}::${symbol}@${at}`) ?? []) {
-      for (const w of d.whereFields!) {
+      const column = (field: string) => ({ entity: d.entity ?? null, field, file, line: d.line, ...(d.access ? { access: d.access } : {}), call: d.name });
+      let named = false;
+      for (const w of d.whereFields ?? []) {
         if (!matches(w.origin, slot)) continue;
-        out.push({
-          column: { entity: d.entity ?? null, field: w.field, file, line: d.line, ...(d.access ? { access: d.access } : {}), call: d.name },
-          hops,
-          ...(w.transform ? { transform: w.transform } : {}),
-          confidence,
-        });
+        named = true;
+        out.push({ column: column(w.field), hops, ...(w.transform ? { transform: w.transform } : {}), confidence });
+      }
+      // A condition object the statement filters on whole: the field the walk carries in it is the column —
+      // unless the filter compares that value with a column it names itself, which says it better.
+      for (const o of d.whereObjects ?? []) {
+        if (named || slot.kind !== "field" || !handsObject(o.origin, slot) || o.except?.includes(slot.name)) continue;
+        out.push({ column: column(slot.name), hops, confidence });
       }
     }
     for (const call of calls) {

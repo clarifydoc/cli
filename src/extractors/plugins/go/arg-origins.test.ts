@@ -128,3 +128,78 @@ func DeletePlayer(ctx context.Context, playerID int64) error {
     ]);
   });
 });
+
+describe("Go conditions flowing into a statement", () => {
+  const SRC = `package models
+
+import (
+	"xorm.io/builder"
+	"xorm.io/xorm"
+)
+
+func GetClubSimpleByID(s *xorm.Session, clubID int64) (*Club, error) {
+	club, _, err := getClubSimple(s, builder.Eq{"id": clubID})
+	return club, err
+}
+
+func getClubSimple(s *xorm.Session, cond builder.Cond) (club *Club, exists bool, err error) {
+	club = &Club{}
+	exists, err = s.
+		Where(cond).
+		OrderBy("position").
+		Get(club)
+	return
+}
+
+func ListPlayers(s *xorm.Session, clubID int64, search string, season int64) (players []*Player, err error) {
+	where := []builder.Cond{
+		builder.Eq{"club_id": clubID},
+	}
+	if search != "" {
+		where = append(where, builder.Like{"name", search}, builder.In("season", []int64{season}))
+	}
+	err = s.Where(builder.And(where...)).Find(&players)
+	return
+}
+
+func GetMatchSimple(s *xorm.Session, m *Match) (match Match, err error) {
+	match = *m
+	_, err = s.Get(&match)
+	return
+}
+
+func (c *Club) ReadOne(s *xorm.Session) error {
+	c.Title = strings.TrimSpace(c.Title)
+	_, err := s.Get(c)
+	return err
+}
+
+func (c *Club) Reload(s *xorm.Session) error {
+	_, err := s.NoAutoCondition().Get(c)
+	return err
+}
+`;
+  it("reads a condition handed to a helper as the columns it compares, each with its value", () => {
+    expect(callsOf(SRC, "GetClubSimpleByID")).toEqual([
+      ["getClubSimple", [{ index: 1, field: "id", origin: { kind: "param", name: "clubID", index: 1 } }]],
+    ]);
+  });
+
+  it("filters on a condition built before the statement, on one handed in, and on a struct used as its own condition", () => {
+    const a = analyze(SRC, "models/club.go");
+    const rows = a.dataSources.filter((d) => d.kind === "database").map((d) => [d.line, d.whereFields ?? null, d.whereObjects ?? null]);
+    expect(rows).toEqual([
+      [18, null, [{ origin: { kind: "param", name: "cond", index: 1 } }]],
+      [29, [
+        { field: "club_id", origin: { kind: "param", name: "clubID", index: 1 } },
+        { field: "name", origin: { kind: "param", name: "search", index: 2 } },
+        { field: "season", origin: { kind: "param", name: "season", index: 3 }, transform: "[]int64" },
+      ], null],
+      [35, null, [{ origin: { kind: "param", name: "m", index: 1 } }]],
+      // The receiver, but not the field the method writes first.
+      [41, null, [{ origin: { kind: "receiver" }, except: ["Title"] }]],
+      // `NoAutoCondition()`: the bean is no condition.
+      [46, null, null],
+    ]);
+  });
+});

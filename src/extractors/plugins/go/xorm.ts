@@ -235,6 +235,13 @@ function stripComment(line: string): string {
   return i >= 0 ? line.slice(0, i) : line;
 }
 
+/** `text` closes more brackets than it opens (strings skipped): the line above holds where they open. */
+function unclosed(text: string): boolean {
+  let depth = 0;
+  for (const ch of text.replace(/"(?:[^"\\]|\\.)*"|`[^`]*`/g, '""')) depth += "([{".includes(ch) ? 1 : ")]}".includes(ch) ? -1 : 0;
+  return depth < 0;
+}
+
 /**
  * The call chain the verb at (`i`, `col`) is called on, read backwards with
  * brackets balanced: `db.GetEngine(ctx).Where("…", id).` → that text, over lines
@@ -243,12 +250,15 @@ function stripComment(line: string): string {
  */
 function chainBefore(lines: string[], i: number, col: number): string {
   let text = stripComment(lines[i]!).slice(0, col);
-  for (let j = i - 1; j >= 0 && i - j < 16; j--) {
+  for (let j = i - 1; j >= 0 && i - j < 40; j--) {
     const prev = stripComment(lines[j]!).trimEnd();
     // A comment line inside the chain (`.Select(…).` ⏎ `// why` ⏎ `Where(…)`) continues it.
     if (prev === "" && /^\s*\/\//.test(lines[j]!)) continue;
-    if (!(prev.endsWith(".") || /^\s*$/.test(text))) break;
-    if (!prev.endsWith(".") && /^\s*$/.test(text)) break;
+    // A step whose arguments spread over lines (`Cols(` ⏎ `"title",` ⏎ `).`) is read back to where it opens.
+    const inside = unclosed(text);
+    if (!inside && !(prev.endsWith(".") || /^\s*$/.test(text))) break;
+    if (!inside && !prev.endsWith(".") && /^\s*$/.test(text)) break;
+    if (!inside && i - j >= 16) break;
     text = prev + text.trimStart();
   }
   text = text.replace(/\.\s*$/, "");

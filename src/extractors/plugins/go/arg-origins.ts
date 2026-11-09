@@ -34,6 +34,14 @@ type Origin = CallArgOrigin["origin"];
  *   }
  *
  * Each only up to a write the body makes first (`c.ID = 0`, `*c = loaded`).
+ *
+ * A condition is a value too, flowing into the statement that filters on it:
+ * built in place or before the statement (`conds := []builder.Cond{…}`,
+ * `append`ed, `builder.And(conds...)`), handed to a helper as its columns
+ * (`getClub(s, builder.Eq{"id": clubID})` → argument 1's field `id`), or
+ * filtered on whole in the helper — a condition parameter (`Where(cond)`) or
+ * a bean xorm conditions on its set fields (`s.Get(c)`, `club = *c;
+ * s.Get(&club)`): `DataSourceInfo.whereObjects`.
  */
 
 const ROUTE_READS: RegExp[] = [
@@ -249,6 +257,16 @@ function addArgOrigins(lines: readonly string[], fn: FunctionInfo, scopes: reado
       out.push({ index: -1, origin: { kind: "receiver" } });
     }
     args.forEach((a, index) => {
+      // A condition built for the callee to filter on (`getClub(s, builder.Eq{"id": clubID})`, a local
+      // `[]builder.Cond` spread into `builder.And(conds...)`): each compared value at its column.
+      const pairs = conditionPairs(a, scope, call.line - 1);
+      if (pairs && pairs.length > 0) {
+        for (const [field, value] of pairs) {
+          const o = goValueOrigin(value, scope, 0, call.line - 1);
+          if (kept(o) && o.origin.kind !== "receiver" && !out.some((x) => x.index === index && x.field === field)) out.push({ index, field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
+        }
+        return;
+      }
       if (a.endsWith("...")) return;
       // A composite literal's fields (`&Club{ID: p.ClubID}`): each value at its field of the argument.
       const composite = /^&?[A-Za-z_][\w.]*\s*\{([\s\S]*)\}$/.exec(a);
@@ -281,6 +299,121 @@ export function withGoArgOriginsInClasses(lines: string[], classes: ClassInfo[])
   return classes;
 }
 
+// ─── Conditions: a value flowing into a statement's filter ───────────────
+
+/** The expression starting at `at` in `text`: up to a newline or `;` outside brackets and strings. */
+function exprAt(text: string, at: number): string {
+  let depth = 0;
+  let i = at;
+  for (; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += c === '"' && text[j] === "\\" ? 2 : 1;
+      i = j;
+    } else if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") {
+      if (--depth < 0) break;
+    } else if ((c === "\n" || c === ";") && depth === 0) break;
+  }
+  return text.slice(at, i).trim();
+}
+
+/** The values local `name` is given before line `line0` (0-based, in the file): `x := v`, `x = v`, `var x = v` — whole expressions, over lines. */
+function valuesBefore(scope: Scope, name: string, line0: number | undefined): string[] {
+  const out: string[] = [];
+  const re = new RegExp(String.raw`(?:^|[;{(\s])(?:var\s+${name}\s+[^=\n;]*?|${name}\s*)(?::=|=(?!=))\s*`, "g");
+  for (const m of scope.code.matchAll(re)) {
+    const at = m.index! + m[0].length;
+    if (line0 !== undefined && scope.start + 1 + (scope.code.slice(0, at).match(/\n/g)?.length ?? 0) >= line0) continue;
+    out.push(exprAt(scope.body, at));
+  }
+  return out;
+}
+
+/** xorm's builder conditions: a map of columns (`builder.Eq{"id": x}`), a column and a value, and their compositions. */
+const COND_MAP = /^builder\.(?:Eq|Neq|Lt|Lte|Gt|Gte)\s*\{/;
+const COND_LIKE = /^builder\.Like\s*\{\s*"([\w.`]+)"\s*,\s*([\s\S]+?)\s*\}$/;
+const COND_CALL = /^(builder\.(?:In|NotIn|Expr|And|Or)|append)\s*\(/;
+const COND_SLICE = /^\[\]builder\.Cond\s*\{/;
+
+/**
+ * The columns a builder condition compares, each with the value text it compares with:
+ * `builder.Eq{"id": x}`, `builder.In("club_id", ids)`, `builder.Expr("id = ?", x)`, `builder.And(a, b)`,
+ * a `[]builder.Cond{…}` and what is `append`ed to it, and a local holding one of them, built before
+ * line `line0` (`conds := []builder.Cond{…}` … `builder.And(conds...)`). Null when `expr` is none of these.
+ */
+function conditionPairs(expr: string, scope: Scope, line0: number | undefined, depth = 0): Array<[string, string]> | null {
+  const e = expr.trim().replace(/\.\.\.$/, "");
+  if (depth > 4 || !e) return null;
+  const whole = (open: number) => closeAt(e, open) === e.length - 1;
+  if (COND_MAP.test(e) || COND_SLICE.test(e)) {
+    const open = e.indexOf("{");
+    if (!whole(open)) return null;
+    const body = e.slice(open + 1, -1);
+    return COND_MAP.test(e) ? pairsOf(body, true) : splitTopLevel(body).flatMap((a) => conditionPairs(a, scope, line0, depth + 1) ?? []);
+  }
+  const like = COND_LIKE.exec(e);
+  if (like) return [[like[1]!.replace(/`/g, ""), like[2]!]];
+  const call = COND_CALL.exec(e);
+  if (call) {
+    const open = call[0].length - 1;
+    if (!whole(open)) return null;
+    const args = splitTopLevel(e.slice(open + 1, -1));
+    if (call[1] === "builder.In" || call[1] === "builder.NotIn") {
+      const col = STRING_LIT.exec(args[0] ?? "");
+      return col && args[1] ? [[(col[1] ?? col[2] ?? "").replace(/`/g, ""), args[1]]] : null;
+    }
+    if (call[1] === "builder.Expr") {
+      const lit = STRING_LIT.exec(args[0] ?? "");
+      if (!lit) return null;
+      const cols = [...(lit[1] ?? lit[2] ?? "").matchAll(CONDITION)].map((c) => c[1]!.replace(/[`"]/g, ""));
+      return cols.flatMap((col, k): Array<[string, string]> => (args[k + 1] ? [[col, args[k + 1]!]] : []));
+    }
+    // `append(conds, more…)`: what it adds — the slice itself is read by its own assignments.
+    const parts = call[1] === "append" ? args.slice(1) : args;
+    const found = parts.map((a) => conditionPairs(a, scope, line0, depth + 1));
+    return call[1] === "append" && found.every((f) => f === null) ? null : found.flatMap((f) => f ?? []);
+  }
+  // A local holding a condition (never a parameter: what that holds is the caller's).
+  if (IDENT.test(e) && e !== scope.receiver && !scope.params.includes(e) && scope.code.includes("builder.")) {
+    const values = valuesBefore(scope, e, line0).map((v) => conditionPairs(v, scope, line0, depth + 1));
+    return values.some((v) => v !== null) ? values.flatMap((v) => v ?? []) : null;
+  }
+  return null;
+}
+
+/** The fields of `name` the body writes before line `line0` (`c.Title = …`, `c.Pos++`). */
+function fieldWrites(scope: Scope, name: string, line0: number): string[] {
+  const out = new Set<string>();
+  const re = new RegExp(String.raw`(?:^|[^\w.])${name}\.([A-Z]\w*)\s*(?:,\s*[\w_.]+\s*)*(?:[-+*/|&]?=(?!=)|\+\+|--)`, "g");
+  for (const m of scope.code.matchAll(re)) if (scope.start + 1 + (scope.code.slice(0, m.index).match(/\n/g)?.length ?? 0) < line0) out.add(m[1]!);
+  return [...out];
+}
+
+/**
+ * The object a statement filters on whole, as a parameter or the receiver: a bean the ORM conditions on
+ * its set fields (`s.Get(c)`, `s.Get(&club)` after `club = *c`), or a condition handed in (`Where(cond)`).
+ * Null for anything else — a local the function builds, an object it reassigns before the statement.
+ */
+function objectOrigin(arg: string, scope: Scope, line0: number): NonNullable<DataSourceInfo["whereObjects"]>[number] | null {
+  const name = arg.trim().replace(/^&/, "");
+  if (!IDENT.test(name)) return null;
+  const own = (base: string, extra: string[] = []): NonNullable<DataSourceInfo["whereObjects"]>[number] | null => {
+    if (writes(scope, base, undefined, line0)) return null;
+    const except = [...new Set([...fieldWrites(scope, base, line0), ...extra])].sort();
+    const ex = except.length > 0 ? { except } : {};
+    if (base === scope.receiver) return { origin: { kind: "receiver" }, ...ex };
+    const index = scope.params.indexOf(base);
+    return index >= 0 ? { origin: { kind: "param", name: base, index }, ...ex } : null;
+  };
+  if (name === scope.receiver || scope.params.includes(name)) return own(name);
+  // A copy of one (`club = *c`), assigned once.
+  const assigned = assignmentsOf(scope, name);
+  const copy = assigned.length === 1 ? /^\*?([A-Za-z_]\w*)$/.exec(assigned[0]!)?.[1] : undefined;
+  return copy && (copy === scope.receiver || scope.params.includes(copy)) ? own(copy, fieldWrites(scope, name, line0)) : null;
+}
+
 // ─── Filter fields of ORM statements ─────────────────────────────────────
 
 /** `repo_id = ?`, `"user".id=?`, `name LIKE ?`, `id IN (?)` — a compared column before each placeholder. */
@@ -288,17 +421,24 @@ const CONDITION = /([`"]?[A-Za-z_][\w`".]*)\s*(?:=|==|<>|!=|>=|<=|>|<|\bLIKE\b|\
 
 /** The statement a database row sits in: lines joined from the chain's first line to the terminal call's end. */
 function statementAt(lines: readonly string[], line0: number, scope: Scope): string {
-  let from = line0;
-  while (from > scope.start + 1 && stripComment(lines[from - 1]!).trimEnd().endsWith(".")) from--;
-  let to = line0;
-  let text = stripComment(lines[from]!);
-  for (let k = from + 1; k <= line0; k++) text += "\n" + stripComment(lines[k]!);
-  // Close what the row's line leaves open, and follow a chain that goes on (`.` at its end).
   const open = (t: string) => {
     let d = 0;
     for (const ch of t.replace(/"(?:[^"\\]|\\.)*"|`[^`]*`/g, '""')) d += "([{".includes(ch) ? 1 : ")]}".includes(ch) ? -1 : 0;
     return d;
   };
+  // Back over lines ending in `.`, and over a step whose arguments spread over lines (`Cols(` ⏎ `"name",` ⏎ `).`).
+  let from = line0;
+  let back = stripComment(lines[line0]!);
+  while (from > scope.start + 1 && line0 - from < 40) {
+    const prev = stripComment(lines[from - 1]!);
+    if (!prev.trimEnd().endsWith(".") && open(back) >= 0) break;
+    back = prev + "\n" + back;
+    from--;
+  }
+  let to = line0;
+  let text = stripComment(lines[from]!);
+  for (let k = from + 1; k <= line0; k++) text += "\n" + stripComment(lines[k]!);
+  // Close what the row's line leaves open, and follow a chain that goes on (`.` at its end).
   while (to < scope.end && to - line0 < 20 && (open(text) > 0 || text.trimEnd().endsWith("."))) text += "\n" + stripComment(lines[++to]!);
   return text;
 }
@@ -313,9 +453,13 @@ function pairsOf(body: string, quotedKeys: boolean): Array<[string, string]> {
   return out;
 }
 
-/** Fields a statement filters on, each with the value text it compares with. */
-function filtersOf(stmt: string, verb: string): Array<[string, string]> {
+/**
+ * Fields a statement filters on, each with the value text it compares with, and the objects it
+ * filters on whole (`objects`: xorm only — a bean conditions on its set fields, GORM's on its key).
+ */
+function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm: boolean): { pairs: Array<[string, string]>; objects: NonNullable<DataSourceInfo["whereObjects"]> } {
   const out: Array<[string, string]> = [];
+  const objects: NonNullable<DataSourceInfo["whereObjects"]> = [];
   // `.Where("a = ? AND b = ?", x, y)` / `.And(…)` / `.Or(…)` / gorm `.Not(…)`.
   for (const m of stmt.matchAll(/\.\s*(?:Where|And|Or|Not|Having)\s*\(/g)) {
     const open = m.index! + m[0].length - 1;
@@ -323,7 +467,17 @@ function filtersOf(stmt: string, verb: string): Array<[string, string]> {
     if (close < 0) continue;
     const args = splitTopLevel(stmt.slice(open + 1, close));
     const lit = STRING_LIT.exec(args[0] ?? "");
-    if (!lit) continue;
+    if (!lit) {
+      // A condition value: built in place or before the statement, or handed in (`Where(cond)`).
+      if (args.length !== 1) continue;
+      const pairs = conditionPairs(args[0]!, scope, line0);
+      if (pairs) out.push(...pairs);
+      else if (xorm && scope.params.includes(args[0]!.trim())) {
+        const o = objectOrigin(args[0]!, scope, line0);
+        if (o) objects.push(o);
+      }
+      continue;
+    }
     const cols = [...(lit[1] ?? lit[2] ?? "").matchAll(CONDITION)].map((c) => c[1]!.replace(/[`"]/g, ""));
     cols.forEach((col, k) => { if (args[k + 1]) out.push([col, args[k + 1]!]); });
   }
@@ -344,14 +498,18 @@ function filtersOf(stmt: string, verb: string): Array<[string, string]> {
     const close = closeAt(stmt, open);
     if (close < 0) continue;
     const args = splitTopLevel(stmt.slice(open + 1, close));
-    if (/^(?:First|Take|Last|Find)$/.test(verb) && args.length === 2 && /^&/.test(args[0]!) && !STRING_LIT.test(args[1]!)) out.push(["id", args[1]!]);
+    if (/^(?:First|Take|Last|Find)$/.test(verb) && args.length === 2 && /^&/.test(args[0]!) && !STRING_LIT.test(args[1]!) && !xorm) out.push(["id", args[1]!]);
+    // xorm: the bean a read or a delete is handed is a condition on its set fields — `Find`'s second argument.
+    const bean = !xorm || /\bNoAutoCondition\s*\(/.test(stmt) ? undefined : /^(?:Get|Exist|Count|Delete)$/.test(verb) ? args[0] : /^(?:Find|FindAndCount|Iterate)$/.test(verb) ? args[1] : undefined;
+    const o = bean ? objectOrigin(bean, scope, line0) : null;
+    if (o && !objects.some((x) => JSON.stringify(x.origin) === JSON.stringify(o.origin))) objects.push(o);
   }
   for (const m of stmt.matchAll(/\.\s*(?:Get|Exist|Where|Find|First|Delete|Count)\s*\(\s*&[A-Za-z_][\w.]*\s*\{/g)) {
     const open = m.index! + m[0].length - 1;
     const close = closeAt(stmt, open);
     if (close > 0) out.push(...pairsOf(stmt.slice(open + 1, close), false));
   }
-  return out;
+  return { pairs: out, objects };
 }
 
 /** Filter fields on a file's xorm/GORM rows whose values have a known origin. */
@@ -364,11 +522,13 @@ export function addGoWhereFields(lines: readonly string[], sources: DataSourceIn
     if (!scope) continue;
     const verb = d.name.replace(/^[^:]*:\s*/, "");
     const fields: NonNullable<DataSourceInfo["whereFields"]> = [];
-    for (const [field, value] of filtersOf(statementAt(lines, d.line - 1, scope), verb)) {
+    const { pairs, objects } = filtersOf(statementAt(lines, d.line - 1, scope), verb, scope, d.line - 1, d.name.startsWith("xorm"));
+    for (const [field, value] of pairs) {
       const o = goValueOrigin(value, scope, 0, d.line - 1);
       if (!o || o.origin.kind === "literal" || o.origin.kind === "receiver" || fields.some((f) => f.field === field)) continue;
       fields.push({ field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
     }
     if (fields.length > 0) d.whereFields = fields;
+    if (objects.length > 0) d.whereObjects = objects;
   }
 }

@@ -2627,6 +2627,19 @@ export interface DataSourceInfo {
    */
   whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string }>;
   /**
+   * For `database`: an object whose fields ARE the statement's filter, each
+   * compared with the column of its name — a condition the function is handed
+   * (`Where(cond)` of `func getClub(s, cond builder.Cond)`), or a struct used
+   * as its own condition (an ORM that filters on the set fields of the bean it
+   * loads into: `club = *c; s.Get(&club)`). `origin` is a parameter of the
+   * enclosing function or its receiver (`{ kind: "receiver" }`); a field the
+   * project pass carries in that object (`builder.Eq{"id": clubID}`,
+   * `&Club{ID: id}` handed in) becomes a filter on the column of that name.
+   * `except`: fields the function writes before the statement, whose values
+   * are no longer the ones handed in.
+   */
+  whereObjects?: Array<{ origin: CallArgOrigin["origin"]; except?: string[] }>;
+  /**
    * For an api-call: the URL's leading base was a runtime value no pass could
    * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it
    * was split off and `target` holds the app-relative rest (`/series/{}`). The

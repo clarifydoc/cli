@@ -248,3 +248,33 @@ func ListSquads(s *xorm.Session) {
     ]);
   });
 });
+
+describe("xorm: a chain opening on a line of its own", () => {
+  it("reads a chain whose step spreads its arguments over lines, and a condition spread the same way", () => {
+    expect(rows(`package models
+
+import "xorm.io/xorm"
+
+func (l *League) Update(s *xorm.Session) (err error) {
+	_, err = s.
+		ID(l.ID).
+		Cols(
+			"title",
+			"season",
+		).
+		Update(l)
+	return
+}
+
+func (f *Fixture) Exists(s *xorm.Session) (bool, error) {
+	return s.
+		Where("home_id = ? AND away_id = ?",
+			f.HomeID, f.AwayID).
+		Exist(&Fixture{})
+}
+`)).toEqual([
+      "12 xorm: Update League write",
+      "20 xorm: Exist Fixture read",
+    ]);
+  });
+});

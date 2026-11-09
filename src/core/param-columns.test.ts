@@ -253,4 +253,44 @@ describe("paramColumns", () => {
     // A type the handler is not built for binds nothing on this route.
     expect(computeParamColumns({ analyses: [routesFile, club, load], symbolLinks: [link("routes/routes.go", "route:GET /clubs/:club", 4, "obj.ReadOne", "models/club.go", "Club.ReadOne")], routes: [{ ...r, handlerTypes: ["models.Season"] }] })).toEqual([]);
   });
+  it("maps a field carried in an object to the column of its name where a statement filters on that object whole", () => {
+    // GET /clubs/:club: the handler hands `builder.Eq{"id": clubID}` to a helper that filters on its condition
+    // parameter, and `&Match{ID: clubID}` to one that loads into a copy of it — a struct used as its own condition.
+    const r = { kind: "api", path: "/clubs/:club", httpMethod: "GET", handler: null, line: 3, filePath: "routes/clubs.go", params: [{ name: "club", type: null, binding: "route", inferred: true }],
+      calls: [{ name: "GetClub", kind: "cross-file", target: null, line: 4, argOrigins: [{ index: 1, origin: { kind: "route-param", name: "club" } }] }] } as any;
+    const routesFile = file("routes/clubs.go", [], { routes: [r] } as any);
+    const models = file("models/club.go", [
+      fn("GetClub", 1, 5, ["s", "clubID"], [
+        { name: "getClubSimple", kind: "internal", target: null, line: 2, argOrigins: [{ index: 1, field: "id", origin: { kind: "param", name: "clubID", index: 1 } }] },
+        { name: "getMatchSimple", kind: "internal", target: null, line: 3, argOrigins: [{ index: 1, field: "ID", origin: { kind: "param", name: "clubID", index: 1 } }] },
+        { name: "renameClub", kind: "internal", target: null, line: 4, argOrigins: [{ index: 1, field: "Title", origin: { kind: "param", name: "clubID", index: 1 } }] },
+      ]),
+      fn("getClubSimple", 7, 9, ["s", "cond"]),
+      fn("getMatchSimple", 11, 14, ["s", "m"]),
+      fn("renameClub", 16, 19, ["s", "c"]),
+    ], {
+      dataSources: [
+        { kind: "database", name: "xorm: Get", target: "Club", entity: "Club", access: "read", line: 8, calls: [], whereObjects: [{ origin: { kind: "param", name: "cond", index: 1 } }] },
+        // The filter names the column the value is compared with itself: that row, not the field's name.
+        { kind: "database", name: "xorm: Get", target: "Match", entity: "Match", access: "read", line: 13, calls: [],
+          whereFields: [{ field: "match_id", origin: { kind: "param-field", name: "m", index: 1, member: "ID" } }], whereObjects: [{ origin: { kind: "param", name: "m", index: 1 } }] },
+        // A field the function writes before the statement is no longer the caller's value.
+        { kind: "database", name: "xorm: Get", target: "Club", entity: "Club", access: "read", line: 18, calls: [], whereObjects: [{ origin: { kind: "param", name: "c", index: 1 }, except: ["Title"] }] },
+      ],
+    } as any);
+    const rows = computeParamColumns({
+      analyses: [routesFile, models],
+      symbolLinks: [
+        link("routes/clubs.go", "route:GET /clubs/:club", 4, "GetClub", "models/club.go", "GetClub"),
+        link("models/club.go", "GetClub", 2, "getClubSimple", "models/club.go", "getClubSimple"),
+        link("models/club.go", "GetClub", 3, "getMatchSimple", "models/club.go", "getMatchSimple"),
+        link("models/club.go", "GetClub", 4, "renameClub", "models/club.go", "renameClub"),
+      ],
+      routes: [r],
+    });
+    expect(rows.map((x) => [x.route.param, `${x.column.entity}.${x.column.field}`, x.column.line, x.hops.map((h) => `${h.symbol}/${h.arg}${h.field ? `.${h.field}` : ""}`).join(" → ")])).toEqual([
+      ["club", "Club.id", 8, "GetClub/1 → getClubSimple/1.id"],
+      ["club", "Match.match_id", 13, "GetClub/1 → getMatchSimple/1.ID"],
+    ]);
+  });
 });
