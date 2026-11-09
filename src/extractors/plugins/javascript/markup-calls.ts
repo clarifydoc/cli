@@ -37,6 +37,8 @@ export function markupCalls(elements: readonly InteractiveElementInfo[], filePat
     const bound = scope?.find((s) => s.name === head);
     // A scoped slot's parameter is the providing component's function (`slotFunctions`), never the component's own `save`.
     if (bound?.slot && head === name) return;
+    // `a.action()` over an imported array: the member of whichever of its objects (`clubActions[].action`).
+    if (bound?.elementOf && head !== name) name = `${bound.elementOf}[]${name.slice(head.length)}`;
     out.push({ name, kind: "internal", target: null, line, ...(bound?.type && head !== name ? { receiverType: bound.type } : {}) });
   };
   for (const el of elements) {

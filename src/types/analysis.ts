@@ -2913,7 +2913,7 @@ export interface ContextValue {
 
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */
 export interface ComponentSubscription {
-  /** The component class, as the file names it. */
+  /** The component class, as the file names it — or the field holding it, as written (`this.editClubDialog`). */
   component: string;
   /** The output (`confirmClicked`), or the reference's outcome member (`closed`, `result`, `afterClosed`). */
   event: string;
@@ -3077,9 +3077,11 @@ export interface InteractiveElementInfo {
    * whose collection's element type the script states (`type`), and a scoped slot's parameter the
    * component the tag sits in provides (`slot`: that component's tag, the slot, the slot prop). A loop variable
    * over a literal array of objects in the same component lists the functions its objects hold under each key
-   * (`callbacks`: `{ action: ["remove", "refresh"] }` for `{ label, action: this.remove }`).
+   * (`callbacks`: `{ action: ["remove", "refresh"] }` for `{ label, action: this.remove }`; a callback written in
+   * place is its held function's name up to the line, `<items[].action@`). A loop over an array the script imports
+   * names it (`elementOf`: `clubActions`), so `a.action()` is read as a call of `clubActions[].action`.
    */
-  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string }; callbacks?: Record<string, string[]> }>;
+  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string }; callbacks?: Record<string, string[]>; elementOf?: string }>;
   /**
    * A markup element with no handler of its own, as a compound selector of what
    * a script can find it by — `button#save.btn[data-delete]`: tag, id, classes

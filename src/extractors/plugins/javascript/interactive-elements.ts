@@ -327,9 +327,10 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
       if (scope.kind === "slot") found.push({ name, slot: { component: scope.component!, name: scope.slot!, prop: scope.whole ? WHOLE_SLOT_PROPS : scope.props![name]! } });
       else {
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
-        const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) : undefined;
+        const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) ?? inlineCallbacksOf(scope.source!) : undefined;
+        const elementOf = name === scope.names[0] && !type && !callbacks ? importedCollection(scope.source!, fullSource) : undefined;
         if (type) found.push({ name, type });
-        else found.push({ name, ...(callbacks ? { callbacks } : {}) });
+        else found.push({ name, ...(callbacks ? { callbacks } : {}), ...(elementOf ? { elementOf } : {}) });
       }
     }
   }
@@ -362,6 +363,14 @@ function literalCallbacksOf(source: string, script: string): Record<string, stri
     if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
     for (const entry of splitTopLevel(obj.slice(1, -1))) {
       const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*(?::\s*(?:this\.)?([A-Za-z_$][\w$]*)(?:\.bind\(this\))?)?\s*$/.exec(entry);
+      // `run: () => sellPlayer()`: a function of its own (`heldFunction`), `<items[].run@<line>>` — any line.
+      const written = m ? null : /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+)$/.exec(entry);
+      if (written && INLINE_FUNCTION.test(written[2]!.trim())) {
+        const list = (out[written[1]!] ??= []);
+        const held = `<${name}[].${written[1]}@`;
+        if (!list.includes(held)) list.push(held);
+        continue;
+      }
       if (!m) continue;
       const fn = m[2] ?? m[1]!;
       if (/^(?:undefined|null|true|false|this)$/.test(fn)) continue;
@@ -370,6 +379,39 @@ function literalCallbacksOf(source: string, script: string): Record<string, stri
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The functions a loop over an array written in the template runs (`v-for="item in [{ run: () => sellPlayer() }]"`):
+ * by key, each callee its objects' callbacks spell, and each function named as a value.
+ */
+function inlineCallbacksOf(source: string): Record<string, string[]> | undefined {
+  const text = source.trim();
+  if (!text.startsWith("[") || !text.endsWith("]")) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const element of splitTopLevel(text.slice(1, -1))) {
+    const obj = element.trim();
+    if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
+    for (const entry of splitTopLevel(obj.slice(1, -1))) {
+      const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(entry);
+      if (!m) continue;
+      const names = INLINE_FUNCTION.test(m[2]!)
+        ? [...m[2]!.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(/g)].map((c) => c[1]!).filter((n) => !/^(?:async|function|if|return|await|emit|\$emit)$/.test(n))
+        : /^[a-z_$][\w$]*$/.test(m[2]!) && !/^(?:undefined|null|true|false)$/.test(m[2]!) ? [m[2]!] : [];
+      if (names.length === 0) continue;
+      const list = (out[m[1]!] ??= []);
+      for (const n of names) if (!list.includes(n)) list.push(n);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The collection a loop reads when it is a name the script imports (`v-for="a in clubActions"`). */
+function importedCollection(source: string, script: string): string | undefined {
+  const name = /^[A-Za-z_$][\w$]*$/.exec(source.trim())?.[0];
+  if (!name) return undefined;
+  const n = escapeRegex(name);
+  return new RegExp(String.raw`\bimport\s+(?:[\w$]+\s*,\s*)?\{[^}]*(?<![\w$])${n}(?![\w$])[^}]*\}\s*from\b`).test(script) ? name : undefined;
 }
 
 /** The text between the bracket at `open` and its match, skipping strings; null when unbalanced. */

@@ -11,6 +11,8 @@ import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
 import { loadedMemberCall } from "./loaded-members.js";
 import { requiredSource } from "./imports-exports.js";
+import { arrayMapEntries, memberAssignment } from "./member-values.js";
+import { heldFunction } from "./held-functions.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -115,8 +117,16 @@ export const javascriptCallHooks: CallExtractionHooks = {
       // A dispatch map: `const ACTIONS = { save: saveClub }` holds `saveClub` under `ACTIONS.save`.
       const map = dispatchMapEntries(node);
       for (const { value, key } of map?.entries ?? []) addResult(value.text, value, "property", `${map!.holder}.${key}`);
+      // The objects of a declared array: `const items = [{ run: sellPlayer }]` holds `sellPlayer` under `items[].run`.
+      const list = arrayMapEntries(node);
+      for (const { name, node: value, key } of list?.entries ?? []) addResult(name, value, "property", `${list!.holder}[].${key}`);
+    } else if (node.type === "assignment_expression") {
+      // A function value assigned to a module object's member at run time (`dialog.callback = deleteClubs`).
+      for (const { name, node: value, holder } of memberAssignment(node)) addResult(name, value, "property", holder);
     }
   },
+
+  heldFunction,
 
   // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
   // A call on a module loaded in place is the module's own member, read where the body is scanned; a

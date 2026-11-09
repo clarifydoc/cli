@@ -23,6 +23,8 @@ describe("component output subscriptions", () => {
     expect(componentSubscriptions(tree, src)).toEqual([
       { component: "ConfirmDialogComponent", event: "confirmClicked", line: 5 },
       { component: "ClubEditDialogComponent", event: "saved", line: 11 },
+      // A dialog a field holds: the class the field is assigned, read by the emit resolver.
+      { component: "this.editDialog", event: "failed", line: 12 },
     ]);
   });
 });

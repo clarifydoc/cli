@@ -1,4 +1,4 @@
-import type { ClassInfo, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
+import type { ClassInfo, ComponentSubscription, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
@@ -187,57 +187,62 @@ export class JsComponentEmitResolver implements DispatchResolver {
     // An output subscribed in code (`modal.componentInstance.confirmClicked.subscribe(() => …)`,
     // the dialog opened with that component): the subscribing function is the handler.
     for (const parent of analyses) {
-      for (const sub of parent.componentSubscriptions ?? []) {
-        const source = parent.imports.find((i) => i.specifiers.includes(sub.component))?.source;
-        const childFile = source ? resolveTarget(source, parent.filePath, filePathMap) : null;
-        const child = childFile ? byPath.get(childFile) : undefined;
-        const target = child ? innermostAt(spans(parent), sub.line) : null;
-        if (!child || !target) continue;
-        if (sub.result) {
-          // The dialog's own outcome: each method closing it through its active-dialog reference.
-          for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap, sub.takesResult)) {
-            const k = `${closer.file}\u0000${closer.symbol}\u0000${closer.callName}\u0000${parent.filePath}\u0000${target.symbol}`;
+      for (const sub0 of parent.componentSubscriptions ?? []) {
+        // A dialog a field holds (`open(this.editClubDialog)`): each class the class or a subclass assigns it.
+        const opened = sub0.component.startsWith("this.") ? fieldComponents(parent, sub0, analyses, filePathMap) : [{ name: sub0.component, owner: parent }];
+        for (const { name: component, owner } of opened) {
+          const sub = { ...sub0, component };
+          const source = owner.imports.find((i) => i.specifiers.includes(sub.component))?.source;
+          const childFile = source ? resolveTarget(source, owner.filePath, filePathMap) : null;
+          const child = childFile ? byPath.get(childFile) : undefined;
+          const target = child ? innermostAt(spans(parent), sub.line) : null;
+          if (!child || !target) continue;
+          if (sub.result) {
+            // The dialog's own outcome: each method closing it through its active-dialog reference.
+            for (const closer of dialogClosers(child, sub.component, sub.result, byPath, filePathMap, sub.takesResult)) {
+              const k = `${closer.file}\u0000${closer.symbol}\u0000${closer.callName}\u0000${parent.filePath}\u0000${target.symbol}`;
+              if (seenLink.has(k)) continue;
+              seenLink.add(k);
+              links.push({
+                sourceFile: closer.file,
+                sourceSymbol: closer.symbol,
+                sourceLine: closer.line,
+                callName: closer.callName,
+                targetFile: parent.filePath,
+                targetSymbol: target.symbol,
+                targetLine: target.line,
+                confidence: "INFERRED",
+              });
+            }
+            continue;
+          }
+          // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
+          let emitter: FileAnalysis | undefined = child;
+          for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
+            const owner: FileAnalysis = emitter;
+            const base = owner.classes.find((c) => c.name === sub.component || depth > 0)?.extends?.replace(/<.*$/s, "").trim();
+            const from = base ? owner.imports.find((i) => i.specifiers.includes(base))?.source : undefined;
+            const file = from ? resolveTarget(from, owner.filePath, filePathMap) : null;
+            emitter = file ? byPath.get(file) : undefined;
+          }
+          if (!emitter) continue;
+          for (const line of (emitter.events ?? []).filter((e) => e.name === sub.event).flatMap((e) => e.sites ?? [e.line])) {
+            const fn = innermostAt(spans(emitter), line);
+            const symbol = fn?.symbol ?? "<template>";
+            const k = `${emitter.filePath}\u0000${symbol}\u0000emit:${sub.event}\u0000${parent.filePath}\u0000${target.symbol}`;
             if (seenLink.has(k)) continue;
             seenLink.add(k);
             links.push({
-              sourceFile: closer.file,
-              sourceSymbol: closer.symbol,
-              sourceLine: closer.line,
-              callName: closer.callName,
+              sourceFile: emitter.filePath,
+              sourceSymbol: symbol,
+              sourceLine: line,
+              callName: `emit:${sub.event}`,
               targetFile: parent.filePath,
               targetSymbol: target.symbol,
               targetLine: target.line,
               confidence: "INFERRED",
             });
           }
-          continue;
-        }
-        // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
-        let emitter: FileAnalysis | undefined = child;
-        for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
-          const owner: FileAnalysis = emitter;
-          const base = owner.classes.find((c) => c.name === sub.component || depth > 0)?.extends?.replace(/<.*$/s, "").trim();
-          const from = base ? owner.imports.find((i) => i.specifiers.includes(base))?.source : undefined;
-          const file = from ? resolveTarget(from, owner.filePath, filePathMap) : null;
-          emitter = file ? byPath.get(file) : undefined;
-        }
-        if (!emitter) continue;
-        for (const line of (emitter.events ?? []).filter((e) => e.name === sub.event).flatMap((e) => e.sites ?? [e.line])) {
-          const fn = innermostAt(spans(emitter), line);
-          const symbol = fn?.symbol ?? "<template>";
-          const k = `${emitter.filePath}\u0000${symbol}\u0000emit:${sub.event}\u0000${parent.filePath}\u0000${target.symbol}`;
-          if (seenLink.has(k)) continue;
-          seenLink.add(k);
-          links.push({
-            sourceFile: emitter.filePath,
-            sourceSymbol: symbol,
-            sourceLine: line,
-            callName: `emit:${sub.event}`,
-            targetFile: parent.filePath,
-            targetSymbol: target.symbol,
-            targetLine: target.line,
-            confidence: "INFERRED",
-          });
         }
       }
     }
@@ -286,6 +291,30 @@ export class JsComponentEmitResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/**
+ * The component classes a field of the subscribing class holds (`open(this.editClubDialog)`): each class the
+ * class itself or a class extending it assigns the field (`this.editClubDialog = ClubEditDialogComponent`,
+ * a `passed: "property"` record under `this.editClubDialog`), with the file that names it.
+ */
+function fieldComponents(parent: FileAnalysis, sub: ComponentSubscription, analyses: FileAnalysis[], filePathMap: Map<string, string>): Array<{ name: string; owner: FileAnalysis }> {
+  const cls = parent.classes.filter((c) => sub.line >= c.line && sub.line <= c.endLine).sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+  if (!cls) return [];
+  const out: Array<{ name: string; owner: FileAnalysis }> = [];
+  const assigned = (file: FileAnalysis, c: ClassInfo) => {
+    for (const m of c.methods) for (const call of m.calls) if (call.passed === "property" && call.returnedAs === sub.component && !out.some((o) => o.name === call.name && o.owner === file)) out.push({ name: call.name, owner: file });
+  };
+  assigned(parent, cls);
+  for (const a of analyses) {
+    for (const c of a.classes) {
+      if (c.extends?.replace(/<.*$/s, "").trim() !== cls.name) continue;
+      const from = a.imports.find((i) => i.specifiers.includes(cls.name))?.source;
+      const declared = a === parent || (from ? resolveTarget(from, a.filePath, filePathMap) === parent.filePath : false);
+      if (declared) assigned(a, c);
+    }
+  }
+  return out;
 }
 
 /**
@@ -436,7 +465,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const bound = propFunctionName(el.component!, el.event, el.line);
         // Vue's `:update-permission="…"` is the child's `props.updatePermission`; a listener
         // `@refresh="reload"` reaches a child declaring `onRefresh` as a prop as that prop.
-        if (VUE_PROP.test(el.event)) bind(el.component!, camelProp(el.event.slice(1)), el.handler!, bound);
+        // `:options="{ onClick: () => … }"` is extracted per member (`<ClubCard:options.onClick@8>`): the child's `props.options.onClick`.
+        if (VUE_PROP.test(el.event)) bind(el.component!, el.event.slice(1).replace(/^[^.]+/, camelProp), el.handler!, bound);
         else if (VUE_LISTENER.test(el.event)) bind(el.component!, listenerProp(el.event), el.handler!, bound);
         else bind(el.component!, el.event, el.handler!);
       }
@@ -476,6 +506,12 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const creator = b.creator ? spans(b.parent).find((sp) => sp.symbol === b.creator) : undefined;
         if (creator) {
           out.push({ file: b.parent.filePath, span: creator });
+          continue;
+        }
+        // A callback the script's options write in place is a function of its own (`<ConfirmBox:onConfirm@17>`).
+        const held = b.handler.startsWith("<") ? spans(b.parent).find((sp) => sp.symbol === b.handler) : undefined;
+        if (held) {
+          out.push({ file: b.parent.filePath, span: held });
           continue;
         }
         const name = cleanHandler(b.handler);
@@ -613,20 +649,23 @@ export class JsLoopItemCallbackResolver implements DispatchResolver {
           const read = new RegExp(`(?<![\\w$.])${escapeRegex(s.name)}\\??\\.([A-Za-z_$][\\w$]*)`, "g");
           for (const m of el.handler!.matchAll(read)) {
             for (const fn of s.callbacks[m[1]!] ?? []) {
-              const span = spans.find((sp) => sp.symbol === fn || sp.symbol.endsWith(`.${fn}`));
-              const key = `${el.line}\0${s.name}.${m[1]}\0${span?.symbol}`;
-              if (!span || seen.has(key)) continue;
-              seen.add(key);
-              links.push({
-                sourceFile: parent.filePath,
-                sourceSymbol: "<setup>",
-                sourceLine: el.line,
-                callName: `${s.name}.${m[1]}`,
-                targetFile: parent.filePath,
-                targetSymbol: span.symbol,
-                targetLine: span.line,
-                confidence: "INFERRED",
-              });
+              // A callback written in place is named up to its line (`<items[].run@`): each of them.
+              const found = fn.endsWith("@") ? spans.filter((sp) => sp.symbol.startsWith(fn)) : [spans.find((sp) => sp.symbol === fn || sp.symbol.endsWith(`.${fn}`))].filter((sp): sp is SymbolSpan => !!sp);
+              for (const span of found) {
+                const key = `${el.line}\0${s.name}.${m[1]}\0${span.symbol}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                links.push({
+                  sourceFile: parent.filePath,
+                  sourceSymbol: "<setup>",
+                  sourceLine: el.line,
+                  callName: `${s.name}.${m[1]}`,
+                  targetFile: parent.filePath,
+                  targetSymbol: span.symbol,
+                  targetLine: span.line,
+                  confidence: "INFERRED",
+                });
+              }
             }
           }
         }
@@ -785,7 +824,7 @@ function fieldMethod(
 /** React's callback-prop convention: `onPress`, `onModalClose`. */
 const PROP_CALLBACK = /^on[A-Z]\w*$/;
 /** A Vue prop bound to a function in markup (`:add="(club) => …"`, see `markupFunctions`). */
-const VUE_PROP = /^:[a-zA-Z][\w-]*$/;
+const VUE_PROP = /^:[a-zA-Z][\w-]*(?:\.[A-Za-z_$][\w$]*)*$/;
 
 /** A Vue listener on a component's tag (`@refresh`, `@save-club.once`): a child may declare it as its `onRefresh` prop. */
 const VUE_LISTENER = /^@[a-zA-Z][\w-]*(?:\.[\w-]+)*$/;

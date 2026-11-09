@@ -6,7 +6,7 @@ const topLevel = async (src: string) =>
   extractTopLevelCalls(await parseSource(src, "typescript" as never, "ClubList.ts"), "typescript" as never).map((c) => c.name);
 
 describe("module-level callbacks", () => {
-  it("are the module's own calls: a query function, a lifecycle hook and an action inside a computed list (real-repo FP)", async () => {
+  it("are the module's own calls: a query function, a lifecycle hook — and an action inside a computed list is handed on as a function of its own (real-repo FP)", async () => {
     const calls = await topLevel(`
 const { data } = useQuery({
   queryKey: ["clubs"],
@@ -20,7 +20,8 @@ const items = computed(() => [
   { label: "Delete", action: async () => { await leagueClient.content.clubs.deleteClub({ name }); } },
 ]);
 `);
-    expect(calls).toEqual(expect.arrayContaining(["leagueClient.content.clubs.listClubs", "loadFixtures", "leagueClient.content.clubs.deleteClub"]));
+    expect(calls).toEqual(expect.arrayContaining(["leagueClient.content.clubs.listClubs", "loadFixtures", "<items[].action@11>"]));
+    expect(calls).not.toContain("leagueClient.content.clubs.deleteClub");
   });
 
   it("are not a handler registered on a router or a test runner, nor a function bound to a name", async () => {

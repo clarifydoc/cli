@@ -4203,8 +4203,13 @@ function spreadMember(
   return found.size === 1 ? [...found.values()][0]! : null;
 }
 
-/** A call through a dispatch map: `ACTIONS.save` (one key) or `ACTIONS[]` (a key known only at run time). */
-const MAP_CALL = /^([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*)|\[\])$/;
+/**
+ * A call through a dispatch map: `ACTIONS.save` (one key), `ACTIONS[]` (a key known only at run time), or
+ * `items[].run` (a member of whichever object of a declared array, `CallInfo.returnedAs` `items[].run`).
+ */
+const MAP_CALL = /^([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*)|\[\](?:\.([A-Za-z_$][\w$]*))?)$/;
+/** The holder a map entry's `returnedAs` names: `ACTIONS` of `ACTIONS.save`, `items` of `items[].run`. */
+const holderOf = (returnedAs: string): string => /^[^.[]*/.exec(returnedAs)![0];
 
 /** The names each file binds to dispatch maps, in any of its scopes (read once per file). */
 const MAP_HOLDERS = new WeakMap<FileAnalysis, ReadonlySet<string>>();
@@ -4214,8 +4219,10 @@ function mapHoldersOf(analysis: FileAnalysis): ReadonlySet<string> {
   const found = new Set<string>();
   const scan = (calls: readonly CallInfo[]) => {
     for (const c of calls) {
-      const dot = c.passed === "property" ? c.returnedAs?.indexOf(".") ?? -1 : -1;
-      if (dot > 0) found.add(c.returnedAs!.slice(0, dot));
+      if (c.passed !== "property" || !c.returnedAs) continue;
+      const holder = holderOf(c.returnedAs);
+      // A field's value (`this.editClubDialog = …`) is the class's, read by its own pass.
+      if (holder && holder !== "this" && holder.length < c.returnedAs.length) found.add(holder);
     }
   };
   for (const fn of analysis.functions) scan(fn.calls);
@@ -4227,10 +4234,12 @@ function mapHoldersOf(analysis: FileAnalysis): ReadonlySet<string> {
 /**
  * A call through a dispatch map the caller's scope declares (`CallInfo.passed: "property"`):
  * `ACTIONS.save()` calls the function the map holds under `save`, as stated (EXTRACTED when that
- * value resolves so); `ACTIONS[kind]()` may call any of the map's functions, one INFERRED link
- * each (all but the first through `ctx.extraLinks`). The map is the caller's own, else its
- * module's top level — unless the caller binds the name itself. Values that are no function draw
- * no edge. Undefined when the call is not one through a map.
+ * value resolves so); `ACTIONS[kind]()` may call any of the map's functions, and `items[].run()`
+ * the `run` of any object of a declared array, one INFERRED link each (all but the first through
+ * `ctx.extraLinks`). The map is the caller's own, else its module's top level — unless the caller
+ * binds the name itself —, else, for one key, the module object's member as the file's other
+ * functions assign it at run time (`dialog.callback = deleteClubs`), INFERRED. Values that are no
+ * function draw no edge. Undefined when the call is not one through a map.
  */
 function dispatchMapCall(
   sourceFile: string,
@@ -4241,21 +4250,30 @@ function dispatchMapCall(
 ): SymbolLink | null | undefined {
   const m = MAP_CALL.exec(call.name);
   if (!m) return undefined;
-  if (!mapHoldersOf(analysis).has(m[1]!)) return importedDispatchMapCall(sourceFile, sourceSymbol, call, m[1]!, m[2], analysis, ctx);
-  const [, holder, key] = m;
-  const held = (calls: readonly CallInfo[] | undefined) => (calls ?? []).filter((c) => c.passed === "property" && c.returnedAs?.startsWith(`${holder}.`));
+  if (!mapHoldersOf(analysis).has(m[1]!)) return importedDispatchMapCall(sourceFile, sourceSymbol, call, m[1]!, m[2] ?? (m[3] !== undefined ? `[].${m[3]}` : undefined), analysis, ctx);
+  const [, holder, key, element] = m;
+  // `ACTIONS.save` names one key; `items[].run` the member of every object of the array; `ACTIONS[]` any key.
+  const named = key !== undefined ? `${holder}.${key}` : element !== undefined ? `${holder}[].${element}` : undefined;
+  const held = (calls: readonly CallInfo[] | undefined) =>
+    (calls ?? []).filter((c) => c.passed === "property" && (named !== undefined ? c.returnedAs === named : c.returnedAs?.startsWith(`${holder}.`)));
   const caller = findEnclosingCallable(analysis, sourceSymbol);
-  let scope = sourceSymbol;
-  let entries = held(caller?.calls);
-  if (entries.length === 0) {
-    if (caller?.params.some((p) => p.name === holder || (/^[{[]/.test(p.name) && bindsName(p.name, holder!))) || caller?.localTypes?.some((l) => l.name === holder)) return undefined;
-    scope = "<setup>";
-    entries = held(analysis.functions.find((f) => f.name === "<setup>")?.calls);
+  const bindsHolder = sourceSymbol !== "<setup>" && (caller?.params.some((p) => p.name === holder || (/^[{[]/.test(p.name) && bindsName(p.name, holder!))) || caller?.localTypes?.some((l) => l.name === holder));
+  let scoped: Array<{ scope: string; entry: CallInfo }> = held(caller?.calls).map((entry) => ({ scope: sourceSymbol, entry }));
+  if (scoped.length === 0) {
+    if (bindsHolder) return undefined;
+    scoped = held(analysis.functions.find((f) => f.name === "<setup>")?.calls).map((entry) => ({ scope: "<setup>", entry }));
   }
-  if (key !== undefined) entries = entries.filter((e) => e.returnedAs === `${holder}.${key}`);
-  if (entries.length === 0) return undefined;
+  // A module object's member another function assigns at run time (`dialog.callback = deleteClubs` in
+  // `openDialog`): whichever of the file's assignments ran last — each a candidate.
+  let assigned = false;
+  if (scoped.length === 0 && key !== undefined) {
+    for (const fn of analysis.functions) if (fn.name !== "<setup>" && fn.name !== sourceSymbol) for (const entry of held(fn.calls)) scoped.push({ scope: fn.name, entry });
+    for (const cls of analysis.classes) for (const fn of cls.methods) for (const entry of held(fn.calls)) scoped.push({ scope: `${cls.name}.${fn.name}`, entry });
+    assigned = scoped.length > 0;
+  }
+  if (scoped.length === 0) return undefined;
   const out: SymbolLink[] = [];
-  for (const entry of entries) {
+  for (const { scope, entry } of scoped) {
     const link = resolvePassedName(sourceFile, scope, entry, analysis, ctx);
     if (!link || out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
     out.push({
@@ -4263,7 +4281,7 @@ function dispatchMapCall(
       sourceSymbol,
       sourceLine: call.line,
       callName: call.name,
-      confidence: key !== undefined ? link.confidence : "INFERRED",
+      confidence: key !== undefined && !assigned ? link.confidence : "INFERRED",
       strategy: "dispatch:object-map",
       relation: "dispatch",
     });
@@ -4296,8 +4314,10 @@ function importedDispatchMapCall(
   const holder = found.def.name;
   const owner = ctx.analysisAt?.get(found.file) ?? ctx.analyses.find((a) => a.filePath === found.file);
   if (!owner || !mapHoldersOf(owner).has(holder)) return undefined;
-  let entries = (owner.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.passed === "property" && c.returnedAs?.startsWith(`${holder}.`));
-  if (key !== undefined) entries = entries.filter((e) => e.returnedAs === `${holder}.${key}`);
+  let entries = (owner.functions.find((f) => f.name === "<setup>")?.calls ?? []).filter((c) => c.passed === "property" && (c.returnedAs?.startsWith(`${holder}.`) || c.returnedAs?.startsWith(`${holder}[].`)));
+  // `ACTIONS.save` (key `save`) or `items[].run` (key `[].run`); with no key, any of the map's own keys.
+  if (key !== undefined) entries = entries.filter((e) => e.returnedAs === (key.startsWith("[]") ? `${holder}${key}` : `${holder}.${key}`));
+  else entries = entries.filter((e) => e.returnedAs?.startsWith(`${holder}.`));
   const out: SymbolLink[] = [];
   for (const entry of entries) {
     const link = resolvePassedName(owner.filePath, "<setup>", entry, owner, ctx);
@@ -4308,7 +4328,7 @@ function importedDispatchMapCall(
       sourceSymbol,
       sourceLine: call.line,
       callName: call.name,
-      confidence: key !== undefined ? link.confidence : "INFERRED",
+      confidence: key !== undefined && !key.startsWith("[]") ? link.confidence : "INFERRED",
       strategy: "dispatch:object-map",
       relation: "dispatch",
     });

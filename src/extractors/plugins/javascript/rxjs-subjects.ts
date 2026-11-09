@@ -2,6 +2,7 @@ import type { CallInfo, FileAnalysis, FunctionInfo, Language } from "../../../ty
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { addDescriptorCalls } from "./descriptor-values.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { isHandedOnName } from "../../shared/call-graph.js";
 
 /**
  * An RxJS subject a class feeds and listens to itself: a handler's `this.reload$.next(v)` runs what the same
@@ -24,7 +25,8 @@ export function addSubjectTriggers(analysis: FileAnalysis, raw: string): void {
   const rxjsNames = new Set(analysis.imports.filter((i) => /^rxjs(?:\/|$)/.test(i.source)).flatMap((i) => i.specifiers));
   const lineOf = lineIndex(raw);
   for (const cls of analysis.classes) {
-    const methods = cls.methods ?? [];
+    // A callback written in place in a method (`closed.subscribe(() => this.reload$.next())`) is a function of its own.
+    const methods = [...(cls.methods ?? []), ...analysis.functions.filter((f) => f.line >= cls.line && f.endLine <= cls.endLine && isHandedOnName(f.name))];
     // subject → the calls its in-class subscribers make
     const reached = new Map<string, CallInfo[]>();
     const holderOf = new Map<string, Set<FunctionInfo>>();

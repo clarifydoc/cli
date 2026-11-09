@@ -152,3 +152,42 @@ export function boundAtSite(site: Node, name: string): boolean {
   const head = name.slice(0, dot).replace(/[?!]$/, "");
   return /^[A-Za-z_$][\w$]*$/.test(head) && parameterShadowedAt(site, head);
 }
+
+/**
+ * True where `name` at `site` is a binding of the module itself: no enclosing block, loop, catch or function
+ * (parameters included) between the site and the top level binds it, and the top level declares or imports it.
+ */
+export function moduleBindingAt(site: Node, name: string): boolean {
+  for (let p = site.parent; p; p = p.parent) {
+    if (p.type === "program") return topLevelNames(p).has(name);
+    if (p.type === "statement_block" || p.type === "switch_body") {
+      if (declaredIn(p).has(name)) return false;
+    } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
+      if (headBinds(p, name)) return false;
+    } else if (FUNCTION_BOUNDARIES.has(p.type)) {
+      if (varsOf(p).has(name) || paramNames(p).has(name)) return false;
+    }
+  }
+  return false;
+}
+
+/** The names a program's top level declares, exports or imports. */
+function topLevelNames(program: Node): Set<string> {
+  const out = new Set(declaredIn(program));
+  for (const stmt of program.namedChildren) {
+    if (stmt.type === "export_statement") {
+      const decl = stmt.childForFieldName("declaration");
+      if (decl?.type === "lexical_declaration" || decl?.type === "variable_declaration") declaratorNames(decl, out);
+    } else if (stmt.type === "import_statement") {
+      const clause = stmt.namedChildren.find((c) => c.type === "import_clause");
+      for (const id of clause?.descendantsOfType("identifier") ?? []) if (id) out.add(id.text);
+    }
+  }
+  return out;
+}
+
+/** True where a parameter of a function enclosing `site` binds `name`: a value handed in. */
+export function boundByParameterAt(site: Node, name: string): boolean {
+  for (let p = site.parent; p && p.type !== "program"; p = p.parent) if (FUNCTION_BOUNDARIES.has(p.type) && paramNames(p).has(name)) return true;
+  return false;
+}

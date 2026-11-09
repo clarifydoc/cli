@@ -3,6 +3,7 @@ import type { TSTree, TSNode } from "../parsers/parser-manager.js";
 import type { LanguageComplexitySpec } from "../types/language-plugin.js";
 import { complexityFor, pluginFor } from "../extractors/registry.js";
 import { DEFAULT_COMPLEXITY } from "../extractors/shared/complexity-defaults.js";
+import { isHandedOnName } from "../extractors/shared/call-graph.js";
 
 /** Branch-structure metrics for one function body. */
 interface BodyMetrics {
@@ -202,8 +203,9 @@ export function computeComplexity(
 
   // Process top-level functions
   for (const fn of functions) {
-    // A test suite's body is its tests, each measured on its own.
-    if (fn.name === "<setup>" || fn.testCase?.kind === "suite") continue;
+    // A test suite's body is its tests, each measured on its own. A callback handed on from a function
+    // (`<toast.action@17>`, `<ClubCard:onPick@9>`) is measured in the function that writes it.
+    if (fn.name === "<setup>" || fn.testCase?.kind === "suite" || isHandedOnName(fn.name)) continue;
     results.push(rowFor(fn.name, fn, root, spec, endRow));
   }
 

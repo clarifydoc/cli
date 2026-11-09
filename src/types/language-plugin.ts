@@ -912,6 +912,13 @@ export interface CallExtractionHooks {
    */
   namedBindingTypes?: readonly string[];
   /**
+   * A function expression the plugin extracts as a function of its own though no declarator names it — a
+   * callback handed on to run later (`toast.action = () => …`, a dialog output's `subscribe(() => …)`): its
+   * name, else null. The walk stops there, as at a named function, and records the function it sits in
+   * handing it on (`passed: "argument"`), so what reached the writer's calls still reaches them.
+   */
+  heldFunction?(node: Node): string | null;
+  /**
    * A node that DEFINES a named function, for a grammar whose function and
    * value bindings share one node type (F# `let f x = …` vs `let x = …`, both
    * `function_or_value_defn`): the module-level walk that builds `<setup>`

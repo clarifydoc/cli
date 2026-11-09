@@ -1,6 +1,6 @@
 import type { ClassInfo, FileAnalysis, FunctionInfo } from "../types/analysis.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
-import { restoreHeldCalls } from "../extractors/shared/call-graph.js";
+import { isHandedOnName, restoreHeldCalls } from "../extractors/shared/call-graph.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { manifestFor, pluginFor } from "../extractors/registry.js";
 
@@ -99,7 +99,11 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   };
 
   const none: ReadonlySet<string> = new Set();
-  for (const fn of analysis.functions) restore(fn, none, none);
+  for (const fn of analysis.functions) {
+    // A callback written in place in a method (`settings.compareFn = (o) => this.clubs.filter(o)`) runs on its instance.
+    const cls = isHandedOnName(fn.name) ? analysis.classes.filter((c) => fn.line >= c.line && fn.endLine <= c.endLine).sort((a, b) => a.endLine - a.line - (b.endLine - b.line))[0] : undefined;
+    restore(fn, cls ? membersOf(cls) : none, cls ? methodsOf(cls) : none);
+  }
   for (const cls of analysis.classes) {
     const members = membersOf(cls);
     const own = methodsOf(cls);

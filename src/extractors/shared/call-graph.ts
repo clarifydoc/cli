@@ -123,6 +123,16 @@ function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>, nam
 }
 const DEFAULT_NAMED_BINDING: ReadonlySet<string> = new Set(["variable_declarator"]);
 
+/**
+ * Whether a function's name is that of one written in place and handed on — a held callback
+ * (`CallExtractionHooks.heldFunction`: `<toast.action@17>`, `<items[].run@3#2>`) or a template's
+ * (`<ClubCard:onPick@9>`): named for where it is written, run on behalf of whatever it sits in.
+ */
+export function isHandedOnName(name: string): boolean {
+  return HANDED_ON_NAME.test(name);
+}
+const HANDED_ON_NAME = /^<.+@\d+(?:#\d+)?>$/;
+
 /** True if the node type opens a nested function/class scope (cross-plugin union). */
 export function isNestedScopeType(nodeType: string): boolean {
   return NESTED_SCOPE_TYPES.has(nodeType);
@@ -232,6 +242,12 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     // expressions are the exception: `onClick={() => addToCart(id)}` has no
     // symbol, so its calls attribute here.
     if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous, named)) return;
+    // A callback the plugin extracts as a function of its own: handed on from here, its calls its own.
+    const held = !isRoot && nested.has(node.type) ? hooks?.heldFunction?.(node) : null;
+    if (held) {
+      push(held, node, true, null, null, null, null, null, null, "argument");
+      return;
+    }
 
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
@@ -444,6 +460,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
     // unless the function is a callback the module runs (`onMounted(() => …)`);
     // inside one, an inline callback runs on its behalf, as in a function body.
     if (hooks!.isFunctionDefinition?.(node)) return;
+    if (nested.has(node.type) && hooks!.heldFunction?.(node)) return;
     if (nested.has(node.type)) {
       if (inCallback && isAnonymousFnExpression(node, anonymous, named)) { /* read on */ }
       else if (hooks!.runsAtTopLevel?.(node)) inCallback = true;

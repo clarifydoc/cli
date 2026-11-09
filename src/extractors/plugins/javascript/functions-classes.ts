@@ -10,6 +10,7 @@ import { escapeRegex } from "../shared/path-utils.js";
 import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
+import { heldFunctionNodes } from "./held-functions.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
 import {
@@ -1453,7 +1454,41 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (this.ctx.dispatchProps.size > 0) for (const fn of functions) addDispatchPropCalls(fn, this.ctx.dispatchProps);
     // `describe`/`it`/`beforeEach` callbacks: each test a function of its own, named by its title path.
     functions.push(...testCaseFunctions(tree.rootNode, sourceText, (name, fn) => this.parseJsArrowOrExpr(name, fn, false)));
+    // Callbacks handed on to run later (`toast.action = () => …`): each a function of its own (`heldFunction`).
+    for (const held of heldFunctionNodes(tree)) {
+      const fn = this.parseJsArrowOrExpr(held.name, held.node, false);
+      // It closes over the functions it is written in: their typed parameters and locals type its receivers.
+      const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
+      if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+      functions.push(fn);
+    }
     return functions;
+  }
+
+  /**
+   * The typed bindings a function written in place sees from the functions around it, innermost first:
+   * each enclosing function's typed parameters and the locals its body types (`warn(club: Club) { …
+   * subscribe(() => club.save()) }`). A name the function binds itself, or a nearer scope binds, is left out.
+   */
+  private capturedTypes(node: Node, own: Set<string>): LocalType[] {
+    const out: LocalType[] = [];
+    for (let p = node.parent; p && p.type !== "class_body" && p.type !== "program"; p = p.parent) {
+      if (!/^(?:method_definition|function_declaration|generator_function_declaration|arrow_function|function_expression|generator_function)$/.test(p.type)) continue;
+      const params = this.extractJsParams(p.childForFieldName("parameters") ?? p.childForFieldName("parameter"));
+      const body = p.childForFieldName("body");
+      const locals = body?.type === "statement_block" ? scanBody(body, new Set(params.map((x) => x.name)), this.ctx, params).localTypes : [];
+      for (const param of params) {
+        if (own.has(param.name)) continue;
+        own.add(param.name);
+        if (param.type && /^[A-Za-z_$]/.test(param.name)) out.push({ name: param.name, type: param.type });
+      }
+      for (const local of locals) {
+        if (own.has(local.name)) continue;
+        own.add(local.name);
+        out.push(local);
+      }
+    }
+    return out;
   }
 
   /**
@@ -2580,6 +2615,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             const fn = this.parseJsArrowOrExpr(field.name, fieldValue, false);
             fn.line = member.startPosition.row + 1;
             methods.push(fn);
+          } else if (fieldValue?.type === "call_expression" && handedOnOnly(node, field.name)) {
+            // `changeCountry = trackField('country')`: a handler a factory builds, bound as `onChange={this.changeCountry}`.
+            methods.push(factoryHandler(field.name, fieldValue, null, member.startPosition.row + 1));
           }
         } else if (member.type === "class_static_block") {
           concreteMembers++;
@@ -2616,8 +2654,14 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const left = assign.childForFieldName("left");
         const value = assign.childForFieldName("right");
         if (left?.type !== "member_expression" || left.childForFieldName("object")?.type !== "this") continue;
-        if (!value || (value.type !== "arrow_function" && value.type !== "function_expression")) continue;
         const field = left.childForFieldName("property")?.text;
+        // `this.changeTitle = updateFieldEvent('title')`: a handler a factory builds, handed on and never called on.
+        if (field && !own.has(field) && value?.type === "call_expression" && handedOnOnly(node, field)) {
+          own.add(field);
+          methods.push(factoryHandler(field, value, ctor.body, stmt.startPosition.row + 1));
+          continue;
+        }
+        if (!value || (value.type !== "arrow_function" && value.type !== "function_expression")) continue;
         if (!field || own.has(field)) continue;
         own.add(field);
         const fn = this.parseJsArrowOrExpr(field, value, false);
@@ -3012,4 +3056,46 @@ function returnedObject(fn: Node): Node | null {
   let body: Node | null = fn.childForFieldName("body");
   while (body?.type === "parenthesized_expression") body = body.namedChild(0);
   return body?.type === "object" ? body : null;
+}
+
+/**
+ * Whether a class binds `this.<field>` as an event handler in its markup — `onChange={this.changeTitle}` —
+ * and never calls it or reads a member of it: what a handler a factory builds looks like from the class's side,
+ * and what a field holding an injected service, a signal or a store (`takeUntilDestroyed(this.destroyRef)`) does not.
+ */
+function handedOnOnly(cls: Node, field: string): boolean {
+  const text = cls.text;
+  const name = escapeRegex(field);
+  if (new RegExp(`\\bthis\\.${name}\\s*(?:[.(\\[]|\\?\\.)`).test(text)) return false;
+  return new RegExp(`\\bon[A-Z]\\w*=\\{\\s*this\\.${name}\\s*\\}`).test(text);
+}
+
+/**
+ * The handler a factory call builds (`updateFieldEvent('title')`), as a method of its own: its calls are the
+ * factory's — the body of a factory the constructor declares itself (`const updateFieldEvent = key => ev => …`),
+ * which no other symbol holds, else the factory call, which the linker follows to the factory.
+ */
+function factoryHandler(name: string, call: Node, ctorBody: Node | null, line: number): FunctionInfo {
+  const callee = call.childForFieldName("function");
+  let body: Node = call;
+  if (callee?.type === "identifier" && ctorBody) {
+    for (const stmt of ctorBody.namedChildren) {
+      if (stmt.type !== "lexical_declaration" && stmt.type !== "variable_declaration") continue;
+      for (const d of stmt.namedChildren) {
+        const value = d.type === "variable_declarator" && d.childForFieldName("name")?.text === callee.text ? d.childForFieldName("value") : null;
+        if (value && (value.type === "arrow_function" || value.type === "function_expression")) body = value.childForFieldName("body") ?? value;
+      }
+    }
+  }
+  return {
+    name,
+    params: [],
+    returnType: null,
+    isAsync: false,
+    isExported: false,
+    decorators: [],
+    calls: extractCalls(body, "typescript"),
+    line,
+    endLine: call.endPosition.row + 1,
+  };
 }

@@ -23,7 +23,7 @@ export function componentSubscriptions(tree: Tree, sourceText: string): Componen
   return out;
 }
 
-function subscriptionOf(call: Node): ComponentSubscription | null {
+export function subscriptionOf(call: Node): ComponentSubscription | null {
   const fn = call.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
   const method = fn.childForFieldName("property")?.text;
@@ -79,7 +79,10 @@ function outcomeOf(source: Node | null, call: Node): ComponentSubscription | nul
   return { component, event, line: call.startPosition.row + 1, result, ...(takesResult ? { takesResult } : {}) };
 }
 
-/** The component class the reference holding the dialog was opened with: `modal = this.modalService.open(ConfirmDialogComponent, …)`, in the enclosing function. */
+/**
+ * The component class the reference holding the dialog was opened with: `modal = this.modalService.open(ConfirmDialogComponent, …)`, in the enclosing function —
+ * or the field holding it, as written (`this.editClubDialog`).
+ */
 function openedComponent(ref: Node | null, at: Node): string | null {
   if (!ref || (ref.type !== "identifier" && ref.type !== "member_expression")) return null;
   const name = ref.text;
@@ -95,6 +98,8 @@ function openedComponent(ref: Node | null, at: Node): string | null {
       const open = value.childForFieldName("function");
       const first = value.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
       if (open?.type === "member_expression" && open.childForFieldName("property")?.text === "open" && first?.type === "identifier" && /^[A-Z]/.test(first.text)) opened.add(first.text);
+      // `open(this.editClubDialog)`: the class a field holds, which the class or a subclass assigns it.
+      else if (open?.type === "member_expression" && open.childForFieldName("property")?.text === "open" && first?.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(first.text)) opened.add(first.text);
       else opened.add("");
     } else if (value) opened.add("");
     for (const c of n.namedChildren) if (c) visit(c);

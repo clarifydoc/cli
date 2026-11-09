@@ -163,7 +163,7 @@ describe("Vue template and component wiring", () => {
 
   it("joins a prop read in a component the script opens to the callbacks its options hand over, not to a namesake", () => {
     expect(linkRows(summary, "src/components/ConfirmBox.vue").filter((r) => r.includes("props.onConfirm"))).toEqual([
-      "accept -props.onConfirm-> src/views/ClubPage.vue#askInline",
+      "accept -props.onConfirm-> src/views/ClubPage.vue#<ConfirmBox:onConfirm@17>",
       "accept -props.onConfirm-> src/views/ClubPage.vue#saveClub",
     ]);
     expect(linkRows(summary, "src/components/OtherBox.vue").filter((r) => r.includes("props.onConfirm"))).toEqual([]);
