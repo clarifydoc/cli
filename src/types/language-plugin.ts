@@ -1443,6 +1443,16 @@ export interface LanguagePluginManifest {
    */
   designFormat?: boolean;
   /**
+   * The language declares data shapes — tables, models, entities — and its
+   * classes are those shapes, never a type code constructs or calls into (SQL
+   * tables, Prisma models, a Core Data model). The symbol linker keeps such
+   * classes out of every type catalog a call resolves through, as it does an
+   * `apiContract` language's schemas: `laps(3)` in Rust is no call into the
+   * `laps` table. Its functions (a stored procedure, a named query) stay
+   * targets.
+   */
+  schemaFormat?: boolean;
+  /**
    * Class-level calls that construct an instance (Delphi `TFoo.Create(…)`,
    * Ruby/Crystal `Foo.new`): a `X.<name>` call on a class that declares no
    * method of that name reaches the class's constructor.

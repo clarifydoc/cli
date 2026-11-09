@@ -11,6 +11,7 @@ import { sqlFrameworkRules } from "./frameworks.js";
 export const sqlManifest: LanguagePluginManifest = {
   docComments: SQL_DOCS,
   language: "sql",
+  schemaFormat: true,
   parsing: "regex",
   extensions: [".sql", ".ddl", ".dml", ".psql", ".mysql", ".tsql", ".plsql", ".pkb", ".pks", ".drift"],
   frameworkRules: sqlFrameworkRules,

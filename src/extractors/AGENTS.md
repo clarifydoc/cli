@@ -43,6 +43,7 @@ instance across member metas) plus:
 - `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
 - `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight); `isApiContractLanguage()` is how core asks
+- `schemaFormat` (manifest) — the language's classes are data shapes (SQL tables, Prisma models, a Core Data model), never types code constructs or calls; with `apiContract` languages they make `declaresSchemaTypes()`, which keeps those classes out of the symbol linker's indexes and type catalogs (functions — a stored procedure, a named query — stay targets)
 
 **Project-level passes.** Some facts only exist across files: a base controller's
 route template, a Django `include("app.urls")`, a URL helper defined in another

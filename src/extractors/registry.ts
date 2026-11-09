@@ -354,6 +354,20 @@ export function isApiContractLanguage(language: string): boolean {
   return API_CONTRACT_LANGUAGES.has(language);
 }
 
+/** Languages whose classes are declared data shapes (`apiContract` or `schemaFormat`), never code types. */
+const SCHEMA_TYPE_LANGUAGES: ReadonlySet<string> = new Set(
+  ALL_MANIFESTS.filter((m) => m.apiContract || m.schemaFormat).map((m) => m.language),
+);
+
+/**
+ * Whether a file of `language` declares its classes as schemas — an API
+ * contract's messages, a SQL table, a Prisma model — rather than as types code
+ * can construct or call: the symbol linker never resolves a call to one.
+ */
+export function declaresSchemaTypes(language: string | undefined): boolean {
+  return !!language && SCHEMA_TYPE_LANGUAGES.has(language);
+}
+
 /** Languages whose imports name package directories (see `LanguagePluginManifest.importsNameDirectories`). */
 const DIRECTORY_IMPORT_LANGUAGES: ReadonlySet<string> = new Set(
   ALL_MANIFESTS.filter((m) => m.importsNameDirectories).map((m) => m.language),

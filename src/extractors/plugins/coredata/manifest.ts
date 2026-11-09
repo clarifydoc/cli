@@ -11,5 +11,6 @@ export const coredataManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [],
   namedFiles: ["contents"],
+  schemaFormat: true,
   importTarget: false,
 };

@@ -26,7 +26,7 @@ import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
 import { buildImportDirectoryResolver, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
@@ -86,7 +86,9 @@ export function buildSymbolLinks(
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   // Design files (a Delphi `.dfm`) name the class their code unit declares;
   // the type catalogs see only the declarations, or every form is ambiguous.
-  const typeDecls = analyses.filter((a) => !isDesignFormat(a.language));
+  // A schema's classes (an OpenAPI fragment, a proto message, a SQL table) are
+  // data shapes, never a type a call constructs: they stay out as well.
+  const typeDecls = analyses.filter((a) => !isDesignFormat(a.language) && !declaresSchemaTypes(a.language));
   const filePathMap = buildFilePathMap(analyses);
   const typeAliases = buildTypeAliasIndex(analyses, filePathMap);
   const memberTypes = buildMemberTypes(typeDecls, typeAliases);
@@ -944,8 +946,11 @@ function buildSymbolIndex(
       });
     }
 
-    // Class methods (store both qualified and unqualified names)
-    for (const cls of analysis.classes) {
+    // Class methods (store both qualified and unqualified names). A schema's
+    // classes (an API contract's messages, a SQL table, a Prisma model) are
+    // data shapes no call runs or constructs: no strategy may land on one.
+    const schemaClasses = declaresSchemaTypes(analysis.language) ? new Set(analysis.classes.map((c) => c.name)) : null;
+    for (const cls of schemaClasses ? [] : analysis.classes) {
       // The class itself
       fileSymbols.set(cls.name, {
         name: cls.name,
@@ -988,7 +993,7 @@ function buildSymbolIndex(
     // Exports (fill in symbols not already captured by functions/methods)
     const exported = new Set<string>();
     for (const exp of analysis.exports) {
-      if (!fileSymbols.has(exp.name)) {
+      if (!fileSymbols.has(exp.name) && !schemaClasses?.has(exp.name)) {
         exported.add(exp.name);
         fileSymbols.set(exp.name, {
           name: exp.name,

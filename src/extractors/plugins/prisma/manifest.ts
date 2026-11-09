@@ -13,6 +13,7 @@ export const prismaManifest: LanguagePluginManifest = {
   language: "prisma",
   parsing: "regex",
   extensions: [".prisma"],
+  schemaFormat: true,
   importTarget: false,
   frameworkRules: prismaFrameworkRules,
 };
