@@ -4,6 +4,10 @@
  * (`final ticket = SeasonTicket();`, `const table = League<Club>();`). A function body sees them by bare name,
  * so the linker types `ticket.renew()` in a method by them when no local, parameter or field takes the name.
  *
+ * A top-level getter binds its name the same way (`GarageGateway get garageGateway => _locator.garageGateway;`, or a
+ * `{ … }` body): its declared return type, or — with none written — the type its arrow body constructs
+ * (`get pit => PitGateway(dio);`).
+ *
  * Read off the lines `dart format` leaves at column 0, outside a block comment. An initializer that only calls
  * (`final ticket = SeasonTicket.load();` — a named constructor and a static method look alike) states nothing.
  */
@@ -12,7 +16,7 @@ import { blankStringLiterals } from "../shared/regex-base.js";
 
 const KEYWORDS = new Set([
   "abstract", "base", "class", "enum", "export", "extension", "external", "factory", "final", "const", "late", "var",
-  "import", "interface", "library", "mixin", "part", "sealed", "typedef", "void", "dynamic", "static", "return",
+  "import", "interface", "library", "mixin", "part", "sealed", "typedef", "void", "dynamic", "static", "return", "get", "set",
 ]);
 
 /** `final|const|var name = Type(…)`, `= const Type<…>(…)`, `= new Type(…)`. */
@@ -20,6 +24,12 @@ const CONSTRUCTED = /^(?:late\s+)?(?:final|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s
 
 /** `[late] [final|const] Type name [= …];` — the type as written. */
 const DECLARED = /^(?:late\s+)?(?:(?:final|const)\s+)?([A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??)\s+([A-Za-z_$][\w$]*)\s*(?:=|;)/;
+
+/** `Type get name =>` / `Type get name {` — the return type as written. */
+const GETTER = /^([A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??)\s+get\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{|$)/;
+
+/** `get name => Type(…)` with no return type written: the type it constructs. */
+const GETTER_CONSTRUCTED = /^get\s+([A-Za-z_$][\w$]*)\s*=>\s*(?:const\s+|new\s+)?(_?[A-Z][\w$]*)\s*(?:<[^()=;]*>)?\s*\(/;
 
 export function dartModuleBindings(lines: readonly string[]): ModuleBindingInfo[] {
   const out = new Map<string, ModuleBindingInfo | null>();
@@ -38,8 +48,14 @@ export function dartModuleBindings(lines: readonly string[]): ModuleBindingInfo[
     const code = blankStringLiterals(raw, ["//"]);
     let name: string | undefined;
     let type: string | undefined;
-    const built = CONSTRUCTED.exec(code);
-    if (built) {
+    const built = CONSTRUCTED.exec(code) ?? GETTER_CONSTRUCTED.exec(code);
+    const getter = built ? null : GETTER.exec(code);
+    if (getter) {
+      if (!KEYWORDS.has(getter[1]!.replace(/[<?].*$/s, ""))) {
+        type = getter[1];
+        name = getter[2];
+      }
+    } else if (built) {
       name = built[1];
       type = built[2];
     } else {

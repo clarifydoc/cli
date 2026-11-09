@@ -17,6 +17,7 @@ import {
   type GlobalMemberDef,
   type ImportInfo,
   type InteractiveElementInfo,
+  type ModuleBindingInfo,
 } from "../types/analysis.js";
 import { reactiveTriggerLinks } from "./reactive-triggers.js";
 import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, StructuralMatch } from "../types/language-plugin.js";
@@ -6782,13 +6783,18 @@ function packageFunctionLink(ctx: LinkContext, analysis: FileAnalysis, sourceFil
 
 /**
  * The type a variable the module declares at its top level states (`FileAnalysis.moduleBindings`): the file's own,
- * else — for a language whose package spans the files of a directory — the one the sibling files declare. Two
- * declarations of the name that differ decide nothing.
+ * else one an import puts in scope (`inScopeModuleBindings`), else — for a language whose package spans the files
+ * of a directory — the one the sibling files declare. Two declarations of the name that differ decide nothing.
  */
 function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: string): { type: string; file: string } | null {
   const key = nameKey(analysis.language, name);
   const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
   if (own) return { type: own.type, file: analysis.filePath };
+  const scoped = inScopeModuleBindings(ctx, analysis, name);
+  if (scoped.length > 0) {
+    const types = new Set(scoped.map((s) => s.binding.type));
+    return types.size === 1 ? { type: scoped[0]!.binding.type, file: scoped[0]!.holder.filePath } : null;
+  }
   if (!typesSpanFiles(analysis.language as Language)) return null;
   const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
   const found = new Map<string, { type: string; file: string }>();
@@ -7214,9 +7220,10 @@ function scopedName(
 }
 
 /**
- * A typed variable declared at module level (`FileAnalysis.moduleBindings`, `var dmLeague: TdmLeague;`)
- * that a bare name reaches when no local, parameter or field takes it: the file's own, else an exported
- * one of a file the caller's imports put in scope (`importsShareScope`: a unit seen through `uses`).
+ * A typed variable declared at module level (`FileAnalysis.moduleBindings`, `var dmLeague: TdmLeague;`, a Dart
+ * top-level getter's return type) that a bare name reaches when no local, parameter or field takes it: the file's
+ * own, else an exported one of a file the caller's imports put in scope (`importsShareScope`: a unit seen through
+ * `uses`; `ImportInfo.inScope`: a Dart library, its parts and barrels — `inScopeModuleBindings`).
  * Its type is read where it is declared. Two such files typing the name differently decide nothing.
  */
 function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string): InjectionPoint | null {
@@ -7229,19 +7236,88 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
   };
   const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
   if (own) return point(analysis, own.type);
-  if (!pluginFor(analysis.language)?.importsShareScope) return null;
-  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const held: Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> = inScopeModuleBindings(ctx, analysis, name);
+  if (pluginFor(analysis.language)?.importsShareScope) {
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    for (const imp of analysis.imports) {
+      const file = importPath(ctx, imp.source, sourceFile);
+      const holder = file && file !== sourceFile ? ctx.analysisByFile.get(file) : undefined;
+      const binding = holder?.moduleBindings?.find((b) => b.exported && nameKey(holder.language, b.name) === key);
+      if (holder && binding) held.push({ holder, binding });
+    }
+  }
   let found: InjectionPoint | null = null;
-  for (const imp of analysis.imports) {
-    const file = importPath(ctx, imp.source, sourceFile);
-    const holder = file && file !== sourceFile ? ctx.analysisByFile.get(file) : undefined;
-    const binding = holder?.moduleBindings?.find((b) => b.exported && nameKey(holder.language, b.name) === key);
-    if (!holder || !binding) continue;
+  for (const { holder, binding } of held) {
     const p = point(holder, binding.type);
     if (!p || (found && (found.typeName !== p.typeName || found.typeFile !== p.typeFile))) return null;
     found = p;
   }
   return found;
+}
+
+/**
+ * The module bindings named `name` that imports putting a library's top-level names in scope bring in
+ * (`ImportInfo.inScope`: a Dart `import`, narrowed by its `show` list): the imported library's exported ones, its
+ * `part`s' (`inScope.shared`) and those its barrel `export`s forward, a few deep. Seen from a `part`, the library
+ * it belongs to and that library's other parts and imports count as its own (private names included). One entry
+ * per declaring file; the caller decides what disagreeing types mean.
+ */
+function inScopeModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: string): Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> {
+  const key = nameKey(analysis.language, name);
+  let memo = inScopeBindingMemo.get(ctx);
+  if (!memo) inScopeBindingMemo.set(ctx, (memo = new Map()));
+  const memoKey = `${analysis.filePath}\0${key}`;
+  const cached = memo.get(memoKey);
+  if (cached) return [...cached];
+  const found = collectInScopeModuleBindings(ctx, analysis, name, key);
+  memo.set(memoKey, found);
+  return [...found];
+}
+
+/** `inScopeModuleBindings` per file and name, per link run. */
+const inScopeBindingMemo = new WeakMap<LinkContext, Map<string, Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }>>>();
+
+function collectInScopeModuleBindings(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  name: string,
+  key: string,
+): Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const byFile = ctx.analysisByFile;
+  const out = new Map<string, { holder: FileAnalysis; binding: ModuleBindingInfo }>();
+  const seen = new Set<string>();
+  const visit = (file: string, depth: number, exportedOnly: boolean): void => {
+    if (depth > MAX_REEXPORT_DEPTH || seen.has(`${file}\0${exportedOnly}`)) return;
+    seen.add(`${file}\0${exportedOnly}`);
+    const holder = byFile.get(file);
+    if (!holder) return;
+    const binding = holder.moduleBindings?.find((b) => (b.exported || !exportedOnly) && nameKey(holder.language, b.name) === key);
+    if (binding && file !== analysis.filePath) out.set(file, { holder, binding });
+    for (const imp of holder.imports) {
+      if (!imp.inScope?.shared) continue;
+      const part = importPath(ctx, imp.inScope.module, file);
+      if (part && part !== file) visit(part, depth + 1, exportedOnly);
+    }
+    if (!exportedOnly) return;
+    for (const e of holder.exports) {
+      if (e.kind !== "re-export" || !e.source || (e.name !== "*" && e.name !== name)) continue;
+      const target = importPath(ctx, e.source, file);
+      if (target && target !== file) visit(target, depth + 1, true);
+    }
+  };
+  const importers = [analysis.filePath, ...scopeLibraries(ctx, analysis.filePath)];
+  for (const lib of importers.slice(1)) visit(lib, 0, false);
+  for (const from of importers) {
+    for (const imp of byFile.get(from)?.imports ?? []) {
+      const scope = imp.inScope;
+      if (!scope || scope.shared) continue;
+      if ((scope.names && !scope.names.includes(name)) || scope.except?.includes(name)) continue;
+      const lib = importPath(ctx, scope.module, from);
+      if (lib && lib !== analysis.filePath) visit(lib, 0, true);
+    }
+  }
+  return [...out.values()];
 }
 
 /**

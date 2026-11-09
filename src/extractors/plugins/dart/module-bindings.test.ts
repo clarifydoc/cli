@@ -29,4 +29,30 @@ describe("dart top-level variables", () => {
       { name: "builtTicket", type: "SeasonTicket", line: 6, exported: true },
     ]);
   });
+
+  it("reads a top-level getter's declared return type, or the type its arrow body constructs", () => {
+    const lines = [
+      "GarageGateway? _garageGateway;",
+      "GarageGateway get garageGateway {",
+      "  _garageGateway ??= GarageGateway();",
+      "  return _garageGateway!;",
+      "}",
+      "PitGateway get pitGateway => ServiceLocator.instance.pitGateway;",
+      "Map<String, Club> get clubsByName =>",
+      "    {};",
+      "get workshop => Workshop(bays: 4);",
+      "get loaded => Workshop.load();",
+      "void get nothing => null;",
+      "class Garage {",
+      "  Bay get bay => Bay();",
+      "}",
+    ];
+    expect(dartModuleBindings(lines)).toEqual([
+      { name: "_garageGateway", type: "GarageGateway?", line: 1, exported: false },
+      { name: "garageGateway", type: "GarageGateway", line: 2, exported: true },
+      { name: "pitGateway", type: "PitGateway", line: 6, exported: true },
+      { name: "clubsByName", type: "Map<String, Club>", line: 7, exported: true },
+      { name: "workshop", type: "Workshop", line: 9, exported: true },
+    ]);
+  });
 });
