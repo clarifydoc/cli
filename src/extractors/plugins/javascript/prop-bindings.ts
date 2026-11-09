@@ -1,6 +1,9 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
+import { libraryObjectAt } from "./library-callbacks.js";
+import { heldFunction } from "./held-functions.js";
+import { namesFunction } from "./member-values.js";
 
 /**
  * Values a component's markup binds to its children's props, where the value's
@@ -51,6 +54,10 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
       const value = attr.namedChild(1);
       if (name?.type !== "property_identifier" || /^on[A-Z]/.test(name.text) || value?.type !== "jsx_expression") continue;
       const expr = value.namedChild(0);
+      // `<Pager table={table} />` with `const table = useReactTable({ onPaginationChange })`: the child's `table.nextPage()` runs it.
+      const library = expr?.type === "identifier" ? libraryObjectAt(attr, expr.text, heldFunction, namesFunction) : null;
+      for (const m of library ?? []) out.push({ component: tag, prop: `${name.text}.${m.method}`, handler: m.name, line: attr.startPosition.row + 1 });
+      if (library) continue;
       // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
       const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
       if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });

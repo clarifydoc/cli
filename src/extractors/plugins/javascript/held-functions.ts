@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { subscriptionOf } from "./component-subscriptions.js";
 import { reactiveCallbackName } from "./reactive-cells.js";
+import { libraryCallbackName } from "./library-callbacks.js";
 
 /**
  * Function values written in place and handed on to run later — each a function of its own
@@ -14,7 +15,9 @@ import { reactiveCallbackName } from "./reactive-cells.js";
  *   - a member assigned a function inside a function: `toast.action = () => reload()` → `<toast.action@17>`;
  *   - a member of an object in a declared array: `const items = [{ run: () => sell() }]` → `<items[].run@3>`;
  *   - a watcher or effect callback a write in the file re-runs (`reactive-cells.ts`):
- *     `watch(query, () => search())` with `query.value = q` in a handler → `<watch@21>`.
+ *     `watch(query, () => search())` with `query.value = q` in a handler → `<watch@21>`;
+ *   - an option callback a library object runs from its methods (`library-callbacks.ts`):
+ *     `useVueTable({ onPaginationChange: (u) => load(u) })` → `<useVueTable:onPaginationChange@21>`.
  *
  * The function that wrote it hands it on (`passed: "argument"`), so whatever reached the writer's
  * calls still reaches them, one `passes` hop further.
@@ -78,7 +81,7 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
     const sub = subscriptionOf(call);
     if (sub) return `<${sub.component.replace(/^this\./, "")}@${sub.event}@${line}>`;
   }
-  if (parent.type === "pair") return pairName(parent, line, imported);
+  if (parent.type === "pair") return libraryCallbackName(fn) ?? pairName(parent, line, imported);
   // `toast.action = () => …` inside a function: what runs when the holder's member is called.
   if (parent.type === "assignment_expression" && parent.childForFieldName("right")?.id === fn.id) {
     const left = parent.childForFieldName("left");

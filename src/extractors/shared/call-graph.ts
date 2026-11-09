@@ -193,6 +193,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     passed?: CallInfo["passed"];
     ownMember?: boolean;
     returnedAs?: string;
+    libraryOption?: string;
     read?: boolean;
     receiver?: { type: string; qualifier?: string } | null;
     key?: string | null;
@@ -226,11 +227,12 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
     candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, passed, receiver, key, args, argCount, argOrigins, argKinds });
     if (!isReference && hooks.boundAt) candidates[candidates.length - 1]!.bound = hooks.boundAt(node, name);
   };
-  const addResult = (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string) => {
+  const addResult = (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string, extra?: { libraryOption?: string }) => {
     if (!name) return;
     if (passed) push(name, node, true, null, null, null, null, null, null, passed);
     else push(name, node, false);
     if (returnedAs) candidates[candidates.length - 1]!.returnedAs = returnedAs;
+    if (extra?.libraryOption) candidates[candidates.length - 1]!.libraryOption = extra.libraryOption;
   };
 
   function walk(node: Node, isRoot: boolean) {
@@ -337,14 +339,16 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // A site its own block binds the name of is another claim than one the module's name reaches.
     const seenKey = c.bound ? `${seenKeyBase}\0bound` : seenKeyBase;
-    // One site is one call, however many ways the walk met it (a decorator is also its call node).
-    const site = `${c.name}\0@${c.line}:${c.column}`;
+    // One site is one call, however many ways the walk met it (a decorator is also its call node) — a value held
+    // under several keys is one claim per key (a library option callback under each method running it).
+    const site = `${c.name}\0@${c.line}:${c.column}${c.passed === "property" ? `\0${c.returnedAs}` : ""}`;
     if (seen.has(seenKey) || seen.has(site)) continue;
     seen.add(site);
     const call: CallInfo = { name: c.name, kind: "internal", target: null, line: c.line, column: c.column };
     if (c.passed) call.passed = c.passed;
     if (c.read) call.read = true;
     if (c.returnedAs) call.returnedAs = c.returnedAs;
+    if (c.libraryOption) call.libraryOption = c.libraryOption;
     if (c.mapMember) call.mapMember = true;
     if (!c.isReference && (c.bound ?? localHere.has(c.name))) call.boundLocally = true;
     if (c.args) call.args = c.args;
@@ -528,10 +532,10 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
 
     // A dispatch map the module declares (`const ACTIONS = { save: saveClub }`): its values are
     // the module's, handed on under their keys. Other extras belong to the declarations they sit in.
-    hooks!.collectExtraCalls?.(node, (name, at, passed, returnedAs) => {
+    hooks!.collectExtraCalls?.(node, (name, at, passed, returnedAs, extra) => {
       if (passed !== "property" || !name || seen.has(`${name}\0passed\0${returnedAs}`)) return;
       seen.add(`${name}\0passed\0${returnedAs}`);
-      results.push({ name, kind: "internal", target: null, line: at.startPosition.row + 1, column: at.startPosition.column, passed, ...(returnedAs ? { returnedAs } : {}) });
+      results.push({ name, kind: "internal", target: null, line: at.startPosition.row + 1, column: at.startPosition.column, passed, ...(returnedAs ? { returnedAs } : {}), ...(extra?.libraryOption ? { libraryOption: extra.libraryOption } : {}) });
     }, (n) => resolveCallName(n, language));
 
     for (const child of node.children) {

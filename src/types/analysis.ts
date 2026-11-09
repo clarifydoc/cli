@@ -1100,6 +1100,13 @@ export interface CallInfo {
    */
   returnedAs?: string;
   /**
+   * For a `passed: "property"` value the LIBRARY runs rather than the source: the factory and the option the value
+   * is written under (`useVueTable:onPaginationChange`). The plugin's knowledge of the library holds it under each
+   * method of the factory's result that runs that option (`returnedAs` `table.nextPage`, `table.setPageIndex`), so
+   * a call of one reaches it — INFERRED, strategy `dispatch:library-option`.
+   */
+  libraryOption?: string;
+  /**
    * A member call whose leaf looks like a built-in's (`ACTIONS.map(club)`) on a name imported from the project:
    * kept only for the linker, which joins it when the exporting file declares that name as an object literal
    * holding the key, and otherwise draws no edge.

@@ -1003,10 +1003,11 @@ export interface CallExtractionHooks {
    * references, Python decorators). `resolve` is this language's resolver.
    * `passed` marks a name handed on rather than invoked (a JSX attribute value, a returned function,
    * a value of a dispatch map). Of these, only `property` names are read at a module's top level too.
+   * `extra.libraryOption` marks a `property` value a library runs from the holder's method (`CallInfo.libraryOption`).
    */
   collectExtraCalls?(
     node: Node,
-    addResult: (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string) => void,
+    addResult: (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string, extra?: { libraryOption?: string }) => void,
     resolve: (node: Node) => string | null,
   ): void;
   /**

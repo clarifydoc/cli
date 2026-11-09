@@ -64,7 +64,7 @@ export function memberAssignment(node: Node): MemberValue[] {
  * in place or wrapped (`const save = useCallback(…)`), or a name it does not bind (an import). A local or module
  * value bound to anything else (`const draft = loadDraft()`, a construction) and a parameter are data.
  */
-function namesFunction(site: Node, name: string): boolean {
+export function namesFunction(site: Node, name: string): boolean {
   if (!NAMED_VALUE.test(name)) return false;
   const declared = mapDeclarator(site, name);
   if (declared) {

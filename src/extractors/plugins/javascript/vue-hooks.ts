@@ -10,6 +10,7 @@ import { boundListeners } from "./bound-listeners.js";
 import { addDynamicComponents } from "./dynamic-components.js";
 import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
+import { libraryHoldersOf, libraryObjectProps } from "./library-callbacks.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -68,6 +69,12 @@ export function vuePreprocess(
           mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${name.replace(/\$/g, "\\$")}\\s*:`).test(sfc.script ?? "");
         const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name) || leftToMixins(name));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
+        // `<Pager :table="table" />` with `const table = useVueTable({ onPaginationChange })`: the child's `table.nextPage()` runs it.
+        const libraries = libraryHoldersOf([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)]);
+        if (libraries.size > 0) {
+          const handed = libraryObjectProps(extractVueFunctionProps(sfc.template, raw, (name) => libraries.has(name)), (holder) => libraries.get(holder));
+          if (handed.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...handed];
+        }
         // `<slot :save="saveAll" />`: what a parent's scoped slot calls.
         const slotFunctions = extractSlotFunctions(sfc.template, raw, (name) => own.has(name));
         if (slotFunctions.length > 0) analysis.slotFunctions = slotFunctions;

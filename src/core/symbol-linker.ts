@@ -4307,8 +4307,9 @@ function dispatchMapCall(
       sourceSymbol,
       sourceLine: call.line,
       callName: call.name,
-      confidence: key !== undefined && !assigned ? link.confidence : "INFERRED",
-      strategy: "dispatch:object-map",
+      // A callback the library runs from the holder's method (`CallInfo.libraryOption`): the library's documented behaviour, never the source's.
+      confidence: key !== undefined && !assigned && !entry.libraryOption ? link.confidence : "INFERRED",
+      strategy: entry.libraryOption ? "dispatch:library-option" : "dispatch:object-map",
       relation: "dispatch",
     });
   }
@@ -4428,8 +4429,8 @@ function importedDispatchMapCall(
       sourceSymbol,
       sourceLine: call.line,
       callName: call.name,
-      confidence: key !== undefined && !key.startsWith("[]") ? link.confidence : "INFERRED",
-      strategy: "dispatch:object-map",
+      confidence: key !== undefined && !key.startsWith("[]") && !entry.libraryOption ? link.confidence : "INFERRED",
+      strategy: entry.libraryOption ? "dispatch:library-option" : "dispatch:object-map",
       relation: "dispatch",
     });
   }

@@ -1,0 +1,255 @@
+import type { Node, Tree } from "web-tree-sitter";
+import type { CallInfo, FunctionPropBinding } from "../../../types/analysis.js";
+
+/**
+ * Option callbacks a library object runs when one of its methods is called — knowledge of the library, kept as
+ * data: `const table = useVueTable({ onPaginationChange: (u) => loadPage(u) })` runs `onPaginationChange` when
+ * the page calls `table.nextPage()`, though no call in the source says so.
+ *
+ * Only what the source states is read: the factory must be imported from the library's package (a project
+ * function named `useVueTable` is the project's), the options must be an object literal written at the call, and
+ * only the options it writes are joined. A callback written in place is a function of its own (`heldFunction`:
+ * `<useVueTable:onPaginationChange@21>`); a named one (`onSortingChange: applySort`) is that function.
+ *
+ * The declarator holding the result records each callback under each method that runs it (`passed: "property"`,
+ * `returnedAs: "table.nextPage"`, `CallInfo.libraryOption`), so the linker's dispatch-map join reaches the callback
+ * from `table.nextPage()` anywhere in that scope, and a child component handed the object (`<Pager :table="table">`,
+ * `<Pager table={table} />`) gets the same callbacks as `table.nextPage` props (`libraryObjectProps`).
+ */
+
+interface LibraryObject {
+  /** The packages exporting the factories (`@tanstack/vue-table`). */
+  packages: RegExp;
+  /** The factories, as the package exports them. */
+  factories: ReadonlySet<string>;
+  /** Each option callback → the methods of the factory's result that run it. */
+  runs: Readonly<Record<string, readonly string[]>>;
+  /**
+   * An option every method of `runs` falls back to when the option of its own feature is not written, with the
+   * methods that run it in any case (TanStack Table: `onStateChange`, which `setState`/`reset` run, and every
+   * feature setter whose own `on…Change` the call leaves out).
+   */
+  fallback?: { option: string; methods: readonly string[] };
+}
+
+/** A TanStack Table state feature's setter and reset (`setSorting`, `resetSorting`), plus the methods built on them. */
+const tableFeature = (feature: string, ...more: string[]): string[] => [`set${feature}`, `reset${feature}`, ...more];
+
+export const LIBRARY_OBJECTS: readonly LibraryObject[] = [
+  {
+    // TanStack Table v8: every state setter hands its updater to the feature's `on…Change` option.
+    packages: /^@tanstack\/(?:(?:vue|react|solid|angular|lit|qwik|preact)-)?table(?:-core)?$/,
+    factories: new Set(["useVueTable", "useReactTable", "createSolidTable", "createAngularTable", "useQwikTable", "createTable"]),
+    runs: {
+      onPaginationChange: tableFeature("Pagination", "setPageIndex", "resetPageIndex", "setPageSize", "resetPageSize", "nextPage", "previousPage", "firstPage", "lastPage"),
+      onSortingChange: tableFeature("Sorting"),
+      onColumnFiltersChange: tableFeature("ColumnFilters"),
+      onGlobalFilterChange: tableFeature("GlobalFilter"),
+      onRowSelectionChange: tableFeature("RowSelection", "toggleAllRowsSelected", "toggleAllPageRowsSelected"),
+      onColumnVisibilityChange: tableFeature("ColumnVisibility", "toggleAllColumnsVisible"),
+      onExpandedChange: tableFeature("Expanded", "toggleAllRowsExpanded"),
+      onColumnOrderChange: tableFeature("ColumnOrder"),
+      onColumnPinningChange: tableFeature("ColumnPinning"),
+      onRowPinningChange: tableFeature("RowPinning"),
+      onColumnSizingChange: tableFeature("ColumnSizing"),
+      onColumnSizingInfoChange: ["setColumnSizingInfo", "resetHeaderSizeInfo"],
+      onGroupingChange: tableFeature("Grouping"),
+    },
+    fallback: { option: "onStateChange", methods: ["setState", "reset"] },
+  },
+];
+
+/** Wrappers an options object or a callback value may sit in. */
+const WRAPPERS: ReadonlySet<string> = new Set(["parenthesized_expression", "as_expression", "satisfies_expression", "non_null_expression"]);
+const FUNCTION_VALUES: ReadonlySet<string> = new Set(["arrow_function", "function_expression"]);
+
+const unwrap = (n: Node | null | undefined): Node | null => {
+  let at = n ?? null;
+  while (at && WRAPPERS.has(at.type)) at = at.namedChild(0);
+  return at;
+};
+
+let memoTree: Tree | null = null;
+let memoImports = new Map<string, { imported: string; source: string }>();
+
+/** Local name → the name it is imported under and the module, for the file's top-level named imports. */
+function importsOf(tree: Tree): Map<string, { imported: string; source: string }> {
+  if (tree === memoTree) return memoImports;
+  memoTree = tree;
+  memoImports = new Map();
+  for (const stmt of tree.rootNode.namedChildren) {
+    if (stmt?.type !== "import_statement") continue;
+    const source = stmt.childForFieldName("source")?.text.slice(1, -1);
+    if (!source) continue;
+    for (const spec of stmt.descendantsOfType("import_specifier")) {
+      const imported = spec?.childForFieldName("name")?.text;
+      if (!spec || !imported) continue;
+      memoImports.set(spec.childForFieldName("alias")?.text ?? imported, { imported, source });
+    }
+  }
+  return memoImports;
+}
+
+/** A call building a library object: its factory as the package exports it and the options object it writes. */
+export interface LibraryObjectCall {
+  library: LibraryObject;
+  factory: string;
+  options: Node;
+}
+
+/**
+ * The library object a call builds — `useVueTable({ … })`, `createAngularTable(() => ({ … }))` — when the callee is
+ * a factory imported from the library's package and its options are an object literal; else null.
+ */
+export function libraryObjectCall(call: Node | null): LibraryObjectCall | null {
+  if (call?.type !== "call_expression") return null;
+  const callee = call.childForFieldName("function");
+  if (callee?.type !== "identifier") return null;
+  const imp = importsOf(call.tree).get(callee.text);
+  const library = imp ? LIBRARY_OBJECTS.find((l) => l.factories.has(imp.imported) && l.packages.test(imp.source)) : undefined;
+  if (!imp || !library) return null;
+  let options = unwrap(call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment"));
+  // Options handed as a function returning them (`createAngularTable(() => ({ … }))`).
+  if (options && FUNCTION_VALUES.has(options.type)) options = unwrap(options.childForFieldName("body"));
+  return options?.type === "object" ? { library, factory: imp.imported, options } : null;
+}
+
+/** The options a call writes that the library runs as callbacks, each with the methods running it. */
+export function statedCallbacks(built: LibraryObjectCall): Array<{ option: string; value: Node; methods: readonly string[] }> {
+  const { library, options } = built;
+  const stated: Array<{ option: string; value: Node }> = [];
+  for (const member of options.namedChildren) {
+    if (member?.type === "shorthand_property_identifier") stated.push({ option: member.text, value: member });
+    else if (member?.type === "pair") {
+      const key = keyText(member.childForFieldName("key"));
+      const value = unwrap(member.childForFieldName("value"));
+      if (key && value) stated.push({ option: key, value });
+    }
+  }
+  const written = new Set(stated.map((s) => s.option));
+  const out: Array<{ option: string; value: Node; methods: readonly string[] }> = [];
+  for (const s of stated) {
+    const own = library.runs[s.option];
+    if (own) out.push({ ...s, methods: own });
+    else if (library.fallback?.option === s.option) {
+      // What runs the fallback: its own methods, and every setter whose own option is not written.
+      const unclaimed = Object.entries(library.runs).filter(([option]) => !written.has(option)).flatMap(([, methods]) => methods);
+      out.push({ ...s, methods: [...library.fallback.methods, ...unclaimed] });
+    }
+  }
+  return out;
+}
+
+/** The held name of a callback written in place as a library object's option: `<useVueTable:onPaginationChange@21>`. */
+export function libraryCallbackName(fn: Node): string | null {
+  const pair = fn.parent;
+  if (pair?.type !== "pair" || unwrap(pair.childForFieldName("value"))?.id !== fn.id) return null;
+  const key = keyText(pair.childForFieldName("key"));
+  if (!key) return null;
+  // The object, then the call it is the options of: `f({ … })`, `f(() => ({ … }))`.
+  let at: Node | null = pair.parent;
+  for (let hop = 0; hop < 4 && at && at.type !== "arguments"; hop++) at = at.parent;
+  const built = at?.type === "arguments" ? libraryObjectCall(at.parent) : null;
+  if (!built || built.options.id !== pair.parent?.id) return null;
+  return statedCallbacks(built).some((s) => s.option === key && s.value.id === fn.id) ? `<${built.factory}:${key}@${fn.startPosition.row + 1}>` : null;
+}
+
+/** One callback a library object's method runs: under `holder.method`, the function `name` the option states. */
+export interface LibraryObjectMember {
+  method: string;
+  /** The held function's name, or the named function as written (`applySort`). */
+  name: string;
+  node: Node;
+  /** `factory:option`, `CallInfo.libraryOption`. */
+  option: string;
+}
+
+/**
+ * The callbacks a declared library object's methods run: `const table = useVueTable({ onPaginationChange: … })`
+ * → `table` and, per method, the callback. `namesFunction` says whether a name written as a value can be a
+ * function (`onSortingChange: applySort`); a value that is neither written in place nor named is left out.
+ */
+export function libraryObjectMembers(
+  declarator: Node,
+  heldName: (fn: Node) => string | null,
+  namesFunction: (site: Node, name: string) => boolean,
+): { holder: string; members: LibraryObjectMember[] } | null {
+  if (declarator.type !== "variable_declarator") return null;
+  const name = declarator.childForFieldName("name");
+  const built = name?.type === "identifier" ? libraryObjectCall(unwrap(declarator.childForFieldName("value"))) : null;
+  if (!name || !built) return null;
+  const members: LibraryObjectMember[] = [];
+  for (const s of statedCallbacks(built)) {
+    const fn = FUNCTION_VALUES.has(s.value.type) ? heldName(s.value) : (s.value.type === "identifier" || s.value.type === "shorthand_property_identifier") && namesFunction(s.value, s.value.text) ? s.value.text : null;
+    if (!fn) continue;
+    for (const method of new Set(s.methods)) members.push({ method, name: fn, node: s.value, option: `${built.factory}:${s.option}` });
+  }
+  return members.length > 0 ? { holder: name.text, members } : null;
+}
+
+/**
+ * The library object a name in markup is where it is used: the `const`/`let` declaring it in an enclosing block or
+ * at the top level, when that declares a library object (`<Pager table={table} />` inside the component holding
+ * `const table = useReactTable({ … })`).
+ */
+export function libraryObjectAt(
+  site: Node,
+  name: string,
+  heldName: (fn: Node) => string | null,
+  namesFunction: (site: Node, name: string) => boolean,
+): LibraryObjectMember[] | null {
+  for (let p = site.parent; p; p = p.parent) {
+    if (p.type !== "statement_block" && p.type !== "program") continue;
+    for (const stmt of p.namedChildren) {
+      const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+      if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+      for (const d of decl.namedChildren) {
+        if (d?.type === "variable_declarator" && d.childForFieldName("name")?.text === name) return libraryObjectMembers(d, heldName, namesFunction)?.members ?? null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The library objects a file's functions hold, from their `CallInfo.libraryOption` records: holder → each method and
+ * the callback it runs (`table` → `nextPage` → `<useVueTable:onPaginationChange@21>`).
+ */
+export function libraryHoldersOf(functions: ReadonlyArray<{ calls: readonly CallInfo[] }>): Map<string, Array<{ method: string; name: string }>> {
+  const out = new Map<string, Array<{ method: string; name: string }>>();
+  for (const fn of functions) {
+    for (const c of fn.calls) {
+      if (c.passed !== "property" || !c.libraryOption || !c.returnedAs) continue;
+      const dot = c.returnedAs.indexOf(".");
+      if (dot <= 0) continue;
+      const holder = c.returnedAs.slice(0, dot);
+      const list = out.get(holder) ?? out.set(holder, []).get(holder)!;
+      const method = c.returnedAs.slice(dot + 1);
+      if (!list.some((m) => m.method === method && m.name === c.name)) list.push({ method, name: c.name });
+    }
+  }
+  return out;
+}
+
+/**
+ * A library object handed to a child as a prop (`<Pager :table="table" />`): the child's `table.nextPage()` runs
+ * the callback the holder's call states, so each method is a function prop of its own (`table.nextPage`), which the
+ * prop-callback resolver joins to the child's calls of it.
+ */
+export function libraryObjectProps(bindings: readonly FunctionPropBinding[], membersOf: (holder: string) => ReadonlyArray<{ method: string; name: string }> | null | undefined): FunctionPropBinding[] {
+  const out: FunctionPropBinding[] = [];
+  for (const b of bindings) {
+    for (const m of membersOf(b.handler) ?? []) out.push({ component: b.component, prop: `${b.prop}.${m.method}`, handler: m.name, line: b.line });
+  }
+  return out;
+}
+
+function keyText(key: Node | null | undefined): string | null {
+  if (!key) return null;
+  if (key.type === "property_identifier") return key.text;
+  if (key.type === "string") {
+    const t = key.text.slice(1, -1);
+    return /^[A-Za-z_$][\w$]*$/.test(t) ? t : null;
+  }
+  return null;
+}

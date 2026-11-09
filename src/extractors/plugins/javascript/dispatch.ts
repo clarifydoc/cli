@@ -581,7 +581,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
           const call = fn.calls.find((c) => !c.passed && !c.read && (c.name === prop || c.name === `props.${prop}` || c.name === `this.props.${prop}` || c.name === `this.${prop}`));
           // A bare call of a prop no `on…` name marks is the prop's only where the component takes it under that name
           // (`function KitRow({ order })`): elsewhere it is a function of the same name in scope.
-          if (call && call.name === prop && !PROP_CALLBACK.test(prop) && !childFile.endsWith(".vue") && !takesProp(child, prop, call.line)) continue;
+          // A member of an object prop (`table.nextPage`, a library object handed down) is the prop's when the component takes its head.
+          if (call && call.name === prop && !PROP_CALLBACK.test(prop) && !childFile.endsWith(".vue") && !takesProp(child, prop.split(".")[0]!, call.line)) continue;
           if (call) callers.push({ symbol: fn.name, line: call.line, callName: call.name });
         }
         const inMarkup = (child.interactiveElements ?? []).find((el) => el.handler && cleanHandler(el.handler) === prop && (!within || (el.line >= within.line && el.line <= within.endLine)));

@@ -11,8 +11,9 @@ import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
 import { loadedMemberCall } from "./loaded-members.js";
 import { requiredSource } from "./imports-exports.js";
-import { arrayMapEntries, memberAssignment } from "./member-values.js";
+import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
 import { heldFunction } from "./held-functions.js";
+import { libraryObjectMembers } from "./library-callbacks.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -120,6 +121,9 @@ export const javascriptCallHooks: CallExtractionHooks = {
       // The objects of a declared array: `const items = [{ run: sellPlayer }]` holds `sellPlayer` under `items[].run`.
       const list = arrayMapEntries(node);
       for (const { name, node: value, key } of list?.entries ?? []) addResult(name, value, "property", `${list!.holder}[].${key}`);
+      // A library object: `const table = useVueTable({ onPaginationChange: … })` holds the callback under each method running it (`table.nextPage`).
+      const lib = libraryObjectMembers(node, heldFunction, namesFunction);
+      for (const { name, node: value, method, option } of lib?.members ?? []) addResult(name, value, "property", `${lib!.holder}.${method}`, { libraryOption: option });
     } else if (node.type === "assignment_expression") {
       // A function value assigned to a module object's member at run time (`dialog.callback = deleteClubs`).
       for (const { name, node: value, holder } of memberAssignment(node)) addResult(name, value, "property", holder);
