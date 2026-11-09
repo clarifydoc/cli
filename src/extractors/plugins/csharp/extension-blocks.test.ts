@@ -46,7 +46,7 @@ describe("C# 14 extension blocks", () => {
     const a = await analyzed(SRC);
     expect(a.classes.map((c) => c.name)).toEqual(["CarExtensions"]);
     const methods = a.classes[0]!.methods;
-    expect(methods.map((m) => m.name).sort()).toEqual(["Build", "Fastest", "Honk", "Wash"]);
+    expect(methods.map((m) => m.name).sort()).toEqual(["Build", "Fastest", "Honk", "IsFast", "Wash"]);
     const honk = methods.find((m) => m.name === "Honk")!;
     expect(honk.params).toEqual([{ name: "car", type: "Car", defaultValue: null, isReceiver: true }]);
     expect(honk.line).toBe(7);

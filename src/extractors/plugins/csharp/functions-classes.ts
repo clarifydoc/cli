@@ -3,13 +3,14 @@ import { attachCommandHandlers } from "./command-handlers.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
+import type { CallInfo } from "../../../types/analysis.js";
 import {
   getVisibility,
   hasModifier as sharedHasModifier,
   extractCsharpAttributes,
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
-import { typeCsharpVariableArgs } from "./arg-kinds.js";
+import { csharpArgKinds, typeCsharpVariableArgs } from "./arg-kinds.js";
 import { csharpElementFacts } from "./element-types.js";
 import {
   FileScopeNodes,
@@ -168,6 +169,10 @@ export class CSharpExtractor extends FunctionClassExtractor {
             if (key) prop.qualifier = key;
           }
           properties.push(prop);
+          // A property with a body (`get { … }`, `set { … }`, `=> …`) runs code: a method of the property's
+          // name, so what its accessors call has a caller. `{ get; set; }` has none.
+          const accessors = this.parseCsharpPropertyBody(member, prop);
+          if (accessors) methods.push(accessors);
         } else if (member.type === "field_declaration") {
           // private readonly Foo _bar; — the tree-sitter shape is
           // field_declaration → variable_declaration { type, variable_declarator { name } }
@@ -271,6 +276,25 @@ export class CSharpExtractor extends FunctionClassExtractor {
     };
   }
 
+  private parseCsharpPropertyBody(node: Node, prop: PropertyInfo): FunctionInfo | null {
+    const list = node.namedChildren.find((c) => c.type === "accessor_list");
+    const body = list && list.namedChildren.some((a) => a.type === "accessor_declaration" && (a.childForFieldName("body") ?? a.namedChildren.find((c) => c.type === "arrow_expression_clause")))
+      ? list
+      : node.namedChildren.find((c) => c.type === "arrow_expression_clause");
+    if (!body) return null;
+    return {
+      name: prop.name,
+      params: [],
+      returnType: prop.type,
+      isAsync: false,
+      isExported: prop.visibility === "public",
+      decorators: [],
+      calls: extractCalls(body, "csharp"),
+      line: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+    };
+  }
+
   private parseCsharpIndexer(node: Node): FunctionInfo {
     const list = node.namedChildren.find((c) => c.type === "bracketed_parameter_list");
     const body = node.namedChildren.find((c) => c.type === "arrow_expression_clause" || c.type === "accessor_list") ?? null;
@@ -331,7 +355,25 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
       for (const call of fn.calls) elements.typeReceiver(call);
     }
-    typeCsharpVariableArgs(fn.calls, params, body);
+    // `: this(name)` / `: base(n, 1)` runs the constructor the arguments choose: a construction of the own
+    // or the base class (the linker's `constructor` strategy), read before the body's own calls.
+    const chain = node.type === "constructor_declaration" ? node.namedChildren.find((c) => c.type === "constructor_initializer") : undefined;
+    if (chain) {
+      const decl = node.parent?.parent;
+      const own0 = decl?.childForFieldName("name")?.text;
+      const target = chain.children.some((c) => c.type === "base") ? (decl ? baseTypeTexts(decl)[0] : undefined) : own0;
+      const own = extractCalls(chain, "csharp");
+      if (target) {
+        const args = chain.children.find((c) => c.type === "argument_list");
+        const call: CallInfo = { name: `new ${target}`, kind: "internal", target: null, line: chain.startPosition.row + 1, column: chain.startPosition.column };
+        if (args) call.argCount = args.namedChildren.filter((c) => c.type === "argument").length;
+        const kinds = csharpArgKinds(chain);
+        if (kinds) call.argKinds = kinds;
+        own.unshift(call);
+      }
+      fn.calls = [...own, ...fn.calls];
+    }
+    typeCsharpVariableArgs(fn.calls, params, body ?? chain ?? null);
     return fn;
   }
 

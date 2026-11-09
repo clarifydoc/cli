@@ -49,7 +49,7 @@ describe("C# functions-classes — dependency-injection facts", () => {
     expect(ctors).toHaveLength(3);
     expect(ctors[0]!.params.map((p) => [p.name, p.type])).toEqual([["repo", "ICarRepo"], ["pricing", "IPricing"]]);
     expect(ctors[0]!.calls.map((c) => c.name)).toEqual(["_repo.Get"]);
-    expect(ctors[2]!.calls.map((c) => c.name)).toEqual(["Init"]);
+    expect(ctors[2]!.calls.map((c) => c.name)).toEqual(["new CheckoutService", "Init"]);
   });
 
   it("reports a primary constructor (class, struct, record) as a constructor with its params", async () => {
@@ -364,5 +364,41 @@ public class Coach : IScout, IAnalyst<Match> {
 }`);
     const coach = classes.find((c) => c.name === "Coach")!;
     expect(coach.methods.map((m) => [m.name, m.explicitInterface])).toEqual([["Report", "IScout"], ["Report", "IAnalyst"], ["Train", undefined]]);
+  });
+});
+
+describe("C# functions-classes — property accessors and chained constructors", () => {
+  const methodsOf = (classes: ClassInfo[], name: string) => classes.find((c) => c.name === name)!.methods;
+
+  it("a property with accessor bodies is a function named for it, carrying its calls", async () => {
+    const classes = await classesOf(`class Garage {
+  public int Count { get { return Tally(); } set { Store(value); } }
+  public int Bays => Measure();
+  public int Slots { get => Open(); }
+  public int Spare { get; init; }
+  public int Fixed { get; set; } = 3;
+}`);
+    const ms = methodsOf(classes, "Garage");
+    expect(ms.find((m) => m.name === "Count")!.calls.map((c) => c.name)).toEqual(["Tally", "Store"]);
+    expect(ms.find((m) => m.name === "Bays")!.calls.map((c) => c.name)).toEqual(["Measure"]);
+    expect(ms.find((m) => m.name === "Slots")!.calls.map((c) => c.name)).toEqual(["Open"]);
+    expect(ms.map((m) => m.name)).not.toContain("Spare");
+    expect(ms.map((m) => m.name)).not.toContain("Fixed");
+    // The class keeps its properties.
+    expect(classes[0]!.properties.map((p) => p.name)).toEqual(["Count", "Bays", "Slots", "Spare", "Fixed"]);
+  });
+
+  it("a chaining constructor calls the constructor its initializer names", async () => {
+    const classes = await classesOf(`class Club {
+  public Club(string name) { }
+  public Club(string name, int rank) : this(name) { Init(); }
+}
+class Giants : Club {
+  public Giants(string n) : base(n, 1) { }
+}`);
+    const chained = methodsOf(classes, "Club")[1]!;
+    expect(chained.calls.map((c) => [c.name, c.argCount])).toEqual([["new Club", 1], ["Init", 0]]);
+    const giants = methodsOf(classes, "Giants")[0]!;
+    expect(giants.calls.map((c) => [c.name, c.argCount, c.argKinds])).toEqual([["new Club", 2, ["string", "int"]]]);
   });
 });

@@ -270,3 +270,33 @@ describe("construction reaches the constructor the class itself declares", () =>
     ]);
   });
 });
+
+describe("C# accessors and chained constructors link", () => {
+  it("links accessor calls from the property and `this(…)`/`base(…)` to the overload the arguments choose", async () => {
+    const analyses = await analyzeAll({
+      "League/Club.cs": [
+        "namespace League",
+        "{",
+        "    public class Club",
+        "    {",
+        "        public Club(string name) {}",
+        "        public Club(string name, int rank) : this(name) {}",
+        "        public int Total { get { return Tally(); } }",
+        "        private int Tally() { return 1; }",
+        "    }",
+        "",
+        "    public class Giants : Club",
+        "    {",
+        "        public Giants(string n) : base(n, 1) {}",
+        "    }",
+        "}",
+        "",
+      ].join("\n"),
+    }, "csharp");
+    const links = buildSymbolLinks(analyses).filter((l) => l.sourceSymbol !== "(reference)");
+    const from = (sym: string) => links.filter((l) => l.sourceSymbol === sym).map((l) => `${l.callName} -> ${l.targetSymbol}@${l.targetLine} [${l.strategy}]`);
+    expect(from("Club.Total")).toEqual(["Tally -> Club.Tally@8 [direct]"]);
+    expect(from("Club.Club")).toEqual(expect.arrayContaining(["new Club -> Club.Club@5 [constructor]"]));
+    expect(from("Giants.Giants")).toEqual(["new Club -> Club.Club@6 [constructor]"]);
+  });
+});
