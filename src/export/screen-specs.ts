@@ -2,6 +2,7 @@ import { projectName } from "./markdown.js";
 import type { BundleFile } from "./obsidian.js";
 import type { InteractiveElement, Route, Screen, Summary } from "./types.js";
 import { cell, idFactory, mermaidLabel, plural } from "./text.js";
+import { stateNode, usageGate } from "../core/symbol-graph.js";
 
 /**
  * A spec per screen, and the user flows through them, as Markdown files that
@@ -274,16 +275,19 @@ export function screenSpecs(summary: Summary): BundleFile[] {
     if (urls.length) directCalls.set(keyOf(r.file, r.symbol), urls);
   }
 
+  // A walk that entered a shared component from one screen leaves through its emits only to that screen's handlers.
+  const gate = usageGate(summary.symbolLinks ?? []);
+
   /** Everything reachable from `starts` by calls, never entering `avoid`; an HTTP edge ends the walk there. */
   const walk = (starts: Key[], avoid: Set<Key>): Reach => {
-    const seen = new Set(starts);
-    let frontier = [...starts];
+    const seen = new Set<string>(starts);
+    let frontier: Array<[Key, string]> = starts.map((k) => [k, ""]);
     const hits: RouteHit[] = [];
     const effects: Effect[] = [];
     const unrouted: string[] = [];
     while (frontier.length && seen.size < WALK_CAP) {
-      const next: Key[] = [];
-      for (const k of frontier) {
+      const next: Array<[Key, string]> = [];
+      for (const [k, state] of frontier) {
         effects.push(...(directData.get(k) ?? []));
         const http = httpLinks.get(k) ?? [];
         for (const h of http) {
@@ -295,9 +299,11 @@ export function screenSpecs(summary: Summary): BundleFile[] {
         }
         if (!http.length) unrouted.push(...(directCalls.get(k) ?? []).filter((u) => u.includes("/") && !/^[\w$.]+\(/.test(u)));
         for (const c of callees.get(k) ?? []) {
-          if (c.http || seen.has(c.to) || avoid.has(c.to)) continue;
-          seen.add(c.to);
-          next.push(c.to);
+          if (c.http || avoid.has(c.to)) continue;
+          const to = gate.active ? gate.forward(state, k, c.to) : "";
+          if (to === null || seen.has(stateNode(c.to, to))) continue;
+          seen.add(stateNode(c.to, to));
+          next.push([c.to, to]);
         }
       }
       frontier = next;

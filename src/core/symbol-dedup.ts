@@ -178,14 +178,29 @@ function dedupInto(result: SymbolLink[], seen: Map<string, number>, links: reado
     const existing = result[existingIdx]!;
     const existingRank = existing.confidence ? CONFIDENCE_RANK[existing.confidence] : 0;
     const newRank = link.confidence ? CONFIDENCE_RANK[link.confidence] : 0;
+    let kept = existing;
     if (newRank > existingRank) {
-      result[existingIdx] = link;
+      kept = link;
     } else if (newRank === existingRank && link.sourceLine < existing.sourceLine) {
       // Tiebreak: keep the earliest source line so the report points at the
       // first occurrence rather than a later duplicate.
-      result[existingIdx] = link;
+      kept = link;
     }
+    // The edge returns to the binding sites of both, and to any entry when either states none.
+    if (existing.viaUsage || link.viaUsage) {
+      const viaUsage = existing.viaUsage && link.viaUsage ? mergeUsages(existing.viaUsage, link.viaUsage) : undefined;
+      const { viaUsage: _drop, ...rest } = kept;
+      kept = viaUsage ? { ...rest, viaUsage } : rest;
+    }
+    result[existingIdx] = kept;
   }
   SEEN.set(result, { length: result.length, seen });
   return result;
+}
+
+/** Both lists of binding sites, each once, in order. */
+function mergeUsages(a: NonNullable<SymbolLink["viaUsage"]>, b: NonNullable<SymbolLink["viaUsage"]>): NonNullable<SymbolLink["viaUsage"]> {
+  const out = [...a];
+  for (const u of b) if (!out.some((x) => x.file === u.file && x.line === u.line)) out.push(u);
+  return out;
 }

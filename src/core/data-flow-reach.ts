@@ -10,7 +10,7 @@ import type { EntryPointInfo,
   SymbolLink,
   SymbolReachSummary,
 } from "../types/analysis.js";
-import { buildSymbolAdjacency, edgeKey, fileOf, keyOf, strongerFirst } from "./symbol-graph.js";
+import { buildSymbolAdjacency, edgeKey, fileOf, keyOf, nodeKey, stateNode, strongerFirst, usageGate } from "./symbol-graph.js";
 import { byName, innermostAt, spansOf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { byOrdinal } from "./ordinal.js";
 
@@ -218,17 +218,25 @@ export interface ReachWitness {
  */
 export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach: SymbolReachSummary[]; witness: ReachWitness } {
   const { reverse, confidence: edgeConfidence, callLine } = buildSymbolAdjacency(input.symbolLinks);
-  // (kind, resource) → reached symbol → the callee it was reached from.
+  // A walk back through a child's emit returns only to the usages that bind it (`UsageGate`): its nodes are
+  // (symbol, state) pairs, `stateNode`, and a symbol is reached at the first of them.
+  const gate = usageGate(input.symbolLinks);
+  // (kind, resource) → reached node → the node it was reached from.
   const parents = new Map<string, Map<string, string | null>>();
+  // (kind, resource) → reached symbol → the node it was first reached as.
+  const firstNodes = new Map<string, Map<string, string>>();
   // (kind, resource) → a bound generic access's root → the hops below it.
   const tails = new Map<string, Map<string, FlowHop[]>>();
   const witness: ReachWitness = {
     pathOf(key, kind, resource) {
       const parent = parents.get(`${kind} ${resource}`);
-      if (!parent?.has(key)) return null;
+      const start = firstNodes.get(`${kind} ${resource}`)?.get(key) ?? key;
+      if (!parent?.has(start)) return null;
       const hops: FlowHop[] = [];
-      for (let cur: string | null | undefined = key; cur && hops.length <= MAX_DEPTH; cur = parent.get(cur)) {
-        const next = parent.get(cur);
+      for (let node: string | null | undefined = start; node && hops.length <= MAX_DEPTH; node = parent.get(node)) {
+        const cur = nodeKey(node);
+        const nextNode = parent.get(node);
+        const next = nextNode ? nodeKey(nextNode) : null;
         const hop: FlowHop = { file: fileOf(cur), symbol: symbolOf(cur) };
         const line = next ? callLine.get(edgeKey(cur, next)) : undefined;
         if (line !== undefined) hop.line = line;
@@ -312,8 +320,12 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     const visited = new Set<string>();
     const parent = new Map<string, string | null>();
     parents.set(`${kind} ${resource}`, parent);
-    type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean };
+    const first = new Map<string, string>();
+    firstNodes.set(`${kind} ${resource}`, first);
+    type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean; state: string };
     const reached: Hop[] = [];
+    // Every node the walk took up, each of a symbol's states: the guessing tier resumes from all of them.
+    const dequeued: Hop[] = [];
     // Roots that start further out (bound generic accesses) join the queue when
     // its frontier reaches their distance, so every symbol keeps its shortest one.
     const pending: Array<Hop & { tail?: FlowHop[] }> = [];
@@ -331,36 +343,43 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
             if (!t) tails.set(`${kind} ${resource}`, (t = new Map()));
             t.set(root.key, root.tail);
           }
-          queue.splice(qi, 0, { key: root.key, dist: root.dist, oFile: root.oFile, oSym: root.oSym, guessed: false });
+          queue.splice(qi, 0, { key: root.key, dist: root.dist, oFile: root.oFile, oSym: root.oSym, guessed: false, state: "" });
         }
         if (qi >= queue.length) break;
         const cur = queue[qi++]!;
-        if (!allowGuess || cur.guessed) reached.push(cur);
+        if (!allowGuess) dequeued.push(cur);
+        if ((!allowGuess || cur.guessed) && !first.has(cur.key)) {
+          first.set(cur.key, stateNode(cur.key, cur.state));
+          reached.push(cur);
+        }
         if (cur.dist >= MAX_DEPTH) continue;
         for (const next of reverse.get(cur.key) ?? []) {
-          if (visited.has(next)) continue;
+          const state = gate.active ? gate.reverse(cur.state, cur.key, next) : "";
+          if (state === null) continue;
+          const node = stateNode(next, state);
+          if (visited.has(node)) continue;
           const viaGuess = guessed(cur.key, next);
           if (viaGuess && !allowGuess) continue;
-          visited.add(next);
-          parent.set(next, cur.key);
-          queue.push({ key: next, dist: cur.dist + 1, oFile: cur.oFile, oSym: cur.oSym, guessed: cur.guessed || viaGuess });
+          visited.add(node);
+          parent.set(node, stateNode(cur.key, cur.state));
+          queue.push({ key: next, dist: cur.dist + 1, oFile: cur.oFile, oSym: cur.oSym, guessed: cur.guessed || viaGuess, state });
         }
       }
     };
     const roots: Hop[] = [];
     for (const s of group) {
       if (s.dist) {
-        pending.push({ key: s.key, dist: s.dist, oFile: s.originFile, oSym: s.originSymbol, guessed: false, ...(s.tail ? { tail: s.tail } : {}) });
+        pending.push({ key: s.key, dist: s.dist, oFile: s.originFile, oSym: s.originSymbol, guessed: false, state: "", ...(s.tail ? { tail: s.tail } : {}) });
       } else if (!visited.has(s.key)) {
         visited.add(s.key);
         parent.set(s.key, null);
-        roots.push({ key: s.key, dist: 0, oFile: s.originFile, oSym: s.originSymbol, guessed: false });
+        roots.push({ key: s.key, dist: 0, oFile: s.originFile, oSym: s.originSymbol, guessed: false, state: "" });
       }
     }
     pending.sort((a, b) => a.dist - b.dist);
     walk(roots, false);
     pending.length = 0;
-    walk([...reached], true);
+    walk(dequeued, true);
     for (const cur of reached) {
       addEffect(cur.key, {
         kind,

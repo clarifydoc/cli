@@ -86,3 +86,31 @@ describe("clarifydoc_trace walk", () => {
     expect(asked).toEqual([]);
   });
 });
+
+describe("clarifydoc_trace walk through a shared component's emit", () => {
+  // Two pages render the confirm dialog, each binding its own handler to its confirm.
+  const DIALOG: SymbolLink[] = [
+    link("src/ClubPage.tsx", "ClubPage", 7, "ConfirmDialog", "src/ConfirmDialog.tsx", "ConfirmDialog", 5),
+    link("src/PlayerPage.tsx", "PlayerPage", 8, "ConfirmDialog", "src/ConfirmDialog.tsx", "ConfirmDialog", 5),
+    { ...link("src/ConfirmDialog.tsx", "ConfirmDialog", 9, "onConfirm", "src/ClubPage.tsx", "saveClub", 4, "dispatch"), viaUsage: [{ file: "src/ClubPage.tsx", line: 7 }] },
+    { ...link("src/ConfirmDialog.tsx", "ConfirmDialog", 9, "onConfirm", "src/PlayerPage.tsx", "deletePlayer", 5, "dispatch"), viaUsage: [{ file: "src/PlayerPage.tsx", line: 8 }] },
+  ];
+
+  it("follows the emit from a page only back to that page's handler", async () => {
+    const text = (await walk(DIALOG, "ClubPage", undefined, "callees", 3, 20)).join("\n");
+    expect(text).toContain("saveClub()");
+    expect(text).not.toContain("deletePlayer");
+  });
+
+  it("walks back from a handler only to the page binding it", async () => {
+    const text = (await walk(DIALOG, "deletePlayer", undefined, "callers", 3, 20)).join("\n");
+    expect(text).toContain("PlayerPage()");
+    expect(text).not.toContain("ClubPage");
+  });
+
+  it("follows every binding from the dialog itself", async () => {
+    const text = (await walk(DIALOG, "ConfirmDialog", "src/ConfirmDialog.tsx", "callees", 1, 20)).join("\n");
+    expect(text).toContain("saveClub()");
+    expect(text).toContain("deletePlayer()");
+  });
+});

@@ -205,6 +205,8 @@ export interface SymbolLink {
   relation?: string;
   navigational?: boolean;
   confidence?: string;
+  /** The binding sites a dispatch back to a component's user returns to (`usageGate`). */
+  viaUsage?: Array<{ file: string; line: number }>;
 }
 
 export interface SymbolReach {

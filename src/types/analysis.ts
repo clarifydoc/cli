@@ -3442,6 +3442,19 @@ export interface SymbolLink {
    * In-memory only: dropped once the reach ran.
    */
   typeArgs?: Array<string | null>;
+  /**
+   * A dispatch back to the instance that bound it: a child component's emit,
+   * callback-prop call or dialog close reaching the handler a parent bound on
+   * ONE usage of the child (`<ConfirmDialog @confirm="saveClub">` in
+   * `ClubPage.vue`, line 4), or the opener's subscription. Each binding site,
+   * as the file holding it and its line — the parent's tag, or the opener's
+   * subscribe call; a re-emitted event keeps the first parent's. Reach that
+   * entered the child's file from a file binding the child returns through
+   * such a link only to its own bindings (`UsageGate` in core/symbol-graph.ts):
+   * ClubPage rendering the dialog never reaches PlayerPage's handler through
+   * its confirm. Absent = the link is taken from any entry.
+   */
+  viaUsage?: Array<{ file: string; line: number }>;
 }
 
 /**

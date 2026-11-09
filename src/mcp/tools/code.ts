@@ -6,6 +6,7 @@ import { routeOperation } from "../../core/openapi-export.js";
 import { describeReasons } from "../../core/risk-verdict.js";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { keyOf, stateNode, usageGate } from "../../core/symbol-graph.js";
 import { fileTestVerdict, testVerdictContext, type TestVerdictContext } from "../../core/test-functions.js";
 import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
@@ -1283,6 +1284,16 @@ export async function walk(
 
   const lines: string[] = [];
   const visited = new Set(frontier);
+  // A walk that entered a shared component from one user leaves through its emits only back to that user
+  // (`usageGate`): a node is walked once per state, listed once.
+  const gate = usageGate(links);
+  const walked = new Set<string>(frontier);
+  const stepOf = (state: string, edge: SymbolLink): string | null => {
+    if (!gate.active) return "";
+    const caller = keyOf(edge.sourceFile, edge.sourceSymbol);
+    const callee = keyOf(edge.targetFile, edge.targetSymbol);
+    return direction === "callees" ? gate.forward(state, caller, callee) : gate.reverse(state, callee, caller);
+  };
   const seedList = [...frontier];
   const seedNotes = new Map<string, string>();
   for (const k of seedList.slice(0, limit)) seedNotes.set(k, `${recursionNote(cycles, k)}${await unresolvedNote(k)}`);
@@ -1310,19 +1321,25 @@ export async function walk(
   // count is shown so a caller knows not to expand it.
   const fanOf = (key: string): number => edgesOf(key).length;
   const notes: string[] = [];
-  let current = seedList;
+  let current: Array<[string, string]> = seedList.map((k) => [k, ""]);
   for (let level = 1; level <= depth; level++) {
-    const next: string[] = [];
+    const next: Array<[string, string]> = [];
     const rows: Array<{ key: string; text: string }> = [];
-    for (const node of current) {
+    for (const [node, state] of current) {
       for (const edge of edgesOf(node)) {
         const otherFile = direction === "callers" ? edge.sourceFile : edge.targetFile;
         const otherSymbol = direction === "callers" ? edge.sourceSymbol : edge.targetSymbol;
         const otherLine = direction === "callers" ? edge.sourceLine : edge.targetLine;
         const key = symbolKey(otherFile, otherSymbol);
-        if (visited.has(key)) continue;
+        const to = stepOf(state, edge);
+        if (to === null || walked.has(stateNode(key, to))) continue;
+        walked.add(stateNode(key, to));
+        if (visited.has(key)) {
+          next.push([key, to]);
+          continue;
+        }
         visited.add(key);
-        next.push(key);
+        next.push([key, to]);
         labels.set(key, `${otherSymbol}() (${otherFile})`);
         names.set(key, [otherFile, otherSymbol]);
         const fan = fanOf(key);
@@ -1348,7 +1365,7 @@ export async function walk(
     }
     current = next.slice(0, expand);
     if (level === depth) {
-      const onward = current.filter((k) => edgesOf(k).some((e) =>
+      const onward = current.map(([k]) => k).filter((k) => edgesOf(k).some((e) =>
         !visited.has(direction === "callers" ? symbolKey(e.sourceFile, e.sourceSymbol) : symbolKey(e.targetFile, e.targetSymbol))));
       if (onward.length > 0) {
         notes.push(`depth ${depth} reached: ${plural(onward.length, "node")} at the last hop ${onward.length === 1 ? "has" : "have"} further ${direction} — raise \`depth\` (max 4) or re-call from one`);

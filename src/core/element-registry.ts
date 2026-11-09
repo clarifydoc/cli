@@ -132,6 +132,8 @@ export interface NormSymbolLink {
   strategy?: SymbolLinkStrategy;
   /** What kind of edge it is — see `SymbolLinkRelation`. */
   relation?: SymbolLinkRelation;
+  /** `SymbolLink.viaUsage`: each binding site as [file element index, line]. */
+  viaUsage?: Array<[number, number]>;
 }
 
 /** Normalized FileComplexityInfo — filePath → file element; each function → a function element. */
@@ -688,6 +690,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     // use-site → interned for identity only; its (varying) call line stays inline.
     to: reg.intern(l.targetFile, l.targetSymbol, { line: l.targetLine }),
     from: reg.intern(l.sourceFile, l.sourceSymbol),
+    usage: l.viaUsage?.map((u) => [internFile(reg, u.file), u.line] as [number, number]),
   }));
 
   const cxRaw = p.complexity?.map((fe) => ({
@@ -776,7 +779,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
   const { elements, remap } = reg.finalize();
 
   // ── build pass ──
-  const symbolLinks: NormSymbolLink[] = slRaw.map(({ l, from, to }) => {
+  const symbolLinks: NormSymbolLink[] = slRaw.map(({ l, from, to, usage }) => {
     const out: NormSymbolLink = {
       from: remap[from],
       fromLine: l.sourceLine,
@@ -787,6 +790,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     if (l.confidence !== undefined) out.confidence = l.confidence;
     if (l.strategy !== undefined) out.strategy = l.strategy;
     if (l.relation !== undefined) out.relation = l.relation;
+    if (usage) out.viaUsage = usage.map(([file, line]) => [remap[file]!, line]);
     return out;
   });
 
@@ -981,6 +985,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     if (nl.confidence !== undefined) out.confidence = nl.confidence;
     if (nl.strategy !== undefined) out.strategy = nl.strategy;
     if (nl.relation !== undefined) out.relation = nl.relation;
+    if (nl.viaUsage) out.viaUsage = nl.viaUsage.map(([file, line]) => ({ file: fileOf(elements, file), line }));
     return out;
   });
 

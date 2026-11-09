@@ -132,3 +132,111 @@ export function bfs(
     }
   }
 }
+
+/**
+ * Context-sensitive reach through dispatches back to a component's user.
+ *
+ * A child's emit, callback-prop call or dialog close is one link per binding
+ * (`SymbolLink.viaUsage`), but a call graph has one node per function: a walk
+ * that enters a shared `<ConfirmDialog>` from `ClubPage` and leaves through its
+ * `confirm` would reach every page's handler. The gate keeps the walk's last
+ * cross-file entry (one level of context) and lets it leave a child file
+ * through a bound link only back to a file binding it there — or when the file
+ * it came from binds the child nowhere (an unknown instance: nothing to tell
+ * the bindings apart by, so all of them stay). A walk that starts inside the
+ * child has no entry and takes every binding.
+ *
+ * States are opaque strings, `""` for none, so a walk keys its visited set by
+ * node and state (`stateNode`); with no bound link in the project every state
+ * is `""` and a walk behaves exactly as without the gate.
+ */
+export interface UsageGate {
+  /** Whether any link carries binding sites. */
+  readonly active: boolean;
+  /** The state after the forward step caller → callee, or null when the gate refuses it. */
+  forward(state: string, caller: string, callee: string): string | null;
+  /** The state after the reverse step callee → caller (a walk from effects back to entries), or null when refused. */
+  reverse(state: string, callee: string, caller: string): string | null;
+}
+
+/** A node of a gated walk: the key, and its state when there is one. */
+export const stateNode = (key: string, state: string): string => (state ? `${key}\u0001${state}` : key);
+/** The `file::symbol` key of a `stateNode`. */
+export const nodeKey = (node: string): string => {
+  const i = node.indexOf("\u0001");
+  return i < 0 ? node : node.slice(0, i);
+};
+
+/** What the gate reads of a link: its ends and binding sites (a summary read back from disk has the same). */
+type GateLink = Pick<SymbolLink, "sourceFile" | "sourceSymbol" | "targetFile" | "targetSymbol" | "viaUsage">;
+const GATES = new WeakMap<readonly GateLink[], { length: number; gate: UsageGate }>();
+const OPEN_GATE: UsageGate = { active: false, forward: () => "", reverse: () => "" };
+
+/** The links' usage gate, built once per array. */
+export function usageGate(symbolLinks: readonly GateLink[]): UsageGate {
+  const hit = GATES.get(symbolLinks);
+  if (hit && hit.length === symbolLinks.length) return hit.gate;
+  const gate = buildUsageGate(symbolLinks);
+  GATES.set(symbolLinks, { length: symbolLinks.length, gate });
+  return gate;
+}
+
+function buildUsageGate(symbolLinks: readonly GateLink[]): UsageGate {
+  // Edge → the files binding it; an edge one link states no binding for is open to every entry.
+  const bound = new Map<string, Set<string> | null>();
+  for (const l of symbolLinks) {
+    const ek = edgeKey(keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol));
+    const prev = bound.get(ek);
+    if (prev === null) continue;
+    if (!l.viaUsage?.length) {
+      bound.set(ek, null);
+      continue;
+    }
+    const files = prev ?? new Set<string>();
+    for (const u of l.viaUsage) files.add(u.file);
+    bound.set(ek, files);
+  }
+  // Child file → every file binding something of it.
+  const binders = new Map<string, Set<string>>();
+  const filesOf = new Map<string, Set<string>>();
+  for (const [ek, files] of bound) {
+    if (!files) continue;
+    filesOf.set(ek, files);
+    const child = fileOf(ek.slice(0, ek.indexOf("\u0000")));
+    const set = binders.get(child) ?? binders.set(child, new Set()).get(child)!;
+    for (const f of files) set.add(f);
+  }
+  if (filesOf.size === 0) return OPEN_GATE;
+  // The file a walk entered a child from may lead out through a binding when it binds the child there, or nowhere.
+  const admits = (child: string, entry: string, files: ReadonlySet<string>): boolean => files.has(entry) || !binders.get(child)?.has(entry);
+  // Forward state: `<child file>\u0002<file it was entered from>`.
+  // Reverse state: `<child file>\u0002<binding files, \u0003-joined>` — the bindings the walk left the child by.
+  const split = (state: string): [string, string] => {
+    const i = state.indexOf("\u0002");
+    return [state.slice(0, i), state.slice(i + 1)];
+  };
+  return {
+    active: true,
+    forward(state, caller, callee) {
+      const from = fileOf(caller);
+      const to = fileOf(callee);
+      const files = filesOf.get(edgeKey(caller, callee));
+      if (files && state) {
+        const [child, entry] = split(state);
+        if (child === from && !admits(child, entry, files)) return null;
+      }
+      return from === to ? state : `${to}\u0002${from}`;
+    },
+    reverse(state, callee, caller) {
+      const from = fileOf(caller);
+      const at = fileOf(callee);
+      if (state) {
+        const [child, joined] = split(state);
+        if (from !== child && !admits(child, from, new Set(joined.split("\u0003")))) return null;
+      }
+      const files = filesOf.get(edgeKey(caller, callee));
+      if (files) return `${from}\u0002${[...files].sort().join("\u0003")}`;
+      return from === at ? state : "";
+    },
+  };
+}

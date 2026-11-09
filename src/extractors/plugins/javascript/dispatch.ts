@@ -23,16 +23,28 @@ import { escapeRegex } from "../shared/path-utils.js";
  * fans out to each bound handler (the runtime does too, one parent at a time).
  */
 
-/** Targets once each, in the order found: a handler two bindings reach takes one of the capped places, not two. */
-function distinctTargets<T extends { file: string; span: { symbol: string; line?: number } }>(targets: T[]): T[] {
-  const seen = new Set<string>();
-  return targets.filter((t) => {
+/** Targets once each, in the order found: a handler two bindings reach takes one of the capped places, not two — with the binding sites of both. */
+function distinctTargets<T extends { file: string; span: { symbol: string; line?: number }; usage?: Usage[] }>(targets: T[]): T[] {
+  const seen = new Map<string, T>();
+  const out: T[] = [];
+  for (const t of targets) {
     const k = `${t.file}\0${t.span.symbol}\0${t.span.line ?? ""}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+    const prev = seen.get(k);
+    if (!prev) {
+      const own = t.usage ? { ...t, usage: [...t.usage] } : t;
+      seen.set(k, own);
+      out.push(own);
+      continue;
+    }
+    // A target one path reaches without a binding site is open to every entry.
+    if (!prev.usage || !t.usage) delete prev.usage;
+    else for (const u of t.usage) if (!prev.usage.some((x) => x.file === u.file && x.line === u.line)) prev.usage.push(u);
+  }
+  return out;
 }
+
+/** Where a parent binds a child's event or callback: its file and the tag's line (`SymbolLink.viaUsage`). */
+type Usage = { file: string; line: number };
 
 export class JsComponentEmitResolver implements DispatchResolver {
   readonly id = "component-emit";
@@ -49,7 +61,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
 
     // Every binding of a child's event on its tag: child file → event key → bindings.
     // `bound`: the function a Vue binding is extracted as when it calls anything but one of the file's own functions (`markupFunctions`).
-    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string; tag?: string }
+    interface Binding { parent: FileAnalysis; handler: string; calls?: string[]; child: FileAnalysis; event: string; angular: boolean; bound?: string; tag?: string; line: number }
     const bindings = new Map<string, Map<string, Binding[]>>();
     const selectors = angularSelectors(analyses);
     for (const parent of analyses) {
@@ -80,31 +92,33 @@ export class JsComponentEmitResolver implements DispatchResolver {
         const event = (angular ? el.event.slice(1, -1) : el.event.slice(1)).split(".")[0]!; // strip @ / () + modifiers
         const byEvent = bindings.get(child.filePath) ?? bindings.set(child.filePath, new Map()).get(child.filePath)!;
         const list = byEvent.get(tagKey(event)) ?? byEvent.set(tagKey(event), []).get(tagKey(event))!;
-        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }), tag: el.tag ?? el.component });
+        list.push({ parent, handler: el.handler!, ...(el.calls ? { calls: el.calls } : {}), child, event, angular, ...(angular ? {} : { bound: propFunctionName(el.tag ?? el.component!, el.event, el.line) }), tag: el.tag ?? el.component, line: el.line });
       }
     }
 
     /**
      * The functions an event of `file` reaches: each parent's named handler, and
      * where the parent only passes it on (`@save="(car) => $emit('save', car)"`),
-     * the handlers its own parents bind to that event, up to four levels.
+     * the handlers its own parents bind to that event, up to four levels. Each with the binding site on the
+     * child's own tag (`usage`): a passed-on event returns to the parent that passed it.
      */
-    const targetsOf = (file: string, key: string, depth: number, seen: Set<string>, only?: (b: Binding) => boolean): Array<{ file: string; span: SymbolSpan }> => {
+    const targetsOf = (file: string, key: string, depth: number, seen: Set<string>, only?: (b: Binding) => boolean, via?: Usage): Array<{ file: string; span: SymbolSpan; usage: Usage[] }> => {
       const at = `${file}#${key}`;
       if (depth > 4 || seen.has(at)) return [];
       seen.add(at);
-      const out: Array<{ file: string; span: SymbolSpan }> = [];
+      const out: Array<{ file: string; span: SymbolSpan; usage: Usage[] }> = [];
       for (const b of (bindings.get(file)?.get(key) ?? []).filter((x) => !only || only(x))) {
+        const usage = [via ?? { file: b.parent.filePath, line: b.line }];
         // Each event the binding passes on, wherever it spells it: `(car) => $emit('save', car)`,
         // `editing = false; $emit('cancel')`, `full ? $emit('reject') : $emit('swap')`.
         const handler = b.handler.trim();
         const passed = b.angular ? [REEMIT_OUTPUT.exec(handler)?.[1]].filter((e): e is string => !!e) : [...handler.matchAll(EMIT_ANYWHERE)].map((m) => m[1]!);
-        for (const event of new Set(passed.map(tagKey))) out.push(...targetsOf(b.parent.filePath, event, depth + 1, seen));
+        for (const event of new Set(passed.map(tagKey))) out.push(...targetsOf(b.parent.filePath, event, depth + 1, seen, undefined, usage[0]));
         if (b.angular ? passed.length > 0 : REEMIT.test(handler)) continue;
         // What an expression binding calls (`unitActions.deleteOne`): its markup function.
         const bound = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
         if (bound) {
-          out.push({ file: b.parent.filePath, span: bound });
+          out.push({ file: b.parent.filePath, span: bound, usage });
           continue;
         }
         // The named handler, and each further method a compound one calls (`page.set($event); reload()`).
@@ -112,11 +126,11 @@ export class JsComponentEmitResolver implements DispatchResolver {
           const name = cleanHandler(handler);
           if (!name) continue; // inline expression, not a named handler
           const span = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
-          if (span) out.push({ file: b.parent.filePath, span });
+          if (span) out.push({ file: b.parent.filePath, span, usage });
           // An Angular output bound to a method of a typed field (`(dismissed)="transferStore.dismiss"`).
           else if (b.angular) {
             const target = fieldMethod(b.parent, handler, byPath, filePathMap);
-            if (target) out.push({ file: target.file.filePath, span: target.span });
+            if (target) out.push({ file: target.file.filePath, span: target.span, usage });
           }
         }
       }
@@ -179,6 +193,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
               targetSymbol: t.span.symbol,
               targetLine: t.span.line,
               confidence: stated ? "EXTRACTED" : "INFERRED",
+              ...(t.usage ? { viaUsage: t.usage } : {}),
             });
           }
         }
@@ -212,6 +227,8 @@ export class JsComponentEmitResolver implements DispatchResolver {
                 targetSymbol: target.symbol,
                 targetLine: target.line,
                 confidence: "INFERRED",
+                // The opener's subscription is the instance: a dialog two screens open closes back to its own opener.
+                viaUsage: [{ file: parent.filePath, line: sub.line }],
               });
             }
             continue;
@@ -241,6 +258,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
               targetSymbol: target.symbol,
               targetLine: target.line,
               confidence: "INFERRED",
+              viaUsage: [{ file: parent.filePath, line: sub.line }],
             });
           }
         }
@@ -281,7 +299,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
                   const k = `${file.filePath}\u0000${user.name}\u0000${at.line}\u0000emit:${e.name}\u0000${t.file}\u0000${t.span.symbol}`;
                   if (seenLink.has(k)) continue;
                   seenLink.add(k);
-                  links.push({ sourceFile: file.filePath, sourceSymbol: user.name, sourceLine: at.line, callName: at.name, targetFile: t.file, targetSymbol: t.span.symbol, targetLine: t.span.line, confidence: "INFERRED" });
+                  links.push({ sourceFile: file.filePath, sourceSymbol: user.name, sourceLine: at.line, callName: at.name, targetFile: t.file, targetSymbol: t.span.symbol, targetLine: t.span.line, confidence: "INFERRED", ...(t.usage ? { viaUsage: t.usage } : {}) });
                 }
               }
             }
@@ -441,7 +459,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
     // `bound`: the function a Vue template's inline prop function is extracted as.
-    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string }>>>();
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string; line: number }>>>();
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
         (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event)),
@@ -451,7 +469,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
       if (els.length === 0 && !parent.functionProps?.length && renamed.length === 0) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      const bind = (component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string) => {
+      const bind = (line: number, component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string) => {
         const src = importSource ?? subByKey.get(tagKey(component));
         let childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
         // A component the parent's own file declares (`const FollowButton = props => …`, beside its user): keyed by the pair.
@@ -459,16 +477,16 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (!childFile || !byPath.has(childFile.split("\u0000")[0]!)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
         const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
-        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}) });
+        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}), line });
       };
       for (const el of els) {
         const bound = propFunctionName(el.component!, el.event, el.line);
         // Vue's `:update-permission="…"` is the child's `props.updatePermission`; a listener
         // `@refresh="reload"` reaches a child declaring `onRefresh` as a prop as that prop.
         // `:options="{ onClick: () => … }"` is extracted per member (`<ClubCard:options.onClick@8>`): the child's `props.options.onClick`.
-        if (VUE_PROP.test(el.event)) bind(el.component!, el.event.slice(1).replace(/^[^.]+/, camelProp), el.handler!, bound);
-        else if (VUE_LISTENER.test(el.event)) bind(el.component!, listenerProp(el.event), el.handler!, bound);
-        else bind(el.component!, el.event, el.handler!);
+        if (VUE_PROP.test(el.event)) bind(el.line, el.component!, el.event.slice(1).replace(/^[^.]+/, camelProp), el.handler!, bound);
+        else if (VUE_LISTENER.test(el.event)) bind(el.line, el.component!, listenerProp(el.event), el.handler!, bound);
+        else bind(el.line, el.component!, el.event, el.handler!);
       }
       // The handed-down prop is the parent's own prop: whatever the parent's callers bind to it, or the creator
       // `connect(…)` bound to that name, which the parent's call at the same line names (`mapDispatchToProps.onFollow`).
@@ -481,44 +499,45 @@ export class JsPropCallbackResolver implements DispatchResolver {
           for (const c of fn.calls) if (c.line === pb.line && !c.passed && !c.read) at.add(c.name);
         }
         const creators = parent.functions.concat(parent.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))).filter((f) => at.has(f.name) && f.name.endsWith(`.${propName}`));
-        bind(pb.component, pb.prop, propName, undefined, undefined, creators.length === 1 ? creators[0]!.name : undefined);
+        bind(pb.line, pb.component, pb.prop, propName, undefined, undefined, creators.length === 1 ? creators[0]!.name : undefined);
       }
       // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
-      for (const fp of parent.functionProps ?? []) bind(fp.component, fp.prop, fp.handler, undefined, fp.importSource);
+      for (const fp of parent.functionProps ?? []) bind(fp.line, fp.component, fp.prop, fp.handler, undefined, fp.importSource);
     }
     if (bindings.size === 0) return [];
 
     const spanCache = new Map<FileAnalysis, SymbolSpan[]>();
     const spans = (a: FileAnalysis) => spanCache.get(a) ?? spanCache.set(a, spansOf(a)).get(a)!;
 
-    /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props. */
-    const targetsOf = (file: string, prop: string, depth: number, seen: Set<string>): Array<{ file: string; span: SymbolSpan }> => {
+    /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props — with the binding site on the child's own tag. */
+    const targetsOf = (file: string, prop: string, depth: number, seen: Set<string>, via?: Usage): Array<{ file: string; span: SymbolSpan; usage: Usage[] }> => {
       const key = `${file}#${prop}`;
       if (depth > 4 || seen.has(key)) return [];
       seen.add(key);
-      const out: Array<{ file: string; span: SymbolSpan }> = [];
+      const out: Array<{ file: string; span: SymbolSpan; usage: Usage[] }> = [];
       for (const b of bindings.get(file)?.get(prop) ?? []) {
+        const usage = [via ?? { file: b.parent.filePath, line: b.line }];
         const inline = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
         if (inline) {
-          out.push({ file: b.parent.filePath, span: inline });
+          out.push({ file: b.parent.filePath, span: inline, usage });
           continue;
         }
         const creator = b.creator ? spans(b.parent).find((sp) => sp.symbol === b.creator) : undefined;
         if (creator) {
-          out.push({ file: b.parent.filePath, span: creator });
+          out.push({ file: b.parent.filePath, span: creator, usage });
           continue;
         }
         // A callback the script's options write in place is a function of its own (`<ConfirmBox:onConfirm@17>`).
         const held = b.handler.startsWith("<") ? spans(b.parent).find((sp) => sp.symbol === b.handler) : undefined;
         if (held) {
-          out.push({ file: b.parent.filePath, span: held });
+          out.push({ file: b.parent.filePath, span: held, usage });
           continue;
         }
         const name = cleanHandler(b.handler);
         if (!name) continue;
         const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
-        if (own) out.push({ file: b.parent.filePath, span: own });
-        else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen));
+        if (own) out.push({ file: b.parent.filePath, span: own, usage });
+        else if (PROP_CALLBACK.test(name)) out.push(...targetsOf(b.parent.filePath, name, depth + 1, seen, usage[0]));
       }
       return distinctTargets(out).slice(0, 8);
     };
@@ -555,6 +574,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
               targetSymbol: t.span.symbol,
               targetLine: t.span.line,
               confidence: "INFERRED",
+              viaUsage: t.usage,
             });
           }
         }
