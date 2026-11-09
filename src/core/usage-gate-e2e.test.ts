@@ -188,6 +188,25 @@ describe("an emit returns to the usage it came in by (Vue template refs)", () =>
         "}",
         "</script>",
       ].join("\n"),
+      // Calls into the dialog through its ref, but binds its confirm in place: no handler of its own to return to.
+      "web/src/pages/MatchPage.vue": [
+        "<template>",
+        "  <div>",
+        '    <button @click="skip">Skip</button>',
+        '    <ConfirmDialog ref="dialog" message="Kick off?" @confirm="kickedOff = true" />',
+        "  </div>",
+        "</template>",
+        "",
+        '<script setup lang="ts">',
+        'import { ref } from "vue";',
+        'import ConfirmDialog from "../components/ConfirmDialog.vue";',
+        "const dialog = ref<InstanceType<typeof ConfirmDialog>>();",
+        "const kickedOff = ref(false);",
+        "function skip() {",
+        "  dialog.value?.onConfirm();",
+        "}",
+        "</script>",
+      ].join("\n"),
       "web/src/router.ts": [
         'import { createRouter, createWebHistory } from "vue-router";',
         'import ClubPage from "./pages/ClubPage.vue";',
@@ -218,5 +237,10 @@ describe("an emit returns to the usage it came in by (Vue template refs)", () =>
     expect(summary.symbolLinks.some((l) => l.sourceSymbol === "quickSave" && l.targetSymbol === "onConfirm")).toBe(true);
     expect(tablesOf(summary, "web/src/pages/ClubPage.vue")).toEqual(["clubs"]);
     expect(tablesOf(summary, "web/src/components/ConfirmDialog.vue")).toEqual(["clubs", "players"]);
+  });
+
+  it("leaves the dialog through no page's handler for a page that calls into it but binds the event nowhere", () => {
+    expect(summary.symbolLinks.some((l) => l.sourceSymbol === "skip" && l.targetSymbol === "onConfirm")).toBe(true);
+    expect(tablesOf(summary, "web/src/pages/MatchPage.vue")).toEqual([]);
   });
 });

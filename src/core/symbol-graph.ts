@@ -141,10 +141,15 @@ export function bfs(
  * that enters a shared `<ConfirmDialog>` from `ClubPage` and leaves through its
  * `confirm` would reach every page's handler. The gate keeps the walk's last
  * cross-file entry (one level of context) and lets it leave a child file
- * through a bound link only back to a file binding it there — or when the file
- * it came from binds the child nowhere (an unknown instance: nothing to tell
- * the bindings apart by, so all of them stay). A walk that starts inside the
- * child has no entry and takes every binding.
+ * through a bound link only back to a file binding it there. A file that uses
+ * the child — imports it, calls into it through a template ref
+ * (`dialogRef.value.close()`), or binds any of its events — is one instance's
+ * parent: a walk entering from it leaves only through that file's own
+ * bindings, and through none when it binds that event nowhere. A subclass is
+ * the child itself, not a user. Only a file with no such evidence is an
+ * unknown instance (nothing to tell the bindings apart by, so all of them
+ * stay). A walk that starts inside the child has no entry and takes every
+ * binding.
  *
  * States are opaque strings, `""` for none, so a walk keys its visited set by
  * node and state (`stateNode`); with no bound link in the project every state
@@ -168,7 +173,11 @@ export const nodeKey = (node: string): string => {
 };
 
 /** What the gate reads of a link: its ends and binding sites (a summary read back from disk has the same). */
-type GateLink = Pick<SymbolLink, "sourceFile" | "sourceSymbol" | "targetFile" | "targetSymbol" | "viaUsage">;
+type GateLink = Pick<SymbolLink, "sourceFile" | "sourceSymbol" | "targetFile" | "targetSymbol" | "viaUsage"> & {
+  /** Read only to tell a file using a child (an import, a template-ref call) from one merely calling it. */
+  readonly strategy?: string;
+  readonly relation?: string;
+};
 const GATES = new WeakMap<readonly GateLink[], { length: number; gate: UsageGate }>();
 const OPEN_GATE: UsageGate = { active: false, forward: () => "", reverse: () => "" };
 
@@ -196,19 +205,28 @@ function buildUsageGate(symbolLinks: readonly GateLink[]): UsageGate {
     for (const u of l.viaUsage) files.add(u.file);
     bound.set(ek, files);
   }
-  // Child file → every file binding something of it.
-  const binders = new Map<string, Set<string>>();
+  // Child file → every file using it: binding something of it, importing it, or calling into it through a template ref.
+  const users = new Map<string, Set<string>>();
+  const use = (child: string, file: string): void => {
+    (users.get(child) ?? users.set(child, new Set()).get(child)!).add(file);
+  };
   const filesOf = new Map<string, Set<string>>();
   for (const [ek, files] of bound) {
     if (!files) continue;
     filesOf.set(ek, files);
     const child = fileOf(ek.slice(0, ek.indexOf("\u0000")));
-    const set = binders.get(child) ?? binders.set(child, new Set()).get(child)!;
-    for (const f of files) set.add(f);
+    for (const f of files) use(child, f);
   }
   if (filesOf.size === 0) return OPEN_GATE;
-  // The file a walk entered a child from may lead out through a binding when it binds the child there, or nowhere.
-  const admits = (child: string, entry: string, files: ReadonlySet<string>): boolean => files.has(entry) || !binders.get(child)?.has(entry);
+  // A subclass is the child itself, not a user of it: `TransferDialog extends EditDialog` is the instance its opener binds.
+  const extending = new Set<string>();
+  for (const l of symbolLinks) if (l.strategy === "inheritance" && l.sourceFile !== l.targetFile) extending.add(`${l.targetFile}\u0000${l.sourceFile}`);
+  for (const l of symbolLinks) {
+    if (l.sourceFile === l.targetFile || !users.has(l.targetFile) || extending.has(`${l.targetFile}\u0000${l.sourceFile}`)) continue;
+    if (l.relation === "reference" || l.strategy === "reference" || l.strategy === "dispatch:template-ref") use(l.targetFile, l.sourceFile);
+  }
+  // The file a walk entered a child from leads out through a binding when it binds the child there, or uses it nowhere.
+  const admits = (child: string, entry: string, files: ReadonlySet<string>): boolean => files.has(entry) || !users.get(child)?.has(entry);
   // Forward state: `<child file>\u0002<file it was entered from>`.
   // Reverse state: `<child file>\u0002<binding files, \u0003-joined>` — the bindings the walk left the child by.
   const split = (state: string): [string, string] => {
