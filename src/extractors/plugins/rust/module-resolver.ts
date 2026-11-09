@@ -100,6 +100,12 @@ const crateIndex = new WeakMap<ReadonlySet<string>, Map<string, string | null>>(
 
 /** A workspace crate by its name (`flowy_ai_pub` → `…/flowy-ai-pub/src`); null when absent or two crates share it. */
 function workspaceCrate(name: string, ctx: ImportResolveContext): string | null {
+  // The crate whose Cargo.toml names it so (`league_clubs` is the package `league-clubs`, in `crates/clubs`).
+  for (const pkg of new Set([name, name.replace(/_/g, "-")])) {
+    const root = ctx.packageRoot?.("cargo", pkg);
+    const src = root === null || root === undefined ? null : join(root, "src");
+    if (src !== null && (ctx.files.has(join(src, "lib.rs")) || ctx.files.has(join(src, "main.rs")))) return src;
+  }
   let index = crateIndex.get(ctx.files);
   if (!index) {
     index = new Map();

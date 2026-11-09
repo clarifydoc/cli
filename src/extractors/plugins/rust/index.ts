@@ -5,33 +5,16 @@ import { parseRustParam, stripRustTypeModifiers } from "./params.js";
 import { collectRocketFacts } from "./rocket-mounts.js";
 import { extractRustRoutes } from "./routes.js";
 import { extractRustDataSources } from "./data-sources.js";
+import { extractRustPathArgCalls } from "./request-wrappers.js";
 import { extractRustModuleRefs } from "./reachability.js";
 import { extractRustClasses } from "./classes.js";
 import { extractEventRegistrations } from "./event-dispatch.js";
 import { extractRustImports } from "./imports.js";
 import { extractRustLocalTypes } from "./locals.js";
 import { extractRustTypeAliases } from "./type-aliases.js";
-import { braceCodeHooks, type BraceLexicon } from "../shared/brace-code.js";
+import { braceCodeHooks } from "../shared/brace-code.js";
+import { RUST_LEXICON } from "./lexicon.js";
 import { callChainPatterns } from "../shared/call-chains.js";
-
-const RAW_STRING = /(?:b|c)?r(#*)"/y;
-
-/** Rust's literal forms: strings that may span lines, `r#"…"#` raw strings, character literals (a lifetime `'a` is code). */
-const RUST_LEXICON: BraceLexicon = {
-  lineComments: ["//"],
-  blockComment: { open: "/*", close: "*/", nests: true },
-  strings: [{ open: '"', close: '"', escapes: true, multiline: true }],
-  rawString: (text, i) => {
-    const c = text[i];
-    if (c !== "r" && c !== "b" && c !== "c") return -1;
-    RAW_STRING.lastIndex = i;
-    const m = RAW_STRING.exec(text);
-    if (!m) return -1;
-    const close = text.indexOf(`"${m[1]}`, i + m[0].length);
-    return close < 0 ? text.length : close + 1 + m[1]!.length;
-  },
-  charLiterals: true,
-};
 
 /** A turbofish `::<T, Vec<u8>>`, blanked so `x.parse::<T>(` reads as the call `x.parse(`. */
 const TURBOFISH = /::<(?:[^<>()]|<(?:[^<>()]|<[^<>()]*>)*>)*>/g;
@@ -208,4 +191,6 @@ export const rustSpec: RegexLangSpec = {
   },
   extractMessageHandlers: (lines) => extractEventRegistrations(lines),
   extractDataSources: (lines) => extractRustDataSources(lines),
+  // Calls handing a path to a project request wrapper (`session.api.post("/x")`), joined by core (request-wrappers.ts).
+  extractPathArgCalls: (lines) => extractRustPathArgCalls(lines),
 };

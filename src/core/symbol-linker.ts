@@ -29,7 +29,7 @@ import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
-import { buildImportDirectoryResolver, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
+import { buildImportDirectoryResolver, packageRootLookup, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
 import { splitTopLevel } from "../extractors/shared/value-resolver.js";
@@ -9139,6 +9139,7 @@ function importResolveContext(ctx: LinkContext): ImportResolveContext {
   const files = new Set(byFile.keys());
   ctx.importResolve = {
     files,
+    packageRoot: packageRootLookup(ctx.packageRoots),
     declares: (file, name) => {
       const a = byFile.get(file);
       return !!a && (a.functions.some((f) => f.name === name) || a.classes.some((c) => c.name === name));

@@ -1187,6 +1187,12 @@ export interface ImportResolveContext {
    * `name` being what the imported module calls it); null when none does.
    */
   namedImportOf?(file: string, name: string): { source: string; name: string } | null;
+  /**
+   * The directory (from the analysis root) of the repository's package an ecosystem's manifest names so
+   * (`cargo`, `league-clubs` → `rust/crates/clubs`); null when none or two do. Absent when the caller
+   * knows no sub-projects.
+   */
+  packageRoot?(ecosystem: string, name: string): string | null;
 }
 
 /**
@@ -1763,6 +1769,14 @@ export interface LanguagePluginManifest {
    * setup off or does not say the framework runs it. Leaf code: reads only its arguments.
    */
   testSetupRuns?(root: ProjectRootView, files: readonly FileAnalysis[]): Array<{ file: string; reason: string }>;
+  /**
+   * The bridges a code generator configured at a project root writes from another language's modules to this
+   * language's functions (a `flutter_rust_bridge.yaml`, a `wasm-pack build` script): `root` and every path are
+   * posix from the analysis root, `read` reads a file by such a path, `files` are the analyzed files. Core
+   * joins a call through an import of a generated module to the function it binds (`foreign-bindings.ts`).
+   * Leaf code: reads only its arguments.
+   */
+  foreignBindings?(root: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): import("./analysis.js").ForeignBindingRule[];
   /**
    * Ecosystems this language's imports are matched against — usually one;
    * Swift/Objective-C import from SwiftPM AND CocoaPods packages.

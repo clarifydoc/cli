@@ -1,4 +1,5 @@
-import type { FileAnalysis } from "../types/analysis.js";
+import type { FileAnalysis, SubProject } from "../types/analysis.js";
+import { packageRootLookup, packageRootsOf } from "./import-directories.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
 import { resolvePythonModule } from "../extractors/plugins/python/module-resolver.js";
@@ -347,11 +348,12 @@ function rootIdentifier(callName: string): string | null {
 }
 
 /** What a plugin's own import resolver (`resolveImport`) may read of the project. */
-export function importResolveContext(analyses: readonly FileAnalysis[], knownFiles: ReadonlySet<string>): ImportResolveContext {
+export function importResolveContext(analyses: readonly FileAnalysis[], knownFiles: ReadonlySet<string>, subProjects?: readonly SubProject[]): ImportResolveContext {
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
   const declared = new Map<string, Set<string>>();
   return {
     files: knownFiles,
+    ...(subProjects?.length ? { packageRoot: packageRootLookup(packageRootsOf(subProjects)) } : {}),
     declares: (file, name) => {
       let names = declared.get(file);
       if (!names) {
@@ -381,14 +383,14 @@ export function importResolveContext(analyses: readonly FileAnalysis[], knownFil
  * @param analyses - Every file analysis
  * @returns The index, keyed by file path
  */
-export function buildImportIndex(analyses: FileAnalysis[]): ImportIndex {
+export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonly SubProject[]): ImportIndex {
   const knownFiles = new Set<string>(analyses.map((a) => a.filePath));
   const local = new Map<string, Map<string, string>>();
   const source = new Map<string, Map<string, string>>();
   const namespaces = new Map<string, string[]>();
   // A language whose imports name modules by a path of its own resolves them itself.
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
-  const resolveCtx = importResolveContext(analyses, knownFiles);
+  const resolveCtx = importResolveContext(analyses, knownFiles, subProjects);
 
   for (const a of analyses) {
     const lm = new Map<string, string>();

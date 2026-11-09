@@ -73,6 +73,7 @@ import {
   EXTENSION_TO_LANGUAGE,
 } from "../extractors/registry.js";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { collectForeignBindingRules, foreignBindingLinks, withForeignBindingLinks } from "./foreign-bindings.js";
 import { placeNamespacedParts } from "./class-namespaces.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
 import { applyHttpClientBases } from "./http-client-bases.js";
@@ -1145,7 +1146,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Out-of-line definitions written through a namespace their file never opens join their class.
   placeNamespacedParts(allAnalyses);
-  const importIndex = buildImportIndex(allAnalyses);
+  const importIndex = buildImportIndex(allAnalyses, subProjects);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
@@ -1204,7 +1205,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const typeOnlyImports: Record<string, string[]> = {};
   // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
   const dynamicImportEdges: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source));
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source), subProjects);
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -1219,6 +1220,12 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (dispatchLinks.length > 0) {
     symbolLinks = dedupSymbolLinksAppend(symbolLinks, dispatchLinks);
     progress.detail(`  Dispatch links: ${dispatchLinks.length}`);
+  }
+  // Calls through a generated language bridge (flutter_rust_bridge, wasm-bindgen) to the function it binds.
+  const bridgeLinks = foreignBindingLinks(allAnalyses, collectForeignBindingRules(projectRoot, subProjects, allAnalyses));
+  if (bridgeLinks.length > 0) {
+    symbolLinks = withForeignBindingLinks(symbolLinks, bridgeLinks);
+    progress.detail(`  Calls through generated bindings: ${bridgeLinks.length}`);
   }
 
   // Step 4b: LSP enhancement (optional)
@@ -3572,6 +3579,8 @@ export function buildComponentGraph(
    * pinned instead. No file is guessed from its last segment or its names.
    */
   namesRepoPackage?: (source: string) => boolean,
+  /** The repository's sub-projects: a language's own import resolver finds a package by its manifest name. */
+  subProjects?: readonly SubProject[],
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -3857,7 +3866,7 @@ export function buildComponentGraph(
       // the `league/` directory over `league.rb`.
       const ownResolver = manifestFor(a.language)?.resolveImport;
       if (ownResolver) {
-        ownResolveCtx ??= importResolveContext(analyses, knownFiles);
+        ownResolveCtx ??= importResolveContext(analyses, knownFiles, subProjects);
         const targets = new Set<string>();
         for (const spec of imp.specifiers.length > 0 ? imp.specifiers : [undefined]) {
           const hit = ownResolver(a.filePath, imp.source, spec && (imp.aliases?.[spec] ?? spec), ownResolveCtx);
@@ -4078,7 +4087,7 @@ export function enrichLinkGraphFromComponentGraph(
   }
 }
 
-import type { FunctionInfo, ImportInfo, RouteInfo } from "../types/analysis.js";
+import type { FunctionInfo, ImportInfo, RouteInfo, SubProject } from "../types/analysis.js";
 import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";

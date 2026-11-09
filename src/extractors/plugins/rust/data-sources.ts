@@ -1,5 +1,6 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { fnAt, readRustCode, rustClientRequests, type RustCode } from "./request-wrappers.js";
 
 /**
  * Rust data sources — sqlx/raw SQL, Diesel tables, reqwest HTTP calls, env
@@ -215,6 +216,16 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
   /** Tables a row was already recorded for in the statement the scan is in. */
   const statementTables = new Set<string>();
 
+  // Functions and their parameters, read once when the file makes a client request at all.
+  let rc: RustCode | null | undefined;
+  const code = () => (rc === undefined ? (rc = /client|reqwest|ureq|surf/i.test(lines.join("\n")) ? readRustCode(lines) : null) : rc);
+  const paramsAt = (i: number) => {
+    const r = code();
+    return r ? fnAt(r, r.lineStarts[i]! + (lines[i]!.length - lines[i]!.trimStart().length))?.params : undefined;
+  };
+  const requestRows = code() ? rustClientRequests(code()!) : [];
+  sources.push(...requestRows);
+
   let inUse = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -254,7 +265,9 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
 
     const req = line.match(REQWEST_RE) ?? chainedClientCall(lines, i);
     if (req) {
-      const target = req[2] ?? urlOfLocal(lines, i, /\(\s*&?([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1]);
+      const name = /\(\s*&?([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1];
+      // A local's URL, else the wrapper's own parameter (`client.get(url)` in `fn fetch(url: &str)`) as a hole its callers fill.
+      const target = req[2] ?? urlOfLocal(lines, i, name) ?? (name && paramsAt(i)?.has(name) ? `\${${name}}` : null);
       sources.push({ kind: "api-call", name: req[1]!.toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }

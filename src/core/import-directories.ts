@@ -27,6 +27,14 @@ export function packageRootsOf(subProjects: readonly SubProject[]): Map<string, 
   return out;
 }
 
+/** `packageRoot` of an import resolver's context: the ONE root a package name has in an ecosystem. */
+export function packageRootLookup(roots: ReadonlyMap<string, readonly PackageRoot[]>): (ecosystem: string, name: string) => string | null {
+  return (ecosystem, name) => {
+    const hits = new Set((roots.get(ecosystem) ?? []).filter((p) => p.name === name).map((p) => p.root));
+    return hits.size === 1 ? [...hits][0]! : null;
+  };
+}
+
 /**
  * The ONE project directory a package import names (Go, Rust, Ruby —
  * `importsNameDirectories`). A language that knows how its import paths map

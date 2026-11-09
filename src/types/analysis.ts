@@ -2075,6 +2075,48 @@ export interface StoreShapes {
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
+/**
+ * A code generator's bridge from one language's modules to another
+ * language's functions (flutter_rust_bridge, wasm-bindgen): the module it
+ * writes — usually gitignored — exports the functions of the implementing
+ * files under a name of its own, and a call through an import of that module
+ * runs the function. Read from the generator's configuration by a plugin
+ * (`LanguagePluginManifest.foreignBindings`); core joins the calls.
+ */
+export interface ForeignBindingRule {
+  /** The generator (`flutter_rust_bridge`), for provenance. */
+  tool: string;
+  /**
+   * The implementing files, posix from the analysis root, without extension:
+   * the file `source + sourceExtension` and every file under `source/`.
+   */
+  source: string;
+  /** Extension of the implementing files (`.rs`). */
+  sourceExtension: string;
+  /** File names that stand for their directory's module (`mod.rs`, `lib.rs`). */
+  indexFiles?: string[];
+  /**
+   * Where the generated modules are, posix from the analysis root, without
+   * extension: each implementing file's module at the same relative path
+   * under it (`src/api/clubs.rs` → `<output>/clubs`), or, with `single`, this
+   * one module for all of them (`pkg/club_wasm`).
+   */
+  output: string;
+  /** Extension of the generated modules (`.dart`, `.js`). */
+  outputExtension: string;
+  single?: boolean;
+  /** How importers spell `output` by package (`package:club/src/rust/api`), besides a relative path. */
+  importPrefix?: string;
+  /** The name a binding gives a function: lowerCamelCase (`renew_contract` → `renewContract`) or the same. */
+  rename: "camel" | "same";
+  /**
+   * The generator's attribute on a function (`wasm_bindgen`, `frb`): `required` when only functions carrying
+   * it are bound; its `renameArgument` (`js_name = renewContract`) names the binding, its `skipArgument`
+   * (`frb(ignore)`) leaves the function out. Only public functions are bound either way.
+   */
+  decorator?: { name: string; required: boolean; renameArgument?: string; skipArgument?: string };
+}
+
 export interface PathArgCall {
   /** The callee as written: a function name, or the leaf of a member call. */
   callee: string;
@@ -2099,6 +2141,13 @@ export interface PathArgCall {
    * the callee is that class's method, wherever the call sits.
    */
   receiverType?: string;
+  /**
+   * The fields walked from a value of `receiverType` to the object the callee
+   * is called on (`session.api.post(…)` with `session: Session` →
+   * `["api"]`): core types each through the class's declared property, and
+   * `name()` through what that method of no arguments returns.
+   */
+  receiverFields?: string[];
   /**
    * The object a member call is made on, as written (`signedUrlService` in
    * `signedUrlService.fetch(url)`): the callee is that object's method — a

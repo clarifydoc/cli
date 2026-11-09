@@ -6,6 +6,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
 import { cargoPackageManager } from "./package-manifests.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { rustForeignBindings } from "./foreign-bindings.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -19,6 +20,8 @@ export const rustManifest: LanguagePluginManifest = {
   resolveImport: resolveRustImport,
   testCommand: rustTestCommand,
   projectCommands: rustProjectCommands,
+  // flutter_rust_bridge and wasm-pack configurations: generated Dart / JS modules bound to Rust functions.
+  foreignBindings: rustForeignBindings,
   language: "rust",
   family: "rust",
   // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`

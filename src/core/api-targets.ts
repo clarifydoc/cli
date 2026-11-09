@@ -1,4 +1,5 @@
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
+import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 import { buildModuleValueLookup } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
@@ -150,6 +151,8 @@ interface FactoryRow {
   row: ApiCall;
   /** Parameter name → its position in the factory's parameter list. */
   params: Map<string, number>;
+  /** The line the factory function is declared on: which of a file's same-named methods it is. */
+  ownerLine: number;
 }
 
 // `${url}`, or PHP's `{$url}`.
@@ -230,7 +233,7 @@ export function expandRequestFactories(
       const list = factories.get(key) ?? [];
       let entry = list.find((e) => e.row === row);
       if (!entry) {
-        entry = { row, params: new Map() };
+        entry = { row, params: new Map(), ownerLine: owner.line };
         list.push(entry);
       }
       entry.params.set(name, owner.params.findIndex((p) => p.name === name));
@@ -277,6 +280,18 @@ export function expandRequestFactories(
     return hits.length === 1 ? hits[0]! : null;
   };
 
+  // Classes by name per sub-project, for a type whose members are declared over several files.
+  let byName: Map<string, ClassRef[]> | null = null;
+  const namesakes = (ref: ClassRef): ClassRef[] => {
+    if (!byName && classes) {
+      byName = new Map();
+      for (const a of analyses) for (const r of classes.classesIn(a.filePath)) {
+        const key = `${r.projectId}\0${r.cls.name}`;
+        (byName.get(key) ?? byName.set(key, []).get(key)!).push(r);
+      }
+    }
+    return byName?.get(`${ref.projectId}\0${ref.cls.name}`) ?? [];
+  };
   const known = new Set(calls.filter((c) => c.kind === "api-call" && c.target).map((c) => `${c.filePath}:${c.line}:${c.target}`));
   let importDirectory: ((source: string, fromFile: string) => string | null) | null = sharedImportDirectory ?? null;
   const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -292,11 +307,16 @@ export function expandRequestFactories(
       // and only that — a receiver of no project class (`Uri.parse`,
       // `Route::get`) calls no project factory.
       if (site.receiverType) {
-        const receiver = classes?.resolve(a.filePath, site.receiverType) ?? importedClass(a.filePath, site.receiverType);
+        let receiver = classes?.resolve(a.filePath, site.receiverType) ?? importedClass(a.filePath, site.receiverType);
+        // `session.api.post(…)`: the type of each field in turn, as the class declaring it states it.
+        for (const field of site.receiverFields ?? []) receiver = receiver && classes ? fieldClass(classes, receiver, field, namesakes) : null;
         if (receiver && classes) {
           const chain = [receiver, ...classes.ancestors(receiver).flatMap((s) => (s.ref ? [s.ref] : []))];
           const owner = chain.find((c) => c.cls.methods.some((m) => m.name === site.callee));
-          let rows = owner ? factories.get(`${owner.filePath}::${site.callee}`) : undefined;
+          // That class's method, never a namesake another class of the same file declares.
+          const own = owner ? new Set(owner.cls.methods.filter((m) => m.name === site.callee).map((m) => m.line)) : undefined;
+          let rows = owner ? factories.get(`${owner.filePath}::${site.callee}`)?.filter((f) => own!.has(f.ownerLine)) : undefined;
+          if (rows?.length === 0) rows = undefined;
           // An interface (`IRequestProvider _requestProvider`): the one implementation whose method is the factory.
           if (!rows) {
             const impls = classes.descendants(receiver).filter((d) => factories.has(`${d.filePath}::${site.callee}`));
@@ -376,6 +396,32 @@ export function expandRequestFactories(
   factories = factoriesOf(onward);
   }
   return added;
+}
+
+/**
+ * The class a field of `ref` (or of a class it extends) is declared with — or, for `name()`, the class a
+ * method of it returns — else null. A type declared over several files (Rust `impl` blocks, partial classes)
+ * answers from the one declaration of that name in its sub-project that has the member.
+ */
+function fieldClass(classes: ClassIndex, ref: ClassRef, field: string, namesakes: (ref: ClassRef) => ClassRef[]): ClassRef | null {
+  const method = field.endsWith("()") ? field.slice(0, -2) : null;
+  const typeIn = (r: ClassRef): string | null | undefined => {
+    if (method) {
+      const m = r.cls.methods.find((x) => x.name === method && x.params.length === 0);
+      return m ? (m.returnType ? receiverTypeName(m.returnType, r.language) : null) : undefined;
+    }
+    const prop = r.cls.properties?.find((p) => p.name === field && !p.isStatic);
+    return prop ? (prop.type ? receiverTypeName(prop.type, r.language) : null) : undefined;
+  };
+  const chain = [ref, ...classes.ancestors(ref).flatMap((s) => (s.ref ? [s.ref] : []))];
+  for (const r of chain) {
+    const type = typeIn(r);
+    if (type !== undefined) return type ? classes.resolve(r.filePath, type) : null;
+  }
+  const others = namesakes(ref).filter((r) => r !== ref && typeIn(r) !== undefined);
+  if (others.length !== 1) return null;
+  const type = typeIn(others[0]!);
+  return type ? classes.resolve(others[0]!.filePath, type) : null;
 }
 
 /** The rows one call site of a factory adds: each factory row with the site's literals in its holes. */

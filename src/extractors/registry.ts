@@ -719,6 +719,9 @@ export const PROJECT_COMMAND_READERS: ReadonlyArray<NonNullable<LanguagePluginMa
 /** Every language's reader of the files its test framework runs while setting a test run up. */
 export const TEST_SETUP_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["testSetupRuns"]>> = ALL_MANIFESTS.flatMap((m) => (m.testSetupRuns ? [m.testSetupRuns] : []));
 
+/** Every language's reader of the code generators that bind other languages' modules to its functions. */
+export const FOREIGN_BINDING_READERS: ReadonlyArray<NonNullable<LanguagePluginManifest["foreignBindings"]>> = ALL_MANIFESTS.flatMap((m) => (m.foreignBindings ? [m.foreignBindings] : []));
+
 const MATCHING_FIELDS = ["importKey", "packageKey", "prefixMatch", "assertsUnused", "installedOwners"] as const;
 
 /**
