@@ -229,6 +229,18 @@ export const release = (id: string) => release_player(id);
 export const renew = (id: string) => renew_contract(id);
 export const releaseAgain = (id: string) => wasm.release_player(id);
 `,
+  "web/packages/wasm/club/lazy.ts": `const wasm = () => import("./pkg/club_wasm");
+const scouting = () => import("./scouting");
+
+export const clubsLater = async (session: string) => (await wasm()).listClubs(session);
+export const releaseLater = async (id: string) => {
+  const m = await wasm();
+  return m.release_player(id);
+};
+export const scoutLater = async (id: string) => (await scouting()).listClubs(id);
+`,
+  "web/packages/wasm/club/scouting.ts": `export const listClubs = (region: string) => [region];
+`,
   "server/go.mod": `module example.com/league
 
 go 1.22
@@ -306,6 +318,17 @@ describe("a Rust library behind generated bindings, requesting through its own w
       "4 listClubs → rust/bindings/wasm/club/src/lib.rs::list_clubs_js",
       "5 release_player → rust/bindings/wasm/club/src/lib.rs::release_player",
       "7 wasm.release_player → rust/bindings/wasm/club/src/lib.rs::release_player",
+    ]);
+  });
+
+  it("joins a call through a loader that imports the wasm module when called, and a namesake loader to its own module", () => {
+    expect(links("web/packages/wasm/club/lazy.ts")).toEqual([
+      "4 listClubs → rust/bindings/wasm/club/src/lib.rs::list_clubs_js",
+      "4 wasm → web/packages/wasm/club/lazy.ts::wasm",
+      "6 wasm → web/packages/wasm/club/lazy.ts::wasm",
+      "7 m.release_player → rust/bindings/wasm/club/src/lib.rs::release_player",
+      "9 listClubs → web/packages/wasm/club/scouting.ts::listClubs",
+      "9 scouting → web/packages/wasm/club/lazy.ts::scouting",
     ]);
   });
 });

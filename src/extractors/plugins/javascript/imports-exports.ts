@@ -6,6 +6,7 @@ import { spawnImports } from "../shared/process-spawns.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { wrappedDefaultName } from "./wrapped-functions.js";
 import { tableEntry } from "./functions-classes.js";
+import { moduleLoaders } from "./loaded-members.js";
 
 /** Initializer node types that make a `const` export a function. */
 const FUNCTION_VALUE_TYPES: ReadonlySet<string> = new Set([
@@ -253,10 +254,28 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
     for (const child of node.namedChildren) this.collectRegisteredRequires(child, imports);
   }
 
-  /** Recursively collect every dynamic `import("module")` call in the subtree. */
-  private collectDynamicImports(node: Node, imports: ImportInfo[]): void {
+  /**
+   * Recursively collect every dynamic `import("module")` call in the subtree, and each place a module loader's
+   * result is bound (`const club = await loadClub()`, `loadClub().then((club) => …)`: `loaders`, the file's
+   * `moduleLoaders`) — the module under that name, as `const club = await import("./club")` binds it.
+   */
+  private collectDynamicImports(node: Node, imports: ImportInfo[], loaders: ReadonlyMap<string, string> = moduleLoaders(node.tree.rootNode)): void {
     if (node.type === "call_expression") {
       const callee = node.childForFieldName("function");
+      const loaded = loaders.size > 0 && callee?.type === "identifier" ? loaders.get(callee.text) : undefined;
+      const names = loaded !== undefined ? loaderBindings(node) : null;
+      if (loaded !== undefined && names) {
+        imports.push({
+          source: loaded,
+          specifiers: names.specifiers,
+          isDefault: false,
+          isNamespace: names.isNamespace,
+          isType: false,
+          line: node.startPosition.row + 1,
+          dynamic: true,
+          ...(Object.keys(names.aliases).length > 0 ? { aliases: names.aliases } : {}),
+        });
+      }
       if (callee && callee.type === "import") {
         const args = node.childForFieldName("arguments");
         const firstArg = args?.child(1);
@@ -279,7 +298,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         }
       }
     }
-    for (const child of node.children) this.collectDynamicImports(child, imports);
+    for (const child of node.children) this.collectDynamicImports(child, imports, loaders);
   }
 
   private parseImportStatement(node: Node): ImportInfo {
@@ -624,6 +643,23 @@ function dynamicBindings(importCall: Node): { specifiers: string[]; aliases: Rec
     }
   }
   return null;
+}
+
+/**
+ * What a module loader's call binds where it stands (`moduleLoaders`): `const club = await loadClub()`,
+ * `const { f } = await loadClub()`, `loadClub().then((club) => …)`. A declarator that does not await the call
+ * holds the promise, which binds nothing; the call must hand the loader no arguments.
+ */
+function loaderBindings(call: Node): ReturnType<typeof dynamicBindings> {
+  if ((call.childForFieldName("arguments")?.namedChildCount ?? 1) !== 0) return null;
+  let up: Node | null = call.parent;
+  let awaited = false;
+  while (up && (up.type === "parenthesized_expression" || up.type === "await_expression")) {
+    if (up.type === "await_expression") awaited = true;
+    up = up.parent;
+  }
+  if (up?.type === "variable_declarator" && !awaited) return null;
+  return dynamicBindings(call);
 }
 
 /** A loader that renders a module's default export once it arrives: `lazy`, `React.lazy`, `loadable`, `defineAsyncComponent`, `lazyWithRetry`. */

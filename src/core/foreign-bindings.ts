@@ -173,9 +173,11 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
     const prefixes = new Map<string, string>();
     const named = new Map<string, { mod: string; exported: string }>();
     const scopes: Array<{ mod: string; names?: string[]; except?: string[] }> = [];
+    let bound = false;
     for (const imp of a.imports) {
       const mod = moduleNamed(a.filePath, imp.source);
       if (!mod) continue;
+      bound = true;
       const names = modules.get(mod)!.names;
       if (imp.inScope) scopes.push({ mod, ...(imp.inScope.names ? { names: imp.inScope.names } : {}), ...(imp.inScope.except ? { except: imp.inScope.except } : {}) });
       for (const spec of imp.specifiers) {
@@ -185,7 +187,14 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
         else if (imp.isNamespace || (!imp.inScope && !imp.isDefault && /^[a-z_]/.test(spec))) prefixes.set(spec, mod);
       }
     }
-    if (prefixes.size === 0 && named.size === 0 && scopes.length === 0) continue;
+    if (!bound) continue;
+    // A call of a module's member where the module is loaded in place (`(await import("./pkg/club")).listClubs()`)
+    // names the module as its `target`.
+    const loaded = (call: { name: string; target?: string | null }): Bound | null => {
+      if (!call.target || call.name.includes(".")) return null;
+      const mod = moduleNamed(a.filePath, call.target);
+      return mod ? modules.get(mod)!.names.get(call.name) ?? null : null;
+    };
     const own = new Set(a.functions.map((f) => f.name));
     const target = (callName: string): Bound | null => {
       const dot = callName.indexOf(".");
@@ -209,7 +218,7 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
     ];
     for (const { symbol, fn } of callers) {
       for (const call of fn.calls) {
-        const hit = target(call.name);
+        const hit = loaded(call) ?? target(call.name);
         if (!hit) continue;
         links.push({
           sourceFile: a.filePath,

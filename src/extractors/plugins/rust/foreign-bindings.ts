@@ -11,8 +11,10 @@ import type { ForeignBindingRule } from "../../../types/analysis.js";
  *     (`lib/src/rust/api/clubs.dart`, `lib/src/rust/third_party/club_kit/clubs.dart`),
  *     its public functions in lowerCamelCase;
  *   - wasm-bindgen through wasm-pack (a `wasm-pack build <crate> --out-dir <dir>`
- *     script in a package.json): the crate's `#[wasm_bindgen]` functions, named
- *     by `js_name` when it says so, in the one module `<dir>/<crate_name>.js`.
+ *     script in a package.json, possibly after `cd <crate> &&`): the crate's
+ *     `#[wasm_bindgen]` functions, and those of the project crates it links
+ *     (`use club_kit as _;`), named by `js_name` when it says so, in the one
+ *     module `<dir>/<crate_name>.js`.
  *
  * Leaf code: reads only its arguments.
  */
@@ -81,6 +83,22 @@ function dependencyEntry(toml: string, section: string, name: string): string | 
 
 /** The directory of the crate `name` a crate depends on: its `path`, through the workspace's when it says `workspace = true`. */
 function dependencyDir(crateDir: string, name: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): string | null {
+  const stated = pathDependencyDir(crateDir, name, read);
+  if (stated !== undefined) return stated;
+  // Else the ONE analyzed crate whose Cargo.toml declares that package name.
+  const hits = new Set<string>();
+  for (const f of files) {
+    const m = /^(?:(.*)\/)?src\/lib\.rs$/.exec(f);
+    if (m && crateName(packageName(read(join(m[1] ?? "", "Cargo.toml"))) ?? "") === crateName(name)) hits.add(m[1] ?? "");
+  }
+  return hits.size === 1 ? [...hits][0]! : null;
+}
+
+/**
+ * The directory a crate's Cargo.toml gives its dependency `name`: its `path`, or the workspace's for
+ * `workspace = true` (null when the workspace names no path); undefined when neither says.
+ */
+function pathDependencyDir(crateDir: string, name: string, read: (path: string) => string | undefined): string | null | undefined {
   const own = read(join(crateDir, "Cargo.toml"));
   const entry = own ? dependencyEntry(own, "dependencies", name) : null;
   const path = (e: string | null) => (e ? /\bpath\s*=\s*"([^"]+)"/.exec(e)?.[1] : undefined);
@@ -96,13 +114,7 @@ function dependencyDir(crateDir: string, name: string, read: (path: string) => s
       if (dir === "" || dir.startsWith("..")) break;
     }
   }
-  // Else the ONE analyzed crate whose Cargo.toml declares that package name.
-  const hits = new Set<string>();
-  for (const f of files) {
-    const m = /^(?:(.*)\/)?src\/lib\.rs$/.exec(f);
-    if (m && crateName(packageName(read(join(m[1] ?? "", "Cargo.toml"))) ?? "") === crateName(name)) hits.add(m[1] ?? "");
-  }
-  return hits.size === 1 ? [...hits][0]! : null;
+  return undefined;
 }
 
 function flutterRustBridge(root: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): ForeignBindingRule[] {
@@ -168,22 +180,61 @@ function wasmPack(root: string, read: (path: string) => string | undefined, file
         else if (t === "--target" || t === "-t" || t === "--scope" || t === "-s" || t === "--mode" || t === "--profile") i++;
         else if (!t.startsWith("-") && crate === ".") crate = t;
       }
-      const crateDir = join(root, crate);
+      // `cd ../crates/club && wasm-pack build .`: the crate path is read from the directory the script moved to.
+      const moved = /\bcd\s+([^\s&|;]+)\s*&&\s*$/.exec(script.slice(0, m.index))?.[1];
+      const crateDir = join(root, moved ?? "", crate);
       const name = packageName(read(join(crateDir, "Cargo.toml")));
       if (!name || !files.has(join(crateDir, "src/lib.rs"))) continue;
-      rules.push({
-        tool: "wasm-bindgen",
-        source: join(crateDir, "src"),
-        sourceExtension: ".rs",
-        indexFiles: ["mod.rs", "lib.rs"],
-        // wasm-pack writes `--out-dir` relative to the crate.
-        output: join(crateDir, outDir, outName ?? crateName(name)),
-        outputExtension: ".js",
-        single: true,
-        rename: "same",
-        decorator: { name: "wasm_bindgen", required: true, renameArgument: "js_name", skipArgument: "skip" },
-      });
+      // wasm-pack writes `--out-dir` relative to the crate.
+      const output = join(crateDir, outDir, outName ?? crateName(name));
+      for (const dir of [crateDir, ...linkedCrates(crateDir, read, files)]) {
+        rules.push({
+          tool: "wasm-bindgen",
+          source: join(dir, "src"),
+          sourceExtension: ".rs",
+          indexFiles: ["mod.rs", "lib.rs"],
+          output,
+          outputExtension: ".js",
+          single: true,
+          rename: "same",
+          decorator: { name: "wasm_bindgen", required: true, renameArgument: "js_name", skipArgument: "skip" },
+        });
+      }
     }
   }
   return rules;
+}
+
+const MAX_LINKED_CRATES = 16;
+
+/**
+ * The project's own crates linked into a wasm crate, whose `#[wasm_bindgen]` functions the generated module
+ * exports too: each `[dependencies]` entry with a `path` (directly or through the workspace) that the crate's
+ * sources name (`use club_kit as _;`, `club_kit::renew()` — a dependency nothing names is not linked), and in
+ * turn the ones those name.
+ */
+function linkedCrates(crateDir: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  const seen = new Set([crateDir]);
+  const queue = [crateDir];
+  while (queue.length > 0 && out.length < MAX_LINKED_CRATES) {
+    const dir = queue.shift()!;
+    const toml = read(join(dir, "Cargo.toml"));
+    const body = toml ? /^\s*\[dependencies\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] : undefined;
+    if (!body) continue;
+    const prefix = `${join(dir, "src")}/`;
+    const sources = [...files].filter((f) => f.startsWith(prefix) && f.endsWith(".rs")).map((f) => read(f) ?? "");
+    for (const line of body.split(/\r?\n/)) {
+      const dep = /^\s*([\w-]+)(?:\.workspace\s*=\s*true|\s*=\s*\{[^}]*\b(?:path|workspace)\s*=)/.exec(line)?.[1];
+      if (!dep) continue;
+      const named = new RegExp(`\\b${crateName(dep)}\\s*(?:::|as\\b|;)`);
+      if (!sources.some((text) => named.test(text))) continue;
+      const depDir = pathDependencyDir(dir, dep, read);
+      if (!depDir || seen.has(depDir) || !files.has(join(depDir, "src/lib.rs"))) continue;
+      seen.add(depDir);
+      out.push(depDir);
+      queue.push(depDir);
+    }
+  }
+  return out;
 }
