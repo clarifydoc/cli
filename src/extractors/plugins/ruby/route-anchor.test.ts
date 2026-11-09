@@ -382,7 +382,7 @@ end`;
 });
 
 describe("rails-route-anchor — a concern's call through a reader typed by an instance variable", () => {
-  it("calls the model's member when the reader's variable is typed (constant, association, alias); an untyped or ambiguous one keeps its name", () => {
+  it("types the call on the model when the reader's variable is typed (constant, association, alias); an untyped or ambiguous one stays untyped", () => {
     const router = `Rails.application.routes.draw do
   post '/badges/matches', to: 'match_badges#create'
   post '/badges/clubs', to: 'club_badges#create'
@@ -412,10 +412,12 @@ end`;
     const importIndex = buildImportIndex(out);
     const ctx = { importIndex, classes: buildClassIndex(out, importIndex), resolveModule: () => null, fileOf: (p: string) => out.find((a) => a.filePath === p) } as ProjectContext;
     reconcileProjectRoutes(out, ctx, [railsRouteAnchor]);
-    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls.map((c) => c.name).filter((n) => /update_badges/.test(n));
-    expect(calls("/badges/matches")).toEqual(["Badgeable.update_badges"]);
-    expect(calls("/badges/clubs")).toEqual(["Badgeable.update_badges"]);
-    expect(calls("/badges/cars")).toEqual(["model.update_badges"]);
+    // The receiver's model is the call's `receiverType`, so the concern's own-receiver write binds to it alone.
+    const calls = (path: string) => out.flatMap((a) => a.routes).find((r) => r.path === path)!.calls
+      .filter((c) => /update_badges/.test(c.name)).map((c) => `${c.name} ${c.receiverType ?? "-"}`);
+    expect(calls("/badges/matches")).toEqual(["model.update_badges Match"]);
+    expect(calls("/badges/clubs")).toEqual(["model.update_badges Club"]);
+    expect(calls("/badges/cars")).toEqual(["model.update_badges -"]);
   });
 });
 

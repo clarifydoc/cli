@@ -234,7 +234,7 @@ export function synthesizeApiRouteSymbolLinks(
 }
 
 /** Receiver heads naming the instance itself, across languages. */
-const SELF_CALL = /^(?:this|self|super|\$this|Self|base|MyBase|Me)(?:\(\))?(?:\.|->|::)/;
+export const SELF_CALL = /^(?:this|self|super|\$this|Self|base|MyBase|Me)(?:\(\))?(?:\.|->|::)/;
 
 /** Longest run of self-calls followed inside a base class to its per-subclass request. */
 const MAX_INHERITED_DEPTH = 4;

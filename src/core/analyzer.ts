@@ -155,6 +155,7 @@ import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } fr
 import { expandTypedMemberHoles } from "./typed-member-holes.js";
 import { expandChannelFactories } from "./channel-factories.js";
 import { expandEntityParameters } from "./entity-parameters.js";
+import { bindMixinSelfAccess, captureMixinReceivers } from "./mixin-self.js";
 import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
 import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
@@ -1597,6 +1598,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // graph is untouched; blast radius (below) does include them — a handler's
   // blast genuinely covers the screens that call it.
   const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses);
+  // The receiver class a call into a mixin ran on, for its own-receiver accesses — before `viaType` is dropped below.
+  const mixinReceivers = allAnalyses.some((a) => a.dataSources?.some((d) => d.mixinSelf)) ? captureMixinReceivers(symbolLinks) : null;
   const inheritedLinks = moveInheritedCallsToSubclasses(symbolLinks, apiSymbolLinks, allAnalyses);
   if (apiSymbolLinks.length > 0) {
     symbolLinks = dedupSymbolLinksAppend(symbolLinks, [...inheritedLinks, ...apiSymbolLinks]);
@@ -1975,6 +1978,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A helper querying the model its caller hands it: a row at each call site handing it an entity class.
   const boundModelRows = expandEntityParameters(allAnalyses, symbolLinks);
   if (boundModelRows > 0 && verbose) progress.detail(`  Models handed to query helpers: ${boundModelRows} row(s)`);
+  // A mixin's access on its own receiver: a row at each call site whose receiver is an entity class.
+  const mixinRows = mixinReceivers ? bindMixinSelfAccess(allAnalyses, symbolLinks, mixinReceivers) : 0;
+  if (mixinRows > 0 && verbose) progress.detail(`  Mixin accesses bound to their receiver: ${mixinRows} row(s)`);
   // An event sent within a topic meets only the handlers of channels joined on that topic.
   const topicRows = scopeChannelTopics(allAnalyses);
   if (topicRows > 0 && verbose) progress.detail(`  Channel events kept apart by topic: ${topicRows} row(s)`);

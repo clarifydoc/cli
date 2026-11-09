@@ -735,8 +735,9 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
     const next: DataSourceInfo[] = [];
     for (const ds of a.dataSources) {
       // Every other Ruby `database` row names its entity already; the
-      // entity-less dotted ones are the chain candidates.
-      if (ds.kind !== "database" || ds.entity || !ds.name.includes(".")) {
+      // entity-less dotted ones are the chain candidates. A concern's row on
+      // its own receiver is bound at each call site instead (core).
+      if (ds.kind !== "database" || ds.entity || ds.mixinSelf || !ds.name.includes(".")) {
         next.push(ds);
         continue;
       }
@@ -878,10 +879,14 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
 
 /**
  * A concern's queries on itself (`update!` bare in `module Scorable`, rows
- * carrying `DataSourceInfo.mixinSelf`) are each including model's: one row per
- * model whose class includes the concern — directly, or through a module that
- * includes it — named and typed as that model's own (`Club.update!`). A concern
- * no model includes queries nothing.
+ * carrying `DataSourceInfo.mixinSelf`). One in its body outside any method (an
+ * `included do … end` block, a callback) runs in every including model's class
+ * body: one row per model whose class includes the concern — directly, or
+ * through a module that includes it — named and typed as that model's own
+ * (`Club.update!`). One inside a method is the model the method is called on,
+ * which only the call site says: it stays unbound here and core binds it at
+ * each resolved call (`bindMixinSelfAccess`). A concern no model includes
+ * queries nothing.
  */
 function spreadConcernSelfQueries(analyses: FileAnalysis[]): void {
   const ruby = analyses.filter((a) => a.language === "ruby");
@@ -923,8 +928,10 @@ function spreadConcernSelfQueries(analyses: FileAnalysis[]): void {
     if (!a.dataSources.some((d) => d.mixinSelf)) continue;
     const next: DataSourceInfo[] = [];
     const have = new Set<string>();
+    const inMethod = (line: number) =>
+      a.functions.some((f) => f.line <= line && line <= f.endLine) || a.classes.some((c) => c.methods.some((m) => m.line <= line && line <= m.endLine));
     for (const ds of a.dataSources) {
-      if (!ds.mixinSelf) {
+      if (!ds.mixinSelf || inMethod(ds.line)) {
         next.push(ds);
         continue;
       }

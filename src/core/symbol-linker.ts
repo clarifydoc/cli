@@ -4805,7 +4805,13 @@ function resolveCallToDefinitionBody(
     const mixed = isQualified || !pluginFor(analysis.language)?.explicitSelfMembers
       ? mixinMember(ctx, analysis, sourceFile, sourceSymbol, leafName, callerSide())
       : null;
-    if (mixed) return mkLink(mixed.file, mixed.symbol, mixed.line, "INFERRED", "inheritance");
+    if (mixed) {
+      const link = mkLink(mixed.file, mixed.symbol, mixed.line, "INFERRED", "inheritance");
+      // Called on the caller's own instance: its class is the receiver (see `SymbolLink.viaType`).
+      const own = sourceSymbol.slice(0, sourceSymbol.indexOf("."));
+      if (!mixed.symbol.startsWith(`${own}.`)) Object.assign(link, { viaType: own, viaTypeFile: sourceFile });
+      return link;
+    }
   }
 
   // ── Strategy 2: through the receiver's declared type ──

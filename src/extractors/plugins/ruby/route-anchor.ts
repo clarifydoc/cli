@@ -312,12 +312,13 @@ function templateHookCalls(
     if (reader) {
       const hook = definerOf(ref, reader[1]!, byName, qualified, modules);
       const type = hook && hook.owner !== action.owner ? readerType(chainOf(ref, byName, qualified), reader[1]!, assoc, modules, 0) : null;
-      // The member is found on the model or a module it includes: that class's own name is the callee.
+      // The member is found on the model or a module it includes: the call is on the model's instance
+      // (`receiverType`), so a concern's access on its own receiver binds to that model alone.
       const model = type ? modules.get(type) : null;
       const member = model ? definerOf(model, reader[2]!, byName, qualified, modules) : null;
       if (member) {
         changed = true;
-        return { ...c, name: `${member.owner.cls.name}.${reader[2]}`, target: null };
+        return { ...c, target: null, receiverType: type! };
       }
       return c;
     }

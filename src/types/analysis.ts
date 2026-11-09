@@ -2411,7 +2411,9 @@ export interface DataSourceInfo {
   /**
    * For `database`: the receiver is the instance (or class) of whatever includes
    * this module — a mixin's `self` (`update!` in a Rails concern). `entity`
-   * stays empty; the plugin's project pass adds one row per including model.
+   * stays empty. Inside a method, core binds it at each resolved call to the
+   * receiver's class (`bindMixinSelfAccess`); in the module's body (a callback
+   * block) the plugin's project pass adds one row per including model.
    */
   mixinSelf?: string;
   /**

@@ -166,7 +166,7 @@ end
   });
 });
 
-describe("a concern's bare ActiveRecord verbs write each including model's table", () => {
+describe("a concern's bare ActiveRecord verbs write the table of the model each call runs on", () => {
   let summary: ProjectAnalysis;
   let dir: string;
   beforeAll(async () => {
@@ -174,19 +174,21 @@ describe("a concern's bare ActiveRecord verbs write each including model's table
       ...MODELS,
       "app/controllers/application_controller.rb": "class ApplicationController < ActionController::Base\nend\n",
       "app/controllers/referees_controller.rb": "class RefereesController < ApplicationController\n  def destroy\n    Referee.find(params[:id]).retire\n  end\nend\n",
-      "config/routes.rb": "Rails.application.routes.draw do\n  resources :referees, only: [:destroy]\nend\n",
+      "app/controllers/clubs_controller.rb": "class ClubsController < ApplicationController\n  def destroy\n    Club.find(params[:id]).retire\n  end\nend\n",
+      "config/routes.rb": "Rails.application.routes.draw do\n  resources :referees, only: [:destroy]\n  resources :clubs, only: [:destroy]\nend\n",
     }));
   }, 60_000);
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("puts one write per including model on each concern method", () => {
-    const writes = (symbol: string) =>
-      (summary.symbolDataAccess ?? []).filter((s) => s.symbol === symbol && s.file === "app/models/concerns/scorable.rb").map((s) => `${s.entity}: ${s.sites.map((x) => x.name).join(",")}`).sort();
-    expect(writes("Scorable.add_goal!")).toEqual(["Club: Club.update!", "Player: Player.update!"]);
-    expect(writes("Scorable.reset_score")).toEqual(["Club: Club.update_columns,Club.save!", "Player: Player.update_columns,Player.save!"]);
-    expect(writes("Scorable.retire")).toEqual(["Club: Club.destroy", "Player: Player.destroy"]);
+  it("names no table on the concern method itself: a call site says which model it runs on", () => {
+    const calls = (summary.dataAccessGraph?.edges ?? []).filter((e) => e.source === "file::app/models/concerns/scorable.rb")
+      .flatMap((e) => e.calls.map((c) => `${c.name} ${c.entity ?? "-"}`)).sort();
+    expect(calls).toEqual(["Scorable.destroy -", "Scorable.save! -", "Scorable.update! -", "Scorable.update_columns -"]);
+    expect((summary.symbolDataAccess ?? []).filter((s) => s.file === "app/models/concerns/scorable.rb")).toEqual([]);
+    const flows = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route" && f.entryLabel.startsWith("DELETE /clubs/")).map((f) => `${f.effect} ${f.resource}`);
+    expect([...new Set(flows)].sort()).toEqual(["db-write Club"]);
   });
 
   it("writes nothing for a concern no model includes, nor from a class nested in a concern", () => {
