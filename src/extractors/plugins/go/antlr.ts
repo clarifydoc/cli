@@ -11,6 +11,7 @@ import {
   IdentifierListContext,
   MethodDeclContext,
   OperandContext,
+  ParametersContext,
   PrimaryExprContext,
   TypeArgsContext,
   TypeSwitchGuardContext,
@@ -66,7 +67,7 @@ export function readGo(source: string): ParsedStructure {
       const name = child.IDENTIFIER()?.symbol;
       if (!name) continue;
       const found: PatternCallName[] = [];
-      collectCalls(child, found);
+      collectCalls(child, found, undefined, callScope([child], child instanceof MethodDeclContext ? child.receiver() : undefined));
       // A declaration ends at its body's `}`, or at its signature when it has none.
       const endLine = child.stop?.line ?? child.start!.line;
       functions.push({ name: name.text ?? "", line: child.start!.line, endLine, calls: withPassedValues(recordPatternCalls(found), [child]) });
@@ -100,7 +101,8 @@ function varFunction(spec: VarSpecContext, out: PatternCallName[]): ParsedFuncti
   }
   collectCalls(spec, out, new Set(literals));
   const found: PatternCallName[] = [];
-  for (const literal of literals) collectCalls(literal, found);
+  const scope = callScope(literals);
+  for (const literal of literals) collectCalls(literal, found, undefined, scope);
   return { name: name.text ?? "", line: name.line, endLine: spec.stop?.line ?? name.line, calls: withPassedValues(recordPatternCalls(found), literals) };
 }
 
@@ -221,19 +223,59 @@ function invokedInPlace(literal: FunctionLitContext): boolean {
   return primary instanceof PrimaryExprContext && primary.children[0] === node && primary.children[1] instanceof ArgumentsContext;
 }
 
-function collectCalls(root: ParserRuleContext, out: PatternCallName[], skip?: ReadonlySet<ParseTree>): void {
+/** The values a function's calls are named from: the names its signatures declare with a type, and its receiver's. */
+interface CallScope {
+  typed: ReadonlySet<string>;
+  receiver?: string;
+}
+
+/** The receiver and parameters of `roots` and of the function literals in them — never a local, whose type is not written. */
+function callScope(roots: readonly ParserRuleContext[], receiver?: ParserRuleContext): CallScope {
+  const typed = new Set<string>();
+  const stack: ParseTree[] = [...roots];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node instanceof TerminalNode) continue;
+    if (node instanceof ParametersContext) declaredNames(node, typed);
+    const ctx = node as ParserRuleContext;
+    for (let i = ctx.children.length - 1; i >= 0; i--) stack.push(ctx.children[i]!);
+  }
+  const own = new Set<string>();
+  if (receiver) declaredNames(receiver, own);
+  return { typed, ...(own.size === 1 ? { receiver: [...own][0]! } : {}) };
+}
+
+/**
+ * A member called through fields of a value whose type the function states — its receiver or a parameter —, named by
+ * every name back to that value: `h.Module.Clubs.Promote(` is `h.Module.Clubs.Promote`, so the linker types the
+ * receiver from `h` field by field. Its last two names (`Clubs.Promote`) would say the caller's own field `Clubs`,
+ * which a value two fields away is not. The receiver's own field (`s.repo.Find(`, read as `repo.Find`), a local's
+ * path (a range variable states no type to start from), a package's member and a path split over lines (whose text
+ * the argument readers look the name up by) keep the scan's name.
+ */
+function pathFromHead(segments: readonly CalleeSegment[], scope: CallScope | undefined): PatternCallName | null {
+  if (!scope || segments.length < 3 || !segments.every((s) => s.kind === "id" && !s.colon)) return null;
+  const ids = segments as ReadonlyArray<Extract<CalleeSegment, { kind: "id" }>>;
+  const head = ids[0]!;
+  const last = ids.at(-1)!;
+  if (!scope.typed.has(head.name) || (ids.length === 3 && head.name === scope.receiver)) return null;
+  if (ids.some((s) => s.line !== head.line)) return null;
+  return { name: ids.map((s) => s.name).join("."), leafName: last.name, line: head.line, column: head.column };
+}
+
+function collectCalls(root: ParserRuleContext, out: PatternCallName[], skip?: ReadonlySet<ParseTree>, scope?: CallScope): void {
   const stack: ParseTree[] = [root];
   while (stack.length > 0) {
     const node = stack.pop()!;
     if (node instanceof TerminalNode || skip?.has(node)) continue;
     const ctx = node as ParserRuleContext;
-    if (ctx instanceof PrimaryExprContext) callsOfPrimary(ctx, out);
+    if (ctx instanceof PrimaryExprContext) callsOfPrimary(ctx, out, scope);
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push(ctx.children[i]!);
   }
 }
 
 /** `primaryExpr: (operand | conversion) (. IDENTIFIER typeArgs? | index | slice | typeAssertion | arguments)*`. */
-function callsOfPrimary(ctx: PrimaryExprContext, out: PatternCallName[]): void {
+function callsOfPrimary(ctx: PrimaryExprContext, out: PatternCallName[], scope?: CallScope): void {
   const children = ctx.children;
   if (children.length < 2) return;
   const segments: CalleeSegment[] = baseSegments(children[0]!);
@@ -247,7 +289,7 @@ function callsOfPrimary(ctx: PrimaryExprContext, out: PatternCallName[]): void {
     // `lru.New[string, *Item](n)` calls `lru.New`.
     if (child instanceof TypeArgsContext) continue;
     if (child instanceof ArgumentsContext) {
-      const named = patternCallName(segments, CHAIN_DEPTH);
+      const named = pathFromHead(segments, scope) ?? patternCallName(segments, CHAIN_DEPTH);
       if (named) out.push(named);
       segments.push({ kind: "call" });
       continue;

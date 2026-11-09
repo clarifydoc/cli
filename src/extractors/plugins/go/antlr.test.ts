@@ -117,6 +117,14 @@ const KNOWN: Record<string, Record<string, [string[], string[]]>> = {
     GetPart: [["Scan"], ["db.QueryRowContext().Scan"]],
     CreatePart: [[], ["db.QueryRowContext().Scan"]],
   },
+  // A member reached through a field of a parameter: the patterns keep the last two names, which would make
+  // `Request` the caller's own field (or a type); the parser names it from the parameter.
+  "test-fixtures/sample-go-api/handler/player_handler.go": {
+    "PlayerHandler.ListPlayers": [["URL.Query"], ["r.URL.Query"]],
+  },
+  "test-fixtures/sample-go-gin/handler/part_handler.go": Object.fromEntries(
+    ["ListParts", "SearchParts", "GetPart", "CreatePart", "DeletePart"].map((fn) => [fn, [["Request.Context"], ["c.Request.Context"]]]),
+  ),
 };
 
 describe("Go: ANTLR and the patterns agree on the fixtures", () => {

@@ -93,7 +93,8 @@ export function buildSymbolLinks(
   const typeDecls = analyses.filter((a) => !isDesignFormat(a.language) && !declaresSchemaTypes(a.language));
   const filePathMap = buildFilePathMap(analyses);
   const typeAliases = buildTypeAliasIndex(analyses, filePathMap);
-  const memberTypes = buildMemberTypes(typeDecls, typeAliases);
+  const packageDirectory = importDirectory ?? buildImportDirectoryResolver(analyses, subProjects);
+  const memberTypes = buildMemberTypes(typeDecls, typeAliases, packageDirectory);
   const ctx: LinkContext = {
     filePathMap,
     typeAliases,
@@ -120,7 +121,7 @@ export function buildSymbolLinks(
     languageOf: new Map(analyses.map((a) => [a.filePath, a.language as string])),
     importedFilesCache: new Map(),
     packageProjects: buildPackageProjectIndex(subProjects),
-    importDirectory: importDirectory ?? buildImportDirectoryResolver(analyses, subProjects),
+    importDirectory: packageDirectory,
     packageRoots: packageRootsOf(subProjects),
     implicitImports: new Map(subProjects.filter((p) => p.implicitImports?.length).map((p) => [p.id, p.implicitImports!])),
     declaredReferences: declaredReferenceClosure(subProjects),
@@ -3356,7 +3357,12 @@ interface InjectionPoint {
  * classes are pulled down (the CQRS base-handler pattern stores the injected
  * `_repository` on `BaseCommandHandler<T,R>`), never overwriting.
  */
-function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex | null = null): Map<string, Map<string, InjectionPoint>> {
+function buildMemberTypes(
+  analyses: FileAnalysis[],
+  typeAliases: TypeAliasIndex | null = null,
+  /** Where a package import leads (`packageQualifiedType`), so a field typed `squadRepo.Repository` is that package's. */
+  importDirectory?: ImportDirectoryResolver,
+): Map<string, Map<string, InjectionPoint>> {
   // Every definition of a class name (a name can recur across services/features).
   const classToFiles = new Map<string, string[]>();
   const declAt = new Map<string, FileAnalysis["classes"][number]>();
@@ -3456,12 +3462,21 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
     }
   }
 
+  let filesInDir: Map<string, string[]> | undefined;
   const out = new Map<string, Map<string, InjectionPoint>>();
   for (const a of analyses) {
     const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
     for (const cls of a.classes) {
       const members = new Map<string, InjectionPoint>();
-      const add = (rawName: string, type: string | null, qualifier: string | undefined, overwrite: boolean, declaredIn = a.filePath): void => {
+      const add = (
+        rawName: string,
+        type: string | null,
+        qualifier: string | undefined,
+        overwrite: boolean,
+        declaredIn = a.filePath,
+        /** The file whose imports the written type is read against: the one declaring the member (a part's sibling). */
+        importer: FileAnalysis = a,
+      ): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
         const written = renamedType(a, receiverTypeName(type, a.language));
@@ -3474,9 +3489,13 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
         if (!typeName && !qualifier) return;
         // `League::Club` where constants are looked up lexically: the class at that path (as declared), or none.
         const path = typeName?.includes("::") ? lexicalPathIn(lexicalEnv(), typeName, declaredIn, a.projectId) : undefined;
+        const inPackage = path === undefined && typeName && importDirectory && type
+          ? packageQualifiedType(importDirectory, importer, type, typeName, (dir) => (filesInDir ??= filesByDirectory(analyses)).get(dir) ?? [], (f) => declAt.has(memberKey(f, typeName)))
+          : undefined;
         const point: InjectionPoint = {
           typeName: path ? path.typeName : typeName ?? "",
-          typeFile: path !== undefined ? path?.typeFile ?? null : typeName ? fileOf(typeName, a.filePath) : null,
+          typeFile: path !== undefined ? path?.typeFile ?? null : inPackage?.length ? pickDefinition(typeName!, declaredFirst(typeName!, inPackage), a.filePath, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f))
+            : typeName ? fileOf(typeName, a.filePath) : null,
           member: rawName,
           consumer: cls.name,
         };
@@ -3491,7 +3510,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       for (const prop of cls.properties) add(prop.name, prop.type, prop.qualifier, true);
       for (const partner of partners.get(`${dir}\0${cls.name}`) ?? []) {
         if (partner.cls === cls || partner.a.language !== a.language) continue;
-        for (const prop of partner.cls.properties) add(prop.name, prop.type, prop.qualifier, false);
+        for (const prop of partner.cls.properties) add(prop.name, prop.type, prop.qualifier, false, a.filePath, partner.a);
       }
       // A part that only extends a class declared elsewhere (C++ bodies in a `.cc`, the class in its header):
       // the declaration's fields are the part's own — the one declaration of that name in the sub-project.
@@ -3499,7 +3518,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
         const decls = inSpace(classToFiles.get(cls.name) ?? [], a.filePath).filter((f) =>
           f !== a.filePath && !declAt.get(memberKey(f, cls.name))?.extension && analysisOf.get(f)?.projectId === a.projectId);
         const decl = decls.length === 1 ? declAt.get(memberKey(decls[0]!, cls.name)) : undefined;
-        for (const prop of decl?.properties ?? []) add(prop.name, prop.type, prop.qualifier, false, decls[0]);
+        for (const prop of decl?.properties ?? []) add(prop.name, prop.type, prop.qualifier, false, decls[0], analysisOf.get(decls[0]!) ?? a);
       }
 
       // Base classes as located from the class that names them (its import,
@@ -3511,7 +3530,11 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       while (base && baseFile && !seen.has(memberKey(baseFile, base))) {
         seen.add(memberKey(baseFile, base));
         const baseCls = declAt.get(memberKey(baseFile, base))!;
-        for (const prop of baseCls.properties) add(prop.name, (child && handedType(child, baseCls, prop.name)) ?? prop.type, prop.qualifier, false);
+        for (const prop of baseCls.properties) {
+          // A type the subclass hands its base is written in the subclass's file; the base's own, in the base's.
+          const handed = child ? handedType(child, baseCls, prop.name) : null;
+          add(prop.name, handed ?? prop.type, prop.qualifier, false, a.filePath, handed ? a : analysisOf.get(baseFile) ?? a);
+        }
         const from: string = baseFile;
         base = renamedType(analysisOf.get(from)!, bareClassName(baseCls.extends));
         baseFile = base ? fileOf(base, from) : null;
@@ -7364,6 +7387,17 @@ function typeRefFor(
   // A constant path where the language looks it up lexically names one class — never its last name's namesake.
   const path = lexicalPathRef(ctx, typeName, sourceFile, projectId);
   if (path !== undefined) return path;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const consumer = written ? ctx.analysisByFile.get(sourceFile) : undefined;
+  const inPackage = consumer
+    ? packageQualifiedType(ctx.importDirectory, consumer, written!, typeName, (dir) => (ctx.directoryFiles ??= filesByDirectory(ctx.analyses)).get(dir) ?? [], (f) => ctx.classAt.has(memberKey(f, typeName)))
+    : undefined;
+  if (inPackage?.length) {
+    const declOf = (f: string, n: string) => ctx.classAt.get(memberKey(f, n));
+    const declared = inPackage.filter((f) => !declOf(f, typeName)?.extension);
+    const pick = pickDefinition(typeName, declared.length > 0 ? declared : inPackage, sourceFile, declOf, (f) => ctx.languageOf.get(f));
+    if (pick) return { typeName, typeFile: pick };
+  }
   const imported = importedTypeRef(ctx, typeName, sourceFile, projectId);
   if (imported !== undefined) return imported?.typeFile ? { typeName: imported.typeName, typeFile: imported.typeFile } : null;
   typeName = dealias(ctx, typeName, sourceFile);
@@ -7377,6 +7411,36 @@ function typeRefFor(
   // A longer path (`Club::League::Table`, a module in front of the type's own path) loses its first name at a time.
   const dc = typeName.indexOf("::");
   return dc > 0 && !ctx.classFiles.has(typeName) ? typeRefFor(ctx, typeName.slice(dc + 2), sourceFile, projectId) : null;
+}
+
+/**
+ * The files declaring a type written through the package an import binds — `*squadRepo.Repository`,
+ * `[]league.Club` — where a package is the scope (`packageScoped`): that package's declaration, whichever
+ * namesake another package declares, and never the caller's own package's, which a qualified name does not mean.
+ * Undefined where the type is not written so, its qualifier binds no import, or the import's package (its one
+ * directory) declares no such type: the bare name's rules decide then. Test files of the package only when it
+ * declares the type nowhere else.
+ */
+function packageQualifiedType(
+  importDirectory: ImportDirectoryResolver,
+  consumer: FileAnalysis,
+  written: string,
+  typeName: string,
+  /** The analysed files of a directory (`dir/`, `""` for the root). */
+  filesIn: (dir: string) => readonly string[],
+  declares: (file: string) => boolean,
+): string[] | undefined {
+  if (!packageScoped(consumer.language)) return undefined;
+  const escaped = typeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const qualifier = new RegExp(`(?:^|[^\\w.])([A-Za-z_]\\w*)\\.${escaped}(?![\\w.])`).exec(written)?.[1];
+  if (!qualifier) return undefined;
+  const imp = consumer.imports.find((i) => !i.isType && i.specifiers.includes(qualifier));
+  const dir = imp ? importDirectory.exact(imp.source, consumer.filePath) : undefined;
+  if (dir === undefined || dir === null) return undefined;
+  const files = filesIn(dir ? `${dir}/` : "").filter((f) => f !== consumer.filePath && declares(f));
+  const production = files.filter((f) => !isTestFile(f, consumer.language as Language));
+  const out = production.length > 0 ? production : files;
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -7647,6 +7711,19 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   // Not where one type spans files (partial classes): there the richest
   // declaration below stands for the type.
   if (declOf(sourceFile, typeName) && !typesSpanFiles(languageOf(sourceFile))) return sourceFile;
+  // Where the package is a directory and a type spans its files (a Go struct beside the files holding its methods),
+  // the source's own part is that type: its richest part stands for it, never a namesake another package declares —
+  // which a catalog of the name's first few declarations may list instead.
+  if (declOf(sourceFile, typeName) && typesSpanFiles(languageOf(sourceFile)) && packageScoped(languageOf(sourceFile) ?? "")) {
+    const dir = sourceFile.slice(0, sourceFile.lastIndexOf("/") + 1);
+    // Parts that only extend a type declared elsewhere (a C++ `.cc` beside its header's class, a Rust `impl`) are not it.
+    const parts = ((ctx.directoryFiles ??= filesByDirectory(ctx.analyses)).get(dir) ?? []).filter((f) => {
+      const part = declOf(f, typeName);
+      return !!part && !part.extension && languageOf(f) === languageOf(sourceFile);
+    });
+    const pick = parts.length > 0 ? pickDefinition(typeName, parts, sourceFile, declOf, languageOf) : null;
+    if (pick) return pick;
+  }
   // Where a type spans files by its declaration and the bodies defined apart (a C++ class and its `.cpp`), the
   // file's own declaration is the class its code means: two `.cc` files each declaring a `Pit` are two.
   if (importsShareScope(languageOf(sourceFile)) && declOf(sourceFile, typeName) && !declOf(sourceFile, typeName)!.extension) return sourceFile;
@@ -8766,6 +8843,12 @@ function methodBesideClass(
     // the crate that defines `Trait`).
     return ctx.projectOf.get(f) === projectId || (part.extension === true && part.implements.length > 0);
   });
+  // A part beside the declaration before one in another directory: a Go struct's methods in a sibling file of its
+  // package, not a namesake type another package declares with a method of that name.
+  if (hits.length > 1) {
+    const beside = hits.filter((f) => f.slice(0, f.lastIndexOf("/") + 1) === dir);
+    if (beside.length > 0) hits = beside;
+  }
   // Where the declaration comes in through an include, the parts that include it (`home/club.cpp` for
   // `home/club.h`, not `away/club.cpp` defining another `Club`).
   if (hits.length > 1 && importsShareScope(language)) {
