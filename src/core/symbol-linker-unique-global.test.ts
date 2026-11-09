@@ -75,3 +75,22 @@ describe("symbol-linker — unique-global counts definitions, not files", () => 
     expect(link).toMatchObject({ targetFile: "League/Coaching.cs", targetSymbol: "Coach.Drill", strategy: "unique-global" });
   });
 });
+
+describe("symbol-linker — a receiver's name is evidence only right before the method", () => {
+  const decl = file("app/models/club.rb", "ruby", { classes: [cls("Club", 1, 5, [fn("relegated?", 2, 4)])] });
+
+  it("never reads the class off an earlier segment of a chain (`club.league.relegated?`)", () => {
+    const caller = file("app/services/table_service.rb", "ruby", {
+      classes: [cls("TableService", 1, 5, [fn("check", 2, 4, [call("club.league.relegated?", 3)], { untypedLocals: ["club"] })])],
+    });
+    expect(from(buildSymbolLinks([decl, caller]), "TableService.check", "club.league.relegated?")).toEqual([]);
+  });
+
+  it("still reads it off the receiver itself (control)", () => {
+    const caller = file("app/services/table_service.rb", "ruby", {
+      classes: [cls("TableService", 1, 5, [fn("check", 2, 4, [call("club.relegated?", 3)], { untypedLocals: ["club"] })])],
+    });
+    const [link] = from(buildSymbolLinks([decl, caller]), "TableService.check", "club.relegated?");
+    expect(link).toMatchObject({ targetSymbol: "Club.relegated?", strategy: "unique-global" });
+  });
+});

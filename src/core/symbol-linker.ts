@@ -4829,9 +4829,18 @@ function resolveCallToDefinitionBody(
     const targetSymbols = symbolIndex.get(targetFile);
     if (targetSymbols) {
       // Try matching any suffix of the qualified name
+      // The target file was found from the head's name (`club.league.relegated?` beside `from league.club import
+      // Club`), not from a binding the file imports: a class member found by the leaf alone is evidenced by the
+      // first segment only, while the method is called on the last.
+      const headGuessed = parts.length > 2 && !analysis.imports.some((imp) => imp.specifiers.includes(parts[0]!) || defaultBinding(imp, parts[0]!));
       for (let i = 1; i < parts.length; i++) {
         const suffix = parts.slice(i).join(".");
-        const suffixDef = targetSymbols.get(suffix) ?? targetSymbols.get(leafName);
+        const bySuffix = targetSymbols.get(suffix);
+        const suffixDef = bySuffix ?? targetSymbols.get(leafName);
+        if (suffixDef && suffixDef.name.includes(".") && (
+          (headGuessed && (!bySuffix || i === parts.length - 1)) ||
+          receiverTypeRefuses(ctx, analysis, sourceFile, sourceSymbol, call, leafName, { file: targetFile, symbol: suffixDef.name })
+        )) break;
         if (suffixDef) {
           // A name the file only imports and passes on (`from .staleness import compute_staleness`): its definition.
           const fwd = suffixDef.reexport && suffixDef.name === leafName ? forwardedDefinition(ctx, targetFile, leafName, 0, new Set()) : null;
@@ -5247,8 +5256,11 @@ function resolveCallToDefinitionBody(
         // in conflicts than it earns in recall.
         // Where locals carry no declared type, the receiver's own name may state
         // its class, or end it (`match_report.close!` → `MatchReport`,
-        // `api.addScore` on a `ScoreApi`).
-        const namedType = tgtClass ? manifestFor(analysis.language as Language)?.typeNamedByReceiver?.(head.replace(/\?$/, "")) : null;
+        // `api.addScore` on a `ScoreApi`). The receiver is the segment right before
+        // the method: in `club.league.relegated?` it is `league`, and `club` names
+        // nothing about the value `relegated?` is called on.
+        const receiverName = receiverSegment(parts[parts.length - 2]!.replace(/\(.*$/s, ""));
+        const namedType = tgtClass && /^[\w$]+$/.test(receiverName) ? manifestFor(analysis.language as Language)?.typeNamedByReceiver?.(receiverName) : null;
         const evidenced =
           sameDir ||
           importsFile(analysis, entry.file, ctx) ||
@@ -5282,7 +5294,10 @@ function resolveCallToDefinitionBody(
         // parameter is named exactly for the target's class (`|match_report|` → `MatchReport`).
         const untypedReceiver = !(namedType && tgtClass!.split(/::|\./).pop() === namedType) &&
           !!findEnclosingCallable(analysis, sourceSymbol)?.untypedLocals?.includes(head.replace(/\?$/, ""));
-        if (!untypedReceiver && !contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx)))) {
+        if (!untypedReceiver && !contradicted && !foreignConstant && !freeTargetVetoed && !foreignPackage && !foreignValue && (evidenced || (!callReceiver && importsNothing(analysis, ctx))) &&
+          // A receiver the linker types (a local typed by its initializer, a chain through declared
+          // members) that does not declare the member: never another class's member of the name.
+          !(tgtClass && receiverTypeRefuses(ctx, analysis, sourceFile, sourceSymbol, call, leafName, { file: entry.file, symbol: entry.def.name }))) {
           return mkLink(
             entry.file,
             entry.def.name,
@@ -6158,6 +6173,59 @@ function resolveThroughDeclaredType(
   }
   ctx.extraLinks.push(...out.slice(1));
   return out[0]!;
+}
+
+/**
+ * Whether the receiver's type, where the linker can type it, refuses a member a name guess picked
+ * (`unique-global`, `deep-qualified`). The type is what Strategy 2 reads — a stated type, a local typed by
+ * the call initializing it (`localTypes[].from`), each hop of a chain through declared field and return
+ * types (`club.league` → `League`). When that is a project type which, with its ancestors and mixins,
+ * does not declare the member, the call is on a value of that type: another class's member of the name
+ * is coincidence (`season_ticket.player_id` on a `SeasonTicket` is its column, never `Contract.player_id`),
+ * and a member the type lacks but a library supplies stays unlinked. An extension method is called on a
+ * type that does not declare it, so the type never refuses one.
+ */
+function receiverTypeRefuses(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  leafName: string,
+  target: { file: string; symbol: string },
+): boolean {
+  if (ctx.extensionMethods.has(`${target.file}\0${target.symbol}`)) return false;
+  // The call states its receiver's type: Strategy 7's own veto reads it as written.
+  if (call.receiverType || call.receiverQualifier) return false;
+  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
+  if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return false;
+  // Only a head the callable itself binds — a local (typed as written or by its initializer) or a parameter —
+  // or its own instance's member chain (`this.club.x`). A bare name read as some field or module binding is a
+  // weak typing, and where a call's name keeps only its last two segments (`Club.shared.load()` read as
+  // `shared.load`) it may not be the receiver at all.
+  const head = receiver[0]!;
+  if (head.ctor || head.call) return false;
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  const key = nameKey(analysis.language, head.name);
+  const bound = SELF_HEADS.has(head.name)
+    ? receiver.length >= 2
+    : !!callable && (callable.localTypes?.some((l) => nameKey(analysis.language, l.name) === key) || callable.params.some((p) => nameKey(analysis.language, p.name) === key));
+  if (!bound) return false;
+  if (call.boundLocally && callable?.params.some((p) => p.name === head.name)) return false;
+  const dot = sourceSymbol.indexOf(".");
+  const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+  const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
+  if (!point?.typeFile || !point.typeName || point.qualifier) return false;
+  const typeName = declaredTypeName(ctx, point.typeFile, point.typeName);
+  if (!ctx.classAt.has(memberKey(point.typeFile, typeName))) return false;
+  // A namesake in another namespace (`Overlay::Concerns::Club` beside `Club`) may be a part of the type
+  // mixed in by a means the analysis does not read (a namespace list applied at load time): never refused.
+  const leafOf = (name: string) => name.split(/::|\./).pop();
+  const owner = target.symbol.slice(0, target.symbol.lastIndexOf("."));
+  if (owner && leafOf(owner) === leafOf(typeName)) return false;
+  const member = manifestFor(analysis.language as Language)?.marksEndNames ? leafName.replace(/\s+/g, "") : receiverSegment(leafName);
+  const own = findMethodInClass(ctx, typeName, point.typeFile, member, sourceFile);
+  return !own || own.file !== target.file || own.symbol !== target.symbol;
 }
 
 /**
