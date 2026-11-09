@@ -18,7 +18,12 @@ import type { CallArgOrigin, ValueStep } from "../../../types/analysis.js";
  * `() => props.clubId` handed to a composable that reads it with `toValue`).
  * A value derived from a known one says how (`derivation`): read off a
  * collection it keys (`clubStore.clubs[props.clubId].id`), or returned by a
- * function called with it and literals only (`getSeasonIdFromClubId(props.clubId)`).
+ * function called with it and literals only (`getSeasonIdFromClubId(props.clubId)`),
+ * or a member of what a composable returns for it (`const { club } =
+ * useClub(() => props.clubId)` … `club.value.id`; the project pass follows it
+ * only where the composable states how the member derives from that parameter,
+ * `derivedLocalsOf`). A `watch` callback's first parameter is the watched
+ * value (`watch(() => props.clubId, (id) => …)`).
  * Reported only when at least one argument's origin is known.
  */
 export function argOriginsOf(node: Node): CallArgOrigin[] | null {
@@ -116,6 +121,17 @@ function fieldOrigins(obj: Node, index: number, prefix: string, depth: number, o
       if (name && URL_VALUE_KEYS.has(name) && value?.type === "object") fieldOrigins(value, index, `${name}.`, 1, out);
       continue;
     }
+    // `mutateAsync({ ...club.value, archived: true })`: the record spread in stands for the properties it holds.
+    if (prop.type === "spread_element") {
+      const inner = prop.namedChildren.find((c) => c?.type !== "comment");
+      const found = !prefix && inner ? originOf(unwrap(inner).node, 0) : null;
+      if (found && wholeRecord(found.steps)) {
+        // What an earlier property set, the spread may overwrite.
+        for (let i = out.length - 1; i >= 0; i--) if (out[i]!.index === index) out.splice(i, 1);
+        out.push({ index, ...split(found) });
+      }
+      continue;
+    }
     if (prop.type === "shorthand_property_identifier") {
       const found = identifierOrigin(prop, prop.text, 0);
       if (found) out.push({ index, ...split(found), field: prefix + prop.text });
@@ -152,7 +168,10 @@ export function filterOrigins(obj: Node): Array<{ field: string; origin: Origin;
 /** A file that reads no URL values needs no declaration scan: the router's words, once per tree. */
 const READS_URL = new WeakMap<object, boolean>();
 const URL_WORDS = /params|query|\$route|paramMap|useParams|useRoute|useSearchParams|props|defineProps/;
+/** Set while a composable's returned locals are read (`derivedLocalsOf`): its parameters are the values, not the URL. */
+let readingLocals = 0;
 function readsUrl(n: Node): boolean {
+  if (readingLocals > 0) return true;
   const tree = n.tree as unknown as object;
   let hit = READS_URL.get(tree);
   if (hit === undefined) {
@@ -249,8 +268,14 @@ function originOf(n: Node, depth: number): Found | null {
       if (direct || !obj) return direct;
       // `clubStore.clubs[props.clubId]`: the key, read off the collection.
       if (n.type === "subscript_expression") return lookupOf(n, obj, depth);
-      // `club.value.id`, `club.id`: a property of what a known value looked up.
-      if (prop && /^[\w$]+$/.test(prop) && readsUrl(n)) return readOffLookup(originOf(obj, depth + 1), prop);
+      if (prop && /^[\w$]+$/.test(prop) && readsUrl(n)) {
+        // `clubState.club`, `clubState = useClub(() => props.clubId)`: a member of what a composable returns for the value.
+        const held = obj.type === "identifier" && !paramOf(obj, obj.text) ? bindingOf(obj, obj.text) : null;
+        const member = held?.kind === "value" ? returnedMemberOf(unwrap(held.value).node, prop, depth) : null;
+        if (member) return member;
+        // `club.value.id`, `club.id`: a property of what a known value looked up.
+        return readOffLookup(originOf(obj, depth + 1), prop);
+      }
       return null;
     }
     case "call_expression": {
@@ -300,10 +325,14 @@ function lookupOf(n: Node, obj: Node, depth: number): Found | null {
   return { ...key, steps: [...(key.steps ?? []), { kind: "lookup", object, line: n.startPosition.row + 1, ...from }] };
 }
 
-/** Property `prop` of a record a lookup found (`club.value.id`): the lookup's field. Null for anything else. */
+/**
+ * Property `prop` of a record a lookup found (`club.value.id`), or of a
+ * composable's member (`club.value.id`, `const { club } = useClub(…)`): the
+ * step's field. Null for anything else.
+ */
 function readOffLookup(base: Found | null, prop: string): Found | null {
   const last = base?.steps?.[base.steps.length - 1];
-  if (!base || last?.kind !== "lookup") return null;
+  if (!base || (last?.kind !== "lookup" && last?.kind !== "returned")) return null;
   return { ...base, steps: [...base.steps!.slice(0, -1), { ...last, field: last.field ? `${last.field}.${prop}` : prop }] };
 }
 
@@ -341,7 +370,44 @@ function identifierOrigin(n: Node, name: string, depth: number): Found | null {
   if (propsSource(unwrap(bound.value).node, depth + 1)) return { kind: "prop", name: bound.key };
   // `const { id } = useParams()` / `const { id: clubId } = this.props.match.params`
   const kind = paramsObject(bound.value, depth + 1);
-  return kind ? { kind, name: bound.key } : null;
+  if (kind) return { kind, name: bound.key };
+  // `const { club } = useClub(() => props.clubId)`: a member of what the composable returns for the value.
+  return returnedMemberOf(unwrap(bound.value).node, bound.key, depth);
+}
+
+/** Calls whose result is the router's, the props' or a wrapper's, never a composable's for a value. */
+const NOT_COMPOSABLES = new Set(["defineProps", "withDefaults", "toRefs", "toRef", "storeToRefs", "useRoute", "useRouter", "useParams", "useSearchParams", "useLocalSearchParams", "reactive", "readonly"]);
+
+/**
+ * `useClub(() => props.clubId)` read for its member `key`: one argument
+ * (a getter's body, or the value itself) has a known origin that is no
+ * literal — the member derives from it, if the composable says so
+ * (`FunctionInfo.derivedLocals`, checked by the project pass). The other
+ * arguments may be anything: the composable states which parameter the
+ * member is keyed by.
+ */
+function returnedMemberOf(call: Node, key: string, depth: number): Found | null {
+  if (call.type !== "call_expression" || depth > 4) return null;
+  const fn = call.childForFieldName("function");
+  if (fn?.type !== "identifier" || WRAPPERS.has(fn.text) || NOT_COMPOSABLES.has(fn.text)) return null;
+  const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+  if (args.length === 0 || args.length > 4 || !readsUrl(call)) return null;
+  let found: { index: number; origin: Found } | null = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i]!.type === "spread_element") return null;
+    const origin = originOf(unwrap(getterBody(args[i]!) ?? args[i]!).node, depth + 1);
+    if (!origin || origin.kind === "literal") continue;
+    if (found) return null;
+    found = { index: i, origin };
+  }
+  if (!found) return null;
+  return { ...found.origin, steps: [...(found.origin.steps ?? []), { kind: "returned", name: fn.text, line: call.startPosition.row + 1, index: found.index, key }] };
+}
+
+/** A derivation ending in a whole record: looked up with no property read, or a composable's member (or its ref's `.value`). */
+function wholeRecord(steps: readonly ValueStep[] | undefined): boolean {
+  const last = steps?.[steps.length - 1];
+  return (last?.kind === "lookup" && !last.field) || (last?.kind === "returned" && (!last.field || last.field === "value"));
 }
 
 /** `params.id` / `params["id"]` where `params` is a params object of the router. */
@@ -444,14 +510,14 @@ const SCOPE_NODES = new Set(["statement_block", "program", "class_body"]);
  * or, where that function is a callback a library invokes (`mutationFn`), the
  * argument (or the property of it the callback destructures) its invoker is handed.
  */
-function paramOf(at: Node, name: string): Origin | null {
+function paramOf(at: Node, name: string): Found | null {
   for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
     if (!FUNCTION_NODES.has(fn.type)) continue;
     const single = fn.childForFieldName("parameter");
     if (single?.type === "identifier") {
       if (single.text === name) {
         const via = invokerOf(fn);
-        return via ? { kind: "invoked", via, index: 0 } : { kind: "param", name, index: 0 };
+        return via ? { kind: "invoked", via, index: 0 } : watchedValue(fn) ?? { kind: "param", name, index: 0 };
       }
       continue;
     }
@@ -462,9 +528,12 @@ function paramOf(at: Node, name: string): Origin | null {
       const id = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
       if (id?.type === "identifier" && id.text === name) {
         const via = invokerOf(fn);
-        return via ? { kind: "invoked", via, index: i } : { kind: "param", name, index: i };
+        return via ? { kind: "invoked", via, index: i } : (i === 0 ? watchedValue(fn) : null) ?? { kind: "param", name, index: i };
       }
       if (declares(pattern, name)) {
+        // `watch([() => props.clubId, query.data], ([id, value]) => …)`: an element of the watched values.
+        const element = i === 0 && id?.type === "array_pattern" ? id.namedChildren.filter((c) => c?.type !== "comment").findIndex((c) => c?.type === "identifier" && c.text === name) : -1;
+        if (element >= 0) return watchedValue(fn, element);
         // A component's destructured props (`function ClubCard({ clubId })`): the prop.
         if (i === 0 && id?.type === "object_pattern" && isComponentFunction(fn)) {
           const field = fieldPath(id, name);
@@ -478,6 +547,41 @@ function paramOf(at: Node, name: string): Origin | null {
     }
   }
   return null;
+}
+
+let watching = 0;
+const VUE_WATCH = new WeakMap<object, boolean>();
+/** Whether a bare `watch` in this file is Vue's: imported from Vue (or a Vue toolkit), or auto-imported — never `fs`'s or a file watcher's. */
+function vueWatch(n: Node): boolean {
+  const tree = n.tree as unknown as object;
+  let vue = VUE_WATCH.get(tree);
+  if (vue === undefined) {
+    const from = /import\s*\{[^}]*\bwatch\b[^}]*\}\s*from\s*["']([^"']+)["']/.exec(n.tree.rootNode.text)?.[1];
+    vue = from === undefined || /^(?:vue|vue-demi|@vue\/|@vueuse\/|#imports|nuxt)/.test(from);
+    VUE_WATCH.set(tree, vue);
+  }
+  return vue;
+}
+/**
+ * `watch(source, (value) => …)`: the callback's first parameter is the watched
+ * value — where the source's comes from (a getter's body, or a ref); with
+ * `element`, the parameter destructures an array of sources and takes that
+ * one. Null for any other function, or a source of unknown origin.
+ */
+function watchedValue(fn: Node, element?: number): Found | null {
+  const args = fn.parent;
+  const call = args?.type === "arguments" ? args.parent : null;
+  if (call?.type !== "call_expression" || call.childForFieldName("function")?.text !== "watch" || watching > 2 || !vueWatch(call)) return null;
+  const list = args!.namedChildren.filter((a): a is Node => !!a && a.type !== "comment");
+  const source = element === undefined ? (list[0]?.type === "array" ? null : list[0]) : list[0]?.type === "array" ? list[0].namedChildren.filter((c) => c?.type !== "comment")[element] : null;
+  if (list[1]?.id !== fn.id || !source || source.type === "spread_element") return null;
+  watching++;
+  try {
+    const found = originOf(unwrap(getterBody(source) ?? source).node, 1);
+    return found && found.kind !== "literal" ? found : null;
+  } finally {
+    watching--;
+  }
 }
 
 /** `defineProps(…)`, `withDefaults(defineProps(…), …)`: a Vue component's props object. */
@@ -635,7 +739,12 @@ function templateValue(anchor: Node, chain: readonly string[], declared: Readonl
   const bound = bindingOf(anchor, head);
   if (!bound) return rest.length === 0 && declared.has(head) ? { kind: "prop", name: head } : null;
   if (rest.length === 0 || (rest.length === 1 && rest[0] === "value")) return identifierOrigin(anchor, head, 0);
-  if (bound.kind !== "value") return null;
+  if (bound.kind !== "value") {
+    // `club.id`, the template unwrapping a composable's member (`const { club } = useClub(…)`).
+    let found = rest.length <= 2 ? identifierOrigin(anchor, head, 0) : null;
+    for (const p of rest) found = readOffLookup(found, p);
+    return found;
+  }
   const value = unwrap(bound.value).node;
   if (rest.length === 1 && propsObject(value, 1)) return { kind: "prop", name: rest[0]! };
   // `club.id`, the template unwrapping `club = computed(() => clubStore.clubs[props.clubId])`.
@@ -643,4 +752,111 @@ function templateValue(anchor: Node, chain: readonly string[], declared: Readonl
   if (rest.length === 2 && rest[0] === "params" && routeObject(value, 1)) return { kind: "route-param", name: rest[1]! };
   if (rest.length === 2 && rest[0] === "query" && (routeObject(value, 1) || routerObject(value))) return { kind: "query-param", name: rest[1]! };
   return null;
+}
+
+/**
+ * The locals a composable hands back whose value derives from one of its
+ * parameters (`FunctionInfo.derivedLocals`), read in `fn`'s own body: a
+ * `computed` whose getter is a lookup keyed by the parameter or a function's
+ * result for it (`computed(() => clubStore.clubs[toValue(clubId)])`), or a
+ * `ref` every assignment of which is such a value (`club.value = await
+ * getClub(id)` in `watch(() => toValue(clubId), async (id) => …)`). A local
+ * with any other assignment, or one derived from no parameter, is left out.
+ */
+export function derivedLocalsOf(fn: Node, locals: readonly string[]): Array<{ local: string; param: number; derivation?: ValueStep[] }> | undefined {
+  const body = fn.childForFieldName("body");
+  if (body?.type !== "statement_block" || locals.length === 0) return undefined;
+  const single = fn.childForFieldName("parameter");
+  const params = single ? [single] : fn.childForFieldName("parameters")?.namedChildren.filter((p): p is Node => !!p && p.type !== "comment") ?? [];
+  const names = params.map((p) => {
+    const pattern = p.childForFieldName("pattern") ?? p;
+    const id = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
+    return id?.type === "identifier" ? id.text : "";
+  });
+  if (!names.some(Boolean)) return undefined;
+  const out: Array<{ local: string; param: number; derivation?: ValueStep[] }> = [];
+  readingLocals++;
+  try {
+    for (const local of locals) {
+      const init = declaredValue(body, local);
+      const held = init ? unwrap(init).node : null;
+      const callee = init?.type === "call_expression" ? init.childForFieldName("function")?.text : undefined;
+      const values: Node[] = [];
+      if (callee === "computed" && held && held.id !== init!.id) values.push(held);
+      else if (callee === "ref" || callee === "shallowRef") {
+        const first = init!.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+        if (first && !emptyValue(first)) values.push(first);
+        if (!assignedValues(body, local, values)) continue;
+      } else continue;
+      let agreed: { param: number; derivation?: ValueStep[] } | null = null;
+      let refused = values.length === 0;
+      for (const value of values) {
+        const found = originOf(unwrap(stripAwait(value)).node, 0);
+        // The composable's own parameter, by its place: not a callback's of the same name.
+        if (found?.kind !== "param" || names[found.index] !== found.name) {
+          refused = true;
+          break;
+        }
+        const here = { param: found.index, ...(found.steps?.length ? { derivation: found.steps } : {}) };
+        if (agreed && JSON.stringify(agreed) !== JSON.stringify(here)) {
+          refused = true;
+          break;
+        }
+        agreed = here;
+      }
+      if (!refused && agreed) out.push({ local, ...agreed });
+    }
+  } finally {
+    readingLocals--;
+  }
+  return out.length ? out : undefined;
+}
+
+/** The initializer of `const name = …` among the body's own statements. */
+function declaredValue(body: Node, name: string): Node | null {
+  for (const stmt of body.namedChildren) {
+    if (stmt?.type !== "lexical_declaration" && stmt?.type !== "variable_declaration") continue;
+    for (const d of stmt.namedChildren) {
+      if (d?.type === "variable_declarator" && d.childForFieldName("name")?.text === name) return d.childForFieldName("value");
+    }
+  }
+  return null;
+}
+
+/** `null`, `undefined`, `[]`, `{}`, a literal: what a ref starts as or is reset to, not a value it is derived to. */
+function emptyValue(n: Node): boolean {
+  const v = unwrap(n).node;
+  if (v.type === "null" || v.type === "undefined" || v.type === "string" || v.type === "number" || v.type === "true" || v.type === "false") return true;
+  if (v.type === "identifier") return v.text === "undefined";
+  return (v.type === "array" || v.type === "object") && v.namedChildren.every((c) => c?.type === "comment");
+}
+
+/**
+ * Every value assigned to `local.value` in the body, nested callbacks and
+ * functions included (empty resets left out), into `into`; false when the
+ * local is assigned otherwise (`local = …`, `local.value += …`).
+ */
+function assignedValues(body: Node, local: string, into: Node[]): boolean {
+  let ok = true;
+  const visit = (n: Node): void => {
+    if (!ok) return;
+    if (n.type === "assignment_expression" || n.type === "augmented_assignment_expression") {
+      const left = n.childForFieldName("left");
+      const target = left?.type === "member_expression" && left.childForFieldName("property")?.text === "value" ? left.childForFieldName("object") : left;
+      if (target?.type === "identifier" && target.text === local) {
+        const right = n.childForFieldName("right");
+        if (n.type !== "assignment_expression" || left === target || !right) ok = false;
+        else if (!emptyValue(right)) into.push(right);
+      }
+    }
+    for (const c of n.namedChildren) if (c) visit(c);
+  };
+  visit(body);
+  return ok;
+}
+
+function stripAwait(n: Node): Node {
+  let v = n;
+  while (v.type === "await_expression" || v.type === "parenthesized_expression") v = v.namedChild(0) ?? v;
+  return v;
 }

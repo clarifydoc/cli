@@ -144,13 +144,32 @@ export function computeParamOrigins(input: {
    * names the project function its call links to — null when it links to none
    * (a library's function proves nothing) — and a lookup the store its head holds.
    */
-  const resolveSteps = (steps: readonly ValueStep[] | undefined, file: string): Step[] | null => {
+  const resolveSteps = (steps: readonly ValueStep[] | undefined, file: string, nested = 0): Step[] | null => {
     const out: Step[] = [];
     for (const step of steps ?? []) {
       if (step.kind === "helper") {
         const target = targetOf(file, step.line, step.name);
         if (!target) return null;
         out.push({ ...step, file, target });
+      } else if (step.kind === "returned") {
+        // A composable's member: followed only where the composable states how it derives from that parameter.
+        const target = targetOf(file, step.line, step.name);
+        const fn = target ? fnNamed(target.file, target.symbol)?.fn : undefined;
+        const local = fn?.returnedMembers?.find((m) => m.key === step.key)?.local;
+        const derived = local && !fn!.returnedSpreads?.length ? fn!.derivedLocals?.find((d) => d.local === local && d.param === step.index) : undefined;
+        if (!derived || nested >= 3) return null;
+        const inner = resolveSteps(derived.derivation, target!.file, nested + 1);
+        if (!inner) return null;
+        // The member is a ref: `.value` is its value (a template reads it unwrapped).
+        const field = step.field?.replace(/^value(?:\.|$)/, "") || undefined;
+        if (field) {
+          const last = inner[inner.length - 1];
+          // A property of the parameter's own value, or of what the composable's step does not say is a record.
+          if (last?.kind !== "lookup" && last?.kind !== "helper") return null;
+          inner[inner.length - 1] = { ...last, field: last.field ? `${last.field}.${field}` : field };
+        }
+        const { field: _read, ...member } = step;
+        out.push({ ...member, file, target: target! }, ...inner);
       } else {
         const target = step.from && step.fromLine ? targetOf(file, step.fromLine, step.from) : undefined;
         out.push({ ...step, file, ...(target ? { target } : {}) });
@@ -171,8 +190,8 @@ export function computeParamOrigins(input: {
     if (own || !field || field.includes(".")) return own;
     const whole = args?.find((a) => lands(a) && a.field === undefined && fieldless(a.derivation));
     if (!whole) return undefined;
-    const last = whole.derivation![whole.derivation!.length - 1] as Extract<ValueStep, { kind: "lookup" }>;
-    return { ...whole, derivation: [...whole.derivation!.slice(0, -1), { ...last, field }] };
+    const last = whole.derivation![whole.derivation!.length - 1] as Extract<ValueStep, { kind: "lookup" | "returned" }>;
+    return { ...whole, derivation: [...whole.derivation!.slice(0, -1), { ...last, field: last.field ? `${last.field}.${field}` : field }] };
   };
 
   /**
@@ -391,10 +410,13 @@ function childFile(a: FileAnalysis, tag: string, imported: readonly string[]): s
   return named.length === 1 ? named[0]! : null;
 }
 
-/** A derivation ending in a record looked up whole (`clubStore.clubs[props.clubId]`, no property read). */
+/**
+ * A derivation ending in a record looked up whole (`clubStore.clubs[props.clubId]`, no property read), or a
+ * composable's member read whole (`club.value`, `const { club } = useClub(…)`).
+ */
 function fieldless(steps: readonly ValueStep[] | undefined): boolean {
   const last = steps?.[steps.length - 1];
-  return last?.kind === "lookup" && !last.field;
+  return (last?.kind === "lookup" && !last.field) || (last?.kind === "returned" && (!last.field || last.field === "value"));
 }
 
 function hasOrigins(a: FileAnalysis): boolean {
@@ -406,7 +428,7 @@ function dedupe<T extends { origin: ParamOrigin["origin"]; hops: unknown[]; via:
   const best = new Map<string, T>();
   for (const l of leaves) {
     const o = l.origin;
-    const k = `${o.kind}|${"name" in o ? o.name : "value" in o ? o.value : ""}|${o.file}|${o.line}|${l.via.map((s) => `${s.kind}:${s.line}:${s.kind === "lookup" ? s.field ?? "" : s.name}`).join(",")}`;
+    const k = `${o.kind}|${"name" in o ? o.name : "value" in o ? o.value : ""}|${o.file}|${o.line}|${l.via.map((s) => `${s.kind}:${s.file}:${s.line}:${s.kind === "lookup" ? s.field ?? "" : `${s.name}.${s.kind === "returned" ? s.key ?? "" : s.field ?? ""}`}`).join(",")}`;
     const prev = best.get(k);
     if (!prev || l.hops.length < prev.hops.length) best.set(k, l);
   }
@@ -456,8 +478,11 @@ function routeParam(link: ApiRouteLink, url: string, slotText: string, routeAt: 
 
 /**
  * How a derived value comes from its origin, in words: `as clubStore.clubs[…].id`
- * for a store record's field, `through getSeasonIdFromClubId()` for a helper's result.
+ * for a store record's field, `through getSeasonIdFromClubId()` for a helper's result,
+ * `through useClub().club` for a composable's member.
  */
-export function describeDerivation(steps: ReadonlyArray<{ kind: string; object?: string; field?: string; name?: string }> | undefined): string {
-  return (steps ?? []).map((s) => (s.kind === "lookup" ? `as ${s.object}[…]${s.field ? `.${s.field}` : ""}` : `through ${s.name}()`)).join(", ");
+export function describeDerivation(steps: ReadonlyArray<{ kind: string; object?: string; field?: string; name?: string; key?: string }> | undefined): string {
+  return (steps ?? [])
+    .map((s) => (s.kind === "lookup" ? `as ${s.object}[…]${s.field ? `.${s.field}` : ""}` : `through ${s.name}()${s.key ? `.${s.key}` : ""}${s.field ? `.${s.field}` : ""}`))
+    .join(", ");
 }

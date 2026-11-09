@@ -1,4 +1,5 @@
 import { responsesOf } from "./responses.js";
+import { derivedLocalsOf } from "./arg-origins.js";
 import { extractZodSchemas } from "./zod-schemas.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
@@ -107,6 +108,16 @@ function finishBody(
     ...(returnedMembers ? { returnedMembers } : {}),
     ...(returnedFrom?.length ? { returnedFrom } : {}),
   };
+}
+
+/**
+ * The returned locals of a composable whose value derives from a parameter (`FunctionInfo.derivedLocals`):
+ * only refs and computeds (`kind: "value"` members) of a function with parameters.
+ */
+function composableLocals(fn: Node, members: FunctionInfo["returnedMembers"]): FunctionInfo["derivedLocals"] {
+  const locals = members?.filter((m) => m.kind === "value" && m.local).map((m) => m.local!) ?? [];
+  if (locals.length === 0 || !/\b(?:computed|ref|shallowRef)\s*\(/.test(fn.childForFieldName("body")?.text ?? "")) return undefined;
+  return derivedLocalsOf(fn, locals);
 }
 
 /** A call chain off a name: `useClubApi()`, `api.clubs.list()`, `usePublicClubApi(slug).clubs`. */
@@ -1985,6 +1996,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const derivedLocals = composableLocals(node, returnedMembers);
     return {
       name,
       params,
@@ -1998,6 +2010,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
+      ...(derivedLocals ? { derivedLocals } : {}),
       ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
@@ -2049,6 +2062,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const derivedLocals = composableLocals(funcNode, returnedMembers);
     return {
       name,
       params,
@@ -2062,6 +2076,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(localTypes ? { localTypes } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
+      ...(derivedLocals ? { derivedLocals } : {}),
       ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),

@@ -1251,8 +1251,18 @@ export type ValueStep =
    * head holds (`clubStore = useClubStore()`, at `fromLine`): the store.
    */
   | { kind: "lookup"; object: string; field?: string; line: number; from?: string; fromLine?: number }
-  /** Returned by the function `name`, called at `line` with the value as its argument `index` (the call's other arguments are literals). */
-  | { kind: "helper"; name: string; line: number; index: number };
+  /**
+   * Returned by the function `name`, called at `line` with the value as its argument `index` (the call's other
+   * arguments are literals), then its property `field` when one is read (only past a `returned` step's expansion).
+   */
+  | { kind: "helper"; name: string; line: number; index: number; field?: string }
+  /**
+   * The member `key` of the object the function `name` returns (a composable: `const { club } =
+   * useClub(() => props.clubId)` at `line`, the value its argument `index`), then its property `field` when one is
+   * read, as written (`value.id` for `club.value.id`). Without `key`, what the function returns itself. Followed
+   * only where that function states how the member derives from that parameter (`FunctionInfo.derivedLocals`).
+   */
+  | { kind: "returned"; name: string; line: number; index: number; key?: string; field?: string };
 
 /**
  * Which value feeds a parameter of an API call's URL (`ProjectAnalysis.paramOrigins`):
@@ -1442,6 +1452,15 @@ export interface FunctionInfo {
    * object, a bare `return`), and wherever the source declares the return type.
    */
   returnedFrom?: string[];
+  /**
+   * Locals the function hands back (a `returnedMembers` entry's `local`, or what `returnedFrom` names) whose value
+   * derives from its parameter `param`, as the body states it: a computed lookup keyed by it (`club =
+   * computed(() => clubStore.clubs[toValue(clubId)])`), or a ref every assignment of which is such a value
+   * (`club.value = await getClub(id)` in `watch(() => toValue(clubId), async (id) => …)`). `derivation`: the steps
+   * from the parameter to the local's value (absent when it is the parameter's value itself). A value read off the
+   * member at a call site (`club.value.id`) derives from the argument handed for that parameter.
+   */
+  derivedLocals?: Array<{ local: string; param: number; derivation?: ValueStep[] }>;
   /**
    * The namespace the function is declared in, as the language writes it (`league::util` for a C++ function inside
    * `namespace league { namespace util {`), where a file's functions may sit in several; otherwise the file's

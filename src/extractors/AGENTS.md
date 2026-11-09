@@ -212,6 +212,10 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
   declaring no return type states what each `return` is (`FunctionInfo.returnedFrom`: `new ClubApi()`, `useClubApi()`,
   a local's name); the linker types both as it types a local's initializer, in the factory's own scope, so
   `const { clubs } = useLeague(); clubs.getAll()` lands on `ClubApi.getAll`. A library's object types nothing.
+  A returned ref or computed whose value derives from a parameter is stated as `FunctionInfo.derivedLocals` (a
+  computed lookup keyed by it, or a ref every assignment of which is a lookup or a function's result for it — a
+  `watch` callback's first parameter being the watched value); a call site reading the member (`const { club } =
+  useClub(() => props.clubId)`, `club.value.id`) states a `returned` derivation step, and `paramOrigins` follows it.
 - Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
   with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
   `componentCandidates`. Targets are deduplicated before the eight-target cap per emit.

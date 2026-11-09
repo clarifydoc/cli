@@ -48,7 +48,7 @@ export interface ParamOrigin {
   origin: { kind: string; name?: string; value?: string; file: string; line: number; screen?: string; routePath?: string; inRoutePath?: boolean };
   hops?: Array<{ file: string; symbol: string; line: number; arg: number; field?: string }>;
   /** The steps a derived value takes from its origin: a store record it keys, a function's result. */
-  derivation?: Array<{ kind: string; object?: string; field?: string; name?: string; file: string; line: number }>;
+  derivation?: Array<{ kind: string; object?: string; field?: string; name?: string; key?: string; file: string; line: number }>;
   route?: { file: string; line: number; method: string | null; path: string; param: string; binding?: string; type?: string };
   confidence?: string;
 }

@@ -224,4 +224,73 @@ function load() {
     ]);
     expect(await originsOf(src, "load", "useSeason")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" }, transform: "getter" }]);
   });
+
+  it("reads a member of what a composable returns for a prop, a watched value and a record spread into a mutation", async () => {
+    const src = `const props = defineProps<{ clubId: number; playerId: number }>();
+const { club } = useClub(() => props.clubId, { lazy: true });
+const squad = useSquad(toRef(props, "clubId"));
+const { data } = useQuery(() => props.clubId, () => props.playerId);
+const { list } = useClubs();
+const picked = ref([]);
+function follow() {
+  watch(() => props.playerId, (id) => loadPlayer(id));
+  watch(picked, (s) => loadSquad(s));
+  watch([picked, () => props.clubId], ([s, clubId]) => loadKit(clubId, s));
+}
+function load() {
+  fetchClub(club.value.id, squad.members.value, data.value.id, list.value.id);
+  update.mutateAsync({ ...club.value, archived: true });
+}`;
+    const returned = { kind: "returned", name: "useClub", line: 2, index: 0, key: "club" };
+    expect(await originsOf(src, "load", "fetchClub")).toEqual([
+      { index: 0, origin: { kind: "prop", name: "clubId" }, derivation: [{ ...returned, field: "value.id" }] },
+      { index: 1, origin: { kind: "prop", name: "clubId" }, derivation: [{ kind: "returned", name: "useSquad", line: 3, index: 0, key: "members", field: "value" }] },
+      // Two values in: no single argument the member derives from. No value in: nothing.
+    ]);
+    // The record spread in stands for each property the callback reads.
+    expect(await originsOf(src, "load", "update.mutateAsync")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" }, derivation: [{ ...returned, field: "value" }] }]);
+    // A watch callback's parameter is the watched value; a source of unknown origin leaves it a parameter.
+    expect(await originsOf(src, "follow", "loadPlayer")).toEqual([{ index: 0, origin: { kind: "prop", name: "playerId" } }]);
+    expect(await originsOf(src, "follow", "loadSquad")).toEqual([{ index: 0, origin: { kind: "param", name: "s", index: 0 } }]);
+    // An array of sources: each element of the destructured parameter is its own; one of unknown origin is none.
+    expect(await originsOf(src, "follow", "loadKit")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" } }]);
+  });
+
+  it("states which returned locals of a composable derive from which parameter", async () => {
+    const src = `export function useClub(clubId: MaybeRefOrGetter<number>, season: number) {
+  const store = useClubStore();
+  const club = ref(null);
+  const loading = ref(false);
+  const record = computed(() => store.clubs[toValue(clubId)]);
+  const current = computed(() => store.current);
+  const kit = ref();
+  const rival = ref();
+  watch(() => toValue(clubId), async (id) => {
+    loading.value = true;
+    club.value = await getClub(id);
+    kit.value = await getKit(id);
+    rival.value = await getClub(season);
+    loading.value = false;
+  }, { immediate: true });
+  function reset() { kit.value = other(); }
+  return { club, loading, record, current, kit, rival, clubId };
+}
+export function useLeague(id: number) {
+  const league = shallowRef(null);
+  onMounted(async () => { league.value = await getLeague(id, "full"); });
+  league.value = undefined;
+  return { league };
+}`;
+    const tree = await parseSource(src, "typescript" as never, "x.ts");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.find((f) => f.name === "useClub")?.derivedLocals).toEqual([
+      { local: "club", param: 0, derivation: [{ kind: "helper", name: "getClub", line: 11, index: 0 }] },
+      { local: "record", param: 0, derivation: [{ kind: "lookup", object: "store.clubs", line: 5, from: "useClubStore", fromLine: 2 }] },
+      { local: "rival", param: 1, derivation: [{ kind: "helper", name: "getClub", line: 13, index: 0 }] },
+    ]);
+    // A literal beside the value keeps a helper's result derived from it.
+    expect(fns.find((f) => f.name === "useLeague")?.derivedLocals).toEqual([
+      { local: "league", param: 0, derivation: [{ kind: "helper", name: "getLeague", line: 21, index: 0 }] },
+    ]);
+  });
 });
