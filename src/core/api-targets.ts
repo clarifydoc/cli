@@ -865,15 +865,16 @@ function splitArgs(text: string): string[] {
 
 /**
  * Project functions whose first parameter is a URL (`url`, `path`, `rest`,
- * `route`, `endpoint`…) and that state no URL template of their own: a call of
- * one requests what it is given. Unique names only.
+ * `route`, `endpoint`…) and that state no URL template of their own but that
+ * parameter: a call of one requests what it is given. Unique names only.
  */
 function passThroughHelpers(analyses: readonly FileAnalysis[]): Set<string> {
   const seen = new Map<string, boolean>();
   for (const a of analyses) {
     for (const fn of a.functions) {
       if (fn.name.includes(".")) continue;
-      const ok = !fn.urlTemplate && /^(?:url|uri|path|pathname|rest|route|endpoint|href|resource)$/i.test(fn.params[0]?.name ?? "");
+      // A template that is the first parameter itself (`(await origin()) + path` → `{path}`) still hands it on.
+      const ok = (!fn.urlTemplate || (fn.urlTemplate === `{${fn.params[0]?.name}}` && !fn.urlTemplateAlternatives)) && /^(?:url|uri|path|pathname|rest|route|endpoint|href|resource)$/i.test(fn.params[0]?.name ?? "");
       seen.set(fn.name, seen.has(fn.name) ? false : ok);
     }
   }

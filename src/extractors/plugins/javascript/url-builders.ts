@@ -85,6 +85,9 @@ function substitute(template: string, params: ParamInfo[], args: string[]): stri
     // the variable names the endpoint itself, and `{}` would join any route — unless the
     // parameter is named for a record's key (`sessionId`, `slug`): that is a value, never an endpoint.
     if (value === null && i < args.length && !NULLISH.test(args[i]!.trim()) && (specificWithout(out, token) || KEY_PARAM.test(p.name))) value = "{}";
+    // A helper giving back the path it is handed (`(await origin()) + path`), handed a variable
+    // (`fetch(await apiUrl(path))` in a request wrapper): that variable, a hole the wrapper's callers fill.
+    if (value === null && template === token && /^[A-Za-z_$][\w$]*$/.test(args[i]?.trim() ?? "")) value = `\${${args[i]!.trim()}}`;
     if (value === null) return null;
     out = out.split(token).join(value);
   }

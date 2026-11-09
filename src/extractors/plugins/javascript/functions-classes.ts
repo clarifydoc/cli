@@ -787,6 +787,9 @@ function objectPathTypes(root: Node): LocalType[] {
 /** A method named for the URL it gives (`getCollectionResource`, `apiPath`, `endpointUrl`). */
 const RESOURCE_METHOD = /(?:Resource|Url|Uri|Path|Endpoint|Route)$/i;
 
+/** A parameter named for the URL or path a helper is handed. */
+const URL_PARAM = /^(?:url|uri|path|pathname|route|endpoint|resource)$/i;
+
 /** The path segment a body only returns: `{ return "albums"; }` → `albums`. */
 function returnedSegment(body: Node | null): string | null {
   const stmts = body?.type === "statement_block" ? body.namedChildren.filter((c) => c.type !== "comment") : [];
@@ -849,9 +852,13 @@ export function extractUrlTemplates(
   // with no guard taken) is a URL the field holds, kept beside its siblings.
   const push = (text: string | null, bareMember = false): boolean => {
     if (text == null) return false;
-    const tpl = stripUrlBase(text);
+    // `(await apiOrigin()) + path`: a runtime origin before the path the caller hands in — that path
+    // is the URL, when the parameter is named for one (a query appended to it changes no path).
+    const handed = /^\{\}\{([A-Za-z_$][\w$]*)\}(?:\?.*)?$/.exec(text)?.[1];
+    const pathOnly = !!handed && paramNames.has(handed) && URL_PARAM.test(handed);
+    const tpl = pathOnly ? `{${handed}}` : stripUrlBase(text);
     // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
-    const ok = tpl.includes("/") || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
+    const ok = tpl.includes("/") || pathOnly || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
       // A helper handing back another of its class's URL methods (`${this.getResourceUrl({id}, 'download')}`).
       /^\$\{this\.[\w$]+\([^{}]*(?:\{[\w$]+\}[^{}]*)*\)\}$/.test(tpl);
     if (ok && !templates.includes(tpl)) templates.push(tpl);
@@ -1027,15 +1034,23 @@ function leadingBaseText(node: Node): string | null {
   if (node.type === "template_string") {
     const first = node.namedChildren[0];
     if (first?.type === "template_substitution" && first.startIndex === node.startIndex + 1) {
-      const inner = first.namedChild(0);
-      return inner?.type === "call_expression" ? inner.text : null;
+      const inner = awaitedCall(first.namedChild(0));
+      return inner ? inner.text : null;
     }
     return null;
   }
   if (node.type === "binary_expression" && node.childForFieldName("operator")?.text === "+") {
-    return leadingBaseText(node.childForFieldName("left") ?? node) ?? (node.childForFieldName("left")?.type === "call_expression" ? node.childForFieldName("left")!.text : null);
+    const left = node.childForFieldName("left") ?? node;
+    return leadingBaseText(left) ?? awaitedCall(left)?.text ?? null;
   }
   return null;
+}
+
+/** A call, also parenthesized or awaited (`(await apiOrigin())`); null for anything else. */
+function awaitedCall(node: Node | null): Node | null {
+  let n = node;
+  while (n?.type === "parenthesized_expression" || n?.type === "await_expression") n = n.namedChild(0);
+  return n?.type === "call_expression" ? n : null;
 }
 
 /**

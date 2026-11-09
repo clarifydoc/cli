@@ -934,6 +934,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private resolveUrlArg(arg: Node): ResolvedUrl | null {
     if (arg.type === "string") return { url: stripQuotes(arg.text), confidence: "EXTRACTED" };
     if (arg.type === "parenthesized_expression" && arg.namedChild(0)) return this.resolveUrlArg(arg.namedChild(0)!);
+    // `fetch(await apiUrl("/clubs"))`: an async URL builder, read as the call it awaits.
+    if (arg.type === "await_expression") {
+      const call = awaitedCall(arg);
+      return call ? this.resolveUrlArg(call) : null;
+    }
     // `fetch(new URL('predict', base))`: the path, under the base when it is relative.
     if (arg.type === "new_expression" && arg.childForFieldName("constructor")?.text === "URL") {
       const [pathArg, baseArg] = arg.childForFieldName("arguments")?.namedChildren ?? [];
@@ -979,7 +984,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const urls = [...new Set(values!.map((v) => resolveTemplateUrl(arg, (name) => (name === n ? { url: v, confidence: "INFERRED" } : this.lookupUrl(name, arg)))))];
         return { url: urls[0]!, ...(urls.length > 1 ? { alternatives: urls.slice(1), choice: true } : {}), confidence: "INFERRED" };
       }
-      const url = resolveTemplateUrl(arg, (name) => this.lookupUrl(name, arg));
+      // A local at the head of the URL holding a builder call (`` `${url}?make=x` ``) is that call.
+      const head = arg.namedChildren[0]?.type === "template_substitution" && arg.namedChildren[0].startIndex === arg.startIndex + 1 ? arg.namedChildren[0].namedChild(0) : null;
+      const url = resolveTemplateUrl(arg, (name) => this.lookupUrl(name, arg) ?? (head?.type === "identifier" && head.text === name ? this.heldBuilderCall(name, arg) : null));
       // A leftover `${…}` means the template couldn't be fully resolved.
       return { url, confidence: url.includes("${") ? "INFERRED" : "EXTRACTED" };
     }
@@ -991,7 +998,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // `const url = requestUri('x', 'v3'); axios.get(url)`: the builder call,
       // as it would be read inline.
       const value = this.bindings()?.valueOf(arg.text, arg);
-      if (value?.type === "call_expression") return this.resolveUrlArg(value);
+      const held = awaitedCall(value ?? null);
+      if (held) return this.resolveUrlArg(held);
       // `const send = (url, options) => fetch(url, options)`: a request wrapper's
       // parameter stays a `${url}` hole, which the request-factory pass fills
       // from each call site (`send(`${API}/clubs`, …)`).
@@ -1106,6 +1114,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       }
     }
     return this.bindings()?.lookup(name, at) ?? null;
+  }
+
+  /**
+   * `` fetch(`${url}?make=x`) `` with `const url = await carsUrl("/cars")` (or the call unawaited): the
+   * builder call in the hole, as it would be written inline, for the URL-builder pass to read.
+   * Only a local at the URL's head is read this way — a builder gives the whole URL, not a piece of one.
+   */
+  private heldBuilderCall(name: string, at: Node): ResolvedUrl | null {
+    const call = awaitedCall(this.bindings()?.valueOf(name, at) ?? null);
+    const callee = call?.childForFieldName("function");
+    if (!call || !callee || !/^(?:identifier|member_expression)$/.test(callee.type)) return null;
+    return { url: `\${${call.text.replace(/\s+/g, " ")}}`, confidence: "INFERRED" };
   }
 
   /** How many locals {@link lookupUrl} is reading through (a local built on itself stops). */
@@ -2576,6 +2596,13 @@ function isParamHole(url: string, at: Node): boolean {
     if (FUNCTION_SCOPES.has(p.type) && declaresParam(p, m[1]!)) return true;
   }
   return false;
+}
+
+/** A call, also awaited or parenthesized (`await apiUrl("/clubs")`); null for anything else. */
+function awaitedCall(node: Node | null): Node | null {
+  let n = node;
+  while (n?.type === "parenthesized_expression" || n?.type === "await_expression") n = n.namedChild(0);
+  return n?.type === "call_expression" ? n : null;
 }
 
 /** Whether a function node declares a parameter of this name. */
