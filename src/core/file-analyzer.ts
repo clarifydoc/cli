@@ -778,6 +778,14 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
       analysis.functions.push(fn);
     }
+    if (hooks?.reactiveCells) {
+      const named = [
+        ...analysis.functions.filter((f) => f.name !== "<setup>"),
+        ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
+      ];
+      const cells = hooks.reactiveCells(tree, sourceText, named);
+      if (cells && cells.writes.length > 0 && cells.triggers.length > 0) analysis.reactiveCells = cells;
+    }
 
     // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
     // comes from where the file sits. Skipped for test files, same as

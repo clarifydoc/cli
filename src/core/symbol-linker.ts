@@ -18,6 +18,7 @@ import {
   type ImportInfo,
   type InteractiveElementInfo,
 } from "../types/analysis.js";
+import { reactiveTriggerLinks } from "./reactive-triggers.js";
 import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, StructuralMatch } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource } from "./import-index.js";
@@ -438,6 +439,7 @@ export function buildSymbolLinks(
   }
 
   links.push(...ctx.extraLinks);
+  links.push(...reactiveTriggerLinks(analyses));
   links.push(...inheritedHandlerLinks(analyses, ctx));
   links.push(...fieldHandlerLinks(analyses, ctx));
   links.push(...parameterDispatchLinks(links, analyses, interfaceImplMap, ctx));

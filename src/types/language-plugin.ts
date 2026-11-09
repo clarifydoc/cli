@@ -704,6 +704,11 @@ export interface AstExtractorHooks {
    * (a Vue SFC's template is blanked out of `sourceText`).
    */
   propBindings?(tree: Tree, sourceText: string, rawSource: string, filePath: string): import("./analysis.js").PropBinding[];
+  /**
+   * Reactive cells the file writes and the callbacks a change re-runs (`FileAnalysis.reactiveCells`),
+   * given the functions extracted so far so a write is named by the function it sits in.
+   */
+  reactiveCells?(tree: Tree, sourceText: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): import("./analysis.js").ReactiveCells | null;
   /** Outputs of components the code opens and subscribes to: `FileAnalysis.componentSubscriptions`. */
   componentSubscriptions?(tree: Tree, sourceText: string): import("./analysis.js").ComponentSubscription[];
   /** Values provided to descendant components by key, and injected from ancestors: `FileAnalysis.contextValues`. */

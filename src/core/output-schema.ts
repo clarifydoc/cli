@@ -45,6 +45,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   slotFunctions: "optional",
   busEvents: "optional",
   componentSubscriptions: "optional",
+  reactiveCells: "optional",
   dynamicEmits: "optional",
   declaredProps: "optional",
   declaredEmits: "optional",

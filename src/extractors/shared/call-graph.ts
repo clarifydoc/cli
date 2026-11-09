@@ -460,7 +460,16 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
     // unless the function is a callback the module runs (`onMounted(() => …)`);
     // inside one, an inline callback runs on its behalf, as in a function body.
     if (hooks!.isFunctionDefinition?.(node)) return;
-    if (nested.has(node.type) && hooks!.heldFunction?.(node)) return;
+    const held = nested.has(node.type) ? hooks!.heldFunction?.(node) : null;
+    if (held) {
+      // Handed on from module code, as `extractCalls` hands it on from a function: whatever reaches the
+      // module's calls reaches the callback's one `passes` hop further.
+      if (!seen.has(`${held}\0passed`)) {
+        seen.add(`${held}\0passed`);
+        results.push({ name: held, kind: "internal", target: null, line: node.startPosition.row + 1, column: node.startPosition.column, passed: "argument" });
+      }
+      return;
+    }
     if (nested.has(node.type)) {
       if (inCallback && isAnonymousFnExpression(node, anonymous, named)) { /* read on */ }
       else if (hooks!.runsAtTopLevel?.(node)) inCallback = true;

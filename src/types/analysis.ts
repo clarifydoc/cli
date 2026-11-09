@@ -462,6 +462,15 @@ export interface FileAnalysis {
    * event on the same bus.
    */
   busEvents?: BusEventSite[];
+  /**
+   * Reactive cells the file writes and the callbacks re-run when one changes: a Vue
+   * `ref` written in a handler and the `watch`/`watchEffect` reading it, a React
+   * `useState` setter and the `useEffect` listing the state among its deps, an
+   * Angular signal's `.set` and the `effect` reading it. Cells are scoped where they
+   * are declared (one component, one class); the reactive-trigger pass joins each
+   * write to the callbacks on the same cell (INFERRED `dispatch` links).
+   */
+  reactiveCells?: ReactiveCells;
   subComponents: SubComponentInfo[];
   interactiveElements: InteractiveElementInfo[];
   /**
@@ -2971,6 +2980,29 @@ export interface ContextValue {
    */
   from?: string;
   member?: string;
+}
+
+/**
+ * The reactive cells of one file (`FileAnalysis.reactiveCells`). A cell is `<scope line>:<name>`, unique in the
+ * file, with the members written or read below it (`12:filters.league`): a write and a watched cell are one value
+ * when either path leads into the other.
+ */
+export interface ReactiveCells {
+  /** A function writing a cell: its symbol as the linker names it (`ClubPage`, `TableComponent.pick`, `<watch@12>`). */
+  writes: Array<{
+    cell: string;
+    function: string;
+    line: number;
+    /** What the write spells: the cell, the setter (`setClubId`). */
+    spelling: string;
+    /** It writes a switch-off value (`false`, `null`, `0`, `''`). */
+    falsy?: boolean;
+  }>;
+  /**
+   * A callback re-run when any of `cells` changes: its symbol, and the line it is written at. `truthyOnly`: it
+   * runs only when the value turns truthy (VueUse `whenever`), so a switch-off write never runs it.
+   */
+  triggers: Array<{ cells: string[]; function: string; line: number; truthyOnly?: boolean }>;
 }
 
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */

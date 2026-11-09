@@ -8,6 +8,7 @@ import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { propBindings } from "./prop-bindings.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
+import { reactiveCells } from "./reactive-cells.js";
 import { withSubjectTriggers } from "./rxjs-subjects.js";
 import { contextValues } from "./provide-inject.js";
 import { busEvents, JsEventBusResolver } from "./bus-events.js";
@@ -252,6 +253,7 @@ function astHooks(language: Language): AstExtractorHooks {
     markupFunctions,
     propBindings,
     componentSubscriptions,
+    reactiveCells,
     contextValues,
     busEvents,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),

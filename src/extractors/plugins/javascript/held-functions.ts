@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { subscriptionOf } from "./component-subscriptions.js";
+import { reactiveCallbackName } from "./reactive-cells.js";
 
 /**
  * Function values written in place and handed on to run later — each a function of its own
@@ -11,7 +12,9 @@ import { subscriptionOf } from "./component-subscriptions.js";
  *   - an `on[A-Z]…` option of a component the script opens:
  *     `modal.open(ConfirmBox, { onConfirm: () => removeClub() })` → `<ConfirmBox:onConfirm@14>`;
  *   - a member assigned a function inside a function: `toast.action = () => reload()` → `<toast.action@17>`;
- *   - a member of an object in a declared array: `const items = [{ run: () => sell() }]` → `<items[].run@3>`.
+ *   - a member of an object in a declared array: `const items = [{ run: () => sell() }]` → `<items[].run@3>`;
+ *   - a watcher or effect callback a write in the file re-runs (`reactive-cells.ts`):
+ *     `watch(query, () => search())` with `query.value = q` in a handler → `<watch@21>`.
  *
  * The function that wrote it hands it on (`passed: "argument"`), so whatever reached the writer's
  * calls still reaches them, one `passes` hop further.
@@ -67,6 +70,8 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
   const line = fn.startPosition.row + 1;
   const parent = fn.parent;
   if (!parent) return null;
+  const reactive = parent.type === "arguments" ? reactiveCallbackName(fn) : null;
+  if (reactive) return reactive;
   // `x.subscribe(() => …)`, `x.subscribe({ next: () => … })`, `ref.result.then((r) => …)`.
   const call = parent.type === "arguments" ? parent.parent : parent.type === "pair" && parent.childForFieldName("key")?.text === "next" ? parent.parent?.parent?.parent : null;
   if (call?.type === "call_expression" && firstArgument(call)?.id === (parent.type === "arguments" ? fn.id : parent.parent!.id)) {
