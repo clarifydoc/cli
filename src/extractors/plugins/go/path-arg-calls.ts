@@ -27,13 +27,15 @@ interface GoFunction {
   /** A method (`func (r *T) Name(…)`): reached through its receiver, never by a bare call. */
   method: boolean;
   params: string[];
+  /** The parameter list as written, between its parentheses (over lines when the signature spans several). */
+  paramText: string;
   start: number;
   end: number;
   /** Takes a `*testing.T`/`testing.TB`: a test helper, whose requests are a test's. */
   testHelper: boolean;
 }
 
-const FUNC_RE = /^func\s+(\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*\(([^)]*)\)/;
+const FUNC_HEAD = /^func\s+(\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*\(/;
 const URL_PARAM = /url|uri|path|endpoint|link/i;
 const VERB_LITERAL = /^"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"$|^http\.Method(Get|Post|Put|Patch|Delete|Head|Options)$/;
 const STRING_LIT = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/;
@@ -53,19 +55,81 @@ function braceDelta(line: string): number {
   return d;
 }
 
+/**
+ * The parameter list opening at `open` on line `i`, up to its closing parenthesis — over the
+ * following lines when the signature spans several (`func f(\n a int,\n) error {`, an inline
+ * `in *struct { … }`), strings and tags skipped — and the line it closes on. Null when it never closes.
+ */
+function paramList(lines: readonly string[], i: number, open: number): { text: string; end: number } | null {
+  let depth = 0;
+  let text = "";
+  for (let k = i; k < lines.length && k - i < 40; k++) {
+    const line = k === i ? lines[k]!.slice(open) : lines[k]!;
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c]!;
+      if (ch === '"' || ch === "`" || ch === "'") {
+        let j = c + 1;
+        while (j < line.length && line[j] !== ch) j += ch !== "`" && line[j] === "\\" ? 2 : 1;
+        // A raw string running past the line (a multi-line tag) is not a signature's.
+        if (j >= line.length) return null;
+        text += line.slice(c, j + 1);
+        c = j;
+        continue;
+      }
+      if (ch === "/" && line[c + 1] === "/") break;
+      if (ch === "(" || ch === "{" || ch === "[") depth++;
+      else if (ch === ")" || ch === "}" || ch === "]") {
+        if (--depth === 0) return { text: text.slice(1), end: k };
+      }
+      text += ch;
+    }
+    text += "\n";
+  }
+  return null;
+}
+
 /** Top-level functions with their parameter names and line span (0-based, inclusive). */
 export function goFunctions(lines: readonly string[]): GoFunction[] {
   const out: GoFunction[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const m = FUNC_RE.exec(lines[i]!);
+    const m = FUNC_HEAD.exec(lines[i]!);
     if (!m) continue;
-    const params = m[3]!.split(",").map((p) => /^\s*([A-Za-z_]\w*)/.exec(p)?.[1]).filter((p): p is string => !!p && p !== "_");
-    let depth = braceDelta(lines[i]!);
-    let k = i;
+    const list = paramList(lines, i, m[0].length - 1);
+    if (!list) continue;
+    // Top-level parts only: a doc tag's commas, a func-typed parameter's own list, an inline struct's fields stay inside.
+    const params = splitParams(list.text).map((p) => /^\s*([A-Za-z_]\w*)/.exec(p)?.[1]).filter((p): p is string => !!p && p !== "_");
+    let depth = 0;
+    for (let k = i; k <= list.end; k++) depth += braceDelta(lines[k]!);
+    let k = list.end;
     while (depth > 0 && k + 1 < lines.length) depth += braceDelta(lines[++k]!);
-    out.push({ name: m[2]!, method: !!m[1], params, start: i, end: k, testHelper: /\btesting\.(?:T|TB|B)\b/.test(m[3]!) });
+    out.push({ name: m[2]!, method: !!m[1], params, paramText: list.text, start: i, end: k, testHelper: /\btesting\.(?:T|TB|B)\b/.test(list.text) });
     i = k;
   }
+  return out;
+}
+
+/** A parameter list split at its top-level commas, strings and brackets honoured. */
+function splitParams(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c]!;
+    if (ch === '"' || ch === "`") {
+      let j = c + 1;
+      while (j < text.length && text[j] !== ch) j += ch === '"' && text[j] === "\\" ? 2 : 1;
+      cur += text.slice(c, j + 1);
+      c = j;
+      continue;
+    }
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
   return out;
 }
 

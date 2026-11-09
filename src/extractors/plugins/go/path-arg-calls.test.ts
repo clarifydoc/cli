@@ -203,3 +203,26 @@ func forward(e events.Event) {
     ]);
   });
 });
+
+describe("Go function spans", () => {
+  it("reads a signature spread over lines, an inline struct parameter with a tag's commas included", () => {
+    const lines = [
+      "func markRead(ctx context.Context, in *struct {",
+      "\tClubID int64 `path:\"club\" doc:\"The club, by id, to mark.\"`",
+      "}) (*struct{}, error) {",
+      "\treturn nil, nil",
+      "}",
+      "",
+      "func listClubs(",
+      "\tctx context.Context,",
+      "\tseason, league string,",
+      ") error {",
+      "\treturn nil",
+      "}",
+    ];
+    expect(goFunctions(lines).map((f) => [f.name, f.params, f.start, f.end])).toEqual([
+      ["markRead", ["ctx", "in"], 0, 4],
+      ["listClubs", ["ctx", "season", "league"], 6, 11],
+    ]);
+  });
+});

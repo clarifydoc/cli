@@ -54,6 +54,27 @@ function access(leaf: string, table: Parameters<typeof dbAccessFor>[1]): { acces
 }
 
 /**
+ * The access of an EF set row: its method's own (`ToListAsync` reads, `Remove` writes), else — for
+ * a query operator that only composes (`Where`, `OrderBy`, `Include`) — a read when the member it
+ * sits in declares it returns the query unexecuted (`IQueryable<Club>`, `IOrderedQueryable<…>`,
+ * `Task<IQueryable<…>>`): whoever runs it pages, lists or counts it. A query run as a bulk write
+ * (`ExecuteDelete`) returns no query, so it is never one of these.
+ */
+function efAccess(method: string, node: Node): { access?: "read" | "write" } {
+  const own = access(method, EF_ACCESS);
+  return own.access || !returnsQuery(node) ? own : { access: "read" };
+}
+
+/** The member `node` sits in declares a query as its result: `IQueryable<T>` and its ordered / including forms, or a task of one. */
+function returnsQuery(node: Node): boolean {
+  let member = enclosingMember(node);
+  // A property's `get` accessor returns the property's type.
+  if (member?.type === "accessor_declaration") member = member.parent?.parent ?? null;
+  const type = member ? member.childForFieldName("returns") ?? member.childForFieldName("type") : null;
+  return !!type && /^(?:(?:[\w.]+\.)?(?:Task|ValueTask)<)?(?:[\w.]+\.)?I(?:Ordered|Includable)?Queryable</.test(type.text.replace(/\s+/g, ""));
+}
+
+/**
  * Read/write classification, kept separate from the sets above because those
  * decide WHETHER a data source is emitted and this decides what it does.
  * Fluent composition (`Where`, `Select`, `Include`, `OrderBy`, `GroupBy`,
@@ -319,7 +340,20 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         const name = tp.childForFieldName("name") ?? tp.namedChildren.find((c) => c.type === "identifier");
         if (name) typeParams.add(name.text);
       }
+      // A parameter declared as a set (`this DbSet<Club> query`) is that set in its own member only: another
+      // member's `query` is whatever that member declares. A field or property holds it file-wide.
+      const params: Array<[number, number]> = [];
+      for (const p of tree.rootNode.descendantsOfType("parameter")) {
+        const set = /^I?DbSet<\s*([\w.]+)\s*>\??$/.exec(p.childForFieldName("type")?.text.replace(/\s+/g, "") ?? "");
+        const name = p.childForFieldName("name")?.text;
+        const member = set && name ? enclosingMember(p) : null;
+        const type = set ? set[1]!.slice(set[1]!.lastIndexOf(".") + 1) : "";
+        if (!member || typeParams.has(type)) continue;
+        params.push([p.startIndex, p.endIndex]);
+        this.efLocals.set(`${member.id}:${name}`, type);
+      }
       for (const m of sourceText.matchAll(/\bI?DbSet<\s*([\w.]+)\s*>\??\s+(\w+)\b/g)) {
+        if (params.some(([from, to]) => m.index! >= from && m.index! < to)) continue;
         const type = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
         if (!this.dbSetNames.has(m[2]!)) this.dbSetNames.set(m[2]!, typeParams.has(type) ? null : type);
       }
@@ -793,7 +827,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         name: `EF: ${method}`,
         target: entity ?? base,
         ...(entity ? { entity } : {}),
-        ...access(method, EF_ACCESS),
+        ...efAccess(method, node),
         line: node.startPosition.row + 1,
       });
     }
@@ -829,7 +863,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         name: `EF: ${method}`,
         target: dbSet ?? receiver ?? null,
         ...(entity ? { entity } : {}),
-        ...access(method, EF_ACCESS),
+        ...efAccess(method, node),
         line: node.startPosition.row + 1,
       });
     }

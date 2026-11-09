@@ -202,7 +202,20 @@ export function computeParamColumns(input: {
             next = field !== undefined ? { kind: "field", of: index, name: field } : { kind: "param", index };
           }
           const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: index, ...(field !== undefined ? { field } : {}) };
-          walk(target.file, target.symbol, target.fn.line, target.fn.calls, next, [...hops, hop], depth + 1, weakest(confidence, link.confidence ?? "INFERRED"), seen, out);
+          const conf = weakest(confidence, link.confidence ?? "INFERRED");
+          walk(target.file, target.symbol, target.fn.line, target.fn.calls, next, [...hops, hop], depth + 1, conf, seen, out);
+          // A generic handler calling a method on the object it is handed (`DoUpdate(ctx, obj CObject, a)` →
+          // `obj.Update(s, a)`): the call site, which knows the object's type, holds the dispatch to that
+          // type's method (`obj.Update` → `ClubRead.Update`), where the field is its receiver's.
+          if (field === undefined || index < 0) continue;
+          const param = target.fn.params[index]!.name;
+          for (const d of linksFrom.get(`${file}::${symbol}`) ?? []) {
+            if (d.sourceLine !== call.line || d.strategy !== "interface-redirect" || !d.callName.startsWith(`${param}.`) || d.callName.slice(param.length + 1).includes(".")) continue;
+            const impl = fnNamed(d.targetFile, d.targetSymbol, d.targetLine);
+            if (!impl) continue;
+            const via = { file: d.targetFile, symbol: d.targetSymbol, line: impl.fn.line, arg: -1, field };
+            walk(impl.file, impl.symbol, impl.fn.line, impl.fn.calls, { kind: "field", of: -1, name: field }, [...hops, hop, via], depth + 2, weakest(conf, d.confidence ?? "INFERRED"), seen, out);
+          }
         }
       }
     }
@@ -256,6 +269,16 @@ export function computeParamColumns(input: {
           // The handler reads it off the request itself (`req.params.slug`, `request.args.get("season")`).
           const hop = { file: handler.file, symbol: handler.symbol, line: handler.fn.line, arg: -1 };
           walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, requestSlot, [hop], 0, link.confidence ?? "INFERRED", new Set(), found);
+          // Or off the input the framework binds the request into, a parameter whose declared type
+          // names the field it writes the value into (a Huma `input *ClubInput`, `ClubID int64 \`path:"club"\``).
+          handler.fn.params.forEach((param, i) => {
+            const type = param.type?.replace(/^[*&\s]+/, "");
+            if (!type || !/^[\w.]+$/.test(type)) return;
+            for (const field of boundFields(leaf(type), handler.file, requestSlot)) {
+              const at = { ...hop, arg: i, field };
+              walk(handler.file, handler.symbol, handler.fn.line, handler.fn.calls, { kind: "field", of: i, name: field }, [at], 0, link.confidence ?? "INFERRED", new Set(), found);
+            }
+          });
         }
       }
       // A handler built for a type binds the request into an instance of it (`RouteInfo.handlerTypes`: a Go

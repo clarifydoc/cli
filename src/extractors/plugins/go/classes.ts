@@ -4,6 +4,7 @@ import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { boundFromTags } from "./bound-tags.js";
 import { bracketDelta, goContainerResult, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
 /**
@@ -329,18 +330,6 @@ function matchingParen(text: string, open: number): number {
   return -1;
 }
 
-/**
- * The request value a binder writes into a tagged field: Echo's `param:"club"`,
- * Gin's `uri:"club"`, Fiber's `params:"club"` (a route parameter) — and Echo's
- * or Fiber's `query:"season"` (a query value; `-` opts out).
- */
-function boundFromTags(tags: readonly string[]): PropertyInfo["boundFrom"] | undefined {
-  for (const t of tags) {
-    const m = /^(param|uri|params|query):"([\w-]+)/.exec(t);
-    if (m && m[2] !== "-") return { kind: m[1] === "query" ? "query-param" : "route-param", name: m[2]! };
-  }
-  return undefined;
-}
 
 /**
  * One struct member → its fields:

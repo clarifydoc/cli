@@ -1,4 +1,5 @@
 import type { CallArgOrigin, ClassInfo, DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
+import { boundFromTags, goTags } from "./bound-tags.js";
 import { goFunctions } from "./path-arg-calls.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
@@ -57,10 +58,18 @@ const QUERY_READS: RegExp[] = [
 /** One conversion a value passes through, its argument first. */
 const CONVERSION = /^(strconv\.(?:ParseInt|ParseUint|Atoi|ParseBool|ParseFloat)|uuid\.(?:Parse|MustParse)|int64|int|string)\(\s*/;
 const STRING_LIT = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/;
+/** A composite literal, its fields' text captured: `&Club{ID: x}`, `models.Club{…}`. */
+const COMPOSITE = /^&?[A-Za-z_][\w.]*\s*\{([\s\S]*)\}$/;
 const IDENT = /^[A-Za-z_]\w*$/;
 
 interface Scope {
   params: string[];
+  /**
+   * The request values a framework binds into a parameter declared as an inline struct, by
+   * parameter and field: Huma's `in *struct { ClubID int64 \`path:"club"\` }` makes `in.ClubID`
+   * the route's `{club}`.
+   */
+  bound?: Map<string, Map<string, Origin>>;
   /** A method's receiver name (`p` of `func (p *Club) Delete(…)`). */
   receiver?: string;
   /** 0-based, inclusive. */
@@ -181,6 +190,8 @@ export function goValueOrigin(raw: string, scope: Scope, depth = 0, line0?: numb
     if (writes(scope, base, field, line0)) return null;
     const t = transform ? { transform } : {};
     if (base === scope.receiver) return { origin: { kind: "receiver-field", name: field }, ...t };
+    const request = scope.bound?.get(base)?.get(field);
+    if (request) return { origin: request, ...t };
     const index = scope.params.indexOf(base);
     return index >= 0 ? { origin: { kind: "param-field", name: base, index, member: field }, ...t } : null;
   }
@@ -203,8 +214,30 @@ function scopesOf(lines: readonly string[]): Scope[] {
   return goFunctions(lines).map((f) => {
     const body = lines.slice(f.start + 1, f.end + 1).map(stripComment).join("\n");
     const receiver = f.method ? /^func\s*\(\s*([A-Za-z_]\w*)\s+/.exec(lines[f.start]!)?.[1] : undefined;
-    return { params: f.params, ...(receiver && receiver !== "_" ? { receiver } : {}), start: f.start, end: f.end, body, code: blank(body) };
+    const bound = inlineBindings(f.paramText);
+    return { params: f.params, ...(receiver && receiver !== "_" ? { receiver } : {}), ...(bound ? { bound } : {}), start: f.start, end: f.end, body, code: blank(body) };
   });
+}
+
+/**
+ * The parameters declared as an inline struct whose fields a binder fills from the request
+ * (`in *struct { ClubID int64 \`path:"club"\` }` — Huma's input), each field with that request value.
+ */
+function inlineBindings(paramText: string): Scope["bound"] | undefined {
+  if (!/\bstruct\s*\{/.test(paramText)) return undefined;
+  let out: Scope["bound"] | undefined;
+  for (const part of splitTopLevel(paramText)) {
+    const m = /^([A-Za-z_]\w*)\s+\*?struct\s*\{([\s\S]*)\}$/.exec(part.trim());
+    if (!m) continue;
+    const fields = new Map<string, Origin>();
+    for (const member of m[2]!.split(/\n|;/)) {
+      const name = /^\s*([A-Z]\w*)\s+\S/.exec(member)?.[1];
+      const bound = name ? boundFromTags(goTags(member)) : undefined;
+      if (bound) fields.set(name!, { kind: bound.kind, name: bound.name });
+    }
+    if (fields.size > 0) (out ??= new Map()).set(m[1]!, fields);
+  }
+  return out;
 }
 
 const scopeAt = (scopes: readonly Scope[], line0: number): Scope | undefined => scopes.find((s) => line0 >= s.start && line0 <= s.end);
@@ -268,10 +301,16 @@ function addArgOrigins(lines: readonly string[], fn: FunctionInfo, scopes: reado
         return;
       }
       if (a.endsWith("...")) return;
-      // A composite literal's fields (`&Club{ID: p.ClubID}`): each value at its field of the argument.
-      const composite = /^&?[A-Za-z_][\w.]*\s*\{([\s\S]*)\}$/.exec(a);
+      // A composite literal's fields (`&Club{ID: p.ClubID}`): each value at its field of the argument —
+      // written in place, or a local built from one before the call (`t := &Club{ID: in.ClubID}`), less
+      // the fields the body writes between.
+      const built = IDENT.test(a) && a !== scope.receiver && !scope.params.includes(a) ? valuesBefore(scope, a, call.line - 1) : [];
+      const local = built.length === 1 && COMPOSITE.test(built[0]!) ? built[0]! : undefined;
+      const composite = COMPOSITE.exec(local ?? a);
       if (composite) {
+        const rewritten = local ? fieldWrites(scope, a, call.line - 1) : [];
         for (const [field, value] of pairsOf(composite[1]!, false)) {
+          if (rewritten.includes(field)) continue;
           const o = goValueOrigin(value, scope, 0, call.line - 1);
           if (kept(o) && o.origin.kind !== "receiver") out.push({ index, field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
         }

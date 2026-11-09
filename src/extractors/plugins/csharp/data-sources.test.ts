@@ -431,6 +431,38 @@ public class NoteRepository {
     ]);
   });
 
+  it("reads a query a helper composes and returns as IQueryable, and nothing a method only composes (real-repo FP)", async () => {
+    const rows = await rowsOf(`namespace X;
+public class SquadRepository(LeagueContext context) {
+  public async Task<PagedList<Squad>> Page(int clubId) => await PagedList<Squad>.CreateAsync(SquadQuery(clubId), 1, 20);
+  private IQueryable<Squad> SquadQuery(int clubId) {
+    var query = context.Squads
+        .Where(s => s.ClubId == clubId || s.Promoted)
+        .AsNoTracking();
+    return query.OrderBy(s => s.Id);
+  }
+  public IOrderedQueryable<Fixture> Upcoming => context.Fixtures.OrderBy(f => f.KickOff);
+  public Task<int> ClearFixtures(int clubId) => context.Fixtures.Where(f => f.ClubId == clubId).ExecuteDeleteAsync();
+  public void Probe(int id) { var unused = context.Referees.Where(r => r.Id == id); }
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access ?? "-"}`)).toEqual([
+      "EF: Where Squads read",
+      "EF: OrderBy Squads read",
+      "EF: OrderBy Fixtures read",
+      "EF: ExecuteDeleteAsync Fixtures write",
+      "EF: Where Referees -",
+    ]);
+  });
+
+  it("takes a parameter declared as a set for that set in its own member only (real-repo FP)", async () => {
+    const rows = await rowsOf(`namespace X;
+public static class QueryableExtensions {
+  public static IQueryable<int> ClubIdsFor(this DbSet<Club> query, int leagueId) => query.Where(c => c.LeagueId == leagueId).Select(c => c.Id);
+  public static IQueryable<Fixture> SortBy(this IQueryable<Fixture> query, bool desc) => desc ? query.OrderByDescending(f => f.KickOff) : query.OrderBy(f => f.KickOff);
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entity} ${d.access ?? "-"} @${d.line}`)).toEqual(["EF: Select Club read @3"]);
+  });
+
   it("keeps the inner access when the operator after it is no EF access of its own", async () => {
     const rows = await rowsOf(`namespace X;
 public class LeagueDbContext : DbContext {
