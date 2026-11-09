@@ -3022,7 +3022,10 @@ export interface ComponentSubscription {
   takesResult?: boolean;
 }
 
-/** A value bound to a child component's prop (`FileAnalysis.propBindings`). */
+/**
+ * A value bound to a child component's prop (`FileAnalysis.propBindings`). A literal is kept only where a
+ * component may act on it by name (a Vue `fetch-key="squad/fetchPlayers"`: a store action, a kind to pick).
+ */
 export interface PropBinding {
   /** The child's tag as written (`ClubCard`, `club-card`). */
   component: string;

@@ -138,3 +138,76 @@ export function dispatchMapMember(callName: string, node: Node): boolean {
   }
   return false;
 }
+
+/** A computed key that is no lookup of a fixed name: `stores[props.kind]`, `stores[kind]` — never `stores["club"]` or `stores[0]`. */
+function runtimeIndex(index: Node | null): boolean {
+  return !!index && index.type !== "string" && index.type !== "number" && index.type !== "template_string";
+}
+
+/**
+ * A record of call results: `const stores = { [Kind.Club]: useClubStore(), [Kind.Player]: usePlayerStore() }`
+ * — a `const` object literal whose every member holds a call (`useClubStore()`, `api.useClubs(slug)`), under
+ * any key. A lookup in it at run time (`stores[props.kind]`) is the result of whichever call the key picks:
+ * the linker fans a call on it out to each (`localTypes` `stores[]`, one entry per call).
+ */
+export function recordEntries(declarator: Node): { holder: string; calls: Node[] } | null {
+  if (declarator.type !== "variable_declarator") return null;
+  const decl = declarator.parent;
+  if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
+  const name = declarator.childForFieldName("name");
+  let value = declarator.childForFieldName("value");
+  while (value && TYPE_WRAPPERS.has(value.type)) value = value.namedChildren[0] ?? null;
+  if (name?.type !== "identifier" || value?.type !== "object") return null;
+  const calls: Node[] = [];
+  for (const member of value.namedChildren) {
+    if (member.type === "comment") continue;
+    if (member.type !== "pair") return null;
+    let held = member.childForFieldName("value");
+    while (held && TYPE_WRAPPERS.has(held.type)) held = held.namedChildren[0] ?? null;
+    if (held?.type !== "call_expression") return null;
+    const callee = held.childForFieldName("function");
+    if ((callee?.type !== "identifier" && callee?.type !== "member_expression") || !NAMED_VALUE.test(callee.text)) return null;
+    calls.push(held);
+  }
+  return calls.length > 0 ? { holder: name.text, calls } : null;
+}
+
+let recordsTree: Node["tree"] | null = null;
+let recordNames = new Set<string>();
+
+/** The names the file binds to records of call results, in any scope (read once per tree). */
+export function recordHolders(node: Node): ReadonlySet<string> {
+  if (node.tree === recordsTree) return recordNames;
+  recordsTree = node.tree;
+  recordNames = new Set();
+  for (const d of node.tree.rootNode.descendantsOfType("variable_declarator")) {
+    const record = d ? recordEntries(d) : null;
+    if (record) recordNames.add(record.holder);
+  }
+  return recordNames;
+}
+
+/**
+ * A member read off a record of call results at a key known only at run time, spelled as the linker reads it:
+ * `stores[props.kind].actions` → `stores[].actions`, `stores[kind].createOne` → `stores[].createOne`. Null for
+ * any other chain — a lookup with a fixed key, an optional step, a call in the chain.
+ */
+export function recordMemberChain(node: Node): string | null {
+  const members: string[] = [];
+  let cur: Node | null = node;
+  while (cur?.type === "member_expression") {
+    const property = cur.childForFieldName("property");
+    if (property?.type !== "property_identifier" || cur.children.some((c) => c.type === "?.")) return null;
+    members.unshift(property.text);
+    cur = cur.childForFieldName("object");
+  }
+  if (cur?.type !== "subscript_expression" || cur.children.some((c) => c.type === "?.")) return null;
+  const object = cur.childForFieldName("object");
+  if (object?.type !== "identifier" || !runtimeIndex(cur.childForFieldName("index")) || !recordHolders(cur).has(object.text)) return null;
+  return [`${object.text}[]`, ...members].join(".");
+}
+
+/** The callee of a call on a record of call results (`stores[props.kind].actions.createOne`) as `stores[].actions.createOne`. */
+export function recordCallee(callee: Node): string | null {
+  return callee.type === "member_expression" ? recordMemberChain(callee) : null;
+}

@@ -264,6 +264,8 @@ function originOf(n: Node, depth: number): Found | null {
       }
       // `props.clubId`: a prop of the component the read sits in.
       if (n.type === "member_expression" && obj && prop && /^[\w$]+$/.test(prop) && readsUrl(n) && propsObject(obj, depth + 1)) return { kind: "prop", name: prop };
+      // `this.clubId` in a Vue options component declaring `props: { clubId }`.
+      if (n.type === "member_expression" && obj?.type === "this" && prop && /^[\w$]+$/.test(prop) && optionsProp(n, prop)) return { kind: "prop", name: prop };
       const direct = paramRead(n, depth);
       if (direct || !obj) return direct;
       // `clubStore.clubs[props.clubId]`: the key, read off the collection.
@@ -600,6 +602,26 @@ function propsSource(n: Node, depth: number): boolean {
     return !!of && propsObject(of, depth + 1);
   }
   return propsObject(n, depth);
+}
+
+/**
+ * Whether `this.<name>` at `at` reads a prop of the Vue options component around it: the nearest object
+ * literal enclosing the read that declares `props` (`props: { clubId: String }`, `props: ['clubId']`) lists it.
+ */
+function optionsProp(at: Node, name: string): boolean {
+  for (let p = at.parent; p; p = p.parent) {
+    if (p.type === "class_body" || p.type === "class_declaration" || p.type === "class") return false;
+    if (p.type !== "object") continue;
+    const pair = p.namedChildren.find((c) => c?.type === "pair" && c.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "") === "props");
+    if (!pair) continue;
+    const value = pair.childForFieldName("value");
+    if (value?.type === "array") return value.namedChildren.some((e) => e?.type === "string" && e.text.slice(1, -1) === name);
+    if (value?.type === "object") {
+      return value.namedChildren.some((m) => (m?.type === "pair" && m.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "") === name) || (m?.type === "shorthand_property_identifier" && m.text === name));
+    }
+    return false;
+  }
+  return false;
 }
 
 /**

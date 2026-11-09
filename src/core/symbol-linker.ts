@@ -4293,6 +4293,80 @@ function dispatchMapCall(
   return out[0]!;
 }
 
+/** A call on a record of call results read at a key known only at run time: `stores[].actions.createOne`. */
+const RECORD_CALL = /^([A-Za-z_$][\w$]*)\[\](?:\.(.+))?$/;
+/** The calls `recordCall` makes up, one per entry: resolved as made through the entry's module, never as a record call again. */
+const RECORD_ENTRY_CALLS = new WeakSet<CallInfo>();
+/** The callee of a call chain as `localTypes[].from` spells one (`useClubStore()`, `league.useClubs(slug)`): its name. */
+const FACTORY_CALL = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\(/;
+
+/**
+ * A call on a record of call results the plugin states (`localTypes` `stores[]`, one entry per call:
+ * `const stores = { [Kind.Club]: useClubStore(), [Kind.Player]: usePlayerStore() }`), at a key known only at
+ * run time — `stores[props.kind].actions.createOne()` (named `stores[].actions.createOne`), or a call on a local
+ * holding a member read off it (`const actions = stores[props.kind].actions`, `localTypes[].from`
+ * `stores[].actions`). Whichever entry the key picks: the call is resolved once per entry as it would be on a
+ * local initialized by that entry's call, one INFERRED link each (all but the first through `ctx.extraLinks`);
+ * an entry resolved only by a guess draws nothing. The record is the caller's own,
+ * else that of a function around it, else its module's top level — unless the caller binds the name itself.
+ * Undefined when the call is not one on such a record.
+ */
+function recordCall(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null | undefined {
+  if (RECORD_ENTRY_CALLS.has(call)) return undefined;
+  const caller = findEnclosingCallable(analysis, sourceSymbol);
+  // The scopes the caller sees, innermost first: its own, those of the functions around it, the module's.
+  const scopes = [caller, ...analysis.functions.filter((f) => caller && f !== caller && f.name !== "<setup>" && f.line <= caller.line && f.endLine >= caller.endLine).sort((a, b) => b.line - a.line), analysis.functions.find((f) => f.name === "<setup>")]
+    .filter((f, i, all): f is NonNullable<typeof f> => !!f && all.indexOf(f) === i);
+  const localsNamed = (name: string) => {
+    for (const s of scopes) {
+      const own = (s.localTypes ?? []).filter((l) => l.name === name);
+      if (own.length > 0) return own;
+      if (s !== caller && s.params.some((p) => p.name === name)) return [];
+    }
+    return [];
+  };
+  let name = call.name;
+  if (!RECORD_CALL.test(name)) {
+    if (!name.includes(".")) return undefined;
+    // `actions.createOne()` on `const actions = stores[props.kind].actions`.
+    const head = name.slice(0, name.indexOf("."));
+    if (caller?.params.some((p) => p.name === head)) return undefined;
+    const held = localsNamed(head);
+    if (held.length !== 1 || held[0]!.type || !held[0]!.from || !RECORD_CALL.test(held[0]!.from)) return undefined;
+    name = `${held[0]!.from}${name.slice(head.length)}`;
+  }
+  const [, holder, rest] = RECORD_CALL.exec(name)!;
+  if (!rest || caller?.params.some((p) => p.name === holder)) return undefined;
+  const entries = localsNamed(`${holder}[]`).filter((l) => !l.type && l.from);
+  if (entries.length === 0) return undefined;
+  const out: SymbolLink[] = [];
+  for (const entry of entries) {
+    // As a call on a local the entry's call initialized: `stores[].actions.createOne` made through `useClubStore`'s module.
+    const factory = FACTORY_CALL.exec(entry.from!)?.[1];
+    const head = factory?.split(".")[0];
+    const imported = head ? analysis.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined)) : undefined;
+    if (!factory || !imported) continue;
+    const synth: CallInfo = { name: `${holder}[].${rest}`, kind: "cross-file", target: imported.source, line: call.line, confidence: "INFERRED", ...(factory === head ? { via: factory } : {}) };
+    RECORD_ENTRY_CALLS.add(synth);
+    const link = resolveCallToDefinition(sourceFile, sourceSymbol, synth, analysis, ctx);
+    if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) continue;
+    if (out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
+    // The factory standing in for a member it could not name stays one, as on a local: `handedClientLinks`
+    // replaces it with the member of the client the factory hands its helper (`useStore("club", api.clubs)`).
+    const viaFactory = link.strategy === "factory-via";
+    out.push({ ...link, sourceSymbol, sourceLine: call.line, callName: call.name, confidence: "INFERRED", ...(viaFactory ? {} : { strategy: "dispatch:object-map" as const, relation: "dispatch" as const }) });
+  }
+  if (out.length === 0) return null;
+  ctx.extraLinks.push(...out.slice(1));
+  return out[0]!;
+}
+
 /**
  * A call through a dispatch map another file declares (`import { ACTIONS } from "./actions"`;
  * `ACTIONS.save(club)`, `ACTIONS[kind](club)`): the import names the exporting file (followed through
@@ -4480,6 +4554,8 @@ function resolveCallToDefinitionBody(
   }
   const mapped = reference ? undefined : dispatchMapCall(sourceFile, sourceSymbol, call, analysis, ctx);
   if (mapped !== undefined) return mapped;
+  const recorded = reference ? undefined : recordCall(sourceFile, sourceSymbol, call, analysis, ctx);
+  if (recorded !== undefined) return recorded;
   // A noise-named key off an imported name that is no dispatch map (`ClubAPI.filter` on an imported
   // `new ClubAPI()`) resolves as any member call would, but never by a name-only guess: an imported
   // array's `.map` must not reach some project function `map`.

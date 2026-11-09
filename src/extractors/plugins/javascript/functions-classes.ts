@@ -25,6 +25,7 @@ import {
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
+import { recordEntries, recordMemberChain } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
@@ -357,6 +358,30 @@ function scanBody(
     return bound;
   };
 
+  /**
+   * `const { store, actions } = stores[props.kind]`: each member the pattern names, read off a record of call
+   * results at a key known only at run time (`from` = `stores[].actions`) — whichever entry the key picks.
+   */
+  const bindRecordMembers = (pattern: Node | null, declarator: readonly Node[]): Set<string> => {
+    const bound = new Set<string>();
+    if (pattern?.type !== "object_pattern") return bound;
+    const eq = declarator.findIndex((c) => c.type === "=");
+    const value = eq >= 0 ? declarator[eq + 1] ?? null : null;
+    const chain = value?.type === "subscript_expression" || value?.type === "member_expression" ? recordMemberChain(value) : null;
+    if (!chain) return bound;
+    for (const p of pattern.namedChildren) {
+      const local = p.type === "shorthand_property_identifier_pattern" ? p.text : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? p.childForFieldName("value")!.text : null;
+      const member = p.type === "shorthand_property_identifier_pattern" ? p.text : p.childForFieldName("key")?.text;
+      if (!local || !member || !/^[\w$]+$/.test(member)) continue;
+      const entry = { local: { name: local, type: "", from: `${chain}.${member}` }, annotated: false };
+      const list = bindings.get(local);
+      if (list) list.push(entry);
+      else bindings.set(local, [entry]);
+      bound.add(local);
+    }
+    return bound;
+  };
+
   // Collections whose element type the source states (a parameter or an annotated local), by name; the
   // variables a `for … of` over one and the callbacks it hands its elements to bind are typed as the element.
   const collections = new Map<string, { element: string; map: boolean }>();
@@ -531,8 +556,19 @@ function scanBody(
           const list = bindings.get(name.text);
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
+          // A record of call results (`const stores = { [Kind.Club]: useClubStore(), … }`): under `stores[]`, each call.
+          const record = recordEntries(node);
+          for (const call of record?.calls ?? []) {
+            const from = callChainText(call, "typescript");
+            if (!from) continue;
+            const entry = { local: { name: `${name.text}[]`, type: "", from }, annotated: false };
+            const held = bindings.get(entry.local.name);
+            if (held) held.push(entry);
+            else bindings.set(entry.local.name, [entry]);
+          }
         } else {
-          bindPattern(name ?? null, bindDestructured(name ?? null, children));
+          const fromRecord = bindRecordMembers(name ?? null, children);
+          bindPattern(name ?? null, new Set([...bindDestructured(name ?? null, children), ...fromRecord]));
         }
       } else if (type === "catch_clause") {
         bindPattern(node.childForFieldName("parameter"));
@@ -653,6 +689,8 @@ function initializerLocal(value: Node, name: string): { local: LocalType; annota
   const expr = awaited ? value.namedChild(0) : value;
   let from: string | null = null;
   if (expr?.type === "call_expression") from = callChainText(expr, "typescript");
+  // `stores[props.kind].actions` off a record of call results: `stores[].actions`, whichever entry the key picks.
+  else if ((expr?.type === "subscript_expression" || (expr?.type === "member_expression" && expr.text.includes("["))) && !awaited && recordMemberChain(expr)) from = recordMemberChain(expr);
   else if (expr?.type === "member_expression" && !awaited) {
     const object = expr.childForFieldName("object");
     const property = expr.childForFieldName("property");

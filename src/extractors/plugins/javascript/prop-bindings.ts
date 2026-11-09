@@ -72,25 +72,50 @@ function firstCallee(fn: Node): Node | null {
   return call?.childForFieldName("function") ?? null;
 }
 
-/** `:club-id="clubId"` / `v-bind:club-id="…"` on a component tag (PascalCase or kebab-case with a hyphen). */
+/**
+ * A name a component takes as a string and acts on by name — a store action (`squad/fetchPlayers`), a store or
+ * kind to pick (`player`) —, never prose, a CSS value or a number: what a literal binding is kept for.
+ */
+const NAME_LITERAL = /^(?!(?:true|false|null|undefined)$)[A-Za-z_$][\w$]*(?:\/[A-Za-z_$][\w$]*)*$/;
+/** Attributes every tag takes, never a prop the component declares. */
+const NOT_PROPS: ReadonlySet<string> = new Set(["key", "ref", "class", "style", "is", "id", "slot"]);
+
+/**
+ * `:club-id="clubId"` / `v-bind:club-id="…"` on a component tag (PascalCase or kebab-case with a hyphen), and a
+ * name handed as a literal — `fetch-key="squad/fetchPlayers"`, `:action-name="'clubs/update'"` (`NAME_LITERAL`).
+ */
 function vueBindings(tree: Tree, raw: string): PropBinding[] {
   const start = raw.search(/<template\b/i);
   const end = raw.lastIndexOf("</template>");
-  if (start < 0 || end < start || !/(?:^|\s)(?::|v-bind:)[\w-]+\s*=/.test(raw.slice(start, end))) return [];
+  if (start < 0 || end < start) return [];
   const anchor = tree.rootNode.namedChildren.find((c) => !!c && c.type !== "comment") ?? null;
-  if (!anchor) return [];
-  const declared = declaredProps(tree.rootNode);
+  let declared: Set<string> | null = null;
   const out: PropBinding[] = [];
   const template = raw.slice(start, end);
   const lineAt = (offset: number) => raw.slice(0, start + offset).split("\n").length;
+  const camel = (name: string) => name.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
   for (const tag of template.matchAll(/<([A-Z][\w]*|[a-z][\w]*-[\w-]*)(?=[\s/>])/g)) {
     const attrs = attributesAfter(template, tag.index! + tag[0].length);
     for (const a of attrs) {
       const bound = /^(?::|v-bind:)([\w-]+)$/.exec(a.name);
-      if (!bound) continue;
-      const prop = bound[1]!.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
-      if (prop === "key" || prop === "ref" || prop === "class" || prop === "style" || prop === "is") continue;
+      if (!bound) {
+        // `fetch-key="squad/fetchPlayers"`: a literal the component takes by name.
+        if (/^[a-z][\w-]*$/.test(a.name) && !/^(?:v-|data-|aria-)/.test(a.name) && !NOT_PROPS.has(a.name) && NAME_LITERAL.test(a.value)) {
+          out.push({ component: tag[1]!, prop: camel(a.name), line: lineAt(a.offset), origin: { kind: "literal", value: a.value } });
+        }
+        continue;
+      }
+      const prop = camel(bound[1]!);
+      if (NOT_PROPS.has(prop)) continue;
       const value = a.value.trim();
+      // `:action-name="'clubs/update'"`
+      const quoted = /^(['"`])(.*)\1$/.exec(value);
+      if (quoted) {
+        if (NAME_LITERAL.test(quoted[2]!)) out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: { kind: "literal", value: quoted[2]! } });
+        continue;
+      }
+      if (!anchor) continue;
+      declared ??= declaredProps(tree.rootNode);
       const wrapped = /^(Number|String|parseInt|encodeURIComponent)\(\s*(.*?)\s*\)$/.exec(value);
       const chain = wrapped ? wrapped[2]! : value;
       if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(chain)) continue;

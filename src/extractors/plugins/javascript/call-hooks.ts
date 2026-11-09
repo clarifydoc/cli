@@ -5,7 +5,7 @@ import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
 import { signalReceiverTypeOfCall } from "./signal-receivers.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
-import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember } from "./dispatch-maps.js";
+import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember, recordCallee } from "./dispatch-maps.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
@@ -131,7 +131,14 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
   // A call on a module loaded in place is the module's own member, read where the body is scanned; a
   // `require("./x")` naming its module is an import fact (the member call's receiver, a binding's initializer), never a call.
-  resolveCallName: (node) => (loadedMemberCall(node) || requiredSource(node) ? null : genericResolveCallName(node, { extraCallee: dispatchMapCallee })),
+  // `stores[props.kind].actions.createOne()` on a record of call results: `stores[].actions.createOne`, fanned out by the linker.
+  // `this['clubs/update']()` where `mapActions(['clubs/update'])` bound that name: `this.clubs/update`, keyed by the action.
+  resolveCallName: (node) => {
+    if (loadedMemberCall(node) || requiredSource(node)) return null;
+    const callee = node.childForFieldName("function");
+    const record = callee?.type === "member_expression" && callee.text.includes("[") ? recordCallee(callee) : null;
+    return record ?? genericResolveCallName(node, { extraCallee: (c) => dispatchMapCallee(c) ?? mappedActionCallee(c) });
+  },
 
   // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.
   statedMember: (node, name) => dispatchMapMember(name, node),
@@ -305,10 +312,24 @@ function dispatchKeyOf(node: Node): string | null {
     const prop = fn.childForFieldName("property")?.text;
     return prop ? (mappedActions(node).get(prop) ?? null) : null;
   }
+  // `this['clubs/update'](…)` where it spread `...mapActions(['clubs/update'])`.
+  if (fn?.type === "subscript_expression") {
+    const name = mappedActionCallee(fn);
+    return name ? mappedActions(node).get(name.slice("this.".length)) ?? null : null;
+  }
   const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
   if (leaf === "queue" || leaf === "queueAll" || leaf === "emit") return jobOrEventKey(node, leaf);
   if (leaf !== "dispatch") return null;
   return dispatchKeyOfArgs((node.childForFieldName("arguments")?.namedChildren ?? []).filter((a): a is Node => !!a && a.type !== "comment"));
+}
+
+/** `this['clubs/update']` naming a method `mapActions` bound (`mapActions(['clubs/update'])`): `this.clubs/update`. */
+function mappedActionCallee(callee: Node): string | null {
+  if (callee.type !== "subscript_expression" || callee.childForFieldName("object")?.type !== "this") return null;
+  const index = callee.childForFieldName("index");
+  if (index?.type !== "string" || index.text.length <= 2) return null;
+  const name = index.text.slice(1, -1);
+  return mappedActions(callee).has(name) ? `this.${name}` : null;
 }
 
 /**

@@ -1,8 +1,9 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, Language, PropBinding, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { factoryActions, importedName, type FactoryAction, type FactoryContext } from "./vuex-factories.js";
+import { autoImportedComponents, globalComponentFiles, tagKey } from "./dispatch.js";
 
 export { extractStoreShapes } from "./vuex-factories.js";
 
@@ -26,7 +27,11 @@ export { extractStoreShapes } from "./vuex-factories.js";
  * './actions'`), else named by the `actions` object the module's factory returns.
  * A key without a namespace names a root action or one of a module that is not
  * namespaced. Inside a module, an action context's `dispatch('act')` names the
- * module's own action first. Where several root stores answer differently, the
+ * module's own action first. A dispatch of a prop (`dispatch(props.fetchKey)`,
+ * `this.$store.dispatch(this.actionName)`: `CallInfo.argOrigins`) names whatever
+ * each user binds it to (`fetch-key="squad/fetchPlayers"`, `FileAnalysis.propBindings`
+ * with a literal origin, through users handing their own prop on): one link per
+ * name, kept to that binding (`viaUsage`). Where several root stores answer differently, the
  * one the caller's app mounts decides; it joins only when exactly one action is left.
  */
 
@@ -141,6 +146,15 @@ function actionNames(node: Node | null | undefined, depth: number): string[] | n
     }
     case "identifier":
       return valuesOfName(n, depth);
+    case "member_expression": {
+      // `ACTIONS.FETCH_CLUBS` over a map the file declares (`const ACTIONS = { FETCH_CLUBS: 'clubs/fetchAll' }`).
+      const obj = n.childForFieldName("object");
+      const prop = n.childForFieldName("property")?.text;
+      const map = obj?.type === "identifier" && prop ? declaredValue(obj) : null;
+      if (map?.type !== "object") return null;
+      const pair = map.namedChildren.find((p) => p?.type === "pair" && keyText(p) === prop);
+      return pair ? actionNames(pair.childForFieldName("value"), depth + 1) : null;
+    }
     case "subscript_expression": {
       // `ACTIONS[kind]` over a map whose every value is a literal name.
       const obj = n.childForFieldName("object");
@@ -416,19 +430,19 @@ export class VuexDispatchResolver implements DispatchResolver {
       return hits.length === 1 ? hits[0]! : null;
     };
 
+    // `store.dispatch(props.fetchKey)`: the names the component's users bind the prop to (`fetch-key="squad/fetchPlayers"`).
+    let propKeys: ((child: string, prop: string) => Map<string, Usage[]>) | null = null;
+
     const links: SymbolLink[] = [];
     for (const a of analyses) {
       const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       for (const fn of fns) {
         for (const call of fn.calls) {
-          // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
-          if (!call.key || !/(?:^|\.)dispatch$|^this\.[\w$]+$/.test(call.name)) continue;
-          const keys = call.key.split(DISPATCH_KEY_SEPARATOR);
-          for (const written of keys) {
+          const emit = (written: string, usage?: Usage[]) => {
             const root = written.startsWith(ROOT_KEY_PREFIX);
             const key = root ? written.slice(ROOT_KEY_PREFIX.length) : written;
             const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name));
-            if (!hit) continue;
+            if (!hit) return;
             const link = (t: Target): SymbolLink => ({
               sourceFile: a.filePath,
               sourceSymbol: fn.name,
@@ -439,15 +453,79 @@ export class VuexDispatchResolver implements DispatchResolver {
               targetLine: t.line,
               confidence: "INFERRED",
               ...(t.viaType ? { viaType: t.viaType, viaTypeFile: t.viaTypeFile } : {}),
+              ...(usage ? { viaUsage: usage } : {}),
             });
             if (hit.fn) links.push(link({ file: hit.file.filePath, symbol: hit.fn.name, line: hit.fn.line }));
             for (const t of hit.also ?? []) links.push(link(t));
+          };
+          if (!call.key) {
+            // The action a prop names: one link per name a user binds, kept to that user (`viaUsage`).
+            const prop = !call.passed && !call.read && /(?:^|\.)dispatch$/.test(call.name) ? propNamedAction(call) : null;
+            if (!prop) continue;
+            propKeys ??= propLiterals(analyses, filePathMap, byPath);
+            for (const [key, usage] of propKeys(a.filePath, prop)) emit(key, usage);
+            continue;
           }
+          // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
+          // `this['clubs/update']()` likewise (`this.clubs/update`).
+          if (!/(?:^|\.)dispatch$|^this\.[\w$/]+$/.test(call.name)) continue;
+          for (const written of call.key.split(DISPATCH_KEY_SEPARATOR)) emit(written);
         }
       }
     }
     return links;
   }
+}
+
+/** Where a user binds a prop of the component: its file and the tag's line (`SymbolLink.viaUsage`). */
+type Usage = { file: string; line: number };
+
+/** The prop a dispatch names its action by: `dispatch(props.fetchKey)`, `this.$store.dispatch(this.actionName, …)`. */
+function propNamedAction(call: CallInfo): string | null {
+  const first = call.argOrigins?.find((o) => o.index === 0);
+  return first?.origin.kind === "prop" && !first.field && !first.transform && !first.derivation ? first.origin.name : null;
+}
+
+/**
+ * The names each component's users bind a prop to, as literals (`FileAnalysis.propBindings`, origin `literal`):
+ * child file + prop → name → the binding sites. A user handing on a prop of its own (`:fetch-key="fetchKey"`)
+ * hands on what its own users bind, four levels up, kept to the binding on the child's tag.
+ */
+function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>, byPath: Map<string, FileAnalysis>): (child: string, prop: string) => Map<string, Usage[]> {
+  const globals = globalComponentFiles(analyses, filePathMap);
+  const autoImported = autoImportedComponents(analyses);
+  const bound = new Map<string, Array<{ parent: string; binding: PropBinding }>>();
+  for (const parent of analyses) {
+    if (!parent.propBindings?.length) continue;
+    const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
+    for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
+    for (const b of parent.propBindings) {
+      if (b.origin.kind !== "literal" && b.origin.kind !== "prop") continue;
+      const src = subByKey.get(tagKey(b.component));
+      const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+      if (!child || !byPath.has(child)) continue;
+      const k = `${child}\0${b.prop}`;
+      (bound.get(k) ?? bound.set(k, []).get(k)!).push({ parent: parent.filePath, binding: b });
+    }
+  }
+  const walk = (child: string, prop: string, depth: number, seen: Set<string>, out: Map<string, Usage[]>, via?: Usage): void => {
+    const k = `${child}\0${prop}`;
+    if (depth > 4 || seen.has(k)) return;
+    seen.add(k);
+    for (const { parent, binding } of bound.get(k) ?? []) {
+      const usage = via ?? { file: parent, line: binding.line };
+      if (binding.origin.kind === "prop") walk(parent, binding.origin.name, depth + 1, seen, out, usage);
+      else if (binding.origin.kind === "literal") {
+        const list = out.get(binding.origin.value) ?? out.set(binding.origin.value, []).get(binding.origin.value)!;
+        if (!list.some((u) => u.file === usage.file && u.line === usage.line)) list.push(usage);
+      }
+    }
+  };
+  return (child, prop) => {
+    const out = new Map<string, Usage[]>();
+    walk(child, prop, 0, new Set(), out);
+    return out;
+  };
 }
 
 function distinct(hits: Array<Hit | null>): Hit[] {
