@@ -634,7 +634,33 @@ describe("Python SQLAlchemy statements", () => {
     ].join("\n")).then((rows) => rows.filter((r) => /scalar/.test(r[0]!)))).toEqual([
       ["self.session.scalar", "Player", "read"],
       ["self.session.scalar", "model", "read"],
-      ["self.session.scalar", null, null],
+      ["self.session.scalar", null, "read"],
+    ]);
+  });
+
+  it("names the parameter a statement takes its model from, never a rebound one", async () => {
+    const src = [
+      "class ClubRepository:",
+      "    def statistics(self):",
+      "        def model_count(model: type[Base], *, scoped: bool = True) -> int:",
+      "            stmt = select(func.count(model.id)).filter_by(league_id=self.league_id)",
+      "            if scoped:",
+      "                stmt = stmt.filter_by(club_id=self.club_id)",
+      "            return self.session.scalar(stmt)",
+      "        return model_count(Club)",
+      "    def first(self, model):",
+      "        return self.session.query(model).first()",
+      "    def rebound(self, model):",
+      "        model = self.model",
+      "        return self.session.scalar(select(model))",
+    ].join("\n");
+    const tree = await parseSource(src, "python" as never, "x.py");
+    const rows = new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database" && /scalar|query/.test(d.name));
+    expect(rows.map((d) => [d.name, d.line, d.entityParameter ?? null, d.entity ?? null])).toEqual([
+      ["self.session.scalar", 7, "model", null],
+      ["self.session.query(model).first", 10, "model", null],
+      ["self.session.query", 10, "model", null],
+      ["self.session.scalar", 13, null, null],
     ]);
   });
 });

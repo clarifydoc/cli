@@ -2416,6 +2416,14 @@ export interface DataSourceInfo {
    */
   entityTypeParameter?: string;
   /**
+   * For `database`: the statement names the model this parameter of the
+   * enclosing function holds (`def model_count(model): select(func.count(model.id))`).
+   * `entity` stays empty; core adds a row at each resolved call site that hands
+   * the function, at that parameter's position, a class the project declares as
+   * an entity (`model_count(Club)`), through the call's `CallInfo.args`.
+   */
+  entityParameter?: string;
+  /**
    * For `database`: the object written is what this method of this project type
    * returns (`systemConfigFetcher.getConfigMap().flatMap(cm -> client.update(cm))`,
    * `SystemConfigFetcher#getConfigMap`). `entity` stays empty; the plugin's project

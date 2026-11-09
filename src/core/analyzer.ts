@@ -154,6 +154,7 @@ import { buildClassIndex } from "./class-index.js";
 import { expandRequestFactories, finalizeApiTargets, resolveSymbolicTargets } from "./api-targets.js";
 import { expandTypedMemberHoles } from "./typed-member-holes.js";
 import { expandChannelFactories } from "./channel-factories.js";
+import { expandEntityParameters } from "./entity-parameters.js";
 import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
 import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
@@ -1971,6 +1972,9 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A wrapper publishing on the channel its caller names: a row at each call site handing it a literal.
   const channelRows = expandChannelFactories(allAnalyses, symbolLinks);
   if (channelRows > 0) progress.detail(`  Channel wrapper call sites: ${channelRows}`);
+  // A helper querying the model its caller hands it: a row at each call site handing it an entity class.
+  const boundModelRows = expandEntityParameters(allAnalyses, symbolLinks);
+  if (boundModelRows > 0 && verbose) progress.detail(`  Models handed to query helpers: ${boundModelRows} row(s)`);
   // An event sent within a topic meets only the handlers of channels joined on that topic.
   const topicRows = scopeChannelTopics(allAnalyses);
   if (topicRows > 0 && verbose) progress.detail(`  Channel events kept apart by topic: ${topicRows} row(s)`);

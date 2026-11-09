@@ -454,11 +454,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // SQLAlchemy names the model in the statement handed over, not in the chain:
           // `session.execute(select(Club)…)`, a local assigned one, `session.query(Club)`.
           // `select(self.model)` names an attribute of the instance, which the project pass resolves.
+          // `select(func.count(model.id))` in `def model_count(model)` names the function's parameter, which core binds per call.
           let entityAttribute: string | undefined;
+          let entityParameter: string | undefined;
           if (!table && !tableRef && !instance && !relatedField) {
             const stated = statementModel(node);
             if (stated?.model) table = stated.model;
             else if (stated?.attribute) entityAttribute = stated.attribute;
+            else if (stated?.parameter) entityParameter = stated.parameter;
             if (stated) access ??= stated.access;
           }
           // Each call of a chain is a row of its own (`query(…).filter(…).first()`): the filter is told once per line.
@@ -476,6 +479,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(authUser ? { authUser: true as const } : {}),
             ...(relatedField ? { relatedField } : {}),
             ...(entityAttribute ? { entityAttribute } : {}),
+            ...(entityParameter ? { entityParameter } : {}),
             ...(access ? { access } : {}),
           }));
           sources.push(...joined);
@@ -534,6 +538,9 @@ const PY_SESSION_STATEMENT_LEAVES = new Set(["exec", "scalars", "scalar"]);
 /** Datastore calls handed a SQLAlchemy statement (`execute`, `scalars`, SQLModel `exec`) or a model (`query`). */
 const PY_STATEMENT_LEAVES = new Set(["execute", "exec", "scalars", "scalar", "query"]);
 
+/** The model a statement names: a class, an attribute of the instance, or a parameter of the enclosing function. */
+type StatedModel = { model?: string; attribute?: string; parameter?: string; access: "read" | "write" };
+
 /**
  * The model a SQLAlchemy call reaches, as the statement handed to the session
  * names it — anywhere down the chain (`session.execute(q).scalars().all()`):
@@ -541,9 +548,11 @@ const PY_STATEMENT_LEAVES = new Set(["execute", "exec", "scalars", "scalar", "qu
  * function assigns such a statement (every assignment that builds one must
  * agree), `update(Club)` / `delete(Club)` / `insert(Club)` writing. A model
  * held by an attribute of the instance (`select(self.model)`) is returned as
- * that attribute, for the project pass to resolve.
+ * that attribute, for the project pass to resolve; one held by a parameter of
+ * the enclosing function (`def model_count(model): select(func.count(model.id))`)
+ * as that parameter, which core binds at each call site.
  */
-function statementModel(call: Node): { model?: string; attribute?: string; access: "read" | "write" } | null {
+function statementModel(call: Node): StatedModel | null {
   let cur: Node | null = call;
   let handed: Node | null = null;
   while (cur?.type === "call") {
@@ -559,16 +568,16 @@ function statementModel(call: Node): { model?: string; attribute?: string; acces
     const model = modelExpression(arg);
     return model ? { ...model, access: "read" } : null;
   }
-  const found = new Map<string, { model?: string; attribute?: string; access: "read" | "write" }>();
+  const found = new Map<string, StatedModel>();
   for (const value of arg.type === "identifier" ? assignedValues(arg.text, handed) : [arg]) {
     const stmt = rootStatement(value);
-    if (stmt) found.set(`${stmt.model ?? ""}|${stmt.attribute ?? ""}|${stmt.access}`, stmt);
+    if (stmt) found.set(`${stmt.model ?? ""}|${stmt.attribute ?? ""}|${stmt.parameter ?? ""}|${stmt.access}`, stmt);
   }
   return found.size === 1 ? [...found.values()][0]! : null;
 }
 
 /** `select(Club).where(…).order_by(…)` → the model `select` is given; null for any other expression. */
-function rootStatement(expr: Node): { model?: string; attribute?: string; access: "read" | "write" } | null {
+function rootStatement(expr: Node): StatedModel | null {
   let cur: Node = expr;
   while (cur.type === "call") {
     const fn = cur.childForFieldName("function");
@@ -585,9 +594,10 @@ function rootStatement(expr: Node): { model?: string; attribute?: string; access
 
 /**
  * `Club`, `models.Club`, `Club.id` → the class; `self.model` / `self.model.id` → the attribute;
- * an SQL function over a column (`func.count(Club.id)`) → that column's class.
+ * an SQL function over a column (`func.count(Club.id)`) → that column's class; `model` /
+ * `model.id` where `model` is a parameter the enclosing function never rebinds → the parameter.
  */
-function modelExpression(node: Node): { model?: string; attribute?: string } | null {
+function modelExpression(node: Node): { model?: string; attribute?: string; parameter?: string } | null {
   if (node.type === "call" && /^(?:sqlalchemy\.)?func\.\w+$/.test(node.childForFieldName("function")?.text ?? "")) {
     const column = positional(node)[0];
     return column ? modelExpression(column) : null;
@@ -595,10 +605,31 @@ function modelExpression(node: Node): { model?: string; attribute?: string } | n
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(node.text)) return null;
   const parts = node.text.split(".");
   if ((parts[0] === "self" || parts[0] === "cls") && parts.length >= 2 && parts.length <= 3 && /^[a-z_]/.test(parts[1]!)) return { attribute: parts[1]! };
+  if (parts.length <= 2 && /^[a-z_]/.test(parts[0]!) && parts[0] !== "self" && parts[0] !== "cls" && heldByParameter(parts[0]!, node)) return { parameter: parts[0]! };
   const at = parts.findIndex((p) => /^[A-Z]/.test(p));
   // A module path before the class (`models.Club`), a column after it (`Club.id`) — never a member of a member.
   if (at < 0 || parts.slice(0, at).some((p) => !/^[a-z_]/.test(p)) || parts.length - at > 2) return null;
   return { model: parts[at]! };
+}
+
+/** `name` is a parameter of the function enclosing `at`, which its body never assigns or loops over. */
+function heldByParameter(name: string, at: Node): boolean {
+  let fn: Node | null = at.parent;
+  while (fn && fn.type !== "function_definition" && fn.type !== "lambda" && fn.type !== "module") fn = fn.parent;
+  if (fn?.type !== "function_definition") return false;
+  const declared = (fn.childForFieldName("parameters")?.namedChildren ?? []).some((p) => {
+    const id = p.type === "identifier" ? p : p.childForFieldName("name") ?? (p.type === "typed_parameter" ? p.namedChildren[0] : null);
+    return id?.type === "identifier" && id.text === name;
+  });
+  if (!declared) return false;
+  let rebound = false;
+  const visit = (n: Node): void => {
+    if (rebound || (n !== fn && (n.type === "function_definition" || n.type === "class_definition"))) return;
+    if ((n.type === "assignment" || n.type === "augmented_assignment" || n.type === "for_statement") && n.childForFieldName("left")?.text === name) rebound = true;
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(fn.childForFieldName("body") ?? fn);
+  return !rebound;
 }
 
 /** Every value the function enclosing `at` assigns to `name` (nested functions aside); none when it rebinds it otherwise. */
