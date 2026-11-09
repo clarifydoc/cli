@@ -27,6 +27,7 @@ import { singularize } from "../shared/inflection.js";
 import { dartRequestBody } from "./request-body.js";
 import { goRoutes, materialRoutes } from "./go-router.js";
 import { extractDartImports, extractDartReExports } from "./imports.js";
+import { applyDartExtensionReceivers } from "./extensions.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 
 /**
@@ -1232,7 +1233,8 @@ export const dartSpec: RegexLangSpec = {
         return m ? m[1]! : null;
       },
     },
-    { pattern: /^\s*extension\s+([A-Za-z_$][\w$]*)\s+on\b/, getExtends: () => null },
+    // `extension Squad<P extends Player> on P` too: a generic extension is a named one.
+    { pattern: /^\s*extension\s+(?!type\b)([A-Za-z_$][\w$]*)\s*(?:<[^{]*?>\s*)?on\b/, getExtends: () => null },
     { pattern: /^\s*enum\s+([A-Za-z_$][\w$]*)/, getExtends: () => null },
   ],
 
@@ -1255,6 +1257,8 @@ export const dartSpec: RegexLangSpec = {
   extractInteractiveElements: (lines) => extractFlutterInteractiveElements(lines),
   // Inline closure handlers as functions of their own (see `flutterClosureFunctions`).
   postProcessFunctions: (lines, fns) => {
+    // An unnamed extension's members are its type's (extensions.ts).
+    applyDartExtensionReceivers(lines, fns);
     // Element types of collections the body builds or is handed, and `is` narrowing.
     for (const fn of fns) addDartElementTypes(fn, lines, null);
     const closures = flutterClosureFunctions(lines);
@@ -1265,6 +1269,8 @@ export const dartSpec: RegexLangSpec = {
   // The same for the members of a class, whose collection-typed fields a body iterates.
   postProcessClasses: (lines, classes) => {
     for (const cls of classes) {
+      // A named extension's members are its type's (extensions.ts).
+      applyDartExtensionReceivers(lines, cls.methods);
       const fields = fieldCollections(cls.properties);
       for (const m of cls.methods) addDartElementTypes(m, lines, fields);
     }
