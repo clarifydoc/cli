@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import { rubyLexicalConstants } from "./autoload.js";
 import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsPluralize, railsUnderscore } from "./schema.js";
 
 /** The ActiveRecord association macros; each declares a reader of the same name. */
@@ -161,6 +162,7 @@ export class RubyEntityExtractor extends EntityExtractor {
   override reconcileProject(analyses: FileAnalysis[]): void {
     const concernAssociations = associationTargets(analyses);
     moveConcernRelations(analyses);
+    spreadConcernSelfQueries(analyses);
     joinSchemaColumns(analyses);
     resolveChainAccesses(analyses, concernAssociations);
     dropServiceObjectQueries(analyses);
@@ -871,6 +873,73 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
   for (const { a, rel } of moved) {
     const list = (a.entityRelations ??= []);
     if (!list.some((r) => r.fromEntity === rel.fromEntity && r.fromField === rel.fromField)) list.push(rel);
+  }
+}
+
+/**
+ * A concern's queries on itself (`update!` bare in `module Scorable`, rows
+ * carrying `DataSourceInfo.mixinSelf`) are each including model's: one row per
+ * model whose class includes the concern — directly, or through a module that
+ * includes it — named and typed as that model's own (`Club.update!`). A concern
+ * no model includes queries nothing.
+ */
+function spreadConcernSelfQueries(analyses: FileAnalysis[]): void {
+  const ruby = analyses.filter((a) => a.language === "ruby");
+  if (!ruby.some((a) => a.dataSources.some((d) => d.mixinSelf))) return;
+  // Every class and module by its full path, and what each includes, resolved the way Ruby looks the constant up.
+  const declared = new Set<string>();
+  for (const a of ruby) for (const cls of a.classes) declared.add(rubyLexicalConstants.pathOf(cls, a.classes));
+  const includedBy = new Map<string, Array<{ path: string; model: string | null }>>();
+  for (const a of ruby) {
+    for (const cls of a.classes) {
+      const path = rubyLexicalConstants.pathOf(cls, a.classes);
+      const model = cls.decorators.includes("entity") ? cls.name : null;
+      const nesting = rubyLexicalConstants.nesting(a.classes, cls.line);
+      for (const mixin of cls.implements) {
+        const written = mixin.replace(/^::/, "");
+        const candidates = mixin.startsWith("::") ? [written] : [...nesting.map((n) => `${n}::${written}`), written];
+        const target = candidates.find((c) => declared.has(c));
+        if (target) (includedBy.get(target) ?? includedBy.set(target, []).get(target)!).push({ path, model });
+      }
+    }
+  }
+  const modelsIncluding = (concern: string): string[] => {
+    const models = new Set<string>();
+    const seen = new Set([concern]);
+    const queue = [concern];
+    while (queue.length > 0 && seen.size < 64) {
+      for (const inc of includedBy.get(queue.shift()!) ?? []) {
+        if (inc.model) models.add(inc.model);
+        else if (!seen.has(inc.path)) {
+          seen.add(inc.path);
+          queue.push(inc.path);
+        }
+      }
+    }
+    return [...models].sort();
+  };
+  const memo = new Map<string, string[]>();
+  for (const a of ruby) {
+    if (!a.dataSources.some((d) => d.mixinSelf)) continue;
+    const next: DataSourceInfo[] = [];
+    const have = new Set<string>();
+    for (const ds of a.dataSources) {
+      if (!ds.mixinSelf) {
+        next.push(ds);
+        continue;
+      }
+      const verb = ds.name.slice(ds.name.lastIndexOf(".") + 1);
+      let models = memo.get(ds.mixinSelf);
+      if (!models) memo.set(ds.mixinSelf, (models = modelsIncluding(ds.mixinSelf)));
+      for (const model of models) {
+        const name = `${model}.${verb}`;
+        if (have.has(`${name}@${ds.line}`)) continue;
+        have.add(`${name}@${ds.line}`);
+        const { mixinSelf: _concern, ...row } = ds;
+        next.push({ ...row, name, entity: model.split("::").pop()! });
+      }
+    }
+    a.dataSources = next;
   }
 }
 

@@ -115,3 +115,28 @@ end
     expect(a.functions.filter((f) => f.testCase)).toEqual([]);
   });
 });
+
+describe("RSpec blocks over several lines", () => {
+  it("gives a brace example its closing brace, and reads no example from a hash key", () => {
+    const fns = analyze(`
+RSpec.describe Club do
+  let(:attributes) do
+    {
+      scenario: {
+        name: League.default_name
+      }
+    }
+  end
+
+  it {
+    expect(subject).to validate_presence_of(:name)
+      .on(:create)
+  }
+end
+`).functions;
+    expect(fns.map((f) => `${f.name} ${f.line}-${f.endLine}: ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "Club 1-14: let,League.default_name",
+      "Club › example at line 10 10-13: expect,validate_presence_of",
+    ]);
+  });
+});

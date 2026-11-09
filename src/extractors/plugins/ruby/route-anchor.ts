@@ -247,8 +247,8 @@ function inheritedGemActions(
 }
 
 /**
- * A route a devise_token_auth mount draws (`rails-devise-model` fact: the model the mount
- * names, the access the gem's action has on it) carries that access as its own — when the
+ * A route a devise_token_auth mount or a `devise_for` draws (`rails-devise-model` fact: the
+ * model the mount names, the access the gem's action has on it) carries that access as its own — when the
  * controller serving it is the gem's, or a project class whose action calls `super` into
  * the gem. An action the project writes without `super` is its own code, read as written.
  * The model must be one class of the project, by exact name.
@@ -262,7 +262,7 @@ function deviseModelActions(
   for (const a of analyses) {
     for (const f of a.routeFacts ?? []) {
       if (f.kind !== "rails-devise-model") continue;
-      const d = f.data as { model: string; method: string; path: string; handler: string; action: string; access: "read" | "write" };
+      const d = f.data as { model: string; method: string; path: string; handler: string; action: string; access: "read" | "write"; gem?: string };
       // `modules` holds every non-controller class by qualified name, a name two files declare as null.
       if (!modules.get(d.model)) continue;
       const model = d.model.split("::").pop()!;
@@ -272,7 +272,8 @@ function deviseModelActions(
         const defined = definerOf(ref, d.action, byName, qualified, modules);
         if (defined && !defined.fn.calls.some((c) => c.name === "super")) continue;
         // Under a project override the chain must end in the gem, not in another base.
-        if (!/^(?:::)?DeviseTokenAuth::\w+Controller$/.test(chainEnd(ref, byName, qualified).cls.extends ?? "")) continue;
+        // `gem`: the module whose controllers the fact's access describes (devise_token_auth's by default).
+        if (!new RegExp(String.raw`^(?:::)?${d.gem ?? "DeviseTokenAuth"}::\w+Controller$`).test(chainEnd(ref, byName, qualified).cls.extends ?? "")) continue;
       }
       for (const b of analyses) {
         const row = b.routes.find((r) => r.httpMethod === d.method && r.path === d.path && r.handler === d.handler);

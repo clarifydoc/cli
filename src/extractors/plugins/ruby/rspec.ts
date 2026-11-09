@@ -22,8 +22,11 @@ const GROUPS = new Set(["describe", "context", "feature", "example_group", "xdes
 const EXAMPLES = new Set(["it", "specify", "scenario", "example", "its", "xit", "fit", "xspecify", "xscenario", "focus", "pending", "skip"]);
 const HOOKS = new Set(["before", "after", "around", "prepend_before", "append_after"]);
 
-/** `RSpec.describe Club, type: :model do`, `it "orders" do |ex|`, `before(:each) do`, `it { … }`. */
-const BLOCK = /^(\s*)(?:RSpec\s*\.\s*)?([a-z_]+)\b\s*(\(?)\s*(.*?)\s*\)?\s*(?:do(?:\s*\|[^|]*\|)?|\{(?:\s*\|[^|]*\|)?.*)\s*$/;
+/**
+ * `RSpec.describe Club, type: :model do`, `it "orders" do |ex|`, `before(:each) do`, `it { … }` — never a
+ * hash key named like one (`scenario: {` in a `let`'s hash).
+ */
+const BLOCK = /^(\s*)(?:RSpec\s*\.\s*)?([a-z_]+)\b(?!:)\s*(\(?)\s*(.*?)\s*\)?\s*(?:do(?:\s*\|[^|]*\|)?|\{(?:\s*\|[^|]*\|)?.*)\s*$/;
 
 /** Cheap gate: a spec file names a group the RSpec way. */
 const GATE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature|shared_examples)\b/;

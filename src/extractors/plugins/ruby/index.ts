@@ -3,6 +3,7 @@ import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addConcernClassMethods } from "./concerns.js";
+import { deviseForFact, extractDeviseFacts } from "./devise-routes.js";
 import { addMacroMembers } from "./member-macros.js";
 import { ACTIVE_RECORD_ASSOCIATION_MACROS } from "./entities.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
@@ -1171,10 +1172,10 @@ export const rubySpec: RegexLangSpec = {
     },
     { pattern: /^\s*module\s+(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
     {
-      // `Striker = Class.new(Base) do … end` — an anonymous class a constant names: a class of that name
-      // extending `Base`, whose block's `def`s are its methods. Only the `do` form (its `end` closes the class);
-      // a brace block or a class nobody names is no class here.
-      pattern: /^\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)\s*=\s*Class\.new\(\s*(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\s*\)\s*do\b/,
+      // `Striker = Class.new(Base) do … end` / `Striker = Class.new(Base) { … }` — an anonymous class a constant
+      // names: a class of that name extending `Base`, whose block's `def`s are its methods. The block's `end` or
+      // `}` closes the class (`blockEnds`); a class nobody names is no class here.
+      pattern: /^\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)\s*=\s*Class\.new\(\s*(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\s*\)\s*(?:do\b|\{)/,
       getExtends: (line) => /Class\.new\(\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/.exec(line)?.[1] ?? null,
     },
   ],
@@ -1357,6 +1358,8 @@ export const rubySpec: RegexLangSpec = {
     if (isGrapeFile(lines)) routes.push(...extractGrapeRoutes(lines, classes, (start, end) => extractCallsFromBody(lines, start, end, ["#"], rubySpec.callPatterns), routeFacts));
     extractRackMounts(lines, routeFacts);
     extractGemRoutedControllers(lines, routeFacts);
+    // A model's `devise :…` modules and the Devise initializer, for the `devise_for` routes (devise-routes.ts).
+    extractDeviseFacts(lines, classes, routeFacts);
 
     // Sinatra's block DSL — gated on the gem being required / subclassed so a
     // `get '/x' do` in a request spec or a Rails router never counts.
@@ -1629,6 +1632,19 @@ export const rubySpec: RegexLangSpec = {
             routeFacts.push({ kind: "rails-devise-model", line: i + 1, data: { model: model.replace(/^::/, ""), method: r.method, path: row.path, handler, action: r.action, access } });
           }
         }
+        continue;
+      }
+
+      // Devise: `devise_for :players, path: 'squad', controllers: {…}, skip: […]` draws the routes of the
+      // modules the model's `devise` line enables — another file's fact, joined by `railsDeviseRoutes`.
+      if (/^devise_for\b/.test(line)) {
+        let stmt = line.replace(/\s#.*$/, "");
+        const at = i;
+        const open = (t: string) => (t.match(/[{[(]/g)?.length ?? 0) - (t.match(/[}\])]/g)?.length ?? 0);
+        while ((open(stmt) > 0 || /,\s*$/.test(stmt)) && i + 1 < lines.length) stmt += " " + lines[++i]!.trim().replace(/\s#.*$/, "");
+        const fact = deviseForFact(stmt, at + 1, { prefix: currentPrefix(), namePrefix: currentNamePrefix(), modules: currentModules(), guards: currentGuards() });
+        if (fact && routeFacts) routeFacts.push(fact);
+        if (/\bdo\b(\s*\|[^|]*\|)?$/.test(stmt)) pushBlock("");
         continue;
       }
 

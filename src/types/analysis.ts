@@ -2409,6 +2409,12 @@ export interface DataSourceInfo {
    */
   entityAttribute?: string;
   /**
+   * For `database`: the receiver is the instance (or class) of whatever includes
+   * this module — a mixin's `self` (`update!` in a Rails concern). `entity`
+   * stays empty; the plugin's project pass adds one row per including model.
+   */
+  mixinSelf?: string;
+  /**
    * For `database`: the table read is the enclosing class's type parameter of
    * this name (`_database.Query<TModel>(…)` inside `BasicRepository<TModel>`).
    * `entity` stays empty; the data-flow reach binds the parameter along each

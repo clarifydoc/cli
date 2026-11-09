@@ -1,6 +1,7 @@
 import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { statementAt } from "./member-macros.js";
+import { rubyLexicalConstants } from "./autoload.js";
 
 /**
  * Inside an ActiveRecord model the receiver of a query is the model itself:
@@ -122,21 +123,45 @@ const BARE_VERB_RE = new RegExp(`(?<![\\w.@$:])(?:self\\.)?(${verbAlt})(?=\\s*\\
 /** A statement that only persists the record itself: `save!`, `self.destroy`. */
 const SELF_SAVE_RE = /^\s*(?:self\.)?(save!?|destroy!?|touch)\s*(?:$|\bif\b|\bunless\b)/;
 
-/** The reads and writes a model makes on itself, as rows of that model. */
+/**
+ * A Rails concern (`module Scorable; extend ActiveSupport::Concern`): its methods run on the instance — and
+ * its `class_methods`/`included` blocks on the class — of each model including it, so a bare `update!` there
+ * is that model's write. Which models those are is another file's fact; the row says the concern
+ * (`DataSourceInfo.mixinSelf`) and the entity pass adds one per including model.
+ */
+function isConcern(lines: readonly string[], cls: ClassInfo, classes: readonly ClassInfo[]): boolean {
+  if (!/^\s*module\s/.test(lines[cls.line - 1] ?? "")) return false;
+  for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
+    if (!/^\s*extend\s+(?:::)?ActiveSupport::Concern\b/.test(lines[i] ?? "")) continue;
+    // Its own line, not one of a module nested inside it.
+    if (!classes.some((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine && c.line <= i + 1 && i + 1 <= c.endLine)) return true;
+  }
+  return false;
+}
+
+/** The reads and writes a model makes on itself, as rows of that model; a concern's, as rows of its includers. */
 export function extractModelSelfQueries(lines: readonly string[], classes: readonly ClassInfo[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   for (const cls of classes) {
-    if (!isModelClass(cls)) continue;
+    const model = isModelClass(cls);
+    if (!model && !isConcern(lines, cls, classes)) continue;
     const entity = cls.name.split("::").pop()!;
+    const concern = model ? null : rubyLexicalConstants.pathOf(cls, classes);
+    // A concern's nested classes (an error class, a value object) are no includer's; its `ClassMethods` is.
+    const nested = model ? [] : classes.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine && c.name !== "ClassMethods");
     for (let i = cls.line; i < Math.min(cls.endLine, lines.length); i++) {
       const raw = lines[i] ?? "";
       if (/^\s*(?:#|def\b|alias\b)/.test(raw)) continue;
+      if (nested.some((c) => c.line <= i + 1 && i + 1 <= c.endLine)) continue;
       const code = raw.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/\s#.*$/, "");
       const seen = new Set<string>();
       const push = (verb: string) => {
         if (seen.has(verb)) return;
         seen.add(verb);
-        out.push({ kind: "database", name: `${cls.name}.${verb}`, target: null, calls: [], line: i + 1, entity, access: WRITE_SET.has(verb) || /^(?:save|destroy|touch)/.test(verb) ? "write" : "read" });
+        const access = WRITE_SET.has(verb) || /^(?:save|destroy|touch)/.test(verb) ? "write" : "read";
+        out.push(concern
+          ? { kind: "database", name: `${concern}.${verb}`, target: null, calls: [], line: i + 1, access, mixinSelf: concern }
+          : { kind: "database", name: `${cls.name}.${verb}`, target: null, calls: [], line: i + 1, entity, access });
       };
       for (const m of code.matchAll(BARE_VERB_RE)) push(m[1]!);
       const save = SELF_SAVE_RE.exec(code);

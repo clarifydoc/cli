@@ -16,8 +16,9 @@ import { findEndLine } from "../shared/regex-base.js";
  * literals, `?x` characters, everything after `__END__`), then runs one stack
  * over the whole file: `def` / `class` / `module` / `if` … at the start of a
  * statement, an expression `x = if …`, a `do`, a `{` open; `end` and `}`
- * close. A `def` whose `end` it finds gets that line; a file it cannot balance
- * keeps the indentation guess for whatever it could not close.
+ * close (a `{` spanning lines gets its `}` as its end). A `def` whose `end`
+ * it finds gets that line; a file it cannot balance keeps the indentation
+ * guess for whatever it could not close.
  */
 
 /** 0-based index of a block's first line → 1-based line of its `end`. */
@@ -350,7 +351,12 @@ export function scanRubyBlocks(lines: readonly string[]): { ends: RubyBlockEnds;
       const member = before === "." || before === ":" || before === "@" || before === "$" || (after === ":" && text[at + tok.length + 1] !== ":");
       if (tok === "{") { stack.push({ kind: "{", line: ln }); prev = tok; continue; }
       if (tok === "}") {
-        if (stack.length > 0 && stack[stack.length - 1]!.kind === "{") stack.pop();
+        if (stack.length > 0 && stack[stack.length - 1]!.kind === "{") {
+          // A brace block over several lines ends here (`Striker = Class.new(Base) {` … `}`); a keyword
+          // block opened on the same line closes later and keeps its own end.
+          const open = stack.pop()!;
+          if (ln > open.line) ends.set(open.line, ln + 1);
+        }
         prev = tok;
         continue;
       }

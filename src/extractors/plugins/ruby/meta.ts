@@ -6,6 +6,7 @@ import { rubyManifest } from "./manifest.js";
 import { RubyEntityExtractor } from "./entities.js";
 import { rubyReachability } from "./reachability.js";
 import { railsRouteAnchor } from "./route-anchor.js";
+import { railsDeviseRoutes } from "./devise-routes.js";
 import { grapeMounts } from "./grape.js";
 import { RailsViewResolver } from "./rails-views.js";
 import { RubyNodeRendererResolver } from "./renderer-dispatch.js";
@@ -22,7 +23,8 @@ export const rubyMeta: LanguagePluginMeta = {
   entities: new RubyEntityExtractor(),
   // Rails routes move from config/routes.rb onto the action that serves them.
   // Grape APIs take the prefix, version and path of the APIs that mount them.
-  routeResolvers: [railsRouteAnchor, grapeMounts],
+  // `devise_for` draws the routes of the modules the model's `devise` line enables.
+  routeResolvers: [railsDeviseRoutes, railsRouteAnchor, grapeMounts],
   // An action renders its Jbuilder view by convention (see rails-views.ts).
   dispatchResolvers: [new RailsViewResolver(), new RubyNodeRendererResolver()],
   builtinTypes: new Set(COMMON_PRIMITIVES),
