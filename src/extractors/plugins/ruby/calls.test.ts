@@ -59,6 +59,23 @@ describe("ruby paren-less calls", () => {
     expect(calls("    self.repo.find(id)")).toEqual(["repo.find"]);
     expect(calls("    repo.find(id)")).toEqual(["repo.find"]);
   });
+
+  it("names a paren-less predicate or command call through a path by every name, and no reader along it", () => {
+    expect(calls("    return if club.league.relegated?")).toEqual(["club.league.relegated?"]);
+    expect(calls("    @club&.league&.reset_table!")).toEqual(["club.league.reset_table!"]);
+    expect(calls("    club.league.promote 1")).toEqual(["club.league.promote"]);
+    expect(calls("    @club.league.promote :top")).toEqual(["club.league.promote"]);
+    expect(calls("    self.club.league.promote places")).toEqual(["self.club.league.promote"]);
+    // One reader on the caller's own instance is named as the reader, as `self.club.relegate(` is.
+    expect(calls("    self.club.relegated?")).toEqual(["club.relegated?"]);
+    expect(calls("    self.club.promote 1")).toEqual(["club.promote"]);
+    expect(calls("    raise Closed unless self.class.open?")).toEqual(["self.class.open?"]);
+    // A reader along the path, or at its end, is no call: no argument follows it.
+    expect(calls("    total = club.league.points + 1")).toEqual([]);
+    expect(calls("    puts club.league.name if squad")).toEqual([]);
+    expect(calls("    return 0 if club.league.size!= 0")).toEqual([]);
+    expect(calls("    club.league.clubs.each do |c|")).toEqual([]);
+  });
 });
 
 describe("ruby nested classes", () => {

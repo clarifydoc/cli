@@ -17,8 +17,24 @@ const PROJECTS: Record<string, Record<string, string>> = {
     "Gemfile": "source 'https://rubygems.org'\ngem 'rails'\n",
     "app/models/application_record.rb": "class ApplicationRecord < ActiveRecord::Base\n  self.abstract_class = true\nend\n",
     "app/models/club.rb": "class Club < ApplicationRecord\n  belongs_to :league\n\n  def relegate(season)\n    season\n  end\nend\n",
-    "app/models/league.rb": "class League < ApplicationRecord\n  def relegate(club)\n    club\n  end\nend\n",
-    "app/services/cup.rb": "class Cup\n  def relegate(club)\n    club\n  end\nend\n",
+    "app/models/league.rb": "class League < ApplicationRecord\n  def relegate(club)\n    club\n  end\n\n  def promote(places)\n    places\n  end\n\n  def relegated?\n    false\n  end\nend\n",
+    "app/services/cup.rb": "class Cup\n  def relegate(club)\n    club\n  end\n\n  def promote(places)\n    places\n  end\n\n  def relegated?\n    true\n  end\nend\n",
+    // Paren-less calls through a path: a predicate, and a command call with an argument. Typed by the head's
+    // declared type; off an untyped head, the namesakes in Cup leave nothing to guess.
+    "app/services/season.rb": `class Season
+  # @param club [Club]
+  def close(club)
+    club.league.promote 1
+    return if club.league.relegated?
+    club.league.name
+  end
+
+  def close_untyped(club)
+    club.league.promote 1
+    club.league.relegated?
+  end
+end
+`,
     "app/services/counter.rb": `class Counter
   def self.empty_counts
     { all: 0 }
@@ -211,6 +227,12 @@ describe("symbol-linker — a call through a path is typed from its head", () =>
     const run = targetsOf("ruby", "Transfer.run");
     expect(run).toContain("League.relegate");
     expect(run).not.toContain("Cup.relegate");
+  });
+
+  it("Ruby: a paren-less call through a path (`club.league.promote 1`, `club.league.relegated?`) is the League's", () => {
+    expect(targetsOf("ruby", "Season.close")).toEqual(["League.promote", "League.relegated?"]);
+    // Off a head the method does not type, the namesakes leave the linker nothing to choose.
+    expect(targetsOf("ruby", "Season.close_untyped")).toEqual([]);
   });
 
   it("Ruby: `self.class.empty_counts.except(…)` calls the class method of the class it is written in", () => {

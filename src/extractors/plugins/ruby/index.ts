@@ -791,6 +791,22 @@ const PARENLESS_CONST_CALL_RE = new RegExp(
   `(?<![\\w.@$:])(?:::)?(?!(?:${[...NON_MODEL_CONSTANTS].join("|")})\\b)([A-Z]\\w*(?:::[A-Z]\\w*)*)\\.([a-z_]\\w*(?:[?!](?!=))?)`,
 );
 
+/**
+ * What may follow a paren-less command call's method name to start its first argument: a number, string,
+ * symbol, instance variable or name — which an attribute read never is. A keyword (`club.name if x`) is none.
+ */
+const RUBY_COMMAND_ARGUMENT = String.raw`(?:\d|["']|:\w|@\w|(?!(?:if|unless|while|until|and|or|not|do|then|rescue|ensure|end|in|when|else|elsif)\b)[a-z_]\w*\b(?![ \t]*[?:]\s))`;
+
+/**
+ * The receiver of a call through a path of readers as the call is named: safe navigation dropped
+ * (`club&.league` → `club.league`), and one reader on the caller's own instance named as the reader
+ * (`self.club` → `club`), as the parenthesized reader call is. `self.class` is no reader: it stays as written.
+ */
+function rubyPathReceiver(path: string): string {
+  const plain = path.replace(/&\./g, ".");
+  return /^self\.(?!class$)[a-z_]\w*$/.test(plain) ? plain.slice(5) : plain;
+}
+
 /** A (possibly namespaced) capitalised receiver, not preceded by `.`/word char,
  *  followed by a `.method`. Global — a line may hold several queries. */
 const AR_CALL_RE = /(?<![\w.@$])([A-Z]\w*(?:::[A-Z]\w*)*)\.([a-z_]\w*[!?]?)/g;
@@ -1193,6 +1209,13 @@ export const rubySpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
     {
+      // The same through a path of readers — `club.league.relegated?`, `@club&.league&.reset!` — named by every
+      // name, as the parenthesized call is (`club.league.relegate(`), so the linker types the receiver from its
+      // head. `self.club.relegated?` calls the reader `club`, as `self.club.relegate(` does.
+      pattern: /(?<![\w.@$:])@?((?:self\.)?[a-z_]\w*(?:&?\.[a-z_]\w*){1,6})&?\.([a-z_]\w*[?!])(?!=)/,
+      buildName: (m) => ({ name: `${rubyPathReceiver(m[1]!)}.${m[2]}`, leafName: m[2] }),
+    },
+    {
       // Constant receiver without parens — `User.all`, `Order::Item.recent`.
       // A capitalised receiver is a class or module, so the member is a class
       // method, not a field. The parenthesised spelling is covered above; the
@@ -1226,9 +1249,18 @@ export const rubySpec: RegexLangSpec = {
       // method are followed by an argument that starts a value (a number, string, symbol, ivar or
       // name), which an attribute read never is. A keyword after it (`club.name if x`) is no argument.
       pattern: new RegExp(
-        String.raw`(?<![\w.@$:])([a-z_]\w*)&?\.([a-z_]\w*[?!]?)[ \t]+(?=(?:\d|["']|:\w|@\w|(?!(?:if|unless|while|until|and|or|not|do|then|rescue|ensure|end|in|when|else|elsif)\b)[a-z_]\w*\b(?![ \t]*[?:]\s)))`,
+        String.raw`(?<![\w.@$:])([a-z_]\w*)&?\.([a-z_]\w*[?!]?)[ \t]+(?=${RUBY_COMMAND_ARGUMENT})`,
       ),
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
+    },
+    {
+      // The same through a path of readers — `club.league.promote 1`, `@club.league.promote :top` — named by
+      // every name, as the parenthesized call is. An attribute read along the path (`club.league`) is no call:
+      // only the step an argument follows is recorded.
+      pattern: new RegExp(
+        String.raw`(?<![\w.@$:])@?((?:self\.)?[a-z_]\w*(?:&?\.[a-z_]\w*){1,6})&?\.([a-z_]\w*[?!]?)[ \t]+(?=${RUBY_COMMAND_ARGUMENT})`,
+      ),
+      buildName: (m) => ({ name: `${rubyPathReceiver(m[1]!)}.${m[2]}`, leafName: m[2] }),
     },
     {
       // A whole statement that is just `receiver.method` — `user.save`,
