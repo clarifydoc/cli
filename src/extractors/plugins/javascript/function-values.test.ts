@@ -8,7 +8,7 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
 
 /**
  * Function values that flow through members, options and arrays, with a callback written in place as a
- * function of its own (`heldFunction`): a handler a factory builds (`this.changeName = updateFieldEvent('name')`),
+ * function of its own (`heldFunction`): a handler a factory builds (`this.changeName = fieldUpdater('name')`),
  * a member assigned at run time (`dialog.callback = callbacks[mode]`, `toast.action = () => …`), a dialog a field
  * holds (`open(this.editClubDialog)`), an options prop's member (`:options="{ onClick: () => … }"`), and the
  * objects of an array a loop runs (written in the template, declared in the script, imported). Each has a
@@ -40,8 +40,8 @@ import { agent, trackField, createStore } from '../api';
 class ClubEditor extends React.Component {
   constructor() {
     super();
-    const updateFieldEvent = key => ev => agent.Clubs.update(key, ev.target.value);
-    this.changeName = updateFieldEvent('name');
+    const fieldUpdater = key => ev => agent.Clubs.update(key, ev.target.value);
+    this.changeName = fieldUpdater('name');
     this.changeCity = trackField('city');
     this.saveClub = ev => { agent.Clubs.save(this.props.club); };
     this.store = createStore('club');

@@ -11,7 +11,7 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
  * `${this.url.replace(this.resource, '')}callbacks/kit`, where `url` is a getter
  * (`${this.baseUrl()}/${this.resource}`) and `resource` is what the subclass hands
  * `super('clubs', …)`. The edit is evaluated over the getter's template, so the call
- * requests `/api/v1/accounts/{}/callbacks/kit` (real-repo FP: the request had lost its base).
+ * requests `/api/v1/leagues/{}/callbacks/kit` (real-repo FP: the request had lost its base).
  */
 describe("a getter URL edited by .replace, end to end", () => {
   let dir: string;
@@ -33,13 +33,13 @@ describe("a getter URL edited by .replace, end to end", () => {
       "  get url() {",
       "    return `${this.baseUrl()}/${this.resource}`;",
       "  }",
-      "  get accountIdFromRoute() {",
+      "  get leagueIdFromRoute() {",
       "    return window.location.pathname.split('/')[3];",
       "  }",
       "  baseUrl() {",
       "    let url = this.apiVersion;",
-      "    if (this.options.accountScoped && this.accountIdFromRoute) {",
-      "      url = `${url}/accounts/${this.accountIdFromRoute}`;",
+      "    if (this.options.leagueScoped && this.leagueIdFromRoute) {",
+      "      url = `${url}/leagues/${this.leagueIdFromRoute}`;",
       "    }",
       "    return url;",
       "  }",
@@ -50,7 +50,7 @@ describe("a getter URL edited by .replace, end to end", () => {
       "import ApiClient from './ApiClient';",
       "class ClubsAPI extends ApiClient {",
       "  constructor() {",
-      "    super('clubs', { accountScoped: true });",
+      "    super('clubs', { leagueScoped: true });",
       "  }",
       "  registerKit(params) {",
       "    return axios.post(`${this.url.replace(this.resource, '')}callbacks/kit`, params);",
@@ -80,12 +80,12 @@ describe("a getter URL edited by .replace, end to end", () => {
     await writeFile(join(server, "app.js"), [
       "const express = require('express');",
       "const router = express.Router();",
-      "router.post('/api/v1/accounts/:account_id/callbacks/kit', (req, res) => res.json({}));",
-      "router.post('/api/v1/accounts/:account_id/kits/renew', (req, res) => res.json({}));",
-      "router.post('/api/v1/accounts/:account_id/boards/notify', (req, res) => res.json({}));",
-      "router.get('/api/v1/accounts/:account_id/kits', (req, res) => res.json([]));",
-      "router.post('/api/v1/accounts/:account_id/callbacks/boots', (req, res) => res.json({}));",
-      "router.post('/api/v1/accounts/:account_id/callbacks/teams', (req, res) => res.json({}));",
+      "router.post('/api/v1/leagues/:league_id/callbacks/kit', (req, res) => res.json({}));",
+      "router.post('/api/v1/leagues/:league_id/kits/renew', (req, res) => res.json({}));",
+      "router.post('/api/v1/leagues/:league_id/boards/notify', (req, res) => res.json({}));",
+      "router.get('/api/v1/leagues/:league_id/kits', (req, res) => res.json([]));",
+      "router.post('/api/v1/leagues/:league_id/callbacks/boots', (req, res) => res.json({}));",
+      "router.post('/api/v1/leagues/:league_id/callbacks/teams', (req, res) => res.json({}));",
       "const app = express();",
       "app.use(router);",
       "app.listen(3000);",
@@ -102,14 +102,14 @@ describe("a getter URL edited by .replace, end to end", () => {
   const callAt = (line: number) => summary.apiCalls?.find((c) => c.filePath === "web/src/api/clubs.js" && c.line === line);
 
   it("takes the resource out of the base and links the sibling endpoint", () => {
-    expect(callAt(7)?.targetAlternatives).toContain("/api/v1/accounts/${this.accountIdFromRoute}/callbacks/kit");
-    expect(routeOf(7)).toBe("/api/v1/accounts/:account_id/callbacks/kit");
+    expect(callAt(7)?.targetAlternatives).toContain("/api/v1/leagues/${this.leagueIdFromRoute}/callbacks/kit");
+    expect(routeOf(7)).toBe("/api/v1/leagues/:league_id/callbacks/kit");
   });
 
   it("evaluates replaceAll, a plain regex, a chain and a bare edited read", () => {
-    expect(routeOf(10)).toBe("/api/v1/accounts/:account_id/kits/renew");
-    expect(routeOf(13)).toBe("/api/v1/accounts/:account_id/boards/notify");
-    expect(routeOf(16)).toBe("/api/v1/accounts/:account_id/kits");
+    expect(routeOf(10)).toBe("/api/v1/leagues/:league_id/kits/renew");
+    expect(routeOf(13)).toBe("/api/v1/leagues/:league_id/boards/notify");
+    expect(routeOf(16)).toBe("/api/v1/leagues/:league_id/kits");
   });
 
   it("leaves the base unresolved when the search value is not known", () => {

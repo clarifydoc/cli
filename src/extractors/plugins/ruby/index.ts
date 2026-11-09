@@ -296,9 +296,9 @@ function mentionsInstanceVariable(line: string, name: string): boolean {
 }
 
 /**
- * `self.class.empty_counts` in an instance method calls the class method of the class it is written in: named
- * through that class (`Counter.empty_counts`), as a call written on the class is, and the step it reads first
- * (`self.class.empty_counts.except(…)`) is a call of its own. Only a class method the class itself declares: one
+ * `self.class.empty_table` in an instance method calls the class method of the class it is written in: named
+ * through that class (`Standings.empty_table`), as a call written on the class is, and the step it reads first
+ * (`self.class.empty_table.except(…)`) is a call of its own. Only a class method the class itself declares: one
  * it inherits or a library adds (`self.class.get` through HTTParty) is not the instance method of that name. A
  * module's `self.class` is its includer's, which the module does not name, and a class method's `self.class` is
  * `Class`: both are left as written.

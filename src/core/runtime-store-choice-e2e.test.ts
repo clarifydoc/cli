@@ -9,7 +9,7 @@ import type { SymbolLink } from "../types/analysis.js";
 /**
  * A store or an action a component picks at run time: a Vuex action named by a prop each user binds to a
  * literal (`store.dispatch(props.fetchKey)` under `<SquadReport fetch-key="squad/fetchPlayers" />`), and a
- * record of composable stores indexed by a prop (`storeMap[props.kind].actions.createOne()`). Each module
+ * record of composable stores indexed by a prop (`squadStores[props.kind].actions.createOne()`). Each module
  * declares a namesake action (`fetchPlayers`, `createOne`), and a third module nobody names is the decoy.
  */
 const FILES: Record<string, string> = {
@@ -109,19 +109,19 @@ const FILES: Record<string, string> = {
     "import { usePlayerStore } from '../composables/use-player-store';",
     "import { Kind } from '../composables/kinds';",
     "const props = defineProps<{ kind: Kind }>();",
-    "const storeMap = {",
+    "const squadStores = {",
     "  [Kind.Club]: useClubStore(),",
     "  [Kind.Player]: usePlayerStore(),",
     "};",
     "async function createItem() {",
-    "  const actions = storeMap[props.kind].actions;",
+    "  const actions = squadStores[props.kind].actions;",
     "  await actions.createOne({ name: 'Rovers' });",
     "}",
     "async function createDirect() {",
-    "  await storeMap[props.kind].actions.createOne({ name: 'United' });",
+    "  await squadStores[props.kind].actions.createOne({ name: 'United' });",
     "}",
     "async function refreshAll() {",
-    "  const { actions } = storeMap[props.kind];",
+    "  const { actions } = squadStores[props.kind];",
     "  await actions.refresh();",
     "}",
     "</script>",

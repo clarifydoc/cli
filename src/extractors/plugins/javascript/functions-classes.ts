@@ -890,7 +890,7 @@ export function extractUrlTemplates(
   // with no guard taken) is a URL the field holds, kept beside its siblings.
   const push = (text: string | null, bareMember = false): boolean => {
     if (text == null) return false;
-    // `(await apiOrigin()) + path`: a runtime origin before the path the caller hands in — that path
+    // `(await garageOrigin()) + path`: a runtime origin before the path the caller hands in — that path
     // is the URL, when the parameter is named for one (a query appended to it changes no path).
     const handed = /^\{\}\{([A-Za-z_$][\w$]*)\}(?:\?.*)?$/.exec(text)?.[1];
     const pathOnly = !!handed && paramNames.has(handed) && URL_PARAM.test(handed);
@@ -1084,7 +1084,7 @@ function leadingBaseText(node: Node): string | null {
   return null;
 }
 
-/** A call, also parenthesized or awaited (`(await apiOrigin())`); null for anything else. */
+/** A call, also parenthesized or awaited (`(await garageOrigin())`); null for anything else. */
 function awaitedCall(node: Node | null): Node | null {
   let n = node;
   while (n?.type === "parenthesized_expression" || n?.type === "await_expression") n = n.namedChild(0);
@@ -1223,7 +1223,7 @@ function collectReturns(
     } else if (stmt.type === "if_statement") {
       const cond = stmt.childForFieldName("condition");
       // A condition on no parameter is still ONE condition: two such `if`s guard
-      // independent changes (`if (opts.enterprise) …; if (opts.accountScoped) …`).
+      // independent changes (`if (opts.youth) …; if (opts.leagueScoped) …`).
       const byParam = cond ? guardParam(cond, params) : "?";
       const inner = byParam === "?" && cond ? `?${cond.text.replace(/\s+/g, "")}` : byParam;
       const cons = stmt.childForFieldName("consequence");
@@ -2727,7 +2727,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const value = assign.childForFieldName("right");
         if (left?.type !== "member_expression" || left.childForFieldName("object")?.type !== "this") continue;
         const field = left.childForFieldName("property")?.text;
-        // `this.changeTitle = updateFieldEvent('title')`: a handler a factory builds, handed on and never called on.
+        // `this.changeCrest = fieldUpdater('crest')`: a handler a factory builds, handed on and never called on.
         if (field && !own.has(field) && value?.type === "call_expression" && handedOnOnly(node, field)) {
           own.add(field);
           methods.push(factoryHandler(field, value, ctor.body, stmt.startPosition.row + 1));
@@ -3131,7 +3131,7 @@ function returnedObject(fn: Node): Node | null {
 }
 
 /**
- * Whether a class binds `this.<field>` as an event handler in its markup — `onChange={this.changeTitle}` —
+ * Whether a class binds `this.<field>` as an event handler in its markup — `onChange={this.changeCrest}` —
  * and never calls it or reads a member of it: what a handler a factory builds looks like from the class's side,
  * and what a field holding an injected service, a signal or a store (`takeUntilDestroyed(this.destroyRef)`) does not.
  */
@@ -3143,8 +3143,8 @@ function handedOnOnly(cls: Node, field: string): boolean {
 }
 
 /**
- * The handler a factory call builds (`updateFieldEvent('title')`), as a method of its own: its calls are the
- * factory's — the body of a factory the constructor declares itself (`const updateFieldEvent = key => ev => …`),
+ * The handler a factory call builds (`fieldUpdater('crest')`), as a method of its own: its calls are the
+ * factory's — the body of a factory the constructor declares itself (`const fieldUpdater = key => ev => …`),
  * which no other symbol holds, else the factory call, which the linker follows to the factory.
  */
 function factoryHandler(name: string, call: Node, ctorBody: Node | null, line: number): FunctionInfo {

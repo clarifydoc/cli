@@ -156,7 +156,7 @@ function extractEmitCalls(
 }
 
 /**
- * An Angular component's outputs — `read = output<Chapter>()` (a type argument may span lines and nest:
+ * An Angular component's outputs — `read = output<Fixture>()` (a type argument may span lines and nest:
  * `output<{ page: number; part: string }>()`, `output<Array<Club>>()`),
  * `@Output() deleted = new EventEmitter<number>()`, `@Output('removed') remove = …`
  * (the alias is the event a parent binds) — each placed where the class first

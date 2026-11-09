@@ -1708,8 +1708,8 @@ export interface ClassInfo {
   fieldValues?: Record<string, string>;
   /**
    * The arguments the class's constructor passes to its superclass's
-   * (`super('contacts', { accountScoped: true })`), rendered as `fieldValues`
-   * are (`contacts`, `${{ accountScoped: true }}`): what a base-class field set
+   * (`super('clubs', { leagueScoped: true })`), rendered as `fieldValues`
+   * are (`clubs`, `${{ leagueScoped: true }}`): what a base-class field set
    * from a constructor parameter (`this.resource = resource`) holds in THIS
    * class. Absent when the constructor makes no such call.
    */

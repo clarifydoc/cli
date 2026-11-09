@@ -239,7 +239,7 @@ export class JsComponentEmitResolver implements DispatchResolver {
             }
             continue;
           }
-          // The output may be emitted by a base the dialog extends (`class TagEditDialog extends EditDialog`).
+          // The output may be emitted by a base the dialog extends (`class KitEditDialog extends EditDialog`).
           let emitter: FileAnalysis | undefined = child;
           for (let depth = 0; emitter && depth < 3 && !(emitter.events ?? []).some((e) => e.name === sub.event); depth++) {
             const owner: FileAnalysis = emitter;
@@ -594,7 +594,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
           if (within && (fn.line < within.line || fn.line > within.endLine)) continue;
           // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
-          // Invoked, never a value read or handed on (`return this.isNote`). Each call site is one link (several pager buttons).
+          // Invoked, never a value read or handed on (`return this.isHomeGame`). Each call site is one link (several pager buttons).
           const sites = new Set<number>();
           for (const c of fn.calls) {
             if (c.passed || c.read || sites.has(c.line)) continue;

@@ -22,27 +22,27 @@ export const garageUrl = async (path: string, queryParams?: Record<string, strin
     return url;
 };
 export const pitUrl = async (path: string) => \`\${await garageOrigin()}\${path}\`;
-export const authenticatedRequestHeaders = async () => ({ "X-Auth-Token": await readSetting("token") });
+export const garageAuthHeaders = async () => ({ "X-Auth-Token": await readSetting("token") });
 export const badgeLabel = async (name: string) => (await readSetting("prefix")) + name;
 `;
 
-const CARS = `import { garageUrl, pitUrl, authenticatedRequestHeaders } from "./origins";
-const ensureOk = (res: Response) => { if (!res.ok) throw new Error("failed"); };
+const CARS = `import { garageUrl, pitUrl, garageAuthHeaders } from "./origins";
+const expectOk = (res: Response) => { if (!res.ok) throw new Error("failed"); };
 export const serviceCar = async (carId: number) => {
     const res = await fetch(await garageUrl("/cars/service"), {
         method: "POST",
-        headers: await authenticatedRequestHeaders(),
+        headers: await garageAuthHeaders(),
         body: JSON.stringify({ carId }),
     });
-    ensureOk(res);
+    expectOk(res);
 };
 export const listCars = async () => {
     const url = await garageUrl("/cars");
-    const res = await fetch(\`\${url}?make=volvo\`, { headers: await authenticatedRequestHeaders() });
+    const res = await fetch(\`\${url}?make=volvo\`, { headers: await garageAuthHeaders() });
     return res.json();
 };
 export const listMechanics = async () => {
-    ensureOk(await fetch(await garageUrl("/mechanics", { active: "true" }), { headers: await authenticatedRequestHeaders() }));
+    expectOk(await fetch(await garageUrl("/mechanics", { active: "true" }), { headers: await garageAuthHeaders() }));
 };
 export const carTyres = async (carId: string) => {
     const url = await garageUrl(\`/cars/\${carId}/tyres\`);
@@ -50,7 +50,7 @@ export const carTyres = async (carId: string) => {
 };
 export const postToGarage = async (path: string, body: unknown) => {
     const res = await fetch(await garageUrl(path), { method: "POST", body: JSON.stringify(body) });
-    ensureOk(res);
+    expectOk(res);
 };
 export const reportLap = async (raw: string) => {
     const lapId = parseInt(raw);
@@ -58,7 +58,7 @@ export const reportLap = async (raw: string) => {
 };
 export const pitStop = async () => {
     const res = await fetch(await pitUrl("/pit/stop"), { method: "PUT" });
-    ensureOk(res);
+    expectOk(res);
 };
 `;
 
@@ -88,7 +88,7 @@ describe("an awaited URL builder", () => {
     expect(fns.find((f) => f.name === "garageUrl")?.urlTemplateBase).toBe("garageOrigin()");
     expect(tpl("pitUrl")).toBe("{path}");
     // A header builder and a label built on a stored prefix are no URLs.
-    expect(tpl("authenticatedRequestHeaders")).toBeUndefined();
+    expect(tpl("garageAuthHeaders")).toBeUndefined();
     expect(tpl("badgeLabel")).toBeUndefined();
     expect(tpl("garageOrigin")).toBeUndefined();
   });

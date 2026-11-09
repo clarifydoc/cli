@@ -2021,8 +2021,8 @@ interface LinkContext {
    * dotted names out, since there a dot means `Class.member`.
    */
   dottedClassSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
-  /** A namespaced class's trailing names (`Routes::Misc`, `Misc` of
-   *  `Invidious::Routes::Misc`) → the declarations ending that way. Strategy 4's
+  /** A namespaced class's trailing names (`Routes::Fixtures`, `Fixtures` of
+   *  `League::Routes::Fixtures`) → the declarations ending that way. Strategy 4's
    *  relative-constant fallback. */
   namespaceSuffixIndex: Map<string, Array<{ file: string; name: string }>>;
   /** filePath → sub-project id, for project-scoped candidate selection. */
@@ -2777,8 +2777,8 @@ function classNameMember(
       declaredClass = target;
     }
   }
-  // A namespace written relative to the caller's (`Routes::Misc.home`
-  // inside `module Invidious`, a Rails `Users::Create` under `Admin`)
+  // A namespace written relative to the caller's (`Routes::Fixtures.home`
+  // inside `module League`, a Rails `Users::Create` under `Admin`)
   // names the ONE class whose declared name ends that way; two such
   // classes are a lookup the linker cannot decide, so neither is taken.
   if (!candidateFiles) {

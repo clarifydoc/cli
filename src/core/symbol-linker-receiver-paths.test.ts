@@ -35,13 +35,13 @@ const PROJECTS: Record<string, Record<string, string>> = {
   end
 end
 `,
-    "app/services/counter.rb": `class Counter
-  def self.empty_counts
+    "app/services/standings.rb": `class Standings
+  def self.empty_table
     { all: 0 }
   end
 
   def totals
-    self.class.empty_counts.except(:all)
+    self.class.empty_table.except(:all)
   end
 end
 `,
@@ -235,8 +235,8 @@ describe("symbol-linker — a call through a path is typed from its head", () =>
     expect(targetsOf("ruby", "Season.close_untyped")).toEqual([]);
   });
 
-  it("Ruby: `self.class.empty_counts.except(…)` calls the class method of the class it is written in", () => {
-    expect(targetsOf("ruby", "Counter.totals")).toContain("Counter.empty_counts");
+  it("Ruby: `self.class.empty_table.except(…)` calls the class method of the class it is written in", () => {
+    expect(targetsOf("ruby", "Standings.totals")).toContain("Standings.empty_table");
     // A class method the class does not declare (HTTParty's `get`) is never its instance method of the name.
     expect(targetsOf("ruby", "ScoutClient.get")).not.toContain("ScoutClient.get");
   });
