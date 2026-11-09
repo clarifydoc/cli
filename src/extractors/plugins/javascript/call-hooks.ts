@@ -277,7 +277,7 @@ function enclosingParams(node: Node): Set<string> {
 /**
  * `store.dispatch('contacts/get')`, `this.$store.dispatch("x")`, `dispatch('x')`:
  * Vuex routes an action by its name string, so the string is the call's key.
- * Only a literal first argument counts; `dispatch(fetchMovies())` (Redux) is a
+ * Only a literal first argument counts; `dispatch(fetchTrophies())` (Redux) is a
  * call of the thunk creator and resolves by name like any other call.
  */
 function dispatchKeyOf(node: Node): string | null {

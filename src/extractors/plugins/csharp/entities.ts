@@ -166,7 +166,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
       }
     }
     // Marr / NzbDrone-style table mapping (the *arr family): the mapper call
-    // names the model class and its table — `Mapper.Entity<Movie>("Movies")`.
+    // names the model class and its table — `Mapper.Entity<Trophy>("Trophies")`.
     const marrTables = new Map<string, string>(); // model → table
     for (const a of analyses) {
       if (a.language !== "csharp") continue;
@@ -273,7 +273,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
         const decs = cls.decorators ?? (cls.decorators = []);
         if (decs.includes("entity")) continue;
         decs.push("entity", orm);
-        // The mapper names the table too (`Entity<Movie>("Movies")`): carried as Rails and Ecto do.
+        // The mapper names the table too (`Entity<Trophy>("Trophies")`): carried as Rails and Ecto do.
         const table = orm === "marr" ? marrTables.get(cls.name) : undefined;
         if (table) {
           decs.push(`table:${table}`);
@@ -1329,7 +1329,7 @@ function* allCalls(a: FileAnalysis) {
   for (const c of a.classes ?? []) for (const m of c.methods ?? []) yield* m.calls ?? [];
 }
 
-/** The C# spelling of the repository pattern: `IBasicRepository<Movie>` / `IRepository<Order, int>` / `MovieStore<Movie>`, `this.` or `_field` members, a constructor named like its class. */
+/** The C# spelling of the repository pattern: `IBasicRepository<Trophy>` / `IRepository<Order, int>` / `TrophyStore<Trophy>`, `this.` or `_field` members, a constructor named like its class. */
 const CSHARP_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   language: "csharp",
   genericArgs: (written) => {

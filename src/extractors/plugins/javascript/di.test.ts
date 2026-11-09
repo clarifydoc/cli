@@ -296,7 +296,7 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
       import { usePlayerApi } from "~/composables/api";
       const api = usePlayerApi();
       const repo = new CarRepo();
-      async function save() { const local = makeLocal(); await api.mealplans.createOne({}); }
+      async function save() { const local = makeLocal(); await api.trainingplans.createOne({}); }
     `;
     const tree = await parseSource(src, "typescript" as any, "x.ts");
     expect(topLevelLocalTypes(tree, src)).toEqual([

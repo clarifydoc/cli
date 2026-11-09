@@ -126,7 +126,7 @@ export function synthesizeApiRouteSymbolLinks(
   };
 
   // A base-class method's request resolved for one subclass is that
-  // subclass's inherited member making it: `MealPlanAPI.createOne` in the
+  // subclass's inherited member making it: `TrainingPlanAPI.createOne` in the
   // subclass's file, not the `BaseCRUDAPI.createOne` every subclass shares —
   // else a click on any subclass would reach every subclass's route.
   let classes: Map<string, FileAnalysis[]> | null = null;

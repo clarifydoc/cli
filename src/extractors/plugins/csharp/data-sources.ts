@@ -1299,9 +1299,9 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       if (types.length > 0) return;
     }
 
-    // A project's typed query helpers: `_database.Query<Movie>(builder)`, `_database.QueryJoined<Movie, MovieFile>(…)`
+    // A project's typed query helpers: `_database.Query<Trophy>(builder)`, `_database.QueryJoined<Trophy, TrophyImage>(…)`
     // (the type arguments are the tables read), and a repository subclass's inherited
-    // `Query(x => x.MovieId == id)`, which reads the model its base is closed over (`: BasicRepository<Movie>`).
+    // `Query(x => x.TrophyId == id)`, which reads the model its base is closed over (`: BasicRepository<Trophy>`).
     if (REPOSITORY_QUERY_RE.test(method)) {
       const own = enclosingTypeDecl(node);
       const typeParams = new Set((own?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []).map((t) => t.text));
@@ -1311,7 +1311,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const typeArgs = generic?.type === "generic_name"
         ? (generic.namedChildren.find((c) => c.type === "type_argument_list")?.namedChildren ?? []).map((t) => t.text.replace(/<.*$/, "").split(".").pop()!)
         : [];
-      // `db.Query<Movie>("SELECT … FROM \"Movies\"")` is Dapper: the SQL names the table, the type is the row's shape.
+      // `db.Query<Trophy>("SELECT … FROM \"Trophies\"")` is Dapper: the SQL names the table, the type is the row's shape.
       const sqlFirst = /^\s*[@$]*"/.test(argumentNodes(node)[0]?.text ?? "");
       const onDatabase = !sqlFirst && (/^_?(?:database|db|dataContext)$/i.test(receiver) || /\bIDatabase$/.test(parameterType(node, receiver) ?? ""));
       const models = typeArgs.length > 0 && onDatabase
@@ -1910,7 +1910,7 @@ function boundModelParameter(call: Node): { parameter: string; access?: "read" |
   return { parameter, ...(accessOf ? { access: accessOf } : {}) };
 }
 
-/** The model a repository class is closed over: `class MovieRepository : BasicRepository<Movie>` → Movie. */
+/** The model a repository class is closed over: `class TrophyRepository : BasicRepository<Trophy>` → Trophy. */
 function repositoryModel(cls: Node): string | null {
   const bases = cls.namedChildren.find((c) => c.type === "base_list");
   for (const b of bases?.namedChildren ?? []) {

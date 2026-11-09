@@ -3372,8 +3372,8 @@ export interface SymbolLink {
   navigational?: boolean;
   /**
    * The receiver's declared class (and its file) when the method called is
-   * inherited from another class — `api.mealplans.createOne()` on a
-   * `MealPlanAPI` lands on `BaseCRUDAPI.createOne`. The HTTP-edge pass moves
+   * inherited from another class — `api.trainingplans.createOne()` on a
+   * `TrainingPlanAPI` lands on `BaseCRUDAPI.createOne`. The HTTP-edge pass moves
    * such a link onto the subclass's own member when the base method's request
    * was resolved per subclass. In-memory only: dropped once that pass ran.
    */

@@ -132,30 +132,30 @@ describe("synthesizeApiRouteSymbolLinks", () => {
     // `this.requests.post(this.baseRoute)` in BaseCRUDAPI.createOne, fanned out
     // per subclass: each URL is its subclass's, so its edge starts there.
     const base = fa("web/api/base.ts", { classes: [{ name: "BaseCRUDAPI", methods: [fn("createOne", 5, 8)], line: 1 }] } as any);
-    const meals = fa("web/api/mealplans.ts", { classes: [{ name: "MealPlanAPI", methods: [], line: 3 }] } as any);
-    const books = fa("web/api/cookbooks.ts", { classes: [{ name: "CookbookAPI", methods: [], line: 4 }] } as any);
+    const trainings = fa("web/api/trainingplans.ts", { classes: [{ name: "TrainingPlanAPI", methods: [], line: 3 }] } as any);
+    const plays = fa("web/api/playbooks.ts", { classes: [{ name: "PlaybookAPI", methods: [], line: 4 }] } as any);
     const alias = fa("web/api/plan-alias.ts", { classes: [{ name: "PlanAliasAPI", methods: [], line: 2 }] } as any);
-    const backend = fa("srv/meals.py", { classes: [{ name: "Meals", methods: [fn("create", 10, 20)] }] } as any);
-    const backend2 = fa("srv/books.py", { classes: [{ name: "Books", methods: [fn("create", 10, 20)] }] } as any);
+    const backend = fa("srv/training.py", { classes: [{ name: "Training", methods: [fn("create", 10, 20)] }] } as any);
+    const backend2 = fa("srv/plays.py", { classes: [{ name: "Plays", methods: [fn("create", 10, 20)] }] } as any);
     const http = synthesizeApiRouteSymbolLinks(
       [
-        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/meals.py", targetLine: 12, handler: "create", routePath: "/api/mealplans", viaSubclasses: ["MealPlanAPI", "PlanAliasAPI"] }),
-        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/books.py", targetLine: 12, handler: "create", routePath: "/api/cookbooks", viaSubclasses: ["CookbookAPI"] }),
+        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/training.py", targetLine: 12, handler: "create", routePath: "/api/trainingplans", viaSubclasses: ["TrainingPlanAPI", "PlanAliasAPI"] }),
+        link({ source: "web/api/base.ts", sourceLine: 6, method: "POST", target: "srv/plays.py", targetLine: 12, handler: "create", routePath: "/api/playbooks", viaSubclasses: ["PlaybookAPI"] }),
       ],
-      [base, meals, books, alias, backend, backend2],
+      [base, trainings, plays, alias, backend, backend2],
     );
     expect(http.map((l) => `${l.sourceFile}::${l.sourceSymbol} → ${l.targetFile}`)).toEqual([
-      "web/api/mealplans.ts::MealPlanAPI.createOne → srv/meals.py",
-      "web/api/plan-alias.ts::PlanAliasAPI.createOne → srv/meals.py",
-      "web/api/cookbooks.ts::CookbookAPI.createOne → srv/books.py",
+      "web/api/trainingplans.ts::TrainingPlanAPI.createOne → srv/training.py",
+      "web/api/plan-alias.ts::PlanAliasAPI.createOne → srv/training.py",
+      "web/api/playbooks.ts::PlaybookAPI.createOne → srv/plays.py",
     ]);
     const click: SymbolLink = {
-      sourceFile: "web/AddMeal.vue", sourceSymbol: "add", sourceLine: 9, callName: "api.mealplans.createOne",
-      targetFile: "web/api/base.ts", targetSymbol: "BaseCRUDAPI.createOne", targetLine: 5, viaType: "MealPlanAPI", viaTypeFile: "web/api/mealplans.ts",
+      sourceFile: "web/AddTraining.vue", sourceSymbol: "add", sourceLine: 9, callName: "api.trainingplans.createOne",
+      targetFile: "web/api/base.ts", targetSymbol: "BaseCRUDAPI.createOne", targetLine: 5, viaType: "TrainingPlanAPI", viaTypeFile: "web/api/trainingplans.ts",
     };
     const other: SymbolLink = { ...click, sourceSymbol: "other", viaType: "UnlinkedAPI", viaTypeFile: "web/api/unlinked.ts" };
     moveInheritedCallsToSubclasses([click, other], http);
-    expect(click).toEqual({ ...click, targetFile: "web/api/mealplans.ts", targetSymbol: "MealPlanAPI.createOne", targetLine: 3 });
+    expect(click).toEqual({ ...click, targetFile: "web/api/trainingplans.ts", targetSymbol: "TrainingPlanAPI.createOne", targetLine: 3 });
     expect("viaType" in click).toBe(false);
     expect([other.targetSymbol, "viaType" in other]).toEqual(["BaseCRUDAPI.createOne", false]);
   });

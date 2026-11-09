@@ -11,7 +11,7 @@ import { readFile } from "fs/promises";
  * A member assigned a chain on an unannotated factory's result
  * (`self.group_clubs = get_repositories(session).clubs`, where the factory
  * only `return AllRepositories(session)`), set in a base class's `__init__` and
- * used by a subclass (real-repo FP: recipe update/delete routes reached no model).
+ * used by a subclass (real-repo FP: tactic update/delete routes reached no model).
  */
 const FILES: Record<string, string> = {
   "pyproject.toml": `[project]\nname = "league"\ndependencies = ["sqlalchemy"]\n`,

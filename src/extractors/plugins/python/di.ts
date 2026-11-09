@@ -850,7 +850,7 @@ export function collectInstanceAttributes(
   typeComments: boolean,
 ): PropertyInfo[] {
   const table = new FactTable();
-  // `self.recipes = get_repositories(session).recipes`: no type stated, a chain the project pass types.
+  // `self.tactics = get_repositories(session).tactics`: no type stated, a chain the project pass types.
   const chains = new Map<string, string | null>();
   for (const { node, fn, selfName } of methods) {
     if (!selfName) continue;
@@ -953,7 +953,7 @@ function freeCallText(node: Node): string | null {
 
 /**
  * A member chain rooted in a function's result, as the project pass reads it:
- * `get_repositories(session, group_id=g).recipes` → `get_repositories().recipes`.
+ * `get_repositories(session, group_id=g).tactics` → `get_repositories().tactics`.
  * Null for anything else (a chain on a name, a method call's result).
  */
 export function resultChainText(node: Node): string | null {

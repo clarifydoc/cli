@@ -764,7 +764,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     const hook = fn?.type === "identifier" ? /^use(?:Lazy)?([A-Z][\w$]*?)(?:Query|Mutation|InfiniteQuery|QueryState)$/.exec(fnName) : null;
     const initiate = fn?.type === "member_expression" && fnName === "initiate" ? /\.endpoints\.([\w$]+)\.initiate$/.exec(fn.text.replace(/\s+/g, "")) : null;
     if (hook && (this.imports ??= importEvidence(this.sourceText)).names.has(fnName)) {
-      // A project hook handed the request's path in its options (`useApiQuery({ path: `/movie/${id}/folder` })`):
+      // A project hook handed the request's path in its options (`useApiQuery({ path: `/trophy/${id}/folder` })`):
       // that path, with the verb the options state (a query's is GET).
       const options = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
       const path = options?.type === "object" ? optionString(options, /^(?:path|url)$/) : null;

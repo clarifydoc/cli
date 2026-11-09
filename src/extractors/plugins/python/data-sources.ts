@@ -978,8 +978,8 @@ function annotatedParam(name: string, at: Node): string | null {
 }
 
 /**
- * A URL another module defines, named by the argument (`api_routes.recipes_url`), or a
- * URL helper's call (`api_routes.recipes_slug(slug)`): a `${…}` hole the project pass fills.
+ * A URL another module defines, named by the argument (`api_routes.tactics_url`), or a
+ * URL helper's call (`api_routes.tactics_slug(slug)`): a `${…}` hole the project pass fills.
  */
 function moduleValueHole(arg: Node): string | null {
   if ((arg.type === "attribute" || arg.type === "identifier") && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){0,2}$/.test(arg.text)) return `\${${arg.text}}`;

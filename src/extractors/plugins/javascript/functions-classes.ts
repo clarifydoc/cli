@@ -1397,11 +1397,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * A registry keyed by a constant, and the creators that name it — a real
    * app's thunks, and every Redux codebase built the same way:
    *
-   *   export const fetchMovies = createThunk(FETCH_MOVIES);
-   *   handleThunks({ [FETCH_MOVIES]: createFetchHandler(section, '/movie') });
+   *   export const fetchTrophies = createThunk(FETCH_TROPHIES);
+   *   handleThunks({ [FETCH_TROPHIES]: createFetchHandler(section, '/trophy') });
    *
-   * `dispatch(fetchMovies())` runs the handler registered under the constant
-   * `fetchMovies` was made with; the two share nothing but that constant. Each
+   * `dispatch(fetchTrophies())` runs the handler registered under the constant
+   * `fetchTrophies` was made with; the two share nothing but that constant. Each
    * `[KEY]: value` entry of an object handed to a call becomes a function named
    * `[KEY]` (its value's calls; an inline handler's body), and a variable made
    * by a call whose first argument is a constant registered in the same file
@@ -2845,9 +2845,9 @@ function knownFieldValues(values: ReadonlyMap<string, string | null>): { fieldVa
 
 /**
  * react-redux `connect(mapStateToProps, mapDispatchToProps)`: an object of
- * action creators, as a variable or inline — `{ lookupMovie, dispatchFetchX: fetchX }`
- * → `lookupMovie → lookupMovie`, `dispatchFetchX → fetchX`. The component calls
- * them as `this.props.lookupMovie()`, a name nothing defines. The function form,
+ * action creators, as a variable or inline — `{ lookupTrophy, dispatchFetchX: fetchX }`
+ * → `lookupTrophy → lookupTrophy`, `dispatchFetchX → fetchX`. The component calls
+ * them as `this.props.lookupTrophy()`, a name nothing defines. The function form,
  * `const mapDispatchToProps = dispatch => ({ onSave: club => dispatch(…) })`,
  * binds each member of the object it returns: `onSave → mapDispatchToProps.onSave`,
  * the function its member is extracted as (`dispatchMappersOf`).
@@ -2896,7 +2896,7 @@ function dispatchMappersOf(root: Node): Set<string> {
   return out;
 }
 
-/** `this.props.lookupMovie(…)` also calls the creator `connect` bound to it. */
+/** `this.props.lookupTrophy(…)` also calls the creator `connect` bound to it. */
 function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, string>): void {
   const extra: CallInfo[] = [];
   for (const call of fn.calls) {

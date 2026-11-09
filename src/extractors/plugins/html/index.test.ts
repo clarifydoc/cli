@@ -253,7 +253,7 @@ describe("template placeholder titles", () => {
 
 describe("HTML pages under a test directory", () => {
   it("skips a fixture page the tests read, never an application page", () => {
-    const page = `<html><body><a href="/recipes">Recipes</a></body></html>`;
+    const page = `<html><body><a href="/tactics">Tactics</a></body></html>`;
     expect(htmlPreprocess(page, "tests/data/html/roast-chicken.html")).toEqual({ skip: "test fixture page" });
     expect(htmlPreprocess(page, "web/src/__tests__/fixtures/club.html")).toEqual({ skip: "test fixture page" });
     expect(htmlPreprocess(page, "public/clubs/index.html")).toBeNull();

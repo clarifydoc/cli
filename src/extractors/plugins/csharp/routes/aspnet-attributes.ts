@@ -224,7 +224,7 @@ export function csExpr(node: Node): CsExpr | null {
   }
 }
 
-/** Positional arguments of an attribute use (`[V3ApiController("movie")]` → `[{s:"movie"}]`). */
+/** Positional arguments of an attribute use (`[V3ApiController("trophy")]` → `[{s:"trophy"}]`). */
 export function attributeUse(attr: Node, name: string): CsAttrUse {
   const args: Array<CsExpr | null> = [];
   const list = attr.namedChildren.find((c) => c.type === "attribute_argument_list");

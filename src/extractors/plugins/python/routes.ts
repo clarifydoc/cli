@@ -84,7 +84,7 @@ function stringValue(text: string, consts: ReadonlyMap<string, string>): string 
  * prefix: `router = APIRouter(prefix="/api")` then `router.include_router(app.router)`
  * mounts `app` at `/api`, prefix or not — a real app lost `/api` on every route
  * when only a literal `prefix=` produced a mount. An empty mount still
- * composes (`api.py` → `recipe/__init__.py` → `recipe_crud_routes.py`). A
+ * composes (`api.py` → `tactic/__init__.py` → `tactic_crud_routes.py`). A
  * prefix this file cannot know (`prefix=settings.api_prefix`) mounts at what
  * is known and says so (`prefixUnresolved`). The receiving router's
  * `dependencies` guard everything mounted under it.

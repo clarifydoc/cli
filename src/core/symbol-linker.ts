@@ -3514,7 +3514,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
   }
 
   // A computed member typed by the chain it returns (a Python `@property` returning
-  // `self.repos.ingredient_foods`): the chain walked over the members typed above,
+  // `self.repos.injury_reports`): the chain walked over the members typed above,
   // a few rounds so a chain through another computed member resolves too.
   const computed = analyses.flatMap((a) => a.classes.flatMap((cls) => cls.properties
     .filter((p) => p.from && !p.type)
@@ -3544,7 +3544,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
       const name = nameKey(a.language, prop.name);
       if (out.get(key)?.has(name)) continue;
       const segs = prop.from!.split(".");
-      // A chain on a function's result (`get_repositories().recipes`): starts at the class it returns.
+      // A chain on a function's result (`get_repositories().tactics`): starts at the class it returns.
       const fnHead = /^(\w+)\(\)$/.exec(segs[0]!)?.[1];
       let cur: InjectionPoint | null;
       if (fnHead) {
@@ -3571,7 +3571,7 @@ function buildMemberTypes(analyses: FileAnalysis[], typeAliases: TypeAliasIndex 
     }
     if (!progressed) break;
   }
-  // A computed member is its subclasses' too (`self.group_recipes` set in a base `__init__`).
+  // A computed member is its subclasses' too (`self.group_tactics` set in a base `__init__`).
   if (computedAt.size > 0) {
     for (const a of analyses) {
       for (const cls of a.classes) {

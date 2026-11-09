@@ -1,6 +1,6 @@
 /**
  * The loose English inflection the ORM conventions share (Rails, Granite,
- * Isar collections, Drift getters): good for `recipes` ↔ `Recipe`,
+ * Isar collections, Drift getters): good for `tactics` ↔ `Tactic`,
  * `categories` ↔ `Category`, `addresses` ↔ `Address`; not a dictionary.
  */
 export function singularize(word: string): string {

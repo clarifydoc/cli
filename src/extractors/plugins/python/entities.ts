@@ -37,10 +37,10 @@ export class PythonEntityExtractor extends EntityExtractor {
 
   /**
    * Project-level pass: the repository pattern over a generic base. A service
-   * reaches the database as `self.repos.recipes.create(…)`: `repos` is a
+   * reaches the database as `self.repos.tactics.create(…)`: `repos` is a
    * property typed `AllRepositories` (declared on a base class in another
-   * file), `recipes` a `@cached_property` returning `RepositoryRecipes`, and
-   * `RepositoryRecipes(HouseholdRepositoryGeneric[Recipe, RecipeModel])` names
+   * file), `tactics` a `@cached_property` returning `RepositoryTactics`, and
+   * `RepositoryTactics(LeagueRepositoryGeneric[Tactic, TacticModel])` names
    * its table only through the type argument that is an entity. The per-file
    * pass sees none of that; this walks the typed member chain across files and
    * puts the entity on the call (a real FastAPI app: 42 of 277 routes reached the database).
@@ -821,7 +821,7 @@ export class PythonEntityExtractor extends EntityExtractor {
 
 // ─── Generic repository access (project-level) ──────────────────────────────
 
-/** The Python spelling: `RepositoryRecipes(HouseholdRepositoryGeneric[Recipe, RecipeModel])`, `self.` members, `__init__`. */
+/** The Python spelling: `RepositoryTactics(LeagueRepositoryGeneric[Tactic, TacticModel])`, `self.` members, `__init__`. */
 const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
   language: "python",
   genericArgs: (written) => {

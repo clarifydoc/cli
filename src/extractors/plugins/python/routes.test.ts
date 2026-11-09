@@ -45,18 +45,18 @@ router.include_router(players.router, prefix="/players")
 
   it("resolves a module constant prefix, and marks one it cannot know", async () => {
     const routes = await routesOf(`
-prefix = "/recipes"
+prefix = "/tactics"
 router = APIRouter()
 router.include_router(comments.router, prefix=prefix)
 app.include_router(api_router, prefix=settings.api_prefix)
 `);
-    expect(routes[0]).toMatchObject({ path: "/recipes", handler: "comments" });
+    expect(routes[0]).toMatchObject({ path: "/tactics", handler: "comments" });
     expect(routes[1]).toMatchObject({ path: "", handler: "api_router", prefixUnresolved: "mount:settings.api_prefix" });
   });
 
   it("reads a project router class's prefix and puts the receiver's guards on the mount", async () => {
     const routes = await routesOf(`
-router = PlayerAPIRouter(prefix="/recipes", route_class=LeagueCrudRoute)
+router = PlayerAPIRouter(prefix="/tactics", route_class=LeagueCrudRoute)
 
 @router.get("/{slug}")
 def get_one(slug: str): ...
@@ -64,7 +64,7 @@ def get_one(slug: str): ...
 admin = APIRouter(prefix="/admin", dependencies=[Depends(get_admin_user)])
 admin.include_router(about.router)
 `);
-    expect(routes.find((r) => r.handler === "get_one")!.path).toBe("/recipes/{slug}");
+    expect(routes.find((r) => r.handler === "get_one")!.path).toBe("/tactics/{slug}");
     const mounted = routes.find((r) => r.mount)!;
     expect(mounted).toMatchObject({ path: "/admin", middleware: ["Depends(get_admin_user)"] });
   });

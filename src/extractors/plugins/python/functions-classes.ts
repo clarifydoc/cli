@@ -408,7 +408,7 @@ const PROPERTY_DECORATOR = /^(?:functools\.)?(?:cached_)?property$/;
  * A property is a member read like an attribute (`self.repo.page_all()`): typed by
  * its return annotation, by the class it constructs (`return RepositoryFood(…)`,
  * `HttpRepo[…](…)`), by the typed attribute it returns (`return self._repos`), or —
- * when it returns a chain (`return self.repos.ingredient_foods`) — by that chain,
+ * when it returns a chain (`return self.repos.injury_reports`) — by that chain,
  * left to the project pass (`PropertyInfo.from`).
  */
 function propertyMembers(parsed: readonly ParsedFunction[], declared: readonly PropertyInfo[]): PropertyInfo[] {

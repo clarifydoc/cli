@@ -554,16 +554,16 @@ describe("normalizeRoutePath — holes before separators", () => {
 describe("linkApiCallsToRoutes — normalized base prefixes", () => {
   it("strips a concrete `/api/vN` base, not just `/api/v1` and `/api/v2`", () => {
     const links = linkApiCallsToRoutes(
-      [apiCall("web/movie.js", "post", "/api/v3/movie")],
-      [route("api/MovieController.cs", "POST", "/movie", "AddMovie")],
+      [apiCall("web/trophy.js", "post", "/api/v3/trophy")],
+      [route("api/TrophyController.cs", "POST", "/trophy", "AddTrophy")],
     );
-    expect(links[0]).toMatchObject({ target: "api/MovieController.cs", matchedVia: "base-prefix:/api/v{}" });
+    expect(links[0]).toMatchObject({ target: "api/TrophyController.cs", matchedVia: "base-prefix:/api/v{}" });
   });
 
   it("mirrors a versioned base the route carries but the call omits", () => {
     const links = linkApiCallsToRoutes(
-      [apiCall("web/movie.js", "post", "/movie")],
-      [route("openapi.json", "POST", "/api/v3/movie", "post_movie")],
+      [apiCall("web/trophy.js", "post", "/trophy")],
+      [route("openapi.json", "POST", "/api/v3/trophy", "post_trophy")],
     );
     expect(links[0]).toMatchObject({ target: "openapi.json", matchedVia: "base-prefix:/api/v{}", confidence: "INFERRED" });
   });
@@ -593,11 +593,11 @@ describe("linkApiCallsToRoutes — what the call itself knows", () => {
 
 describe("linkApiCallsToRoutes — method policy", () => {
   it("refuses a route that serves another method, whichever tier found it (real-repo FP)", () => {
-    // `POST /movie`: the literal path is BlocklistController's GET; the
+    // `POST /trophy`: the literal path is BlocklistController's GET; the
     // /api/v3 contract row serving POST is one tier further.
-    const blocklist = route("Blocklist/BlocklistController.cs", "GET", "/movie", "GetMovieBlocklist");
-    const contract = route("openapi.json", "POST", "/api/v3/movie", "post_movie");
-    const links = linkApiCallsToRoutes([apiCall("web/addMovie.js", "post", "/movie")], [blocklist, contract]);
+    const blocklist = route("Blocklist/BlocklistController.cs", "GET", "/trophy", "GetTrophyBlocklist");
+    const contract = route("openapi.json", "POST", "/api/v3/trophy", "post_trophy");
+    const links = linkApiCallsToRoutes([apiCall("web/addTrophy.js", "post", "/trophy")], [blocklist, contract]);
     expect(links[0]).toMatchObject({ target: "openapi.json", matchedVia: "base-prefix:/api/v{}" });
   });
 
@@ -617,18 +617,18 @@ describe("linkApiCallsToRoutes — method policy", () => {
   });
 
   it("reads a request descriptor without a method as a GET (real-repo FP: createFetchHandler)", () => {
-    const routes = [route("MovieController.cs", "GET", "/movie", "AllMovie"), route("MovieController.cs", "POST", "/movie", "AddMovie")];
-    const [link] = linkApiCallsToRoutes([apiCall("web/movieActions.js", "request", "/movie")], routes);
-    expect(link).toMatchObject({ handler: "AllMovie", confidence: "EXTRACTED" });
+    const routes = [route("TrophyController.cs", "GET", "/trophy", "AllTrophy"), route("TrophyController.cs", "POST", "/trophy", "AddTrophy")];
+    const [link] = linkApiCallsToRoutes([apiCall("web/trophyActions.js", "request", "/trophy")], routes);
+    expect(link).toMatchObject({ handler: "AllTrophy", confidence: "EXTRACTED" });
     // Two GETs on the path stay ambiguous.
     const [twin] = linkApiCallsToRoutes(
-      [apiCall("web/movieActions.js", "request", "/movie")],
-      [...routes, route("Other/OtherController.cs", "GET", "/movie", "Other")],
+      [apiCall("web/trophyActions.js", "request", "/trophy")],
+      [...routes, route("Other/OtherController.cs", "GET", "/trophy", "Other")],
     );
     expect(twin!.confidence).toBe("AMBIGUOUS");
     // A path with no GET: the wrapper set the verb, the path decides.
-    const [post] = linkApiCallsToRoutes([apiCall("web/movieActions.js", "request", "/movie")], [route("MovieController.cs", "POST", "/movie", "AddMovie")]);
-    expect(post).toMatchObject({ handler: "AddMovie", confidence: "INFERRED" });
+    const [post] = linkApiCallsToRoutes([apiCall("web/trophyActions.js", "request", "/trophy")], [route("TrophyController.cs", "POST", "/trophy", "AddTrophy")]);
+    expect(post).toMatchObject({ handler: "AddTrophy", confidence: "INFERRED" });
   });
 
   it("serves HEAD with GET", () => {
@@ -670,26 +670,26 @@ describe("linkApiCallsToRoutes — code rows and their API-contract twins", () =
   });
 
   it("lands on the code twin a spec join found when the code row knows only its tail", () => {
-    // Real-repo shape: the controller row is prefix-less (`/movie`), the contract row
+    // Real-repo shape: the controller row is prefix-less (`/trophy`), the contract row
     // carries the real path; the symbol linker's spec join tied the operation
-    // to MovieController.AddMovie.
-    const ctl = route("Movies/MovieController.cs", "POST", "/movie", "AddMovie", 120);
-    const spec = route("openapi.json", "POST", "/api/v3/movie", "post_api_v3_movie", 5000);
+    // to TrophyController.AddTrophy.
+    const ctl = route("Trophies/TrophyController.cs", "POST", "/trophy", "AddTrophy", 120);
+    const spec = route("openapi.json", "POST", "/api/v3/trophy", "post_api_v3_trophy", 5000);
     const join = {
       sourceFile: "openapi.json",
       sourceLine: 5000,
-      targetFile: "Movies/MovieController.cs",
-      targetSymbol: "MovieController.AddMovie",
+      targetFile: "Trophies/TrophyController.cs",
+      targetSymbol: "TrophyController.AddTrophy",
       targetLine: 121,
       strategy: "spec-join",
     };
     const twins = pairContractTwins([ctl, spec], [join], isContract);
     expect(twins.get(spec)).toBe(ctl);
-    const [link] = linkApiCallsToRoutes([apiCall("web/addMovie.js", "post", "/api/v3/movie")], [ctl, spec], {
+    const [link] = linkApiCallsToRoutes([apiCall("web/addTrophy.js", "post", "/api/v3/trophy")], [ctl, spec], {
       isContract,
       contractTwins: twins,
     });
-    expect(link).toMatchObject({ target: ctl.filePath, targetLine: 120, routePath: "/api/v3/movie", confidence: "EXTRACTED" });
+    expect(link).toMatchObject({ target: ctl.filePath, targetLine: 120, routePath: "/api/v3/trophy", confidence: "EXTRACTED" });
   });
 
   it("pairs a contract row with the twin serving its own API version, not another version's (real-repo FP)", () => {
@@ -893,7 +893,7 @@ describe("linkApiCallsToRoutes — a call whose base is unknown", () => {
   it("never lets an unsplit leading hole stand for a path segment (real-repo FP: /duplicate)", () => {
     const links = linkApiCallsToRoutes(
       [apiCall("web/base-clients.ts", "post", "${this.itemRoute(itemId)}/duplicate")],
-      [route("recipes.py", "POST", "/{slug}/duplicate", "duplicate_one")],
+      [route("tactics.py", "POST", "/{slug}/duplicate", "duplicate_one")],
     );
     expect(links).toEqual([]);
   });

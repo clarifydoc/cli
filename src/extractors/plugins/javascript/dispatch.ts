@@ -375,9 +375,9 @@ function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
 }
 
 /**
- * React's emit: a callback handed down as a prop. `<AddNewMovie
- * onMovieLookupChange={this.onMovieLookupChange} />` in the parent, and
- * `this.props.onMovieLookupChange(value)` (or a destructured `onMovieLookupChange()`,
+ * React's emit: a callback handed down as a prop. `<AddNewTrophy
+ * onTrophyLookupChange={this.onTrophyLookupChange} />` in the parent, and
+ * `this.props.onTrophyLookupChange(value)` (or a destructured `onTrophyLookupChange()`,
  * or `onPress={onModalClose}` straight in the child's markup) in the child. The
  * child calls a name it never defines; the parent bound it on the child's tag.
  *

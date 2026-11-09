@@ -15,32 +15,32 @@ const file = (filePath: string, classes: any[], functions: any[] = []): FileAnal
 /** The repository pattern over a generic base, reached through typed members declared in other files. */
 describe("Python generic repository access", () => {
   it("puts the entity-typed argument of the repository's generic base on calls through a typed member chain", () => {
-    const model = file("db/models/recipe.py", [cls("RecipeModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
-    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("HouseholdRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
-    const recipes = file("repos/repository_recipes.py", [cls("RepositoryRecipes", { extends: "RecipeSuggestionMixin", implements: ["HouseholdRepositoryGeneric[Recipe, RecipeModel]"] })]);
-    const factory = file("repos/repository_factory.py", [cls("AllRepositories", { props: [["session", "Session"]], methods: [method("recipes", [], "RepositoryRecipes")] })]);
+    const model = file("db/models/tactic.py", [cls("TacticModel", { extends: "SqlAlchemyBase", decorators: ["entity", "sqlalchemy"] })]);
+    const generic = file("repos/repository_generic.py", [cls("RepositoryGeneric"), cls("LeagueRepositoryGeneric", { extends: "RepositoryGeneric[Schema, Model]" })]);
+    const tactics = file("repos/repository_tactics.py", [cls("RepositoryTactics", { extends: "TacticSuggestionMixin", implements: ["LeagueRepositoryGeneric[Tactic, TacticModel]"] })]);
+    const factory = file("repos/repository_factory.py", [cls("AllRepositories", { props: [["session", "Session"]], methods: [method("tactics", [], "RepositoryTactics")] })]);
     const base = file("routes/_base.py", [cls("_BaseController", { props: [["_repos", "AllRepositories | None"]], methods: [method("repos", ["self._repos"])] }), cls("BasePlayerController", { extends: "_BaseController" })]);
-    const service = file("services/recipe_service.py", [
-      cls("RecipeServiceBase", { props: [["repos", "AllRepositories"]] }),
-      cls("RecipeService", { extends: "RecipeServiceBase", methods: [method("create_one", ["self._factory", "self.repos.recipes.create", "self.repos.recipes.get_one"])] }),
+    const service = file("services/tactic_service.py", [
+      cls("TacticServiceBase", { props: [["repos", "AllRepositories"]] }),
+      cls("TacticService", { extends: "TacticServiceBase", methods: [method("create_one", ["self._factory", "self.repos.tactics.create", "self.repos.tactics.get_one"])] }),
     ]);
-    const controller = file("routes/recipes.py", [
-      cls("RecipeController", { extends: "BasePlayerController", methods: [method("delete_one", ["self.repos.recipes.delete", "self.service.update_one"])] }),
+    const controller = file("routes/tactics.py", [
+      cls("TacticController", { extends: "BasePlayerController", methods: [method("delete_one", ["self.repos.tactics.delete", "self.service.update_one"])] }),
     ]);
-    const fn = file("routes/public.py", [], [method("list_recipes", ["repos.recipes.get_all"], null, [{ name: "repos", type: "AllRepositories", defaultValue: null }])]);
+    const fn = file("routes/public.py", [], [method("list_tactics", ["repos.tactics.get_all"], null, [{ name: "repos", type: "AllRepositories", defaultValue: null }])]);
     (controller as any).dataSources = [{ kind: "database", name: "self.service.update_one", target: null, entity: "service", line: 11, calls: [] }];
 
-    new PythonEntityExtractor().reconcileProject([model, generic, recipes, factory, base, service, controller, fn]);
+    new PythonEntityExtractor().reconcileProject([model, generic, tactics, factory, base, service, controller, fn]);
 
     expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
-      ["self.repos.recipes.create", "RecipeModel", "write"],
-      ["self.repos.recipes.get_one", "RecipeModel", "read"],
+      ["self.repos.tactics.create", "TacticModel", "write"],
+      ["self.repos.tactics.get_one", "TacticModel", "read"],
     ]);
     expect(controller.dataSources.map((d) => [d.name, d.entity])).toEqual([
-      ["self.repos.recipes.delete", "RecipeModel"],
+      ["self.repos.tactics.delete", "TacticModel"],
       ["self.service.update_one", "service"], // a service is no repository: untouched
     ]);
-    expect(fn.dataSources.map((d) => d.entity)).toEqual(["RecipeModel"]);
+    expect(fn.dataSources.map((d) => d.entity)).toEqual(["TacticModel"]);
   });
 
   it("types a local by the free function that builds it (real-repo FP)", () => {

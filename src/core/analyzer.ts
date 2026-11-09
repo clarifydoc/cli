@@ -2653,7 +2653,7 @@ function withoutComments(source: string): string {
 
 /**
  * A base-URL expression a link starts with, before its app path — `{{AppSubUrl}}/user/login`,
- * `${window.App.urlBase}/movie/…`, `${baseUrl}/x`, JSP's `${pageContext.request.contextPath}/x`:
+ * `${window.App.urlBase}/trophy/…`, `${baseUrl}/x`, JSP's `${pageContext.request.contextPath}/x`:
  * the app is served under it, so the path after it is the link.
  */
 const BASE_URL_PREFIX = /(?:\{\{-?\s*[\w.$]*\b(?:AppSubUrl|SubUrl|AppUrl|BaseUrl|BaseURL|baseUrl|base_url|urlBase|urlpath|url_path|basePath|base_path|rootUrl|root_url|contextPath|context_path)\b\s*-?\}\}|\$\{\s*[\w.$]*\b(?:urlBase|baseUrl|basePath|base_path|BASE_URL|BASE_PATH|contextPath|rootPath)\b\s*\}|<%=\s*request\.getContextPath\(\)\s*%>|\$\{\s*pageContext\.request\.contextPath\s*\})(?=\/)/g;

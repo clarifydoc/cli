@@ -8,7 +8,7 @@ import type { CallInfo, FileAnalysis } from "../types/analysis.js";
  * at the top of `<script setup>`, `usePlayerApi` imported through a barrel and
  * declared to return `PlayerApi` — a renamed re-export of `PlayerApiClient`,
  * while an unrelated class really named `PlayerApi` exists — and the call
- * `api.mealplans.createOne()` landing on a method `MealPlanAPI` inherits.
+ * `api.trainingplans.createOne()` landing on a method `TrainingPlanAPI` inherits.
  */
 
 const fn = (name: string, line: number, calls: CallInfo[] = [], extra: Record<string, unknown> = {}) =>
@@ -32,14 +32,14 @@ function project(dialog: FileAnalysis): FileAnalysis[] {
     }),
     file("app/lib/api/index.ts", { exports: [{ name: "PlayerApi", kind: "re-export", line: 1, source: "./client-player", sourceName: "PlayerApiClient" }] }),
     file("app/lib/api/client-player.ts", {
-      imports: [imp("./player/mealplans", ["MealPlanAPI"])],
-      classes: [klass("PlayerApiClient", { properties: [prop("mealplans", "MealPlanAPI")] })],
+      imports: [imp("./player/trainingplans", ["TrainingPlanAPI"])],
+      classes: [klass("PlayerApiClient", { properties: [prop("trainingplans", "TrainingPlanAPI")] })],
     }),
     // The players CRUD client: a class really named `PlayerApi`, which must not be taken for the alias.
     file("app/lib/api/player/players.ts", { classes: [klass("PlayerApi", { extends: "BaseCRUDAPI" })] }),
-    file("app/lib/api/player/mealplans.ts", {
+    file("app/lib/api/player/trainingplans.ts", {
       imports: [imp("../base", ["BaseCRUDAPI"])],
-      classes: [klass("MealPlanAPI", { extends: "BaseCRUDAPI" })],
+      classes: [klass("TrainingPlanAPI", { extends: "BaseCRUDAPI" })],
     }),
     file("app/lib/api/base.ts", { classes: [klass("BaseCRUDAPI", { methods: [fn("createOne", 5)] })] }),
   ];
@@ -47,26 +47,26 @@ function project(dialog: FileAnalysis): FileAnalysis[] {
 
 describe("module-scope receivers typed through an imported factory", () => {
   it("links a call on a <setup> local to the method its class inherits, through the renamed re-export", () => {
-    const dialog = file("app/components/AddMeal.vue", {
+    const dialog = file("app/components/AddTraining.vue", {
       imports: [imp("app/composables/api", ["usePlayerApi"])],
       functions: [
         fn("<setup>", 1, [call("usePlayerApi", 2, "cross-file", "app/composables/api")], { endLine: 1, localTypes: [{ name: "api", type: "", from: "usePlayerApi()" }] }),
-        fn("addRecipeToPlan", 10, [call("api.mealplans.createOne", 11, "cross-file", "app/composables/api")]),
+        fn("addTacticToPlan", 10, [call("api.trainingplans.createOne", 11, "cross-file", "app/composables/api")]),
       ],
     });
-    const link = buildSymbolLinks(project(dialog)).find((l) => l.sourceSymbol === "addRecipeToPlan");
-    expect(link).toMatchObject({ targetFile: "app/lib/api/base.ts", targetSymbol: "BaseCRUDAPI.createOne", viaType: "MealPlanAPI", viaTypeFile: "app/lib/api/player/mealplans.ts" });
+    const link = buildSymbolLinks(project(dialog)).find((l) => l.sourceSymbol === "addTacticToPlan");
+    expect(link).toMatchObject({ targetFile: "app/lib/api/base.ts", targetSymbol: "BaseCRUDAPI.createOne", viaType: "TrainingPlanAPI", viaTypeFile: "app/lib/api/player/trainingplans.ts" });
   });
 
   it("does not reach a module local the function shadows with a parameter", () => {
-    const dialog = file("app/components/AddMeal.vue", {
+    const dialog = file("app/components/AddTraining.vue", {
       imports: [imp("app/composables/api", ["usePlayerApi"])],
       functions: [
         fn("<setup>", 1, [call("usePlayerApi", 2, "cross-file", "app/composables/api")], { endLine: 1, localTypes: [{ name: "api", type: "", from: "usePlayerApi()" }] }),
-        fn("addRecipeToPlan", 10, [call("api.mealplans.createOne", 11, "cross-file", "app/composables/api")], { params: [{ name: "api", type: null, defaultValue: null }] }),
+        fn("addTacticToPlan", 10, [call("api.trainingplans.createOne", 11, "cross-file", "app/composables/api")], { params: [{ name: "api", type: null, defaultValue: null }] }),
       ],
     });
-    const link = buildSymbolLinks(project(dialog)).find((l) => l.sourceSymbol === "addRecipeToPlan");
+    const link = buildSymbolLinks(project(dialog)).find((l) => l.sourceSymbol === "addTacticToPlan");
     expect(link?.targetSymbol).not.toBe("BaseCRUDAPI.createOne");
   });
 });

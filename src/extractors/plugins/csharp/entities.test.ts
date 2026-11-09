@@ -431,35 +431,35 @@ describe("EF Core cross-file entity reconciliation", () => {
 });
 
 describe("generic repository access + Marr table mapping (project-level)", () => {
-  it("attributes `_movieRepository.Get(id)` to the type argument of the repository's generic base", () => {
-    const repo = analysis("Movies/MovieRepository.cs", [
-      cls("IMovieRepository", { extends: "IBasicRepository<Movie>" }),
-      cls("MovieRepository", { extends: "BasicRepository<Movie>", implements: ["IMovieRepository"] }),
+  it("attributes `_trophyRepository.Get(id)` to the type argument of the repository's generic base", () => {
+    const repo = analysis("Trophies/TrophyRepository.cs", [
+      cls("ITrophyRepository", { extends: "IBasicRepository<Trophy>" }),
+      cls("TrophyRepository", { extends: "BasicRepository<Trophy>", implements: ["ITrophyRepository"] }),
     ]);
-    const movie = analysis("Movies/Movie.cs", [cls("Movie", { extends: "ModelBase" })]);
+    const trophy = analysis("Trophies/Trophy.cs", [cls("Trophy", { extends: "ModelBase" })]);
     const mapping = analysis("Datastore/TableMapping.cs", [{
       ...cls("TableMapping"),
-      methods: [{ name: "Map", line: 5, endLine: 9, params: [], calls: [{ name: 'Mapper.Entity<Movie>("Movies").RegisterModel', kind: "internal", target: null, line: 6 }] } as any],
+      methods: [{ name: "Map", line: 5, endLine: 9, params: [], calls: [{ name: 'Mapper.Entity<Trophy>("Trophies").RegisterModel', kind: "internal", target: null, line: 6 }] } as any],
     }]);
-    const service = analysis("Movies/MovieService.cs", [{
-      ...cls("MovieService", { properties: [{ name: "_movieRepository", type: "IMovieRepository" }] }),
+    const service = analysis("Trophies/TrophyService.cs", [{
+      ...cls("TrophyService", { properties: [{ name: "_trophyRepository", type: "ITrophyRepository" }] }),
       methods: [
-        { name: "MovieService", line: 10, endLine: 12, params: [{ name: "movieRepository", type: "IMovieRepository" }], calls: [] } as any,
-        { name: "GetMovie", line: 20, endLine: 24, params: [], calls: [
-          { name: "_movieRepository.Get", kind: "internal", target: null, line: 21 },
-          { name: "_movieRepository.Insert", kind: "internal", target: null, line: 22 },
+        { name: "TrophyService", line: 10, endLine: 12, params: [{ name: "trophyRepository", type: "ITrophyRepository" }], calls: [] } as any,
+        { name: "GetTrophy", line: 20, endLine: 24, params: [], calls: [
+          { name: "_trophyRepository.Get", kind: "internal", target: null, line: 21 },
+          { name: "_trophyRepository.Insert", kind: "internal", target: null, line: 22 },
           { name: "_logger.Info", kind: "internal", target: null, line: 23 },
         ] } as any,
       ],
     }]);
-    for (const a of [repo, movie, mapping, service]) { (a as any).language = "csharp"; (a as any).functions = []; (a as any).dataSources = []; }
-    new CSharpEntityExtractor().reconcileProject([repo, movie, mapping, service]);
+    for (const a of [repo, trophy, mapping, service]) { (a as any).language = "csharp"; (a as any).functions = []; (a as any).dataSources = []; }
+    new CSharpEntityExtractor().reconcileProject([repo, trophy, mapping, service]);
     expect(service.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([
-      ["_movieRepository.Get", "Movie", "read"],
-      ["_movieRepository.Insert", "Movie", "write"],
+      ["_trophyRepository.Get", "Trophy", "read"],
+      ["_trophyRepository.Insert", "Trophy", "write"],
     ]);
-    expect(movie.classes[0]!.decorators).toEqual(["entity", "marr", "table:Movies"]);
-    expect(movie.classes[0]!.tableName).toBe("Movies");
+    expect(trophy.classes[0]!.decorators).toEqual(["entity", "marr", "table:Trophies"]);
+    expect(trophy.classes[0]!.tableName).toBe("Trophies");
   });
 
   it("follows a local the method initializes from a call, typed by what the callee declares it returns", () => {

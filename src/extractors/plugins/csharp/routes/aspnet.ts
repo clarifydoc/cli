@@ -85,7 +85,7 @@ const EMPTY_SCOPE: ControllerScope = {
  * which one file can see when the base lives in another.
  */
 export interface CsControllerFact {
-  /** The class's base type as written (`BaseApiController`, `RestController<MovieResource>`). */
+  /** The class's base type as written (`BaseApiController`, `RestController<TrophyResource>`). */
   base: string | null;
   abstract: boolean;
   /** Its own class-level `[Route]` template, tokens unresolved. */

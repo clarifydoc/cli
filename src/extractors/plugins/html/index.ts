@@ -72,7 +72,7 @@ const TEST_DIR = /(?:^|[\\/])(?:__tests__|tests?|specs?|cypress|e2e)[\\/]/i;
 
 /**
  * Content-sniffing preprocess: skip pages that are generated API reference, and directory guards —
- * and any page under a test directory, a fixture the tests read (a saved third-party recipe page a
+ * and any page under a test directory, a fixture the tests read (a saved third-party product page a
  * scraper is tested against): its links are another site's, never this application's requests.
  */
 export function htmlPreprocess(rawSource: string, relativePath = ""): { skip: string } | null {

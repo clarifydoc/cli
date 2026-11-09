@@ -5,10 +5,10 @@ import { receiverTypeName } from "../../shared/type-parser.js";
  * The repository pattern over a generic base, as a project-level pass any
  * plugin can run from its entity extractor's `reconcileProject`:
  *
- *   C#      `IMovieRepository : IBasicRepository<Movie>` … `_movieRepository.Get(id)`
- *   Python  `RepositoryRecipes(HouseholdRepositoryGeneric[Recipe, RecipeModel])` …
- *           `self.repos.recipes.create(…)` through `repos: AllRepositories` and
- *           `@cached_property def recipes(self) -> RepositoryRecipes`
+ *   C#      `ITrophyRepository : IBasicRepository<Trophy>` … `_trophyRepository.Get(id)`
+ *   Python  `RepositoryTactics(LeagueRepositoryGeneric[Tactic, TacticModel])` …
+ *           `self.repos.tactics.create(…)` through `repos: AllRepositories` and
+ *           `@cached_property def tactics(self) -> RepositoryTactics`
  *
  * The data access lives in a base class whose type parameter is unknown
  * there, so a call through the repository reached no entity. This walks the
@@ -24,11 +24,11 @@ import { receiverTypeName } from "../../shared/type-parser.js";
  */
 export interface RepositoryAccessKnobs {
   language: Language;
-  /** Type arguments when `written` is a repository generic (`IBasicRepository<Movie>`, `Generic[A, B]`), else null. */
+  /** Type arguments when `written` is a repository generic (`IBasicRepository<Trophy>`, `Generic[A, B]`), else null. */
   genericArgs(written: string): string[] | null;
   /** Receiver heads that mean the enclosing instance (`this`, `self`). */
   selfHeads: ReadonlySet<string>;
-  /** How a member is named at the call versus its declaration (`_movieRepository` ↔ `movieRepository`). */
+  /** How a member is named at the call versus its declaration (`_trophyRepository` ↔ `trophyRepository`). */
   memberKey(name: string): string;
   isConstructor(method: FunctionInfo, cls: ClassInfo): boolean;
   /** Generic types an awaited call's result is wrapped in (`Task`, `ValueTask`). */
@@ -84,7 +84,7 @@ export function attributeRepositoryAccesses(analyses: FileAnalysis[], knobs: Rep
             const param = cls.methods.find((m) => knobs.isConstructor(m, cls))?.params.find((p) => p.name === head);
             if (param?.type && written(param.type)) found = resolveChain(rest, written(param.type), depth + 1);
           }
-          // A chain on a function's result (`get_repositories().recipes`): from the class it returns.
+          // A chain on a function's result (`get_repositories().tactics`): from the class it returns.
           const fn = /^(\w+)\(\)$/.exec(head!)?.[1];
           if (fn && rest.every((s) => /^[\w$]+$/.test(s))) {
             const returns = [...new Set((functionsNamed.get(fn) ?? []).map((f) => written(f.returnType)).filter((t): t is string => !!t))];

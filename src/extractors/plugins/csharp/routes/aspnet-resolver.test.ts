@@ -97,7 +97,7 @@ public class WantToReadController : BaseApiController { [HttpPost("v2")] public 
   });
 
   it("serves an abstract base's routed actions under each concrete subclass, and drops the base's own rows", async () => {
-    const [rest, movie, tag] = await analyze({
+    const [rest, trophy, tag] = await analyze({
       "Http/RestController.cs": `
 [ApiController]
 public abstract class RestController<T> : Controller
@@ -105,14 +105,14 @@ public abstract class RestController<T> : Controller
     [HttpGet("{id:int}")]
     public ActionResult<T> GetResourceById(int id) => Ok();
 }`,
-      "Api/MovieController.cs": `[Route("api/v3/movie")] public class MovieController : RestController<MovieResource> { [HttpPost] public IActionResult Add() => Ok(); }`,
+      "Api/TrophyController.cs": `[Route("api/v3/trophy")] public class TrophyController : RestController<TrophyResource> { [HttpPost] public IActionResult Add() => Ok(); }`,
       "Api/TagController.cs": `[Route("api/v3/tag")] public class TagController : RestController<TagResource> { }`,
     });
     expect(rest!.routes.map((r) => `${r.httpMethod} ${r.path} ${r.owner}`).sort()).toEqual([
-      "GET /api/v3/movie/{id} MovieController",
       "GET /api/v3/tag/{id} TagController",
+      "GET /api/v3/trophy/{id} TrophyController",
     ]);
-    expect(movie!.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["POST /api/v3/movie"]);
+    expect(trophy!.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["POST /api/v3/trophy"]);
     expect(tag!.routes).toEqual([]);
   });
 
@@ -235,12 +235,12 @@ public class TagController : RestController<TagResource>
     [NonAction]
     public void Handle(TagsUpdatedEvent message) { }
 }`,
-      "League.Api.V3/Movies/MovieLookupController.cs": `
-[V3ApiController("movie/lookup")]
-public class MovieLookupController : RestController<MovieResource>
+      "League.Api.V3/Trophies/TrophyLookupController.cs": `
+[V3ApiController("trophy/lookup")]
+public class TrophyLookupController : RestController<TrophyResource>
 {
-    [HttpGet("tmdb")]
-    public object SearchByTmdbId(int tmdbId) => null;
+    [HttpGet("archive")]
+    public object SearchByArchiveId(int archiveId) => null;
 }`,
     });
     const byPath = (p: string) => out.find((a) => a.filePath === p);
@@ -250,11 +250,11 @@ public class MovieLookupController : RestController<MovieResource>
       "POST /api/v3/Tag TagController",
       "PUT /api/v3/Tag/{id} TagController",
     ]);
-    expect(rows(byPath("League.Api.V3/Movies/MovieLookupController.cs"))).toEqual(["GET /api/v3/movie/lookup/tmdb MovieLookupController"]);
+    expect(rows(byPath("League.Api.V3/Trophies/TrophyLookupController.cs"))).toEqual(["GET /api/v3/trophy/lookup/archive TrophyLookupController"]);
     // The abstract base's [RestGetById] action is served under each concrete controller.
     expect(rows(byPath("League.Http/REST/RestController.cs"))).toEqual([
       "GET /api/v3/Tag/{id} TagController",
-      "GET /api/v3/movie/lookup/{id} MovieLookupController",
+      "GET /api/v3/trophy/lookup/{id} TrophyLookupController",
     ]);
     // `IApiBehaviorMetadata` is [ApiController] behaviour: the complex parameter binds from the body.
     const put = byPath("League.Api.V3/Tags/TagController.cs")!.routes.find((r) => r.httpMethod === "PUT")!;

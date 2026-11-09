@@ -283,44 +283,44 @@ describe("URL-builder template extraction — a parameter extended per switch ar
 describe("JavaScriptExtractor — a registry keyed by a constant", () => {
   it("makes each `[KEY]:` handler a function and each creator naming KEY a function calling it", async () => {
     const src = `import { createThunk, handleThunks } from 'Store/thunks';
-export const FETCH_MOVIES = 'movies/fetchMovies';
-export const DELETE_MOVIE = 'movies/deleteMovie';
-export const fetchMovies = createThunk(FETCH_MOVIES);
-export const deleteMovie = createThunk(DELETE_MOVIE, (payload) => payload);
+export const FETCH_TROPHIES = 'trophies/fetchTrophies';
+export const DELETE_TROPHY = 'trophies/deleteTrophy';
+export const fetchTrophies = createThunk(FETCH_TROPHIES);
+export const deleteTrophy = createThunk(DELETE_TROPHY, (payload) => payload);
 export const setSort = createAction(SET_SORT);
 export const actionHandlers = handleThunks({
-  [FETCH_MOVIES]: createFetchHandler(section, '/movie'),
-  [DELETE_MOVIE]: (getState, payload, dispatch) => {
-    createRemoveItemHandler(section, '/movie')(getState, payload, dispatch);
+  [FETCH_TROPHIES]: createFetchHandler(section, '/trophy'),
+  [DELETE_TROPHY]: (getState, payload, dispatch) => {
+    createRemoveItemHandler(section, '/trophy')(getState, payload, dispatch);
   },
 });
-const lookup = { [FETCH_MOVIES]: 1 };`;
-    const tree = await parseSource(src, "typescript" as never, "movieActions.js");
+const lookup = { [FETCH_TROPHIES]: 1 };`;
+    const tree = await parseSource(src, "typescript" as never, "trophyActions.js");
     const fns = new JavaScriptExtractor().extractFunctions(tree, src);
-    const view = fns.filter((f) => /\[|fetchMovies|deleteMovie|setSort/.test(f.name)).map((f) => `${f.name}@${f.line} -> ${f.calls.map((c) => c.name).join(",")}`);
+    const view = fns.filter((f) => /\[|fetchTrophies|deleteTrophy|setSort/.test(f.name)).map((f) => `${f.name}@${f.line} -> ${f.calls.map((c) => c.name).join(",")}`);
     expect(view).toEqual([
       // \`section\` is an identifier argument, kept as a possible callback like in any body.
-      "[FETCH_MOVIES]@8 -> createFetchHandler,section",
-      "[DELETE_MOVIE]@9 -> createRemoveItemHandler,section",
-      "fetchMovies@4 -> [FETCH_MOVIES]",
-      "deleteMovie@5 -> [DELETE_MOVIE]",
+      "[FETCH_TROPHIES]@8 -> createFetchHandler,section",
+      "[DELETE_TROPHY]@9 -> createRemoveItemHandler,section",
+      "fetchTrophies@4 -> [FETCH_TROPHIES]",
+      "deleteTrophy@5 -> [DELETE_TROPHY]",
     ]);
   });
 });
 
 describe("JavaScriptExtractor — arrow class fields", () => {
   it("makes `onSave = () => {…}` a method of its class (React class components)", async () => {
-    const src = `class AddNewMovie extends Component {
+    const src = `class AddNewTrophy extends Component {
   state = { term: '' };
   onSearchInputChange = ({ value }) => {
-    this.props.onMovieLookupChange(value);
+    this.props.onTrophyLookupChange(value);
   };
   render() { return null; }
 }`;
-    const tree = await parseSource(src, "javascript" as never, "AddNewMovie.js");
+    const tree = await parseSource(src, "javascript" as never, "AddNewTrophy.js");
     const [cls] = new JavaScriptExtractor().extractClasses(tree, src);
     expect(cls!.methods.map((m) => `${m.name}@${m.line}`)).toEqual(["onSearchInputChange@3", "render@6"]);
-    expect(cls!.methods[0]!.calls.map((c) => c.name)).toEqual(["this.props.onMovieLookupChange"]);
+    expect(cls!.methods[0]!.calls.map((c) => c.name)).toEqual(["this.props.onTrophyLookupChange"]);
   });
 
   it("makes `this.onSave = (e) => {…}` in the constructor a method, with its own calls (real-repo FP)", async () => {
@@ -350,18 +350,18 @@ describe("JavaScriptExtractor — arrow class fields", () => {
 
 describe("JavaScriptExtractor — connect(…, mapDispatchToProps)", () => {
   it("adds the bound action creator to a `this.props.x()` call", async () => {
-    const src = `import { clearAddMovie, lookupMovie } from 'Store/Actions/addMovieActions';
-const mapDispatchToProps = { lookupMovie, dispatchClear: clearAddMovie };
-class AddNewMovieConnector extends Component {
-  onMovieLookupChange = (term) => { this.props.lookupMovie({ term }); };
+    const src = `import { clearAddTrophy, lookupTrophy } from 'Store/Actions/addTrophyActions';
+const mapDispatchToProps = { lookupTrophy, dispatchClear: clearAddTrophy };
+class AddNewTrophyConnector extends Component {
+  onTrophyLookupChange = (term) => { this.props.lookupTrophy({ term }); };
   onClear() { this.props.dispatchClear(); this.props.onModalClose(); }
 }
-export default connect(createMapStateToProps, mapDispatchToProps)(AddNewMovieConnector);`;
-    const tree = await parseSource(src, "javascript" as never, "AddNewMovieConnector.js");
+export default connect(createMapStateToProps, mapDispatchToProps)(AddNewTrophyConnector);`;
+    const tree = await parseSource(src, "javascript" as never, "AddNewTrophyConnector.js");
     const [cls] = new JavaScriptExtractor().extractClasses(tree, src);
     expect(cls!.methods.map((m) => `${m.name}: ${m.calls.map((c) => c.name).join(",")}`)).toEqual([
-      "onMovieLookupChange: this.props.lookupMovie,lookupMovie",
-      "onClear: this.props.dispatchClear,this.props.onModalClose,clearAddMovie",
+      "onTrophyLookupChange: this.props.lookupTrophy,lookupTrophy",
+      "onClear: this.props.dispatchClear,this.props.onModalClose,clearAddTrophy",
     ]);
   });
 });
