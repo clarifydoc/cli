@@ -169,6 +169,8 @@ interface HelperLookup {
   method?: (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null;
   /** `endPoints('profile').url`, `messages.update(id).url`: the URL a helper's descriptor or table entry states under that key. */
   descriptor?: (site: CallSite, receiver: string, name: string, args: string[], key: string, keyArgs: string[] | null) => string[] | null;
+  /** `this.resource` seen from the calling class: the literal its chain states (a `super('clubs')` argument included), or null. */
+  field?: (file: string, line: number, name: string) => string | null;
 }
 
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
@@ -268,6 +270,174 @@ function descriptorRead(text: string, lookup: HelperLookup, site: CallSite): Hel
   return null;
 }
 
+// `${this.url.replace(this.resource, '')}callbacks/kit`, `this.url.replaceAll('clubs', 'kits')`: a getter's URL
+// with a part taken out or swapped (a client building a sibling endpoint from its own base).
+const GETTER_EDIT_RE = /(\$\{\s*)?\bthis\s*\.\s*([A-Za-z_$][\w$]*)(?=\s*\.\s*replace(?:All)?\s*\()/g;
+
+/** One `.replace(search, replacement)` / `.replaceAll(…)`: the search is literal text or a hole of the template (`this.resource`). */
+interface UrlEdit {
+  all: boolean;
+  search: { text: string } | { hole: string };
+  replacement: string;
+}
+
+/** A string literal with nothing in it JavaScript would read as a pattern or a hole (`$&`, `${…}`, escapes). */
+const PLAIN_LITERAL = /^(['"`])([^'"`$\\]*)\1$/;
+/** A regex literal of plain characters (`/clubs/`, `/\/clubs/g`): the text it matches, and whether it is global. */
+const PLAIN_REGEX = /^\/((?:[^\\/[\](){}.*+?^$|]|\\[/.\-_])+)\/(g?)$/;
+
+/**
+ * A getter read edited by `.replace`/`.replaceAll` calls, evaluated over each of the getter's
+ * templates: `get url() { return `${this.baseUrl()}/${this.resource}` }` with
+ * `this.url.replace(this.resource, '')` is `${this.baseUrl()}/`. Null when any edit cannot be
+ * told: a search value the template does not show (a runtime value, or text a hole may hold).
+ */
+function editedGetterRead(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {
+  for (const m of text.matchAll(GETTER_EDIT_RE)) {
+    const read = readEdits(text, m.index! + m[0].length);
+    if (!read) continue;
+    let end = read.end;
+    if (m[1] !== undefined) {
+      // The whole `${…}` hole: nothing else may follow the edits inside it.
+      const close = /^\s*\}/.exec(text.slice(end));
+      if (!close) continue;
+      end += close[0].length;
+    } else if (text.slice(0, m.index).trim() !== "" || text.slice(end).trim() !== "") {
+      continue; // a bare expression is understood only as the whole URL
+    }
+    const getter = lookup.method!(site.file, site.line, m[2]!, true);
+    if (!getter || getter.params.length > 0) continue;
+    const field = (name: string) => lookup.field?.(site.file, site.line, name) ?? null;
+    const rewrites = getter.templates.map((t) => applyEdits(t, read.edits, field));
+    if (rewrites.some((r) => r === null)) continue;
+    return { start: m.index!, end, rewrites: rewrites as string[] };
+  }
+  return null;
+}
+
+/** The `.replace(…)` / `.replaceAll(…)` chain starting at `from`, and where it ends. */
+function readEdits(text: string, from: number): { edits: UrlEdit[]; end: number } | null {
+  const edits: UrlEdit[] = [];
+  let i = from;
+  for (;;) {
+    const m = /^\s*\.\s*(replace|replaceAll)\s*\(/.exec(text.slice(i));
+    if (!m) break;
+    const open = i + m[0].length;
+    const close = closingParen(text, open);
+    if (close < 0) return null;
+    const args = argsOf(text.slice(open, close));
+    const edit = args.length === 2 ? readEdit(m[1] === "replaceAll", args[0]!, args[1]!) : null;
+    if (!edit) return null;
+    edits.push(edit);
+    i = close + 1;
+  }
+  return edits.length > 0 ? { edits, end: i } : null;
+}
+
+/** The index of the `)` closing the parenthesis opened just before `open` (strings and regex literals skipped), or -1. */
+function closingParen(text: string, open: number): number {
+  let depth = 1;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "'" || ch === '"' || ch === "`" || (ch === "/" && /[(,]\s*$/.test(text.slice(open - 1, i)))) {
+      for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function readEdit(all: boolean, search: string, replacement: string): UrlEdit | null {
+  const repl = PLAIN_LITERAL.exec(replacement)?.[2];
+  if (repl === undefined) return null;
+  const lit = PLAIN_LITERAL.exec(search)?.[2];
+  if (lit) return { all, search: { text: lit }, replacement: repl };
+  const re = PLAIN_REGEX.exec(search);
+  if (re) {
+    // `replaceAll` with a non-global regex throws: no URL.
+    if (all && !re[2]) return null;
+    return { all: all || re[2] === "g", search: { text: re[1]!.replace(/\\(.)/g, "$1") }, replacement: repl };
+  }
+  if (/^this\s*\.\s*[A-Za-z_$][\w$]*$/.test(search)) return { all, search: { hole: search.replace(/\s+/g, "") }, replacement: repl };
+  return null;
+}
+
+/** A template as its literal runs and `${…}` holes (braces balanced). */
+function templateParts(template: string): Part[] {
+  const out: Part[] = [];
+  let lit = "";
+  for (let i = 0; i < template.length; i++) {
+    if (template.startsWith("${", i)) {
+      let depth = 0;
+      let j = i + 1;
+      for (; j < template.length; j++) {
+        if (template[j] === "{") depth++;
+        else if (template[j] === "}" && --depth === 0) break;
+      }
+      if (j < template.length) {
+        if (lit) out.push({ hole: false, text: lit });
+        lit = "";
+        out.push({ hole: true, text: template.slice(i, j + 1) });
+        i = j;
+        continue;
+      }
+    }
+    lit += template[i];
+  }
+  if (lit) out.push({ hole: false, text: lit });
+  return out;
+}
+
+/**
+ * The template with each edit applied, or null when one cannot be told. Text is looked for
+ * in the template's literal runs; when it is in none and the template has holes, the fields
+ * among them the class states (`${this.resource}` from `super('clubs')`) are filled in and it
+ * is looked for again — a hole left may hold it at run time, so nothing is claimed. A field
+ * search (`this.resource`) is the text the class states for it, or else, stated only at run
+ * time, the template's own `${this.resource}`.
+ */
+function applyEdits(template: string, edits: UrlEdit[], field: (name: string) => string | null): string | null {
+  let parts: Part[] | null = templateParts(template);
+  const fill = (ps: Part[], only?: string): Part[] =>
+    templateParts(ps.map((p) => {
+      const name = p.hole ? /^\$\{\s*this\s*\.\s*([A-Za-z_$][\w$]*)\s*\}$/.exec(p.text)?.[1] : undefined;
+      const value = name && (only === undefined || name === only) ? field(name) : null;
+      return value ?? p.text;
+    }).join(""));
+  for (const edit of edits) {
+    if ("hole" in edit.search) {
+      const hole = edit.search.hole;
+      const name = hole.slice("this.".length);
+      const value = field(name);
+      if (value) {
+        parts = replaceText(fill(parts, name), value, edit);
+      } else {
+        const at = parts.flatMap((p, i) => (p.hole && p.text.slice(2, -1).replace(/\s+/g, "") === hole ? [i] : []));
+        if (at.length === 0) return null;
+        for (const i of edit.all ? at : at.slice(0, 1)) parts[i] = { hole: false, text: edit.replacement };
+        parts = templateParts(parts.map((p) => p.text).join(""));
+      }
+    } else {
+      parts = replaceText(parts, edit.search.text, edit) ?? replaceText(fill(parts), edit.search.text, edit);
+    }
+    if (!parts) return null;
+  }
+  return parts.map((p) => p.text).join("");
+}
+
+type Part = { hole: boolean; text: string };
+
+function replaceText(parts: Part[], search: string, edit: UrlEdit): Part[] | null {
+  const hits = parts.flatMap((p, i) => (!p.hole && p.text.includes(search) ? [i] : []));
+  if (hits.length === 0) return parts.some((p) => p.hole) ? null : parts;
+  const out = parts.map((p) => ({ ...p }));
+  if (edit.all) for (const i of hits) out[i]!.text = out[i]!.text.split(search).join(edit.replacement);
+  else out[hits[0]!]!.text = out[hits[0]!]!.text.replace(search, () => edit.replacement);
+  return templateParts(out.map((p) => p.text).join(""));
+}
+
 /** A builder's templates with a call's arguments in; null when a bare-variable argument leaves one unresolved. */
 function rewriteWith(builder: UrlBuilder, args: string[]): string[] | null {
   const named = builder.params.length === 0 && args.length === 1 ? objectArgument(args[0]!) : null;
@@ -287,6 +457,10 @@ function firstResolvable(text: string, lookup: HelperLookup, site: CallSite): He
       if (!getter || getter.params.length > 0) continue;
       return { start: m.index!, end: m.index! + m[0].length, rewrites: getter.templates };
     }
+  }
+  if (lookup.method && text.includes("this.") && /\.\s*replace(?:All)?\s*\(/.test(text)) {
+    const edited = editedGetterRead(text, lookup, site);
+    if (edited) return edited;
   }
   for (const m of text.matchAll(HELPER_CALL_RE)) {
     const inTemplate = m[2] != null;
@@ -351,6 +525,7 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
   keepHelperBases(lookup, analyses);
   if (ctx) {
     lookup.method = methodResolver(ctx);
+    lookup.field = fieldResolver(ctx);
     lookup.descriptor = descriptorResolver(analyses, ctx, lookup);
   }
   if (lookup.global.size === 0 && lookup.local.size === 0 && !lookup.method) return 0;
@@ -385,14 +560,47 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
 
 /** The classes below the one holding the call, when one of them states a getter `text` reads (`${this.url}`). */
 function overridingClasses(ctx: ProjectContext, file: string, line: number, text: string): ClassRef[] {
-  let cls: ClassRef | null = null;
-  for (const ref of ctx.classes.classesIn(file)) {
-    if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
-  }
+  const cls = classAt(ctx, file, line);
   if (!cls) return [];
   const names = [...text.matchAll(GETTER_READ_RE)].map((m) => m[1]!);
   const below = ctx.classes.descendants(cls);
   return names.length > 0 && below.some((d) => names.some((n) => d.cls.methods.some((x) => x.name === n) || d.cls.fieldValues?.[n] !== undefined)) ? below : [];
+}
+
+/** The innermost class holding a line. */
+function classAt(ctx: ProjectContext, file: string, line: number): ClassRef | null {
+  let cls: ClassRef | null = null;
+  for (const ref of ctx.classes.classesIn(file)) {
+    if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
+  }
+  return cls;
+}
+
+/**
+ * `this.<name>` seen from the class holding a line: the first value its chain states — a
+ * literal, or a constructor parameter (`this.resource = resource`) followed down to the
+ * literal the class below handed `super(…)`. Null for a value stated only at run time.
+ */
+function fieldResolver(ctx: ProjectContext): (file: string, line: number, name: string) => string | null {
+  const paramIndex = (c: ClassRef, value: string): number => {
+    const param = /^\$\{([\w$]+)\}$/.exec(value)?.[1];
+    const ctor = param ? c.cls.methods.find((m) => m.name === "constructor") : undefined;
+    return ctor ? ctor.params.findIndex((p) => p.name === param) : -1;
+  };
+  return (file, line, name) => {
+    const cls = classAt(ctx, file, line);
+    if (!cls) return null;
+    const up = [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))];
+    const k = up.findIndex((c) => c.cls.fieldValues?.[name] !== undefined);
+    if (k < 0) return null;
+    let value = up[k]!.cls.fieldValues![name]!;
+    let index = paramIndex(up[k]!, value);
+    for (let j = k - 1; j >= 0 && index >= 0; j--) {
+      value = up[j]!.cls.superArgs?.[index] ?? "${}";
+      index = paramIndex(up[j]!, value);
+    }
+    return value.includes("${") ? null : value;
+  };
 }
 
 /**
@@ -442,12 +650,7 @@ function localHelpers(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuil
  */
 function methodResolver(ctx: ProjectContext, fixed?: ClassRef): (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null {
   return (file, line, name, getterOnly) => {
-    let cls: ClassRef | null = fixed ?? null;
-    if (!fixed) {
-      for (const ref of ctx.classes.classesIn(file)) {
-        if (ref.cls.line <= line && line <= ref.cls.endLine && (!cls || ref.cls.line >= cls.cls.line)) cls = ref;
-      }
-    }
+    const cls = fixed ?? classAt(ctx, file, line);
     if (!cls) return null;
     for (const c of [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))]) {
       const fn = c.cls.methods.find((m) => m.name === name);
