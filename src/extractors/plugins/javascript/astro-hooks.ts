@@ -1,5 +1,5 @@
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
-import { blankExceptAstroCode, parseAstro } from "../../../parsers/astro-sfc.js";
+import { astroAssetRefs, blankExceptAstroCode, parseAstro } from "../../../parsers/astro-sfc.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
 import { materializeElementRequests } from "../shared/element-requests.js";
@@ -26,6 +26,11 @@ export function astroPreprocess(rawSource: string, relativePath: string): Prepro
         const setup = analysis.functions.find((f) => f.name === "<setup>");
         if (setup) setup.calls.push(call);
         else analysis.functions.unshift({ name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [call], line: 1, endLine: 1 });
+      }
+      // `<script src>` / `<link href>` load files the page depends on.
+      for (const ref of astroAssetRefs(rawSource)) {
+        if (!analysis.imports.some((i) => i.source === ref.source))
+          analysis.imports.push({ source: ref.source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: ref.line });
       }
       analysis.templateTree = parsed.templateTree;
       analysis.interactiveElements.push(...extractHtmlInteractiveElements(parsed.markup.split("\n"), { requests: true }));

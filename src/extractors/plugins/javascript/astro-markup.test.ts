@@ -75,3 +75,28 @@ import { getClubs, getPlayers, label, tag } from '../lib/clubs';
     expect(setupCalls(a)).toEqual(["getClubs@4", "getPlayers@5", "label@4", "tag@5"]);
   });
 });
+
+describe("Astro <script src> and <link href> as imports", () => {
+  const sources = (a: FileAnalysis) => a.imports.map((i) => i.source).sort();
+
+  it("records local scripts, stylesheets and module preloads, not URLs or comments", async () => {
+    const a = await analyze(`---
+import Layout from '../layouts/Layout.astro';
+---
+<html><head>
+<link rel="stylesheet" href="../styles/club.css">
+<link href="../scripts/preload.ts" rel="modulepreload" />
+<link rel="icon" href="../img/crest.svg">
+<link rel="stylesheet" href="https://cdn.example.com/league.css">
+<!-- <script src="../scripts/old.ts"></script> -->
+</head><body>
+<script src="../scripts/club.ts"></script>
+<script type="module" src='./local.js'></script>
+<script src="//cdn.example.com/x.js"></script>
+<script src="/vendor/table.js"></script>
+</body></html>
+`);
+    expect(sources(a)).toEqual(["../layouts/Layout.astro", "../scripts/club.ts", "../scripts/preload.ts", "../styles/club.css", "./local.js", "public/vendor/table.js"]);
+    expect(a.imports.find((i) => i.source === "../scripts/club.ts")?.line).toBe(11);
+  });
+});

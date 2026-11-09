@@ -62,3 +62,36 @@ export function parseAstro(source: string): AstroBlocks {
   flattenTemplateComponents(templateTree, templateComponents, new Set());
   return { frontmatter: fm ? { start: fm.start, end: fm.end } : null, markup, templateComponents, templateTree };
 }
+
+export interface AstroAssetRef {
+  /** The specifier as the resolver reads it: relative as written, a `/`-rooted one under `public/`. */
+  source: string;
+  line: number;
+}
+
+/**
+ * The files a page loads through `<script src>` and `<link href>` (stylesheet, modulepreload): a relative
+ * path, or a `/`-rooted one that Astro serves from `public/`. Absolute URLs, other `<link>` kinds, comments
+ * and the frontmatter are left out.
+ */
+export function astroAssetRefs(source: string): AstroAssetRef[] {
+  const fm = astroFrontmatter(source);
+  const text = (fm ? source.slice(0, fm.close).replace(/[^\n]/g, " ") + source.slice(fm.close) : source).replace(/<!--[\s\S]*?-->/g, blank);
+  const refs: AstroAssetRef[] = [];
+  const attr = (attrs: string, name: string): string | null => {
+    const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(attrs);
+    return m ? (m[1] ?? m[2] ?? "").trim() : null;
+  };
+  for (const m of text.matchAll(/<(script|link)\b([^>]*)>/gi)) {
+    const attrs = m[2]!;
+    const isScript = m[1]!.toLowerCase() === "script";
+    if (!isScript && !/^(?:stylesheet|modulepreload)$/i.test(attr(attrs, "rel") ?? "")) continue;
+    const ref = attr(attrs, isScript ? "src" : "href");
+    if (!ref || /^(?:[a-z][\w+.-]*:|\/\/|#)/i.test(ref) || /[{}]/.test(ref)) continue;
+    const path = ref.replace(/[?#].*$/, "");
+    if (!path) continue;
+    const line = text.slice(0, m.index!).split("\n").length;
+    refs.push({ source: path.startsWith("/") ? `public${path}` : path, line });
+  }
+  return refs;
+}
