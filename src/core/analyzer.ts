@@ -868,8 +868,11 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     if (seed) progress.detail(`  Seeded ${seed.files} cached file(s) from the main worktree's analysis (${seed.from})`);
   }
   const prevManifest = options.incremental ? await loadManifest(outputDir) : null;
+  // Every run that writes leaves a manifest behind, so the first `--incremental` run after a plain
+  // one reuses what it wrote instead of reading every file again; only `--incremental` reads one.
+  const keepsManifest = options.incremental === true || !dryRun;
   // What the run is made from besides the files; OSV answers change on their own, so never "up to date" with it.
-  const fingerprints = options.incremental && !dryRun && !options.osv
+  const fingerprints = keepsManifest && !dryRun && !options.osv
     ? await runFingerprints(projectRoot, {
         options: {
           extractor: extractorStamp(),
@@ -964,8 +967,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const buildMacros = macrosOf(compilationDb.get(file.relativePath));
         const macroStamp = macrosStamp(compilationDb.get(file.relativePath));
         const reading = readingOf(file, projectId);
-        const rewriteStamp = options.incremental ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
-        const resolver = options.incremental
+        const rewriteStamp = keepsManifest ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
+        const resolver = keepsManifest
           ? withReading(macroStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(macroStamp).digest("hex").slice(0, 12)}` : rewriteStamp, reading)
           : undefined;
         const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
@@ -998,7 +1001,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
           ...(buildMacros ? { buildMacros } : {}),
-          ...(options.incremental ? { reportSkips: true as const } : {}),
+          ...(keepsManifest ? { reportSkips: true as const } : {}),
           ...(reading ? { reading } : {}),
         });
         if (outcome && "failed" in outcome) {
@@ -1019,8 +1022,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
           delete newManifestEntries[manifestKey];
           return result;
         }
-        if (options.incremental && !prevManifest) {
-          // First-time incremental run: compute hash for manifest seed.
+        if (keepsManifest && !prevManifest) {
+          // No manifest to compare with (a first incremental run, or a plain one): compute hash for manifest seed.
           const classification = await classifyFileForCache(file.absolutePath, undefined);
           newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
         } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
@@ -2055,7 +2058,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const runOnce = /(?:^|\/)(?:migrations?|migrate|alembic|seeds?|seeders|fixtures)\//i;
     const skip = (f: string) => isUnauthored(f) || fileLayerMap[f] === "test" || runOnce.test(f);
     // An incremental run keeps each file's loops by content hash: building every graph again is most of this pass.
-    const shapes = options.incremental && !dryRun ? await openLoopShapeCache(outputDir, newManifestEntries, projectRoot) : null;
+    const shapes = !dryRun ? await openLoopShapeCache(outputDir, newManifestEntries, projectRoot, options.incremental === true) : null;
     const shapesOf = shapes ? shapes.get : (wanted: readonly string[]) => loopShapesOfFiles(projectRoot, wanted);
     const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph, shapesOf }).catch(() => []);
     await shapes?.save().catch(() => undefined);
@@ -2583,7 +2586,7 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Save the manifest only after the rest of the pipeline succeeds so a crash
   // mid-run leaves the previous manifest intact.
-  if (options.incremental) {
+  if (keepsManifest) {
     const manifest: Manifest = {
       version: 1,
       extractorVersion: extractorStamp(),

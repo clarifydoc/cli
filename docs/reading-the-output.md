@@ -47,7 +47,7 @@ per-file JSON of their own.
 ├── <source path>.json        one per analyzed file: orders/Controllers/OrdersController.cs.json, …
 ├── report-data.json          the report viewer's input
 ├── report.html               the interactive report (--html, or `clarifydoc report`)
-├── manifest.json             content hashes for --incremental
+├── manifest.json             content hashes, what --incremental compares with
 ├── impact-latest.json        what changed since the previous --incremental run
 ├── lsp-enhancement.json      links added by language servers (lsp-update)
 ├── lsp-ground-truth.json     every language-server query and its raw answer
@@ -60,7 +60,7 @@ per-file JSON of their own.
 | `<path>.json` | every `analyze` | You want everything extracted from one file, before any cross-file linking. |
 | `report.html` | `analyze --html`, `report` | You want to look rather than query. One self-contained file. |
 | `report-data.json` | every `analyze` | Rarely — it is a subset of the summary shaped for the viewer, and its format follows the viewer. |
-| `manifest.json` | `analyze --incremental` | You want to know which version of which file the analysis saw. |
+| `manifest.json` | every `analyze` | You want to know which version of which file the analysis saw. |
 | `impact-latest.json` | `analyze --incremental`, from the second run | You want the effect of the latest change set. |
 | `lsp-enhancement.json` | `lsp-update` | Almost never directly — `report` and `mcp` merge it for you. |
 | `lsp-ground-truth.json` | `lsp-update`, `analyze` with LSP | You are measuring the text linker against a language server. |
@@ -449,8 +449,8 @@ prints it for a git diff or a file list.
 
 ### `manifest.json`
 
-Written by `--incremental`: per analyzed file its `sha256` and `mtime`, plus the `extractorVersion`. A file
-whose hash matches is reused from its per-file JSON. A new ClarifyDoc version whose extraction changed has a
+Written by every run: per analyzed file its `sha256` and `mtime`, plus the `extractorVersion`. With
+`--incremental`, a file whose hash matches is reused from its per-file JSON. A new ClarifyDoc version whose extraction changed has a
 new `extractorVersion`, which discards every cached file at once — so the cache never mixes versions.
 
 ### `lsp-enhancement.json` and `lsp-ground-truth.json`

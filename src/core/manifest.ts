@@ -5,6 +5,7 @@ import { join, resolve, sep } from "path";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { headCommit, listGitFiles } from "./source-revision.js";
 import { featureStamp } from "./feature-flags.js";
+import { byOrdinal } from "./ordinal.js";
 
 /**
  * Bump whenever extractor logic changes in a way that would produce different
@@ -137,7 +138,9 @@ export async function saveManifest(outputDir: string, manifest: Manifest): Promi
   const finalPath = join(dir, MANIFEST_NAME);
   const tmpPath = join(dir, `${MANIFEST_NAME}.${process.pid}.tmp`);
 
-  const body = JSON.stringify(manifest, null, 2);
+  // Entries arrive in the order files finished: sorted, two runs over the same tree write the same bytes.
+  const sorted = <T>(of: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(of).sort(([x], [y]) => byOrdinal(x, y)));
+  const body = JSON.stringify({ ...manifest, entries: sorted(manifest.entries), ...(manifest.skipped ? { skipped: sorted(manifest.skipped) } : {}) }, null, 2);
   await writeFile(tmpPath, body, "utf-8");
   try {
     await rename(tmpPath, finalPath);

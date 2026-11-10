@@ -3,6 +3,7 @@ import { join } from "path";
 import { extractorStamp, type ManifestEntry } from "./manifest.js";
 import type { LoopShape } from "./query-in-loop.js";
 import { loopShapesOfFiles } from "./loop-shape-batch.js";
+import { byOrdinal } from "./ordinal.js";
 
 /**
  * The loops of each file's functions, kept between incremental runs by the
@@ -23,10 +24,12 @@ export async function openLoopShapeCache(
   outputDir: string,
   manifest: Readonly<Record<string, ManifestEntry>>,
   projectRoot: string,
+  /** False for a run that reads every file again: its graphs are built, and kept for the next run. */
+  reuse = true,
 ): Promise<{ get: (files: readonly string[]) => Promise<Array<LoopShape[] | null | undefined>>; save: () => Promise<void> }> {
   const path = join(outputDir, CACHE_NAME);
   let previous: CacheFile["files"] = {};
-  try {
+  if (reuse) try {
     const parsed = JSON.parse(await readFile(path, "utf-8")) as Partial<CacheFile>;
     if (parsed.extractorVersion === extractorStamp() && parsed.files && typeof parsed.files === "object") previous = parsed.files;
   } catch {
@@ -59,7 +62,7 @@ export async function openLoopShapeCache(
       return out;
     },
     async save() {
-      const body: CacheFile = { extractorVersion: extractorStamp(), files: next };
+      const body: CacheFile = { extractorVersion: extractorStamp(), files: Object.fromEntries(Object.entries(next).sort(([x], [y]) => byOrdinal(x, y))) };
       const tmp = `${path}.${process.pid}.tmp`;
       await writeFile(tmp, JSON.stringify(body), "utf-8");
       await rename(tmp, path);
