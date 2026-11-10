@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from "fs/promises";
+import { sharedEntries } from "../../shared/dir-listings.js";
 import { join } from "path";
 import type { FileAnalysis } from "../../../types/analysis.js";
 import type {
@@ -362,7 +363,8 @@ function listProjectFiles(ctx: ReachabilityLoadContext): Promise<string[]> {
         if (depth > MAX_DEPTH || out.length >= MAX_LISTED) return;
         let entries: import("fs").Dirent[];
         try {
-          entries = await readdir(join(ctx.projectRoot, rel), { withFileTypes: true });
+          const dir = join(ctx.projectRoot, rel);
+          entries = (sharedEntries(dir) as import("fs").Dirent[] | undefined) ?? (await readdir(dir, { withFileTypes: true }));
         } catch {
           return;
         }

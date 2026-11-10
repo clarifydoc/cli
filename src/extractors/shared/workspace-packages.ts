@@ -1,6 +1,6 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
+import { existsSync, lstatSync, readFileSync } from "fs";
 import { dirname, join, posix, relative, resolve, sep } from "path";
-import { clearDirectoryListings, rememberListing } from "./dir-listings.js";
+import { clearDirectoryListings, listEntries, rememberListing } from "./dir-listings.js";
 
 /**
  * Packages of the repository itself, imported by name — a pnpm/npm/yarn
@@ -49,7 +49,7 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
   const walk = (dir: string, depth: number): void => {
     let entries: import("fs").Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = listEntries(dir) as import("fs").Dirent[];
     } catch {
       return;
     }

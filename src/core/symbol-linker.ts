@@ -2863,19 +2863,24 @@ function classNameMember(
             ...imported,
             ...candidateFiles.filter((f) => !imported.includes(f) && ctx.projectOf.get(f) !== analysis.projectId && importedProjects.has(ctx.projectOf.get(f))),
           ];
+    // A name many files declare (a namespace module reopened in each) makes this loop long: the keys are built once.
+    const classLevelKey = `${declaredClass}.self.${methodName}`;
+    const memberSymbolKey = `${declaredClass}.${methodName}`;
     for (const filePath of eligible) {
       const syms = symbolIndex.get(filePath)!;
       // A call on the class itself reaches its class-level method when the
       // language names one apart (Ruby `def self.call` → `X.self.call`).
-      // Bare, only where the name IS a class of that file (a member it lists bare): a local
-      // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
-      // The bare entry counts only inside the class's own body: a free
-      // function beside the class (or another class's member) is not its member.
-      const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
-      const bare = cls ? syms.get(methodName) : undefined;
-      // A class nested in its body (a Ruby concern's `ClassMethods`) has members of its own.
-      const classDef = syms.get(`${declaredClass}.self.${methodName}`) ?? syms.get(`${declaredClass}.${methodName}`) ??
-        (bare && bare.line >= cls!.line && bare.line <= cls!.endLine && (memberClassOf(ctx, filePath, bare) ?? cls!.name) === cls!.name ? bare : undefined);
+      let classDef = syms.get(classLevelKey) ?? syms.get(memberSymbolKey);
+      if (!classDef) {
+        // Bare, only where the name IS a class of that file (a member it lists bare): a local
+        // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
+        // The bare entry counts only inside the class's own body: a free
+        // function beside the class (or another class's member) is not its member.
+        const bare = syms.get(methodName);
+        const cls = bare ? ctx.classAt.get(memberKey(filePath, declaredClass)) : undefined;
+        // A class nested in its body (a Ruby concern's `ClassMethods`) has members of its own.
+        if (bare && cls && bare.line >= cls.line && bare.line <= cls.endLine && (memberClassOf(ctx, filePath, bare) ?? cls.name) === cls.name) classDef = bare;
+      }
       if (classDef) {
         return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
       }

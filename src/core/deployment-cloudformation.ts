@@ -94,13 +94,14 @@ export async function collectCloudFormation(projectRoot: string, ignore: readonl
   const out: TerraformDeployment = { files: [], groups: [], edges: [] };
   // Names drawn from a logical id, by the template that took them: a logical id is local to its stack.
   const logicalNames = new Map<string, string>();
-  for (const rel of found) {
-    let text: string;
-    try {
-      text = await readFile(join(absRoot, rel), "utf8");
-    } catch {
-      continue;
-    }
+  // Read in parallel batches (templates are found by content, so every YAML and JSON file is opened), judged in path order.
+  const texts: Array<string | undefined> = [];
+  for (let i = 0; i < found.length; i += 32) {
+    texts.push(...(await Promise.all(found.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf8").catch(() => undefined)))));
+  }
+  for (const [i, rel] of found.entries()) {
+    const text = texts[i];
+    if (text === undefined) continue;
     if (text.length > 2_000_000 || !GATE.test(text) || !/\bResources\b/.test(text)) continue;
     const root = parseOpenApiDocument(text.split(/\r?\n/));
     const resources = root.children.get("Resources");

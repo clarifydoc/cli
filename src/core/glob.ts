@@ -28,7 +28,8 @@
  */
 import { glob as tinyGlob, globSync as tinyGlobSync, type GlobOptions as TinyGlobOptions } from "tinyglobby";
 import { readdir, readdirSync, readFileSync, realpath, realpathSync, stat, statSync, type Dirent } from "fs";
-import { resolve, sep } from "path";
+import { isAbsolute, resolve, sep } from "path";
+import { sharedEntries, shareEntries } from "../extractors/shared/dir-listings.js";
 
 /**
  * The options ClarifyDoc's glob wrapper accepts — the engine's own options
@@ -66,7 +67,7 @@ export class LinkedFiles {
   private readonly paths = new Set<string>();
 
   /** Report each link in one directory listing as a file, recording it. */
-  record(dir: string, entries: Dirent[]): Dirent[] {
+  record(dir: string, entries: readonly Dirent[]): Dirent[] {
     return entries.map((entry) => {
       if (!entry.isSymbolicLink()) return entry;
       this.paths.add(resolve(dir, entry.name));
@@ -126,20 +127,36 @@ function walkFs(
   prune: ((absoluteDir: string) => boolean) | undefined,
 ): NonNullable<TinyGlobOptions["fs"]> {
   const root = resolve(cwd);
-  const filter = (dir: string, entries: Dirent[]): Dirent[] => {
+  const filter = (dir: string, entries: readonly Dirent[]): Dirent[] => {
     if (linkedWorktreeOf(root, dir, entries) && resolve(dir) !== root) return [];
-    const kept = prune ? entries.filter((e) => !(e.isDirectory() && prune(resolve(dir, e.name)))) : entries;
+    const kept = prune ? entries.filter((e) => !(e.isDirectory() && prune(resolve(dir, e.name)))) : [...entries];
     return links ? links.record(dir, kept) : kept;
   };
+  // Listings are shared between the walks of one analysis, unfiltered: each walk prunes and records for itself.
+  const absolute = (dir: string): string => (isAbsolute(dir) ? dir : resolve(dir));
   return {
     stat,
     statSync,
     realpath,
     realpathSync,
-    readdir: ((dir: string, options: { withFileTypes: true }, cb: (err: NodeJS.ErrnoException | null, entries: Dirent[]) => void) =>
-      readdir(dir, options, (err, entries) => cb(err, err ? [] : filter(dir, entries)))) as typeof readdir,
-    readdirSync: ((dir: string, options: { withFileTypes: true }) =>
-      filter(dir, readdirSync(dir, options))) as typeof readdirSync,
+    readdir: ((dir: string, options: { withFileTypes: true }, cb: (err: NodeJS.ErrnoException | null, entries: Dirent[]) => void) => {
+      const key = absolute(dir);
+      const hit = sharedEntries(key);
+      // Answered on a later tick, as a read would be: the walker counts on its callback returning first.
+      if (hit) return void process.nextTick(cb, null, filter(dir, hit));
+      readdir(dir, options, (err, entries) => {
+        if (!err) shareEntries(key, entries);
+        cb(err, err ? [] : filter(dir, entries));
+      });
+    }) as typeof readdir,
+    readdirSync: ((dir: string, options: { withFileTypes: true }) => {
+      const key = absolute(dir);
+      const hit = sharedEntries(key);
+      if (hit) return filter(dir, hit);
+      const entries = readdirSync(dir, options);
+      shareEntries(key, entries);
+      return filter(dir, entries);
+    }) as typeof readdirSync,
   };
 }
 

@@ -1,5 +1,6 @@
 import { open, readdir, readFile } from "fs/promises";
 import { join } from "path";
+import { sharedEntries } from "../../shared/dir-listings.js";
 
 /**
  * Executable scripts with no extension — Express's `bin/www`, a repo's
@@ -22,7 +23,8 @@ export async function findShebangScripts(
   for (const dir of new Set(dirs)) {
     let entries: import("fs").Dirent[];
     try {
-      entries = await readdir(join(projectRoot, dir), { withFileTypes: true });
+      const abs = join(projectRoot, dir);
+      entries = (sharedEntries(abs) as import("fs").Dirent[] | undefined) ?? (await readdir(abs, { withFileTypes: true }));
     } catch {
       continue;
     }

@@ -56,6 +56,7 @@ import { analyzeFileOutcome, importRewriteStamp, type FileTask, type FileResult,
 import { AnalysisWorkerPool, type FailedFile } from "./worker-pool.js";
 import { byOrdinal } from "./ordinal.js";
 import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
+import { shareDirectoryEntries } from "../extractors/shared/dir-listings.js";
 import { clearWorkspacePackageCache, namesWorkspacePackage } from "../extractors/shared/workspace-packages.js";
 import { buildFilePathMap, buildLinkGraph, isExternalPackage, resolveTarget } from "../extractors/shared/link-scoring.js";
 import {
@@ -684,6 +685,16 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
  * @returns The counts the CLI prints and the lists of changed/removed files
  */
 async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
+  // Every walk of this run reads a directory once: the listings are shared until it ends.
+  const endSharing = shareDirectoryEntries();
+  try {
+    return await runPipeline(options);
+  } finally {
+    endSharing();
+  }
+}
+
+async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { projectRoot, outputDir, verbose, dryRun } = options;
   const progress = new ProgressReporter(!!verbose, options.onProgress, options.signal);
 
