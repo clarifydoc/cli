@@ -22,10 +22,29 @@ export function resolveRubyRequire(importingFile: string, source: string, _speci
     if (!dir) break;
   }
   let only: string | null = null;
-  for (const file of ctx.files) {
+  for (const file of filesNamed(ctx.files, path.slice(path.lastIndexOf("/") + 1))) {
     if (!file.endsWith(`/${path}`) || file === importingFile) continue;
     if (only) return null;
     only = file;
   }
   return only;
+}
+
+/** The analyzed files by file name, per file set: a `require` no directory answers (`rails_helper` in every spec) asked of every file again. */
+const byFileName = new WeakMap<ReadonlySet<string>, Map<string, string[]>>();
+
+/** The files called `name`, in the set's order. */
+function filesNamed(files: ReadonlySet<string>, name: string): readonly string[] {
+  let index = byFileName.get(files);
+  if (!index) {
+    index = new Map();
+    for (const file of files) {
+      const base = file.slice(file.lastIndexOf("/") + 1);
+      const named = index.get(base);
+      if (named) named.push(file);
+      else index.set(base, [file]);
+    }
+    byFileName.set(files, index);
+  }
+  return index.get(name) ?? [];
 }

@@ -78,6 +78,8 @@ interface Scope {
   body: string;
   /** `body` with string contents blanked, offsets unchanged. */
   code: string;
+  /** What the body's scans answered, by name: every call of a function asks about the same few names again. */
+  memo?: { assigned: Map<string, readonly string[]>; written: Map<string, number> };
 }
 
 /** The index of the bracket closing the one at `open` (strings skipped), or -1. */
@@ -141,7 +143,14 @@ function unwrap(expr: string): { expr: string; transform?: string } {
 }
 
 /** The values `name` is assigned in the body (`x := v`, `x, err := v`, `x = v`, `var x = v`, an `if x, err := v;` header). */
-function assignmentsOf(scope: Scope, name: string): string[] {
+function assignmentsOf(scope: Scope, name: string): readonly string[] {
+  const memo = (scope.memo ??= { assigned: new Map(), written: new Map() }).assigned;
+  let out = memo.get(name);
+  if (!out) memo.set(name, (out = scanAssignments(scope, name)));
+  return out;
+}
+
+function scanAssignments(scope: Scope, name: string): string[] {
   const out: string[] = [];
   const re = new RegExp(String.raw`(?:^|[;{(\s])(?:var\s+)?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))\s*([^\n;]+)`, "g");
   for (const m of scope.code.matchAll(re)) {
@@ -160,13 +169,23 @@ function assignmentsOf(scope: Scope, name: string): string[] {
  * Without a line: anywhere in the body.
  */
 function writes(scope: Scope, name: string, field?: string, line0?: number): boolean {
-  const before = (m: RegExpMatchArray) => line0 === undefined || scope.start + 1 + (scope.code.slice(0, m.index).match(/\n/g)?.length ?? 0) < line0;
-  const whole = new RegExp(String.raw`(?:^|[^\w.])(?:[\w_]+\s*,\s*)*\*?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))`, "g");
-  for (const m of scope.code.matchAll(whole)) if (before(m)) return true;
+  // The first write's line decides: it is before `line0` or none is.
+  const before = (first: number) => first >= 0 && (line0 === undefined || first < line0);
+  if (before(firstWrite(scope, name, () => new RegExp(String.raw`(?:^|[^\w.])(?:[\w_]+\s*,\s*)*\*?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))`)))) return true;
   if (field === undefined) return false;
-  const own = new RegExp(String.raw`(?:^|[^\w.])${name}\.${field}\s*(?:,\s*[\w_.]+\s*)*(?:[-+*/|&]?=(?!=)|\+\+|--)`, "g");
-  for (const m of scope.code.matchAll(own)) if (before(m)) return true;
-  return false;
+  return before(firstWrite(scope, `${name}.${field}`, () => new RegExp(String.raw`(?:^|[^\w.])${name}\.${field}\s*(?:,\s*[\w_.]+\s*)*(?:[-+*/|&]?=(?!=)|\+\+|--)`)));
+}
+
+/** The file line (0-based) of the first match of `pattern` in the body, -1 when it has none; remembered under `key`. */
+function firstWrite(scope: Scope, key: string, pattern: () => RegExp): number {
+  const memo = (scope.memo ??= { assigned: new Map(), written: new Map() }).written;
+  let line = memo.get(key);
+  if (line === undefined) {
+    const m = pattern().exec(scope.code);
+    line = m ? scope.start + 1 + (scope.code.slice(0, m.index).match(/\n/g)?.length ?? 0) : -1;
+    memo.set(key, line);
+  }
+  return line;
 }
 
 /** The origin of one value written in `scope`; null when unknown. */

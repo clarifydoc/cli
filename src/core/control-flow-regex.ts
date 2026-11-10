@@ -513,11 +513,72 @@ function splitInline(code: string): { head: string; tail: string; negated?: bool
 function classify(code: string, spec: LanguageRegexControlFlowSpec, shown = code): Matched | null {
   const trimmed = code.trim();
   if (trimmed === "") return null;
+  const plain = !LINE_TERMINATOR.test(trimmed);
   for (const rule of spec.statements) {
+    const keyword = plain ? headTailRule(rule.match) : null;
+    if (keyword) {
+      const at = headSpan(trimmed, keyword);
+      if (at) return { type: rule.type, head: shownSpan(code, shown, at[0], at[1] - at[0]), negated: rule.negated };
+      continue;
+    }
     const hit = withIndices(rule.match).exec(trimmed);
     if (hit) return { type: rule.type, head: shownCapture(hit, 1, code, shown), negated: rule.negated };
   }
   return null;
+}
+
+/**
+ * The tail most statement rules end with: an optional `(`, the head, an optional `)` and `{`. Run by the
+ * regex engine it is cubic in a run of spaces — and a blanked string literal is one — which made a few
+ * long conditions most of a file's time. A rule ending with it is matched by its keyword part and
+ * {@link headSpan} instead, which reads the same capture in one pass.
+ */
+const HEAD_TAIL = String.raw`\s*\(?\s*(.*?)\s*\)?\s*\{?\s*$`;
+/** `.` stops at these, so a line holding one keeps the pattern as written. */
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+const KEYWORD_PARTS = new WeakMap<RegExp, RegExp | null>();
+
+/** The keyword part of a rule that ends with {@link HEAD_TAIL}, anchored where the rule is; null for any other rule. */
+export function headTailRule(re: RegExp): RegExp | null {
+  let keyword = KEYWORD_PARTS.get(re);
+  if (keyword === undefined) {
+    const source = re.source;
+    const flags = re.flags.replace(/[gyd]/g, "");
+    const before = source.slice(0, -HEAD_TAIL.length);
+    // Only a keyword part that is itself a whole pattern with no group of its own: the head stays capture 1.
+    keyword = source.endsWith(HEAD_TAIL) && before.startsWith("^") && !flags.includes("s") && !flags.includes("m") && !/\((?!\?:)/.test(before.replace(/\\./g, ""))
+      ? new RegExp(before, flags)
+      : null;
+    KEYWORD_PARTS.set(re, keyword);
+  }
+  return keyword;
+}
+
+/**
+ * Where capture 1 of `<keyword>` + {@link HEAD_TAIL} lies in `line`, or null when the keyword does not
+ * match. The tail always matches what follows a keyword, so the regex's answer is its first try: spaces,
+ * one `(` and spaces are skipped, and the lazy head ends where the longest closing run — spaces, one `)`,
+ * spaces, one `{`, spaces, read back from the end — begins.
+ */
+export function headSpan(line: string, keyword: RegExp): [number, number] | null {
+  const hit = keyword.exec(line);
+  if (!hit) return null;
+  let start = hit.index + hit[0].length;
+  while (start < line.length && isSpace(line.charCodeAt(start))) start++;
+  if (line.charCodeAt(start) === 40 /* ( */) start++;
+  while (start < line.length && isSpace(line.charCodeAt(start))) start++;
+  let end = line.length;
+  while (end > start && isSpace(line.charCodeAt(end - 1))) end--;
+  if (end > start && line.charCodeAt(end - 1) === 123 /* { */) end--;
+  while (end > start && isSpace(line.charCodeAt(end - 1))) end--;
+  if (end > start && line.charCodeAt(end - 1) === 41 /* ) */) end--;
+  while (end > start && isSpace(line.charCodeAt(end - 1))) end--;
+  return [start, end];
+}
+
+/** What `\s` matches, line terminators aside (a line holding one never gets here). */
+function isSpace(c: number): boolean {
+  return c === 32 || c === 9 || c === 11 || c === 12 || c === 160 || c === 0xfeff || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x202f || c === 0x205f || c === 0x3000;
 }
 
 /**

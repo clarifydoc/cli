@@ -1,7 +1,8 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { join } from "path";
 import { extractorStamp, type ManifestEntry } from "./manifest.js";
-import { loopShapes, type LoopShape } from "./query-in-loop.js";
+import type { LoopShape } from "./query-in-loop.js";
+import { loopShapesOfFiles } from "./loop-shape-batch.js";
 
 /**
  * The loops of each file's functions, kept between incremental runs by the
@@ -22,7 +23,7 @@ export async function openLoopShapeCache(
   outputDir: string,
   manifest: Readonly<Record<string, ManifestEntry>>,
   projectRoot: string,
-): Promise<{ get: (file: string) => Promise<LoopShape[] | null>; save: () => Promise<void> }> {
+): Promise<{ get: (files: readonly string[]) => Promise<Array<LoopShape[] | null | undefined>>; save: () => Promise<void> }> {
   const path = join(outputDir, CACHE_NAME);
   let previous: CacheFile["files"] = {};
   try {
@@ -33,16 +34,29 @@ export async function openLoopShapeCache(
   }
   const next: CacheFile["files"] = {};
   return {
-    async get(file) {
-      const sha256 = manifest[file]?.sha256;
-      const hit = previous[file];
-      if (sha256 && hit && hit.sha256 === sha256) {
-        next[file] = hit;
-        return hit.shapes;
-      }
-      const shapes = await loopShapes(projectRoot, file);
-      if (sha256) next[file] = { sha256, shapes };
-      return shapes;
+    /** The loops of each file, in order: remembered ones as they are, the rest built together. */
+    async get(files) {
+      const out: Array<LoopShape[] | null | undefined> = new Array(files.length);
+      const missing: number[] = [];
+      files.forEach((file, i) => {
+        const sha256 = manifest[file]?.sha256;
+        const hit = previous[file];
+        if (sha256 && hit && hit.sha256 === sha256) {
+          next[file] = hit;
+          out[i] = hit.shapes;
+        } else {
+          missing.push(i);
+        }
+      });
+      const built = await loopShapesOfFiles(projectRoot, missing.map((i) => files[i]!));
+      missing.forEach((i, at) => {
+        const shapes = built[at];
+        out[i] = shapes;
+        const sha256 = manifest[files[i]!]?.sha256;
+        // A file whose worker died has no answer to remember.
+        if (sha256 && shapes !== undefined) next[files[i]!] = { sha256, shapes };
+      });
+      return out;
     },
     async save() {
       const body: CacheFile = { extractorVersion: extractorStamp(), files: next };

@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, statSync } from "fs";
-import { clearDirectoryListings } from "./dir-listings.js";
-import { dirname, isAbsolute, join, resolve, sep, posix } from "path";
+import { clearDirectoryListings, listDirectory } from "./dir-listings.js";
+import { basename, dirname, isAbsolute, join, resolve, sep, posix } from "path";
 import { workspacePackageDir } from "./workspace-packages.js";
 import { stripJsonc } from "../plugins/shared/jsonc.js";
 import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
@@ -361,12 +361,42 @@ function isModuleAt(abs: string): boolean {
   return MODULE_EXTENSIONS.some((ext) => isFile(join(abs, "index" + ext)));
 }
 
+/**
+ * Whether `p` is a file. An alias target is tried under a dozen extensions and again as a directory's
+ * index, for every import of every file, and nearly all of those paths do not exist: a path whose
+ * directory lists no such name is answered from the listing (read once per analysis), and only a name
+ * that is there is asked of the file system, once.
+ */
 function isFile(p: string): boolean {
-  try {
-    return statSync(p).isFile();
-  } catch {
-    return false;
+  const known = fileChecks.get(p);
+  if (known !== undefined) return known;
+  let found = false;
+  if (namesIn(dirname(p))?.has(foldedName(basename(p))) !== false) {
+    try {
+      found = statSync(p).isFile();
+    } catch {
+      found = false;
+    }
   }
+  fileChecks.set(p, found);
+  return found;
+}
+
+const fileChecks = new Map<string, boolean>();
+const foldedListings = new Map<string, ReadonlySet<string> | null>();
+
+/** A name as a file system that ignores case and Unicode composition compares it: a listed name never fails this test. */
+const foldedName = (name: string): string => name.normalize("NFC").toLowerCase();
+
+/** The names `dir` lists, folded; null when it cannot be listed (the path is then asked of the file system). */
+function namesIn(dir: string): ReadonlySet<string> | null {
+  let names = foldedListings.get(dir);
+  if (names === undefined) {
+    const listed = listDirectory(dir);
+    names = listed ? new Set(listed.map(foldedName)) : null;
+    foldedListings.set(dir, names);
+  }
+  return names;
 }
 
 /**
@@ -568,6 +598,8 @@ export function packageImportsStamp(importerAbs: string): string {
 
 export function clearTsconfigAliasCache(): void {
   clearDirectoryListings();
+  fileChecks.clear();
+  foldedListings.clear();
   packageImportsCache.clear();
   tsconfigCache.clear();
   dirAliasCache.clear();

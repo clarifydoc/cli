@@ -2197,36 +2197,72 @@ function localDeclaredType(node: Node, name: string, raw = false): string | null
   }
   if (!fn) return null;
 
-  const scan = (n: Node): string | null => {
+  // The first declaration of the name, in source order, that states a type. One that states none hides
+  // what it holds (its initializer's own declarations) and the search goes on after it.
+  let resumeAt = 0;
+  for (const d of declarationsIn(fn)) {
+    if (d.at < resumeAt || d.name !== name) continue;
+    const type = simple(d.type);
+    if (type) return type;
+    resumeAt = d.end;
+  }
+  return null;
+}
+
+/** A name a callable's body declares with its type as written: a local, a resource, a loop variable, a property, a parameter. */
+interface BodyDeclaration {
+  name: string;
+  type: string | null | undefined;
+  /** The declaring node's place in the callable's pre-order walk, and the place after everything it holds. */
+  at: number;
+  end: number;
+}
+
+/** Each callable's declarations, read off its nodes once per tree: every call in the body asks for a receiver's type. */
+const bodyDeclarations = new WeakMap<object, Map<number, BodyDeclaration[]>>();
+
+function declarationsIn(fn: Node): BodyDeclaration[] {
+  let perTree = bodyDeclarations.get(fn.tree);
+  if (!perTree) bodyDeclarations.set(fn.tree, (perTree = new Map()));
+  let out = perTree.get(fn.id);
+  if (out) return out;
+  out = [];
+  const found = out;
+  let at = 0;
+  const walk = (n: Node): void => {
+    const here = at++;
+    const from = found.length;
     if (n.type === "local_variable_declaration") {
+      let type: string | null | undefined;
+      let read = false;
       for (const c of n.children) {
-        if (c.type === "variable_declarator" && c.childForFieldName("name")?.text === name) {
-          return simple(n.childForFieldName("type")?.text);
+        if (c.type !== "variable_declarator") continue;
+        const declared = c.childForFieldName("name")?.text;
+        if (declared === undefined) continue;
+        if (!read) {
+          type = n.childForFieldName("type")?.text;
+          read = true;
         }
+        found.push({ name: declared, type, at: here, end: 0 });
       }
-    } else if (n.type === "resource") {
-      // `try (Statement statement = connection.createStatement())`
-      if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
-    } else if (n.type === "enhanced_for_statement") {
-      // `for (SeasonTicketCategory c : categories)`
-      if (n.childForFieldName("name")?.text === name) return simple(n.childForFieldName("type")?.text);
+    } else if (n.type === "resource" || n.type === "enhanced_for_statement") {
+      // `try (Statement statement = connection.createStatement())`, `for (SeasonTicketCategory c : categories)`
+      const declared = n.childForFieldName("name")?.text;
+      if (declared !== undefined) found.push({ name: declared, type: n.childForFieldName("type")?.text, at: here, end: 0 });
     } else if (n.type === "property_declaration") {
       const kt = kotlinNameAndType(n);
-      if (kt.name === name) return simple(kt.type);
+      if (kt.name !== undefined && kt.name !== null) found.push({ name: kt.name, type: kt.type, at: here, end: 0 });
     } else if (n.type === "formal_parameter" || n.type === "parameter") {
       const kt = kotlinNameAndType(n);
-      const pName = n.childForFieldName("name")?.text ?? kt.name;
-      if (pName === name) {
-        return simple(n.childForFieldName("type")?.text ?? kt.type);
-      }
+      const declared = n.childForFieldName("name")?.text ?? kt.name;
+      if (declared !== undefined && declared !== null) found.push({ name: declared, type: n.childForFieldName("type")?.text ?? kt.type, at: here, end: 0 });
     }
-    for (const child of n.children) {
-      const hit = scan(child);
-      if (hit) return hit;
-    }
-    return null;
+    for (const child of n.children) walk(child);
+    for (let i = from; i < found.length && found[i]!.at === here; i++) found[i]!.end = at;
   };
-  return scan(fn);
+  walk(fn);
+  perTree.set(fn.id, out);
+  return out;
 }
 
 /** Annotations whose string argument is the method's SQL (or, for Room's write verbs, none). */

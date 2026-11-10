@@ -36,37 +36,86 @@ export interface BlastRadiusOptions {
 }
 
 /**
+ * The import graph over file indices: `forward[i]` the files `i` imports, `reverse[i]` the files importing
+ * it, each in the order the string-keyed graph lists them — a walk over these visits files in the order
+ * a walk over the names would. Every file gets one walk per analysis; on names that was a `Set<string>`
+ * per file, most of this pass's time.
+ */
+interface IndexedGraph {
+  names: string[];
+  forward: number[][];
+  reverse: number[][];
+}
+
+function indexGraph(componentGraph: Record<string, string[]>): IndexedGraph {
+  const ids = new Map<string, number>();
+  const names: string[] = [];
+  const idOf = (name: string): number => {
+    let id = ids.get(name);
+    if (id === undefined) {
+      id = names.length;
+      ids.set(name, id);
+      names.push(name);
+    }
+    return id;
+  };
+  const entries = Object.entries(componentGraph);
+  // Ids in the order the files first appear: a source, then its targets.
+  for (const [source, targets] of entries) {
+    idOf(source);
+    for (const t of targets) idOf(t);
+  }
+  const forward: number[][] = names.map(() => []);
+  const reverse: number[][] = names.map(() => []);
+  for (const [source, targets] of entries) {
+    const s = ids.get(source)!;
+    const out = forward[s]!;
+    for (const target of targets) {
+      const t = ids.get(target)!;
+      out.push(t);
+      // One source's entries for a target are added back to back, so a repeat is the last one.
+      const back = reverse[t]!;
+      if (back[back.length - 1] !== s) back.push(s);
+    }
+  }
+  return { names, forward, reverse };
+}
+
+/**
  * The files an editor must hold in mind to change `start` safely: everything
  * within `hops` hops following imports in BOTH directions. Downstream files
  * break when the contract changes; upstream files define the contracts being
  * relied on. Self is excluded from the count but included in the size.
  */
 function contextBurdenFor(
-  start: string,
-  forward: Record<string, string[]>,
-  reverse: Map<string, Set<string>>,
-  lineCounts: ReadonlyMap<string, number> | undefined,
+  start: number,
+  graph: IndexedGraph,
+  lineCounts: readonly (number | undefined)[] | undefined,
   hops: number,
+  seen: Uint32Array,
+  stamp: number,
 ): ContextBurden {
-  const visited = new Set<string>([start]);
-  let frontier = [start];
-  for (let hop = 0; hop < hops && frontier.length > 0; hop++) {
-    const next: string[] = [];
-    for (const node of frontier) {
-      for (const n of forward[node] ?? []) if (!visited.has(n)) { visited.add(n); next.push(n); }
-      for (const n of reverse.get(node) ?? []) if (!visited.has(n)) { visited.add(n); next.push(n); }
+  seen[start] = stamp;
+  const visited = [start];
+  let from = 0;
+  for (let hop = 0; hop < hops && from < visited.length; hop++) {
+    const to = visited.length;
+    for (let i = from; i < to; i++) {
+      const node = visited[i]!;
+      for (const n of graph.forward[node]!) if (seen[n] !== stamp) { seen[n] = stamp; visited.push(n); }
+      for (const n of graph.reverse[node]!) if (seen[n] !== stamp) { seen[n] = stamp; visited.push(n); }
     }
-    frontier = next;
+    from = to;
   }
   let lines: number | null = null;
   if (lineCounts) {
     for (const f of visited) {
-      const n = lineCounts.get(f);
+      const n = lineCounts[f];
       if (n !== undefined) lines = (lines ?? 0) + n;
     }
   }
   return {
-    files: visited.size - 1,
+    files: visited.length - 1,
     lines,
     estimatedTokens: lines === null ? null : lines * TOKENS_PER_LINE,
   };
@@ -95,15 +144,10 @@ export function analyzeBlastRadius(
   totalFiles: number,
   options: BlastRadiusOptions = {},
 ): BlastRadiusInfo[] {
-  // ── Build reverse graph: file → files that depend on it ──
-  const reverseGraph = new Map<string, Set<string>>();
-
-  for (const [source, targets] of Object.entries(componentGraph)) {
-    for (const target of targets) {
-      if (!reverseGraph.has(target)) reverseGraph.set(target, new Set());
-      reverseGraph.get(target)!.add(source);
-    }
-  }
+  const graph = indexGraph(componentGraph);
+  const { names, reverse } = graph;
+  const fileCount = names.length;
+  const lineCounts = options.lineCounts ? names.map((n) => options.lineCounts!.get(n)) : undefined;
 
   // ── Build per-symbol usage from symbolLinks ──
   // targetFile → (symbolName → caller sites)
@@ -140,26 +184,28 @@ export function analyzeBlastRadius(
     });
   }
 
-  // ── Collect all files that appear in the graph ──
-  const allFiles = new Set<string>();
-  for (const [source, targets] of Object.entries(componentGraph)) {
-    allFiles.add(source);
-    for (const t of targets) allFiles.add(t);
-  }
-
   const results: BlastRadiusInfo[] = [];
+  // One walk's visited marks: a file is seen when its slot holds the walk's stamp.
+  const seen = new Uint32Array(fileCount);
+  const burdenSeen = new Uint32Array(fileCount);
+  const queue = new Int32Array(fileCount + 1);
+  const depths = new Uint8Array(fileCount + 1);
 
-  for (const filePath of allFiles) {
+  for (let id = 0; id < fileCount; id++) {
+    const filePath = names[id]!;
+    const stamp = id + 1;
     // ── Direct dependents ──
-    const directDeps = reverseGraph.get(filePath) ?? new Set();
-    const directCount = directDeps.size;
-    const affectedFiles = [...directDeps].sort().slice(0, AFFECTED_LIST_CAP);
+    const directDeps = reverse[id]!;
+    const directCount = directDeps.length;
+    const affectedFiles = directDeps.map((d) => names[d]!).sort().slice(0, AFFECTED_LIST_CAP);
 
     // ── Transitive dependents via BFS (max depth 8) ──
-    const visited = new Set<string>([filePath, ...directDeps]);
-    const queue: { file: string; depth: number }[] = [];
+    seen[id] = stamp;
+    let queued = 0;
     for (const dep of directDeps) {
-      queue.push({ file: dep, depth: 1 });
+      seen[dep] = stamp;
+      queue[queued] = dep;
+      depths[queued++] = 1;
     }
 
     const transitiveFiles: string[] = [];
@@ -168,20 +214,21 @@ export function analyzeBlastRadius(
     let maxDepth = directCount > 0 ? 1 : 0;
 
     let qi = 0;
-    while (qi < queue.length) {
-      const { file, depth } = queue[qi++];
+    while (qi < queued) {
+      const depth = depths[qi]!;
+      const file = queue[qi++]!;
       if (depth > maxDepth) maxDepth = depth;
 
       if (depth >= 8) continue;
 
-      const nextDeps = reverseGraph.get(file) ?? new Set();
-      for (const next of nextDeps) {
-        if (!visited.has(next)) {
-          visited.add(next);
+      for (const next of reverse[file]!) {
+        if (seen[next] !== stamp) {
+          seen[next] = stamp;
           transitiveCount++;
-          if (transitiveFiles.length < TRANSITIVE_LIST_CAP) transitiveFiles.push(next);
+          if (transitiveFiles.length < TRANSITIVE_LIST_CAP) transitiveFiles.push(names[next]!);
           impactScore += 1 / (depth + 1); // decay with depth
-          queue.push({ file: next, depth: depth + 1 });
+          queue[queued] = next;
+          depths[queued++] = depth + 1;
         }
       }
     }
@@ -241,7 +288,7 @@ export function analyzeBlastRadius(
       exportedSymbols,
       changeRisk,
       maxDepth,
-      contextBurden: contextBurdenFor(filePath, componentGraph, reverseGraph, options.lineCounts, CONTEXT_HOPS),
+      contextBurden: contextBurdenFor(id, graph, lineCounts, CONTEXT_HOPS, burdenSeen, stamp),
     });
   }
 

@@ -93,6 +93,7 @@ import { checkDocReferences, docReferences, resolveDocLinks, type DocReference }
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
 import { openLoopShapeCache } from "./loop-shape-cache.js";
+import { loopShapesOfFiles } from "./loop-shape-batch.js";
 import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands, collectTestSetupRuns } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
@@ -2055,7 +2056,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const skip = (f: string) => isUnauthored(f) || fileLayerMap[f] === "test" || runOnce.test(f);
     // An incremental run keeps each file's loops by content hash: building every graph again is most of this pass.
     const shapes = options.incremental && !dryRun ? await openLoopShapeCache(outputDir, newManifestEntries, projectRoot) : null;
-    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph, ...(shapes ? { shapesOf: shapes.get } : {}) }).catch(() => []);
+    const shapesOf = shapes ? shapes.get : (wanted: readonly string[]) => loopShapesOfFiles(projectRoot, wanted);
+    const loops = await findQueriesInLoops({ projectRoot, dataAccess: symbolDataAccess, symbolLinks, skip, entityGraph, shapesOf }).catch(() => []);
     await shapes?.save().catch(() => undefined);
     const blocking = findBlockingInAsync(allAnalyses, skip);
     patterns.push(...loops, ...blocking);

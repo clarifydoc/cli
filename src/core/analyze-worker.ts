@@ -7,10 +7,12 @@
  */
 import { parentPort } from "worker_threads";
 import { analyzeFileOutcome, type FileTask } from "./file-analyzer.js";
+import { loopShapes } from "./query-in-loop.js";
+import type { LoopShapeTask } from "./loop-shape-batch.js";
 
 interface WorkerRequest {
   id: number;
-  task: FileTask;
+  task: FileTask | LoopShapeTask;
 }
 
 if (!parentPort) {
@@ -27,7 +29,10 @@ parentPort.on("message", (msg: WorkerRequest) => {
     // promise always settles.
     let result: unknown = null;
     try {
-      result = await analyzeFileOutcome(msg.task);
+      // The other work a pool hands out: one file's loops, for the query-in-loop pass.
+      result = "loopShapes" in msg.task
+        ? { shapes: await loopShapes(msg.task.loopShapes.projectRoot, msg.task.file.relativePath) }
+        : await analyzeFileOutcome(msg.task);
     } catch (err) {
       console.error(`  Worker error analyzing ${msg.task.file.relativePath}: ${(err as Error).message}`);
     }

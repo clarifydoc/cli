@@ -22,8 +22,11 @@ export async function findQueriesInLoops(input: {
   maxFiles?: number;
   /** The ER model: a loop over one entity's rows that queries a related one names the relation. */
   entityGraph?: Pick<EntityGraph, "nodes" | "edges">;
-  /** Where a file's loops come from — a cache an incremental run keeps by content hash; default `loopShapes`. */
-  shapesOf?: (file: string) => Promise<LoopShape[] | null>;
+  /**
+   * Where the files' loops come from, one answer per file in order (null or undefined: not judged) — worker
+   * threads, or a cache an incremental run keeps by content hash; default `loopShapes`, one file at a time.
+   */
+  shapesOf?: (files: readonly string[]) => Promise<Array<LoopShape[] | null | undefined>>;
 }): Promise<PatternInfo[]> {
   const dbFns = new Map<string, SymbolDataAccess>();
   const sitesByFile = new Map<string, Array<{ line: number; via?: string; entity: string }>>();
@@ -51,9 +54,16 @@ export async function findQueriesInLoops(input: {
 
   const out: PatternInfo[] = [];
   const files = [...sitesByFile.keys()].sort().slice(0, input.maxFiles ?? 2000);
-  const shapesOf = input.shapesOf ?? ((file: string) => loopShapes(input.projectRoot, file));
-  for (const file of files) {
-    const cfgs = await shapesOf(file);
+  let shapes: Array<LoopShape[] | null | undefined>;
+  if (input.shapesOf) {
+    shapes = await input.shapesOf(files);
+  } else {
+    shapes = [];
+    for (const file of files) shapes.push(await loopShapes(input.projectRoot, file));
+  }
+  for (let at = 0; at < files.length; at++) {
+    const file = files[at]!;
+    const cfgs = shapes[at];
     if (!cfgs) continue; // no graph for this language
     const seen = new Set<number>();
     let lines: string[] | undefined;

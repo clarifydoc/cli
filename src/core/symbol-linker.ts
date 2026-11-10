@@ -6822,12 +6822,32 @@ function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: stri
   if (!typesSpanFiles(analysis.language as Language)) return null;
   const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
   const found = new Map<string, { type: string; file: string }>();
-  for (const a of ctx.analyses) {
-    if (a === analysis || a.language !== analysis.language || a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1) !== dir) continue;
+  for (const a of bindingFilesIn(ctx, analysis.language, dir)) {
+    if (a === analysis) continue;
     const b = a.moduleBindings?.find((x) => nameKey(a.language, x.name) === key);
     if (b) found.set(b.type, { type: b.type, file: a.filePath });
   }
   return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+/** The files declaring module bindings, by language and directory, per link run: asked once per unresolved head. */
+const bindingFilesByDir = new WeakMap<LinkContext, Map<string, FileAnalysis[]>>();
+
+/** The files of `language` in `dir` (with its trailing slash) that declare module bindings, in analysis order. */
+function bindingFilesIn(ctx: LinkContext, language: string, dir: string): readonly FileAnalysis[] {
+  let index = bindingFilesByDir.get(ctx);
+  if (!index) {
+    index = new Map();
+    for (const a of ctx.analyses) {
+      if (!a.moduleBindings?.length) continue;
+      const at = `${a.language}\0${a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1)}`;
+      const files = index.get(at);
+      if (files) files.push(a);
+      else index.set(at, [a]);
+    }
+    bindingFilesByDir.set(ctx, index);
+  }
+  return index.get(`${language}\0${dir}`) ?? [];
 }
 
 /** The return type a method of the point's class (own or inherited) declares, with the file of its declaration. */

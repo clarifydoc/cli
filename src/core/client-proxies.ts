@@ -77,6 +77,14 @@ export function clientProxyCalls(
     }
     return found;
   };
+  // Many files import the same name from the same module: each is followed once.
+  const holders = new Map<string, { file: FileAnalysis; local: string } | null>();
+  const exportHolder = (file: string, name: string): { file: FileAnalysis; local: string } | null => {
+    const key = `${file}\0${name}`;
+    let held = holders.get(key);
+    if (held === undefined) holders.set(key, (held = holderOf(file, name, 0, new Set())));
+    return held;
+  };
   // A project class by its simple name (one of that name), for a member holding a proxy one level down.
   const classesNamed = new Map<string, Array<{ file: string; cls: ClassInfo }>>();
   for (const a of analyses) for (const c of a.classes) (classesNamed.get(c.name) ?? classesNamed.set(c.name, []).get(c.name)!).push({ file: a.filePath, cls: c });
@@ -178,7 +186,7 @@ export function clientProxyCalls(
         for (const spec of imp.specifiers ?? []) {
           if (moduleScope.has(spec)) continue;
           const from = localFor(a.filePath, spec);
-          const held = from ? holderOf(from, spec, 0, new Set()) : null;
+          const held = from ? exportHolder(from, spec) : null;
           if (!held) continue;
           for (const l of moduleTypes(held.file)) {
             if (l.name !== held.local && !l.name.startsWith(held.local + ".")) continue;

@@ -21,12 +21,17 @@ export interface FailedFile {
   failed: string;
 }
 
-/** What one task settles with: an analysis, a file its plugin refused (when the task asks), a file that killed its worker, or nothing. */
-type Outcome = FileResult | SkippedFile | FailedFile | null;
+/** What a pool needs of a task: the file it is about, to say which one a worker died on. */
+export interface PoolTask {
+  file: { relativePath: string };
+}
 
-interface Pending {
-  task: FileTask;
-  resolve: (r: Outcome) => void;
+/** What one task settles with: its result (for a file: an analysis, or a file its plugin refused when the task asks), a file that killed its worker, or nothing. */
+type Outcome<R> = R | FailedFile | null;
+
+interface Pending<T, R> {
+  task: T;
+  resolve: (r: Outcome<R>) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -86,24 +91,24 @@ export interface PoolOptions {
  * idle worker and resolves with its result, and `destroy` terminates the
  * threads. See the module comment for what a dying worker does.
  */
-export class AnalysisWorkerPool {
+export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | SkippedFile> {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
   // Index-pointer queue per repo convention (no Array.shift()).
-  private queue: Pending[] = [];
+  private queue: Pending<T, R>[] = [];
   private queueHead = 0;
-  private pending = new Map<Worker, Pending>();
+  private pending = new Map<Worker, Pending<T, R>>();
   private nextId = 0;
   /** Set once any worker has taken up a file: from then on a dead worker is its file's doing, not the pool's. */
   private started = false;
   private destroyed = false;
   /** Whether this pool holds the heap-growth bound (`boundHeapGrowth`), released once by `destroy`. */
   private bounded = false;
-  private readonly fallback: (task: FileTask) => Promise<Outcome>;
+  private readonly fallback: (task: T) => Promise<Outcome<R>>;
   private readonly workerUrl: URL;
   private readonly deadlineMs: number;
 
-  private constructor(fallback: (task: FileTask) => Promise<Outcome>, workerUrl: URL, deadlineMs: number) {
+  private constructor(fallback: (task: T) => Promise<Outcome<R>>, workerUrl: URL, deadlineMs: number) {
     this.fallback = fallback;
     this.workerUrl = workerUrl;
     this.deadlineMs = deadlineMs;
@@ -114,13 +119,13 @@ export class AnalysisWorkerPool {
    * running from source where dist/analyze-worker.js doesn't exist) — the
    * caller then analyzes in-process as before.
    */
-  static create(
+  static create<T extends PoolTask = FileTask, R = FileResult | SkippedFile>(
     size: number,
-    fallback: (task: FileTask) => Promise<Outcome>,
+    fallback: (task: T) => Promise<Outcome<R>>,
     options: PoolOptions = {},
-  ): AnalysisWorkerPool | null {
+  ): AnalysisWorkerPool<T, R> | null {
     const workerUrl = options.workerUrl ?? new URL("./analyze-worker.js", import.meta.url);
-    const pool = new AnalysisWorkerPool(fallback, workerUrl, options.deadlineMs ?? deadlineFromEnv());
+    const pool = new AnalysisWorkerPool<T, R>(fallback, workerUrl, options.deadlineMs ?? deadlineFromEnv());
     boundHeapGrowth(true);
     pool.bounded = true;
     try {
@@ -148,11 +153,11 @@ export class AnalysisWorkerPool {
     return Math.min(8, Math.max(1, cores - 1));
   }
 
-  run(task: FileTask): Promise<Outcome> {
+  run(task: T): Promise<Outcome<R>> {
     // No worker left (none could be started): analyze in-process instead of queueing forever.
     if (this.workers.length === 0) return this.fallback(task);
     return new Promise((resolve) => {
-      const item: Pending = { task, resolve };
+      const item: Pending<T, R> = { task, resolve };
       const worker = this.idle.pop();
       if (worker) {
         this.dispatch(worker, item);
@@ -176,7 +181,7 @@ export class AnalysisWorkerPool {
   private attach(worker: Worker): void {
     this.workers.push(worker);
     this.idle.push(worker);
-    worker.on("message", (msg: { id: number; result?: Outcome; begin?: true }) => {
+    worker.on("message", (msg: { id: number; result?: Outcome<R>; begin?: true }) => {
       this.started = true;
       if (msg.begin) {
         const item = this.pending.get(worker);
@@ -248,13 +253,13 @@ export class AnalysisWorkerPool {
     this.takeNext(worker);
   }
 
-  private dispatch(worker: Worker, item: Pending): void {
+  private dispatch(worker: Worker, item: Pending<T, R>): void {
     this.pending.set(worker, item);
     worker.postMessage({ id: this.nextId++, task: item.task });
   }
 
   /** From the moment the worker takes the file up (its `begin` message), not from dispatch. */
-  private startDeadline(worker: Worker, item: Pending): void {
+  private startDeadline(worker: Worker, item: Pending<T, R>): void {
     if (this.deadlineMs <= 0) return;
     item.timer = setTimeout(() => {
       this.retire(worker, `no result within ${this.deadlineMs / 1000} s`, true);
