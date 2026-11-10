@@ -1999,6 +1999,12 @@ interface LinkContext {
   /** Lazy: file → its analysis. */
   analysisAt?: Map<string, FileAnalysis>;
   /**
+   * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
+   * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
+   * each map call back to the other until the stack runs out.
+   */
+  mapCallsInFlight?: Set<string>;
+  /**
    * Links a resolution produces besides its own: the `reference` edge from a
    * caller to the interface method a redirected/bound call goes through.
    */
@@ -4274,8 +4280,27 @@ function dispatchMapCall(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null | undefined {
-  const m = MAP_CALL.exec(call.name);
-  if (!m) return undefined;
+  if (!MAP_CALL.test(call.name)) return undefined;
+  // A map entry whose value leads back to the call being resolved names no function: it draws no edge.
+  const inFlight = (ctx.mapCallsInFlight ??= new Set());
+  const key = `${sourceFile}\0${sourceSymbol}\0${call.name}`;
+  if (inFlight.has(key)) return null;
+  inFlight.add(key);
+  try {
+    return dispatchMapCallOnce(sourceFile, sourceSymbol, call, analysis, ctx);
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+function dispatchMapCallOnce(
+  sourceFile: string,
+  sourceSymbol: string,
+  call: CallInfo,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null | undefined {
+  const m = MAP_CALL.exec(call.name)!;
   if (!mapHoldersOf(analysis).has(m[1]!)) return importedDispatchMapCall(sourceFile, sourceSymbol, call, m[1]!, m[2] ?? (m[3] !== undefined ? `[].${m[3]}` : undefined), analysis, ctx);
   const [, holder, key, element] = m;
   // `ACTIONS.save` names one key; `items[].run` the member of every object of the array; `ACTIONS[]` any key.

@@ -111,6 +111,22 @@ describe("symbol links through a dispatch map", () => {
   });
 });
 
+describe("symbol links through values assigned from each other", () => {
+  it("draws no edge, and ends, when two values are each assigned from the other (real-repo FP)", () => {
+    // `kickoff.value = firstMatch.value` at the top level, `firstMatch.value = kickoff.value` in a
+    // function: each read leads to the other's assignment, which once recursed until the stack ran out.
+    const assigned = (name: string, returnedAs: string, line: number): CallInfo =>
+      ({ name, kind: "internal", target: null, line, passed: "property", returnedAs });
+    const fixtures = file("src/pages/Fixtures.vue", {
+      functions: [
+        fn("<setup>", 1, [assigned("firstMatch.value", "kickoff.value", 2), { name: "kickoff.value", kind: "internal", target: null, line: 3 }]),
+        fn("setRound", 10, [assigned("kickoff.value", "firstMatch.value", 11), { name: "firstMatch.value", kind: "internal", target: null, line: 12 }]),
+      ],
+    });
+    expect(linksFrom([fixtures], "src/pages/Fixtures.vue")).toEqual([]);
+  });
+});
+
 describe("symbol links through a dispatch map of another file", () => {
   const held = (name: string, key: string, line: number): CallInfo =>
     ({ name, kind: "internal", target: null, line, passed: "property", returnedAs: `ACTIONS.${key}` });
