@@ -36,24 +36,25 @@ const ANONYMOUS_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const NAMED_BINDING_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const NO_TYPES: ReadonlySet<string> = new Set();
 
-/** Call node types whose arguments are scanned for callback identifiers (union). */
-const CALLBACK_ARG_NODE_TYPES = new Set<string>();
+/** Per language: call node types whose arguments are scanned for callback identifiers. */
+const CALLBACK_ARG_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 
-/** Node type → fields that bind a local name there (union, see CallExtractionHooks.bindingSites). */
-const BINDING_SITES = new Map<string, Set<string>>();
-
-/** Pattern node type → fields holding further bound names, "*" = all (union). */
-const BINDING_PATTERNS = new Map<string, Set<string>>();
+/**
+ * Per language, as the scope sets above and for the same reason (`assignment_expression`
+ * is a JS and a Java node, and only JS binds a callable name by assigning it):
+ * node type → fields that bind a local name there (CallExtractionHooks.bindingSites),
+ * and pattern node type → fields holding further bound names, "*" = all.
+ */
+type FieldTable = ReadonlyMap<string, ReadonlySet<string>>;
+interface BindingTables { sites: FieldTable; patterns: FieldTable }
+const BINDINGS_BY_LANGUAGE = new Map<Language, BindingTables>();
+const NO_BINDINGS: BindingTables = { sites: new Map(), patterns: new Map() };
 
 /** The leaves of a bound pattern. */
 const BOUND_IDENTIFIER_TYPES = new Set(["identifier", "shorthand_property_identifier_pattern"]);
 
-function unionFields(into: Map<string, Set<string>>, from: Readonly<Record<string, readonly string[]>> | undefined): void {
-  for (const [type, fields] of Object.entries(from ?? {})) {
-    let set = into.get(type);
-    if (!set) into.set(type, (set = new Set()));
-    for (const f of fields) set.add(f);
-  }
+function fieldTable(from: Readonly<Record<string, readonly string[]>> | undefined): FieldTable {
+  return new Map(Object.entries(from ?? {}).map(([type, fields]) => [type, new Set(fields)]));
 }
 
 /** Called by the registry while aggregating plugin metas. */
@@ -64,9 +65,8 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   NESTED_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.nestedScopeTypes ?? []));
   ANONYMOUS_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.anonymousScopeTypes ?? []));
   NAMED_BINDING_BY_LANGUAGE.set(language, new Set(["variable_declarator", ...(hooks.namedBindingTypes ?? [])]));
-  for (const t of hooks.callbackArgNodeTypes ?? []) CALLBACK_ARG_NODE_TYPES.add(t);
-  unionFields(BINDING_SITES, hooks.bindingSites);
-  unionFields(BINDING_PATTERNS, hooks.bindingPatterns);
+  CALLBACK_ARG_BY_LANGUAGE.set(language, new Set(hooks.callbackArgNodeTypes ?? []));
+  BINDINGS_BY_LANGUAGE.set(language, { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) });
 }
 
 /**
@@ -75,8 +75,8 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
  * (`const onClick = () => …`, `f = lambda: …`) binds a function — the plugin
  * extracts it as one — so passing it on stays a callback reference.
  */
-function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>): void {
-  const fields = BINDING_SITES.get(site.type);
+function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>, tables: BindingTables): void {
+  const fields = tables.sites.get(site.type);
   if (!fields) return;
   if (!nested.has(site.type)) {
     const value = site.childForFieldName("value") ?? site.childForFieldName("right");
@@ -84,26 +84,26 @@ function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<st
   }
   for (const field of fields) {
     // "*": every name the site lists (`nonlocal a, b`).
-    if (field === "*") for (const child of site.namedChildren) collectPatternNames(child, into);
+    if (field === "*") for (const child of site.namedChildren) collectPatternNames(child, into, tables.patterns);
     const bound = field === "*" ? null : site.childForFieldName(field);
-    if (bound) collectPatternNames(bound, into);
+    if (bound) collectPatternNames(bound, into, tables.patterns);
   }
 }
 
-function collectPatternNames(pattern: Node, into: Set<string>): void {
+function collectPatternNames(pattern: Node, into: Set<string>, patterns: FieldTable): void {
   if (BOUND_IDENTIFIER_TYPES.has(pattern.type)) {
     into.add(pattern.text);
     return;
   }
-  const fields = BINDING_PATTERNS.get(pattern.type);
+  const fields = patterns.get(pattern.type);
   if (!fields) return;
   if (fields.has("*")) {
-    for (const child of pattern.namedChildren) collectPatternNames(child, into);
+    for (const child of pattern.namedChildren) collectPatternNames(child, into, patterns);
     return;
   }
   for (const field of fields) {
     const child = pattern.childForFieldName(field);
-    if (child) collectPatternNames(child, into);
+    if (child) collectPatternNames(child, into, patterns);
   }
 }
 
@@ -180,6 +180,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
+  const callbackArgTypes = CALLBACK_ARG_BY_LANGUAGE.get(language) ?? NO_TYPES;
+  const bindings = BINDINGS_BY_LANGUAGE.get(language) ?? NO_BINDINGS;
 
   const visited = new Set<number>();
   const resolve = (n: Node) => resolveCallName(n, language);
@@ -253,9 +255,9 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
 
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
-    collectBoundNames(node, boundHere, nested);
+    collectBoundNames(node, boundHere, nested, bindings);
     // A body's own bindings (not a function's parameters): what a bare call of that name calls.
-    if (!nested.has(node.type) && !anonymous.has(node.type)) collectBoundNames(node, localHere, nested);
+    if (!nested.has(node.type) && !anonymous.has(node.type)) collectBoundNames(node, localHere, nested, bindings);
 
     // Standard call expressions
     if (callTypes.has(node.type)) {
@@ -271,7 +273,7 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
       }
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
-      if (CALLBACK_ARG_NODE_TYPES.has(node.type)) {
+      if (callbackArgTypes.has(node.type)) {
         const args = node.childForFieldName("arguments");
         if (args) {
           for (const arg of args.children) {
@@ -307,10 +309,10 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   }
 
   // A body's parameters live on its function node, outside the walk.
-  if (!BINDING_SITES.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere, nested);
+  if (!bindings.sites.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere, nested, bindings);
   // A nested function's free names include its enclosing functions' parameters: values handed in
   // (`seconds`, a decorator's `func`), never a function of the project of that name.
-  for (let p = bodyNode.parent?.parent ?? null; p; p = p.parent) if (nested.has(p.type)) collectBoundNames(p, boundHere, nested);
+  for (let p = bodyNode.parent?.parent ?? null; p; p = p.parent) if (nested.has(p.type)) collectBoundNames(p, boundHere, nested, bindings);
   walk(bodyNode, true);
 
   const results: CallInfo[] = [];

@@ -39,6 +39,12 @@ const dropGlobalAlias = (name: string | null): string | null => (name?.includes(
 export const csharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["invocation_expression", "object_creation_expression", "implicit_object_creation_expression"]),
   passedArguments: csharpMethodGroups,
+  // A PascalCase name the member declares or assigns itself (`const int MaxPath = 260;`,
+  // `AppFolder = root;`) is a value when handed on, never a method group.
+  bindingSites: {
+    variable_declarator: ["name"],
+    assignment_expression: ["left"],
+  },
   nestedScopeTypes: ["local_function_statement", "anonymous_method_expression", "lambda_expression"],
   // A lambda passed as an argument (a LINQ predicate, a DI factory
   // `sp => new Foo(..)`, a `Task.Run(() => …)`, an event handler) runs on

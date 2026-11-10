@@ -278,6 +278,24 @@ fun wire() {
 class Wiring { void Wire(int count) { Register(Save); Bus.On(this.Promote); Run(count, total); } }
 `, "csharp", "method_declaration")).toEqual(["Register", "Save:argument", "Bus.On", "this.Promote:argument", "Run"]);
   });
+
+  // The binding tables are each language's own. Read as a union over the loaded plugins, a file's
+  // calls depended on which other languages its worker thread had met before it.
+  it("C#: a PascalCase name the member declares or assigns is a value", async () => {
+    expect(await usesInLang(`
+class Wiring { void Wire() { const int MaxClubs = 20; Stadium = Find(); Register(MaxClubs, Stadium, Save); } }
+`, "csharp", "method_declaration")).toEqual(["Find", "Register", "Save:argument"]);
+  });
+
+  it("Java: assigning a field does not bind the method of its name, whatever else is loaded", async () => {
+    await ensureLanguagesLoaded(["typescript"]);
+    await ensureLanguagesLoaded(["java"]);
+    const tree = await parseSource(`
+class Squad { Player captain; void pick() { captain = captain(7); } }`, "java", "f");
+    const find = (n: Node): Node | null => (n.type === "method_declaration" ? n : n.children.map(find).find(Boolean) ?? null);
+    const calls = extractCalls(find(tree.rootNode)!.childForFieldName("body"), "java");
+    expect(calls.map((c) => [c.name, c.boundLocally ?? false])).toEqual([["captain", false]]);
+  });
 });
 
 describe("classifyCalls — a tRPC client call is a request, not a query", () => {
