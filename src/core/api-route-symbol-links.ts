@@ -331,11 +331,14 @@ export function moveInheritedCallsToSubclasses(
  * and produce no edge (correct: no evidence they meet).
  */
 export function synthesizeQueueSymbolLinks(rows: SymbolDataAccess[]): SymbolLink[] {
+  // A destination is its broker + address: `matches` on Kafka is not `matches` on RabbitMQ.
+  const destKey = (r: SymbolDataAccess): string => `${r.broker ?? "?"}::${r.datastore}`;
   const consumersByDest = new Map<string, SymbolDataAccess[]>();
   for (const r of rows) {
     if (r.access !== "queue-consume" || !r.datastore) continue;
-    let arr = consumersByDest.get(r.datastore);
-    if (!arr) consumersByDest.set(r.datastore, (arr = []));
+    const key = destKey(r);
+    let arr = consumersByDest.get(key);
+    if (!arr) consumersByDest.set(key, (arr = []));
     arr.push(r);
   }
   if (consumersByDest.size === 0) return [];
@@ -343,7 +346,7 @@ export function synthesizeQueueSymbolLinks(rows: SymbolDataAccess[]): SymbolLink
   const out: SymbolLink[] = [];
   for (const pub of rows) {
     if (pub.access !== "queue-publish" || !pub.datastore) continue;
-    for (const con of consumersByDest.get(pub.datastore) ?? []) {
+    for (const con of consumersByDest.get(destKey(pub)) ?? []) {
       if (pub.file === con.file && pub.symbol === con.symbol) continue;
       out.push({
         sourceFile: pub.file,

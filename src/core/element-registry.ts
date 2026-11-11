@@ -290,6 +290,11 @@ export interface NormBlastRadiusInfo {
 /** Element index + the node's (non-derivable) aggregate call-weight counts. */
 export interface NormDataAccessNode {
   el: number;
+  /** Queue nodes only: what the id cannot give back (the address with its `::`, the broker, an unresolved destination's reason and site). */
+  name?: string;
+  broker?: string;
+  reason?: string;
+  filePath?: string;
   inboundCount: number;
   outboundCount: number;
 }
@@ -932,6 +937,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     out.dataAccessGraph = {
       nodes: daRaw.nodes.map(({ node, idx }) => ({
         el: remap[idx],
+        ...(node.kind === "queue" ? { name: node.name, ...(node.broker ? { broker: node.broker } : {}), ...(node.reason ? { reason: node.reason } : {}), ...(node.filePath ? { filePath: node.filePath } : {}) } : {}),
         inboundCount: node.inboundCount,
         outboundCount: node.outboundCount,
       })),
@@ -1179,6 +1185,18 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
         const name = kind === "entity"
           ? id.slice(id.lastIndexOf("::") + 2)
           : id.slice(id.indexOf("::") + 2);
+        if (kind === "queue" && nn.name !== undefined) {
+          return {
+            id,
+            name: nn.name,
+            kind,
+            filePath: nn.filePath ?? "",
+            ...(nn.broker ? { broker: nn.broker } : {}),
+            ...(nn.reason ? { reason: nn.reason } : {}),
+            inboundCount: nn.inboundCount,
+            outboundCount: nn.outboundCount,
+          };
+        }
         return { id, name, kind, filePath: "", inboundCount: nn.inboundCount, outboundCount: nn.outboundCount };
       }),
       edges: n.dataAccessGraph.edges.map((ne): DataAccessEdge => ({

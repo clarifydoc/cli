@@ -125,6 +125,22 @@ describe("element-registry codec — synthetic edge cases", () => {
     roundTrips(p);
   });
 
+  it("queue nodes keep broker, address and an unresolved destination's reason", () => {
+    const p = baseProject();
+    p.dataAccessGraph = {
+      nodes: [
+        { id: "file::src/Pub.java", name: "Pub.java", kind: "file", filePath: "src/Pub.java", inboundCount: 0, outboundCount: 2 },
+        { id: "queue::amqp::league.exchange", name: "league.exchange", kind: "queue", filePath: "", broker: "amqp", inboundCount: 1, outboundCount: 0 },
+        { id: "queue::amqp::?src/Pub.java:12", name: "(unresolved)", kind: "queue", filePath: "src/Pub.java", broker: "amqp", reason: "ambiguous send overload", inboundCount: 1, outboundCount: 0 },
+      ],
+      edges: [
+        { source: "file::src/Pub.java", target: "queue::amqp::league.exchange", calls: [{ name: "MQ: send", line: 8 }], total: 1 },
+        { source: "file::src/Pub.java", target: "queue::amqp::?src/Pub.java:12", calls: [{ name: "MQ: send", line: 12 }], total: 1 },
+      ],
+    };
+    roundTrips(p);
+  });
+
   it("symbolReach + dataFlows page-id encode/decode round-trip", () => {
     const p = baseProject();
     p.files = ["srv/service.ts", "srv/routes.ts", "web/api.ts"];

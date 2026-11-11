@@ -27,15 +27,15 @@ describe.skipIf(!existsSync(fixture))("sample-job-queues", () => {
       .filter((e) => e.source.startsWith("queue::") || e.target.startsWith("queue::"))
       .map((e) => `${e.source} -> ${e.target}`);
     expect(edges.sort()).toEqual([
-      "file::node-api/src/chat-client.ts -> queue::chat message",
-      "file::node-api/src/chat-server.ts -> queue::chat message",
-      "file::node-api/src/server.ts -> queue::emails",
-      "file::py-app/app/views.py -> queue::generate_report",
-      "queue::archive_reports -> file::py-app/app/tasks.py",
-      "queue::chat message -> file::node-api/src/chat-client.ts",
-      "queue::chat message -> file::node-api/src/chat-server.ts",
-      "queue::emails -> file::node-api/src/worker.ts",
-      "queue::generate_report -> file::py-app/app/tasks.py",
+      "file::node-api/src/chat-client.ts -> queue::socket.io::chat message",
+      "file::node-api/src/chat-server.ts -> queue::socket.io::chat message",
+      "file::node-api/src/server.ts -> queue::bullmq::emails",
+      "file::py-app/app/views.py -> queue::celery::generate_report",
+      "queue::bullmq::emails -> file::node-api/src/worker.ts",
+      "queue::celery::archive_reports -> file::py-app/app/tasks.py",
+      "queue::celery::generate_report -> file::py-app/app/tasks.py",
+      "queue::socket.io::chat message -> file::node-api/src/chat-client.ts",
+      "queue::socket.io::chat message -> file::node-api/src/chat-server.ts",
     ]);
   });
 

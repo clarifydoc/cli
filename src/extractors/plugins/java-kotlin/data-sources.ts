@@ -7,6 +7,7 @@ import type { CallBaseRef, DataSourceInfo, Language, PathArgCall } from "../../.
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import { simpleTypeName } from "../../shared/type-parser.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
+import { brokerOfTemplate } from "../../shared/message-brokers.js";
 import { kotlinNameAndType } from "./functions-classes.js";
 
 /**
@@ -862,7 +863,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const event = /\bApplicationListener\s*<\s*([\w.]+)/.exec(node.childForFieldName("interfaces")?.text ?? "")?.[1]?.split(".").pop();
       const handler = event ? node.childForFieldName("body")?.namedChildren.find((m) => m.type === "method_declaration" && m.childForFieldName("name")?.text === "onApplicationEvent") : undefined;
       if (event && handler && !LIFECYCLE_EVENT_RE.test(event)) {
-        sources.push(this.ds({ kind: "queue-consume", name: "ApplicationListener", target: event, line: (handler.childForFieldName("name") ?? handler).startPosition.row + 1 }));
+        sources.push(this.ds({ kind: "queue-consume", name: "ApplicationListener", target: event, broker: "events", line: (handler.childForFieldName("name") ?? handler).startPosition.row + 1 }));
       }
     }
 
@@ -903,6 +904,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             kind: "queue-consume",
             name: `@${listener[1]}`,
             target,
+            broker: { RabbitListener: "amqp", KafkaListener: "kafka", JmsListener: "jms" }[listener[1]!],
             ...(ref && literals.length === 0 ? { targetRef: ref } : {}),
             line: node.startPosition.row + 1,
           }));
@@ -922,6 +924,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             kind: "queue-consume",
             name: `@${evtListener[1]}`,
             target,
+            broker: "events",
             line: node.startPosition.row + 1,
           }));
         }
@@ -1317,7 +1320,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const lit = /"([^"]+)"/.exec(args)?.[1];
       const name = /\(\s*(?:listOf|setOf|List\.of|Set\.of|Arrays\.asList|Collections\.singletonList)?\s*\(?\s*([a-z_]\w*)\s*\)/i.exec(args)?.[1];
       const topic = lit ?? (name ? this.topicDefaults.get(name) ?? this.stringConsts.get(name) ?? name : null);
-      sources.push(this.ds({ kind: "queue-consume", name: "MQ: Kafka subscribe", target: topic ?? null, line }));
+      sources.push(this.ds({ kind: "queue-consume", name: "MQ: Kafka subscribe", target: topic ?? null, broker: "kafka", line }));
       return;
     }
 
@@ -1328,13 +1331,21 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (MQ_TEMPLATE_PUBLISH.has(method) && this.isMqTemplate(node, receiver)) {
       // `kafkaTemplate.send(record)` / `rabbitTemplate.convertAndSend(payload)`: the one argument is the
       // message (a ProducerRecord, a Message, a payload for the default destination), never its address.
-      const stated = callArguments(node).length >= 2;
-      const ref = stated ? constantRef(call.firstArg) : null;
+      const args = callArguments(node);
+      const stated = args.length >= 2;
+      const leaf = receiverLeaf(receiver);
+      const declared = /^\w+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+      const broker = brokerOfTemplate(declared, receiver);
+      const overload = broker === "amqp" ? amqpSendOverload(args) : null;
+      const ref = stated && !overload?.ambiguous ? constantRef(call.firstArg) : null;
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
-        target: stated ? destinationLabel(call.firstArg, this.stringConsts) : null,
+        target: stated && !overload?.ambiguous ? destinationLabel(call.firstArg, this.stringConsts) : null,
         ...(ref ? { targetRef: ref } : {}),
+        ...(overload?.routingKey ? { entity: overload.routingKey } : {}),
+        ...(overload?.ambiguous ? { unresolvedReason: overload.ambiguous } : {}),
+        ...(broker ? { broker } : {}),
         line,
       }));
       return;
@@ -1346,6 +1357,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       sources.push(this.ds({
         kind: method === "basicPublish" ? "queue-publish" : "queue-consume",
         name: `MQ: ${method}`,
+        broker: "amqp",
         target: destinationLabel(call.firstArg, this.stringConsts),
         ...(constantRef(call.firstArg) ? { targetRef: constantRef(call.firstArg)! } : {}),
         line,
@@ -1777,6 +1789,25 @@ function constantRef(arg: Node | null): string | null {
   const t = constantString(arg);
   const m = t ? /^\$\{([^{}]+)\}$/.exec(t) : null;
   return m ? m[1]! : null;
+}
+
+/**
+ * What a Spring AMQP `convertAndSend`/`send` call's arguments say. The overloads are
+ * `(message)`, `(routingKey, message)`, `(exchange, routingKey, message)` and the same
+ * with a trailing `MessagePostProcessor` / `CorrelationData`, so three arguments the
+ * first two of which are strings fit two readings: `(exchange, routingKey, message)`
+ * and `(routingKey, message, postProcessor)`. The exchange form is taken only when
+ * the third argument is no string literal and no post-processor shape; a string third
+ * argument as well makes every argument a string, which names no destination.
+ */
+function amqpSendOverload(args: Node[]): { routingKey?: string; ambiguous?: string } | null {
+  const isStr = (n: Node | undefined): boolean => !!n && /string/.test(n.type);
+  if (args.length < 3 || !isStr(args[0]) || !isStr(args[1])) return null;
+  const third = args[2]!;
+  if (isStr(third)) return { ambiguous: "ambiguous send overload: three string arguments (exchange, routing key, message or routing key, message, post-processor)" };
+  const postProcessor = /lambda|method_reference/.test(third.type) || /^new\s+(?:\w+\.)*(?:CorrelationData|\w*PostProcessor)\b/.test(third.text);
+  if (postProcessor) return null;
+  return { routingKey: args[1]!.text.replace(/^"|"$/g, "") };
 }
 
 /**

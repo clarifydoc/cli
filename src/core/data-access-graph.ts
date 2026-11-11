@@ -1,4 +1,5 @@
 import type {
+  DataSourceInfo,
   FileAnalysis,
   DataAccessGraph,
   DataAccessNode,
@@ -6,6 +7,7 @@ import type {
   EntityGraph,
   SymbolDataAccess,
 } from "../types/analysis.js";
+import { brokerOfRow } from "../extractors/shared/message-brokers.js";
 import { byOrdinal } from "./ordinal.js";
 // One shared key derivation with the ER-graph node dedupe — an access name
 // must reach the same node `synthesizeReferencedTableEntities` deduped against.
@@ -31,6 +33,37 @@ import { nodeKeyIndex, tableMatchKeys as entityMatchKeys } from "./entity-graph.
  */
 /** Sentinel datastore/queue name for DB-shaped calls whose target could not be resolved. */
 export const UNKNOWN_TARGET = "(unresolved)";
+
+/** The broker of a queue node no extractor named; a placeholder, so the node key stays well formed. */
+export const UNKNOWN_BROKER = "?";
+
+/**
+ * The broker a queue row is on: the one its extractor stated, else the one
+ * every row of the project naming the same destination states, else `?`. A row
+ * that names no broker thus still meets the publisher/consumer of its own
+ * destination when only one broker uses that name, and stays apart when
+ * several do.
+ */
+export function queueBrokerResolver(analyses: FileAnalysis[]): (ds: DataSourceInfo) => string {
+  const byAddress = new Map<string, Set<string>>();
+  for (const a of analyses) {
+    for (const ds of a.dataSources ?? []) {
+      if (ds.kind !== "queue-publish" && ds.kind !== "queue-consume") continue;
+      const broker = brokerOfRow(ds);
+      const address = ds.target?.trim();
+      if (!broker || !address) continue;
+      let set = byAddress.get(address);
+      if (!set) byAddress.set(address, (set = new Set()));
+      set.add(broker);
+    }
+  }
+  return (ds) => {
+    const own = brokerOfRow(ds);
+    if (own) return own;
+    const known = byAddress.get(ds.target?.trim() ?? "");
+    return known?.size === 1 ? [...known][0]! : UNKNOWN_BROKER;
+  };
+}
 
 /**
  * Build the file → datastore/entity/queue graph described in the module comment.
@@ -88,20 +121,29 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     return id;
   }
 
-  function ensureQueue(target: string): string {
-    const id = `queue::${target}`;
+  /**
+   * One node per broker + address (`queue::amqp::matches`): `matches` on Kafka
+   * and on RabbitMQ are different destinations. A destination no value
+   * resolves is keyed by where it is written (`queue::amqp::?src/Pub.java:12`),
+   * so unrelated unresolved ones never share a node and never pair.
+   */
+  function ensureQueue(broker: string, target: string | null, filePath: string, line: number, reason: string | undefined): string {
+    const id = target !== null ? `queue::${broker}::${target}` : `queue::${broker}::?${filePath}:${line}`;
     if (!nodes.has(id)) {
       nodes.set(id, {
         id,
-        name: target,
+        name: target ?? UNKNOWN_TARGET,
         kind: "queue",
-        filePath: "",
+        filePath: target === null ? filePath : "",
+        ...(broker !== UNKNOWN_BROKER ? { broker } : {}),
+        ...(target === null ? { reason: reason ?? "destination is not a literal" } : {}),
         inboundCount: 0,
         outboundCount: 0,
       });
     }
     return id;
   }
+  const brokerOf = queueBrokerResolver(analyses);
 
   function edgeFor(source: string, target: string): DataAccessEdge {
     const key = `${source}→${target}`;
@@ -120,9 +162,9 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
         // a consumer file that name the same exchange/queue/topic meet at one
         // queue node, and edge direction carries the message flow —
         // file→queue for publish, queue→file for consume.
-        const qTarget = ds.target && ds.target.trim() !== "" ? ds.target.trim() : UNKNOWN_TARGET;
+        const qTarget = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
         const fileId = ensureFile(a.filePath);
-        const qId = ensureQueue(qTarget);
+        const qId = ensureQueue(brokerOf(ds), qTarget, a.filePath, ds.line, ds.unresolvedReason);
         const edge = ds.kind === "queue-publish" ? edgeFor(fileId, qId) : edgeFor(qId, fileId);
         edge.calls.push({ name: ds.name, line: ds.line, ...(ds.entity ? { entity: ds.entity } : {}) });
         edge.total += 1;
@@ -219,6 +261,7 @@ export function attributeDataAccessToSymbols(
 
   // (file::symbol::entity) → merged record.
   const merged = new Map<string, SymbolDataAccess>();
+  const brokerOf = queueBrokerResolver(analyses);
 
   for (const a of analyses) {
     // Index every function/method by line span. Methods are qualified
@@ -300,7 +343,8 @@ export function attributeDataAccessToSymbols(
       const traceEntity = entity || (isQueue || ds.routine || ds.store ? (datastore ?? "") : "");
       if (!traceEntity) continue; // no resolvable target — nothing to link.
 
-      const key = `${a.filePath}::${best.symbol}::${ds.kind}::${traceEntity}`;
+      const broker = isQueue ? brokerOf(ds) : UNKNOWN_BROKER;
+      const key = `${a.filePath}::${best.symbol}::${ds.kind}::${traceEntity}${isQueue ? `::${broker}` : ""}`;
       let rec = merged.get(key);
       if (!rec) {
         rec = {
@@ -311,6 +355,7 @@ export function attributeDataAccessToSymbols(
           entityMatched: matchedName !== null,
           datastore,
           ...(isQueue ? { access: ds.kind as "queue-publish" | "queue-consume" } : {}),
+          ...(isQueue && broker !== UNKNOWN_BROKER ? { broker } : {}),
           sites: [],
         };
         merged.set(key, rec);

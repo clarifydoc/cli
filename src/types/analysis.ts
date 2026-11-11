@@ -228,7 +228,9 @@ export interface EntityGraph {
  */
 export interface DataAccessNode {
   /** Unique id. For files: `file::<path>`. For datastores: `db::<target>`.
-   *  For entities: `entity::<target>::<entity>`. For queues: `queue::<target>`. */
+   *  For entities: `entity::<target>::<entity>`. For queues: `queue::<broker>::<address>` (`?` for an
+   *  unknown broker; `queue::<broker>::?<file>:<line>` for a destination no
+   *  value resolves). */
   id: string;
   /** Display name (file basename, datastore target, or entity/table name). */
   name: string;
@@ -239,6 +241,10 @@ export interface DataAccessNode {
   kind: "file" | "datastore" | "entity" | "queue";
   /** File path for "file" nodes. Empty for datastore/entity nodes. */
   filePath: string;
+  /** For "queue" nodes: the broker (`amqp`, `kafka`, …), absent for an old summary or an unknown one. */
+  broker?: string;
+  /** For "queue" nodes whose destination is unresolved: why. */
+  reason?: string;
   /** Number of incoming edges (only meaningful for datastore nodes). */
   inboundCount: number;
   /** Number of outgoing edges (only meaningful for file nodes). */
@@ -2508,6 +2514,20 @@ export interface DataSourceInfo {
    */
   targetRef?: string;
   /**
+   * For queue kinds: the message broker the destination lives on (`amqp`,
+   * `kafka`, `sqs`, `bullmq`, `celery`, `redis`, `mqtt`, `socket.io`, `dapr`, …),
+   * lower-case. Absent when the extractor cannot tell; a destination name alone
+   * (`matches`) then no longer says which broker it is on — the data-access
+   * graph keys a queue node on broker + address.
+   */
+  broker?: string;
+  /**
+   * For queue kinds with no resolvable `target`: why (`ambiguous convertAndSend
+   * overload`, `destination is a variable`). The graph keys such a row by its
+   * source location, never a shared "(unresolved)" node.
+   */
+  unresolvedReason?: string;
+  /**
    * An element's request whose URL sits in this markup attribute
    * (`data-update-url`): it stands only where a project script reads the
    * attribute (`FileAnalysis.attributeReads`), with the verb those scripts agree on.
@@ -3684,6 +3704,8 @@ export interface SymbolDataAccess {
    * "event on RabbitMQ" endpoint of a button→…→event trace.
    */
   access?: "queue-publish" | "queue-consume";
+  /** For queue kinds: the broker `datastore` is a destination on (see `DataSourceInfo.broker`). */
+  broker?: string;
   /** Individual DB call sites inside the function, sorted by line. */
   /** `access`: set where one line holds several routes' own accesses (`DataSourceInfo.handler` naming a route). */
   sites: Array<{ name: string; line: number; access?: "read" | "write" }>;

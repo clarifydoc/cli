@@ -340,6 +340,23 @@ describe("Java Spring AMQP / Kafka extraction", () => {
     expect(publishes(s)[0]?.target).toBe("cars-exchange");
   });
 
+  it("reads convertAndSend(exchange, routingKey, payload) as an exchange with a routing key, on the amqp broker", async () => {
+    const s = await javaSourcesOf(`    rabbitTemplate.convertAndSend("league.exchange", "match.finished", event);`);
+    expect(publishes(s)[0]).toMatchObject({ target: "league.exchange", entity: "match.finished", broker: "amqp" });
+  });
+
+  it("refuses three string arguments, which fit two overloads", async () => {
+    const s = await javaSourcesOf(`    rabbitTemplate.convertAndSend("league.exchange", "match.finished", "full time");`);
+    expect(publishes(s)[0]?.target).toBeNull();
+    expect(publishes(s)[0]?.unresolvedReason).toMatch(/ambiguous/);
+  });
+
+  it("reads a trailing post-processor as the (routingKey, message, postProcessor) overload", async () => {
+    const s = await javaSourcesOf(`    rabbitTemplate.convertAndSend("match.finished", "x", m -> m);`);
+    expect(publishes(s)[0]).toMatchObject({ target: "match.finished", broker: "amqp" });
+    expect(publishes(s)[0]?.entity).toBeUndefined();
+  });
+
   it("captures kafkaTemplate.send topic", async () => {
     const s = await javaSourcesOf(`    kafkaTemplate.send("player-events", payload);`);
     expect(publishes(s)[0]?.target).toBe("player-events");
