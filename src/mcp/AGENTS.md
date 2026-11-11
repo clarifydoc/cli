@@ -79,6 +79,11 @@ write. That is what lets an external agent be configured as nothing but a comman
   route — the files whose source holds its path literal with no call linked from them (a scan of the analysed files,
   screen links like `to="/x"` skipped). A failed `trace to=` names the node its forward walk got nearest to the target
   (in the target's file when it reached one, else the deepest) and how many of its calls did not resolve.
+- **`clarifydoc_impact` can read another checkout.** `worktree=<path>` (or the server's `CLARIFYDOC_WORKTREE`; the
+  working directory is never guessed) points at a linked worktree of the analyzed repository: the diff, its hunks, the
+  working-file re-analysis and a `proposed` edit's old text come from there, while paths stay the analysis's own
+  (the project keeps its place inside the worktree). [impact-worktree.ts](impact-worktree.ts) requires both to share
+  one `--git-common-dir` and refuses anything else; the answer's first line names the worktree.
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).

@@ -38,6 +38,7 @@ import {
 } from "../format.js";
 import { isTestPath, projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { latencySection } from "../usage.js";
+import { requestedWorktree, resolveImpactWorktree } from "../impact-worktree.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
 
 const NO_ARGS = { type: "object", properties: {}, additionalProperties: false } as const;
@@ -1315,7 +1316,7 @@ export function healthTool(ctx: ToolContext): McpTool {
 }
 
 /** The impact of an edit not made yet: its content parsed in memory, its lines judged against the analysis. */
-async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof import("../../core/impact-diff.js").computeImpactDiff>[0], proposed: Array<{ file?: unknown; content?: unknown }>) {
+async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof import("../../core/impact-diff.js").computeImpactDiff>[0], proposed: Array<{ file?: unknown; content?: unknown }>, root: string, origin: string) {
   if (proposed.length > 20) return { text: "proposed: at most 20 files.", isError: true };
   const contents = new Map<string, string | null>();
   for (const p of proposed) {
@@ -1327,19 +1328,20 @@ async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof impor
   }
   const [{ computeImpactDiff, renderImpactMarkdown }, cs] = await Promise.all([import("../../core/impact-diff.js"), import("../../core/changed-symbols.js")]);
   const files = [...contents.keys()];
-  const hunks = await cs.proposedHunks(ctx.store.projectRoot, contents);
+  const hunks = await cs.proposedHunks(root, contents);
   const before = await cs.loadFileAnalyses(ctx.store.analysisDir, files);
   const found = cs.symbolsInHunks(before, hunks);
-  const after = await cs.analyzeWorkingFiles(ctx.store.projectRoot, files, contents);
+  const after = await cs.analyzeWorkingFiles(root, files, contents);
   const impact = computeImpactDiff(summary, files, {
     baseLabel: "proposed edit",
     symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await cs.judgeSignatures(ctx.store.analysisDir, before, after, summary), hunks },
   });
   // What the edit itself gets wrong: syntax it introduces, calls with an argument count nothing accepts.
   const { checkPatch, renderPatchCheck } = await import("../../core/patch-check.js");
-  const check = renderPatchCheck(await checkPatch(ctx.store.projectRoot, ctx.store.analysisDir, summary.symbolLinks ?? [], contents));
+  const check = renderPatchCheck(await checkPatch(root, ctx.store.analysisDir, summary.symbolLinks ?? [], contents));
   return {
     text: joinLines([
+      origin,
       renderImpactMarkdown(impact),
       check ? `\n${check}` : "",
       "",
@@ -1360,6 +1362,7 @@ export function impactTool(ctx: ToolContext): McpTool {
         files: { type: "array", items: { type: "string" } },
         base: { type: "string" },
         staged: { type: "boolean" },
+        worktree: { type: "string" },
         proposed: {
           type: "array",
           description: "Each file's full new content (null deletes); at most 20 files of 1 MB.",
@@ -1376,7 +1379,22 @@ export function impactTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
       const proposedArg = Array.isArray(args.proposed) ? (args.proposed as Array<{ file?: unknown; content?: unknown }>) : [];
-      if (proposedArg.length) return proposedImpact(ctx, loaded.summary, proposedArg);
+      // Another checkout of this repository, when the change is made there: its diff, its lines, its files.
+      let root = ctx.store.projectRoot;
+      let origin = "";
+      const wanted = requestedWorktree(stringArg(args, "worktree"));
+      if (wanted) {
+        try {
+          const wt = await resolveImpactWorktree(ctx.store.projectRoot, wanted);
+          if (wt) {
+            root = wt.root;
+            origin = `Changes read from the ${wt.label} (paths are the same as in the analyzed checkout).`;
+          }
+        } catch (e) {
+          return { text: (e as Error).message, isError: true };
+        }
+      }
+      if (proposedArg.length) return proposedImpact(ctx, loaded.summary, proposedArg, root, origin);
       const explicit = stringArrayArg(args, "files");
       let changed: string[];
       let label: string;
@@ -1386,7 +1404,7 @@ export function impactTool(ctx: ToolContext): McpTool {
       } else {
         const { gitChangedFiles } = await import("../../core/git-changed-files.js");
         try {
-          ({ files: changed, label } = await gitChangedFiles(ctx.store.projectRoot, {
+          ({ files: changed, label } = await gitChangedFiles(root, {
             base: stringArg(args, "base"),
             staged: booleanArg(args, "staged"),
           }));
@@ -1422,10 +1440,10 @@ export function impactTool(ctx: ToolContext): McpTool {
             import("../../core/git-changed-files.js"),
             import("../../core/changed-symbols.js"),
           ]);
-          const hunks = await gitChangedHunks(ctx.store.projectRoot, { base: stringArg(args, "base"), staged: booleanArg(args, "staged") });
+          const hunks = await gitChangedHunks(root, { base: stringArg(args, "base"), staged: booleanArg(args, "staged") });
           const before = await loadFileAnalyses(ctx.store.analysisDir, [...new Set([...hunks.keys(), ...changed])]);
           const found = symbolsInHunks(before, hunks);
-          const after = await analyzeWorkingFiles(ctx.store.projectRoot, [...before.keys()]);
+          const after = await analyzeWorkingFiles(root, [...before.keys()]);
           symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(ctx.store.analysisDir, before, after, loaded.summary), hunks };
         } catch {
           // Without line ranges the file-level projection stands alone.
@@ -1434,6 +1452,7 @@ export function impactTool(ctx: ToolContext): McpTool {
       const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label, ...(symbols ? { symbols } : {}) });
       return {
         text: joinLines([
+          origin,
           renderImpactMarkdown(impact),
           "",
           facts([
