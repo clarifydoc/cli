@@ -7456,7 +7456,9 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
   const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
   if (own) return point(analysis, own.type);
   const held: Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> = inScopeModuleBindings(ctx, analysis, name);
-  if (pluginFor(analysis.language)?.importsShareScope) {
+  if (pluginFor(analysis.language)?.moduleBindingsFollowImports) {
+    held.push(...requiredModuleBindings(ctx, analysis, name, key));
+  } else if (pluginFor(analysis.language)?.importsShareScope) {
     ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
     for (const imp of analysis.imports) {
       const file = importPath(ctx, imp.source, sourceFile);
@@ -7470,6 +7472,34 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
     const p = point(holder, binding.type);
     if (!p || (found && (found.typeName !== p.typeName || found.typeFile !== p.typeFile))) return null;
     found = p;
+  }
+  return found;
+}
+
+/**
+ * The exported module bindings named `name` of the files `analysis` imports, and of the files those import in turn
+ * (`moduleBindingsFollowImports`), a few files deep — each file once, never `analysis` itself.
+ */
+function requiredModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: string, key: string): Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> {
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const ownResolver = pluginFor(analysis.language)?.resolveImport;
+  const found: Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> = [];
+  const seen = new Set([analysis.filePath]);
+  let frontier = [analysis];
+  for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
+    const next: FileAnalysis[] = [];
+    for (const from of frontier) {
+      for (const imp of from.imports) {
+        const file = (ownResolver ? ownResolver(from.filePath, imp.source, undefined, importResolveContext(ctx)) : null) ?? importPath(ctx, imp.source, from.filePath);
+        const holder = file && !seen.has(file) ? ctx.analysisByFile.get(file) : undefined;
+        if (!holder) continue;
+        seen.add(file!);
+        next.push(holder);
+        const binding = holder.moduleBindings?.find((b) => b.exported && nameKey(holder.language, b.name) === key);
+        if (binding) found.push({ holder, binding });
+      }
+    }
+    frontier = next;
   }
   return found;
 }
@@ -7594,6 +7624,8 @@ function typeRefFor(
     const pick = pickDefinition(typeName, declared.length > 0 ? declared : inPackage, sourceFile, declOf, (f) => ctx.languageOf.get(f));
     if (pick) return { typeName, typeFile: pick };
   }
+  const inModule = written?.includes(".") ? moduleQualifiedType(ctx, written, typeName, sourceFile) : null;
+  if (inModule) return inModule;
   const imported = importedTypeRef(ctx, typeName, sourceFile, projectId);
   if (imported !== undefined) return imported?.typeFile ? { typeName: imported.typeName, typeFile: imported.typeFile } : null;
   typeName = dealias(ctx, typeName, sourceFile);
@@ -7607,6 +7639,40 @@ function typeRefFor(
   // A longer path (`Club::League::Table`, a module in front of the type's own path) loses its first name at a time.
   const dc = typeName.indexOf("::");
   return dc > 0 && !ctx.classFiles.has(typeName) ? typeRefFor(ctx, typeName.slice(dc + 2), sourceFile, projectId) : null;
+}
+
+/**
+ * A type written through a module an import binds (`m.Club` after `import league.models as m`, `lm.Club` after
+ * `from league import models as lm`, `other.models.Club` after `import other.models`): the class that module's file
+ * declares, never a namesake another module declares. Null where the type is not written so, the qualifier binds no
+ * import of the file, the module is no project file, or it declares no such class (the bare name's rules decide then).
+ */
+function moduleQualifiedType(ctx: LinkContext, written: string, typeName: string, sourceFile: string): { typeName: string; typeFile: string } | null {
+  const escaped = typeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const qualifier = new RegExp(`(?:^|[^\\w.])([A-Za-z_][\\w.]*)\\.${escaped}(?![\\w.])`).exec(written)?.[1];
+  if (!qualifier) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const analysis = ctx.analysisByFile.get(sourceFile);
+  if (!analysis) return null;
+  const ownResolver = pluginFor(analysis.language)?.resolveImport;
+  const resolve = (source: string): string | null => (ownResolver ? ownResolver(sourceFile, source, typeName, importResolveContext(ctx)) ?? null : importPath(ctx, source, sourceFile));
+  const found = new Map<string, { typeName: string; typeFile: string }>();
+  for (const imp of analysis.imports) {
+    if (imp.isType || imp.source.includes("/") || !imp.specifiers.includes(qualifier)) continue;
+    let file: string | null;
+    if (imp.isNamespace) file = resolve(imp.source);
+    else {
+      // `from league import models as lm`: the package's file of the name the alias stands for.
+      const moduleName = imp.aliases?.[qualifier] ?? qualifier;
+      const sub = resolve(`${imp.source}${imp.source.endsWith(".") ? "" : "."}${moduleName}`);
+      const isModule = !!sub && (sub.slice(sub.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "") === moduleName || sub.split("/").at(-2) === moduleName);
+      file = isModule ? sub : null;
+    }
+    if (!file || file === sourceFile) continue;
+    const ref = ctx.classAt.has(memberKey(file, typeName)) ? { typeName, typeFile: file } : forwardedClass(ctx, file, typeName, 0, new Set());
+    if (ref) found.set(`${ref.typeFile}\0${ref.typeName}`, ref);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
 }
 
 /**

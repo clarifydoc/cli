@@ -44,6 +44,7 @@ import { blockParamsOf } from "./block-params.js";
 import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
+import { rubyModuleBindings } from "./module-bindings.js";
 
 /** The helper name of a `resources … as: :teams` route: `teams`, `team`, `new_team`, `edit_team`. */
 function resourceHelper(prefix: string, as: string, action: string, singular: boolean): string {
@@ -1409,6 +1410,9 @@ export const rubySpec: RegexLangSpec = {
   // `def initialize(repo: UserRepo.new)` — a constructing default types the
   // parameter (see di.ts for YARD / Sorbet declarations).
   parseParam: parseRubyParam,
+
+  // `SERVICE = ClubService.new` at the top level: the constant's type, for `SERVICE.process`.
+  extractModuleBindings: (lines) => rubyModuleBindings(lines),
 
   // `repo = UserRepo.new`, `repo = AppContainer[:user_repo]`.
   extractLocalTypes: (bodyLines, fn) => extractRubyLocalTypes(bodyLines, fn),

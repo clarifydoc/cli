@@ -31,6 +31,8 @@ export const rubyManifest: LanguagePluginManifest = {
   autoloadedFiles: rubyAutoloadedFiles,
   // `Helper` inside a compact `class League::Report` is `::Helper`, never `League::Helper`.
   lexicalConstants: rubyLexicalConstants,
+  // `require`d files' top-level constants (`SERVICE = ClubService.new`) are global once loaded.
+  moduleBindingsFollowImports: true,
   typeNamedByReceiver: rubyTypeNamedByReceiver,
   // `Club.find(id)` is a Club, `Club.where(…)` a query of Clubs (ActiveRecord).
   selfTypedMembers: rubyModelFinders,

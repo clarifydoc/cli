@@ -1667,6 +1667,12 @@ export interface LanguagePluginManifest {
    */
   moduleLocalsInScope?: boolean;
   /**
+   * A file's exported module-level bindings (`FileAnalysis.moduleBindings`) are seen by the files that import it,
+   * and by those it imports in turn (Ruby: a `require`d file's top-level constants are global once loaded). The
+   * linker follows imports a few files deep; the files named must agree on the binding's type.
+   */
+  moduleBindingsFollowImports?: boolean;
+  /**
    * Language-specific filename/path patterns that mark a file as a test
    * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,
    * Python `test_*.py`. Matched against the project-relative path (both `/` and
