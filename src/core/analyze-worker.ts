@@ -9,10 +9,11 @@ import { parentPort } from "worker_threads";
 import { analyzeFileOutcome, type FileTask } from "./file-analyzer.js";
 import { loopShapes } from "./query-in-loop.js";
 import type { LoopShapeTask } from "./loop-shape-batch.js";
+import { writeOutputFilesSync, type OutputWriteTask } from "./output-writer.js";
 
 interface WorkerRequest {
   id: number;
-  task: FileTask | LoopShapeTask;
+  task: FileTask | LoopShapeTask | OutputWriteTask;
 }
 
 if (!parentPort) {
@@ -29,13 +30,18 @@ parentPort.on("message", (msg: WorkerRequest) => {
     // promise always settles.
     let result: unknown = null;
     try {
-      // The other work a pool hands out: one file's loops, for the query-in-loop pass.
+      // The other work a pool hands out: one file's loops, for the query-in-loop
+      // pass, and a batch of finished output files to write.
       result = "loopShapes" in msg.task
         ? { shapes: await loopShapes(msg.task.loopShapes.projectRoot, msg.task.file.relativePath) }
-        : await analyzeFileOutcome(msg.task);
+        : "write" in msg.task
+          ? writeOutputFilesSync(msg.task.write)
+          : await analyzeFileOutcome(msg.task);
     } catch (err) {
       console.error(`  Worker error analyzing ${msg.task.file.relativePath}: ${(err as Error).message}`);
     }
-    parentPort!.postMessage({ id: msg.id, result });
+    // A file's output JSON (a task with `deferWrite`) changes hands without a copy.
+    const json = result && typeof result === "object" && "json" in result ? (result as { json?: Uint8Array }).json : undefined;
+    parentPort!.postMessage({ id: msg.id, result }, json ? [json.buffer as ArrayBuffer] : []);
   })();
 });

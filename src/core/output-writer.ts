@@ -1,4 +1,5 @@
 import { writeFile, mkdir, access } from "fs/promises";
+import { mkdirSync, writeFileSync } from "fs";
 import { resolve, dirname, join, relative, isAbsolute } from "path";
 import type {
   FileAnalysis,
@@ -114,6 +115,84 @@ export async function ensureSelfIgnored(outputDir: string, projectRoot: string):
   );
 }
 
+/** Where one file's analysis is kept: `<outputDir>/<relativePath>.json`. */
+export function fileAnalysisPath(filePath: string, options: OutputOptions): string {
+  return resolve(options.outputDir, `${filePath}.json`);
+}
+
+/**
+ * One file's analysis as the JSON text its output file holds.
+ *
+ * Runs schema validation once per file. Warnings are collected, not thrown —
+ * an extractor producing malformed output should still produce visible output
+ * with the issue flagged inline.
+ */
+export function serializeFileAnalysis(analysis: FileAnalysis, options: OutputOptions): string {
+  const warnings = validateFileAnalysis(analysis);
+  if (warnings.length > 0) {
+    analysis.extractorWarnings = warnings;
+  }
+  return options.pretty ? JSON.stringify(analysis, null, 2) : JSON.stringify(analysis);
+}
+
+/**
+ * Write one output file, making its directory when it is not there yet. The
+ * directory exists for every file but the first one written into it, so the
+ * file is written first and the directory made only on a miss.
+ */
+export async function writeOutputFile(outPath: string, data: string | Uint8Array): Promise<void> {
+  try {
+    await writeFile(outPath, data, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, data, "utf-8");
+  }
+}
+
+/** One output file to write: its bytes, where they go, and the key its writer answers a failure under. */
+export interface OutputFile {
+  key: string;
+  path: string;
+  data: Uint8Array;
+}
+
+/** A batch of output files for one thread to write (a pool task: `file` says what it is when a worker dies on it). */
+export interface OutputWriteTask {
+  file: { relativePath: string };
+  write: OutputFile[];
+}
+
+/** The files of a batch that could not be written. */
+export interface OutputWriteResult {
+  unwritten: Array<{ key: string; error: string }>;
+}
+
+/**
+ * Write a batch of output files one after the other, on the calling thread,
+ * making a directory when it is not there yet. This is what a worker thread
+ * runs: it has nothing else in hand, so nothing waits on its event loop.
+ */
+export function writeOutputFilesSync(files: readonly OutputFile[]): OutputWriteResult {
+  const unwritten: OutputWriteResult["unwritten"] = [];
+  for (const file of files) {
+    try {
+      // Bytes handed to another thread and back are gone from this one: an analysis is never empty.
+      if (file.data.byteLength === 0) throw new Error("its JSON was handed to a worker that died");
+      try {
+        writeFileSync(file.path, file.data);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        mkdirSync(dirname(file.path), { recursive: true });
+        writeFileSync(file.path, file.data);
+      }
+    } catch (err) {
+      unwritten.push({ key: file.key, error: (err as Error).message });
+    }
+  }
+  return { unwritten };
+}
+
 /**
  * Write a single file analysis result as JSON.
  * Creates: <outputDir>/<relativePath>.json
@@ -122,22 +201,8 @@ export async function writeFileAnalysis(
   analysis: FileAnalysis,
   options: OutputOptions,
 ): Promise<string> {
-  const outPath = resolve(options.outputDir, `${analysis.filePath}.json`);
-  await mkdir(dirname(outPath), { recursive: true });
-
-  // Run schema validation once per file. Warnings are collected, not thrown —
-  // an extractor producing malformed output should still produce visible output
-  // with the issue flagged inline.
-  const warnings = validateFileAnalysis(analysis);
-  if (warnings.length > 0) {
-    analysis.extractorWarnings = warnings;
-  }
-
-  const json = options.pretty
-    ? JSON.stringify(analysis, null, 2)
-    : JSON.stringify(analysis);
-
-  await writeFile(outPath, json, "utf-8");
+  const outPath = fileAnalysisPath(analysis.filePath, options);
+  await writeOutputFile(outPath, serializeFileAnalysis(analysis, options));
   return outPath;
 }
 

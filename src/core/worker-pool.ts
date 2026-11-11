@@ -31,6 +31,8 @@ type Outcome<R> = R | FailedFile | null;
 
 interface Pending<T, R> {
   task: T;
+  /** Buffers of the task that change hands instead of being copied. */
+  transfer?: ArrayBuffer[];
   resolve: (r: Outcome<R>) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -153,11 +155,18 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
     return Math.min(8, Math.max(1, cores - 1));
   }
 
-  run(task: T): Promise<Outcome<R>> {
+  /**
+   * Hand a task to the next idle worker.
+   *
+   * @param task - What the worker runs
+   * @param transfer - Buffers inside the task that move to the worker without a copy; they are empty here afterwards
+   * @returns The task's result, `FailedFile` when its worker died on it, or null
+   */
+  run(task: T, transfer?: ArrayBuffer[]): Promise<Outcome<R>> {
     // No worker left (none could be started): analyze in-process instead of queueing forever.
     if (this.workers.length === 0) return this.fallback(task);
     return new Promise((resolve) => {
-      const item: Pending<T, R> = { task, resolve };
+      const item: Pending<T, R> = { task, resolve, ...(transfer?.length ? { transfer } : {}) };
       const worker = this.idle.pop();
       if (worker) {
         this.dispatch(worker, item);
@@ -167,9 +176,18 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
     });
   }
 
-  async destroy(): Promise<void> {
+  /**
+   * The analysis is over and the workers only finish what they were handed
+   * (writing output): the bound on heap growth, which is the whole process's,
+   * is lifted now and not when the pool ends.
+   */
+  relax(): void {
     if (this.bounded) boundHeapGrowth(false);
     this.bounded = false;
+  }
+
+  async destroy(): Promise<void> {
+    this.relax();
     this.destroyed = true;
     const workers = this.workers;
     this.workers = [];
@@ -255,7 +273,7 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
 
   private dispatch(worker: Worker, item: Pending<T, R>): void {
     this.pending.set(worker, item);
-    worker.postMessage({ id: this.nextId++, task: item.task });
+    worker.postMessage({ id: this.nextId++, task: item.task }, item.transfer ?? []);
   }
 
   /** From the moment the worker takes the file up (its `begin` message), not from dispatch. */

@@ -2,10 +2,11 @@ import { readFileSync, statSync } from "fs";
 import { createHash } from "crypto";
 import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
+import { isMainThread } from "worker_threads";
 import { computeRegexComplexity } from "./complexity-regex.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import type { DiscoveredFile } from "./file-discovery.js";
-import { writeFileAnalysis, type OutputOptions } from "./output-writer.js";
+import { serializeFileAnalysis, writeFileAnalysis, type OutputOptions } from "./output-writer.js";
 import { parseSource } from "../parsers/parser-manager.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
@@ -96,6 +97,12 @@ export interface FileTask {
   /** tsconfig.json paths-style aliases for the project (may be empty). */
   tsconfigAliases: AliasMap;
   /**
+   * The caller writes the file's JSON: the result carries it (`FileResult.json`)
+   * and nothing is written here. A file being created holds up the reads
+   * beside it, so a pool's files are written once its sources are read.
+   */
+  deferWrite?: boolean;
+  /**
    * Where file-based routing reads from: the file's path relative to its own
    * sub-project's root, and that sub-project's frameworks. An Expo app in
    * `mobile/` routes `mobile/app/x.tsx` as `app/x.tsx`, and a Next.js web app
@@ -131,6 +138,8 @@ export interface FileResult {
   rawSource: string | null; // non-null only for frontend route files
   complexities: ComplexityInfo[];
   securityIssues: SecurityIssue[];
+  /** The file's output JSON, not yet written: set for a task with `deferWrite`, whose caller writes it. */
+  json?: Uint8Array;
 }
 
 /**
@@ -321,6 +330,15 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
   const { file, frameworkIds, projectId, outputOpts, verbose, projectRoot, tsconfigAliases } = task;
   const routeScope = task.routeScope ?? { relativePath: file.relativePath, frameworkIds };
 
+  /** Write the file's JSON, or hand it back as bytes for the caller to write (`deferWrite`). */
+  const store = async (a: FileAnalysis): Promise<{ json?: Uint8Array }> => {
+    if (!task.deferWrite) {
+      await writeFileAnalysis(a, outputOpts);
+      return {};
+    }
+    return { json: new TextEncoder().encode(serializeFileAnalysis(a, outputOpts)) };
+  };
+
   const applyTsconfigAliasesToImports = (a: FileAnalysis): void => {
     if (a.imports.length === 0) return; // nothing to rewrite — skip the tsconfig lookup
     rewriteModuleSources(a.imports, a.language);
@@ -375,7 +393,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // single-file callers may not) — a no-op when the plugin is loaded.
     await ensureLanguagesLoaded([file.language]);
     const filePlugin = pluginFor(file.language);
-    const rawSource = await readFile(file.absolutePath, filePlugin?.sourceEncoding ?? "utf-8");
+    // A worker thread has one file in hand, so it reads without a round trip
+    // through the I/O threads; the main thread keeps several files in flight.
+    const encoding = filePlugin?.sourceEncoding ?? "utf-8";
+    const rawSource = isMainThread ? await readFile(file.absolutePath, encoding) : readFileSync(file.absolutePath, encoding);
     // Flag minified/bundled artifacts once; every branch below stamps it on
     // the analysis so project-level detectors can exclude these files.
     const minified = isMinifiedSource(rawSource);
@@ -403,8 +424,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       applyTsconfigAliasesToImports(analysis);
       const customTypeRefs = extractTypeReferences(analysis, file.language);
       if (customTypeRefs.length > 0) analysis.typeReferences = customTypeRefs;
-      await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: [] };
+      return { analysis, rawSource: null, complexities: [], securityIssues: [], ...(await store(analysis)) };
     }
 
     // Languages without tree-sitter grammars: use regex extraction
@@ -447,14 +467,14 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const regexSpec = regexSpecFor(analysis.language);
       const regexComplexities = regexSpec ? computeRegexComplexity(regexLines, analysis, regexSpec, caseInsensitive) : [];
       if (regexComplexities.length > 0) analysis.complexities = regexComplexities;
-      await writeFileAnalysis(analysis, outputOpts);
+      const stored = await store(analysis);
       // Keep raw source for regex-path UI files that back a screen (HTML pages,
       // Blazor .razor) so buildScreen can recover the page caption + navigation.
       const isUiSource =
         analysis.routes.some((r) => r.kind === "frontend") ||
         analysis.subComponents.length > 0 ||
         analysis.interactiveElements.length > 0;
-      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: regexComplexities, securityIssues: fileSecurityIssues };
+      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: regexComplexities, securityIssues: fileSecurityIssues, ...stored };
     }
 
     // Container-format preprocessing (e.g. Vue SFC → its <script> block)
@@ -503,8 +523,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
       const fallbackTypeRefs = extractTypeReferences(analysis, file.language);
       if (fallbackTypeRefs.length > 0) analysis.typeReferences = fallbackTypeRefs;
-      await writeFileAnalysis(analysis, outputOpts);
-      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues };
+      return { analysis, rawSource: null, complexities: [], securityIssues: fileSecurityIssues, ...(await store(analysis)) };
     }
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
@@ -853,7 +872,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // Read from the source as written: a container's preprocess keeps its lines in place.
     attachDocComments(analysis, rawSource, manifestFor(language)?.docComments);
 
-    await writeFileAnalysis(analysis, outputOpts);
+    const stored = await store(analysis);
 
     // Keep raw source for files that can back a screen: route-config files
     // (caption/nav) AND the UI component files routes resolve to (Vue/JSX/TSX,
@@ -875,6 +894,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       rawSource: isUiSource ? rawSource : null,
       complexities: fileComplexities,
       securityIssues: fileSecurityIssues,
+      ...stored,
     };
   } catch (err) {
     console.error(

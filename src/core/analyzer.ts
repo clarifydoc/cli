@@ -48,7 +48,12 @@ import {
   writeLspGroundTruth,
   writeImpactDiff,
   ensureSelfIgnored,
+  fileAnalysisPath,
+  writeOutputFilesSync,
+  type OutputFile,
   type OutputOptions,
+  type OutputWriteResult,
+  type OutputWriteTask,
 } from "./output-writer.js";
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload, loadReportSummary } from "./report-payload.js";
@@ -940,15 +945,51 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // startup. Falls back to in-process analysis when workers are unavailable
   // (e.g. running from source, CLARIFYDOC_WORKERS=0, or tiny projects).
   const poolSize = AnalysisWorkerPool.defaultSize(files.length);
-  const pool = poolSize > 0 ? AnalysisWorkerPool.create(poolSize, analyzeFileOutcome) : null;
+  const pool = poolSize > 0
+    ? AnalysisWorkerPool.create<FileTask | OutputWriteTask, FileResult | SkippedFile | OutputWriteResult>(
+        poolSize,
+        async (task) => ("write" in task ? writeOutputFilesSync(task.write) : analyzeFileOutcome(task)),
+      )
+    : null;
   const runTask = (task: FileTask): Promise<FileResult | SkippedFile | FailedFile | null> =>
-    pool ? pool.run(task) : analyzeFileOutcome(task);
+    pool ? (pool.run(task) as Promise<FileResult | SkippedFile | FailedFile | null>) : analyzeFileOutcome(task);
   // Files a worker died on (out of memory, past the per-file deadline): left
   // out of the analysis, never retried in-process, and said so in the summary.
   const failedFiles: { path: string; reason: string }[] = [];
   // With a pool, keep a couple of extra slots so the main thread can overlap
   // manifest classification / cache reads while every worker stays busy.
   const fileConcurrency = pool ? poolSize + 2 : 8;
+  // A pool's workers do not write as they go: a file being created holds up
+  // the reads beside it, and creating files does not scale with threads. Each
+  // file's JSON comes back with its result and is held here until the sources
+  // are read (or this much is held); then a few workers write it in batches
+  // while the passes below run. `CLARIFYDOC_HELD_OUTPUT_MB` sets how much is held (default 256).
+  const heldMb = Number(process.env.CLARIFYDOC_HELD_OUTPUT_MB);
+  const HELD_OUTPUT_BYTES = (Number.isFinite(heldMb) && heldMb >= 0 && process.env.CLARIFYDOC_HELD_OUTPUT_MB !== "" ? heldMb : 256) * 1024 * 1024;
+  const OUTPUT_WRITERS = 4;
+  const OUTPUT_BATCH = 2000;
+  let heldOutput: OutputFile[] = [];
+  let heldBytes = 0;
+  const outputWrites: Promise<OutputWriteResult["unwritten"]>[] = [];
+  const writeHeldOutput = (workers: AnalysisWorkerPool<FileTask | OutputWriteTask, FileResult | SkippedFile | OutputWriteResult>): void => {
+    const files = heldOutput;
+    heldOutput = [];
+    heldBytes = 0;
+    const size = Math.min(OUTPUT_BATCH, Math.ceil(files.length / OUTPUT_WRITERS));
+    const batches: OutputFile[][] = [];
+    for (let i = 0; i < files.length; i += size) batches.push(files.slice(i, i + size));
+    outputWrites.push(
+      runWithConcurrency(batches, OUTPUT_WRITERS, async (batch) => {
+        const outcome = await workers.run(
+          { file: { relativePath: `the analysis of ${batch.length} files` }, write: batch },
+          batch.map((f) => f.data.buffer as ArrayBuffer),
+        );
+        if (outcome && "unwritten" in outcome) return outcome.unwritten;
+        const error = outcome && "failed" in outcome ? outcome.failed : "no answer from the worker writing it";
+        return batch.map((f) => ({ key: f.key, error }));
+      }).then((parts) => parts.flat()),
+    );
+  };
 
   // File-based routes are read relative to the file's own sub-project, under
   // that sub-project's frameworks (see FileTask.routeScope).
@@ -1014,6 +1055,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
           ...(buildMacros ? { buildMacros } : {}),
           ...(keepsManifest ? { reportSkips: true as const } : {}),
           ...(reading ? { reading } : {}),
+          ...(pool ? { deferWrite: true as const } : {}),
         });
         if (outcome && "failed" in outcome) {
           failedFiles.push({ path: file.relativePath, reason: outcome.failed });
@@ -1033,6 +1075,13 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
           delete newManifestEntries[manifestKey];
           return result;
         }
+        if (result.json) {
+          const json = result.json;
+          delete result.json;
+          heldOutput.push({ key: manifestKey, path: fileAnalysisPath(result.analysis.filePath, outputOpts), data: json });
+          heldBytes += json.byteLength;
+          if (pool && heldBytes >= HELD_OUTPUT_BYTES) writeHeldOutput(pool);
+        }
         if (keepsManifest && !prevManifest) {
           // No manifest to compare with (a first incremental run, or a plain one): compute hash for manifest seed.
           const classification = await classifyFileForCache(file.absolutePath, undefined);
@@ -1049,9 +1098,21 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
         progress.fileDone(completedCount, files.length);
       },
     );
-  } finally {
+  } catch (err) {
     await pool?.destroy();
+    throw err;
   }
+  // The sources are read: the workers write the files' JSON while the passes
+  // below run, and end when they have.
+  if (pool) {
+    pool.relax();
+    if (heldOutput.length > 0) writeHeldOutput(pool);
+  }
+  const outputWritten = Promise.all(outputWrites)
+    .then((parts) => parts.flat())
+    .finally(() => pool?.destroy());
+  // Awaited where the summary is written; a pass that throws before then must not leave it unhandled.
+  outputWritten.catch(() => undefined);
 
   if (options.incremental) {
     progress.detail(`  Incremental: ${unchangedCount} unchanged, ${reparsedCount} reparsed`);
@@ -2567,6 +2628,11 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   };
 
   progress.step("Writing project summary...");
+  // A file whose JSON could not be written stays out of the manifest, so the next run analyzes it again.
+  for (const { key, error } of await outputWritten) {
+    console.error(`  Error writing the analysis of ${key}: ${error}`);
+    delete newManifestEntries[key];
+  }
   // Build the report payload from the in-memory (denormalized) summary BEFORE
   // writeProjectSummary, which normalizes for on-disk storage. Written so the
   // report viewer (SPA / server) can fetch it directly.

@@ -28,6 +28,7 @@ parentPort.on("message", ({ id, task }) => {
   if (name.startsWith("exit")) process.exit(3);
   if (name.startsWith("throw")) setTimeout(() => { throw new Error("gearbox seized"); });
   else if (name.startsWith("spin")) for (;;) {}
+  else if (task.write) parentPort.postMessage({ id, result: { received: task.write.map((f) => f.data.byteLength) } });
   else parentPort.postMessage({ id, result: { analysis: { filePath: name } } });
 });
 `,
@@ -56,6 +57,20 @@ describe("AnalysisWorkerPool", () => {
       expect(fallback).not.toHaveBeenCalled();
     } finally {
       errors.mockRestore();
+      await pool.destroy();
+    }
+  });
+
+  it("moves a task's buffers to the worker instead of copying them", async () => {
+    const pool = AnalysisWorkerPool.create(1, vi.fn(async () => null), { workerUrl, deadlineMs: 0 })!;
+    try {
+      const moved = new TextEncoder().encode("{\"club\":1}");
+      const copied = new TextEncoder().encode("{}");
+      const batch = { file: { relativePath: "two files" }, write: [{ key: "club.ts", path: "club.ts.json", data: moved }, { key: "match.ts", path: "match.ts.json", data: copied }] };
+      expect(await pool.run(batch as unknown as FileTask, [moved.buffer as ArrayBuffer])).toEqual({ received: [10, 2] });
+      expect(moved.byteLength).toBe(0);
+      expect(copied.byteLength).toBe(2);
+    } finally {
       await pool.destroy();
     }
   });
