@@ -7,6 +7,7 @@ import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-
 import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { REFIT_GATE, refitInterfaceCalls } from "./refit.js";
 
 /**
@@ -1007,7 +1008,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         let ref: string | undefined;
         if (topic === null && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(argText)) {
           // A constant: this file's (declared once), else a PascalCase or `Type.Name` one another class declares, for the project pass.
-          const declared = [...node.tree.rootNode.text.matchAll(new RegExp(String.raw`\b(?:const|static\s+readonly|readonly\s+static)\s+string\s+${argText.replace(/\./g, "\\.")}\s*=\s*"([^"\\]*)"\s*;`, "g"))];
+          const declared = [...node.tree.rootNode.text.matchAll(new RegExp(String.raw`\b(?:const|static\s+readonly|readonly\s+static)\s+string\s+${escapeRegex(argText)}\s*=\s*"([^"\\]*)"\s*;`, "g"))];
           const bare = argText.includes(".") ? [] : declared;
           if (bare.length === 1) topic = bare[0]![1]!;
           else if (bare.length === 0 && /^(?:[A-Z]\w*\.)*[A-Z]\w*$/.test(argText)) ref = argText;

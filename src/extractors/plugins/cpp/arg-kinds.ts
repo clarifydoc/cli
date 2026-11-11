@@ -32,8 +32,12 @@ export function cppOverloadTypeKey(type: string): string {
   if (type === "?" || type.startsWith("->")) return type;
   let t = type.replace(/\b(?:const|volatile|constexpr|static|register|mutable|struct|class|enum|union|typename)\b/g, " ");
   // Template arguments stay, so `Box<int>` and `Box<float>` are two types.
-  const args = /<.*>/s.exec(t)?.[0].replace(/\s+/g, "") ?? "";
-  const bare = t.replace(/<.*>/s, "");
+  // From the first `<` to the last `>`, sliced rather than replaced: one cut, nothing left to re-scan.
+  const lt = t.indexOf("<");
+  const gt = t.lastIndexOf(">");
+  const hasArgs = lt >= 0 && gt > lt;
+  const args = hasArgs ? t.slice(lt, gt + 1).replace(/\s+/g, "") : "";
+  const bare = hasArgs ? t.slice(0, lt) + t.slice(gt + 1) : t;
   const pointer = /\*/.test(bare);
   t = bare.replace(/[&*]+/g, " ").replace(/\s+/g, " ").trim();
   t = t.replace(/^(?:::)?(?:std::)/, "").replace(/^.*::/, "");

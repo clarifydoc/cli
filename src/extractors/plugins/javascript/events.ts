@@ -256,7 +256,7 @@ export function dynamicEmitFacts(source: string): { lines: number[]; literals: s
 
 /** The text a script gives `name` (`const buttons = [ … ]`, `const actions = computed(() => [ … ])`), through the end of its statement. */
 function declarationText(script: string, name: string): string {
-  const head = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\b[^=\\n]*=`).exec(script);
+  const head = new RegExp(`\\b(?:const|let|var)\\s+${escapeRegex(name)}\\b[^=\\n]*=`).exec(script);
   if (!head) return "";
   const start = head.index + head[0].length;
   let depth = 0;

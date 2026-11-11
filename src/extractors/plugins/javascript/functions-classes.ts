@@ -350,7 +350,7 @@ function scanBody(
     for (const p of pattern.namedChildren) {
       const local = p.type === "shorthand_property_identifier_pattern" ? p.text : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? p.childForFieldName("value")!.text : null;
       const member = p.type === "shorthand_property_identifier_pattern" ? p.text : p.childForFieldName("key")?.text;
-      if (!local || !member || !/^[\w$]+$/.test(member) || !new RegExp(`[(,]\\s*${local.replace(/\$/g, "\\$")}\\s*[,)]`).test(body.text)) continue;
+      if (!local || !member || !/^[\w$]+$/.test(member) || !new RegExp(`[(,]\\s*${escapeRegex(local)}\\s*[,)]`).test(body.text)) continue;
       const entry = { local: { name: local, type: "", from: `${call}.${member}`, destructured: true as const }, annotated: false };
       const list = bindings.get(local);
       if (list) list.push(entry);

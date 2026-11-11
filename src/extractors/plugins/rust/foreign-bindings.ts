@@ -1,4 +1,5 @@
 import type { ForeignBindingRule } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Rust libraries other languages call through generated bindings, as the
@@ -72,7 +73,7 @@ function packageName(toml: string | undefined): string | null {
 
 /** The entry for `name` in a TOML section (`club-kit = { path = "../kit" }`, `club-kit.workspace = true`). */
 function dependencyEntry(toml: string, section: string, name: string): string | null {
-  const body = new RegExp(`^\\s*\\[${section.replace(/\./g, "\\.")}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, "m").exec(toml)?.[1];
+  const body = new RegExp(`^\\s*\\[${escapeRegex(section)}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, "m").exec(toml)?.[1];
   if (!body) return null;
   for (const line of body.split(/\r?\n/)) {
     const m = /^\s*([\w-]+)(\.workspace)?\s*=\s*(.*)$/.exec(line);

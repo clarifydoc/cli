@@ -1,4 +1,5 @@
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * A function or Observable kept as a property of a descriptor a class declares as a literal, then called through an
@@ -50,7 +51,7 @@ export function addDescriptorCalls(analysis: FileAnalysis, raw: string): void {
 function fieldInitializerStart(raw: string, field: string, from: number, to: number, lines: number[]): number {
   const begin = lines[Math.max(0, from - 1)] ?? 0;
   const end = lines[Math.min(lines.length - 1, to)] ?? raw.length;
-  const re = new RegExp(String.raw`(?<![\w$.])` + field.replace(/\$/g, "\\$") + String.raw`\s*[!?]?\s*(?::[^=;\n]+)?=\s*(?!=)`, "g");
+  const re = new RegExp(String.raw`(?<![\w$.])` + escapeRegex(field) + String.raw`\s*[!?]?\s*(?::[^=;\n]+)?=\s*(?!=)`, "g");
   re.lastIndex = begin;
   const m = re.exec(raw);
   return m && m.index < end ? m.index + m[0].length : -1;

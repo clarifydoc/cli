@@ -1,4 +1,5 @@
 import type { InteractiveElementInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Listeners handed to a component as one object: `<ClubDialog v-bind="bindings" />` with
@@ -30,7 +31,7 @@ export function boundListeners(template: string, raw: string, script: string): I
 
 /** The body of the object literal a script binds to `name` (`const name = { … }`, `computed(() => ({ … }))`, `reactive({ … })`). */
 export function objectLiteral(script: string, name: string): string | undefined {
-  const decl = new RegExp(`(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*(?::[^=\\n]+)?=\\s*(?:computed\\s*\\(\\s*\\(\\s*\\)\\s*=>\\s*\\(?\\s*|reactive\\s*\\(\\s*)?\\{`).exec(script);
+  const decl = new RegExp(`(?:const|let|var)\\s+${escapeRegex(name)}\\s*(?::[^=\\n]+)?=\\s*(?:computed\\s*\\(\\s*\\(\\s*\\)\\s*=>\\s*\\(?\\s*|reactive\\s*\\(\\s*)?\\{`).exec(script);
   if (!decl) return undefined;
   const open = decl.index + decl[0].length - 1;
   let depth = 0;

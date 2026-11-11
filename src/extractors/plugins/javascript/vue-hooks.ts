@@ -11,6 +11,7 @@ import { addDynamicComponents } from "./dynamic-components.js";
 import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 import { libraryHoldersOf, libraryObjectProps } from "./library-callbacks.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Vue SFC preprocessing: parse the <script> block as the file's source, and
@@ -66,7 +67,7 @@ export function vuePreprocess(
         const own = new Set([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].map((f) => f.name.split(".").pop()!));
         // Never a name the component's own script keys (`pageTitle: 'Stadium'` in `data()`): that is its data.
         const leftToMixins = (name: string) =>
-          mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${name.replace(/\$/g, "\\$")}\\s*:`).test(sfc.script ?? "");
+          mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${escapeRegex(name)}\\s*:`).test(sfc.script ?? "");
         const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name) || leftToMixins(name));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
         // `<Pager :table="table" />` with `const table = useVueTable({ onPaginationChange })`: the child's `table.nextPage()` runs it.
