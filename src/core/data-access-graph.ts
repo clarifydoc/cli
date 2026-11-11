@@ -199,7 +199,13 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     for (const ds of a.busContracts ?? []) {
       const qTarget = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
       if (qTarget === null) continue;
-      contractQueues.add(ensureQueue(brokerOf(ds), qTarget, a.filePath, ds.line, ds.unresolvedReason));
+      const qId = ensureQueue(brokerOf(ds), qTarget, a.filePath, ds.line, ds.unresolvedReason);
+      contractQueues.add(qId);
+      const node = nodes.get(qId);
+      if (node) {
+        const files = (node.contractFiles ??= []);
+        if (!files.includes(a.filePath)) files.push(a.filePath);
+      }
     }
   }
   for (const id of contractQueues) {

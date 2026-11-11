@@ -249,6 +249,8 @@ export interface DataAccessNode {
   contract?: true;
   /** For "queue" nodes: a contract states it and no code publishes or consumes it. */
   unimplemented?: true;
+  /** For "queue" nodes a contract states: the contract documents that declare it (project-relative paths). */
+  contractFiles?: string[];
   /** Number of incoming edges (only meaningful for datastore nodes). */
   inboundCount: number;
   /** Number of outgoing edges (only meaningful for file nodes). */
