@@ -18,6 +18,7 @@ import { AnalysisStore, type AnalyzeSettings } from "./store.js";
 import { freshnessBanner, statusReport, type ToolContext } from "./tools/context.js";
 import { analyzeTool, healthTool, impactTool, searchTool, servicesTool, statusTool } from "./tools/overview.js";
 import { blastRadiusTool, contractTool, fileTool, routesTool, screensTool, traceTool } from "./tools/code.js";
+import { renamePlanTool } from "./tools/rename-plan.js";
 import { extractTool } from "./tools/extract.js";
 import { dataFlowsTool, dataModelTool } from "./tools/data.js";
 import { INSTRUCTIONS } from "./guidance.js";
@@ -179,6 +180,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     traceTool(ctx),
     extractTool(ctx),
     blastRadiusTool(ctx),
+    renamePlanTool(ctx),
     dataModelTool(ctx),
     dataFlowsTool(ctx),
     healthTool(ctx),

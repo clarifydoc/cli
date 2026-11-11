@@ -68,6 +68,7 @@ describe("clarifydoc MCP tools — react fixture", () => {
       "clarifydoc_trace",
       "clarifydoc_extract",
       "clarifydoc_blast_radius",
+      "clarifydoc_rename_plan",
       "clarifydoc_data_model",
       "clarifydoc_data_flows",
       "clarifydoc_health",
