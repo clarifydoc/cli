@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
+import type { RouteInfo, RouteFact, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
+import { enclosingFunction, PATH_PARAM_ROUTE, type PathParamRoute } from "./path-helpers.js";
 import { responsesOf } from "../responses.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, buildAuth, filterKind, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
@@ -235,6 +236,8 @@ interface ExpressRouteMeta {
   mountGuards?: GuardAttr[];
   /** The path is a constant (`router.get(ROUTES.CARS, h)`): a route only on a receiver the file shows is a router. */
   constantPath?: true;
+  /** The path is a parameter of the function registering it (`mountProgress(app, routePath)`): its calls bind it. */
+  pathParam?: { fn: string; index: number; routerIsParam: boolean };
 }
 const routeMeta = new WeakMap<RouteInfo, ExpressRouteMeta>();
 
@@ -338,7 +341,14 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
         const args = node.childForFieldName("arguments");
         if (args) {
           const firstArg = args.child(1); // skip '('
-          const constant = method !== "use" ? constantRoutePath(firstArg) : null;
+          // `app.get(routePath, h)` inside `function mountProgress(app, routePath)`: the path each call hands it.
+          const helper = method !== "use" && firstArg?.type === "identifier" ? enclosingFunction(node) : null;
+          const paramIndex = helper ? helper.params.indexOf(firstArg!.text) : -1;
+          const receiverNode = fn.childForFieldName("object");
+          const pathParam = helper && paramIndex >= 0
+            ? { fn: helper.name, index: paramIndex, routerIsParam: receiverNode?.type === "identifier" && helper.params.includes(receiverNode.text) }
+            : null;
+          const constant = pathParam ? `\${${firstArg!.text}}` : method !== "use" ? constantRoutePath(firstArg) : null;
           const paths = constant !== null ? [constant] :
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&
@@ -379,6 +389,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             // the handler (`router.get('/', requireAuth, async (req, res) => …)`).
             let handler: string | null = null;
             let middlewareNodes: Node[] = [];
+            let factoryHandler = false;
             if (controllerAction) {
               handler = controllerAction;
               middlewareNodes = rest;
@@ -387,6 +398,16 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             } else if (last && (last.type === "identifier" || last.type === "member_expression" || mountModule !== null)) {
               handler = last.text;
               middlewareNodes = rest.slice(0, -1);
+            } else if (last?.type === "call_expression" && method !== "use") {
+              // A handler a factory builds (`createUploadHandler({ dir })`): named by the factory. A client request's
+              // payload has the same shape (`api.post("/clubs", toPayload(club))`), so only on a proven router.
+              const callee = last.childForFieldName("function");
+              // A guard or filter a factory makes (`passport.authenticate('jwt')`, `rateLimit()`) is middleware, no handler.
+              if (callee && (callee.type === "identifier" || callee.type === "member_expression") && !guardFromMiddleware(last) && !filterKind(collapse(last.text))) {
+                handler = callee.text;
+                middlewareNodes = rest.slice(0, -1);
+                factoryHandler = true;
+              }
             }
 
             // Middleware in source order; the auth idioms among them also
@@ -442,7 +463,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               };
               if (method === "use") route.mount = true;
               if (mountModule !== null) route.mountModule = mountModule;
-              routeMeta.set(route, { receiver, guards, params, ...(constant !== null ? { constantPath: true as const } : {}) });
+              routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { constantPath: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
               routes.push(route);
             }
           }
@@ -461,8 +482,13 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  * it is not a guard; the kinds that protect or shape a request (`rateLimit()`,
  * `cors()`, `csurf()`, a validator) are inherited as `filters` instead.
  */
-export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string): void {
+export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string, facts?: RouteFact[]): void {
   dropUnprovenConstantRoutes(routes, sourceText ?? root.text);
+  // A route whose path its function is handed: where it sits, for the pass binding each call's path.
+  for (const r of routes) {
+    const p = routeMeta.get(r)?.pathParam;
+    if (p) facts?.push({ kind: PATH_PARAM_ROUTE, line: r.line, data: { fn: p.fn, index: p.index } satisfies PathParamRoute });
+  }
   if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
   if (sourceText === undefined || sourceText.includes("basePath(")) applyHonoBasePaths(root, routes);
   composeLocalMounts(routes);
@@ -528,7 +554,8 @@ function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): vo
   for (const m of sourceText.matchAll(ROUTER_FACTORY)) routers.add(m[1]!.toLowerCase());
   const kept = routes.filter((r) => {
     const meta = routeMeta.get(r);
-    if (!meta?.constantPath || (meta.receiver && routers.has(meta.receiver))) return true;
+    // A helper handed its router too (`function mountProgress(app, routePath)`) registers on whatever router its caller has.
+    if (!meta?.constantPath || meta.pathParam?.routerIsParam || (meta.receiver && routers.has(meta.receiver))) return true;
     routeMeta.delete(r);
     return false;
   });

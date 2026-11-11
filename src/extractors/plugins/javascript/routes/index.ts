@@ -5,6 +5,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
 import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
+import { collectPathHelperCalls } from "./path-helpers.js";
 import { collectRouteArrays, resolveRouteWrappers, visitReactRouterRoute } from "./react-router.js";
 import { collectNestClassGuards, visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
@@ -68,7 +69,9 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // apply to every later route on it — a file-level fact the per-node
     // visitor cannot see, so it is written after the walk.
     if (mayDeclareAdonisRoutes(sourceText)) extractAdonisChains(tree.rootNode, express);
-    applyRouterLevelGuards(tree.rootNode, express, sourceText);
+    applyRouterLevelGuards(tree.rootNode, express, sourceText, facts);
+    // Calls handing a router and a path to a helper that registers the route (path-helpers.ts).
+    if (facts) collectPathHelperCalls(tree.rootNode, sourceText, facts);
     // Fastify / hapi plugins registered under a prefix: inline ones prefix their routes here,
     // imported ones become mounts for the project mount pass.
     if (mayRegisterPlugins(sourceText)) {
