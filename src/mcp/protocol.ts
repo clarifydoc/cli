@@ -433,6 +433,34 @@ function describeTool(tool: McpTool, out: (text: string) => string) {
 /** A miss: the answer ends in a `Next: …` line. */
 const isEmpty = (text: string) => /(?:^|\n)Next: [^\n]*$/.test(text);
 
+/**
+ * Bytes per answer section: the text split at its markdown headings (`# `, `## `…), the lead before the
+ * first one named `(lead)`. Same-titled sections add up; past 24 titles the rest are `(other)`. The log
+ * only — what a client receives is untouched.
+ */
+export function sectionBytes(text: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  const add = (name: string, chunk: string) => {
+    if (!chunk) return;
+    const key = name in out || Object.keys(out).length < 24 ? name : "(other)";
+    out[key] = (out[key] ?? 0) + Buffer.byteLength(chunk, "utf8") + 1;
+  };
+  let name = "(lead)";
+  let chunk: string[] = [];
+  let fence = false;
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    const m = !fence ? /^#{1,6}\s+(.+?)\s*$/.exec(line) : null;
+    if (m) {
+      add(name, chunk.join("\n"));
+      name = m[1]!.slice(0, 60);
+      chunk = [line];
+    } else chunk.push(line);
+  }
+  add(name, chunk.join("\n"));
+  return out;
+}
+
 function logCall(tool: string, args: Record<string, unknown>, result: ToolResult, ms: number): void {
   const file = process.env.CLARIFYDOC_MCP_LOG;
   if (!file) return;
@@ -442,7 +470,7 @@ function logCall(tool: string, args: Record<string, unknown>, result: ToolResult
       return [k, text && text.length > 200 ? `${text.slice(0, 200)}… (${text.length} chars)` : v];
     }),
   );
-  const line = { at: new Date().toISOString(), tool, args: short, chars: result.text.length, ms, isError: result.isError === true, empty: isEmpty(result.text) };
+  const line = { at: new Date().toISOString(), tool, args: short, chars: result.text.length, bytes: Buffer.byteLength(result.text, "utf8"), sections: sectionBytes(result.text), ms, isError: result.isError === true, empty: isEmpty(result.text) };
   try {
     appendFileSync(file, JSON.stringify(line) + "\n");
   } catch {

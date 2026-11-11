@@ -67,6 +67,7 @@ write. That is what lets an external agent be configured as nothing but a comman
   heading; body hits in test files come after the code unless the query mentions tests. `signature=` reads parameters and
   return types from the per-file JSON of the candidates only. The tools/list byte budget is tight:
   new schema text has to pay for itself.
+- **A symbol or file hit carries a `reached from:` line** — up to three routes/screens of its file's blast-radius `traceImpact`, `(+N)` for the rest; computed in `reachSuffix` only for the hits a page shows, after ranking, so it never changes order (asserted in search-reach.test.ts). File granularity: a lower bound.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
   IS the rank — for a model reading top-down and for a search benchmark alike. A new searchable kind
@@ -107,7 +108,8 @@ write. That is what lets an external agent be configured as nothing but a comman
   description is one "Use …" sentence plus its arguments in a few words; an example call goes to `EXAMPLES` in
   [guidance.ts](guidance.ts), which only the AGENTS.md / CLAUDE.md section carries, and the instructions name
   each question's tool in a line (`brief`) — the reasons are in that section too.
-  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty) and
+  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, `bytes` and `sections` — bytes per heading-delimited part of the answer, `sectionBytes` in protocol.ts —, time, error, empty;
+  `node scripts/mcp-log-summary.mjs <log>` prints per tool the calls, bytes and each section's share) and
   the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
   `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out
   is not callable, so every mention of one — in an answer, a resource, a prompt, a tool description and the

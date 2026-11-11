@@ -150,6 +150,26 @@ function hitLine(hit: RankedCandidate, query: string): string {
   return `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}${importedAs ? ` · imported as ${importedAs}` : ""}`;
 }
 
+/** How many routes and screens a hit's "reached from" line names before it says `(+N)`. */
+const MAX_REACHED_FROM = 3;
+
+/**
+ * For a file, symbol or class hit: the routes and screens whose execution reaches its file, from the
+ * file's blast radius (an O(1) lookup, run only for the hits a page shows). Display only — ranking has
+ * already happened, and nothing here feeds back into it. File granularity: a lower bound, never exact.
+ */
+function reachSuffix(hit: RankedCandidate, loaded: LoadedAnalysis): string {
+  if (!hit.path || (hit.kind !== "symbol" && hit.kind !== "file")) return "";
+  const t = loaded.index.byFile.get(hit.path)?.blast?.traceImpact;
+  if (!t) return "";
+  const names = [...t.routes.map((r) => `${r.method ?? "ANY"} ${r.path}`), ...t.screens.map((s) => s.name)];
+  const total = Math.max(t.routeCount + t.screenCount, names.length);
+  if (total === 0) return "";
+  const shown = names.slice(0, MAX_REACHED_FROM);
+  const more = total - shown.length;
+  return `\n  reached from: ${shown.join(", ")}${more > 0 ? ` (+${more})` : ""}`;
+}
+
 function kindTag(kind: SearchKind): string {
   return `[${kind}]`;
 }
@@ -478,7 +498,7 @@ export function searchTool(ctx: ToolContext): McpTool {
             "",
             header,
             "",
-            bulletList(ranked, limit, (hit) => hitLine(hit, query), { offset }),
+            bulletList(ranked, limit, (hit) => hitLine(hit, query) + reachSuffix(hit, loaded), { offset }),
           ]),
         };
       }
@@ -492,7 +512,7 @@ export function searchTool(ctx: ToolContext): McpTool {
           header,
           "",
           ...note,
-          bulletList(ranked, limit, (hit) => hitLine(hit, query), { offset }),
+          bulletList(ranked, limit, (hit) => hitLine(hit, query) + reachSuffix(hit, loaded), { offset }),
           ...(wantBody
             ? ["", `## In function bodies and docs`, "", ...(bodyHits.length ? bodyLines(bodyHits) : ["(no further body or doc matches)"]), "", bodyNote ?? ""]
             : []),
