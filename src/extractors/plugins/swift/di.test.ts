@@ -125,6 +125,14 @@ describe("swift locals", () => {
       { name: "r5", type: "Mailer" },
       { name: "f", type: "", qualifier: "playerRepo" },
       { name: "c", type: "Cache" },
+      { name: "y", type: "", from: "PgRepo().configured()" },
+    ]);
+  });
+
+  it("reads Type.init(…) as a construction of Type", () => {
+    expect(locals('let a = Club.init(name: "x")', "let b = Club.init()!")).toEqual([
+      { name: "a", type: "Club" },
+      { name: "b", type: "Club" },
     ]);
   });
 

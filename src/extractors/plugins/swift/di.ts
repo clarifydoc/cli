@@ -412,6 +412,17 @@ export function initializerType(rhs: string): { type: string; qualifier?: string
   }
   const factory = text.match(/^(?:[A-Z]\w*)?Container\s*(?:\.\s*shared\s*)?\.\s*([a-zA-Z_]\w*)\s*(?:\([^()]*\)|\.\s*resolve\s*\(\s*\))\s*$/);
   if (factory) return { type: "", qualifier: factory[1]! };
+  // `Club.init(name: "x")` is the construction `Club(name: "x")`.
+  const explicit = /^([A-Z][\w.]*)\s*\.\s*init\s*\(/.exec(text);
+  if (explicit) {
+    let depth = 0;
+    let end = -1;
+    for (let i = explicit[0].length - 1; i < text.length && end < 0; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) end = i;
+    }
+    if (end >= 0 && /^[!?]?\s*$/.test(text.slice(end + 1))) return { type: explicit[1]! };
+  }
   const built = constructionOf(text);
   if (built && !built.cast) {
     // Keep generic arguments as written (`Repo<User>`); the linker strips them.

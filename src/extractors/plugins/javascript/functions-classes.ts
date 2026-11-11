@@ -361,6 +361,43 @@ function scanBody(
   };
 
   /**
+   * `const { coach } = club.staff()` / `const { coach } = club`: each member the pattern names, read off a value or a
+   * method's result (`from` = `club.staff().coach`, `club.coach`) — typed by the linker through the declaration of
+   * that field or return. A bare factory call (`useClubData()`) is `bindDestructured`'s.
+   */
+  const bindMembers = (pattern: Node | null, declarator: readonly Node[]): Set<string> => {
+    const bound = new Set<string>();
+    if (pattern?.type !== "object_pattern") return bound;
+    const eq = declarator.findIndex((c) => c.type === "=");
+    let value = eq >= 0 ? declarator[eq + 1] ?? null : null;
+    let awaited = false;
+    if (value?.type === "await_expression") {
+      awaited = true;
+      value = value.namedChild(0);
+    }
+    if (!value) return bound;
+    let source: string | null = null;
+    if (value.type === "call_expression") {
+      if (value.childForFieldName("function")?.type === "member_expression") source = callChainText(value, "typescript");
+    } else if (value.type === "identifier" || value.type === "member_expression") {
+      source = /^(?:this\.)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(value.text) ? value.text : null;
+    }
+    if (!source || (awaited && value.type !== "call_expression")) return bound;
+    for (const p of pattern.namedChildren) {
+      const local = p.type === "shorthand_property_identifier_pattern" ? p.text : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? p.childForFieldName("value")!.text : null;
+      const member = p.type === "shorthand_property_identifier_pattern" ? p.text : p.childForFieldName("key")?.text;
+      // Kept only where the body calls on the name: a type is of use to a receiver.
+      if (!local || !member || !/^[A-Za-z_$][\w$]*$/.test(member) || !new RegExp(`(?<![\\w$.])${escapeRegex(local)}\\s*\\??\\.`).test(body.text)) continue;
+      const entry = { local: { name: local, type: "", from: `${source}.${member}`, member: true as const, ...(awaited ? { awaited: true as const } : {}) }, annotated: false };
+      const list = bindings.get(local);
+      if (list) list.push(entry);
+      else bindings.set(local, [entry]);
+      bound.add(local);
+    }
+    return bound;
+  };
+
+  /**
    * `const { store, actions } = stores[props.kind]`: each member the pattern names, read off a record of call
    * results at a key known only at run time (`from` = `stores[].actions`) — whichever entry the key picks.
    */
@@ -571,7 +608,7 @@ function scanBody(
           }
         } else {
           const fromRecord = bindRecordMembers(name ?? null, children);
-          bindPattern(name ?? null, new Set([...bindDestructured(name ?? null, children), ...fromRecord]));
+          bindPattern(name ?? null, new Set([...bindDestructured(name ?? null, children), ...fromRecord, ...bindMembers(name ?? null, children)]));
         }
       } else if (type === "catch_clause") {
         bindPattern(node.childForFieldName("parameter"));

@@ -25,7 +25,31 @@ export function cppReadingVariant(relativePath: string, mix: Readonly<Record<str
   return CPP_SOURCE_EXTENSIONS.some((ext) => mix[ext]) ? undefined : "c-first";
 }
 
+/**
+ * The element types a `std::pair<Club, Player>` / `std::tuple<…>` return states, in order, for a structured binding
+ * (`auto [club, player] = pairOf();`). Null for any other type.
+ */
+export function cppTupleElements(returnType: string): string[] | null {
+  const m = /^(?:const\s+)?(?:std\s*::\s*)?(?:pair|tuple)\s*<([\s\S]+)>\s*[&]*$/.exec(returnType.trim());
+  if (!m) return null;
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  const body = m[1]!;
+  for (let i = 0; i <= body.length; i++) {
+    const ch = body[i];
+    if (ch === "<" || ch === "(") depth++;
+    else if (ch === ">" || ch === ")") depth--;
+    else if ((ch === "," && depth === 0) || i === body.length) {
+      out.push(body.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  return out.every(Boolean) ? out : null;
+}
+
 export const cppManifest: LanguagePluginManifest = {
+  tupleElementsOf: cppTupleElements,
   docComments: C_STYLE_DOCS,
   language: "cpp",
   family: "cfam",

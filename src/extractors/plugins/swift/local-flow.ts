@@ -87,18 +87,38 @@ export function callFrom(rhs: string, bare = false): { from: string; awaited?: b
   let text = codeOf(rhs).trim();
   const awaited = /\bawait\s/.test(text.match(/^(?:try[?!]?\s+)?(?:await\s+)?/)![0]);
   text = text.replace(/^(?:try[?!]?\s+)?(?:await\s+)?(?:try[?!]?\s+)?/, "").replace(/^self\s*\./, "");
-  const m = new RegExp(String.raw`^([A-Za-z_]\w*(?:\s*[?!]?\s*\.\s*[A-Za-z_]\w*)${bare ? "*" : "+"})\s*\(`).exec(text);
-  if (!m) return null;
-  const open = m[0].length - 1;
-  const close = closeOf(text, open);
-  const tail = text.slice(close).trim();
-  // A trailing `!`/`?` unwraps the result; anything else (an operator, a further member) is another expression.
-  if (close < 0 || !/^[!?]?$/.test(tail)) return null;
-  const path = m[1]!.replace(/\s+/g, "").replace(/[?!]\./g, ".");
-  const parts = path.split(".");
-  // A capitalized last name is a construction or a nested type, never a method.
-  if (/^[A-Z]/.test(parts.at(-1)!)) return null;
-  return { from: `${path}()`, ...(awaited ? { awaited: true } : {}) };
+  // A path of hops, each `name` or `name(…)`, joined by `.` (optional chaining dropped): `car.engine().cylinders()`.
+  const head = /^[A-Za-z_]\w*/.exec(text);
+  if (!head) return null;
+  const names = [head[0]];
+  let chain = head[0];
+  let at = head[0].length;
+  let lastCall = false;
+  let calls = 0;
+  for (;;) {
+    while (text[at] === " ") at++;
+    if (text[at] === "(") {
+      const close = closeOf(text, at);
+      if (close < 0) return null;
+      chain += "()";
+      at = close;
+      lastCall = true;
+      calls++;
+    } else lastCall = false;
+    const tail = /^\s*[?!]?\s*(?:\.\s*([A-Za-z_]\w*))/.exec(text.slice(at));
+    if (!tail) break;
+    // A name before a hop is a member; the hop after a call-less head still extends the path.
+    names.push(tail[1]!);
+    chain += `.${tail[1]!}`;
+    at += tail[0].length;
+  }
+  // A trailing `!`/`?` unwraps the result; anything else (an operator, a closure) is another expression.
+  if (!lastCall || !/^\s*[?!]?\s*$/.test(text.slice(at))) return null;
+  if (!bare && names.length < 2) return null;
+  // A capitalized hop is a construction or a nested type, never a method; `init` is a construction.
+  if (names.slice(1).some((n) => /^[A-Z]/.test(n) || n === "init")) return null;
+  if (calls === 0) return null;
+  return { from: chain, ...(awaited ? { awaited: true } : {}) };
 }
 
 export { elementType } from "./collection-types.js";

@@ -81,7 +81,7 @@ describe("C and C++ locals", () => {
   Physio twice;
   auto [home, away] = score();
   // Crate commented;
-`)).toEqual(["twice: "]);
+`)).toEqual(["home <- score()", "away <- score()", "twice: "]);
   });
 
   it("keeps a parameter's own type; a local shadowing one of another type is untold, so the parameter never answers it", () => {

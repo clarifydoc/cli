@@ -268,6 +268,8 @@ describe("Go typed locals", () => {
       { name: "r", type: "*PgRepo" },
       { name: "err", type: "error" },
       { name: "s", type: "*Svc" },
+      // A chain of calls: core follows each hop's declared return.
+      { name: "t", type: "", from: "NewSvc().With()" },
       // Another package's function: core types it by its declared result.
       { name: "u", type: "", from: "other.NewSvc()" },
     ]);
@@ -277,7 +279,10 @@ describe("Go typed locals", () => {
     expect(locals(`	a := NewConcRepo()`)).toEqual([{ name: "a", type: "", from: "NewConcRepo()" }]);
     expect(locals(`	u, err := repo.Find(id)
 	n := len(xs)
-	c := svc.Open().Conn()`)).toEqual([{ name: "u", type: "", from: "repo.Find()" }]);
+	c := svc.Open().Conn()`)).toEqual([
+      { name: "u", type: "", from: "repo.Find()" },
+      { name: "c", type: "", from: "svc.Open().Conn()" },
+    ]);
   });
 
   it("drops a name declared again with another or an unknown type", () => {

@@ -6879,10 +6879,19 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true },
+  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true; member?: true },
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || local.destructured || depth >= MAX_INITIALIZER_DEPTH) return null;
+  if (local.member) {
+    // A member the pattern reads off a value (`const { coach } = club`, `from` = `club.coach`; off a call's result,
+    // `club.staff().coach`): the declared type of that field or method, read off the declaration.
+    const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+    if (!chain || chain.length < 2 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
+    const declared = chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth);
+    if (!declared) return null;
+    return returnedPoint(ctx, declared.type, declared.file, { typeName: "", typeFile: null, consumer }, local.awaited === true);
+  }
   if (local.fromIndex !== undefined || local.element) {
     // A tuple unpacking (`a, b = repo.load()`) or a loop over a collection (`for c in self.clubs`): the element of
     // the declared type the call returns or the field states — read off the declaration, never inferred.

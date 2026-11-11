@@ -253,7 +253,23 @@ function singleCall(rhs: string): string | null {
   const text = rhs.trim().replace(/;\s*$/, "").replace(/^\(\s*\*\s*([A-Za-z_]\w*)\s*\)\./, "$1.");
   const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
   if (!m || GO_TYPE_KEYWORDS.has(m[1]!) || /^(?:make|new|len|cap|append|string|int|float64|byte|rune)$/.test(m[1]!)) return null;
-  return matchingClose(text, m[0].length - 1) === text.length - 1 ? `${m[1]}()` : null;
+  const close = matchingClose(text, m[0].length - 1);
+  if (close === text.length - 1) return `${m[1]}()`;
+  // A chain of calls — `club.Address().City()`: each further `.name(…)` (or a field read) is a hop the linker types.
+  let chain = `${m[1]}()`;
+  let at = close + 1;
+  while (at < text.length) {
+    const hop = /^\.([A-Za-z_]\w*)(\s*\()?/.exec(text.slice(at));
+    if (!hop) return null;
+    at += hop[0].length;
+    if (hop[2]) {
+      const end = matchingClose(text, at - 1);
+      if (end < 0) return null;
+      at = end + 1;
+      chain += `.${hop[1]}()`;
+    } else chain += `.${hop[1]}`;
+  }
+  return chain;
 }
 
 /**

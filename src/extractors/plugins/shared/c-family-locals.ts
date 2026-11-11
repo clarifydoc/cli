@@ -62,7 +62,7 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
     if (d.type === null && d.from === undefined) { unknown.add(d.name); return; }
     if (d.from !== undefined) {
       const calls = fromCalls.get(d.name) ?? fromCalls.set(d.name, new Set()).get(d.name)!;
-      calls.add(d.from);
+      calls.add(`${d.fromIndex ?? ""}\u0000${d.from}`);
       return;
     }
     const types = seen.get(d.name) ?? seen.set(d.name, new Set()).get(d.name)!;
@@ -70,7 +70,7 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
   };
 
   for (const raw of bodyLines) {
-    if (!/[A-Za-z_]\w*[\s*&>]+[*&\s]*[A-Za-z_]/.test(raw)) continue;
+    if (!/[A-Za-z_]\w*[\s*&>]+[*&\s]*[A-Za-z_[]/.test(raw)) continue;
     const line = blankStringLiterals(raw.replace(/\/\*.*?\*\//g, (c) => " ".repeat(c.length)), ["//"]);
     // A statement's own head: `for (…)`'s declaration is read apart from the statement it controls. In a condition
     // only one with an initializer declares (`if (Club* c = find())`); `if (a < b && c > d)` compares.
@@ -97,7 +97,10 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
       untold.add(name);
       continue;
     }
-    for (const from of calls) out.push({ name, type: "", from });
+    for (const key of calls) {
+      const [index, from] = key.split("\u0000") as [string, string];
+      out.push({ name, type: "", from, ...(index ? { fromIndex: Number(index) } : {}) });
+    }
   }
   const text = code.join("\n");
   for (const [name, heads] of aliasFroms) {
@@ -135,6 +138,8 @@ interface Declared {
   from?: string;
   /** The plain name that initializes it (`auto& q = p`, `= *p`, `= &p`). */
   alias?: string;
+  /** A structured binding's position among the names bound from that call's result. */
+  fromIndex?: number;
 }
 
 /** The declarations one statement makes: `Crate a, *b = make(), c(3)` declares three; `needsInit` in a condition. */
@@ -190,7 +195,13 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
   const name = m[2]!;
   const init = m[3]!.trim();
   if (needsInit && !/^(?:=(?!=)|:(?!:)|\{)/.test(init)) return null;
-  if (name.startsWith("[")) return [...name.slice(1, -1).matchAll(/[A-Za-z_]\w*/g)].map((n) => ({ name: n[0], type: null }));
+  if (name.startsWith("[")) {
+    const names = [...name.slice(1, -1).matchAll(/[A-Za-z_]\w*/g)].map((n) => n[0]);
+    // `auto [club, player] = pairOf();`: each name is the element at its position of what the call is declared to
+    // return (a pair or tuple the manifest's `tupleElementsOf` reads); typed only when the declaration states it.
+    const from = typeText === "auto" && init.startsWith("=") ? initializerCall(init.slice(1).trim()) : null;
+    return names.map((n, i) => (from ? { name: n, type: null, from, fromIndex: i } : { name: n, type: null }));
+  }
   if (NOT_A_TYPE.has(name) || SPECIFIERS.has(name)) return null;
   // What may follow a declared name: nothing, an initializer, an array bound, a range-for's `:`.
   if (init && !/^(?:=(?!=)|\(|\{|\[|:(?!:))/.test(init)) return null;
