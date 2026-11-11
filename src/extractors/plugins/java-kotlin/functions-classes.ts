@@ -12,6 +12,7 @@ import { simpleTypeName } from "../../shared/type-parser.js";
 import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotations.js";
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
+import { withCallNarrowing } from "./call-hooks.js";
 import { typeVariableArgs } from "./arg-kinds.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
@@ -535,7 +536,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // A Javalin `Context` / Spark `Request` handler method: what its body reads off the request.
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
-    const calls = extractCalls(body, language);
+    const calls = withCallNarrowing(elements?.narrowedOf, () => extractCalls(body, language));
     if (elements) {
       for (const call of calls) {
         const type = elements.receiverOf(call);

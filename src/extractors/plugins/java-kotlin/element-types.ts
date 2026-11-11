@@ -215,6 +215,8 @@ export interface ElementFacts {
   locals: LocalType[];
   /** Types the receiver of a call stated as an element access names (`cars.get(0).wash()` → `Car`). */
   receiverOf(call: CallInfo): string | null;
+  /** The type an `is`/`instanceof` arm around the call gives its receiver name, null outside every arm. */
+  narrowedOf?(call: CallInfo): string | null;
 }
 
 /**
@@ -506,8 +508,13 @@ export function jvmElementFacts(
       }
       case "when_entry": {
         if (language !== "kotlin") break;
-        const test = n.namedChildren.find((c) => c.type === "when_condition")?.namedChildren.find((c) => c.type === "type_test");
-        const subject = n.parent?.namedChildren.find((c) => c.type === "when_subject")?.namedChildren[0];
+        const condition = n.namedChildren.find((c) => c.type === "when_condition");
+        const whenSubject = n.parent?.namedChildren.find((c) => c.type === "when_subject")?.namedChildren[0];
+        // A subject-less `when { x is Club -> … }`: the entry's own condition is the test and names the subject.
+        const single = n.namedChildren.filter((c) => c.type === "when_condition").length === 1;
+        const own = whenSubject || !single ? undefined : condition?.namedChildren.find((c) => c.type === "check_expression");
+        const test = own ?? condition?.namedChildren.find((c) => c.type === "type_test");
+        const subject = whenSubject ?? own?.namedChildren[0];
         const type = test?.namedChildren.find((c) => c.type === "user_type")?.text;
         const cls = type ? classOf(type) : null;
         const region = n.namedChildren.find((c) => c.type === "control_structure_body");
@@ -573,7 +580,13 @@ export function jvmElementFacts(
     if (!/[([]/.test(split.receiver)) return null;
     return valueOfChain(split.receiver, rootState, rules);
   };
-  return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf } : null;
+  const narrowedOf = (call: CallInfo): string | null => {
+    if (call.receiverType) return null;
+    const split = splitCallName(call.name);
+    if (!split || !/^[A-Za-z_$][\w$]*$/.test(split.receiver) || scopedType(split.receiver, call) !== undefined) return null;
+    return narrowedAt(split.receiver, call);
+  };
+  return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf, ...(narrowed.size > 0 ? { narrowedOf } : {}) } : null;
 }
 
 /** A Kotlin branch body that always leaves the block: its last statement is a `return`, `throw`, `break` or `continue`. */

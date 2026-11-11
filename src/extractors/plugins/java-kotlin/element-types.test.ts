@@ -189,3 +189,49 @@ public class Table {
     expect(targets(summary, "Row.work", "squad.sign")).toEqual(["Squad.sign:injection"]);
   });
 });
+
+describe("JVM narrowing keeps one call per arm", () => {
+  let summary: ProjectAnalysis;
+  let done: () => Promise<void>;
+  beforeAll(async () => {
+    ({ summary, done } = await scan({
+      "league/Club.java": "package league;\npublic class Club { public void save() {} }\n",
+      "league/Player.java": "package league;\npublic class Player { public void save() {} }\n",
+      "league/Garage.java": "package league;\npublic class Garage { public void save() {} }\n",
+      "league/Registry.java": `package league;
+public class Registry {
+  void arms(Object x) {
+    if (x instanceof Club c) { c.save(); } else if (x instanceof Player p) { p.save(); }
+  }
+  void same(Object x) {
+    if (x instanceof Club) { ((Club) x).save(); }
+  }
+  void outside(Object x) { if (x instanceof Club c) { c.save(); } x.save(); }
+}
+`,
+      "league/Roster.kt": `package league
+class Roster {
+  fun subject(x: Any) { when (x) { is Club -> x.save(); is Player -> x.save(); else -> {} } }
+  fun subjectless(x: Any) { when { x is Club -> x.save(); x is Player -> x.save() } }
+  fun outside(x: Any) { if (x is Club) { x.save() }; x.save() }
+}
+`,
+    }));
+  });
+  afterAll(async () => { await done(); });
+
+  const saves = (from: string): string[] =>
+    summary.symbolLinks.filter((l) => l.sourceSymbol === from && /(^|\.)save$/.test(l.callName ?? "")).map((l) => l.targetSymbol).sort();
+
+  it("Java instanceof arms link each save to its own class", () => {
+    expect(saves("Registry.arms")).toEqual(["Club.save", "Player.save"]);
+  });
+  it("Kotlin when-is arms, with and without a subject, keep two calls", () => {
+    expect(saves("Roster.subject")).toEqual(["Club.save", "Player.save"]);
+    expect(saves("Roster.subjectless")).toEqual(["Club.save", "Player.save"]);
+  });
+  it("a call outside the narrowed region gets no narrowed type, and no unrelated class is linked", () => {
+    expect(saves("Registry.outside")).toEqual(["Club.save"]);
+    expect(saves("Roster.outside")).toEqual(["Club.save"]);
+  });
+});

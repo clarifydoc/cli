@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { jvmArgOriginsOf } from "./arg-origins.js";
+import type { CallInfo } from "../../../types/analysis.js";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { containerLookup, expressionFact } from "./di-expressions.js";
@@ -123,6 +124,8 @@ const JAVA_NESTED_SCOPE_TYPES = [
  * hand is not the one a container registration would substitute.
  */
 function javaReceiverType(node: Node): { type: string; qualifier?: string } | null {
+  const narrowed = narrowedReceiver(node);
+  if (narrowed) return narrowed;
   const recv = node.children[0];
   if (!recv || (recv.type !== "method_invocation" && recv.type !== "parenthesized_expression")) return null;
   if (node.children[1]?.type !== ".") return null;
@@ -153,6 +156,8 @@ function proxyFactoryType(recv: Node): { type: string } | null {
 
 /** Kotlin: `ctx.getBean(Foo::class.java).m()`, `get<Foo>().m()`, `(ctx.getBean("n") as Foo).m()`. */
 function kotlinReceiverType(node: Node): { type: string; qualifier?: string } | null {
+  const narrowed = narrowedReceiver(node);
+  if (narrowed) return narrowed;
   const callee = node.children[0];
   if (callee?.type !== "navigation_expression") return null;
   const recv = callee.children[0];
@@ -164,6 +169,31 @@ function lookupType(recv: Node): { type: string; qualifier?: string } | null {
   const fact = recv.type === "parenthesized_expression" ? expressionFact(recv) : containerLookup(recv);
   if (!fact?.type || fact.constructed) return null;
   return fact.qualifier ? { type: fact.type, qualifier: fact.qualifier } : { type: fact.type };
+}
+
+/**
+ * The narrowing the method being read is under: `x.save()` inside `x instanceof Club` / `is Club` is a call on a
+ * `Club`. The call extractor holds calls apart by receiver type, so the arms of one chain — `is Club -> x.save()`,
+ * `is Player -> x.save()` — stay two calls only when the hook states each type while the walk runs.
+ */
+let activeNarrowing: ((call: CallInfo) => string | null) | null = null;
+
+export function withCallNarrowing<T>(narrowedOf: ((call: CallInfo) => string | null) | undefined, run: () => T): T {
+  const previous = activeNarrowing;
+  activeNarrowing = narrowedOf ?? null;
+  try {
+    return run();
+  } finally {
+    activeNarrowing = previous;
+  }
+}
+
+function narrowedReceiver(node: Node): { type: string } | null {
+  if (!activeNarrowing) return null;
+  const name = resolveJvmCallName(node);
+  if (!name) return null;
+  const type = activeNarrowing({ name, kind: "internal", target: null, line: node.startPosition.row + 1, column: node.startPosition.column });
+  return type ? { type } : null;
 }
 
 export const javaCallHooks: CallExtractionHooks = {

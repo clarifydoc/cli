@@ -1075,7 +1075,12 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
     if (!name || (!/[.:>]/.test(name) && isControlFlowKeyword(shortName))) return;
     // Calls of one name with different keys stay separate (two templates rendered), and so do calls
     // of one name on types the name does not spell (`new.perform` on two classes a block constructs).
-    const unspelled = receiver?.receiverType && !name.includes(receiver.receiverType) ? receiver.receiverType : undefined;
+    // A name that spells the type exactly (`Club.save` on `Club`, `league::Club.save`) states it already; a name that
+    // merely contains it (`ClubService.save` on `Club`) does not.
+    const stated = receiver?.receiverType;
+    const spelledReceiver = stated ? name.replace(/(?:\.|::|->)[^.:>]*$/, "") : "";
+    const spells = (r: string): boolean => r === stated || r.endsWith(`.${stated}`) || r.endsWith(`::${stated}`) || r.endsWith(`->${stated}`);
+    const unspelled = stated && name !== stated && !(spelledReceiver !== name && spells(spelledReceiver)) ? stated : undefined;
     const base = receiver?.key ? `${name}\0${receiver.key}` : unspelled ? `${name}\0${unspelled}` : name;
     const args = receiver?.args;
     const seenKey = args ? `${base}\0(${args.argCount}${args.templateArgs ? `<${args.templateArgs.join(",")}>` : ""}:${args.argKinds?.join(",") ?? ""})` : base;
