@@ -358,6 +358,7 @@ instead of interleaving with it.
 | `clarifydoc_file` | Everything about one file: functions, complexity, data access, callers, findings, the decisions that name it; flagged when the file changed since the analysis |
 | `clarifydoc_trace` | Callers/callees of a symbol, N hops, plus the data effects it reaches; `to=` for the path between two symbols |
 | `clarifydoc_extract` | One function's source and the functions it calls, cut to a token budget; with `package=`, an installed package's exported API at the installed version |
+| `clarifydoc_rename_plan` | What renaming a function or class touches: the definition and every caller as exact `file:line:col` spans, the imports and exports naming it; refused when any link is inferred or ambiguous. Writes nothing |
 | `clarifydoc_blast_radius` | What breaks if a file changes — dependents, screens/routes/entities reached |
 | `clarifydoc_data_model` | Entities/tables, columns, relations, and the functions that read/write them |
 | `clarifydoc_data_flows` | Route/screen → data effect rows (e.g. which endpoints reach a DB write) |
