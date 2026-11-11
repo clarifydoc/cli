@@ -90,3 +90,72 @@ describe("C++ overloads", () => {
       .toEqual(["basic_string", "long", "Club", "string", "vector<Club>", "long", "boolean", "float"]);
   });
 });
+
+const LOCALS = `struct Club { int id; };
+struct Player { int id; };
+void record(const Club& club) { }
+void record(int goals) { }
+void sign(const Player& p) { }
+void sign(int n) { }
+void play() {
+  Club c;
+  record(c);
+}
+void viaAuto() {
+  auto c = Club();
+  record(c);
+}
+void viaPointer(Club* c) {
+  record(*c);
+}
+void viaParam(const Club& c, int n) {
+  record(c);
+  record(n);
+}
+void viaDeclAndInit() {
+  Club c{};
+  Player p;
+  record(c);
+  sign(p);
+}
+class Season {
+  Club club;
+  int rounds;
+  void open() {
+    record(club);
+    record(rounds);
+  }
+  void close() {
+    record(this->club);
+  }
+};
+void viaSmart() {
+  std::unique_ptr<Club> u;
+  record(*u);
+}
+`;
+
+describe("C++ overloads, typed variables", () => {
+  const run = () => {
+    const parsed = readCpp(LOCALS);
+    expect(parsed.syntaxErrors).toBe(0);
+    const a = extractWithRegex(LOCALS, "league/club.cpp", "cpp", undefined, parsed);
+    return buildSymbolLinks([a]).filter((l) => /record|sign/.test(l.callName));
+  };
+  const at = (links: ReturnType<typeof run>, line: number) => links.filter((l) => l.sourceLine === line).map((l) => l.targetLine);
+  it("chooses by a typed local, an auto local, a dereferenced pointer, a parameter and a field", () => {
+    const links = run();
+    expect(at(links, 9)).toEqual([3]);
+    expect(at(links, 13)).toEqual([3]);
+    expect(at(links, 16)).toEqual([3]);
+    expect(at(links, 19)).toEqual([3]);
+    expect(at(links, 20)).toEqual([4]);
+    expect(at(links, 25)).toEqual([3]);
+    expect(at(links, 26)).toEqual([5]);
+    expect(at(links, 32)).toEqual([3]);
+    expect(at(links, 33)).toEqual([4]);
+    expect(at(links, 36)).toEqual([3]);
+    // A smart pointer's pointee is not read off its declared type: the call stays a tie.
+    expect(links.find((l) => l.sourceLine === 41)?.overloadsFit).toBe(2);
+  });
+});

@@ -1150,7 +1150,7 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
     if (fits.length === 1) return { line: fits[0]!.line };
     if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
       const typeKey = fits[0]!.typeKey;
-      const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey) : k));
+      const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey, (t) => typesOf().ancestors(t) !== null) : k));
       const best = bestOverload(kinds, fits.map((o) => ({
         types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
         variadic: o.variadic,
@@ -1207,12 +1207,24 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
   return touched;
 }
 
+/** `auto c = Club(3);`: the one initializer of a local, a call written as the construction of a class the project declares. */
+function constructedType(locals: readonly { type: string; from?: string }[] | undefined, isProjectClass: (t: string) => boolean): string | undefined {
+  if (!locals || locals.length !== 1 || locals[0]!.type || !locals[0]!.from) return undefined;
+  const name = /^([A-Za-z_]\w*)\s*[({]/.exec(locals[0]!.from)?.[1];
+  return name && isProjectClass(name) ? name : undefined;
+}
+
 /** A variable argument's type key, from the calling function's parameters and typed locals, then its class's fields; `?` when none declares it. */
-function variableKind(name: string, site: { fn: FunctionInfo; cls: ClassInfo | null }, typeKey: (t: string) => string): string {
+function variableKind(written: string, site: { fn: FunctionInfo; cls: ClassInfo | null }, typeKey: (t: string) => string, isProjectClass: (t: string) => boolean): string {
+  // `*name`: what a pointer to a class points at; an iterator or a smart pointer states nothing the overloads compare.
+  const dereferenced = written.startsWith("*");
+  const name = dereferenced ? written.slice(1) : written;
   const declared = site.fn.params.find((p) => p.name === name && !p.isReceiver)?.type
     ?? site.fn.localTypes?.find((l) => l.name === name && l.type)?.type
+    ?? constructedType(site.fn.localTypes?.filter((l) => l.name === name), isProjectClass)
     ?? site.cls?.properties.find((p) => p.name === name)?.type;
-  return declared ? typeKey(declared) : "?";
+  const key = declared ? typeKey(declared) : "?";
+  return dereferenced && !isProjectClass(key) ? "?" : key;
 }
 
 /** The project's classes by simple name, and each one's supertypes as far as the project declares them. */

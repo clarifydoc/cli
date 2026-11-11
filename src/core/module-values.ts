@@ -272,6 +272,47 @@ export function resolveTargetRefs(analyses: readonly FileAnalysis[], lookup: Mod
 }
 
 /**
+ * Container registrations whose profile names a constant (`DiBinding.conditional.profiles`: `@Profile(Profiles.PROD)`
+ * → `${Profiles.PROD}`) take the name the declaring class states. A profile nothing states is dropped, never guessed;
+ * a registration left with no profile keeps its bare condition, and one left with only negated profiles (`!prod`) is
+ * a default — on unless named — so it is unconditional. Returns the number of profiles filled.
+ */
+export function resolveBindingConditions(analyses: readonly FileAnalysis[], lookup: ModuleValueLookup): number {
+  let n = 0;
+  for (const a of analyses) {
+    for (const b of a.diBindings ?? []) {
+      if (!b.conditional?.profiles?.some((p) => p.includes("${"))) continue;
+      // A class-level condition is one object shared by its beans: each takes its own copy.
+      const c = (b.conditional = { ...b.conditional });
+      let filledHere = 0;
+      const profiles: string[] = [];
+      let incomplete = false;
+      for (const p of c.profiles ?? []) {
+        if (!p.includes("${")) { profiles.push(p); continue; }
+        let unknown = false;
+        const filled = p.replace(HOLE, (_h, inner: string) => {
+          const v = lookup(a.filePath, inner.trim());
+          if (v === null || v.includes("${")) { unknown = true; return ""; }
+          return v;
+        });
+        if (unknown || !filled.replace(/^!/, "")) { incomplete = true; continue; }
+        profiles.push(filled);
+        filledHere++;
+      }
+      // A list with a name nothing states is no list: the registration is conditional on a profile we cannot name.
+      if (profiles.length > 0 && !incomplete) {
+        c.profiles = profiles;
+        n += filledHere;
+      }
+      else delete c.profiles;
+      if (c.profiles?.every((x) => x.startsWith("!")) && !c.condition) delete b.conditional;
+      else if (!c.profiles && !c.condition) c.condition = "Profile";
+    }
+  }
+  return n;
+}
+
+/**
  * Routes whose path names another module's constants (`RouteInfo.pathTemplate`:
  * `@GetMapping(ApiPaths.CLUB)` → `${ApiPaths.CLUB}`) take the path the
  * defining modules state. What nothing states is never guessed away — the

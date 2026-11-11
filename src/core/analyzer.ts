@@ -170,7 +170,7 @@ import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
 import { buildImportIndex, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
-import { buildModuleValueLookup, resolveRouteTemplates, resolveTargetRefs } from "./module-values.js";
+import { buildModuleValueLookup, resolveBindingConditions, resolveRouteTemplates, resolveTargetRefs } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
@@ -1250,6 +1250,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // A channel or target named by another module's constant (`Topic: kafka.Topic`).
   const valueRefCount = resolveTargetRefs(allAnalyses, moduleValue);
   if (valueRefCount > 0 && verbose) progress.detail(`  targets named by another module's value: ${valueRefCount}`);
+  // A registration's profile naming a constant (`@Profile(Profiles.PROD)`).
+  const profileCount = resolveBindingConditions(allAnalyses, moduleValue);
+  if (profileCount > 0 && verbose) progress.detail(`  profiles named by a constant: ${profileCount}`);
   // A route path naming another module's constant (`@GetMapping(ApiPaths.CLUB)`).
   const routeTemplateCount = resolveRouteTemplates(allAnalyses, moduleValue);
   if (routeTemplateCount > 0 && verbose) progress.detail(`  route paths named by another module's value: ${routeTemplateCount}`);

@@ -143,7 +143,7 @@ function conditionOf(anns: Node[]): DiBinding["conditional"] | undefined {
   for (const a of anns) {
     const n = annotationName(a);
     if (!n) continue;
-    if (n === "Profile") profiles = [...(profiles ?? []), ...(annotationValues(a, ["value"]) ?? [])];
+    if (n === "Profile") profiles = [...(profiles ?? []), ...(annotationValues(a, ["value"], true, true) ?? [])];
     else if (n.startsWith("Conditional") && n !== "ConditionalOnMissingBean") condition ??= n;
   }
   if (!profiles && !condition) return undefined;

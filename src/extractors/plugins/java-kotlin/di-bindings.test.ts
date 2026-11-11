@@ -113,6 +113,29 @@ class TestGarageConfig {
     ]);
   });
 
+  it("reads a profile named by a constant as a hole a project pass fills", async () => {
+    expect(await factsOf(`@Repository @Profile(PROD)
+class A implements ClubRepo {}
+@Repository @Profile(Profiles.PROD)
+class B implements ClubRepo {}
+@Repository @Profile({Profiles.PROD, "test"})
+class C implements ClubRepo {}
+@Repository @Profile(value = "demo")
+class D implements ClubRepo {}`, "java")).toMatchObject([
+      { implementation: "A", conditional: { profiles: ["${PROD}"] } },
+      { implementation: "B", conditional: { profiles: ["${Profiles.PROD}"] } },
+      { implementation: "C", conditional: { profiles: ["${Profiles.PROD}", "test"] } },
+      { implementation: "D", conditional: { profiles: ["demo"] } },
+    ]);
+    expect(await factsOf(`@Repository @Profile(Profiles.PROD)
+class E(val x: Int) : ClubRepo
+@Repository @Profile([Profiles.PROD, "test"])
+class F : ClubRepo`, "kotlin")).toMatchObject([
+      { implementation: "E", conditional: { profiles: ["${Profiles.PROD}"] } },
+      { implementation: "F", conditional: { profiles: ["${Profiles.PROD}", "test"] } },
+    ]);
+  });
+
   it("registers the declared type itself when the body is no single construction — so it still competes", async () => {
     expect(await factsOf(`class C {
   @Bean Notifier sms() { return factory.create(); }

@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { constantString as constantExpression } from "./constant-expr.js";
 import { annotationArgsNode, isAnnotationNode } from "./routes/spring.js";
 
 /**
@@ -91,9 +92,11 @@ function annotationArgs(ann: Node): { positional: Node[]; named: Map<string, Nod
  * literal yields its content, an array (`{"a","b"}`, `["a","b"]`,
  * `arrayOf(…)`) each element, a class literal its simple type name, and any
  * other expression (a constant) its source text — the same text the other
- * side of the binding spells it with. Null when the argument is absent.
+ * side of the binding spells it with. With `holes`, a constant spelled
+ * `NAME` or `Type.NAME` (also inside a concatenation) is a `${…}` hole instead,
+ * which a project pass fills from the class that declares it. Null when the argument is absent.
  */
-export function annotationValues(ann: Node, keys: readonly string[], positional = true): string[] | null {
+export function annotationValues(ann: Node, keys: readonly string[], positional = true, holes = false): string[] | null {
   const { positional: pos, named } = annotationArgs(ann);
   let node: Node | undefined = positional ? pos[0] : undefined;
   if (!node) {
@@ -102,7 +105,7 @@ export function annotationValues(ann: Node, keys: readonly string[], positional 
       if (node) break;
     }
   }
-  return node ? expressionValues(node) : null;
+  return node ? expressionValues(node, holes) : null;
 }
 
 /** True when the annotation has an argument named `key` whose source text is `text` (`autowireCandidate = false`). */
@@ -111,7 +114,11 @@ export function annotationArgIs(ann: Node, key: string, text: string): boolean {
 }
 
 /** Constant values of an argument expression (see `annotationValues`). */
-export function expressionValues(node: Node): string[] {
+export function expressionValues(node: Node, holes = false): string[] {
+  if (holes && node.type !== "string_literal") {
+    const text = constantExpression(node);
+    if (text !== null) return [text];
+  }
   switch (node.type) {
     case "string_literal": {
       const s = constantString(node);
@@ -120,7 +127,7 @@ export function expressionValues(node: Node): string[] {
     case "element_value_array_initializer":
     case "collection_literal":
     case "array_initializer":
-      return node.namedChildren.flatMap(expressionValues);
+      return node.namedChildren.flatMap((c) => expressionValues(c, holes));
     case "class_literal":
     case "callable_reference":
     case "navigation_expression": {
@@ -133,7 +140,7 @@ export function expressionValues(node: Node): string[] {
       const callee = node.children[0];
       if (callee?.type === "simple_identifier" && /^(?:arrayOf|listOf|setOf)$/.test(callee.text)) {
         const args = node.children.find((c) => c.type === "call_suffix")?.children.find((c) => c.type === "value_arguments");
-        return (args?.namedChildren ?? []).flatMap((v) => (v.namedChildren.length > 0 ? expressionValues(v.namedChildren[v.namedChildren.length - 1]!) : []));
+        return (args?.namedChildren ?? []).flatMap((v) => (v.namedChildren.length > 0 ? expressionValues(v.namedChildren[v.namedChildren.length - 1]!, holes) : []));
       }
       break;
     }

@@ -548,6 +548,9 @@ function argumentKind(clause: InitializerClauseContext, stream: readonly Token[]
   const body = tokens.length === 2 && (tokens[0]!.type === CPP14Lexer.Minus || tokens[0]!.type === CPP14Lexer.Plus) ? tokens.slice(1) : tokens;
   if (body.length === 0) return "?";
   if (body.every((t) => t.type === CPP14Lexer.StringLiteral)) return /^"/.test(body[0]!.text ?? "") ? "string" : "?";
+  // `*club` is `@*club` (a dereferenced variable: the linker takes it only when the variable's type is a class of the project, never an iterator or smart pointer) and `this->club` is the variable `club`.
+  if (body.length === 2 && body[0]!.type === CPP14Lexer.Star && body[1]!.type === CPP14Lexer.Identifier) return `@*${body[1]!.text}`;
+  if (body.length === 3 && body[0]!.type === CPP14Lexer.This && body[1]!.type === CPP14Lexer.Arrow && body[2]!.type === CPP14Lexer.Identifier) return `@${body[2]!.text}`;
   if (body.length !== 1) return "?";
   const token = body[0]!;
   const t = (token.text ?? "").toLowerCase();

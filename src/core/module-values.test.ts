@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyAnalysis, type FileAnalysis, type ImportInfo, type Language } from "../types/analysis.js";
 import { buildImportIndex } from "./import-index.js";
-import { buildModuleValueLookup, resolveTargetRefs } from "./module-values.js";
+import { buildModuleValueLookup, resolveBindingConditions, resolveTargetRefs } from "./module-values.js";
 import { buildClassIndex } from "./class-index.js";
 import "../extractors/registry.js";
 
@@ -91,5 +91,21 @@ describe("module values across files", () => {
     const analyses = [kafka, checkout];
     expect(resolveTargetRefs(analyses, lookup(analyses))).toBe(1);
     expect(checkout.dataSources.map((d) => d.target)).toEqual(["matches", null]);
+  });
+});
+
+describe("profiles named by a constant", () => {
+  const binding = (profiles: string[], condition?: string) => ({
+    service: "ClubRepo", implementation: "ProdClubRepo", line: 1, via: "@Repository", conditional: { profiles, ...(condition ? { condition } : {}) },
+  });
+  it("fills a constant another file states, keeps a literal, and leaves a list with an unknown name on the bare condition", () => {
+    const profiles = file("league/Profiles.kt", "kotlin", { PROD: "prod", NEGATED: "dev" });
+    const repo = { ...file("league/Repo.kt", "kotlin", null), diBindings: [binding(["${PROD}", "test"]), binding(["${GONE}", "test"]), binding(["!${NEGATED}"])] } as FileAnalysis;
+    const n = resolveBindingConditions([profiles, repo], lookup([profiles, repo]));
+    expect(n).toBe(2);
+    expect(repo.diBindings![0]!.conditional).toEqual({ profiles: ["prod", "test"] });
+    expect(repo.diBindings![1]!.conditional).toEqual({ condition: "Profile" });
+    // Only a negated profile: the bean is a default, on unless named.
+    expect(repo.diBindings![2]!.conditional).toBeUndefined();
   });
 });
