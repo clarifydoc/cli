@@ -326,9 +326,6 @@ export function collectNestClassGuards(root: Node, routes: readonly RouteInfo[],
 /** NestJS: a class-level guard a controller inherits from its base class. */
 export const nestInheritedGuards = inheritedClassGuards("nest-inherited-guards", ["typescript", "javascript"]);
 
-/** A route whose controller prefix is an enum member (`@Controller(RouteKey.Asset)`), for `nestPrefixResolver`. */
-export const NEST_PREFIX_FACT = "nest-prefix-ref";
-
 /** Inspect a single node for a NestJS HTTP-verb decorator. */
 export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   if (node.type !== "decorator") return;
@@ -374,7 +371,6 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
       ? joinPath(scope.prefixRef ? `\${${scope.prefixRef}}` : scope.prefix, template ?? path)
       : undefined;
     const params = methodParams.flatMap((p) => paramOf(p, fullPath) ?? []);
-    if (scope.prefixRef) facts?.push({ kind: NEST_PREFIX_FACT, line, data: { ref: scope.prefixRef, path: fullPath } });
     const route: RouteInfo = {
       path: fullPath,
       ...(pathTemplate !== undefined ? { pathTemplate } : {}),
@@ -398,54 +394,3 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
     routes.push(route);
   }
 }
-
-/**
- * `@Controller(RouteKey.Asset)` where `enum RouteKey { Asset = 'assets' }` sits
- * in another file: every route of that controller is served under the member's
- * value. The enum is the one of that name in the controller's sub-project, else
- * in the project; a name two enums share there is left alone.
- */
-export const nestPrefixResolver: RouteResolver = {
-  id: "nest-enum-prefix",
-  languages: ["typescript", "javascript"],
-  priority: 40,
-  resolve(analyses: FileAnalysis[]): void {
-    const pending = analyses.filter((a) => a.routeFacts?.some((f) => f.kind === NEST_PREFIX_FACT));
-    if (pending.length === 0) return;
-    const enums = new Map<string, Array<{ project: string | undefined; values: Record<string, string> }>>();
-    for (const a of analyses) {
-      for (const c of a.classes) {
-        if (c.kind !== "enum" || !c.fieldValues) continue;
-        (enums.get(c.name) ?? enums.set(c.name, []).get(c.name)!).push({ project: a.projectId, values: c.fieldValues });
-      }
-    }
-    for (const a of pending) {
-      for (const f of a.routeFacts!) {
-        if (f.kind !== NEST_PREFIX_FACT) continue;
-        const { ref, path } = f.data as { ref: string; path: string };
-        const [enumName, member] = ref.split(".") as [string, string];
-        const all = enums.get(enumName) ?? [];
-        const local = all.filter((e) => e.project === a.projectId);
-        const pick = local.length > 0 ? local : all;
-        if (pick.length !== 1) continue;
-        const prefix = pick[0]!.values[member];
-        if (prefix === undefined) continue;
-        // The project pass could not follow the member (the enum sits behind an import it cannot resolve): it left
-        // the tail under `constant:${ref}`, or — with no tail — the hole in the path.
-        const hole = `\${${ref}}`;
-        for (const r of a.routes) {
-          if (r.line !== f.line) continue;
-          if (r.prefixUnresolved === `constant:${hole}`) {
-            r.path = joinPath(prefix, r.path);
-            delete r.prefixUnresolved;
-          } else if (r.path.includes(hole)) {
-            r.path = joinPath(prefix, r.path.replace(hole, ""));
-            const left = r.pathUnresolved?.filter((u) => u !== ref);
-            if (left?.length) r.pathUnresolved = left;
-            else delete r.pathUnresolved;
-          } else if (r.path === path && !r.pathTemplate) r.path = joinPath(prefix, path);
-        }
-      }
-    }
-  },
-};

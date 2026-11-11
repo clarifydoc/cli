@@ -55,6 +55,8 @@ export const REPORTS: Record<ReportKey, ReportConfig> = {
   [ReportKey.fixtures]: { title: 'Fixtures', detailsPath: 'fixtures/upcoming' },
 };`),
     ).toEqual({
+      "ReportKey.squad": "squad",
+      "ReportKey.fixtures": "fixtures",
       "REPORTS.squad.detailsPath": "squad",
       "REPORTS.fixtures.detailsPath": "fixtures/upcoming",
     });

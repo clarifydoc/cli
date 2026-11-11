@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
 
 /** Cheap gate: a string literal containing a `/` somewhere in the file, or a name like a route path or a table of them. */
-const URLISH_LITERAL = /['"`][^'"`\n]*\/|\b\w*(?:[pP]ath|[rR]oute)\s*:|\b\w*(?:[pP]aths|[rR]outes|PATHS|ROUTES|[pP]refix(?:es)?|PREFIX(?:ES)?)\s*[:=]/;
+const URLISH_LITERAL = /['"`][^'"`\n]*\/|\b\w*(?:[pP]ath|[rR]oute)\s*:|\b\w*(?:[pP]aths|[rR]outes|PATHS|ROUTES|[pP]refix(?:es)?|PREFIX(?:ES)?)\s*[:=]|\benum\b/;
 /**
  * A member whose value is a route path even without a `/`: one named like a path (`detailsPath: 'squad'`), or
  * any member of a table of paths, routes or prefixes (`ClubPaths.DETAIL = ':id'`, `PREFIXES.legacy = 'legacy'`)
@@ -95,7 +95,12 @@ export function extractModuleValues(tree: Tree, sourceText: string): Record<stri
     });
   const out: Record<string, string> = {};
   let kept = 0;
+  // A string enum's members are values too, a controller prefix among them (`@Controller(RouteKey.Club)`):
+  // kept whatever they look like, so core can fill a reference whose import it cannot follow.
+  let members = 0;
+  for (const [key, value] of enumValues) if (members++ < 100) out[key] = value;
   for (const [key, value] of raw) {
+    if (key in out) continue;
     const resolved = resolve(value, 0);
     // An endpoint table: URL-shaped values, API versions (`'v1'`) that URLs splice in, and route paths a member
     // names — `''` too, an index route's (`dashboard: { path: '' }` under `/app`).

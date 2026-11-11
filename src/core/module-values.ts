@@ -167,10 +167,35 @@ export function buildModuleValueLookup(
     return null;
   };
 
+  /**
+   * `Enum.member` that no import or scope reached (an alias path the resolver cannot follow): the ONE
+   * module of the caller's sub-project whose value table has that head name. A head two modules
+   * declare, or one only another sub-project declares, fills nothing.
+   */
+  let headOwners: Map<string, FileAnalysis[]> | null = null;
+  const headTable = (a: FileAnalysis, expr: string): { value: string; file: string } | null => {
+    const dot = expr.indexOf(".");
+    if (dot < 0) return null;
+    if (!headOwners) {
+      headOwners = new Map();
+      for (const f of analyses) {
+        if (!f.moduleValues) continue;
+        const heads = new Set(Object.keys(f.moduleValues).filter((k) => k.includes(".")).map((k) => k.slice(0, k.indexOf("."))));
+        for (const h of heads) (headOwners.get(h) ?? headOwners.set(h, []).get(h)!).push(f);
+      }
+    }
+    const family = extensionFamily(a.filePath);
+    const fromTest = isTestFile(a.filePath, a.language);
+    const owners = (headOwners.get(expr.slice(0, dot)) ?? []).filter((f) => f.projectId === a.projectId && extensionFamily(f.filePath) === family && (fromTest || !isTestFile(f.filePath, f.language)));
+    if (owners.length !== 1 || owners[0]!.filePath === a.filePath) return null;
+    const v = owners[0]!.moduleValues?.[expr];
+    return v === undefined ? null : { value: v, file: owners[0]!.filePath };
+  };
+
   const find = (fromFile: string, expr: string): { value: string; file: string } | null => {
     const a = byFile.get(fromFile);
     if (!a || !NAME.test(expr)) return null;
-    return findIn(a, fromFile, expr) ?? classConstant(a, expr) ?? importedInScope(a, expr);
+    return findIn(a, fromFile, expr) ?? classConstant(a, expr) ?? importedInScope(a, expr) ?? headTable(a, expr);
   };
 
   const findIn = (a: FileAnalysis, fromFile: string, expr: string): { value: string; file: string } | null => {

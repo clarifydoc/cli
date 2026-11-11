@@ -75,3 +75,55 @@ describe("a NestJS controller prefixed by an enum member", () => {
     ]);
   });
 });
+
+const CONTROLLER = `import { Controller, Get } from '@nestjs/common';
+import { RouteKey } from '@league/shared/enum';
+
+@Controller(RouteKey.Club)
+export class ClubController {
+  @Get('statistics')
+  statistics() {}
+}
+`;
+const ENUM = `export enum RouteKey {
+  Club = 'clubs',
+}
+`;
+const NEST_PKG = (name: string) => JSON.stringify({ name, dependencies: { "@nestjs/common": "10.0.0", "@nestjs/core": "10.0.0" } });
+
+async function paths(files: Record<string, string>): Promise<string[]> {
+  const dir = await mkdtemp(join(tmpdir(), "cd-nest-enum-"));
+  try {
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    const summary = await loadReportSummary(join(dir, "out"));
+    return summary.routeMap.filter((r) => r.kind === "api").map((r) => r.path).sort();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+describe("an enum reference behind an import the resolver cannot follow", () => {
+  it("is filled from the one enum of that name in the sub-project", async () => {
+    expect(await paths({ "package.json": NEST_PKG("league"), "src/a/enum.ts": ENUM, "src/club.controller.ts": CONTROLLER })).toEqual(["/clubs/statistics"]);
+  }, 180_000);
+
+  it("is left alone when two modules declare that enum name", async () => {
+    const got = await paths({ "package.json": NEST_PKG("league"), "src/a/enum.ts": ENUM, "src/b/enum.ts": ENUM.replace("clubs", "teams"), "src/club.controller.ts": CONTROLLER });
+    expect(got).not.toContain("/clubs/statistics");
+    expect(got).not.toContain("/teams/statistics");
+  }, 180_000);
+
+  it("is left alone when only another sub-project declares the enum", async () => {
+    const got = await paths({
+      "api/package.json": NEST_PKG("league-api"),
+      "api/src/club.controller.ts": CONTROLLER,
+      "web/package.json": JSON.stringify({ name: "league-web" }),
+      "web/src/enum.ts": ENUM,
+    });
+    expect(got).not.toContain("/clubs/statistics");
+  }, 180_000);
+});
