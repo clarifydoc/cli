@@ -3,9 +3,31 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
-## Unreleased
+## 0.13.0 — 2026-11-11
+
+Extractor 1.623.0 → 1.674.0: every cached analysis is read again once.
 
 ### Changed
+
+- **Wrong facts corrected (extractor 1.626.0–1.674.0).**
+  - A name guess never overrides a receiver the linker has typed: from a local, a parameter, a field (`club.league.x()`)
+    or a module binding.
+  - A call through a path (`PlayerService.instance.add(…)`, `club.league.relegate`) is named by every name back to its
+    head, in Ruby, Dart, Swift and Scala, so the receiver is typed from the head instead of the caller's namesake.
+  - API-contract schemas, SQL tables, Prisma and Core Data models are never call targets.
+  - A route reaches what its handler reaches, never everything the function registering it touches (a `main` that also
+    runs migrations).
+  - Go Echo routes take the first handler argument (the rest is middleware), and wrapped handlers are unwrapped.
+  - A dotted import of a package is never matched to a project file by its last segment.
+  - Two runs over the same bytes write the same links: each language reads its own binding tables.
+  - Spring `@RequestMapping` without `method` serves every verb. A request wrapper never takes a namesake from another
+    sub-project.
+  - A route path named by a constant nothing states keeps the hole (`RouteInfo.pathUnresolved`) instead of a guessed URL.
+  - A file's own function wins over an import of its name; an inherited lookup takes the base's own member.
+  - A child's emit, callback-prop call or dialog close returns only to the parent the walk came in by; a parent that
+    calls the child through its ref counts as that parent.
+  - A map call leading back to itself no longer overflows the stack and fails the analysis.
+  - A test suite carries only its own calls and typed locals, not its nested cases'.
 
 - **Wrong facts corrected (extractor 1.624.0).**
   - A call on what a project factory returns (a composable, hook or store factory) now lands on the member it names, or
@@ -60,6 +82,61 @@ recorded in the git history only.
   - Rails: an admin override calling `super` and devise_token_auth's mounted actions reach their model; an `@x ||= @y`
     alias and a model-constant assignment type the variable.
   - Astro: the head call of a `{list().map(…)}` block with markup.
+- **Data reached through more code (extractor 1.626.0–1.674.0):**
+  - A URL hole over a field typed by a string enum or union names each value's route, AMBIGUOUS.
+  - A factory's result is typed by what it returns (`const { clubs } = useLeague()`; `clubs.getAll()`).
+  - Repository methods outside the verb list reach the model they query; a query helper handed a model (`count(Club)`)
+    reaches that table at each call.
+  - Rails: `devise_for` draws the routes the model's Devise modules enable; a concern's writes bind per including model
+    and per call site; instance variables are typed by what assigns them.
+  - Go: xorm conditions carry route parameters to columns; a field typed through a package import is that package's
+    type; Huma input fields are route parameters.
+  - C#: property accessors and chained constructors carry their calls; `IQueryable` helpers are reads.
+  - Dart: extension members take the extended type as receiver; a top-level getter types the calls made through it.
+  - Python: a module installed into `sys.modules` stands for the module it replaces.
+  - Rust: a project's own request wrapper is followed to each path it is handed; generated language bridges link.
+- **Front ends followed further (extractor 1.626.0–1.674.0):**
+  - A link through a route path table (`paths.app.club.getHref(id)`) reaches its screen.
+  - Callbacks written in place (a dialog result's `then`, an `onX` option) are functions of their own.
+  - A write to a reactive cell runs the watchers on it, so a click that only sets state reaches the request a watcher
+    makes.
+  - A URL value read off a store record, a helper or a composable member keyed by a prop keeps the prop as its origin.
+  - Every parent binding a child is linked (it was the first eight); functions handed to a child under any prop, from a
+    mixin or bound again by a middle component are followed; plain-JS destructured parameters and renamed prop callbacks
+    join.
+  - A Vuex action or store chosen by a prop reaches each action a user binds; Vue declared props and emits are read,
+    and a listener is not a prop; components registered by an install loop are found.
+  - `fetch(await carsUrl("/x"))` is a request; a getter URL edited by `.replace` is evaluated; module loaders
+    (`() => import("./club")`) and wasm crates' bindings link.
+  - TanStack Table option callbacks run from the table's methods; Astro `<script src>` and `<link href>` are imports.
+- **More routes, messages and deployments (extractor 1.640.0–1.674.0):**
+  - Express handlers built by a factory (`createUploadHandler({ … })`) and routes a helper is handed the path of.
+  - Raw `node:http` route modules dispatched from another file, with regex paths, constants and route tables.
+  - Next.js `middleware.ts` / `proxy.ts` `config.matcher` guards the routes it covers when the middleware checks the
+    caller.
+  - Request wrappers are looked up through imports; injected fetch implementations and leading-slash joiners are read.
+  - A dotted enum member no import reaches is filled from the one value table of that name in the sub-project.
+  - Dapr pub/sub through the Go, Python, Java and JS SDKs; CloudFormation and SAM templates as deployment topology.
+  - Message destinations are keyed by broker and address, so a topic and a queue of one name on two brokers stay apart;
+    an unresolved destination is its own node at its source location.
+  - Spring beans gated by `@Profile` or `@Conditional*` yield to an unconditional one; `AutoConfiguration.imports` lists
+    count as config mentions.
+  - C++ overloads are chosen by argument kinds, ranking an exact match over a promotion over a conversion, and explicit
+    specializations by their template arguments.
+- **MCP server and install:**
+  - A symbol, file or route with no callers says what could hide one, with numbers; a failed `trace to=` names where it
+    broke off.
+  - `clarifydoc_impact` reads a change made in a linked git worktree (`worktree=`, or `CLARIFYDOC_WORKTREE`).
+  - Under `--tools core` or a named list, a hint naming an unlisted tool reads as `clarifydoc ask <tool> …`.
+  - `clarifydoc_status` reports p50/p90 tool latency.
+  - `install` adds a `post-rewrite` git hook: one refresh per rebase.
+  - The library exports `usageGate`, `stateNode` and `nodeKey` for walks over stored symbol links.
+
+### Performance
+
+- Every run leaves a manifest, so the first `--incremental` run after a full one is warm.
+- The walks of one run share their directory listings; per-file output is written by idle workers after the reads; a
+  body's call patterns are compiled once; each test body is read once.
 
 ## 0.12.1 — 2026-11-06
 
