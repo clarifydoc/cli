@@ -183,7 +183,13 @@ export async function serveHttp(server: McpServer, options: HttpOptions = {}): P
   };
   const create = (client: Session["client"]): string => {
     sweep();
-    while (sessions.size >= maxSessions) endSession(sessions.keys().next().value as string);
+    // Past the cap, the least recently seen session with no open stream goes first: one with a live stream is an
+    // agent still listening. Only when every session has a stream does the least recently seen one go.
+    while (sessions.size >= maxSessions) {
+      let victim: string | undefined;
+      for (const [id, s] of sessions) if (!s.streams.size) { victim = id; break; }
+      endSession(victim ?? (sessions.keys().next().value as string));
+    }
     const id = randomUUID();
     const now = Date.now();
     sessions.set(id, { createdAt: now, lastSeen: now, client, streams: new Set() });

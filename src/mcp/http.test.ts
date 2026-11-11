@@ -186,6 +186,20 @@ describe("serveHttp", () => {
     expect(ended).toBe(true);
   });
 
+  it("past the session cap, evicts a session without an open stream before one an agent still listens on", async () => {
+    handle = await serveHttp(build(), { port: 0, keepAliveMs: 30, maxSessions: 2 });
+    const open = async () => (await post(init)).headers.get("mcp-session-id")!;
+    const listening = await open();
+    const res = await fetch(handle.url, { headers: { accept: "text/event-stream", "mcp-session-id": listening } });
+    const reader = res.body!.getReader();
+    await reader.read();
+    const idle = await open();
+    await open(); // a third: the idle one goes, though the listening one is older
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": listening })).status).toBe(200);
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": idle })).status).toBe(404);
+    await reader.cancel();
+  });
+
   it("caps event streams per session: a fifth closes the oldest", async () => {
     handle = await serveHttp(build(), { port: 0, keepAliveMs: 30 });
     const session = (await post(init)).headers.get("mcp-session-id")!;
