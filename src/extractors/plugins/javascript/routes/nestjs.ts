@@ -4,6 +4,7 @@ import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../../shared/route-metadata.js";
 import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
+import { CONSTANT_REF } from "./path-helpers.js";
 
 /**
  * NestJS decorator routing.
@@ -90,9 +91,6 @@ function firstString(call: Node): string | null {
   }
   return null;
 }
-
-/** A constant's name as written (`ClubPaths.DETAIL`, `CLUBS`): a value another module may state. */
-const CONSTANT_REF = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/;
 
 /**
  * The paths a route decorator's first argument declares: each alternative of
@@ -325,13 +323,13 @@ export function collectNestClassGuards(root: Node, routes: readonly RouteInfo[],
   collectClassGuardFacts(classes, routes, facts);
 }
 
-/** Inspect a single node for a NestJS HTTP-verb decorator. */
 /** NestJS: a class-level guard a controller inherits from its base class. */
 export const nestInheritedGuards = inheritedClassGuards("nest-inherited-guards", ["typescript", "javascript"]);
 
 /** A route whose controller prefix is an enum member (`@Controller(RouteKey.Asset)`), for `nestPrefixResolver`. */
 export const NEST_PREFIX_FACT = "nest-prefix-ref";
 
+/** Inspect a single node for a NestJS HTTP-verb decorator. */
 export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   if (node.type !== "decorator") return;
   const d = decoratorCall(node);
@@ -341,28 +339,6 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
 
   const scope = controllerScope(classBody);
   const { decorators, method } = decoratorRun(node);
-  // One route per path the decorator maps; a constant prefix or path is a template the project pass fills.
-  for (const { path, template } of pathArgs(d.call)) {
-    const fullPath = joinPath(scope.prefix, path);
-    const pathTemplate = scope.prefixRef || template !== undefined
-      ? joinPath(scope.prefixRef ? `\${${scope.prefixRef}}` : scope.prefix, template ?? path)
-      : undefined;
-    pushNestRoute(node, d, scope, decorators, method, fullPath, pathTemplate, routes, facts);
-  }
-}
-
-function pushNestRoute(
-  node: Node,
-  d: { name: string; call: Node },
-  scope: ControllerScope,
-  decorators: Node[],
-  method: Node | null,
-  fullPath: string,
-  pathTemplate: string | undefined,
-  routes: RouteInfo[],
-  facts: RouteFact[] | undefined,
-): void {
-
   const guards: GuardAttr[] = [];
   const methodVersions: string[] = [];
   const filters: string[] = [];
@@ -372,15 +348,6 @@ function pushNestRoute(
     const filter = filterOf(dec);
     if (filter) filters.push(filter);
     methodVersions.push(...versionsOf(dec));
-  }
-
-  const params: RouteParamInfo[] = [];
-  if (method) {
-    for (const p of method.childForFieldName("parameters")?.namedChildren ?? []) {
-      if (p.type !== "required_parameter" && p.type !== "optional_parameter") continue;
-      const info = paramOf(p, fullPath);
-      if (info) params.push(info);
-    }
   }
 
   // `@HttpCode(201)` and the declared return type (`Promise<UserDto>`): what the action answers.
@@ -395,28 +362,41 @@ function pushNestRoute(
   }
   const returnType = method?.childForFieldName("return_type")?.text?.replace(/^:\s*/, "").trim();
   const bodyType = returnType && !/^(?:Promise<\s*)?(?:void|any|unknown)\s*>?$/.test(returnType) ? returnType : undefined;
-  if (scope.prefixRef) facts?.push({ kind: NEST_PREFIX_FACT, line: node.startPosition.row + 1, data: { ref: scope.prefixRef, path: fullPath } });
-  const route: RouteInfo = {
-    path: fullPath,
-    ...(pathTemplate !== undefined ? { pathTemplate } : {}),
-    httpMethod: d.name.toUpperCase(),
-    kind: "api",
-    handler: method?.childForFieldName("name")?.text ?? null,
-    calls: [],
-    middleware: [],
-    line: node.startPosition.row + 1,
-    ...(bodyType || status !== null ? { responses: [{ status, ...(bodyType ? { type: bodyType } : {}) }] } : {}),
-  };
-  applyRouteMeta(route, {
-    inheritedGuards: scope.guards,
-    guards,
-    // A method-level @Version overrides the controller's.
-    versions: methodVersions.length > 0 ? methodVersions : scope.versions,
-    params,
-    inheritedFilters: scope.filters,
-    filters,
-  });
-  routes.push(route);
+  const handler = method?.childForFieldName("name")?.text ?? null;
+  const methodParams = method?.childForFieldName("parameters")?.namedChildren
+    .filter((p) => p.type === "required_parameter" || p.type === "optional_parameter") ?? [];
+  const line = node.startPosition.row + 1;
+
+  // One route per path the decorator maps; a constant prefix or path is a template the project pass fills.
+  for (const { path, template } of pathArgs(d.call)) {
+    const fullPath = joinPath(scope.prefix, path);
+    const pathTemplate = scope.prefixRef || template !== undefined
+      ? joinPath(scope.prefixRef ? `\${${scope.prefixRef}}` : scope.prefix, template ?? path)
+      : undefined;
+    const params = methodParams.flatMap((p) => paramOf(p, fullPath) ?? []);
+    if (scope.prefixRef) facts?.push({ kind: NEST_PREFIX_FACT, line, data: { ref: scope.prefixRef, path: fullPath } });
+    const route: RouteInfo = {
+      path: fullPath,
+      ...(pathTemplate !== undefined ? { pathTemplate } : {}),
+      httpMethod: d.name.toUpperCase(),
+      kind: "api",
+      handler,
+      calls: [],
+      middleware: [],
+      line,
+      ...(bodyType || status !== null ? { responses: [{ status, ...(bodyType ? { type: bodyType } : {}) }] } : {}),
+    };
+    applyRouteMeta(route, {
+      inheritedGuards: scope.guards,
+      guards: [...guards],
+      // A method-level @Version overrides the controller's.
+      versions: methodVersions.length > 0 ? [...methodVersions] : scope.versions,
+      params,
+      inheritedFilters: scope.filters,
+      filters: [...filters],
+    });
+    routes.push(route);
+  }
 }
 
 /**

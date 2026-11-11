@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { ClassInfo, FileAnalysis, FunctionInfo, ProjectAnalysis } from "../types/analysis.js";
+import { routeIdentityKey } from "./route-linker.js";
 
 /**
  * A lint of our own output: contradictions inside one `ProjectAnalysis` that no
@@ -196,11 +197,8 @@ export function lintAnalysis(project: ProjectAnalysis, files?: ReadonlyMap<strin
   const seen = new Map<string, number>();
   for (const r of project.routeMap ?? []) {
     checkLine(`route ${r.httpMethod ?? "*"} ${r.path}`, r.filePath ?? "", r.line);
-    const versions = r.versions?.length ? [...r.versions].sort().join(",") : "";
-    const holed = !!r.pathUnresolved;
-    const where = r.prefixUnresolved || holed ? ` ${r.filePath} ${r.owner ?? ""}${holed ? ` ${r.line}` : ""}` : "";
-    const consumes = r.consumes?.length ? ` ${r.consumes.join(",")}` : "";
-    const key = `${r.projectId ?? ""} ${r.kind} ${(r.httpMethod ?? "").toUpperCase()} ${r.path} ${versions}${where}${consumes}`;
+    // dedupeRoutes keeps two rows of one key apart when they consume different media types.
+    const key = `${routeIdentityKey(r)} ${r.consumes?.join(",") ?? ""}`;
     seen.set(key, (seen.get(key) ?? 0) + 1);
     if (seen.get(key) === 2) add("route-duplicate-key", `two routes share one identity: ${(r.httpMethod ?? "*").toUpperCase()} ${r.path}${r.projectId ? ` in ${r.projectId}` : ""}`, r.filePath, r.line);
   }

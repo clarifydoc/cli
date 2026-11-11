@@ -31,23 +31,36 @@ export interface PathHelperCall {
   args: Array<string | null>;
 }
 
+/** A name a project pass can fill a path from: `ROUTES`, `ClubPaths.DETAIL`, up to four steps. */
+export const CONSTANT_REF = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/;
+
+/** `const router = express.Router()`, `app = express()`, `new Hono()`, `new Router()`, `fastify()`: a receiver made a router. */
+const ROUTER_FACTORY = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:require\(\s*['"][\w@/.-]+['"]\s*\)\s*\.\s*)?(?:express\s*\.\s*)?(?:express|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/gi;
+
+/** The names a router factory makes in this file, lowercased. */
+export function routerFactoryNames(sourceText: string): Set<string> {
+  return new Set([...sourceText.matchAll(ROUTER_FACTORY)].map((m) => m[1]!.toLowerCase()));
+}
+
 /** Names a call hands a router by: `app`, `router`, `server`, `api`, and what a router factory made in this file. */
 const ROUTER_ARG = /^(?:app|router|server|api|routes?|r)$/i;
-const ROUTER_MADE = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:express(?:\s*\.\s*Router)?|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/g;
+/** A conventional router name passed as an argument — the gate before walking the file's calls. */
+const ROUTER_ARG_PASSED = /[(,]\s*(?:app|router|server|api|routes?|r)\s*[,)]/i;
 /** Calls that take a path but never register a route. */
 const NOT_HELPERS = new Set(["fetch", "require", "import", "get", "post", "put", "patch", "delete", "use", "all", "route", "listen", "join", "resolve", "redirect", "render", "sendFile"]);
 
 /** Every call in the file handing on a router and a literal path (`mountProgress(app, "/api/x")`). */
 export function collectPathHelperCalls(root: Node, sourceText: string, facts: RouteFact[]): void {
   if (!/['"`]\//.test(sourceText)) return;
-  const made = new Set([...sourceText.matchAll(ROUTER_MADE)].map((m) => m[1]!));
+  const made = routerFactoryNames(sourceText);
+  if (made.size === 0 && !ROUTER_ARG_PASSED.test(sourceText)) return;
   for (const call of root.descendantsOfType("call_expression")) {
     if (!call) continue;
     const fn = call.childForFieldName("function");
     const callee = fn?.type === "identifier" ? fn.text : fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : undefined;
     if (!callee || NOT_HELPERS.has(callee)) continue;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
-    if (!args.some((a) => a.type === "identifier" && (ROUTER_ARG.test(a.text) || made.has(a.text)))) continue;
+    if (!args.some((a) => a.type === "identifier" && (ROUTER_ARG.test(a.text) || made.has(a.text.toLowerCase())))) continue;
     const literal = (a: Node): string | null =>
       (a.type === "string" || (a.type === "template_string" && !a.namedChildren.some((c) => c.type === "template_substitution"))) ? stripQuotes(a.text) : null;
     const values = args.map(literal);
@@ -88,40 +101,33 @@ export const pathHelperResolver: RouteResolver = {
         (helpers.get(fn) ?? helpers.set(fn, []).get(fn)!).push({ a, line: f.line, index });
       }
     }
-    if (helpers.size === 0) return;
     // A name one file declares: the helper. Two files declaring it: neither.
-    const owner = new Map<string, FileAnalysis | null>();
-    for (const [fn, list] of helpers) {
-      const files = new Set(list.map((h) => h.a));
-      owner.set(fn, files.size === 1 ? list[0]!.a : null);
-    }
-    const bound = new Map<string, Set<string>>();
+    for (const [fn, list] of helpers) if (new Set(list.map((h) => h.a)).size > 1) helpers.delete(fn);
+    if (helpers.size === 0) return;
+    const bound = new Map<FileAnalysis, Map<number, Set<string>>>();
     for (const a of analyses) {
       for (const f of a.routeFacts ?? []) {
         if (f.kind !== PATH_HELPER_CALL) continue;
         const call = f.data as PathHelperCall;
-        if (!owner.get(call.callee)) continue;
-        for (const h of helpers.get(call.callee)!) {
+        for (const h of helpers.get(call.callee) ?? []) {
           const path = call.args[h.index];
           if (!path || !path.startsWith("/")) continue;
-          (bound.get(`${h.a.filePath}\u0000${h.line}`) ?? bound.set(`${h.a.filePath}\u0000${h.line}`, new Set()).get(`${h.a.filePath}\u0000${h.line}`)!).add(path);
+          const lines = bound.get(h.a) ?? bound.set(h.a, new Map()).get(h.a)!;
+          (lines.get(h.line) ?? lines.set(h.line, new Set()).get(h.line)!).add(path);
         }
       }
     }
-    for (const [key, paths] of bound) {
-      const [file, lineText] = key.split("\u0000") as [string, string];
-      const a = analyses.find((x) => x.filePath === file)!;
-      const line = Number(lineText);
-      const placeholders = a.routes.filter((r) => r.line === line && (r.pathUnresolved?.length || r.pathTemplate));
-      if (placeholders.length === 0) continue;
-      const copies: RouteInfo[] = [];
-      for (const r of placeholders) {
-        for (const path of [...paths].sort()) {
+    for (const [a, lines] of bound) {
+      for (const [line, paths] of lines) {
+        const placeholders = a.routes.filter((r) => r.line === line && (r.pathUnresolved?.length || r.pathTemplate));
+        if (placeholders.length === 0) continue;
+        const copies: RouteInfo[] = [];
+        for (const r of placeholders) {
           const { pathTemplate: _t, pathUnresolved: _u, prefixUnresolved: _p, ...rest } = r;
-          copies.push({ ...rest, path, resolvedBy: pathHelperResolver.id });
+          for (const path of [...paths].sort()) copies.push({ ...rest, path, resolvedBy: pathHelperResolver.id });
         }
+        a.routes = [...a.routes.filter((r) => !placeholders.includes(r)), ...copies];
       }
-      a.routes = [...a.routes.filter((r) => !placeholders.includes(r)), ...copies];
     }
   },
 };

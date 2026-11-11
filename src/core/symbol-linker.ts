@@ -1109,15 +1109,15 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
     name.replace(/^new\s+/, "").replace(/<.*$/s, "").split(/\.|::/).pop() ?? "";
   /**
    * The line of the one overload in `list` the call behind `link` can mean, if the arguments tell;
-   * minus the number that fit when several do and nothing tells them apart (`process(int)` /
+   * the number that fit when several do and nothing tells them apart (`process(int)` /
    * `process(long)` with `42`).
    */
-  const choose = (list: Overload[], link: SymbolLink): number | undefined => {
+  const choose = (list: Overload[], link: SymbolLink): { line: number } | { tie: number } | undefined => {
     const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
     const n = site?.call.argCount;
     if (n === undefined) return undefined;
     const fits = list.filter((o) => n >= o.min && n <= o.max);
-    if (fits.length === 1) return fits[0]!.line;
+    if (fits.length === 1) return { line: fits[0]!.line };
     if (fits.length > 1 && site!.call.argKinds && fits[0]!.typeKey) {
       const typeKey = fits[0]!.typeKey;
       const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey) : k));
@@ -1125,19 +1125,14 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
         types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
         variadic: o.variadic,
       })), typesOf());
-      if (best >= 0) return fits[best]!.line;
+      if (best >= 0) return { line: fits[best]!.line };
     }
-    return fits.length > 1 ? -fits.length : undefined;
+    return fits.length > 1 ? { tie: fits.length } : undefined;
   };
-  /** A tie leaves the link on the body it found, said to be one of several (`SymbolLink.overloadsFit`). */
-  const settle = (link: SymbolLink, line: number | undefined): boolean => {
-    if (line !== undefined && line < 0) {
-      link.overloadsFit = -line;
-      return false;
-    }
-    if (line === undefined) return false;
-    link.targetLine = line;
-    return true;
+  /** Whether the arguments chose one body; a tie leaves the link on the body it found, said to be one of several (`SymbolLink.overloadsFit`). */
+  const settle = (link: SymbolLink, choice: ReturnType<typeof choose>): choice is { line: number } => {
+    if (choice && "tie" in choice) link.overloadsFit = choice.tie;
+    return !!choice && "line" in choice;
   };
   for (const link of links) {
     const callLeaf = leafOf(link.callName);
@@ -1158,17 +1153,17 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
         if (list.length < 2) continue;
       }
       touched.add(link);
-      settle(link, choose(list, link));
+      const choice = choose(list, link);
+      if (settle(link, choice)) link.targetLine = choice.line;
       continue;
     }
     // A link to the class itself (`Club(3)` beside `class Club`): to the constructor the arguments choose.
     const ctor = callLeaf === leafOf(link.targetSymbol) ? ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol}`) : undefined;
     const ctors = ctor ? overloads.get(`${link.targetFile}\u0000${ctor}`) : undefined;
-    const line = ctors ? choose(ctors, link) : undefined;
-    if (line !== undefined && line < 0) link.overloadsFit = -line;
-    if (line === undefined || line < 0) continue;
+    const choice = ctors ? choose(ctors, link) : undefined;
+    if (!settle(link, choice)) continue;
     link.targetSymbol = ctor!;
-    link.targetLine = line;
+    link.targetLine = choice.line;
     link.strategy = "constructor";
     link.relation = relationForStrategy("constructor");
     touched.add(link);
@@ -2019,6 +2014,8 @@ interface LinkContext {
   subclasses?: Map<string, Array<{ name: string; file: string }>>;
   /** Class name → every file declaring it (capped), for type-space lookups. */
   classFiles: Map<string, string[]>;
+  /** `${qualifier}\0${class}` → the files whose package the qualifier ends and that declare the class (`new B.Ball()`), built on use. */
+  packageClassFiles?: Map<string, FileAnalysis[]>;
   /** `${file}\0${symbol}` of extension methods (a parameter `isReceiver`). */
   extensionMethods: Set<string>;
   /** `Class.method` → files defining it (partial classes, Go methods beside their type); folded for case-insensitive languages. */
@@ -4105,6 +4102,11 @@ function buildExtensionMethods(analyses: FileAnalysis[]): Set<string> {
 /** Upper bound on files kept per class name in `classFiles`. */
 const CLASS_FILES_CAP = 32;
 
+/** A supertype's own name as written (`Base<T>`, `pkg.Base`, `App\Base`, `Base(metaclass=M)` → `Base`). */
+function writtenTypeLeaf(t: string): string {
+  return t.replace(/[<[(].*$/s, "").trim().split(/\.|::|\\/).pop() ?? "";
+}
+
 /** Every class name → the files declaring it, capped at `CLASS_FILES_CAP`. */
 function buildClassFiles(analyses: FileAnalysis[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -4856,15 +4858,13 @@ function resolveCallToDefinitionBody(
     && findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) !== null;
   if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null || memberFirst)) {
     const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) : null;
-    // Two classes of one name in the file (`namespace First { class Twin }`, `namespace Second { class Twin }`):
-    // the caller's is the one around the call, and a member of the other is no member of its.
-    // A `partial` class written twice is one class.
-    const twins = ownerClass ? analysis.classes.filter((c) => c.name === ownerClass) : [];
-    const around = twins.length > 1 && !twins.every((c) => c.partial) ? twins.find((c) => c.line <= call.line && call.line <= c.endLine) : undefined;
-    if (around && hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`) && (hit.line < around.line || hit.line > around.endLine)) {
-      return null;
-    }
     if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
+      // Two classes of one name in the file (`namespace First { class Twin }`, `namespace Second { class Twin }`):
+      // the caller's is the one around the call, and a member of the other is no member of its.
+      // A `partial` class written twice is one class.
+      const twins = ownerClass ? analysis.classes.filter((c) => c.name === ownerClass) : [];
+      const around = twins.length > 1 && !twins.every((c) => c.partial) ? twins.find((c) => c.line <= call.line && call.line <= c.endLine) : undefined;
+      if (around && (hit.line < around.line || hit.line > around.endLine)) return null;
       if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
     } else if (hit) {
       return Object.assign(mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance"), { viaType: ownerClass, viaTypeFile: sourceFile });
@@ -4998,8 +4998,8 @@ function resolveCallToDefinitionBody(
       const resolvedHere = () => (resolved ??= findMethodInClass(ctx, cls.name, sourceFile, leafName));
       // The supertypes the chain's classes name as written (`class ModelTestCase(TestCase)`): a bare match in a base's
       // file stands for one of those, even where several classes of the name keep `parentClassOf` from choosing.
-      const simple = (t: string) => t.replace(/[<[(].*$/s, "").trim().split(/\.|::|\\/).pop() ?? "";
-      const named = new Set([cls.extends, ...cls.implements].filter((t): t is string => !!t).map(simple));
+      const chain: Array<ClassInfo | undefined> = [cls];
+      const named = (owner: string) => chain.some((c) => c && [c.extends, ...(c.implements ?? [])].some((t) => !!t && writtenTypeLeaf(t) === owner));
       let parentInfo = parentClassOf(ctx, cls.name, sourceFile);
       const visited = new Set<string>();
       while (parentInfo && !visited.has(memberKey(parentInfo.parentFile, parentInfo.parentClass))) {
@@ -5010,10 +5010,10 @@ function resolveCallToDefinitionBody(
           // `class Scout { void Report() }`: `Report()` in Coach is no inherited call).
           const bare = symbolIn(ctx, parentInfo.parentFile, leafName);
           const bareOwner = bare ? memberClassOf(ctx, parentInfo.parentFile, bare) : null;
-          const base = ctx.classAt.get(memberKey(parentInfo.parentFile, parentInfo.parentClass));
-          for (const t of [base?.extends, ...(base?.implements ?? [])]) if (t) named.add(simple(t));
-          const reached = bare && bareOwner !== null && bareOwner !== parentInfo.parentClass && !named.has(bareOwner) ? resolvedHere() : null;
-          const parentDef = (bare && (bareOwner === null || bareOwner === parentInfo.parentClass || named.has(bareOwner) || (reached?.file === parentInfo.parentFile && reached.symbol === bare.name)) ? bare : undefined)
+          chain.push(ctx.classAt.get(memberKey(parentInfo.parentFile, parentInfo.parentClass)));
+          const foreign = bare && bareOwner !== null && bareOwner !== parentInfo.parentClass && !named(bareOwner);
+          const reached = foreign ? resolvedHere() : null;
+          const parentDef = (bare && (!foreign || (reached?.file === parentInfo.parentFile && reached.symbol === bare.name)) ? bare : undefined)
             ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
             // A property the base reads through an accessor the caller's class overrides: that override.
@@ -5234,7 +5234,13 @@ function resolveCallToDefinitionBody(
     // `new B.Foo()` where `A.Foo` and `B.Foo` exist: the namespace written decides, never the caller's own.
     const qualifier = ctorMatch ? ctorMatch[1]!.split(/[.\\]/).slice(0, -1).join(".") : "";
     if (qualifier && className) {
-      const inPackage = ctx.analyses.filter((f) => f.packageName && (f.packageName === qualifier || f.packageName.endsWith(`.${qualifier}`)) && f.classes.some((c) => c.name === className));
+      const memoKey = `${qualifier}\0${className}`;
+      const memo = (ctx.packageClassFiles ??= new Map<string, FileAnalysis[]>());
+      let inPackage = memo.get(memoKey);
+      if (!inPackage) {
+        inPackage = ctx.analyses.filter((f) => f.packageName && (f.packageName === qualifier || f.packageName.endsWith(`.${qualifier}`)) && f.classes.some((c) => c.name === className));
+        memo.set(memoKey, inPackage);
+      }
       if (inPackage.length === 1) {
         const cls = inPackage[0]!.classes.find((c) => c.name === className)!;
         const ctor = ownConstructor(cls, inPackage[0]!.language, true);

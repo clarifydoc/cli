@@ -644,9 +644,9 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     for (const cls of analysis.classes) localSymbols.add(cls.name);
     // Top-level functions — none nested in another's body: what a bare call names over an import of its name.
     // A test block (`describe('useClub', …)`) is named for its title and declares nothing.
+    const nested = nestedFunctions(analysis.functions);
     const ownFunctions = new Set(analysis.functions
-      .filter((fn) => !fn.testCase && !fn.name.includes(".") && !fn.name.startsWith("<") &&
-        !analysis.functions.some((o) => o !== fn && !o.name.startsWith("<") && o.line <= fn.line && fn.endLine <= o.endLine && (o.line < fn.line || fn.endLine < o.endLine)))
+      .filter((fn) => !fn.testCase && !fn.name.includes(".") && !fn.name.startsWith("<") && !nested.has(fn))
       .map((fn) => fn.name));
     // A dispatch map the file declares whose every value is a function the file defines or a
     // name it imports (`const ACTIONS = { save: saveClub, list: loadMatches }`): `ACTIONS.save()`
@@ -958,4 +958,22 @@ function detectDirectives(
       line: 1,
     });
   }
+}
+
+/** The functions another function's span strictly contains (`<setup>` and other `<…>` pseudo-functions aside), in one sweep. */
+function nestedFunctions(functions: readonly FunctionInfo[]): Set<FunctionInfo> {
+  const spans = functions.filter((f) => !f.name.startsWith("<")).sort((a, b) => a.line - b.line || b.endLine - a.endLine);
+  const nested = new Set<FunctionInfo>();
+  let maxEnd = -Infinity;
+  for (let i = 0; i < spans.length;) {
+    // Functions of one span contain each other no more than themselves.
+    const { line, endLine } = spans[i]!;
+    let j = i;
+    while (j < spans.length && spans[j]!.line === line && spans[j]!.endLine === endLine) j++;
+    // Every earlier span starts no later and, on the same line, ends later: one reaching this end contains it.
+    if (maxEnd >= endLine) for (let k = i; k < j; k++) nested.add(spans[k]!);
+    maxEnd = Math.max(maxEnd, endLine);
+    i = j;
+  }
+  return nested;
 }

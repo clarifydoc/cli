@@ -1,6 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteInfo, RouteFact, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
-import { enclosingFunction, PATH_PARAM_ROUTE, type PathParamRoute } from "./path-helpers.js";
+import { CONSTANT_REF, enclosingFunction, PATH_PARAM_ROUTE, routerFactoryNames, type PathParamRoute } from "./path-helpers.js";
 import { responsesOf } from "../responses.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, buildAuth, filterKind, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
@@ -44,7 +44,7 @@ export function isRoutePath(path: string): boolean {
  */
 function constantRoutePath(arg: Node | null): string | null {
   if (!arg || (arg.type !== "member_expression" && arg.type !== "identifier")) return null;
-  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/.test(arg.text)) return null;
+  if (!CONSTANT_REF.test(arg.text)) return null;
   return arg.text.split(".").some((seg) => /(?:paths?|routes?|urls?|endpoints?)$/i.test(seg)) ? `\${${arg.text}}` : null;
 }
 
@@ -234,8 +234,12 @@ interface ExpressRouteMeta {
   params: RouteParamInfo[];
   /** Guards on the same-file mounts this route was composed through (`app.use("/admin", requireAdmin, admin)`). */
   mountGuards?: GuardAttr[];
-  /** The path is a constant (`router.get(ROUTES.CARS, h)`): a route only on a receiver the file shows is a router. */
-  constantPath?: true;
+  /**
+   * A route only on a receiver the file shows is a router: its path is a constant
+   * (`router.get(ROUTES.CARS, h)`) or its handler a call (`createUploadHandler(…)`),
+   * both shapes a client request shares.
+   */
+  needsRouter?: true;
   /** The path is a parameter of the function registering it (`mountProgress(app, routePath)`): its calls bind it. */
   pathParam?: { fn: string; index: number; routerIsParam: boolean };
 }
@@ -463,7 +467,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               };
               if (method === "use") route.mount = true;
               if (mountModule !== null) route.mountModule = mountModule;
-              routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { constantPath: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
+              routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { needsRouter: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
               routes.push(route);
             }
           }
@@ -536,26 +540,22 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
   }
 }
 
-/** `const router = express.Router()`, `app = express()`, `new Hono()`, `new Router()`, `fastify()`: a receiver made a router. */
-const ROUTER_FACTORY = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:require\(\s*['"][\w@/.-]+['"]\s*\)\s*\.\s*)?(?:express\s*\.\s*)?(?:express|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/gi;
-
 /**
- * A route whose path is a constant (`router.get(ROUTES.CARS, h)`) has the shape of a client
- * request (`this.requests.put(routes.password, payload)`): it stays only on a receiver the file
+ * A route whose path is a constant (`router.get(ROUTES.CARS, h)`) or whose handler is a call has
+ * the shape of a client request (`this.requests.put(routes.password, payload)`): it stays only on a receiver the file
  * shows is a router — one made by a router factory, or one registering a route by a literal path.
  */
 function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): void {
-  if (!routes.some((r) => routeMeta.get(r)?.constantPath)) return;
-  const routers = new Set<string>();
+  if (!routes.some((r) => routeMeta.get(r)?.needsRouter)) return;
+  const routers = routerFactoryNames(sourceText);
   for (const r of routes) {
     const meta = routeMeta.get(r);
-    if (meta?.receiver && !meta.constantPath) routers.add(meta.receiver);
+    if (meta?.receiver && !meta.needsRouter) routers.add(meta.receiver);
   }
-  for (const m of sourceText.matchAll(ROUTER_FACTORY)) routers.add(m[1]!.toLowerCase());
   const kept = routes.filter((r) => {
     const meta = routeMeta.get(r);
     // A helper handed its router too (`function mountProgress(app, routePath)`) registers on whatever router its caller has.
-    if (!meta?.constantPath || meta.pathParam?.routerIsParam || (meta.receiver && routers.has(meta.receiver))) return true;
+    if (!meta?.needsRouter || meta.pathParam?.routerIsParam || (meta.receiver && routers.has(meta.receiver))) return true;
     routeMeta.delete(r);
     return false;
   });
