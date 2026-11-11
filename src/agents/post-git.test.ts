@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join } from "path";
-import { isTreeMovingGit, runHook, startRefresh } from "./hooks.js";
+import { isTreeMovingGit, refreshArgs, runHook, startRefresh } from "./hooks.js";
 import { applyPlans, planClaudeHooks, planCodexHooks, planCopilotHooks } from "./install.js";
 
 const self = { command: "clarifydoc", args: [] as string[] };
@@ -69,6 +69,27 @@ describe("post-git hook", () => {
     }
   });
 
+  it("repeats the options the analysis was made with, and the plain default without a record", () => {
+    const root = mkdtempSync(join(tmpdir(), "post-git-args-"));
+    try {
+      const dir = join(root, ".clarifydoc", "garage");
+      mkdirSync(dir, { recursive: true });
+      const plain = ["analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--no-pretty"];
+      expect(refreshArgs(root, dir)).toEqual(plain);
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify({ version: 1, entries: {}, runOptions: { outputDir: ".clarifydoc", lsp: false, gitHistory: false, features: ["no-antlr", "bad arg"] } }));
+      expect(refreshArgs(root, dir)).toEqual(["analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--no-git-history", "--feature", "no-antlr", "--no-pretty"]);
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify({ version: 1, entries: {}, runOptions: { lsp: true, gitHistory: true, features: [], exclude: ["generated/**", "--evil"], maxFiles: 50 } }));
+      expect(refreshArgs(root, dir)).toEqual(["analyze", ".", "-o", ".clarifydoc", "--incremental", "--exclude", "generated/**", "--max-files", "50", "--no-pretty"]);
+      // The directory the hook found decides where it writes.
+      const other = join(root, "build", "out", "garage");
+      mkdirSync(other, { recursive: true });
+      writeFileSync(join(other, "manifest.json"), JSON.stringify({ version: 1, entries: {}, runOptions: { lsp: false, gitHistory: true, features: [] } }));
+      expect(refreshArgs(root, other)[3]).toBe("build/out");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("is wired after Bash in Claude Code, Copilot and a Codex hooks.json", () => {
     const root = mkdtempSync(join(tmpdir(), "post-git-install-"));
     try {
@@ -84,6 +105,18 @@ describe("post-git hook", () => {
       writeFileSync(join(root, "hooks.json"), JSON.stringify({ hooks: {} }));
       const codex = JSON.parse(planCodexHooks(self, undefined, root).content);
       expect(codex.hooks.PostToolUse[0].hooks[0].command).toMatch(/hook post-git$/);
+
+      // A config.toml gets the same entry, once however often it is written again.
+      rmSync(join(root, "hooks.json"));
+      writeFileSync(join(root, "config.toml"), 'model = "coupe"\n');
+      const first = planCodexHooks(self, undefined, root);
+      expect(first.content).toMatch(/\[\[hooks\.PostToolUse\]\]\nmatcher = "Bash"\n\n\[\[hooks\.PostToolUse\.hooks\]\]\ntype = "command"\ncommand = "[^"\n]*hook post-git"\ntimeout = 10\n/);
+      applyPlans([first], false);
+      writeFileSync(join(root, "config.toml"), readFileSync(join(root, "config.toml"), "utf8").replace("# clarifydoc:hooks:start\n", ""));
+      const again = planCodexHooks(self, undefined, root).content;
+      expect(again.match(/\[\[hooks\.PostToolUse\]\]/g)).toHaveLength(1);
+      expect(again.match(/\[\[hooks\.PreToolUse\]\]/g)).toHaveLength(1);
+      expect(again).toContain('model = "coupe"');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

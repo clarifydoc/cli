@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { isAbsolute, join, relative } from "path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/server.js";
 
 /**
@@ -309,6 +309,35 @@ function alive(pid: number): boolean {
 }
 
 /**
+ * The `analyze` arguments of a refresh: the options the analysis in `analysisDir` was made with, which its manifest
+ * records (`runOptions`) — its output directory is the one it already sits in; its include and exclude globs, file
+ * cap, extraction features, LSP and git-history settings — and always `--incremental`. Inputs outside the tree
+ * (`--spec`, `--coverage`) are not recorded, so a refresh runs without them. Without a record (an older analysis) the plain default:
+ * `.clarifydoc`, no LSP.
+ */
+export function refreshArgs(root: string, analysisDir: string): string[] {
+  let rec: { lsp?: unknown; features?: unknown; gitHistory?: unknown; include?: unknown; exclude?: unknown; maxFiles?: unknown } | undefined;
+  try {
+    rec = (JSON.parse(readFileSync(join(analysisDir, "manifest.json"), "utf8")) as { runOptions?: typeof rec }).runOptions;
+  } catch {
+    rec = undefined;
+  }
+  const base = relative(resolve(root), dirname(resolve(analysisDir))).split(sep).join("/");
+  const output = rec && base && !base.startsWith("..") && !isAbsolute(base) ? base : ".clarifydoc";
+  const args = ["analyze", ".", "-o", output, "--incremental"];
+  if (!rec || rec.lsp !== true) args.push("--no-lsp");
+  if (rec && rec.gitHistory === false) args.push("--no-git-history");
+  const features = rec && Array.isArray(rec.features) ? rec.features.filter((f): f is string => typeof f === "string" && /^[\w:-]+$/.test(f)) : [];
+  if (features.length) args.push("--feature", ...features);
+  const globs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((g): g is string => typeof g === "string" && g.length > 0 && !g.startsWith("-")) : []);
+  if (rec && globs(rec.include).length) args.push("--include", ...globs(rec.include));
+  if (rec && globs(rec.exclude).length) args.push("--exclude", ...globs(rec.exclude));
+  if (rec && typeof rec.maxFiles === "number" && Number.isInteger(rec.maxFiles) && rec.maxFiles > 0) args.push("--max-files", String(rec.maxFiles));
+  args.push("--no-pretty");
+  return args;
+}
+
+/**
  * One incremental analysis in the background, never two at once: a lock file holds the child's pid, and while
  * that process lives (or, in the moment between the lock and the pid, for thirty seconds) another hook does
  * nothing. The child is detached with no stdio, so the hook returns at once and the agent never waits for it.
@@ -343,7 +372,7 @@ export function startRefresh(root: string, analysisDir: string): void {
   void import("./install.js").then(({ selfCommand }) => {
     const self = selfCommand();
     try {
-      const child = spawn(self.command, [...self.args, "analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--no-pretty"], {
+      const child = spawn(self.command, [...self.args, ...refreshArgs(root, analysisDir)], {
         cwd: root,
         detached: true,
         stdio: "ignore",

@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { buildMcpServer } from "./server.js";
+import { Sources, registrationSpan } from "./tools/rename-plan.js";
 
 const FILES: Record<string, string> = {
   "package.json": JSON.stringify({ name: "league", version: "1.0.0" }),
@@ -104,5 +105,79 @@ describe("clarifydoc_rename_plan", () => {
     const { text, isError } = await plan({ symbol: "relegate", to: "demote" });
     expect(isError).toBe(false);
     expect(text).toContain("No function, method or class named `relegate`");
+  });
+});
+
+describe("clarifydoc_rename_plan — route registrations", () => {
+  const ROUTES: Record<string, string> = {
+    "package.json": JSON.stringify({ name: "league-api", version: "1.0.0", dependencies: { express: "4.18.0" } }),
+    "src/handlers.ts": [
+      "export function playFriendly(req: any, res: any) {",
+      "  res.json([]);",
+      "}",
+      "export function playCup(req: any, res: any) {",
+      "  res.json([]);",
+      "}",
+      "",
+    ].join("\n"),
+    "src/routes.ts": [
+      "import express from 'express';",
+      "import { playFriendly, playCup as cup } from './handlers';",
+      "const router = express.Router();",
+      "router.get('/friendly', playFriendly);",
+      "router.get('/cup', cup);",
+      "export default router;",
+      "",
+    ].join("\n"),
+  };
+  let routesDir = "";
+  let routes: ReturnType<typeof buildMcpServer>["server"];
+  const ask = async (args: Record<string, unknown>): Promise<string> => {
+    const res = (await routes.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "clarifydoc_rename_plan", arguments: args } })) as { result: { content: Array<{ text: string }> } };
+    return res.result.content[0]!.text;
+  };
+
+  beforeAll(async () => {
+    routesDir = mkdtempSync(join(tmpdir(), "clarifydoc-rename-routes-"));
+    for (const [name, text] of Object.entries(ROUTES)) {
+      mkdirSync(dirname(join(routesDir, name)), { recursive: true });
+      writeFileSync(join(routesDir, name), text);
+    }
+    routes = buildMcpServer({ projectRoot: routesDir, analysisDir: join(routesDir, "out"), allowAnalyze: true, analyzeSettings: { gitHistory: false }, log: () => {} }).server;
+    await routes.handleMessage({ jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: "clarifydoc_analyze", arguments: {} } });
+  }, 120_000);
+  afterAll(() => rmSync(routesDir, { recursive: true, force: true }));
+
+  it("lists the route line that registers the handler in its own section, at the name", async () => {
+    const text = await ask({ symbol: "playFriendly", to: "hostFriendly" });
+    expect(text).toContain("Nothing is written");
+    expect(text).toContain("## Route registrations (1)");
+    const [, file, line, start, end] = text.match(/^- (src\/routes\.ts):(\d+):(\d+)-(\d+)$/m)!;
+    expect(readFileSync(join(routesDir, file!), "utf-8").split("\n")[Number(line) - 1]!.slice(Number(start) - 1, Number(end) - 1)).toBe("playFriendly");
+    expect(text).toContain("the definition, 0 call sites and 1 route registration");
+  });
+
+  it("finds the name inside a string, picks the one after `#`, and says when the line holds none", async () => {
+    const rails = mkdtempSync(join(tmpdir(), "clarifydoc-rename-lines-"));
+    try {
+      mkdirSync(join(rails, "config"), { recursive: true });
+      writeFileSync(join(rails, "config/routes.rb"), [
+        "  get 'friendlies', to: 'clubs#friendly'",
+        "  get 'friendly/friendly', to: 'clubs#friendly'",
+        "  get 'friendly', post 'friendly'",
+        "  resources :clubs",
+        "  resources :clubs, only: [:friendly]",
+        "",
+      ].join("\n"));
+      const sources = new Sources(rails);
+      const at = async (line: number) => registrationSpan(sources, "config/routes.rb", line, "friendly");
+      expect(await at(1)).toMatchObject({ span: { col: 32, end: 40 }, inString: true });
+      expect(await at(2)).toMatchObject({ span: { col: 39, end: 47 } });
+      expect((await at(3)).why).toMatch(/times on the route line|does not spell/);
+      expect((await at(4)).why).toMatch(/does not spell `friendly`/);
+      expect(await at(5)).toMatchObject({ span: { col: 29, end: 37 }, inString: false });
+    } finally {
+      rmSync(rails, { recursive: true, force: true });
+    }
   });
 });

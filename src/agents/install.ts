@@ -366,12 +366,16 @@ export function planCodexHooks(self: Launcher = selfCommand(), configToml?: stri
   }
   const file = join(codexDir, "config.toml");
   const existing = configToml ?? (existsSync(file) ? readFileSync(file, "utf8") : "");
-  const block = `${CODEX_HOOK_START}\n[[hooks.PreToolUse]]\nmatcher = "Bash"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = ${JSON.stringify(command)}\ntimeout = 10\n${CODEX_HOOK_END}\n`;
-  // The previous block, its start marker included or not (a table rewritten above it may have taken the comment line).
-  const ours = /(?:# clarifydoc:hooks:start\n)?\[\[hooks\.PreToolUse\]\]\nmatcher = "Bash"\n\n\[\[hooks\.PreToolUse\.hooks\]\]\n(?:[^\n[]*\n)*?# clarifydoc:hooks:end\n?/g;
+  const table = (event: string, cmd: string) => `[[hooks.${event}]]\nmatcher = "Bash"\n\n[[hooks.${event}.hooks]]\ntype = "command"\ncommand = ${JSON.stringify(cmd)}\ntimeout = 10\n`;
+  // After a git command that moves the working tree: one background refresh.
+  const gitCommand = shellLine([launcher.command, ...launcher.args, "hook", "post-git"]);
+  const block = `${CODEX_HOOK_START}\n${table("PreToolUse", command)}\n${table("PostToolUse", gitCommand)}${CODEX_HOOK_END}\n`;
+  // The previous block; or, when a table rewritten above it took the start comment, its tables up to the end marker.
+  // Only lines of the shape we wrote, so a damaged block never takes a user's own tables with it.
+  const ours = /(?:# clarifydoc:hooks:start\n)?(?:\[\[hooks\.(?:Pre|Post)ToolUse(?:\.hooks)?\]\]\n|matcher = "Bash"\n|type = "command"\n|command = [^\n]*\n|timeout = 10\n|\n)*# clarifydoc:hooks:end\n?/g;
   const without = existing.replace(ours, "").replace(/\n{3,}/g, "\n\n");
-  if (/^\s*(?:hooks\.)?PreToolUse\s*=/m.test(without)) {
-    return { file, content: block, skip: "its PreToolUse hooks are an inline array, which cannot be mixed with [[hooks.PreToolUse]] tables — add this hook to that array by hand" };
+  if (/^\s*(?:hooks\.)?(?:Pre|Post)ToolUse\s*=/m.test(without)) {
+    return { file, content: block, skip: "its PreToolUse or PostToolUse hooks are an inline array, which cannot be mixed with [[hooks.…]] tables — add these hooks to that array by hand" };
   }
   return { file, content: `${without.trimEnd()}${without.trim() ? "\n\n" : ""}${block}`, note };
 }

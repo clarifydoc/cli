@@ -96,6 +96,25 @@ export interface Manifest {
   fingerprint?: string;
   /** The same with documentation left out (`runFingerprints().code`): equal while `fingerprint` is not means only prose changed. */
   codeFingerprint?: string;
+  /** The options the run was made with that a rerun needs — see {@link RunOptions}. Absent in manifests of older runs. */
+  runOptions?: RunOptions;
+}
+
+/**
+ * What a background refresh needs to repeat a run: the switches only, never a token, an environment value or an
+ * absolute path. The fingerprints above are hashes and cannot be turned back into these.
+ */
+export interface RunOptions {
+  /** `--include` / `--exclude` globs and `--max-files`, as given. Inputs that name files outside the tree (`--spec`, `--coverage`) are not recorded. */
+  include?: string[];
+  exclude?: string[];
+  maxFiles?: number;
+  /** Whether LSP enhancement was on (`analyze` runs it unless `--no-lsp`). */
+  lsp: boolean;
+  /** `--feature` names that deviate from the defaults, as `analyze --feature` takes them (`no-antlr`, `tree-sitter:swift`). */
+  features: string[];
+  /** Whether git churn and co-change were read (`--no-git-history` turns it off). */
+  gitHistory: boolean;
 }
 
 const MANIFEST_NAME = "manifest.json";

@@ -64,7 +64,7 @@ function textualHits(line: string, code: string, name: string): number {
   return identifierHits(line, name).length - identifierHits(code, name).length;
 }
 
-class Sources {
+export class Sources {
   private readonly cache = new Map<string, string[] | null>();
   constructor(private readonly root: string) {}
   async lines(file: string): Promise<string[] | null> {
@@ -90,6 +90,36 @@ async function spanOn(sources: Sources, file: string, line: number, name: string
   if (hits.length === 0) return { why: `\`${name}\` is not written on that line as an identifier (a call split over lines, spelled another way, or a link that carries the line where its caller starts, such as a route handler, not the call)`, inText };
   if (hits.length > 1) return { why: `\`${name}\` is written ${hits.length} times on that line`, inText };
   return { span: { file, line, col: hits[0]! + 1, end: hits[0]! + 1 + name.length }, inText };
+}
+
+/** The links that say a route's handler is this symbol: the route's own line is the link's source, not a call. */
+const REGISTRATION_STRATEGIES: ReadonlySet<string> = new Set(["route-component", "route-self", "route-scan", "route-override"]);
+/** A route annotation (`@GetMapping`) this many lines above the method it marks is the method itself, not a registration. */
+const ANNOTATION_REACH = 10;
+/** Route registrations listed, however many there are. */
+const REGISTRATIONS_LISTED = 40;
+
+/**
+ * Where a route's registration line spells the handler's name — in code or inside a string (`'clubs#index'`,
+ * `to: "clubs#index"`, `only: [:index]`). Several spellings are told apart by what precedes the name (`#`, `.`,
+ * `::`, `:`), which is how a handler is written after its class; still several, or none, is a refusal.
+ */
+export async function registrationSpan(sources: Sources, file: string, line: number, name: string): Promise<{ span?: Span; inString?: boolean; why?: string }> {
+  const text = (await sources.lines(file))?.[line - 1];
+  if (text === undefined) return { why: "the line cannot be read (the file changed or is gone since the analysis)" };
+  let hits = identifierHits(text, name);
+  if (hits.length === 0) return { why: `the route line does not spell \`${name}\` (the handler is implied by the registration, such as a \`resources\` declaration or a convention)` };
+  if (hits.length > 1) {
+    // The one written after its class (`clubs#index`), else the one in code when the others are in strings (`'/cup', cup`).
+    const after = hits.filter((at) => /[#.:]$/.test(text.slice(Math.max(0, at - 2), at)));
+    const code = identifierHits(codeOnly(text, file), name);
+    if (after.length === 1) hits = after;
+    else if (code.length === 1) hits = code;
+    else return { why: `\`${name}\` is written ${hits.length} times on the route line` };
+  }
+  const at = hits[0]!;
+  const inString = identifierHits(codeOnly(text, file), name).length === 0;
+  return { span: { file, line, col: at + 1, end: at + 1 + name.length }, inString };
 }
 
 const spanText = (s: Span): string => `${s.file}:${s.line}:${s.col}-${s.end}`;
@@ -239,9 +269,17 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
   const importers = new Set<string>();
   for (const l of asTarget) if (l.relation === "reference") importers.add(l.sourceFile);
   const callerFiles = new Set<string>();
+  const registrations: SymbolLink[] = [];
   for (const l of callers) {
     const where = loc(l.sourceFile, l.sourceLine);
     callerFiles.add(l.sourceFile);
+    if (REGISTRATION_STRATEGIES.has(l.strategy ?? "")) {
+      // A route declared on the handler itself — its own line, or an annotation/attribute above the method — is the method, already the definition.
+      const above = l.sourceFile === def.file ? l.targetLine - l.sourceLine : -1;
+      const own = above === 0 || (above > 0 && above <= ANNOTATION_REACH && /^\s*(@|\[|#\[)/.test((await sources.lines(l.sourceFile))?.[l.sourceLine - 1] ?? ""));
+      if (!own) registrations.push(l);
+      continue;
+    }
     if ((l.confidence ?? "INFERRED") !== "EXTRACTED") {
       refuse(where, `the link to it is ${l.confidence ?? "INFERRED"}${l.strategy ? ` (${l.strategy})` : ""}, so this may not be a call of it`);
       continue;
@@ -257,6 +295,26 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
     await addSite(l.sourceFile, l.sourceLine, where, "caller");
   }
   const walked = callers.length;
+
+  // The routes that register it: their lines are in their own section, spelled however the framework does.
+  const registered: Array<{ span: Span; inString: boolean }> = [];
+  const registeredLines = new Set<string>();
+  for (const l of registrations) {
+    const where = loc(l.sourceFile, l.sourceLine);
+    const key = `${l.sourceFile}:${l.sourceLine}`;
+    if (registeredLines.has(key)) continue;
+    registeredLines.add(key);
+    // A route that states its handler (`clubs#index`, `handlers.index`) is certain enough though the linker could only scan for it; a guess is not.
+    const states = (l.callName ?? "").split(/[#.:]+/).pop() === name;
+    if (l.confidence === "AMBIGUOUS" || (l.confidence !== "EXTRACTED" && !states)) {
+      refuse(where, `route registration: the route may not name this definition (${l.strategy}, ${l.confidence ?? "INFERRED"}${l.callName ? `, handler written \`${l.callName}\`` : ""})`);
+      continue;
+    }
+    const r = await registrationSpan(sources, l.sourceFile, l.sourceLine, name);
+    if (!r.span) refuse(where, `route registration: ${r.why}`);
+    else if (seen.has(key)) continue;
+    else registered.push({ span: r.span, inString: !!r.inString });
+  }
 
   // Imports, exports and re-exports that name it.
   const around: string[] = [];
@@ -296,10 +354,11 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
 
   sites.sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line);
   const callSites = sites.filter((s) => s !== defSpan);
+  registered.sort((a, b) => byOrdinal(a.span.file, b.span.file) || a.span.line - b.span.line);
   return joinLines([
     heading,
     "",
-    `Nothing is written. ${plural(sites.length, "span")} in ${plural(new Set(sites.map((s) => s.file)).size, "file")}: the definition and ${plural(callSites.length, "call site")}, all EXTRACTED, each with the name once on its line. Spans are \`file:line:start-end\` (1-based columns in characters, end exclusive).`,
+    `Nothing is written. ${plural(sites.length + registered.length, "span")} in ${plural(new Set([...sites, ...registered.map((r) => r.span)].map((s) => s.file)).size, "file")}: the definition, ${plural(callSites.length, "call site")}${registered.length ? ` and ${plural(registered.length, "route registration")}` : ""}, all EXTRACTED or stated by the route, each with the name once on its line. Spans are \`file:line:start-end\` (1-based columns in characters, end exclusive).`,
     "",
     "## Definition",
     `- ${defSpan ? spanText(defSpan) : loc(def.file, def.line)}`,
@@ -307,6 +366,13 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
     `## Callers (${callSites.length})`,
     ...(callSites.length === 0 ? ["- no resolved caller; that is a lower bound, not proof of none"] : bulletList(callSites, limit, spanText)),
     "",
+    ...(registered.length === 0
+      ? []
+      : [
+          `## Route registrations (${registered.length})`,
+          ...bulletList(registered, Math.min(limit, REGISTRATIONS_LISTED), (r) => `${spanText(r.span)}${r.inString ? " (inside a string)" : ""}`),
+          "",
+        ]),
     `## Imports and exports naming it (${around.length})`,
     ...(around.length === 0 ? ["- none read"] : bulletList(around, limit, (r) => r)),
     ...(unreadFiles ? [`- imports of ${plural(unreadFiles, "more file")} not read`] : []),

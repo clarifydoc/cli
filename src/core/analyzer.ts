@@ -9,6 +9,7 @@ import { normalizeRoutePath } from "./route-linker.js";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";
 import { seedFromMainWorktree } from "./worktree-seed.js";
 import { runFingerprints } from "./run-fingerprint.js";
+import { featureStamp } from "./feature-flags.js";
 import {
   extractorStamp,
   loadManifest,
@@ -17,6 +18,7 @@ import {
   classifyFile as classifyFileForCache,
   normalizeManifestKey,
   type Manifest,
+  type RunOptions,
   type ManifestEntry,
 } from "./manifest.js";
 import {
@@ -456,6 +458,18 @@ async function docsOnlyResult(args: {
     codeFingerprint: args.fingerprints.code,
   });
   return { ...resultOf(summary, args.outputDir), docsOnly: true };
+}
+
+/** The switches of this run a background refresh repeats: globs and flags only — no path, token or environment value. */
+function runOptionsOf(options: AnalyzeOptions): RunOptions {
+  return {
+    ...(options.include?.length ? { include: [...options.include] } : {}),
+    ...(options.exclude?.length ? { exclude: [...options.exclude] } : {}),
+    ...(options.maxFiles ? { maxFiles: options.maxFiles } : {}),
+    lsp: options.lsp !== false,
+    features: featureStamp().split(",").filter(Boolean).map((f) => (f.startsWith("-") ? `no-${f.slice(1)}` : f)),
+    gitHistory: options.gitHistory !== false,
+  };
 }
 
 /** The result counts of a summary already on disk. */
@@ -2675,6 +2689,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
       ...(fingerprint ? { fingerprint } : {}),
       ...(fingerprints ? { codeFingerprint: fingerprints.code } : {}),
+      runOptions: runOptionsOf(options),
     };
     await saveManifest(outputDir, manifest);
     // Remove per-file JSON for sources that disappeared since the last run so
