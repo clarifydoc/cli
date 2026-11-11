@@ -1,4 +1,5 @@
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
+import { queueHoleKey } from "./data-access-graph.js";
 
 /**
  * Synthesize cross-tier symbol links from the api↔route join, so the Call
@@ -332,7 +333,7 @@ export function moveInheritedCallsToSubclasses(
  */
 export function synthesizeQueueSymbolLinks(rows: SymbolDataAccess[]): SymbolLink[] {
   // A destination is its broker + address: `matches` on Kafka is not `matches` on RabbitMQ.
-  const destKey = (r: SymbolDataAccess): string => `${r.broker ?? "?"}::${r.datastore}`;
+  const destKey = (r: SymbolDataAccess): string => `${r.broker ?? "?"}::${queueHoleKey(r.datastore ?? "")}`;
   const consumersByDest = new Map<string, SymbolDataAccess[]>();
   for (const r of rows) {
     if (r.access !== "queue-consume" || !r.datastore) continue;

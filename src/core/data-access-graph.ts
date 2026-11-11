@@ -399,6 +399,6 @@ export function attributeDataAccessToSymbols(
  * f-string's `club.{id}.signed`, a contract's `club.{clubId}.signed`) all read as
  * one `*`, so a document's channel and the code that sends to it meet on one node.
  */
-function queueHoleKey(target: string): string {
+export function queueHoleKey(target: string): string {
   return target.replace(/\$?\{[^{}]*\}/g, "*");
 }

@@ -37,7 +37,7 @@ type Dialect = "go" | "python" | "js";
 function typeOfVariable(text: string, name: string, dialect: Dialect): string | null {
   const id = name.replace(/\$/g, "\\$");
   const re =
-    dialect === "go" ? new RegExp(String.raw`\b${id}\s*(?::=|=(?!=))\s*&?(?:[\w]+\.)?(?:New)?(\w+)\s*[({]`)
+    dialect === "go" ? new RegExp(String.raw`\b${id}\s*(?::=|=(?!=))\s*&?(?:[\w]+\.)?(?:New(?=[A-Z]\w*\s*\()|(?!New[A-Z]\w*\s*\())(\w+)\s*[({]`)
     : dialect === "python" ? new RegExp(String.raw`^\s*${id}\s*=(?!=)\s*(?:[\w]+\.)*(\w+)\s*\(`, "m")
     : new RegExp(String.raw`\b${id}\s*=(?!=)\s*new\s+(?:[\w$]+\.)*([\w$]+)\s*\(`);
   const hits = new Set([...text.matchAll(new RegExp(re.source, re.flags + "g"))].map((m) => m[1]!));
@@ -48,7 +48,7 @@ function typeOfVariable(text: string, name: string, dialect: Dialect): string | 
 function handlerOf(arg: string, text: string, dialect: Dialect): string | null {
   const a = arg.trim();
   const direct =
-    dialect === "go" ? /^&?(?:[\w]+\.)?(?:New)?(\w+)\s*[({]/.exec(a)
+    dialect === "go" ? /^&?(?:[\w]+\.)?(?:New(?=[A-Z]\w*\s*\()|(?!New[A-Z]\w*\s*\())(\w+)\s*[({]/.exec(a)
     : dialect === "python" ? /^(?:[\w]+\.)*(\w+)\s*\(/.exec(a)
     : /^new\s+(?:[\w$]+\.)*([\w$]+)\s*\(/.exec(a);
   if (direct) return direct[1]!;

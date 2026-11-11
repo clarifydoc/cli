@@ -46,4 +46,14 @@ describe("queue nodes: broker and unresolved destinations", () => {
     expect(queues.find((n) => n.id.endsWith("A.java:5"))!.reason).toBe("ambiguous send overload");
     expect(synthesizeQueueSymbolLinks(attributeDataAccessToSymbols(files, empty))).toEqual([]);
   });
+
+  it("meets a publish and a consume whose holes are spelled differently, and not a different literal", () => {
+    const files = [
+      sender("src/Out.java", [row({ name: "MQ: send", target: "club.${id}.signed" })]),
+      sender("src/In.java", [row({ kind: "queue-consume", name: "MQ: consume", target: "club.{club_id}.signed" })]),
+      sender("src/Other.java", [row({ kind: "queue-consume", name: "MQ: consume", target: "club.{club_id}.released" })]),
+    ];
+    const links = synthesizeQueueSymbolLinks(attributeDataAccessToSymbols(files, empty));
+    expect(links.map((l) => `${l.sourceFile} -> ${l.targetFile}`)).toEqual(["src/Out.java -> src/In.java"]);
+  });
 });

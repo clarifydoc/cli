@@ -43,6 +43,13 @@ describe("Convex builders defined in another module", () => {
       "export const loose = lq({ args: {}, handler: async () => 1 });",
       "",
     ].join("\n"));
+    write("convex/leagues.ts", [
+      'import { authedQuery as aq } from "./lib/auth";',
+      'import { looseQuery as lq } from "./lib/other";',
+      "export const table = aq({ args: {}, handler: async () => 1 });",
+      "export const decoy = lq({ args: {}, handler: async () => 1 });",
+      "",
+    ].join("\n"));
     write("convex/http.ts", [
       'import { httpRouter } from "convex/server";',
       'import { httpAction } from "./_generated/server";',
@@ -69,6 +76,8 @@ describe("Convex builders defined in another module", () => {
     const routes = s.routeMap.map((r) => `${r.httpMethod} ${r.path}`);
     expect(routes).toContain("GET /convex/clubs.list");
     expect(routes).toContain("POST /convex/clubs.sign");
+    expect(routes).toContain("GET /convex/leagues.table");
+    expect(routes).not.toContain("GET /convex/leagues.decoy");
     expect(routes).not.toContain("GET /convex/clubs.loose");
     expect(routes).not.toContain("POST /convex/clubs.loose");
     const links = (s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url} -> ${l.target}`);
