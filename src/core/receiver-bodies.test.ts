@@ -40,18 +40,23 @@ class Player { public: Player operator+(const Player& o) const; };
 class Car { public: Car operator+(const Car& o) const; };
 struct Kit { int n; };
 Kit operator+(const Kit& a, const Kit& b);
-void tally(Player a, Player b, Car c, Car d, Kit k, Kit m, int x, int y, Player* p) {
+void tally(Player a, Player b, Car c, Car d, Kit k, Kit m, int x, int y, Player* p, size_t n, uint16_t q) {
   Player s = a + b;
   Car t = c + d;
   Kit u = k + m;
   int z = x + y;
   Player w = p + 1;
+  size_t half = n * 2 + q * 3;
+  bool same = k == m;
 }
 void Club::sign() { tally(); }
 void audit(Club* c) { c->sign(); }
 Player Player::operator+(const Player& o) const { return o; }
 Car Car::operator+(const Car& o) const { return o; }
 Kit operator+(const Kit& a, const Kit& b) { return a; }
+bool operator==(const Kit& a, const Kit& b) { return a.n == b.n; }
+bool operator==(const Kit& a, int b) { return a.n == b; }
+struct Iter { int operator*() const { return 0; } };
 `,
     });
   }, 120_000);
@@ -62,7 +67,7 @@ Kit operator+(const Kit& a, const Kit& b) { return a; }
     expect(links(java).filter((l) => l.includes("Referee"))).toEqual([]);
   });
 
-  it("links an operator expression to the operator of its left operand's class, never a primitive's or a pointer's", () => {
+  it("links an operator expression to the operator of its left operand's class, never a primitive's, a `_t` number's, a pointer's, or one of a free overload set (real-repo FP)", () => {
     const l = links(cpp).filter((x) => x.startsWith("tally>"));
     expect(l).toEqual(["tally>main.cpp:Car.operator+", "tally>main.cpp:Player.operator+", "tally>main.cpp:operator+"]);
   });

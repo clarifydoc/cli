@@ -165,6 +165,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
   const objects = new Map<PatternCallName[], Map<string, string>>();
   const operatorSites: OperatorSite[] = [];
   const freeOperators = new Set<string>();
+  const freeOperatorCount = new Map<string, number>();
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const found: Found[] = [];
   const own = (name: { text: string; line: number; specializedOn?: string[] }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
@@ -184,8 +185,12 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       const name = declaredName(ctx.declarator(), text);
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
-      const free = name?.text.startsWith("operator") ? freeOperatorOf(ctx, name.text) : null;
-      if (free) freeOperators.add(free);
+      if (name?.text.startsWith("operator")) {
+        const free = freeOperatorOf(ctx, name.text);
+        if (free) freeOperators.add(free);
+        // Every free definition of the operator, whatever its parameters: an overload set the left operand alone cannot choose from.
+        if (isFreeDefinition(ctx)) freeOperatorCount.set(name.text, (freeOperatorCount.get(name.text) ?? 0) + 1);
+      }
     } else if (ctx instanceof MacroFunctionDefinitionContext) {
       const head = (ctx.children[0] as TerminalNode).symbol;
       into = own({ text: head.text ?? "", line: head.line }, ctx, head.line);
@@ -260,7 +265,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
   }
   // A free `operator+(const Club&, …)` the file defines is what `a + b` calls on a `Club a` that declares none.
   for (const site of operatorSites) {
-    if (freeOperators.has(`${site.type}|${site.name}`)) site.calls.push({ name: site.name, leafName: site.name, line: site.line, column: site.column });
+    if (freeOperators.has(`${site.type}|${site.name}`) && freeOperatorCount.get(site.name) === 1) site.calls.push({ name: site.name, leafName: site.name, line: site.line, column: site.column });
   }
   return found;
 }
@@ -293,7 +298,8 @@ function operatorCall(ctx: BinaryExpressionContext, calls: PatternCallName[], ob
   sites?.push({ calls, type: objects.get(head)!, name: `operator${spelling}`, line: first.line, column: first.column });
 }
 
-const NOT_A_CLASS = /^(?:void|char|char8_t|char16_t|char32_t|wchar_t|bool|short|int|long|float|double|signed|unsigned|auto|decltype)$/;
+// A `_t` name is a C typedef of a number (`uint16_t`, `size_t`, `int64_t`, `time_t`): `n * 10` on one is arithmetic.
+const NOT_A_CLASS = /^(?:void|char|char8_t|char16_t|char32_t|wchar_t|bool|short|int|long|float|double|signed|unsigned|auto|decltype|[A-Za-z_]\w*_t)$/;
 
 /**
  * The names a parameter or local declaration declares, each with whether it is a class-typed value: a type spelled by
@@ -351,6 +357,12 @@ function specifierText(seq: DeclSpecifierSeqContext, drop = 0): string {
  * `Club|operator+` of its first parameter's type, the left operand it is called on. Null for a member, a friend defined in
  * its class, or a first parameter no plain name types.
  */
+/** A definition outside any class with no `Class::` in front of its name. */
+function isFreeDefinition(def: FunctionDefinitionContext): boolean {
+  for (let up: ParserRuleContext | null = def.parent; up; up = up.parent) if (up instanceof ClassSpecifierContext) return false;
+  return !/::/.test(def.declarator().getText());
+}
+
 function freeOperatorOf(def: FunctionDefinitionContext, name: string): string | null {
   for (let up: ParserRuleContext | null = def.parent; up; up = up.parent) if (up instanceof ClassSpecifierContext) return null;
   const top = def.declarator().pointerDeclarator()?.noPointerDeclarator() ?? def.declarator().noPointerDeclarator();
