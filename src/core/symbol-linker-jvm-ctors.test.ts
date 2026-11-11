@@ -190,4 +190,24 @@ describe("Java anonymous classes", () => {
     // The call inside the anonymous body is still the enclosing method's.
     expect(links.some((l) => l.startsWith("Squad.start: 6 club.sign"))).toBe(true);
   });
+
+  it("a local built from an empty anonymous subclass is its base: inherited calls on it link (real-repo FP)", async () => {
+    const analyses = await analyzeAll({
+      ...files,
+      "com/example/league/Kit.java": "package com.example.league;\npublic abstract class Kit { public void setColour(String c) {} }\n",
+      "com/example/league/KitTest.java": [
+        "package com.example.league;",
+        "public class KitTest {",
+        "  void paint() {",
+        "    var kit = new Kit() {};",
+        "    kit.setColour(\"red\");",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    }, "java");
+    expect(linksFrom(analyses, "com/example/league/KitTest.java").filter((l) => l.includes(" kit.setColour "))).toEqual([
+      "KitTest.paint: 5 kit.setColour -> com/example/league/Kit.java::Kit.setColour@2 [calls]",
+    ]);
+  });
 });

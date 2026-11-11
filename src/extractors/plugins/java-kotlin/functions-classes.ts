@@ -915,7 +915,12 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
           const value = c.childForFieldName("value");
           const local = c.childForFieldName("name")?.text;
           // Initialized by an anonymous class: the local is that class (see `collectAnonymousClasses`).
-          const anonymous = value && local && isAnonymousClassCreation(value) ? anonymousClassName(value) : null;
+          // One declaring no method is never emitted (`new Base() {}`): the local is then the base itself.
+          const anonymous = value && local && isAnonymousClassCreation(value)
+            ? (value.children.find((ch) => ch.type === "class_body")?.children.some((m) => m.type === "method_declaration")
+              ? anonymousClassName(value)
+              : anonymousBaseOf(value))
+            : null;
           if (anonymous && !seen.has(local!)) {
             seen.add(local!);
             out.push({ name: local!, type: anonymous });
