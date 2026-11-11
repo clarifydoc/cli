@@ -75,7 +75,7 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
     if (!hook) continue;
     const serviceOf = (spelling: string | null | undefined): string | null => {
       if (!spelling) return null;
-      const s = hook(spelling.trim(), a);
+      const s = hook(spelling.trim(), a, analyses);
       if (!s) return null;
       return s.certain || declared.has(s.service) ? s.service : null;
     };

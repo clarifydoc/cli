@@ -35,6 +35,14 @@ describe("Convex builders defined in another module", () => {
       "export const loose = looseQuery({ args: {}, handler: async () => 1 });",
       "",
     ].join("\n"));
+    write("convex/aliased.ts", [
+      'import { authedQuery as q, authedMutation as m } from "./lib/auth";',
+      'import { looseQuery as lq } from "./lib/other";',
+      "export const top = q({ args: {}, handler: async () => 1 });",
+      "export const send = m({ args: {}, handler: async () => 1 });",
+      "export const loose = lq({ args: {}, handler: async () => 1 });",
+      "",
+    ].join("\n"));
     write("convex/http.ts", [
       'import { httpRouter } from "convex/server";',
       'import { httpAction } from "./_generated/server";',
@@ -65,6 +73,14 @@ describe("Convex builders defined in another module", () => {
     expect(routes).not.toContain("POST /convex/clubs.loose");
     const links = (s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url} -> ${l.target}`);
     expect(links).toContain("src/Clubs.tsx GET /convex/clubs.list -> convex/clubs.ts");
+  });
+
+  it("places a builder imported under another local name by its exported name", async () => {
+    const s = await loadReportSummary(out);
+    const routes = s.routeMap.map((r) => `${r.httpMethod} ${r.path}`);
+    expect(routes).toContain("GET /convex/aliased.top");
+    expect(routes).toContain("POST /convex/aliased.send");
+    expect(routes).not.toContain("GET /convex/aliased.loose");
   });
 
   it("reads an http route whose path and method are constants of the file", async () => {

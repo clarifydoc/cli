@@ -168,7 +168,7 @@ export function visitConvexFunction(node: Node, routes: RouteInfo[], modulePath:
       facts.push({
         kind: "convex-use",
         line: node.startPosition.row + 1,
-        data: { local: callee.text, name: name.text, modulePath, handler: h.ref ?? name.text, calls: h.node ? collectCallNames(h.node) : [] },
+        data: { local: callee.text, exported: from, name: name.text, modulePath, handler: h.ref ?? name.text, calls: h.node ? collectCallNames(h.node) : [] },
       });
     }
     return;
@@ -223,6 +223,8 @@ export function visitConvexHttpRoute(node: Node, routes: RouteInfo[], consts?: M
 
 interface UseData {
   local: string;
+  /** The name the defining module exports it under (`authedQuery` in `import { authedQuery as q }`). */
+  exported?: string;
   name: string;
   modulePath: string;
   handler: string;
@@ -255,7 +257,7 @@ export const convexBuilderResolver: RouteResolver = {
       for (const f of uses) {
         const u = f.data as UseData;
         const file = ctx.importIndex.localFor(a.filePath, u.local);
-        const builder = file ? defined.get(`${file}#${u.local}`) : undefined;
+        const builder = file ? defined.get(`${file}#${u.exported ?? u.local}`) : undefined;
         if (!builder) continue;
         added.push({
           path: `${CONVEX_PREFIX}${u.modulePath}.${u.name}`,

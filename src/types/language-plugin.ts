@@ -2155,7 +2155,7 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * project declares the service. Core's gRPC client pass
    * (`core/grpc-clients.ts`) reads only this.
    */
-  grpcStubService?: (spelling: string, file: FileAnalysis) => { service: string; certain: boolean } | null;
+  grpcStubService?: (spelling: string, file: FileAnalysis, project?: readonly FileAnalysis[]) => { service: string; certain: boolean } | null;
   /**
    * The gRPC service a class implements, read off protoc's generated base for
    * it (`CartService.CartServiceBase`, `…Grpc.…ImplBase`, `…Servicer`, an

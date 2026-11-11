@@ -243,3 +243,97 @@ describe("Thrift row joined to the one Python handler", () => {
     expect(targets.sort()).toEqual(["clubs -> py/server.py", "getClub -> py/server.py"]);
   });
 });
+
+/** Object-literal Node handlers, awaited Node clients, and a Go client of a package generated from the `.thrift`. */
+const MORE: Record<string, string> = {
+  "idl/league.thrift": DYNAMIC["idl/league.thrift"]!,
+  "gen/league/club_service.go": `package league
+
+type ClubServiceClient struct{ c int }
+type ClubServiceProcessor struct{ p int }
+
+func NewClubServiceClient(c int) *ClubServiceClient { return &ClubServiceClient{c: c} }
+`,
+  "go/scout.go": `package main
+
+import "example.com/league/gen/league"
+
+type Scout struct{ client *league.ClubServiceClient }
+
+func (s *Scout) Visit(ctx context.Context) { s.client.GetClub(ctx, "c1") }
+`,
+  "go/fan.go": `package main
+
+import "example.com/fans/ticketing"
+
+type Fan struct{ client *ticketing.FooClient }
+
+func (s *Fan) Visit(ctx context.Context) { s.client.GetClub(ctx, "c1") }
+`,
+  "node/literal-server.js": `const thrift = require("thrift");
+const ClubService = require("./gen/ClubService");
+const held = {
+  getClub(id, result) { result(null, {}); },
+  clubs: async (limit) => [],
+};
+thrift.createServer(ClubService, held);
+`,
+  "node/inline-server.js": `const thrift = require("thrift");
+const ClubService = require("./gen/ClubService");
+thrift.createServer(ClubService, {
+  getClub(id, result) { result(null, {}); },
+  clubs: async (limit) => [],
+  unrelated() {},
+});
+`,
+  "node/other-server.js": `const http = require("http");
+const ClubService = {};
+http.createServer(ClubService, { getClub() {}, clubs() {} });
+`,
+  "node/awaited.js": `const thrift = require("thrift");
+const ClubService = require("./gen/ClubService");
+async function visit(conn) {
+  const client = await thrift.createClient(ClubService, conn);
+  return client.getClub("c1");
+}
+async function visitMore() {
+  const client = (await connect()).createClient(ClubService, 1);
+  return client.clubs(3);
+}
+`,
+};
+
+describe("Thrift: object-literal handlers, awaited clients, generated Go packages", () => {
+  let dir: string;
+  let out: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-thrift-more-"));
+    for (const [p, text] of Object.entries(MORE)) {
+      await mkdir(dirname(join(dir, "src", p)), { recursive: true });
+      await writeFile(join(dir, "src", p), text);
+    }
+    out = join(dir, "out");
+    await analyze({ projectRoot: join(dir, "src"), outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("serves the rows an object-literal handler has members for, held or written in the call", async () => {
+    const s = await loadReportSummary(out);
+    const served = (f: string) => s.routeMap.filter((r) => r.filePath === f && r.contract).map((r) => `${r.contract!.method}:${r.handler}`).sort();
+    expect(served("node/literal-server.js")).toEqual(["clubs:held.clubs", "getClub:held.getClub"]);
+    expect(served("node/inline-server.js")).toEqual(["clubs:createServer.clubs", "getClub:createServer.getClub"]);
+    expect(served("node/other-server.js")).toEqual([]);
+  });
+
+  it("links an awaited Node client and a Go client of a generated package, and a namesake client to nothing", async () => {
+    const s = await loadReportSummary(out);
+    const links = (s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url}`).sort();
+    expect(links).toEqual([
+      "go/scout.go POST /com.example.league.ClubService/getClub",
+      "node/awaited.js POST /com.example.league.ClubService/clubs",
+      "node/awaited.js POST /com.example.league.ClubService/getClub",
+    ]);
+  });
+});
