@@ -163,8 +163,9 @@ export const NOISE_CALLS = new Set([
  * Use `classifyCalls()` afterward to categorize using import context.
  *
  * Does NOT descend into nested function definitions, arrow functions, or lambdas.
+ * `skip` names further subtrees the caller reads on their own; the walk leaves them out.
  */
-export function extractCalls(bodyNode: Node | null, language: Language): CallInfo[] {
+export function extractCalls(bodyNode: Node | null, language: Language, skip?: (node: Node) => boolean): CallInfo[] {
   if (!bodyNode) return [];
 
   const hooks = callHooksByLanguage.get(language);
@@ -240,6 +241,8 @@ export function extractCalls(bodyNode: Node | null, language: Language): CallInf
   function walk(node: Node, isRoot: boolean) {
     if (visited.has(node.id)) return;
     visited.add(node.id);
+    // A subtree the caller reads as a function of its own (a test runner's nested `it`).
+    if (!isRoot && skip?.(node)) return;
 
     // Don't descend into nested function/class definitions (except the root
     // body itself) — those are symbols of their own. Anonymous function

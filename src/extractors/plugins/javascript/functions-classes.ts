@@ -96,8 +96,9 @@ function finishBody(
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
+  skip?: (node: Node) => boolean,
 ): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]>; returnedFrom?: string[] } {
-  const scan = scanBody(body, paramNames, ctx, params);
+  const scan = scanBody(body, paramNames, ctx, params, skip);
   const returnedMembers = returnedMembersOf(body);
   // A concise arrow returns its body.
   const returnedFrom = body && body.type !== "statement_block" ? resultChains(body, []) : scan.returnedFrom;
@@ -302,6 +303,7 @@ function scanBody(
   paramNames: ReadonlySet<string>,
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
+  skip?: (node: Node) => boolean,
 ): { extraCalls: CallInfo[]; localTypes: LocalType[]; returnedSpreads: string[]; returnedFrom: string[] | null } {
   const extraCalls: CallInfo[] = [];
   const returnedSpreads: string[] = [];
@@ -478,6 +480,7 @@ function scanBody(
   // `ownBody`: outside every function expression, where a `return` is the function's own.
   const walk = (node: Node, isRoot: boolean, inScope: boolean, parentType: string, ownBody: boolean): void => {
     const type = node.type;
+    if (!isRoot && skip?.(node)) return;
     if (!isRoot && SEPARATE_SCOPES.has(type)) {
       // A class this body declares is its own: an instance's type is that class, never a namesake elsewhere.
       if (type === "class_declaration" && inScope) {
@@ -1518,7 +1521,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     if (sourceText.includes("]:")) this.extractKeyedRegistry(tree.rootNode, functions);
     if (this.ctx.dispatchProps.size > 0) for (const fn of functions) addDispatchPropCalls(fn, this.ctx.dispatchProps);
     // `describe`/`it`/`beforeEach` callbacks: each test a function of its own, named by its title path.
-    functions.push(...testCaseFunctions(tree.rootNode, sourceText, (name, fn) => this.parseJsArrowOrExpr(name, fn, false)));
+    functions.push(...testCaseFunctions(tree.rootNode, sourceText, (name, fn, skip) => this.parseJsArrowOrExpr(name, fn, false, skip)));
     // Callbacks handed on to run later (`toast.action = () => …`): each a function of its own (`heldFunction`).
     for (const held of heldFunctionNodes(tree)) {
       const fn = this.parseJsArrowOrExpr(held.name, held.node, false);
@@ -2076,6 +2079,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     name: string,
     node: Node,
     isExported: boolean,
+    /** Subtrees that are functions of their own and are not read as part of this one (a test runner's nested `it`). */
+    skip?: (node: Node) => boolean,
   ): FunctionInfo {
     // Handle type assertions wrapping the arrow function: `const f = ((): T => {}) as const`
     let funcNode = node;
@@ -2115,7 +2120,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
     return {
       name,

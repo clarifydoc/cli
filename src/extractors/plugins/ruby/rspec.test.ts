@@ -139,4 +139,30 @@ end
       "Club › example at line 10 10-13: expect,validate_presence_of",
     ]);
   });
+
+  it("gives each group only the calls of its own lines, however deep its examples nest", () => {
+    const fns = analyze(`
+RSpec.describe Club do
+  let(:garage) { Garage.new }
+  context "pit" do
+    let(:crew) { Crew.new }
+    context "stops" do
+      it "changes tyres" do
+        Tyre.fit(garage)
+      end
+    end
+    it "waits" do
+      crew.wait
+    end
+  end
+  after { Garage.close }
+end
+`).functions;
+    const calls = (n: string) => fns.find((f) => f.name === n)!.calls.map((c) => c.name);
+    expect(calls("Club")).not.toContain("Tyre.fit");
+    expect(calls("Club")).not.toContain("crew.wait");
+    expect(calls("Club › pit › stops › changes tyres")).toContain("Tyre.fit");
+    expect(calls("Club › pit › waits")).toContain("crew.wait");
+    expect(fns.find((f) => f.name === "Club › pit › stops")!.calls.map((c) => c.name)).not.toContain("Tyre.fit");
+  });
 });

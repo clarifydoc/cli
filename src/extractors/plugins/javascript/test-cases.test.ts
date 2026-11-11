@@ -85,4 +85,46 @@ describe("league", () => {
     const rows = computeComplexity(tree, "typescript" as never, fns, []);
     expect(rows.map((r) => [r.functionName, r.complexity])).toEqual([["league › ranks", 3], ["league › draws", 3]]);
   });
+
+  it("reads a suite's own body only: its nested suites' and cases' calls and typed locals are theirs", async () => {
+    const code = `
+describe("league", () => {
+  const garage: Garage = openGarage();
+  it("parks", () => {
+    const car: Car = new Car();
+    park(car);
+  });
+  describe("pit", () => {
+    const crew: Crew = hireCrew();
+    describe("stops", () => {
+      it("changes tyres", () => { const wheel: Wheel = new Wheel(); fitTyre(wheel); });
+    });
+  });
+  closeGarage();
+});
+`;
+    const fns = await functionsOf(code);
+    const by = new Map(fns.map((f) => [f.name, f]));
+    const names = (n: string) => by.get(n)!.calls.map((c) => c.name);
+    expect(names("league")).toEqual(expect.arrayContaining(["openGarage", "closeGarage"]));
+    expect(names("league")).not.toContain("park");
+    expect(names("league")).not.toContain("hireCrew");
+    expect(names("league › pit")).toEqual(["hireCrew"]);
+    expect(names("league › pit › stops › changes tyres")).toContain("fitTyre");
+    const typed = (n: string) => (by.get(n)!.localTypes ?? []).map((l) => l.name);
+    expect(typed("league")).toEqual(["garage"]);
+    expect(typed("league › pit")).toEqual(["crew"]);
+    expect(typed("league › pit › stops › changes tyres")).toEqual(["wheel"]);
+  });
+
+  it("keeps a suite's own call that a nested case also makes", async () => {
+    const code = `
+describe("league", () => {
+  it("opens", () => { open(); });
+  open();
+});
+`;
+    const fns = await functionsOf(code);
+    expect(fns.find((f) => f.name === "league")!.calls.map((c) => c.name)).toEqual(["open"]);
+  });
 });

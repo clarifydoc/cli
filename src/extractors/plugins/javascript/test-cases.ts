@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
+import type { FunctionInfo } from "../../../types/analysis.js";
 
 /**
  * A test runner's registrations (mocha, jest, vitest, jasmine, node:test): their callbacks run
@@ -55,52 +55,40 @@ export const TEST_TITLE_SEPARATOR = " › ";
  * and `testCase` saying what it is. `build` turns the callback into a `FunctionInfo` the way the
  * extractor builds any function expression.
  */
-export function testCaseFunctions(root: Node, sourceText: string, build: (name: string, fn: Node) => FunctionInfo): FunctionInfo[] {
+export function testCaseFunctions(root: Node, sourceText: string, build: (name: string, fn: Node, skip: (node: Node) => boolean) => FunctionInfo): FunctionInfo[] {
   if (!GATE.test(sourceText)) return [];
   const out: FunctionInfo[] = [];
-  // Returns the calls of every callback registered below `node`, as each was built: the enclosing
-  // callback's own body reached into them (an inline callback's calls are its encloser's), and
-  // they are a function of their own, so the encloser gives them up.
-  const visit = (node: Node, path: string[]): CallInfo[] => {
-    const nested: CallInfo[] = [];
+  /** A registration this file turns into a function: the callback, its kind and title; null for any other node. */
+  const registered = (node: Node): { reg: string; callback: Node; title: string } | null => {
+    if (node.type !== "call_expression") return null;
+    const reg = registrationName(node.childForFieldName("function"));
+    if (!reg) return null;
+    const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
+    const callback = args.find(isFunction);
+    if (!callback) return null;
+    // A suite or case states its title first; a hook is named for its kind.
+    const title = HOOKS.has(reg) ? reg : titleOf(args[0] === callback ? undefined : args[0]);
+    return title ? { reg, callback, title } : null;
+  };
+  // A callback's body is read once, without the registrations below it: those are functions of
+  // their own, each read once as its own body, so a suite carries only its own calls and locals.
+  const skip = (node: Node): boolean => registered(node) !== null;
+  const visit = (node: Node, path: string[]): void => {
     for (const child of node.namedChildren) {
-      if (child.type === "call_expression") {
-        const reg = registrationName(child.childForFieldName("function"));
-        const args = reg ? (child.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment") : [];
-        const callback = args.find(isFunction);
-        if (reg && callback) {
-          const hook = HOOKS.has(reg);
-          // A suite or case states its title first; a hook is named for its kind.
-          const title = hook ? reg : titleOf(args[0] === callback ? undefined : args[0]);
-          if (title) {
-            // `::` would read as the `file::symbol` separator; the title itself stays as written.
-            const fn = build([...path, title].join(TEST_TITLE_SEPARATOR).replace(/::/g, ":"), callback);
-            fn.testCase = { title, path: [...path], kind: SUITES.has(reg) ? "suite" : hook ? "hook" : "case" };
-            out.push(fn);
-            nested.push(...fn.calls);
-            fn.calls = without(fn.calls, visit(callback, [...path, title])).filter((c) => !TEST_REGISTRATION.has(c.name.split(".")[0]!));
-            continue;
-          }
-        }
+      const found = registered(child);
+      if (!found) {
+        visit(child, path);
+        continue;
       }
-      nested.push(...visit(child, path));
+      const { reg, callback, title } = found;
+      // `::` would read as the `file::symbol` separator; the title itself stays as written.
+      const fn = build([...path, title].join(TEST_TITLE_SEPARATOR).replace(/::/g, ":"), callback, skip);
+      fn.testCase = { title, path: [...path], kind: SUITES.has(reg) ? "suite" : HOOKS.has(reg) ? "hook" : "case" };
+      out.push(fn);
+      fn.calls = fn.calls.filter((c) => !TEST_REGISTRATION.has(c.name.split(".")[0]!));
+      visit(callback, [...path, title]);
     }
-    return nested;
   };
   visit(root, []);
   return out;
-}
-
-/** `calls` less one occurrence of each of `taken` (by name and line). */
-function without(calls: CallInfo[], taken: readonly CallInfo[]): CallInfo[] {
-  if (!taken.length) return calls;
-  const left = new Map<string, number>();
-  for (const c of taken) left.set(`${c.name}\0${c.line}`, (left.get(`${c.name}\0${c.line}`) ?? 0) + 1);
-  return calls.filter((c) => {
-    const k = `${c.name}\0${c.line}`;
-    const n = left.get(k) ?? 0;
-    if (n === 0) return true;
-    left.set(k, n - 1);
-    return false;
-  });
 }

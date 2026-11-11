@@ -59,17 +59,20 @@ export function withDescribedClass(line: string, fn: FunctionInfo): string {
  */
 function callsOver(code: readonly string[], from: number, to: number, owned: ReadonlySet<number>, prefixes: string[], patterns: CallPattern[], subject: string | undefined): CallInfo[] {
   const shifts = new Map<number, number[]>();
-  const body = code.map((l, i) => {
-    if (i < from || i > to || owned.has(i)) return "";
-    if (!subject || !l.includes("described_class")) return l;
+  // Only the block's own range is read; the scan sees an array as long as the file's up to `to`.
+  const body: string[] = new Array<string>(to + 1);
+  for (let i = from; i <= to; i++) {
+    const l = code[i]!;
+    if (owned.has(i)) { body[i] = ""; continue; }
+    if (!subject || !l.includes("described_class")) { body[i] = l; continue; }
     const at: number[] = [];
     const text = l.replace(DESCRIBED, (_m, offset: number) => {
       at.push(offset + at.length * (subject.length - DESCRIBED_LENGTH));
       return subject;
     });
     shifts.set(i + 1, at);
-    return text;
-  });
+    body[i] = text;
+  }
   // The registration itself (`it`, `describe`) is the enclosing block's statement, not a call of this one.
   // Removed in place: the member calls held back as noise (`League::Club.new`) are kept against
   // this array, and come back once the file's classes are known (`restoreTypedReceiverCalls`).
@@ -163,11 +166,14 @@ export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPattern
   const subjectOf = (b: Block | null): string | undefined => (b ? b.subject ?? subjectOf(b.parent) : undefined);
   // The lines each block owns: its own, less the opening line (the enclosing block's statement) and
   // its nested blocks. A block opened and closed on one line (`it { expect(club).to be_valid }`) keeps that line.
+  // One pass: a block's nested blocks cover their own nested ones, so only its direct children's
+  // lines are added (every line is added once, to its parent).
   const ownedOf = new Map<Block, Set<number>>();
-  for (const b of blocks) {
-    const owned = new Set<number>(b.end > b.start ? [b.start] : []);
-    for (const c of blocks) if (c !== b && c.start > b.start && c.end <= b.end) for (let i = c.start; i <= c.end; i++) owned.add(i);
-    ownedOf.set(b, owned);
+  for (const b of blocks) ownedOf.set(b, new Set<number>(b.end > b.start ? [b.start] : []));
+  for (const c of blocks) {
+    if (!c.parent) continue;
+    const owned = ownedOf.get(c.parent)!;
+    for (let i = c.start; i <= c.end; i++) owned.add(i);
   }
   // The names a group's `let` / `subject` bind, typed where the block builds the described class or a
   // constant; a nested group sees its ancestors' and may rebind one (to a type nobody can tell: null).
