@@ -345,6 +345,23 @@ describe("construction without a written constructor call", () => {
     expect(relations(analyses, "svc/svc.go")).toEqual(["models.Club -> models/club.go::Club"]);
   });
 
+  it("Go: a literal inside a method named like its type builds the type, never calls the method (real-repo FP)", async () => {
+    const analyses = await analyzeAll({
+      "models/club.go": [
+        "package models",
+        "type Player struct { Name string }",
+        "type Club struct { player *Player }",
+        "func (c *Club) Player() *Player {",
+        "  if c.player != nil { return c.player }",
+        "  return &Player{}",
+        "}",
+        "",
+      ].join("\n"),
+    }, "go");
+    const links = buildSymbolLinks(analyses).filter((l) => l.callName === "Player").map((l) => `${l.sourceSymbol} -> ${l.targetSymbol} [${l.relation}]`);
+    expect(links).toEqual(["Club.Player -> Player [instantiates]"]);
+  });
+
   it("Rust: a struct expression constructs its struct, not `Club::new`; a match pattern constructs nothing", async () => {
     const analyses = await analyzeAll({
       "src/models.rs": "pub struct Club { pub name: String }\nimpl Club {\n    pub fn new() -> Club { Club { name: String::new() } }\n}\n",

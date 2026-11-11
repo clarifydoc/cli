@@ -4678,7 +4678,13 @@ function resolveCallUnscoped(
   /** A name that REFERS to a callable (a route's handler), not a call written in a body. */
   reference = false,
 ): SymbolLink | null {
-  const link = resolveCallToDefinitionBody(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  let link = resolveCallToDefinitionBody(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  // A struct literal (`User{...}`) only ever builds a type: a function or method of that name (the enclosing
+  // `Client.User()` itself) is no target. The class lookup a `new` takes is asked instead, or nothing links.
+  if (link && call.construction === "literal" && link.strategy !== "constructor") {
+    const asNew = resolveCallToDefinitionBody(sourceFile, sourceSymbol, { ...call, name: `new ${call.name.replace(/::/g, ".")}` }, analysis, ctx, reference);
+    link = asNew && asNew.strategy === "constructor" ? { ...asNew, callName: call.name } : null;
+  }
   // One of several values a descriptor holds under a key (`CallInfo.alternative`): whichever strategy found it, never surer than a guess.
   return link && call.alternative && link.confidence !== "AMBIGUOUS" ? { ...link, confidence: "AMBIGUOUS" } : link;
 }
