@@ -1,3 +1,5 @@
+import { convexDbAccess, convexReference } from "./convex-data.js";
+import { namesConvex } from "./routes/convex.js";
 import { responseReadsOf, type BodyStyle } from "./response-reads.js";
 import { resolveRtkHooks } from "./rtk-query.js";
 import { resolveKubbClientCalls } from "./kubb.js";
@@ -701,6 +703,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private mq: MqEvidence | null = null;
   /** The file names tRPC (its client import), so `x.y.useQuery()` chains are procedure calls. */
   private trpcClient: boolean | null = null;
+  /** The file names Convex (its server module, generated API or client package). */
+  private convexFile: boolean | null = null;
   /** Names the file's Kysely queries give their common table expressions. */
   private kyselyCtes: Set<string> | null = null;
   /** Names the file binds to a SQL template tag (see `sqlTagNames`), read on first need. */
@@ -815,6 +819,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.imports = null;
     this.mq = null;
     this.trpcClient = null;
+    this.convexFile = null;
     this.kyselyCtes = null;
     this.sqlTags = null;
     this.rtk = null;
@@ -1569,6 +1574,28 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // database op: `apiClient.get("/owners")` is HTTP, but its leaf `get`
       // collides with Drizzle's `.get()` in ORM_METHODS.
       let emittedApiCall = false;
+
+      // Convex: a client's `useQuery(api.clubs.list)` is a request to the function (routes/convex.ts),
+      // and a function's `ctx.db.*` calls are its table accesses.
+      if (fnName && (this.convexFile ??= namesConvex(this.sourceText))) {
+        const ref = convexReference(node);
+        if (ref) {
+          sources.push(this.ds({ kind: "api-call", name: ref.method, target: ref.target, line: node.startPosition.row + 1 }));
+          return;
+        }
+        const db = /_generated\/server|convex\/server/.test(this.sourceText) ? convexDbAccess(node) : null;
+        if (db) {
+          sources.push(this.ds({
+            kind: "database",
+            name: db.chain,
+            target: db.table,
+            ...(db.table ? { entity: db.table } : {}),
+            line: node.startPosition.row + 1,
+            access: db.access,
+          }));
+          return;
+        }
+      }
 
       // RTK Query: an endpoint definition in an API slice, or a component's generated hook.
       if (fnName && this.rtkCall(node, fn, fnName, sources)) return;

@@ -12,6 +12,7 @@ import { visitVueRouterRoute } from "./vue-router.js";
 import { mayDeclareAngularJsRoutes, visitAngularJsRoute } from "./angularjs.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
+import { convexCustomBuilders, convexModulePath, mayDefineConvex, visitConvexFunction, visitConvexHttpRoute } from "./convex.js";
 import { collectCdkRoutes } from "./cdk.js";
 import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
@@ -41,6 +42,11 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const tanstack: RouteInfo[] = [];
     const trpc: RouteInfo[] = [];
     const maybeTrpc = mayDefineTrpc(sourceText);
+    const convex: RouteInfo[] = [];
+    // Convex: exported query/mutation/action builders of a functions-directory module, and `http.route` on its router.
+    const convexModule = mayDefineConvex(sourceText) && _filePath ? convexModulePath(_filePath, sourceText) : null;
+    const convexCustom = convexModule !== null ? convexCustomBuilders(sourceText) : null;
+    const convexHttp = mayDefineConvex(sourceText) && sourceText.includes("httpRouter");
     const navigation: RouteInfo[] = [];
     const maybeNavigation = mayDeclareReactNavigation(sourceText);
     const maybeTanstack = sourceText.includes("FileRoute(") || sourceText.includes("createRoute(");
@@ -56,6 +62,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
       if (maybeAngularJs) visitAngularJsRoute(node, vueRouter);
       if (maybeTanstack) visitTanstackFileRoute(node, tanstack);
       if (maybeTrpc) visitTrpcRouter(node, trpc, facts);
+      if (convexModule !== null) visitConvexFunction(node, convex, convexModule, convexCustom!);
+      if (convexHttp) visitConvexHttpRoute(node, convex);
       if (maybeNavigation) {
         visitReactNavigationScreen(node, navigation);
         visitStaticNavigator(node, navigation);
@@ -104,6 +112,6 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // grpc-js servers: the handlers `addService` registers per rpc.
     const grpc = extractGrpcJsServices(sourceText);
 
-    return [...express, ...routeObjects, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...navigation, ...graphql, ...grpc];
+    return [...express, ...routeObjects, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...convex, ...navigation, ...graphql, ...grpc];
   },
 };

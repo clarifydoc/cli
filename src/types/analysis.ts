@@ -1906,6 +1906,12 @@ export interface RouteInfo {
    */
   consumed?: true;
   /**
+   * API routes only: callable from the project's own server code but not by a
+   * client of the deployment (a Convex `internalMutation`). Never judged
+   * "uncalled" as public API.
+   */
+  internal?: true;
+  /**
    * On an API-contract row (OpenAPI, WSDL, …): the code route implementing the
    * operation (`pairContractTwins` — same method and path, or the handler the
    * spec join bound). The two rows are one endpoint; its handler, callers and

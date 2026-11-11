@@ -1940,7 +1940,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     const uncalled = allRoutes.filter((r) =>
       r.kind === "api" && !r.consumed && isJoinableRoute(r) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
       // A webhook receiver is called by its sender, never by the repository.
-      !r.webhook && calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
+      !r.webhook && !r.internal && calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
     if (uncalled.length > 0) {
       apiRouteLinkStats.uncalledCount = uncalled.length;
       apiRouteLinkStats.uncalled = uncalled.slice(0, 200).map((r) => ({ file: r.filePath, line: r.line, method: r.httpMethod ?? null, path: r.path }));

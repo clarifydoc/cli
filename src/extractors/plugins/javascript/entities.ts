@@ -84,12 +84,61 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
       /* keep what we have */
     }
     try {
+      if (/\bdefineTable\s*\(/.test(ctx.sourceText) && /["']convex\/server["']/.test(ctx.sourceText)) this.extractConvex(ctx, entities, relations);
+    } catch {
+      /* keep what we have */
+    }
+    try {
       if (/\bTables\s*:\s*\{/.test(ctx.sourceText)) this.extractSupabase(ctx, entities, relations);
     } catch {
       /* keep what we have */
     }
 
     return { entities, relations };
+  }
+
+  // ─── Convex schema ───────────────────────────────────────────────────────
+
+  /**
+   * `defineSchema({ clubs: defineTable({ name: v.string(), leagueId: v.id("leagues") }) })`: each
+   * key is a table (what `ctx.db.query("clubs")` names), each `v.*` validator a column, and
+   * `v.id("leagues")` — alone, optional or in an array — a foreign key to that table.
+   */
+  private extractConvex(ctx: EntityExtractContext, entities: ClassInfo[], relations: EntityRelation[]): void {
+    const text = this.logicalLines(ctx.lines, { lineComment: SLASH_COMMENT }).map((l) => l.text).join("\n");
+    const tableRe = /(?:^|[\s{,])["']?([A-Za-z_$][\w$]*)["']?\s*:\s*defineTable\s*\(\s*(?:v\s*\.\s*object\s*\(\s*)?\{/g;
+    for (const m of text.matchAll(tableRe)) {
+      const name = m[1]!;
+      const block = this.balancedBlock(text, m.index! + m[0].length - 1);
+      const properties: PropertyInfo[] = [];
+      const targets = new Set<string>();
+      for (const field of splitTopLevel(block.slice(1, -1))) {
+        const f = /^\s*["']?([A-Za-z_$][\w$]*)["']?\s*:\s*([\s\S]+)$/.exec(field);
+        if (!f) continue;
+        const validator = f[2]!.trim();
+        const optional = /^v\s*\.\s*optional\s*\(/.test(validator);
+        const inner = optional ? validator.replace(/^v\s*\.\s*optional\s*\(\s*/, "") : validator;
+        const array = /^v\s*\.\s*array\s*\(/.test(inner);
+        const id = /^v\s*\.\s*(?:array\s*\(\s*v\s*\.\s*)?id\s*\(\s*["'](\w+)["']/.exec(inner)?.[1];
+        const kind = /^v\s*\.\s*(\w+)/.exec(inner)?.[1] ?? null;
+        properties.push(this.column(f[1]!, id ? `Id<"${id}">${array ? "[]" : ""}` : kind));
+        if (id) {
+          relations.push({
+            fromEntity: name,
+            fromField: f[1]!,
+            toEntity: id,
+            cardinality: array ? "one-to-many" : "many-to-one",
+            foreignKey: array ? null : f[1]!,
+            ...(optional ? { optional: true } : {}),
+            orm: "convex",
+            confidence: "EXTRACTED",
+          });
+          targets.add(id);
+        }
+      }
+      const declared = ctx.lines.findIndex((l) => new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\b["']?\\s*:\\s*defineTable`).test(l));
+      entities.push(this.entity({ name, orm: "convex", properties, implementsList: [...targets], line: declared >= 0 ? declared + 1 : 1 }));
+    }
   }
 
   // ─── Supabase generated types ────────────────────────────────────────────
