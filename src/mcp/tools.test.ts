@@ -827,3 +827,27 @@ describe("clarifydoc_contract — parameter origins (sample-react)", () => {
     expect(text).toMatch(/id ← .*route parameter `id` of screen PlayerEditPage \(\/players\/:id\/edit\) at pages\/PlayerEditPage\.tsx:9/);
   });
 });
+
+describe("no callers is a lower bound", () => {
+  const { server } = serverFor("sample-dead-code");
+
+  it("trace says what could hide a caller of a function no link touches", async () => {
+    const r = await call(server, "clarifydoc_trace", { symbol: "trimAll" });
+    expect(r.text).toContain("`trimAll()` is defined at src/lib/legacyFormat.ts:5.");
+    expect(r.text).toContain("No callers found for `trimAll()` — a lower bound");
+    expect(r.text).not.toMatch(/safe to delete/i);
+  });
+
+  it("explain keeps the lower bound instead of dropping the empty callers part", async () => {
+    const r = await call(server, "clarifydoc_explain", { subject: "trimAll" });
+    expect(r.text).toContain("## Callers");
+    expect(r.text).toContain("a lower bound");
+  });
+
+  it("route gaps count the files holding an uncalled route's path as a literal", async () => {
+    const { server: react } = serverFor("sample-react");
+    const r = await call(react, "clarifydoc_routes", { gaps: true });
+    expect(r.text).toContain('"No caller" is a lower bound');
+    expect(r.text).toMatch(/path literal in \d+ files? \(\d+ not tests\), e\.g\. \S+:\d+/);
+  });
+});

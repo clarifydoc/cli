@@ -146,7 +146,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         if (!text) continue;
         const body = stripNext(text);
         // A part that found nothing ("No call-graph edges match …") is not context.
-        if (/^No\b/.test(body)) continue;
+        if (/^No\b/.test(body) && !/lower bound/.test(body)) continue;
         const section = `## ${p.title}\n\n${body}`;
         if (tokensOf(section) <= room) out.push(section);
         else {
@@ -351,7 +351,7 @@ function seamsPart(seams: readonly FileSeam[]): string {
       const names = s.functions.join(", ") + (s.functionCount > s.functions.length ? `, +${s.functionCount - s.functions.length} more` : "");
       const cost = s.externalFacing
         ? `${s.moves} move freely; ${s.externalFacing} are called from ${s.callerFiles} other file(s), which a split must update`
-        : "no caller in another file observed — it moves without touching another file (a framework or a tag may still reach it)";
+        : "no resolved caller in another file — a lower bound: an unresolved call, a framework or a tag may still reach it, so check clarifydoc_trace direction=callers before moving it";
       return `${i + 1}. ${s.functionCount} functions, ${s.lines} lines${s.boundaries.length ? `, touches ${s.boundaries.join(", ")}` : ""}: ${names}\n   ${cost}`;
     })
     .join("\n");

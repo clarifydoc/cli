@@ -72,6 +72,13 @@ write. That is what lets an external agent be configured as nothing but a comman
   IS the rank — for a model reading top-down and for a search benchmark alike. A new searchable kind
   contributes `Candidate`s; it must not print a section of its own. The tiers and tie-breaks are tuned against
   hand-labelled queries on real repositories, never against the tool's own output, and every one of them is pinned by a case in `search-rank.test.ts`.
+- **"No callers" is a lower bound, and says why.** A symbol, file or route nothing resolved to never reads as safe to
+  delete ([tools/caller-bounds.ts](tools/caller-bounds.ts)): the answer counts the unresolved calls elsewhere named
+  like the member (one pass over the per-file JSON per loaded analysis, up to five `file:line` examples, code before
+  tests), the interface/base declaration above it or the container registration that builds its class, and — for a
+  route — the files whose source holds its path literal with no call linked from them (a scan of the analysed files,
+  screen links like `to="/x"` skipped). A failed `trace to=` names the node its forward walk got nearest to the target
+  (in the target's file when it reached one, else the deepest) and how many of its calls did not resolve.
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).

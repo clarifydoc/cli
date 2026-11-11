@@ -9,7 +9,7 @@ import { byOrdinal } from "../../core/ordinal.js";
 import { describeDerivation } from "../../core/param-origins.js";
 import { keyOf, nodeKey, stateNode, usageGate } from "../../core/symbol-graph.js";
 import { fileTestVerdict, testVerdictContext, type TestVerdictContext } from "../../core/test-functions.js";
-import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, SymbolLink } from "../../types/analysis.js";
+import type { ApiCallMiss, ApiRouteLinkStats, CallInfo, ContractFinding, FileAnalysis, ProjectAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type FileFacts, type LoadedAnalysis, type RouteWithFile } from "../store.js";
 import { untrackedAmong } from "../../core/source-revision.js";
 import {
@@ -41,6 +41,7 @@ import {
 import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
+import { boundLines, fileBound, refOf, routeBoundLine, routeLiterals, symbolBound, type CallerBound } from "./caller-bounds.js";
 
 export function routesTool(ctx: ToolContext): McpTool {
   return {
@@ -74,7 +75,7 @@ export function routesTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
       if (booleanArg(args, "gaps", false)) {
-        return { text: routeGaps(summary.apiRouteLinkStats, stringArg(args, "path"), stringArg(args, "file"), numberArg(args, "limit", 40, { max: 500 }), summary.contractFindings) };
+        return { text: await routeGaps(ctx, loaded, summary.apiRouteLinkStats, stringArg(args, "path"), stringArg(args, "file"), numberArg(args, "limit", 40, { max: 500 }), summary.contractFindings) };
       }
       const pathFilter = stringArg(args, "path");
       const methodFilter = stringArg(args, "method")?.toUpperCase();
@@ -272,7 +273,7 @@ function missExisting(m: ApiCallMiss): string {
 }
 
 /** The `gaps` view of `clarifydoc_routes`: calls that reach no route, routes no call reaches. */
-function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number, contracts: readonly ContractFinding[] = []): string {
+async function routeGaps(ctx: ToolContext, loaded: LoadedAnalysis, stats: ApiRouteLinkStats | undefined, pathFilter: string | undefined, fileFilter: string | undefined, limit: number, contracts: readonly ContractFinding[] = []): Promise<string> {
   const contractRows = contracts.filter((c) => (!pathFilter || contains(c.url, pathFilter) || contains(c.route.path, pathFilter)) && (!fileFilter || contains(c.file, fileFilter)));
   const misses = (stats?.misses ?? []).filter((m) =>
     (!pathFilter || contains(m.url, pathFilter)) && (!fileFilter || contains(m.file, fileFilter)));
@@ -287,6 +288,10 @@ function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | un
       next: [(pathFilter || fileFilter) && "clarifydoc_routes gaps=true without `path`/`file`", "clarifydoc_routes kind=\"api\""],
     });
   }
+  // One pass over the source for the rows that print: files holding a listed route's path with no call linked from them.
+  const refs = uncalled.slice(0, limit).map((r) => ({ r, ref: { method: r.method, path: r.path, file: r.file, line: r.line } }));
+  const found = await routeLiterals(ctx, loaded, refs.map((x) => x.ref));
+  const literals = new Map(refs.map((x) => [x.r, found.get(x.ref)]));
   const missed = stats ? stats.unmatched + stats.refused.methodMismatch + (stats.refused.originMismatch ?? 0) + stats.refused.ambiguousSuffix : 0;
   return joinLines([
     `# Route gaps`,
@@ -295,8 +300,14 @@ function routeGaps(stats: ApiRouteLinkStats | undefined, pathFilter: string | un
     ...bulletList(misses, limit, (m) => `${m.method ?? "?"} ${m.url} — ${MISS_REASON[m.reason]} (${loc(m.file, m.line)})${missExisting(m)}`),
     "",
     `## Routes no call in the repository reaches (${uncalled.length}${(stats?.uncalledCount ?? 0) > uncalled.length ? ` listed of ${stats!.uncalledCount}` : ""})`,
-    "Only services some in-repo client calls; an endpoint here may still be called from outside.",
-    ...bulletList(uncalled, limit, (r) => `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})`),
+    "Only services some in-repo client calls. \"No caller\" is a lower bound: an endpoint here may be called from outside, or by a call the linker could not read — files holding its path literal are counted per row.",
+    ...bulletList(uncalled, limit, (r) => {
+      const b = literals.get(r);
+      const n = b?.files.length ?? 0;
+      const code = b?.files.filter((f) => !f.test).length ?? 0;
+      const hint = !b ? "" : !b.searchable ? " — path has no fixed segment to search" : n ? ` — path literal in ${plural(n, "file")} (${code} not tests), e.g. ${loc(b.files[0]!.file, b.files[0]!.line)}` : "";
+      return `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})${hint}`;
+    }),
     ...(contractRows.length > 0
       ? [
         "",
@@ -902,6 +913,46 @@ function callsOfSymbol(analysis: FileAnalysis, symbol: string): CallInfo[] | und
   return analysis.functions?.find((f) => f.name === symbol)?.calls;
 }
 
+/** The first definition a name (and file) names, from the complexity rows: where a symbol no link touches lives. */
+function definitionOf(summary: ProjectAnalysis, symbol: string | undefined, file: string | undefined): { file: string; symbol: string; line: number } | undefined {
+  if (!symbol) return undefined;
+  const want = symbol.toLowerCase();
+  const rows: Array<{ file: string; symbol: string; line: number }> = [];
+  for (const c of summary.complexity ?? []) {
+    if (file && c.filePath !== file) continue;
+    for (const f of c.functions) {
+      const n = f.functionName.toLowerCase();
+      if (n === want || n.endsWith(`.${want}`)) rows.push({ file: c.filePath, symbol: f.functionName, line: f.line });
+    }
+  }
+  return rows.sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line)[0];
+}
+
+/**
+ * The lines a callers section carries when the walk found no caller: a lower bound and, for up to three
+ * definitions, what could hide one (unresolved calls named like it, an interface or container above it).
+ */
+async function noCallerLines(ctx: ToolContext, loaded: LoadedAnalysis, links: SymbolLink[], symbol: string | undefined, file: string | undefined): Promise<string[]> {
+  if (!symbol && file) return boundLines(`\`${file}\``, await fileBound(ctx, loaded, file));
+  const defs = new Map<string, { file: string; symbol: string }>();
+  for (const l of links) {
+    if (isReference(l) || !matchesSeed(l, symbol, file, "target")) continue;
+    defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol });
+  }
+  if (!defs.size) {
+    const d = definitionOf(loaded.summary, symbol, file);
+    if (d) defs.set(symbolKey(d.file, d.symbol), d);
+  }
+  if (!defs.size) return [];
+  const rows = [...defs.values()].slice(0, 3);
+  const bounds = await Promise.all(rows.map((d) => symbolBound(ctx, loaded, d.file, d.symbol)));
+  const merged: CallerBound = { reasons: [...new Set(bounds.flatMap((b) => b.reasons))], unresolvedNamed: Math.max(...bounds.map((b) => b.unresolvedNamed)) };
+  return [
+    ...boundLines(rows.length === 1 ? `\`${rows[0]!.symbol}()\`` : `${rows.length} definitions`, merged),
+    ...(defs.size > rows.length ? [`(${defs.size - rows.length} more definitions not checked)`] : []),
+  ];
+}
+
 export function traceTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_trace",
@@ -947,6 +998,11 @@ export function traceTool(ctx: ToolContext): McpTool {
       );
       if (seeds.length === 0) {
         const near = symbol ? nearSymbols(loaded.summary, symbol) : null;
+        // A definition no resolved call touches: no callers is a lower bound, and what could hide one is said.
+        const def = definitionOf(loaded.summary, symbol, file);
+        const bound = def
+          ? await symbolBound(ctx, loaded, def.file, def.symbol)
+          : !symbol && file ? await fileBound(ctx, loaded, file) : undefined;
         return {
           text: noResults({
             headline: missHeadline("call-graph edges", [
@@ -956,6 +1012,7 @@ export function traceTool(ctx: ToolContext): McpTool {
             holds: [
               `The analysis holds ${plural(all.length, "resolved call")}. Either nothing resolved to this one, ` +
               `or the name differs.`,
+              ...(bound ? [def ? `\`${def.symbol}()\` is defined at ${loc(def.file, def.line)}.` : "", ...boundLines(def ? `\`${def.symbol}()\`` : `\`${file}\``, bound)] : []),
               near?.line,
             ],
             next: [
@@ -995,7 +1052,7 @@ export function traceTool(ctx: ToolContext): McpTool {
       if (to) {
         const toFileArg = stringArg(args, "toFile");
         const toFile = toFileArg ? mustResolveFile(loaded, toFileArg) : undefined;
-        return { text: pathReport(all, { symbol, file }, { symbol: to, file: toFile }, limit, minConfidence) };
+        return { text: await pathReport(all, { symbol, file }, { symbol: to, file: toFile }, limit, minConfidence, unresolvedCalls(ctx, everything)) };
       }
 
       const blocks: string[][] = [
@@ -1003,7 +1060,10 @@ export function traceTool(ctx: ToolContext): McpTool {
       ];
 
       if (direction === "callers" || direction === "both") {
-        blocks.push(section(`Callers (up to ${depth} hop${depth === 1 ? "" : "s"})`, await walk(all, symbol, file, "callers", depth, limit)));
+        const lines = await walk(all, symbol, file, "callers", depth, limit);
+        // No resolved caller: the section says so as a lower bound, with what could hide one.
+        if (!lines.some((l) => /^\s*hop 1 \(/.test(l))) lines.push(...(await noCallerLines(ctx, loaded, all, symbol, file)));
+        blocks.push(section(`Callers (up to ${depth} hop${depth === 1 ? "" : "s"})`, lines));
       }
       if (direction === "callees" || direction === "both") {
         blocks.push(section(`Callees (up to ${depth} hop${depth === 1 ? "" : "s"})`, await walk(all, symbol, file, "callees", depth, limit, unresolvedCalls(ctx, everything))));
@@ -1394,13 +1454,14 @@ const PATH_MAX_LISTED = 5;
  * leads the other way (the target calls the seed), that is said instead of
  * "no path".
  */
-export function pathReport(
+export async function pathReport(
   links: SymbolLink[],
   from: { symbol?: string; file?: string },
   target: { symbol: string; file?: string },
   limit: number,
   minConfidence: string,
-): string {
+  unresolved?: UnresolvedCalls,
+): Promise<string> {
   // A path that enters a shared component from one user leaves through its emits only back to that user
   // (`usageGate`), as the callers/callees walk does: its nodes are (symbol, state) pairs (`stateNode`).
   const gate = usageGate(links);
@@ -1516,9 +1577,11 @@ export function pathReport(
       ...render(path),
     ]);
   }
+  const breaks = await breakOff(links, fwd, target, unresolved);
   return noResults({
     headline: `No call path between them within ${PATH_MAX_HOPS} hops, in either direction.`,
     holds: [
+      ...breaks,
       "Paths run over resolved calls; an HTTP hop counts only where a call was joined to its route.",
       minConfidence !== "AMBIGUOUS" ? `Only edges at ${minConfidence} or surer were followed.` : "",
     ],
@@ -1527,6 +1590,48 @@ export function pathReport(
       `clarifydoc_trace symbol="${target.symbol}" direction="callers" — what does reach it`,
     ],
   });
+}
+
+/**
+ * Where a failed `to=` walk broke off: how much the forward walk reached and the node nearest the target
+ * — one in the target's file when it reached any, else the deepest — with the calls there that resolved
+ * to nothing, since the path may continue through one of them.
+ */
+async function breakOff(
+  links: SymbolLink[],
+  fwd: { dist: Map<string, number>; seeds: Set<string>; targets: Set<string> },
+  target: { symbol: string; file?: string },
+  unresolved: UnresolvedCalls | undefined,
+): Promise<string[]> {
+  const names = new Map<string, { file: string; symbol: string }>();
+  for (const l of links) {
+    names.set(symbolKey(l.sourceFile, l.sourceSymbol), { file: l.sourceFile, symbol: l.sourceSymbol });
+    names.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol });
+  }
+  const depthOf = new Map<string, number>();
+  for (const [node, d] of fwd.dist) {
+    const key = nodeKey(node);
+    if (d > (depthOf.get(key) ?? -1)) depthOf.set(key, d);
+  }
+  const targetFiles = new Set([...fwd.targets].map((k) => names.get(k)?.file).filter((f): f is string => !!f));
+  const reached = [...depthOf].filter(([k]) => names.has(k));
+  const inFile = reached.filter(([k]) => targetFiles.has(names.get(k)!.file));
+  const pool = inFile.length ? inFile : reached;
+  // The deepest node; the seed itself only when the walk went nowhere.
+  const best = pool.sort((a, b) => b[1] - a[1] || byOrdinal(a[0], b[0]))[0];
+  if (!best) return [];
+  const [key, hops] = best;
+  const at = names.get(key)!;
+  const total = reached.length;
+  const line = `The walk from the seed reached ${plural(total, "function")} within ${PATH_MAX_HOPS} hops; ` +
+    (hops === 0
+      ? `it did not leave the seed ${at.symbol}() (${at.file}) — it has no resolved callee.`
+      : `nearest to \`${target.symbol}\`${inFile.length ? " (in its file)" : ""}: ${at.symbol}() (${at.file}), ${plural(hops, "hop")} in.`);
+  const r = unresolved ? await unresolved(at.file, at.symbol).catch(() => undefined) : undefined;
+  const hidden = r && r.unresolved > 0
+    ? `${at.symbol}() has ${r.unresolved} of ${plural(r.total, "call")} not resolved — the path may continue through one of them.`
+    : r ? `${at.symbol}() resolves all ${plural(r.total, "call")} it makes: the graph ends there.` : "";
+  return [line, hidden];
 }
 
 /** Edges from one node, in the walk's direction, at which it is marked a hub. */
@@ -1596,10 +1701,14 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         const f: FileFacts | undefined = loaded.index.byFile.get(path);
         return {
           text: noResults({
-            headline: `${path} has no blast-radius entry — nothing in the analysis imports it.`,
-            holds: f?.inbound.length
-              ? `${plural(f.inbound.length, "call-graph edge")} still resolve into it.`
-              : `${plural(all.length, "file")} are scored; this one is not among them.`,
+            headline: `${path} has no blast-radius entry — no file in the analysis imports it (a lower bound, not "safe to delete").`,
+            holds: [
+              f?.inbound.length
+                ? `${plural(f.inbound.length, "call-graph edge")} still resolve into it.`
+                : `${plural(all.length, "file")} are scored; this one is not among them.`,
+              ...(await fileBound(ctx, loaded, path)).reasons,
+              "Entry points, framework-loaded files, reflection and other repositories import nothing the analysis can see.",
+            ],
             next: [
               f?.inbound.length ? `clarifydoc_trace file="${path}" direction="callers"` : undefined,
               `clarifydoc_file path="${path}" — what it declares, and who it imports`,
@@ -1838,7 +1947,7 @@ export function contractTool(ctx: ToolContext): McpTool {
         text: joinLines([
           `# ${routeLabel(route.httpMethod, route.path)}${route.handler ? ` → ${route.handler}` : ""}${project} (${loc(route.filePath, route.line)})`,
           route.middleware?.length ? `guards: ${route.middleware.join(", ")}${a?.inherited ? " (from controller)" : ""}` : "guards: none declared here",
-          cs.length ? `called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}` : "called from: no frontend call linked",
+          cs.length ? `called from: ${cs.join(", ")}${ch ? ` … +${ch}` : ""}` : `called from: no call linked — a lower bound: ${routeBoundLine((await routeLiterals(ctx, loaded, [refOf(route)])).values().next().value)}`,
           ...(fedLines.length ? ["parameters fed by:", ...fedLines] : []),
           ...(filterLines.length ? ["parameters filter on:", ...filterLines] : []),
           "",

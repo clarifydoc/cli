@@ -126,19 +126,55 @@ describe("clarifydoc_trace to= through a shared component's emit", () => {
 
   it("finds the path from a page through the dialog to its own handler", async () => {
     const { pathReport } = await import("./code.js");
-    const text = pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "saveClub" }, 10, "AMBIGUOUS");
+    const text = await pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "saveClub" }, 10, "AMBIGUOUS");
     expect(text).toContain("1 shortest path of 2 hops");
     expect(text).toContain("saveClub()");
   });
 
   it("finds no path from a page through the dialog to another page's handler", async () => {
     const { pathReport } = await import("./code.js");
-    const text = pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS");
+    const text = await pathReport(DIALOG, { symbol: "quickSave" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS");
     expect(text).toContain("No call path between them");
   });
 
   it("finds the path from the dialog itself to every page's handler", async () => {
     const { pathReport } = await import("./code.js");
-    expect(pathReport(DIALOG, { symbol: "onConfirm" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS")).toContain("1 shortest path of 1 hop");
+    expect(await pathReport(DIALOG, { symbol: "onConfirm" }, { symbol: "deletePlayer" }, 10, "AMBIGUOUS")).toContain("1 shortest path of 1 hop");
+  });
+});
+
+describe("clarifydoc_trace to= that fails", () => {
+  const GRAPH: SymbolLink[] = [
+    link("src/league.ts", "runSeason", 4, "playMatch", "src/match.ts", "playMatch", 2),
+    link("src/match.ts", "playMatch", 5, "extraTime", "src/match.ts", "extraTime", 20),
+    link("src/transfer.ts", "signPlayer", 3, "payFee", "src/transfer.ts", "payFee", 9),
+  ];
+
+  it("names the node nearest the target, preferring one in the target's file, and what did not resolve there", async () => {
+    const { pathReport } = await import("./code.js");
+    const asked: string[] = [];
+    const text = await pathReport(GRAPH, { symbol: "runSeason" }, { symbol: "payFee" }, 10, "AMBIGUOUS", async (f, s) => {
+      asked.push(`${f}::${s}`);
+      return { unresolved: 2, total: 5 };
+    });
+    expect(text).toContain("No call path between them within 8 hops");
+    expect(text).toContain("reached 3 functions");
+    expect(text).toContain("extraTime() (src/match.ts), 2 hops in");
+    expect(text).toContain("extraTime() has 2 of 5 calls not resolved — the path may continue through one of them.");
+    expect(asked).toEqual(["src/match.ts::extraTime"]);
+  });
+
+  it("prefers a reached node in the target's own file", async () => {
+    const { pathReport } = await import("./code.js");
+    const links = [...GRAPH, link("src/match.ts", "extraTime", 22, "penalties", "src/transfer.ts", "bookKeeping", 1), link("src/transfer.ts", "audit", 2, "payFee", "src/transfer.ts", "payFee", 9)];
+    const text = await pathReport(links, { symbol: "runSeason" }, { symbol: "payFee" }, 10, "AMBIGUOUS");
+    expect(text).toContain("bookKeeping() (src/transfer.ts), 3 hops in");
+    expect(text).toContain("(in its file)");
+  });
+
+  it("says the graph ends where every call resolved", async () => {
+    const { pathReport } = await import("./code.js");
+    const text = await pathReport(GRAPH, { symbol: "runSeason" }, { symbol: "payFee" }, 10, "AMBIGUOUS", async () => ({ unresolved: 0, total: 3 }));
+    expect(text).toContain("resolves all 3 calls it makes: the graph ends there.");
   });
 });
