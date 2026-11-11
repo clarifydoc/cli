@@ -56,8 +56,10 @@ describe("JVM calls inside an anonymous or local class", () => {
 }`;
     const tree = await parseSource(src, "java" as any, "X.java");
     const ex = new JavaKotlinExtractor();
-    const methods = ex.extractClasses(tree, src).flatMap((c) => c.methods).map((f) => f.name);
-    expect(methods).toEqual(["park"]);
+    const classes = ex.extractClasses(tree, src);
+    expect(classes.find((c) => c.name === "Garage")!.methods.map((f) => f.name)).toEqual(["park"]);
+    // The anonymous class is a synthetic class of its own, so a local typed by it reaches its `run`.
+    expect(classes.filter((c) => c.synthetic).map((c) => `${c.name}:${c.methods.map((f) => f.name)}`)).toEqual(["Runnable$2_29:run"]);
     expect((await methodOf(src, "java", "park")).calls.map((c) => c.name)).toEqual(expect.arrayContaining(["repo.save", "r.run"]));
   });
 });

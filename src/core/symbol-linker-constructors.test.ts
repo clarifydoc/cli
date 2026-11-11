@@ -82,6 +82,8 @@ describe("constructor overloads", () => {
     expect(callsFrom(analyses, "league/Club.kt")).toEqual([
       "10 Club -> league/Club.kt::Club.constructor@4 [constructor]",
       "11 Club -> league/Club.kt::Club.constructor@3 [constructor]",
+      // `constructor(id: Int) : this(id.toString())` runs the primary one.
+      "4 new Club -> league/Club.kt::Club.constructor@3 [constructor]",
     ]);
   });
 
