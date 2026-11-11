@@ -245,6 +245,10 @@ export interface DataAccessNode {
   broker?: string;
   /** For "queue" nodes whose destination is unresolved: why. */
   reason?: string;
+  /** For "queue" nodes: an API contract (AsyncAPI) states this destination. */
+  contract?: true;
+  /** For "queue" nodes: a contract states it and no code publishes or consumes it. */
+  unimplemented?: true;
   /** Number of incoming edges (only meaningful for datastore nodes). */
   inboundCount: number;
   /** Number of outgoing edges (only meaningful for file nodes). */
@@ -2556,6 +2560,11 @@ export interface DataSourceInfo {
    * graph keys a queue node on broker + address.
    */
   broker?: string;
+  /**
+   * For queue kinds: the row is stated by an API contract document (an AsyncAPI channel operation), not by code
+   * that sends or receives. The queue node it names is the one code's rows meet; it is marked `contract`.
+   */
+  fromContract?: true;
   /**
    * For queue kinds with no resolvable `target`: why (`ambiguous convertAndSend
    * overload`, `destination is a variable`). The graph keys such a row by its

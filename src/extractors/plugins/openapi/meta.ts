@@ -1,5 +1,6 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { splitLines } from "../../shared/source-lines.js";
+import { extractAsyncApi, isAsyncApiDocument } from "./asyncapi.js";
 import { extractSchemaFragment, openapiSpec } from "./index.js";
 import { openapiManifest } from "./manifest.js";
 import { openapiRequestSchema } from "./request-schema.js";
@@ -69,6 +70,19 @@ export const openapiMeta: LanguagePluginMeta = {
   skipSecurityScan: true,
   preprocess(rawSource, relativePath) {
     if (isOpenApiDocument(rawSource)) return null;
+    // An AsyncAPI document: the bus counterpart — channel operations become contract rows on the queue nodes code uses.
+    if (isAsyncApiDocument(rawSource)) {
+      return {
+        sourceText: rawSource,
+        language: "openapi",
+        postExtract(analysis) {
+          const { classes, relations, dataSources } = extractAsyncApi(splitLines(rawSource));
+          analysis.classes = classes;
+          if (relations.length > 0) analysis.entityRelations = relations;
+          analysis.dataSources.push(...dataSources);
+        },
+      };
+    }
     // A Dapr `kind: Subscription` resource: read by the serverless plugin, with the other deployment descriptors.
     if (/\.ya?ml$/i.test(relativePath) && /\bdapr\.io\//.test(rawSource) && DAPR_SUBSCRIPTION_RE.test(rawSource)) return { sourceText: rawSource, language: "serverless" };
     if (!isSchemaFragment(rawSource, relativePath)) return { skip: "not an OpenAPI/Swagger document" };

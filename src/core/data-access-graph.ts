@@ -144,6 +144,8 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     return id;
   }
   const brokerOf = queueBrokerResolver(analyses);
+  const contractQueues = new Set<string>();
+  const codeQueues = new Set<string>();
 
   function edgeFor(source: string, target: string): DataAccessEdge {
     const key = `${source}→${target}`;
@@ -168,6 +170,7 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
         const edge = ds.kind === "queue-publish" ? edgeFor(fileId, qId) : edgeFor(qId, fileId);
         edge.calls.push({ name: ds.name, line: ds.line, ...(ds.entity ? { entity: ds.entity } : {}) });
         edge.total += 1;
+        if (qTarget !== null) (ds.fromContract ? contractQueues : codeQueues).add(qId);
         continue;
       }
       if (ds.kind !== "database") continue;
@@ -189,6 +192,13 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
         fd.total += 1;
       }
     }
+  }
+
+  for (const id of contractQueues) {
+    const node = nodes.get(id);
+    if (!node) continue;
+    node.contract = true;
+    if (!codeQueues.has(id)) node.unimplemented = true;
   }
 
   for (const edge of edges.values()) {

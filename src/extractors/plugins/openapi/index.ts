@@ -271,7 +271,7 @@ function get(node: SpecNode | undefined, ...path: string[]): SpecNode | undefine
 // ─── Type texts ───────────────────────────────────────────────────────────────
 
 /** `#/components/schemas/User` / `#/definitions/User` → `User`. */
-function refName(ref: string | null | undefined): string | null {
+export function refName(ref: string | null | undefined): string | null {
   if (!ref) return null;
   // A pointer INTO a schema (`…#/components/schemas/Club/properties/id`) is that member's
   // schema, which names no type: its last segment is the member, never a schema.
@@ -535,7 +535,7 @@ export function extractOpenApiEntities(lines: string[]): ClassInfo[] {
 }
 
 /** One schema as an entity: its properties (inline `allOf` members' too) and the schemas it composes. */
-function schemaClass(name: string, schema: SpecNode): ClassInfo {
+export function schemaClass(name: string, schema: SpecNode): ClassInfo {
   const required = requiredNames(schema);
   const props: PropertyInfo[] = [];
   for (const [propName, prop] of propertyNodes(schema)) {

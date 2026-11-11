@@ -1,5 +1,7 @@
 # src/extractors/plugins — Per-language implementations
 
+An extension has one owning plugin, and `.yml`/`.yaml`/`.json` are OpenAPI's, so AsyncAPI is a branch of its `preprocess` (an `asyncapi:` root key, checked after the OpenAPI sniff) handing the file to `openapi/asyncapi.ts`, not a second plugin. Operations become queue rows with `DataSourceInfo.fromContract`: 2.x `publish` = the application receives (consume), `subscribe` = it sends (publish); 3.x `action: receive|send`. The broker comes from `servers[].protocol` (`brokerOfProtocol`; a channel's `servers` narrows it, several protocols give a row each), the address from the channel name or 3.x `address`. `buildDataAccessGraph` marks a node `contract` / `unimplemented`; `element-registry.ts` carries both flags through the summary. Payloads: `components.schemas` and each message with an inline `payload` become `openapi` classes.
+## AsyncAPI (inside `openapi/`)
 Each language gets one folder. Two patterns are used depending on whether the language has a working tree-sitter grammar:
 
 ## Tree-sitter plugins (AST-based)

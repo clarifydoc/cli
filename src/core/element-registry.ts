@@ -294,6 +294,8 @@ export interface NormDataAccessNode {
   name?: string;
   broker?: string;
   reason?: string;
+  contract?: true;
+  unimplemented?: true;
   filePath?: string;
   inboundCount: number;
   outboundCount: number;
@@ -937,7 +939,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     out.dataAccessGraph = {
       nodes: daRaw.nodes.map(({ node, idx }) => ({
         el: remap[idx],
-        ...(node.kind === "queue" ? { name: node.name, ...(node.broker ? { broker: node.broker } : {}), ...(node.reason ? { reason: node.reason } : {}), ...(node.filePath ? { filePath: node.filePath } : {}) } : {}),
+        ...(node.kind === "queue" ? { name: node.name, ...(node.broker ? { broker: node.broker } : {}), ...(node.reason ? { reason: node.reason } : {}), ...(node.contract ? { contract: true } : {}), ...(node.unimplemented ? { unimplemented: true } : {}), ...(node.filePath ? { filePath: node.filePath } : {}) } : {}),
         inboundCount: node.inboundCount,
         outboundCount: node.outboundCount,
       })),
@@ -1193,6 +1195,8 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
             filePath: nn.filePath ?? "",
             ...(nn.broker ? { broker: nn.broker } : {}),
             ...(nn.reason ? { reason: nn.reason } : {}),
+            ...(nn.contract ? { contract: true as const } : {}),
+            ...(nn.unimplemented ? { unimplemented: true as const } : {}),
             inboundCount: nn.inboundCount,
             outboundCount: nn.outboundCount,
           };
