@@ -376,9 +376,10 @@ export function expandRequestFactories(
         // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
         // the caller's sub-project with that name, or nothing.
         const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`) && byFile.get(k.slice(0, k.indexOf("::")))?.projectId === a.projectId);
-        // The one top-level declaration of the name in the sub-project, and it is the factory — never a method of some class.
+        // The one factory of that name in the sub-project — refused when a top-level function of the name that is
+        // not this factory exists there too (the call may be that one).
         const declared = wrappers.declarationsInProject(a.filePath, site.callee);
-        if (named.length === 1 && declared.length === 1 && named[0] === `${declared[0]}::${site.callee}`) rows = factories.get(named[0]!);
+        if (named.length === 1 && declared.every((file) => named[0] === `${file}::${site.callee}`)) rows = factories.get(named[0]!);
       }
       if (!rows && source) {
         // A default export bound under another name (`import fetchIt from './createFetchHandler'`):

@@ -186,6 +186,8 @@ interface HelperLookup {
   descriptor?: (site: CallSite, receiver: string, name: string, args: string[], key: string, keyArgs: string[] | null) => string[] | null;
   /** `this.resource` seen from the calling class: the literal its chain states (a `super('clubs')` argument included), or null. */
   field?: (file: string, line: number, name: string) => string | null;
+  /** `this.clubs.url(…)`: the method of the class the calling class declares that field as (`clubs: ClubService`, `= inject(ClubService)`). */
+  fieldMethod?: (file: string, line: number, field: string, name: string) => UrlBuilder | null;
 }
 
 function buildFileIndex(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuilder | null>> {
@@ -286,6 +288,12 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
   if (recv === "this" && lookup.method) {
     const own = lookup.method(site.file, site.line, name);
     if (own) return own;
+  }
+  // A field whose declared type the class states: that class's method, before any project-wide namesake.
+  const field = /^this\.([A-Za-z_$][\w$]*)$/.exec(recv)?.[1];
+  if (field && lookup.fieldMethod) {
+    const typed = lookup.fieldMethod(site.file, site.line, field, name);
+    if (typed) return typed;
   }
   // A bare call is the helper its own file declares, else the one its import names — never a
   // same-named helper of another file. Only a call no import resolves falls to the project-wide name.
@@ -588,6 +596,7 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
     const wrappers = buildWrapperIndex(analyses, ctx.importIndex);
     lookup.imported = (file, name) => wrappers.importedFrom(file, name);
     lookup.method = methodResolver(ctx);
+    lookup.fieldMethod = fieldMethodResolver(ctx);
     lookup.field = fieldResolver(ctx);
     lookup.descriptor = descriptorResolver(analyses, ctx, lookup);
   }
@@ -711,6 +720,22 @@ function localHelpers(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuil
  * the URL losing its prefix. `getterOnly` answers a property read (`this.url`):
  * only a getter is read that way.
  */
+/** `this.<field>.<name>(…)`: the method of the class the calling class's chain declares `field` as, or null. */
+function fieldMethodResolver(ctx: ProjectContext): (file: string, line: number, field: string, name: string) => UrlBuilder | null {
+  return (file, line, field, name) => {
+    const cls = classAt(ctx, file, line);
+    if (!cls) return null;
+    for (const c of [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))]) {
+      const prop = c.cls.properties?.find((p) => p.name === field);
+      if (!prop) continue;
+      const written = prop.type?.replace(/<.*$/s, "").trim();
+      const target = written ? ctx.classes.resolve(c.filePath, written) : null;
+      return target ? methodResolver(ctx, target)(target.filePath, target.cls.line, name) : null;
+    }
+    return null;
+  };
+}
+
 function methodResolver(ctx: ProjectContext, fixed?: ClassRef): (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null {
   return (file, line, name, getterOnly) => {
     const cls = fixed ?? classAt(ctx, file, line);
