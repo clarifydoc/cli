@@ -41,3 +41,21 @@ export function anonymousSubjectsOf(call: Node): string[] | null {
   }
   return out.length > 0 ? out : null;
 }
+
+/**
+ * Whether an anonymous class types what it initializes: a `var` (no stated type) or a declared type naming the
+ * class's own base, where the synthetic class is a refinement. Any other stated type (`Map<String, Club> m = new
+ * HashMap<>() {{ ... }}`, `Base b = new Impl() { ... }`) is the declared supertype and stays.
+ */
+export function anonymousRefinesDeclared(declared: string | null | undefined, creation: Node): boolean {
+  const text = declared?.trim();
+  if (!text || text === "var") return true;
+  const base = anonymousBaseOf(creation)?.split(".").pop();
+  const simple = text.replace(/<[\s\S]*$/, "").replace(/\s+/g, "").split(".").pop();
+  return !!base && simple === base;
+}
+
+/** Cheap text gate: whether a Java source can hold an anonymous class (`new X(...) {`). */
+export function mayHoldAnonymousClass(source: string): boolean {
+  return /\bnew\b[^;]*\)\s*\{/.test(source);
+}

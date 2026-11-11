@@ -14,7 +14,7 @@ import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { withCallNarrowing } from "./call-hooks.js";
 import { typeVariableArgs } from "./arg-kinds.js";
-import { anonymousBaseOf, anonymousClassName, isAnonymousClassCreation } from "./java-anonymous.js";
+import { anonymousBaseOf, anonymousClassName, anonymousRefinesDeclared, isAnonymousClassCreation, mayHoldAnonymousClass } from "./java-anonymous.js";
 import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
@@ -54,6 +54,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
    * calls inside are the enclosing method's, which stays where they are attributed.
    */
   private collectAnonymousClasses(root: Node, classes: ClassInfo[]): void {
+    if (!mayHoldAnonymousClass(root.text)) return;
     for (const creation of root.descendantsOfType("object_creation_expression")) {
       if (!isAnonymousClassCreation(creation) || creation.parent?.type !== "variable_declarator") continue;
       const name = anonymousClassName(creation);
@@ -315,6 +316,16 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           }
         }
         if (qualifier) prop.qualifier = qualifier;
+        // A field initialized by an anonymous class is that class (emitted by `collectAnonymousClasses`), or its base
+        // when the body declares no method.
+        if (lang === "java" && member.type === "field_declaration") {
+          const value = this.findChildByType(member, "variable_declarator")?.childForFieldName("value");
+          if (value && isAnonymousClassCreation(value) && anonymousRefinesDeclared(typeNode?.text, value)) {
+            const declares = value.children.find((ch) => ch.type === "class_body")?.children.some((m) => m.type === "method_declaration");
+            const anon = declares ? anonymousClassName(value) : anonymousBaseOf(value);
+            if (anon) prop.type = anon;
+          }
+        }
         properties.push(prop);
       } else if (member.type === "annotation_type_element_declaration") {
         // `@interface Since { String value(); }`: each element is a method answering `since.value()`.
@@ -916,7 +927,7 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
           const local = c.childForFieldName("name")?.text;
           // Initialized by an anonymous class: the local is that class (see `collectAnonymousClasses`).
           // One declaring no method is never emitted (`new Base() {}`): the local is then the base itself.
-          const anonymous = value && local && isAnonymousClassCreation(value)
+          const anonymous = value && local && isAnonymousClassCreation(value) && anonymousRefinesDeclared(type, value)
             ? (value.children.find((ch) => ch.type === "class_body")?.children.some((m) => m.type === "method_declaration")
               ? anonymousClassName(value)
               : anonymousBaseOf(value))

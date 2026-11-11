@@ -2035,6 +2035,8 @@ interface LinkContext {
   constantNames?: Set<string>;
   /** Analyses by path, built on first use (re-export following). */
   analysisByFile?: Map<string, FileAnalysis>;
+  /** Whether any file carries a module binding named by a qualified path (`League::SERVICE`); computed on first use. */
+  hasQualifiedBindings?: boolean;
   /** File → the files whose scope it is part of (`ImportInfo.inScope.shared`), built on first use. */
   scopeLibraries?: Map<string, string[]>;
   /** Analyzed files by lowercased stem, built on first use (`declarationExtensions`). */
@@ -5117,7 +5119,26 @@ function resolveCallToDefinitionBody(
   // container registrations that bind it), not via an import of the method.
   if (!def && isQualified) {
     const link = throughDeclaredType();
-    if (link) return link;
+    if (link) {
+      // A builder chain typed hop by hop (`Club.builder().name(x).city(y)`) that lands on the member the
+      // qualified name alone states (Strategy 3) is as certain as that: the chain only confirms it. A target
+      // only the chain found keeps INFERRED.
+      if (link.confidence === "INFERRED" && link.strategy === "injection" && call.kind === "cross-file" && targetFile && call.name.includes(")")) {
+        const states = symbolIndex.get(targetFile);
+        if (states) {
+          for (let i = 1; i < parts.length; i++) {
+            const suffixDef = states.get(parts.slice(i).join(".")) ?? states.get(leafName);
+            if (!suffixDef) continue;
+            if (targetFile === link.targetFile && suffixDef.name === link.targetSymbol
+              && !receiverTypeRefuses(ctx, analysis, sourceFile, sourceSymbol, call, leafName, { file: targetFile, symbol: suffixDef.name })) {
+              return { ...link, confidence: "EXTRACTED", strategy: "deep-qualified", relation: relationForStrategy("deep-qualified") };
+            }
+            break;
+          }
+        }
+      }
+      return link;
+    }
   }
 
   // ── Strategy 3: Deep qualified call resolution ──
@@ -6637,7 +6658,8 @@ function chainPoint(
     rest = receiver.slice(1);
     // `League::SERVICE.process` — a variable a namespace declares, written by its qualified name
     // (`ModuleBindingInfo.name` of a binding inside a namespace).
-    for (let k = receiver.length; !point && k >= 2 && /^[A-Z]/.test(head.name); k--) {
+    ctx.hasQualifiedBindings ??= ctx.analyses.some((a) => a.moduleBindings?.some((b) => b.name.includes("::") || b.lexical?.name.includes("::")));
+    for (let k = receiver.length; !point && ctx.hasQualifiedBindings && k >= 2 && /^[A-Z]/.test(head.name); k--) {
       const segments = receiver.slice(0, k);
       if (segments.some((r) => r.call)) continue;
       point = moduleBindingPoint(ctx, analysis, sourceFile, consumer, segments.map((r) => r.name).join("::"));
