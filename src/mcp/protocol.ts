@@ -120,6 +120,8 @@ export interface McpServerOptions {
   prompts?: McpPrompt[];
   /** Diagnostics sink. Never stdout. */
   log?: (message: string) => void;
+  /** Applied to every text that leaves the server (answers, resources, prompts, tool descriptions); used to point away from tools this session does not list. */
+  rewrite?: (text: string) => string;
   /** A line to end a tool's answer with (a freshness warning), or null for none. */
   annotate?: (tool: string) => Promise<string | null>;
   /** The revision of the analysis answers are read from, which page cursors are bound to; null when there is none. */
@@ -208,7 +210,7 @@ export class McpServer {
       case "ping":
         return {};
       case "tools/list":
-        return { tools: [...this.tools.values()].map(describeTool) };
+        return { tools: [...this.tools.values()].map((t) => describeTool(t, (s) => this.out(s))) };
       case "tools/call":
         return this.callTool(params);
       case "resources/list":
@@ -236,7 +238,7 @@ export class McpServer {
           prompts: [...this.prompts.values()].map((p) => ({
             name: p.name,
             ...(p.title ? { title: p.title } : {}),
-            description: p.description,
+            description: this.out(p.description),
             arguments: p.arguments,
           })),
         };
@@ -312,10 +314,10 @@ export class McpServer {
       this.log(`tools/call ${name} -> ${result.text.length} chars in ${Date.now() - started}ms`);
       logCall(name, args, result, Date.now() - started);
       this.calls.push({ tool: name, chars: result.text.length, ms: Date.now() - started, isError: result.isError === true, empty: isEmpty(result.text) });
-      const text = await this.shape(result.text, args, cursor);
+      const text = await this.shape(this.out(result.text), args, cursor);
       const note = this.options.annotate ? await this.options.annotate(name).catch(() => null) : null;
       return {
-        content: [{ type: "text", text: sanitizeOutput(note ? `${text}\n\n${note}` : text) }],
+        content: [{ type: "text", text: sanitizeOutput(note ? `${text}\n\n${this.out(note)}` : text) }],
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (e) {
@@ -325,8 +327,13 @@ export class McpServer {
       logCall(name, args, { text: msg, isError: true }, Date.now() - started);
       this.calls.push({ tool: name, chars: msg.length, ms: Date.now() - started, isError: true, empty: false });
       this.log(`tools/call ${name} failed: ${msg}`);
-      return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      return { content: [{ type: "text", text: `Error: ${this.out(msg)}` }], isError: true };
     }
+  }
+
+  /** Text as it leaves the server: through the options' `rewrite`, when there is one. */
+  private out(text: string): string {
+    return this.options.rewrite ? this.options.rewrite(text) : text;
   }
 
   /**
@@ -352,7 +359,7 @@ export class McpServer {
     if (typeof uri !== "string") throw rpcError(INVALID_PARAMS, "resources/read requires a string `uri`");
     const resource = this.resources.get(uri);
     if (resource) {
-      const text = await resource.read();
+      const text = this.out(await resource.read());
       return { contents: [{ uri, mimeType: resource.mimeType, text }] };
     }
     for (const t of this.templates) {
@@ -360,7 +367,7 @@ export class McpServer {
       if (!vars) continue;
       const text = await t.read(vars);
       if (text === null) break;
-      return { contents: [{ uri, mimeType: t.mimeType, text }] };
+      return { contents: [{ uri, mimeType: t.mimeType, text: this.out(text) }] };
     }
     throw rpcError(INVALID_PARAMS, `Unknown resource: ${uri}`);
   }
@@ -376,8 +383,8 @@ export class McpServer {
     const missing = prompt.arguments.filter((a) => a.required && !args[a.name]).map((a) => a.name);
     if (missing.length) throw rpcError(INVALID_PARAMS, `Prompt ${name} needs: ${missing.join(", ")}`);
     return {
-      description: prompt.description,
-      messages: [{ role: "user", content: { type: "text", text: prompt.render(args) } }],
+      description: this.out(prompt.description),
+      messages: [{ role: "user", content: { type: "text", text: this.out(prompt.render(args)) } }],
     };
   }
 }
@@ -402,10 +409,10 @@ export function matchUriTemplate(template: string, uri: string): Record<string, 
   return vars;
 }
 
-function describeTool(tool: McpTool) {
+function describeTool(tool: McpTool, out: (text: string) => string) {
   return {
     name: tool.name,
-    description: tool.description,
+    description: out(tool.description),
     inputSchema: tool.inputSchema,
     annotations: {
       ...(tool.title ? { title: tool.title } : {}),

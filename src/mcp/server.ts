@@ -28,6 +28,7 @@ import { explainTool } from "./tools/explain.js";
 import { contextDocsTool } from "./tools/decisions.js";
 import { diffTool, exportTool, factsTool, sequenceTool } from "./tools/commands.js";
 import { detectProject } from "../core/detect-project.js";
+import { hiddenToolNames, rewriteHiddenTools } from "./hidden-tools.js";
 
 export const MCP_SERVER_NAME = "clarifydoc";
 
@@ -261,13 +262,19 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
     },
   ];
 
+  // A tool left out cannot be called here: every mention of one — in answers,
+  // prompts and the instructions — becomes its `clarifydoc ask` form.
+  const hidden = hiddenToolNames(tools, listed);
+  const rewrite = hidden.size ? (text: string) => rewriteHiddenTools(text, hidden) : undefined;
+
   server = new McpServer({
     name: MCP_SERVER_NAME,
     version: config.version ?? TOOL_VERSION,
     instructions:
       listed.length < tools.length
-        ? `${INSTRUCTIONS}\n\nThis server was started with a narrower tool set: ${listed.map((t) => t.name).join(", ")}. The other tools named above are not available in this session.`
+        ? `${rewriteHiddenTools(INSTRUCTIONS, hidden)}\n\nThis server was started with a narrower tool set: ${listed.map((t) => t.name).join(", ")}. The other tools are not callable in this session; where an answer or the text above names one as \`clarifydoc ask <tool> key=value\`, run that in a shell.`
         : INSTRUCTIONS,
+    ...(rewrite ? { rewrite } : {}),
     tools: listed,
     resources,
     resourceTemplates,

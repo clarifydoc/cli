@@ -110,7 +110,10 @@ write. That is what lets an external agent be configured as nothing but a comman
   `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, time, error, empty) and
   the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
   `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out
-  is not callable, so an answer that names one is a dead end there — keep the core set what answers point to most.
+  is not callable, so every mention of one — in an answer, a resource, a prompt, a tool description and the
+  instructions — is rewritten to `clarifydoc ask <tool> key=value` ([hidden-tools.ts](hidden-tools.ts), the server's
+  `rewrite` option, applied where text leaves it); mentions are rewritten, never dropped, and with the full list
+  nothing changes. Keep the core set what answers point to most all the same: a shell call costs a round trip.
   `ALWAYS_LOAD` (search, trace) carry `_meta["anthropic/alwaysLoad"]: true`, which Claude Code reads to load
   those schemas up front while it defers the rest behind its tool search; `_meta` is not counted in the budget
   (it reaches the host, not the model).

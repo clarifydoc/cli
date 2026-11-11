@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { CORE_TOOLS, buildMcpServer } from "./server.js";
+import { rewriteHiddenTools } from "./hidden-tools.js";
 import { latencySection, percentile, renderUsage, toolLatency, usageLine } from "./usage.js";
 
 const config = {
@@ -30,6 +31,59 @@ describe("tool profiles", () => {
     expect(named.names).toEqual(["clarifydoc_search", "clarifydoc_routes"]);
     const res = (await named.server.handleMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "clarifydoc_trace", arguments: {} } })) as { error?: { message: string } };
     expect(res.error?.message).toContain("Unknown tool: clarifydoc_trace");
+  });
+
+  it("points at an unlisted tool as `clarifydoc ask`, in answers, instructions and prompts", async () => {
+    const call = async (server: Awaited<ReturnType<typeof listed>>["server"], name: string, args: Record<string, unknown>) => {
+      const res = (await server.handleMessage({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name, arguments: args } })) as { result: { content: Array<{ text: string }> } };
+      return res.result.content[0]!.text;
+    };
+    const core = await listed("core");
+    const full = await listed();
+    const hiddenName = new RegExp(`\\b(${full.names.filter((n) => !core.names.includes(n)).join("|")})\\b`);
+
+    // Every answer of a core tool, over a few shapes, names no tool the session lacks.
+    const probes: Array<[string, Record<string, unknown>]> = [
+      ["clarifydoc_search", { query: "zzzz-no-such-thing" }],
+      ["clarifydoc_explain", { subject: "routes/players.ts" }],
+      ["clarifydoc_file", { path: "routes/players.ts" }],
+      ["clarifydoc_status", {}],
+    ];
+    let askLines = 0;
+    for (const [name, args] of probes) {
+      const text = await call(core.server, name, args);
+      expect(text).not.toMatch(hiddenName);
+      askLines += (text.match(/clarifydoc ask [a-z-]+/g) ?? []).length;
+      // The full list says it the old way.
+      expect(await call(full.server, name, args)).not.toMatch(/clarifydoc ask /);
+    }
+    expect(askLines).toBeGreaterThan(0);
+    expect(await call(core.server, "clarifydoc_file", { path: "routes/players.ts" })).toContain('clarifydoc ask blast-radius path="routes/players.ts"');
+    expect(await call(full.server, "clarifydoc_file", { path: "routes/players.ts" })).toContain('clarifydoc_blast_radius path="routes/players.ts"');
+
+    // Instructions: unlisted tools become the shell form, listed ones stay.
+    expect(core.instructions).not.toMatch(hiddenName);
+    expect(core.instructions).toContain("clarifydoc ask routes");
+    expect(core.instructions).toContain("clarifydoc_explain");
+    expect(full.instructions).toContain("clarifydoc_routes");
+
+    // Prompts, the same way.
+    const prompt = async (s: typeof core.server) => {
+      const res = (await s.handleMessage({ jsonrpc: "2.0", id: 6, method: "prompts/get", params: { name: "trace-feature", arguments: { feature: "players" } } })) as { result?: { messages: Array<{ content: { text: string } }> } };
+      return res.result?.messages[0]?.content.text ?? "";
+    };
+    const corePrompt = await prompt(core.server);
+    expect(corePrompt).toContain("clarifydoc ask data-flows");
+    expect(corePrompt).toContain("clarifydoc_search");
+    expect(await prompt(full.server)).toContain("clarifydoc_data_flows");
+  });
+
+  it("rewrites only hidden names, keeping the arguments", () => {
+    const hidden = new Set(["clarifydoc_blast_radius", "clarifydoc_routes"]);
+    expect(rewriteHiddenTools('Next: clarifydoc_blast_radius path="a.ts" · clarifydoc_trace symbol=X · clarifydoc_routes_extra', hidden)).toBe(
+      'Next: clarifydoc ask blast-radius path="a.ts" · clarifydoc_trace symbol=X · clarifydoc_routes_extra',
+    );
+    expect(rewriteHiddenTools("clarifydoc_routes", new Set())).toBe("clarifydoc_routes");
   });
 
   it("refuses a name no tool has, listing what there is", () => {
