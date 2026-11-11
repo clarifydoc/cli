@@ -343,7 +343,9 @@ export function expandRequestFactories(
         continue;
       }
       const source = importIndex.localFor(a.filePath, site.callee);
-      let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${site.callee}`) : undefined);
+      // `import { request as send } from './http'`: the file declares the exported name, not the local one.
+      const exported = (a.imports ?? []).find((i) => i.aliases?.[site.callee] !== undefined && (!source || (importIndex.fileForSource?.(a.filePath, i.source) ?? source) === source))?.aliases?.[site.callee] ?? site.callee;
+      let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${exported}`) : undefined);
       // A bare call from inside a class, of a name no import brings in, is a
       // method of that class's own chain — never another class's helper.
       const imported = (a.imports ?? []).some((i) => i.specifiers.includes(site.callee));

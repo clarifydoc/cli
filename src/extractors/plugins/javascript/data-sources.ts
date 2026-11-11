@@ -1408,6 +1408,32 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return this.routerReceivers;
   }
 
+  /**
+   * Whether a call's callee is a local, or a `this.` field, that this file binds to a fetch root
+   * through `??` / `||` — an injected implementation with the global as its default
+   * (`const impl = opts.impl ?? globalThis.fetch`, `this.fetchImpl = options.fetch || window.fetch`).
+   */
+  private injectedFetch(fn: Node | null): boolean {
+    if (!fn) return false;
+    let value: Node | null = null;
+    if (fn.type === "identifier") {
+      value = this.bindings()?.valueOf(fn.text, fn) ?? null;
+      while (value?.type === "parenthesized_expression") value = value.namedChild(0);
+      if (value?.type !== "binary_expression") return false;
+      const op = value.childForFieldName("operator")?.text;
+      return (op === "??" || op === "||") && fetchOperand(value);
+    }
+    if (fn.type === "member_expression" && fn.childForFieldName("object")?.type === "this") {
+      const name = fn.childForFieldName("property")?.text;
+      if (!name || !this.sourceText.includes("fetch")) return false;
+      const re = new RegExp(`(?:\\bthis\\s*\\.\\s*|^\\s*)${escapeRegex(name)}\\s*=(?!=)\\s*([^;\\n]+)`, "gm");
+      for (const m of this.sourceText.matchAll(re)) {
+        if (/\?\?|\|\|/.test(m[1]!) && m[1]!.split(/\?\?|\|\|/).some((o) => FETCH_OPERAND_RE.test(o.trim()))) return true;
+      }
+    }
+    return false;
+  }
+
   /** Whether an object literal is an argument of a call to an HTTP client (`http.request({…})`, `axios({…})`). */
   private passedToHttpClient(obj: Node): boolean {
     if (obj.parent?.type !== "arguments") return false;
@@ -1534,7 +1560,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // `post`, not the object — using the full member-chain text would let any
       // substring (`Sec-Fetch-User`, `events/fetchEventTypes`) spuriously match.
       // Keep the dotted chain only for the ORM root check (`prisma.user.findMany`).
-      const fnName = calleeLeaf(fn);
+      // `const impl = opts.impl ?? globalThis.fetch; impl(url, init)`: a callee bound to a fetch
+      // root through `??`/`||` is that root for this call.
+      const injectedFetch = this.injectedFetch(fn);
+      const fnName = injectedFetch ? "fetch" : calleeLeaf(fn);
       const ormChain = fn && fn.type === "member_expression" ? fn.text : fnName;
       // A call emitted as an HTTP api-call below must not ALSO be emitted as a
       // database op: `apiClient.get("/owners")` is HTTP, but its leaf `get`
@@ -1617,10 +1646,10 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           const firstLiteral = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment");
           const verbFirst = firstLiteral?.type === "string" && HTTP_VERBS.has(stripQuotes(firstLiteral.text).toLowerCase());
           const bareLibrary = fn.type === "identifier" &&
-            (/^(?:fetch|axios)$/i.test(fnName) || verbFirst || (this.imports ??= importEvidence(this.sourceText)).names.has(fnName));
+            (/^(?:fetch|axios)$/i.test(fnName) || injectedFetch || verbFirst || (this.imports ??= importEvidence(this.sourceText)).names.has(fnName));
           const exactRoot =
             HTTP_ROOTS.has(fnName.toLowerCase()) &&
-            (bareLibrary || trustedReceiver || (!!recv && GLOBAL_RECEIVERS.has(recv)));
+            (bareLibrary || trustedReceiver || injectedFetch || (!!recv && GLOBAL_RECEIVERS.has(recv)));
           const trusted = exactRoot || trustedReceiver || localInstance;
           // `http.request('POST', url)` / `this.http.request('GET', url)`:
           // the verb comes first and the URL second.
@@ -2905,6 +2934,22 @@ function supabaseTable(call: Node, fn: Node | null): { table: string; verb: stri
   const next = call.parent?.type === "member_expression" ? call.parent.childForFieldName("property")?.text ?? null : null;
   const access = next === "select" ? "read" : next && /^(?:insert|update|upsert|delete)$/.test(next) ? "write" : undefined;
   return { table, verb: next, ...(access ? { access } : {}) };
+}
+
+/** `fetch`, `globalThis.fetch`, `window.fetch`, `opts.fetch`: an operand that is the fetch function itself. */
+const FETCH_OPERAND_RE = /^\(?\s*(?:(?:globalThis|window|self|global)\s*\??\.\s*)?fetch\s*\)?$/;
+
+/** Whether either side of a `??` / `||` chain is the global fetch (the default an injected implementation falls back to). */
+function fetchOperand(expr: Node): boolean {
+  const left = expr.childForFieldName("left");
+  const right = expr.childForFieldName("right");
+  const test = (n: Node | null): boolean => {
+    if (!n) return false;
+    if (n.type === "parenthesized_expression") return test(n.namedChild(0));
+    if (n.type === "binary_expression" && /^(?:\?\?|\|\|)$/.test(n.childForFieldName("operator")?.text ?? "")) return fetchOperand(n);
+    return FETCH_OPERAND_RE.test(n.text.trim());
+  };
+  return test(left) || test(right);
 }
 
 /** A named HTTP client: fetch, axios, http(Client), request, ajax, or a fetchX/httpX helper. */

@@ -72,6 +72,14 @@ function argLiteral(raw: string): string | null {
  */
 function substitute(template: string, params: ParamInfo[], args: string[]): string | null {
   let out = template;
+  // `{p?/}`: the joining slash a path argument that starts with one does not need.
+  for (const [i, p] of params.entries()) {
+    const marker = `{${p.name}?/}`;
+    if (!out.includes(marker)) continue;
+    const given = i < args.length ? argLiteral(args[i]!) : null;
+    if (given === null) return null;
+    out = out.split(marker).join(given.startsWith("/") ? "" : "/");
+  }
   for (const [i, p] of params.entries()) {
     const token = `{${p.name}}`;
     if (!out.includes(token)) continue;
@@ -165,12 +173,34 @@ interface HelperLookup {
   global: Map<string, UrlBuilder | null>;
   /** File-local helpers by their dotted name — a route table's `routes.tagsSlug`. */
   local: Map<string, Map<string, UrlBuilder>>;
+  /** Free helpers by the file declaring them: the lexical (same-file) and import-resolved lookups. */
+  byFile?: Map<string, Map<string, UrlBuilder | null>>;
+  /** Free functions each file declares at all (template or not): a bare call to one is that one. */
+  declared?: Map<string, Set<string>>;
+  /** The project file an import in `file` binds `name` from, and the name that file declares; null when none resolves. */
+  imported?: (file: string, name: string) => { file: string; exported: string } | null;
   /** `this.m(…)`: the method of that name along the calling class's chain. */
   method?: (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null;
   /** `endPoints('profile').url`, `messages.update(id).url`: the URL a helper's descriptor or table entry states under that key. */
   descriptor?: (site: CallSite, receiver: string, name: string, args: string[], key: string, keyArgs: string[] | null) => string[] | null;
   /** `this.resource` seen from the calling class: the literal its chain states (a `super('clubs')` argument included), or null. */
   field?: (file: string, line: number, name: string) => string | null;
+}
+
+function buildFileIndex(analyses: FileAnalysis[]): Map<string, Map<string, UrlBuilder | null>> {
+  const out = new Map<string, Map<string, UrlBuilder | null>>();
+  for (const a of analyses) {
+    if (a.language !== "typescript" && a.language !== "javascript") continue;
+    const map = new Map<string, UrlBuilder | null>();
+    for (const fn of a.functions) {
+      const templates = templatesOf(fn);
+      if (templates.length === 0 || fn.name.includes(".")) continue;
+      // Two same-named declarations of one file (nested scopes) are not told apart here.
+      map.set(fn.name, map.has(fn.name) ? null : { templates, params: fn.params });
+    }
+    if (map.size > 0) out.set(a.filePath, map);
+  }
+  return out;
 }
 
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
@@ -237,6 +267,15 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
   if (recv === "this" && lookup.method) {
     const own = lookup.method(site.file, site.line, name);
     if (own) return own;
+  }
+  // A bare call is the helper its own file declares, else the one its import names — never a
+  // same-named helper of another file. Only a call no import resolves falls to the project-wide name.
+  if (!recv && lookup.byFile) {
+    const here = lookup.byFile.get(site.file)?.get(name);
+    if (here) return here;
+    if (here === undefined && lookup.declared?.get(site.file)?.has(name)) return null; // declared here, states no URL
+    const from = lookup.imported?.(site.file, name);
+    if (from) return lookup.byFile.get(from.file)?.get(from.exported) ?? null;
   }
   return lookup.global.get(name) ?? null;
 }
@@ -525,7 +564,15 @@ function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): s
 export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
   const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
   keepHelperBases(lookup, analyses);
+  lookup.byFile = buildFileIndex(analyses);
   if (ctx) {
+    const filesByPath = new Map(analyses.map((a) => [a.filePath, a]));
+    lookup.imported = (file, name) => {
+      const target = ctx.importIndex.localFor(file, name);
+      if (!target || !filesByPath.has(target)) return null;
+      const imp = filesByPath.get(file)?.imports?.find((i) => i.aliases?.[name] !== undefined && (ctx.importIndex.fileForSource?.(file, i.source) ?? target) === target);
+      return { file: target, exported: imp?.aliases?.[name] ?? name };
+    };
     lookup.method = methodResolver(ctx);
     lookup.field = fieldResolver(ctx);
     lookup.descriptor = descriptorResolver(analyses, ctx, lookup);

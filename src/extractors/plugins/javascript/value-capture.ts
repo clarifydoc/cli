@@ -95,6 +95,8 @@ export function astToValueExpr(node: Node | null, opts: CaptureOptions = {}): Va
       // string: the request goes to the same path either way, so the arm that
       // writes it out stands for both. Any other choice stays one hole.
       const arms = [node.childForFieldName("consequence"), node.childForFieldName("alternative")].map(unparenthesized);
+      const fold = leadingSlashFold(node, arms);
+      if (fold) return { kind: "lit", value: fold };
       const empty = arms.findIndex((a) => a !== null && isEmptyString(a));
       const other = empty === -1 ? null : arms[1 - empty];
       if (other && (other.type === "string" || other.type === "template_string") && /^.[?&#]/.test(other.text)) return astToValueExpr(other, opts);
@@ -150,6 +152,29 @@ function unparenthesized(node: Node | null): Node | null {
   let n = node;
   while (n?.type === "parenthesized_expression") n = n.namedChild(0);
   return n;
+}
+
+/**
+ * `p.startsWith('/') ? '' : '/'` (or `!p.startsWith('/') ? '/' : ''`): a segment that joins a base
+ * and a path without doubling or dropping the slash. Spelled `{p?/}` — a marker a call site fills,
+ * since only its argument says whether it starts with a slash. Null for any other conditional.
+ */
+function leadingSlashFold(node: Node, arms: Array<Node | null>): string | null {
+  let cond = unparenthesized(node.childForFieldName("condition"));
+  let negated = false;
+  if (cond?.type === "unary_expression" && cond.childForFieldName("operator")?.text === "!") {
+    negated = true;
+    cond = unparenthesized(cond.childForFieldName("argument"));
+  }
+  if (cond?.type !== "call_expression") return null;
+  const callee = cond.childForFieldName("function");
+  const arg = cond.childForFieldName("arguments")?.namedChildren;
+  if (callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "startsWith") return null;
+  const subject = callee.childForFieldName("object");
+  if (subject?.type !== "identifier" || arg?.length !== 1 || arg[0]!.type !== "string" || stripQuotes(arg[0]!.text) !== "/") return null;
+  const [whenTrue, whenFalse] = arms.map((a) => (a && (a.type === "string" || a.type === "template_string") ? stripQuotes(a.text) : null));
+  const [onSlash, otherwise] = negated ? [whenFalse, whenTrue] : [whenTrue, whenFalse];
+  return onSlash === "" && otherwise === "/" ? `{${subject.text}?/}` : null;
 }
 
 /** `""`, `''` or an empty template literal. */

@@ -894,6 +894,8 @@ export function extractUrlTemplates(
   // with no guard taken) is a URL the field holds, kept beside its siblings.
   const push = (text: string | null, bareMember = false): boolean => {
     if (text == null) return false;
+    // A leading-slash marker (`{p?/}`) names a parameter the caller fills; any other name is no helper's.
+    if ([...text.matchAll(/\{([A-Za-z_$][\w$]*)\?\/\}/g)].some((m) => !paramNames.has(m[1]!))) return false;
     // `(await garageOrigin()) + path`: a runtime origin before the path the caller hands in — that path
     // is the URL, when the parameter is named for one (a query appended to it changes no path).
     const handed = /^\{\}\{([A-Za-z_$][\w$]*)\}(?:\?.*)?$/.exec(text)?.[1];
