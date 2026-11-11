@@ -14,6 +14,7 @@ import {
   HandlerContext,
   IdExpressionContext,
   InitDeclaratorContext,
+  InitializerClauseContext,
   IterationStatementContext,
   LambdaExpressionContext,
   MacroArgumentsContext,
@@ -35,6 +36,7 @@ import {
 import { SPECIFIER_KEYWORDS, TYPE_KEYWORDS } from "../../../parsers/antlr/cpp/CppTypes.js";
 import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCallName } from "../shared/antlr-calls.js";
+import type { CallArguments } from "../shared/regex-base.js";
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { blankAsm } from "../c/rewrites.js";
@@ -156,10 +158,10 @@ function read(text: string, also?: string): ParsedStructure {
 function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean, bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const found: Found[] = [];
-  const own = (name: { text: string; line: number }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
+  const own = (name: { text: string; line: number; specializedOn?: string[] }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
     const calls: PatternCallName[] = [];
     const endLine = ctx.stop?.line ?? name.line;
-    found.push({ span: { name: name.text, line: name.line, endLine }, calls, from, to: endLine });
+    found.push({ span: { name: name.text, line: name.line, endLine, ...(name.specializedOn ? { specializedOn: name.specializedOn } : {}) }, calls, from, to: endLine });
     return calls;
   };
   while (stack.length > 0) {
@@ -170,7 +172,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     if (ctx instanceof FunctionDefinitionContext) {
       // `Club() = default;` defines nothing the file states.
       if (ctx.functionBody().Assign()) continue;
-      const name = declaredName(ctx.declarator());
+      const name = declaredName(ctx.declarator(), text);
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
     } else if (ctx instanceof MacroFunctionDefinitionContext) {
@@ -182,7 +184,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       // A chain is one nested context per step: read it once, from its outermost.
       if (!(ctx.parent instanceof PostfixExpressionContext && ctx.parent.children[0] === ctx)) {
-        postfixCalls(ctx, calls, text);
+        postfixCalls(ctx, calls, text, stream);
         connectReferences(ctx, calls);
       }
     } else if (calls && ctx instanceof PrimaryExpressionContext && ctx.MacroName()) {
@@ -206,7 +208,7 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       const bound = localBinding(ctx);
       if (bound) (bindings.get(calls) ?? bindings.set(calls, []).get(calls)!).push(bound);
     } else if (calls && ctx instanceof NewExpression_Context) {
-      newCall(ctx, calls, text);
+      newCall(ctx, calls, text, stream);
     } else if (calls && ctx instanceof MemInitializerContext) {
       // `: Player(id), name_(n)`: a base's constructor called, a member initialized — the patterns read both as calls.
       const id = ctx.memInitializerId();
@@ -341,18 +343,27 @@ function declaredIdentifier(declarator: DeclaratorContext): Token | null {
 }
 
 /** The name a declarator declares, as the patterns name a definition: its last name, `~Club`, `operator==`. */
-function declaredName(declarator: DeclaratorContext | null): { text: string; line: number } | null {
+function declaredName(declarator: DeclaratorContext | null, text: string): { text: string; line: number; specializedOn?: string[] } | null {
   // `auto kick() -> bool` declares through the trailing-return form, with no pointer declarator.
   let direct: NoPointerDeclaratorContext | null = declarator?.pointerDeclarator()?.noPointerDeclarator() ?? declarator?.noPointerDeclarator() ?? null;
   while (direct) {
     const id = direct.declaratorId()?.idExpression();
     if (id) {
       const unqualified = id.unqualifiedId() ?? id.qualifiedId()?.unqualifiedId();
-      return unqualified ? { text: unqualifiedName(unqualified), line: unqualified.start!.line } : null;
+      const specializedOn = unqualified ? templateArgsOf(unqualified, text) : undefined;
+      return unqualified ? { text: unqualifiedName(unqualified), line: unqualified.start!.line, ...(specializedOn ? { specializedOn } : {}) } : null;
     }
     direct = direct.noPointerDeclarator() ?? direct.pointerDeclarator()?.noPointerDeclarator() ?? null;
   }
   return null;
+}
+
+/** The template arguments written on a name (`convert<std::string>` → `["std::string"]`), as the source spells them. */
+function templateArgsOf(id: UnqualifiedIdContext, text: string): string[] | undefined {
+  const template = id.templateId();
+  const list = template?.simpleTemplateId()?.templateArgumentList() ?? template?.templateArgumentList();
+  const args = list?.templateArgument().filter((a) => a.start && a.stop).map((a) => text.slice(a.start!.start, a.stop!.stop + 1).trim());
+  return args && args.length > 0 ? args : undefined;
 }
 
 /** An unqualified name as written, template arguments left off: `size`, `~Club`, `operator==`, `get` of `get<T>`. */
@@ -392,7 +403,7 @@ function previousName(scope: ParserRuleContext): Token | null {
 }
 
 /** The calls a postfix chain makes: each `(…)` calls what comes before it, named by the patterns first. */
-function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[], text: string): void {
+function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[], text: string, stream: readonly Token[]): void {
   const chain: PostfixExpressionContext[] = [];
   for (let link: PostfixExpressionContext | null = outer; link; ) {
     chain.push(link);
@@ -416,7 +427,7 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       const source = `${text.slice(start.start, op.symbol.start)}(`;
       const byPattern = patternNamedCall(source, cppSpec.callPatterns ?? [], start.line, start.column);
       const named = byPattern === undefined ? memberPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH) : byPattern;
-      if (named) calls.push(named);
+      if (named) calls.push(withArguments(named, argumentsOf(link.expressionList(), stream, calleeTemplateArgs(first, text))));
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
       // `p->kick(` is `p.kick`, as `p.kick(` is: the linker types `p` through its declaration, a field's or a local's.
@@ -488,7 +499,7 @@ function headSteps(link: PostfixExpressionContext): CalleeStep[] {
 }
 
 /** `new Club(…)`: the type is called, named as the patterns read `Club(`. */
-function newCall(ctx: NewExpression_Context, calls: PatternCallName[], text: string): void {
+function newCall(ctx: NewExpression_Context, calls: PatternCallName[], text: string, stream: readonly Token[]): void {
   const init = ctx.newInitializer_();
   const type = ctx.newTypeId();
   if (!init || !type || init.start?.type !== CPP14Lexer.LeftParen || !type.start || !type.stop || type.stop.type !== CPP14Lexer.Identifier) return;
@@ -496,5 +507,57 @@ function newCall(ctx: NewExpression_Context, calls: PatternCallName[], text: str
   const source = `new ${text.slice(type.start.start, init.start.start)}(`;
   const byPattern = patternNamedCall(source, cppSpec.callPatterns ?? [], type.start.line, type.start.column);
   const named = byPattern === undefined ? nameCall([idStep(name)], CHAIN_DEPTH) : byPattern;
-  if (named) calls.push(named);
+  if (named) calls.push(withArguments(named, argumentsOf(init.expressionList(), stream)));
+}
+
+/** The call with the arguments it passes, when they are all told. */
+function withArguments(named: PatternCallName, args: CallArguments | undefined): PatternCallName {
+  return args ? { ...named, args } : named;
+}
+
+/** The template arguments a call writes on its callee: `convert<int>(x)`, `Util::convert<int>(x)`, `p->convert<int>(x)`. */
+function calleeTemplateArgs(callee: ParseTree | undefined, text: string): string[] | undefined {
+  if (!(callee instanceof PostfixExpressionContext)) return undefined;
+  const head = callee.children[0];
+  const id = head instanceof PrimaryExpressionContext ? head.idExpression() : callee.children.find((k) => k instanceof IdExpressionContext) as IdExpressionContext | undefined;
+  const unqualified = id?.unqualifiedId() ?? id?.qualifiedId()?.unqualifiedId();
+  return unqualified ? templateArgsOf(unqualified, text) : undefined;
+}
+
+/**
+ * How many arguments a call passes and what each is as its own expression says (`CallInfo.argKinds`: a literal's
+ * type, `@name` for a variable the linker types from the function's parameters and fields, `?` otherwise). Undefined
+ * where a pack expansion hides the count.
+ */
+function argumentsOf(list: { initializerList(): { initializerClause(): InitializerClauseContext[]; Ellipsis(): TerminalNode[] } } | null, stream: readonly Token[], templateArgs?: string[]): CallArguments | undefined {
+  const clauses = list?.initializerList().initializerClause() ?? [];
+  if (list && list.initializerList().Ellipsis().length > 0) return undefined;
+  const kinds = clauses.map((c) => argumentKind(c, stream));
+  return {
+    argCount: clauses.length,
+    ...(kinds.some((k) => k !== "?") ? { argKinds: kinds } : {}),
+    ...(templateArgs ? { templateArgs } : {}),
+  };
+}
+
+/** One argument's kind: a literal's canonical type, `@name` for a plain name, `?` for any other expression. */
+function argumentKind(clause: InitializerClauseContext, stream: readonly Token[]): string {
+  if (!clause.start || !clause.stop) return "?";
+  const tokens = stream.slice(clause.start.tokenIndex, clause.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL);
+  // `-5` is an int too.
+  const body = tokens.length === 2 && (tokens[0]!.type === CPP14Lexer.Minus || tokens[0]!.type === CPP14Lexer.Plus) ? tokens.slice(1) : tokens;
+  if (body.length === 0) return "?";
+  if (body.every((t) => t.type === CPP14Lexer.StringLiteral)) return /^"/.test(body[0]!.text ?? "") ? "string" : "?";
+  if (body.length !== 1) return "?";
+  const token = body[0]!;
+  const t = (token.text ?? "").toLowerCase();
+  switch (token.type) {
+    case CPP14Lexer.IntegerLiteral: return t.includes("l") ? "long" : "int";
+    case CPP14Lexer.FloatingLiteral: return /f$/.test(t) && !t.startsWith("0x") ? "float" : "double";
+    case CPP14Lexer.CharacterLiteral: return t.startsWith("'") ? "char" : "?";
+    case CPP14Lexer.BooleanLiteral: return "boolean";
+    case CPP14Lexer.PointerLiteral: return "null";
+    case CPP14Lexer.Identifier: return tokens.length === 1 ? `@${token.text}` : "?";
+    default: return "?";
+  }
 }

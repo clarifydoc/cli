@@ -17,9 +17,11 @@ const read = (source: string) => {
   return { errors: parsed.syntaxErrors, functions: parsed.syntaxErrors ? [] : shape(extractWithRegex(source, "league.cpp", "cpp", undefined, parsed)) };
 };
 
+// The parse keeps a name once per distinct argument list (`CallInfo.argKinds`); the patterns once per name.
+const names = (calls: Array<{ name: string }>) => [...new Set(calls.map((c) => c.name))];
 const shape = (a: FileAnalysis) => [
-  ...a.functions.map((f) => [f.name, f.line, f.calls.map((c) => c.name)]),
-  ...a.classes.flatMap((c) => c.methods.map((m) => [`${c.name}::${m.name}`, m.line, m.calls.map((x) => x.name)])),
+  ...a.functions.map((f) => [f.name, f.line, names(f.calls)]),
+  ...a.classes.flatMap((c) => c.methods.map((m) => [`${c.name}::${m.name}`, m.line, names(m.calls)])),
 ];
 
 describe("C++ through ANTLR", () => {

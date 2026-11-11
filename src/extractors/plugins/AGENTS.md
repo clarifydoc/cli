@@ -105,6 +105,7 @@ like `knownPackages`. Notes:
   language's meta — swap in the embedded source/language before parsing, and
   optionally merge container data back via `postExtract`.
 - A format with its own parser (.dfm) declares `parsing: "custom"` + `customParse`.
+- A parser front end may state each call's arguments (`PatternCallName.args` → `CallInfo.argCount`/`argKinds`/`templateArgs`; C++ `cpp/antlr.ts`): `callRecorder` then keeps one row per distinct (name, count, kinds, template arguments) in a function instead of one per name, so `g(1); g(1.0);` are two calls. The manifest's `calls.overloadTypeKey` folds declared types (`cpp/arg-kinds.ts`), `calls.conversionRanks` makes core rank exact > promotion > conversion (`argFit`'s `ranked` scale), and `calls.explicitSpecializations` has `convert<int>(x)` choose the definition whose `FunctionInfo.specializedOn` names those arguments. Core's `pickOverloads` reads a call's site from the link's own file only.
 - An extension several languages share (`.h`) has one owner, but how it is READ can depend on its sub-project: the
   owner's manifest `readingVariant(relativePath, mix)` gets the project's file counts by extension and names a
   variant (the C++ plugin: `c-first` for a `.h` in a project with `.c` and no C++ source) that its `meta.antlr` reader

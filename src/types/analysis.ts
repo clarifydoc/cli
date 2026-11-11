@@ -1199,6 +1199,11 @@ export interface CallInfo {
    * is known.
    */
   argKinds?: string[];
+  /**
+   * The template arguments the call writes on its callee (`convert<int>(x)` → `["int"]`), as written (C++): the linker
+   * picks the explicit specialization (`FunctionInfo.specializedOn`) they name.
+   */
+  templateArgs?: string[];
 }
 
 /** One argument of a call and where its value comes from (`CallInfo.argOrigins`). */
@@ -1375,6 +1380,11 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /**
+   * The template arguments an explicit specialization names (`template<> std::string convert<std::string>(…)` →
+   * `["std::string"]`), as written: a call writing the same arguments (`CallInfo.templateArgs`) reaches it.
+   */
+  specializedOn?: string[];
   /**
    * Generated, not written: a member the language or a code generator gives
    * the class from what it declares — a Java record's accessors, Kotlin

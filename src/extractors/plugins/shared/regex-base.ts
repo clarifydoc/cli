@@ -549,6 +549,7 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
       endLine: span.endLine,
     };
     if (span.isConstructor) fn.isConstructor = true;
+    if (span.specializedOn) fn.specializedOn = span.specializedOn;
     attachRequestAccess(fn, lines, span.line, span.endLine, spec);
     attachLocalTypes(fn, lines, i, inline, span.endLine, spec);
     return fn;
@@ -1045,8 +1046,18 @@ export type CallRecorder = (
   shortName: string,
   line: number,
   column: number,
-  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean },
+  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean; args?: CallArguments },
 ) => void;
+
+/**
+ * What a parser front end read of a call's arguments (`CallInfo.argCount` / `argKinds` / `templateArgs`). Calls of one
+ * name that differ in them stay separate rows, since they may reach different overloads.
+ */
+export interface CallArguments {
+  argCount: number;
+  argKinds?: string[];
+  templateArgs?: string[];
+}
 
 /**
  * Records calls into `calls` the way a body scan does: a keyword is no call, each name is kept once (its
@@ -1065,7 +1076,17 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
     // Calls of one name with different keys stay separate (two templates rendered), and so do calls
     // of one name on types the name does not spell (`new.perform` on two classes a block constructs).
     const unspelled = receiver?.receiverType && !name.includes(receiver.receiverType) ? receiver.receiverType : undefined;
-    const seenKey = receiver?.key ? `${name}\0${receiver.key}` : unspelled ? `${name}\0${unspelled}` : name;
+    const base = receiver?.key ? `${name}\0${receiver.key}` : unspelled ? `${name}\0${unspelled}` : name;
+    const args = receiver?.args;
+    const seenKey = args ? `${base}\0(${args.argCount}${args.templateArgs ? `<${args.templateArgs.join(",")}>` : ""}:${args.argKinds?.join(",") ?? ""})` : base;
+    const withArgs = (call: CallInfo): CallInfo => {
+      if (args) {
+        call.argCount = args.argCount;
+        if (args.argKinds) call.argKinds = args.argKinds;
+        if (args.templateArgs) call.templateArgs = args.templateArgs;
+      }
+      return call;
+    };
     if (seen.has(seenKey)) {
       const first = receiver?.receiverCut ? kept.get(seenKey) : undefined;
       if (first) first.receiverCut = true;
@@ -1078,14 +1099,14 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
       calls.push(call);
     };
     if (receiver?.key) {
-      keep({ name, kind: "internal", target: null, line, column, key: receiver.key });
+      keep(withArgs({ name, kind: "internal", target: null, line, column, key: receiver.key }));
       return;
     }
     if (receiver?.receiverType || receiver?.receiverQualifier) {
       const call: CallInfo = { name, kind: "internal", target: null, line, column };
       if (receiver.receiverType) call.receiverType = receiver.receiverType;
       if (receiver.receiverQualifier) call.receiverQualifier = receiver.receiverQualifier;
-      keep(call);
+      keep(withArgs(call));
       return;
     }
     if (CALL_NOISE.has(shortName)) {
@@ -1095,7 +1116,7 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
       if (name.includes(".")) holdNoiseCall(calls, { name, kind: "internal", target: null, line, column, ...(receiver?.receiverCut ? { receiverCut: true as const } : {}) });
       return;
     }
-    keep({ name, kind: "internal", target: null, line, column });
+    keep(withArgs({ name, kind: "internal", target: null, line, column }));
   };
 }
 

@@ -1,0 +1,43 @@
+/**
+ * How a declared C++ parameter or variable type folds to the key the overload chooser compares an argument kind with
+ * (`calls.overloadTypeKey`; the arguments' own kinds are read by `antlr.ts`): qualifiers, references and pointers
+ * left off, the arithmetic types and their fixed-width spellings folded to `int`, `long`, `float`, …, the string
+ * types to `string`, any other type to its simple name.
+ */
+
+const KEYS: Readonly<Record<string, string>> = {
+  int32_t: "int", uint32_t: "int", wchar_t: "int", char16_t: "int", char32_t: "int",
+  int16_t: "short", uint16_t: "short",
+  int64_t: "long", uint64_t: "long", size_t: "long", ssize_t: "long", ptrdiff_t: "long", intptr_t: "long", uintptr_t: "long",
+  int8_t: "char", uint8_t: "char",
+  bool: "boolean", boolean: "boolean",
+  string: "string", wstring: "string", string_view: "string", u8string: "string", cstring: "string", QString: "string",
+  void: "object", object: "object",
+};
+
+/** The key of a spelling made only of arithmetic keywords in any order (`long unsigned int`, `long long`), else null. */
+function arithmeticKey(words: readonly string[]): string | null {
+  if (words.length === 0 || !words.every((w) => /^(?:int|signed|unsigned|short|long|char|float|double)$/.test(w))) return null;
+  if (words.includes("double")) return "double";
+  if (words.includes("float")) return "float";
+  if (words.includes("char")) return "char";
+  if (words.includes("short")) return "short";
+  return words.includes("long") ? "long" : "int";
+}
+
+/** `const std::string&` → `string`, `unsigned long long` → `long`, `const Club *` → `Club`, `const char *` → `string`, `std::vector<Club>` → `vector<Club>`, `long unsigned int` → `long`. */
+export function cppOverloadTypeKey(type: string): string {
+  if (type === "?" || type.startsWith("->")) return type;
+  let t = type.replace(/\b(?:const|volatile|constexpr|static|register|mutable|struct|class|enum|union|typename)\b/g, " ");
+  // Template arguments stay, so `Box<int>` and `Box<float>` are two types.
+  const args = /<.*>/s.exec(t)?.[0].replace(/\s+/g, "") ?? "";
+  const bare = t.replace(/<.*>/s, "");
+  const pointer = /\*/.test(bare);
+  t = bare.replace(/[&*]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(?:::)?(?:std::)/, "").replace(/^.*::/, "");
+  if (args) return `${t}${args}`;
+  const key = arithmeticKey(t.split(" ")) ?? KEYS[t];
+  // A pointer to a character is a C string; a pointer to `void` takes any pointer.
+  if (pointer && key === "char") return "string";
+  return key ?? t;
+}

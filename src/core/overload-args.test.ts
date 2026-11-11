@@ -56,3 +56,16 @@ describe("bestOverload", () => {
     expect(bestOverload(["string", "int"], log, types)).toBe(0);
   });
 });
+
+describe("ranked conversions (C++)", () => {
+  it("ranks exact over promotion over conversion, and leaves unranked scores alone", () => {
+    expect(argFit("int", "int", types, true)).toBe(4);
+    expect(argFit("float", "double", types, true)).toBe(3);
+    expect(argFit("int", "double", types, true)).toBe(2);
+    expect(argFit("int", "double", types)).toBe(2);
+    expect(argFit("@x", "int", types, true)).toBe(1);
+    expect(bestOverload(["float"], [{ types: ["int"], variadic: false }, { types: ["double"], variadic: false }], types, true)).toBe(1);
+    expect(bestOverload(["int"], [{ types: ["double"], variadic: false }, { types: ["float"], variadic: false }], types, true)).toBe(-1);
+    expect(bestOverload(["int"], [{ types: ["long"], variadic: false }, { types: ["double"], variadic: false }], types)).toBe(-1);
+  });
+});

@@ -5,6 +5,7 @@ import { cppSpec } from "./index.js";
 import { nativePackages } from "./packages.js";
 import { C_BUILTINS } from "../c/meta.js";
 import { cppManifest } from "./manifest.js";
+import { cppOverloadTypeKey } from "./arg-kinds.js";
 import { cFamilyReachability } from "../shared/c-family-reachability.js";
 import { cppGrpcService } from "../shared/grpc-stubs.js";
 import { isObjcHeader } from "../shared/objc-header.js";
@@ -39,4 +40,7 @@ export const cppMeta: LanguagePluginMeta = {
   grpcServiceOf: cppGrpcService,
   // `class Paddock { class Iterator … }` is `Paddock::Iterator` (see classes.ts).
   nestedTypePaths: true,
+  // The parse states each call's argument count and kinds (`CallInfo.argCount`/`argKinds`); the linker chooses among
+  // same-named definitions by them. No tree-sitter reading, so no call node types.
+  calls: { callNodeTypes: new Set<string>(), overloadTypeKey: cppOverloadTypeKey, conversionRanks: true, explicitSpecializations: true },
 };

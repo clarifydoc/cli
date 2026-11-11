@@ -5,7 +5,7 @@
  */
 
 import type { CallInfo } from "../../../types/analysis.js";
-import { callRecorder } from "./regex-base.js";
+import { callRecorder, type CallArguments } from "./regex-base.js";
 
 /** One step of a callee expression, left to right. */
 export type CalleeSegment =
@@ -31,6 +31,8 @@ export interface PatternCallName {
   boundLocally?: true;
   /** The name is handed on, not called here (`CallInfo.passed`): Qt's `&ClubWindow::saveClub` slot argument. */
   passed?: "argument";
+  /** The arguments the call passes, as the parse reads them; calls of one name differing in them are separate rows. */
+  args?: CallArguments;
 }
 
 /**
@@ -142,7 +144,7 @@ export function recordPatternCalls(
         ...(c.receiverCut ? { receiverCut: true } : {}),
       }
       : undefined;
-    add(c.name, c.leafName, c.line, c.column, receiver);
+    add(c.name, c.leafName, c.line, c.column, c.args ? { ...receiver, args: c.args } : receiver);
   }
   // A name handed on is a reference of its own; a name the function also calls is a call already.
   const invoked = new Set(calls.map((c) => c.name));

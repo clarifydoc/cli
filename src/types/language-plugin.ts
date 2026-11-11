@@ -1109,6 +1109,18 @@ export interface CallExtractionHooks {
    */
   overloadTypeKey?(type: string): string;
   /**
+   * The language ranks the conversions an argument may take to a parameter (C++): an exact match beats a promotion
+   * (`char` → `int`, `int` → `long`, `float` → `double`), which beats a conversion (`int` → `double`). Without it
+   * every widening is as good as another and a call two overloads accept stays a tie.
+   */
+  conversionRanks?: boolean;
+  /**
+   * A call states the template arguments of its callee (`CallInfo.templateArgs`) and a definition the ones it
+   * specializes (`FunctionInfo.specializedOn`): the linker chooses the specialization they name, the keys compared
+   * through `overloadTypeKey`.
+   */
+  explicitSpecializations?: boolean;
+  /**
    * The language has no overloading — a second definition of a name is an
    * overload signature, a typing stub or a conditional redefinition, not a
    * body to choose (TypeScript, Python, PHP): calls are not split by their
@@ -1899,6 +1911,8 @@ export interface ParsedFunctionSpan {
   isExported?: boolean;
   /** A constructor, where its name does not say so (`FunctionInfo.isConstructor`). */
   isConstructor?: true;
+  /** The template arguments of an explicit specialization (`FunctionInfo.specializedOn`). */
+  specializedOn?: string[];
   calls: CallInfo[];
 }
 

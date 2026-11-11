@@ -19,6 +19,19 @@ const WIDENS_TO: Readonly<Record<string, readonly string[]>> = {
   boolean: [],
 };
 
+/**
+ * The widenings that are promotions where a language ranks them above conversions (C++: `char`/`short`/`bool` to `int`,
+ * `int` to `long`, `float` to `double`); every other entry of `WIDENS_TO` is then a conversion (`int` to `double`).
+ */
+const PROMOTES_TO: Readonly<Record<string, readonly string[]>> = {
+  byte: ["int"],
+  short: ["int"],
+  char: ["int"],
+  boolean: ["int"],
+  int: ["long"],
+  float: ["double"],
+};
+
 /** A key no class can stand for: a primitive or the string type. */
 function isValueKey(key: string): boolean {
   return key in WIDENS_TO || key === "string";
@@ -40,9 +53,19 @@ export interface TypeHierarchy {
 /**
  * How well one argument fits one parameter: 3 exact, 2 assignable (widening,
  * a subtype, a lambda of the right shape), 1 unknown (either side unknown, or
- * the parameter is the top type), 0 impossible.
+ * the parameter is the top type), 0 impossible. With `ranked` (the language ranks conversions: C++), the scale is one
+ * wider — 4 exact, 3 assignable or a promotion, 2 a conversion between primitives (`int` to `double`), 1 unknown.
  */
-export function argFit(arg: string, param: string | null, types: TypeHierarchy): number {
+export function argFit(arg: string, param: string | null, types: TypeHierarchy, ranked = false): number {
+  const fit = plainFit(arg, param, types);
+  if (!ranked) return fit;
+  if (fit === 3) return 4;
+  if (fit !== 2) return fit;
+  // A value kind assignable to another value kind: a promotion, else a conversion.
+  return isValueKey(arg) && isValueKey(param!) && !PROMOTES_TO[arg]?.includes(param!) ? 2 : 3;
+}
+
+function plainFit(arg: string, param: string | null, types: TypeHierarchy): number {
   if (!param || param === "?" || arg === "?" || arg.startsWith("@")) return 1;
   const pLambda = lambdaShape(param);
   const aLambda = lambdaShape(arg);
@@ -81,7 +104,7 @@ export interface OverloadParams {
  * which accept the call's arity), or -1 when the kinds cannot tell: every
  * argument unknown, no overload possible, or a tie at the top.
  */
-export function bestOverload(argKinds: readonly string[], candidates: readonly OverloadParams[], types: TypeHierarchy): number {
+export function bestOverload(argKinds: readonly string[], candidates: readonly OverloadParams[], types: TypeHierarchy, ranked = false): number {
   if (!argKinds.some((k) => k !== "?" && !k.startsWith("@"))) return -1;
   let best = -1;
   let bestScore = -1;
@@ -90,7 +113,7 @@ export function bestOverload(argKinds: readonly string[], candidates: readonly O
     let score = 0;
     for (let a = 0; a < argKinds.length; a++) {
       // Arguments past a variadic parameter's position are not compared.
-      const fit = o.variadic && a >= o.types.length - 1 ? 1 : argFit(argKinds[a]!, o.types[a] ?? null, types);
+      const fit = o.variadic && a >= o.types.length - 1 ? 1 : argFit(argKinds[a]!, o.types[a] ?? null, types, ranked);
       if (fit === 0) return;
       score += fit;
     }
