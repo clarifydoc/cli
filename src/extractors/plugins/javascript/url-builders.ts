@@ -30,6 +30,7 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // value resolver (one copy instead of the three that used to exist).
 import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { buildWrapperIndex } from "../../../core/wrapper-index.js";
 
 interface UrlBuilder {
   /** Every distinct template the helper may return, primary first. */
@@ -205,12 +206,30 @@ function buildFileIndex(analyses: FileAnalysis[]): Map<string, Map<string, UrlBu
 
 function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
   const index = new Map<string, UrlBuilder | null>();
+  const blankMembers = new Set<string>();
+  const statedByMember = new Set<string>();
   for (const a of analyses) {
     if (a.language !== "typescript" && a.language !== "javascript") continue;
+    const members = new Set(a.classes.flatMap((c) => c.methods));
     const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods)];
     for (const fn of fns) {
       const templates = templatesOf(fn);
-      if (templates.length === 0 || fn.name.includes(".")) continue;
+      if (fn.name.includes(".")) continue;
+      // A member of a class is judged with every same-named member: one that states no URL
+      // makes `receiver.name(…)` unknown rather than the namesake that does.
+      const isMember = members.has(fn);
+      if (templates.length === 0) {
+        // Only against a templated member: a free function of the same name is another lookup (the caller's file / import).
+        if (isMember) {
+          blankMembers.add(fn.name);
+          if (statedByMember.has(fn.name)) index.set(fn.name, null);
+        }
+        continue;
+      }
+      if (isMember) {
+        statedByMember.add(fn.name);
+        if (blankMembers.has(fn.name)) index.set(fn.name, null);
+      }
       const existing = index.get(fn.name);
       if (existing === undefined) {
         index.set(fn.name, { templates, params: fn.params });
@@ -566,13 +585,8 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
   keepHelperBases(lookup, analyses);
   lookup.byFile = buildFileIndex(analyses);
   if (ctx) {
-    const filesByPath = new Map(analyses.map((a) => [a.filePath, a]));
-    lookup.imported = (file, name) => {
-      const target = ctx.importIndex.localFor(file, name);
-      if (!target || !filesByPath.has(target)) return null;
-      const imp = filesByPath.get(file)?.imports?.find((i) => i.aliases?.[name] !== undefined && (ctx.importIndex.fileForSource?.(file, i.source) ?? target) === target);
-      return { file: target, exported: imp?.aliases?.[name] ?? name };
-    };
+    const wrappers = buildWrapperIndex(analyses, ctx.importIndex);
+    lookup.imported = (file, name) => wrappers.importedFrom(file, name);
     lookup.method = methodResolver(ctx);
     lookup.field = fieldResolver(ctx);
     lookup.descriptor = descriptorResolver(analyses, ctx, lookup);

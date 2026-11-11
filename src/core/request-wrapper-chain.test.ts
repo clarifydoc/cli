@@ -4,7 +4,9 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
-import type { ProjectAnalysis } from "../types/analysis.js";
+import type { DataSourceInfo, FileAnalysis, FunctionInfo, ProjectAnalysis } from "../types/analysis.js";
+import type { ImportIndex } from "../types/project.js";
+import { expandRequestFactories } from "./api-targets.js";
 
 /**
  * Classic page scripts calling helpers another script defines, a wrapper of a
@@ -148,5 +150,32 @@ describe("wrapper lookups follow the import, not the bare name", () => {
 
   it("does not read a local bound to some other object's fetch member as the request function", () => {
     expect(rowsOf("src/cache.ts")).toEqual([]);
+  });
+});
+
+describe("a member wrapper counts only when every same-named member forwards the URL", () => {
+  const fn = (name: string, line: number, endLine: number): FunctionInfo =>
+    ({ name, line, endLine, params: [{ name: "path", type: null, defaultValue: null }], calls: [] }) as unknown as FunctionInfo;
+  const file = (filePath: string, functions: FunctionInfo[], extra: Partial<FileAnalysis> = {}): FileAnalysis =>
+    ({ filePath, projectId: "p", language: "typescript", functions, exports: [], classes: [], imports: [], ...extra }) as unknown as FileAnalysis;
+  const index: ImportIndex = { localFor: (f, n) => (n === "garageService" || n === "lotService" ? (f === "src/use.ts" ? `src/${n === "garageService" ? "garage" : "lot"}.ts` : null) : null), sourceFor: () => null, namespacesFor: () => [] };
+  const row = (filePath: string, line: number): DataSourceInfo & { filePath: string } => ({ kind: "api-call", name: "fetch", target: "${path}", line, calls: [], filePath });
+  const use = (receiver: string) =>
+    file("src/use.ts", [], { pathArgCalls: [{ callee: "fetch", args: ["/api/clubs"], line: 3, receiver }] });
+
+  it("joins the one member that forwards it", () => {
+    const garage = file("src/garage.ts", [fn("garageService.fetch", 2, 2)]);
+    const calls = [row("src/garage.ts", 2)];
+    expect(expandRequestFactories(calls, [garage, use("garageService")], index)).toBe(1);
+    expect(calls[1]).toMatchObject({ filePath: "src/use.ts", target: "/api/clubs" });
+  });
+
+  it("refuses it when a same-named member of the receiver forwards nothing (decoy)", () => {
+    const lot = file("src/lot.ts", [fn("lotService.fetch", 2, 2)], {
+      classes: [{ name: "lotService", line: 4, endLine: 6, methods: [fn("fetch", 5, 5)] }] as never,
+    });
+    const calls = [row("src/lot.ts", 2)];
+    expect(expandRequestFactories(calls, [lot, use("lotService")], index)).toBe(0);
+    expect(calls).toHaveLength(1);
   });
 });

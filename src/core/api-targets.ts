@@ -4,6 +4,7 @@ import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types
 import { buildModuleValueLookup } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { importsNameDirectories, pluginFor } from "../extractors/registry.js";
+import { buildWrapperIndex } from "./wrapper-index.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -204,6 +205,7 @@ export function expandRequestFactories(
 ): number {
   const byFile = new Map<string, FileAnalysis>(analyses.map((a) => [a.filePath, a]));
   if (!analyses.some((a) => a.pathArgCalls?.length)) return 0;
+  const wrappers = buildWrapperIndex(analyses, importIndex);
 
   const fnsOf = new Map<string, FunctionInfo[]>();
   const functionsIn = (file: string): FunctionInfo[] => {
@@ -327,9 +329,15 @@ export function expandRequestFactories(
         continue;
       }
       // `signedUrlService.fetch(url)`: the method of that object, in its own module or the one it is imported from.
-      let objectRows = site.receiver
-        ? factories.get(`${importIndex.localFor(a.filePath, site.receiver) ?? a.filePath}::${site.receiver}.${site.callee}`)
-        : undefined;
+      let objectRows: FactoryRow[] | undefined;
+      if (site.receiver) {
+        const home = importIndex.localFor(a.filePath, site.receiver) ?? a.filePath;
+        const found = factories.get(`${home}::${site.receiver}.${site.callee}`);
+        // Every same-named member the receiver can be must forward the URL: a namesake that does not refuses it.
+        const defs = wrappers.memberDefinitions(home, site.receiver, site.callee);
+        const forwarding = found ? new Set(found.map((f) => f.ownerLine)) : undefined;
+        if (found && defs.every((d) => forwarding!.has(d.line))) objectRows = found;
+      }
       // `httplib.NewClientRequest(method, url)`: a function of the package directory the import names.
       if (!objectRows && site.receiver && importsNameDirectories(a.language)) {
         const imp = (a.imports ?? []).find((i) => i.specifiers.includes(site.receiver!));
@@ -342,9 +350,10 @@ export function expandRequestFactories(
         if (objectRows) expandSite(produced, a.filePath, site, objectRows, known);
         continue;
       }
+      const bound = wrappers.importedFrom(a.filePath, site.callee);
       const source = importIndex.localFor(a.filePath, site.callee);
       // `import { request as send } from './http'`: the file declares the exported name, not the local one.
-      const exported = (a.imports ?? []).find((i) => i.aliases?.[site.callee] !== undefined && (!source || (importIndex.fileForSource?.(a.filePath, i.source) ?? source) === source))?.aliases?.[site.callee] ?? site.callee;
+      const exported = bound?.exported ?? (a.imports ?? []).find((i) => i.aliases?.[site.callee] !== undefined && (!source || (importIndex.fileForSource?.(a.filePath, i.source) ?? source) === source))?.aliases?.[site.callee] ?? site.callee;
       let rows = factories.get(ownKey) ?? (source ? factories.get(`${source}::${exported}`) : undefined);
       // A bare call from inside a class, of a name no import brings in, is a
       // method of that class's own chain — never another class's helper.
@@ -367,7 +376,9 @@ export function expandRequestFactories(
         // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
         // the caller's sub-project with that name, or nothing.
         const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`) && byFile.get(k.slice(0, k.indexOf("::")))?.projectId === a.projectId);
-        if (named.length === 1) rows = factories.get(named[0]!);
+        // The one top-level declaration of the name in the sub-project, and it is the factory — never a method of some class.
+        const declared = wrappers.declarationsInProject(a.filePath, site.callee);
+        if (named.length === 1 && declared.length === 1 && named[0] === `${declared[0]}::${site.callee}`) rows = factories.get(named[0]!);
       }
       if (!rows && source) {
         // A default export bound under another name (`import fetchIt from './createFetchHandler'`):
