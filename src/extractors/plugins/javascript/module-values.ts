@@ -96,9 +96,16 @@ export function extractModuleValues(tree: Tree, sourceText: string): Record<stri
   const out: Record<string, string> = {};
   let kept = 0;
   // A string enum's members are values too, a controller prefix among them (`@Controller(RouteKey.Club)`):
-  // kept whatever they look like, so core can fill a reference whose import it cannot follow.
-  let members = 0;
-  for (const [key, value] of enumValues) if (members++ < 100) out[key] = value;
+  // kept whatever they look like, so core can fill a reference whose import it cannot follow. A project's one
+  // `enum.ts` often holds every enum it has (hundreds of members), so the bound is per enum, not per file.
+  const perEnum = new Map<string, number>();
+  for (const [key, value] of enumValues) {
+    const name = key.slice(0, key.indexOf("."));
+    const n = perEnum.get(name) ?? 0;
+    if (n >= 200 || perEnum.size > 300) continue;
+    perEnum.set(name, n + 1);
+    out[key] = value;
+  }
   for (const [key, value] of raw) {
     if (key in out) continue;
     const resolved = resolve(value, 0);

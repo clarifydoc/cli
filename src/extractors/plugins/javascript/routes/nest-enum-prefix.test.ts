@@ -111,6 +111,11 @@ describe("an enum reference behind an import the resolver cannot follow", () => 
     expect(await paths({ "package.json": NEST_PKG("league"), "src/a/enum.ts": ENUM, "src/club.controller.ts": CONTROLLER })).toEqual(["/clubs/statistics"]);
   }, 180_000);
 
+  it("is filled from a project's one enum file however many members its other enums have (real-repo FP)", async () => {
+    const kits = `export enum KitColour {\n${Array.from({ length: 150 }, (_, i) => `  Shade${i} = 'shade-${i}',`).join("\n")}\n}\n`;
+    expect(await paths({ "package.json": NEST_PKG("league"), "src/enum.ts": kits + ENUM, "src/club.controller.ts": CONTROLLER.replace("@league/shared/enum", "src/enum.js") })).toEqual(["/clubs/statistics"]);
+  }, 180_000);
+
   it("is left alone when two modules declare that enum name", async () => {
     const got = await paths({ "package.json": NEST_PKG("league"), "src/a/enum.ts": ENUM, "src/b/enum.ts": ENUM.replace("clubs", "teams"), "src/club.controller.ts": CONTROLLER });
     expect(got).not.toContain("/clubs/statistics");
