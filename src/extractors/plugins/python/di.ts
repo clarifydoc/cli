@@ -1466,7 +1466,8 @@ const mentionsIsinstance = new WeakMap<object, boolean>();
 function narrowedType(call: Node, name: string): { type: string } | null {
   let seen = mentionsIsinstance.get(call.tree);
   if (seen === undefined) {
-    seen = call.tree.rootNode.text.includes("isinstance");
+    const text = call.tree.rootNode.text;
+    seen = text.includes("isinstance") || text.includes("match ");
     mentionsIsinstance.set(call.tree, seen);
   }
   if (!seen) return null;
@@ -1474,12 +1475,38 @@ function narrowedType(call: Node, name: string): { type: string } | null {
   for (let cur = call.parent; cur; child = cur, cur = cur.parent) {
     const t = cur.type;
     if (t === "function_definition" || t === "lambda" || t === "class_definition" || t === "module") return null;
+    // `match x: case Club(): x.rank()` — the arm's body sees `x` as the class the pattern names.
+    if (t === "case_clause" && cur.childForFieldName("consequence")?.id === child.id) {
+      const subject = cur.parent?.parent;
+      if (subject?.type === "match_statement" && subject.childForFieldName("subject")?.text === name) {
+        const found = classPatternType(cur.namedChildren.find((c) => c.type === "case_pattern"));
+        if (found) return { type: found };
+      }
+    }
     if ((t === "if_statement" || t === "elif_clause") && cur.childForFieldName("consequence")?.id === child.id) {
       const found = isinstanceOf(cur.childForFieldName("condition"), name);
       if (found) return { type: found };
     }
   }
   return null;
+}
+
+/** The class a `case` pattern names — `Club()`, `Club(name=x)`, `Club() as c`, `Club() | Car()` (alternatives) — else null. */
+function classPatternType(pattern: Node | null | undefined): string | null {
+  if (!pattern) return null;
+  const inner = pattern.namedChildren.find((c) => c.type !== "comment");
+  if (!inner) return null;
+  if (inner.type === "as_pattern") return classPatternType(inner.namedChildren.find((c) => c.type === "case_pattern"));
+  if (inner.type === "union_pattern") {
+    const names = inner.namedChildren.map((c) => (c.type === "class_pattern" ? classNameOf(c) : null));
+    return names.length >= 2 && names.every((n): n is string => !!n) ? names.join("|") : null;
+  }
+  return inner.type === "class_pattern" ? classNameOf(inner) : null;
+}
+
+function classNameOf(pattern: Node): string | null {
+  const name = pattern.namedChildren.find((c) => c.type === "dotted_name")?.text;
+  return name && isClassName(name) ? name : null;
 }
 
 /** The class `isinstance(name, Class)` narrows `name` to, through `and`; null otherwise. */

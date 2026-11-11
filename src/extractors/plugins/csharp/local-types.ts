@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FunctionInfo } from "../../../types/analysis.js";
 import { CSHARP_BUILTINS } from "./builtins.js";
+import { typeTestNarrowedType } from "./type-tests.js";
 import { callChainText } from "../../shared/call-graph.js";
 
 /**
@@ -219,6 +220,10 @@ export function csharpReceiverTypeOf(node: Node): StaticType | null {
   else return null;
   if (!receiver) return null;
   const t = receiver.type;
+  if (t === "identifier") {
+    const narrowed = typeTestNarrowedType(node, receiver.text);
+    return narrowed && isProjectTypeCandidate(narrowed.type) ? narrowed : null;
+  }
   if (
     t !== "invocation_expression" && t !== "parenthesized_expression" && t !== "postfix_unary_expression" &&
     t !== "object_creation_expression"

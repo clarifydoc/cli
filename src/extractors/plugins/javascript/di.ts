@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { isBuiltinType } from "../../shared/builtin-types.js";
+import { instanceofNarrowedType } from "./narrowing.js";
 
 /**
  * Dependency-injection facts for TS/JS — the shared vocabulary of the
@@ -321,7 +322,7 @@ export function receiverTypeOfCall(node: Node): InjectedType | null {
   const fn = node.childForFieldName("function");
   if (fn?.type !== "member_expression") return null;
   const obj = fn.childForFieldName("object");
-  if (obj?.type === "identifier") return blockLocalType(node, obj.text);
+  if (obj?.type === "identifier") return blockLocalType(node, obj.text) ?? instanceofNarrowedType(node, obj.text);
   if (!obj || !TYPED_RECEIVER_NODES.has(obj.type)) return null;
   return expressionType(obj);
 }

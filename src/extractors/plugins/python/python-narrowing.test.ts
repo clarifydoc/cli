@@ -91,6 +91,19 @@ def narrow_tuple(x):
         x.save()
 
 
+def narrow_match(x):
+    match x:
+        case Club():
+            x.rank()
+        case Car(name="v8") as c:
+            x.save()
+        case Garage() | Car():
+            x.name()
+        case _:
+            x.rank()
+    x.rank()
+
+
 def ctx():
     with Club() as c:
         c.save()
@@ -136,6 +149,11 @@ def dyn2():
   it("narrows on isinstance inside the branch", () => {
     expect(target("narrow", "x.rank")).toEqual(["Club.rank:injection"]);
     expect(target("narrow_tuple", "x.save")).toEqual([]);
+  });
+  it("narrows on a match case's class pattern, in that arm only", () => {
+    // Club arm first, the wildcard arm and the call after the match last: the two `rank` calls with no pattern stay unlinked.
+    expect(target("narrow_match", "x.rank")).toEqual(["Club.rank:injection"]);
+    expect(target("narrow_match", "x.save")).toEqual(["Car.save:injection"]);
   });
   it("types a with-as target by what the manager's __enter__ returns", () => {
     expect(target("ctx", "c.save")).toEqual(["Club.save:injection"]);

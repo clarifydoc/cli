@@ -272,7 +272,7 @@ export function jvmElementFacts(
 
   // Kotlin `is` narrowing: the name keeps its declared type outside the regions that test it, so it is typed only
   // when every receiver use of it sits inside such regions, all of one type.
-  const narrowed = new Map<string, Array<{ type: string; region: { startIndex: number; endIndex: number } }>>();
+  const narrowed = new Map<string, Array<{ type: string; region: { startIndex: number; endIndex: number }; from: [number, number]; to: [number, number] }>>();
 
   const lambdaNames = (lambda: Node): Array<{ name: string; type: string | null }> => {
     const out: Array<{ name: string; type: string | null }> = [];
@@ -469,7 +469,7 @@ export function jvmElementFacts(
         const region = regionOf(n);
         if (subject?.type === "simple_identifier" && cls && region) {
           const list = narrowed.get(subject.text) ?? [];
-          list.push({ type: cls, region });
+          list.push({ type: cls, region, from: [region.startPosition.row, region.startPosition.column], to: [region.endPosition.row, region.endPosition.column] });
           narrowed.set(subject.text, list);
         }
         break;
@@ -494,7 +494,12 @@ export function jvmElementFacts(
           const cls = type ? classOf(type) : null;
           if (subject?.type !== "simple_identifier" || !cls) continue;
           const list = narrowed.get(subject.text) ?? [];
-          list.push({ type: cls, region: { startIndex: n.endIndex, endIndex: parent.endIndex } });
+          list.push({
+            type: cls,
+            region: { startIndex: n.endIndex, endIndex: parent.endIndex },
+            from: [n.endPosition.row, n.endPosition.column],
+            to: [parent.endPosition.row, parent.endPosition.column],
+          });
           narrowed.set(subject.text, list);
         }
         break;
@@ -508,7 +513,7 @@ export function jvmElementFacts(
         const region = n.namedChildren.find((c) => c.type === "control_structure_body");
         if (test && !test.children.some((c) => c.type === "!is") && subject?.type === "simple_identifier" && cls && region) {
           const list = narrowed.get(subject.text) ?? [];
-          list.push({ type: cls, region });
+          list.push({ type: cls, region, from: [region.startPosition.row, region.startPosition.column], to: [region.endPosition.row, region.endPosition.column] });
           narrowed.set(subject.text, list);
         }
         break;
@@ -547,11 +552,24 @@ export function jvmElementFacts(
     }
   }
   locals.push(...fromOnly);
+  /** The type of the innermost `is` region around the call that narrows `name`, when several arms or a use outside keep no method-wide type. */
+  const narrowedAt = (name: string, call: CallInfo): string | null => {
+    const regions = narrowed.get(name);
+    if (!regions || binders.has(name) || call.column === undefined) return null;
+    const at: [number, number] = [call.line - 1, call.column];
+    const before = (a: [number, number], b: [number, number]) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+    let best: (typeof regions)[number] | undefined;
+    for (const r of regions) {
+      if (!before(r.from, at) || !before(at, r.to)) continue;
+      if (!best || (before(best.from, r.from) && before(r.to, best.to))) best = r;
+    }
+    return best?.type ?? null;
+  };
   const receiverOf = (call: CallInfo): string | null => {
     if (call.receiverType) return null;
     const split = splitCallName(call.name);
     if (!split) return null;
-    if (/^[A-Za-z_$][\w$]*$/.test(split.receiver)) return scopedType(split.receiver, call) ?? null;
+    if (/^[A-Za-z_$][\w$]*$/.test(split.receiver)) return scopedType(split.receiver, call) ?? narrowedAt(split.receiver, call);
     if (!/[([]/.test(split.receiver)) return null;
     return valueOfChain(split.receiver, rootState, rules);
   };

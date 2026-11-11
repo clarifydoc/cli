@@ -95,6 +95,7 @@ class Board(private val fleet: List<Club>) {
   fun chain(clubs: List<Club>) { clubs.filter { it.rich() }.forEach { x -> x.sign() } }
   fun whenIs(o: Any) { when (o) { is Club -> o.sign(); else -> {} } }
   fun smart(o: Any) { if (o is Club) { o.scout() } }
+  fun arms(o: Any) { when (o) { is Club -> o.scout(); is Decoy -> o.code(); else -> o.rich() }; o.sign() }
   fun leaky(o: Any) { if (o is Club) { o.scout() } else { o.sign() } }
   fun index(clubs: List<Club>) { clubs[0].sign() }
   fun first(clubs: List<Club>) { clubs.firstOrNull()?.scout() }
@@ -122,8 +123,13 @@ class Board(private val fleet: List<Club>) {
     expect(targets(summary, "Board.whenIs", "o.sign")).toEqual(["Club.sign:injection"]);
     expect(targets(summary, "Board.smart", "o.scout")).toEqual(["Club.scout:injection"]);
   });
-  it("leaves a name typed only inside the narrowing, never where it is used outside it", () => {
-    expect(targets(summary, "Board.leaky", "o.scout")).toEqual([]);
+  it("types each call by the region that narrows its receiver, and none outside one", () => {
+    expect(targets(summary, "Board.leaky", "o.scout")).toEqual(["Club.scout:injection"]);
+    expect(targets(summary, "Board.leaky", "o.sign")).toEqual([]);
+    expect(targets(summary, "Board.arms", "o.scout")).toEqual(["Club.scout:injection"]);
+    expect(targets(summary, "Board.arms", "o.code")).toEqual(["Decoy.code:injection"]);
+    expect(targets(summary, "Board.arms", "o.rich")).toEqual([]);
+    expect(targets(summary, "Board.arms", "o.sign")).toEqual([]);
   });
   it("types an index and a first() receiver, and a caught exception", () => {
     expect(targets(summary, "Board.index", "clubs[0].sign")).toEqual(["Club.sign:injection"]);
