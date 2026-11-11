@@ -14,6 +14,7 @@ import { contextValues } from "./provide-inject.js";
 import { busEvents, JsEventBusResolver } from "./bus-events.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
+import { nextMiddlewareGuards } from "./routes/next-middleware.js";
 import { nestInheritedGuards } from "./routes/nestjs.js";
 import { pathHelperResolver } from "./routes/path-helpers.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
@@ -296,7 +297,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestInheritedGuards, screenTableResolver, pathHelperResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

@@ -105,7 +105,7 @@ const FRAMEWORK_ENTRIES: Readonly<Record<string, readonly Rule[]>> = {
   nextjs: [
     [/^(?:src\/)?pages\//, "Next.js page"],
     [/^(?:src\/)?app\/(?:.*\/)?(?:page|layout|template|loading|error|global-error|not-found|default|route|opengraph-image|twitter-image|icon|apple-icon|sitemap|robots|manifest)\.[jt]sx?$/, "Next.js app-router file"],
-    [/^(?:src\/)?(?:middleware|instrumentation(?:-client)?)\.[jt]s$/, "Next.js middleware"],
+    [/^(?:src\/)?(?:middleware|proxy|instrumentation(?:-client)?)\.[jt]s$/, "Next.js middleware"],
   ],
   nuxt: [
     [/^(?:app\/|src\/)?(?:pages|layouts|middleware|plugins|components|composables|utils|stores|modules|server)\//, "Nuxt auto-registered directory"],
