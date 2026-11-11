@@ -81,14 +81,14 @@ describe("top-level script code types its own locals", () => {
     expect(memberCalls(analyses, "league/report.py", "<setup>")).toEqual(["repo.all -> league/repo.py::ClubRepo.all [injection/INFERRED]"]);
   });
 
-  it("Ruby: a script's and a seed file's statements are their `<setup>`; a library file's are not", async () => {
+  it("Ruby: a script's and a seed file's statements are their `<setup>`; a file that defines a class keeps none", async () => {
     const script = 'require_relative "../lib/club_repo"\nrepo = ClubRepo.new\nrepo.all\n';
     const analyses = await analyzeAll({
       "lib/club_repo.rb": "class ClubRepo\n  def all\n    []\n  end\nend\n",
       "lib/garage.rb": "class Garage\n  def all\n    []\n  end\nend\n",
       "script/report.rb": script,
       "db/seeds.rb": script,
-      "lib/boot.rb": script,
+      "lib/boot.rb": script + "class Boot\nend\n",
     }, "ruby");
     expect(memberCalls(analyses, "script/report.rb", "<setup>")).toEqual([
       "ClubRepo.new -> lib/club_repo.rb::ClubRepo [constructor/INFERRED]",
