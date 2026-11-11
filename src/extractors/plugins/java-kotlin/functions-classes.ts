@@ -194,6 +194,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   /** The methods the bodies of an enum's constants declare, for those names the enum has no method of. */
   private collectConstantBodies(enumBody: Node, lang: JkLang, methods: FunctionInfo[]): void {
     const have = new Set(methods.map((m) => m.name));
+    const introduced = new Set<FunctionInfo>();
     for (const constant of enumBody.children) {
       if (constant.type !== "enum_constant" && constant.type !== "enum_entry") continue;
       const bodyNode = this.findChildByType(constant, "class_body");
@@ -201,8 +202,20 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       const found: FunctionInfo[] = [];
       this.collectMembers(bodyNode, lang, found, [], null);
       for (const m of found) {
-        if (have.has(m.name)) continue;
+        if (have.has(m.name)) {
+          // The constant's override of a method the enum declares: its calls run as that method's, so the enum's
+          // method owns them too (a body-less abstract declaration is the common case). Only for a method of the
+          // enum's own, never one another constant introduced.
+          const own = methods.find((x) => x.name === m.name && x.params?.length === m.params?.length && !introduced.has(x));
+          if (own && m.calls?.length && own.params?.length === m.params?.length) {
+            const seen = new Set((own.calls ?? []).map((c) => `${c.name}@${c.line}`));
+            const extra = m.calls.filter((c) => !seen.has(`${c.name}@${c.line}`));
+            if (extra.length) own.calls = [...(own.calls ?? []), ...extra];
+          }
+          continue;
+        }
         have.add(m.name);
+        introduced.add(m);
         methods.push(m);
       }
     }

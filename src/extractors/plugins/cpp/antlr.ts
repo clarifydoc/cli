@@ -2,6 +2,8 @@ import { Token, TerminalNode, type ParserRuleContext, type ParseTree } from "ant
 import type { BuildMacros, ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { CPP14Lexer } from "../../../parsers/antlr/cpp/CPP14Lexer.js";
 import {
+  BinaryExpressionContext,
+  ClassSpecifierContext,
   CompoundStatementContext,
   ConditionContext,
   CPP14Parser,
@@ -122,6 +124,9 @@ function blankRawStrings(text: string): string {
   return out + text.slice(at);
 }
 
+/** An operator expression read as a call on its left operand, whose class may have no such member. */
+interface OperatorSite { calls: PatternCallName[]; type: string; name: string; line: number; column: number }
+
 /** A function the walk found: its span and, as a call owner, the calls it makes and the lines it covers. */
 interface Found extends CallOwner {
   span: Omit<ParsedFunctionSpan, "calls">;
@@ -156,6 +161,10 @@ function read(text: string, also?: string): ParsedStructure {
 }
 
 function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean, bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
+  // Per function: the parameters and locals declared as a class-typed value (not a pointer, an array or a primitive).
+  const objects = new Map<PatternCallName[], Map<string, string>>();
+  const operatorSites: OperatorSite[] = [];
+  const freeOperators = new Set<string>();
   const stack: Array<{ node: ParseTree; owner: PatternCallName[] | null }> = [{ node: root, owner: null }];
   const found: Found[] = [];
   const own = (name: { text: string; line: number; specializedOn?: string[] }, ctx: ParserRuleContext, from: number): PatternCallName[] => {
@@ -175,6 +184,8 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       const name = declaredName(ctx.declarator(), text);
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
+      const free = name?.text.startsWith("operator") ? freeOperatorOf(ctx, name.text) : null;
+      if (free) freeOperators.add(free);
     } else if (ctx instanceof MacroFunctionDefinitionContext) {
       const head = (ctx.children[0] as TerminalNode).symbol;
       into = own({ text: head.text ?? "", line: head.line }, ctx, head.line);
@@ -184,9 +195,11 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       // A chain is one nested context per step: read it once, from its outermost.
       if (!(ctx.parent instanceof PostfixExpressionContext && ctx.parent.children[0] === ctx)) {
-        postfixCalls(ctx, calls, text, stream);
+        postfixCalls(ctx, calls, text, stream, objects.get(calls));
         connectReferences(ctx, calls);
       }
+    } else if (calls && ctx instanceof BinaryExpressionContext) {
+      operatorCall(ctx, calls, objects.get(calls), operatorSites);
     } else if (calls && ctx instanceof PrimaryExpressionContext && ctx.MacroName()) {
       // `SIGNAL(moved(Club *))`: the macro is called, its arguments read off the tokens.
       const head = ctx.MacroName()!.symbol;
@@ -207,6 +220,11 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       // A parameter or a local the body may call (`auto kick = [](int x) { … };`, `std::function<int(int)> kick`).
       const bound = localBinding(ctx);
       if (bound) (bindings.get(calls) ?? bindings.set(calls, []).get(calls)!).push(bound);
+      for (const [name, isObject] of declaredValues(ctx)) {
+        const map = objects.get(calls) ?? objects.set(calls, new Map()).get(calls)!;
+        if (isObject) map.set(name, isObject);
+        else map.delete(name);
+      }
     } else if (calls && ctx instanceof NewExpression_Context) {
       newCall(ctx, calls, text, stream);
     } else if (calls && ctx instanceof MemInitializerContext) {
@@ -240,7 +258,110 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     }
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push({ node: ctx.children[i]!, owner: into });
   }
+  // A free `operator+(const Club&, …)` the file defines is what `a + b` calls on a `Club a` that declares none.
+  for (const site of operatorSites) {
+    if (freeOperators.has(`${site.type}|${site.name}`)) site.calls.push({ name: site.name, leafName: site.name, line: site.line, column: site.column });
+  }
   return found;
+}
+
+/** The operators a class declares that a call reads: `a + b` calls `a`'s `operator+`. Never `=`, `&&`, `||`, `&`, `|`. */
+const OPERATOR_SPELLING = new Map<number, string>([
+  [CPP14Lexer.Plus, "+"], [CPP14Lexer.Minus, "-"], [CPP14Lexer.Star, "*"], [CPP14Lexer.Div, "/"],
+  [CPP14Lexer.Equal, "=="], [CPP14Lexer.Less, "<"],
+]);
+
+/**
+ * `a + b` where `a` is a parameter or local declared as a class-typed value in the function (`Club a`, `const Club& a`;
+ * never a pointer, an array, a primitive or `auto`, nor a field the walk cannot type): a call of `a.operator+`, which
+ * the linker types through `a`'s declaration like any receiver. Only the first operator of a flat
+ * chain, whose left operand is the chain's first one whatever the precedence; `a << b` is two `<` tokens.
+ */
+function operatorCall(ctx: BinaryExpressionContext, calls: PatternCallName[], objects?: ReadonlyMap<string, string>, sites?: OperatorSite[]): void {
+  const operands = ctx.pointerMemberExpression();
+  const ops = ctx.binaryOperator();
+  const op = ops[0];
+  if (!op || operands.length < 2 || !op.start) return;
+  const head = operands[0]!.getText();
+  if (!objects?.has(head)) return;
+  const first = op.start;
+  let spelling = OPERATOR_SPELLING.get(first.type);
+  // `a << b` is `Less Less`; `a < b` a single `Less` followed by something other than a second `<`.
+  if (first.type === CPP14Lexer.Less && op.getChildCount() === 2) spelling = "<<";
+  if (!spelling) return;
+  calls.push({ name: `${head}.operator${spelling}`, leafName: `operator${spelling}`, line: first.line, column: first.column });
+  sites?.push({ calls, type: objects.get(head)!, name: `operator${spelling}`, line: first.line, column: first.column });
+}
+
+const NOT_A_CLASS = /^(?:void|char|char8_t|char16_t|char32_t|wchar_t|bool|short|int|long|float|double|signed|unsigned|auto|decltype)$/;
+
+/**
+ * The names a parameter or local declaration declares, each with whether it is a class-typed value: a type spelled by
+ * a name (qualified, with template arguments, `const`, a reference) that is no primitive and no `auto`, declared
+ * without `*` or `[]`. `Player a;` may read as two specifiers and no declarator.
+ */
+function declaredValues(ctx: DeclaratorContext | ParameterDeclarationContext | SimpleDeclarationContext): Array<[string, string | false]> {
+  const typeOk = (seq: string): string | false => {
+    const words = valueTypeName(seq);
+    return words && !NOT_A_CLASS.test(words) ? words : false;
+  };
+  const plain = (decl: DeclaratorContext | null): boolean => !!decl && !/[*\[]/.test(decl.getText());
+  const out: Array<[string, string | false]> = [];
+  if (ctx instanceof ParameterDeclarationContext) {
+    const decl = ctx.declarator();
+    const id = decl && declaredIdentifier(decl);
+    if (id) out.push([id.text ?? "", plain(decl) && !declaresFunction(decl) && typeOk(ctx.declSpecifierSeq() ? specifierText(ctx.declSpecifierSeq()!) : "")]);
+    else {
+      const name = specifierName(ctx.declSpecifierSeq());
+      if (name && ctx.declSpecifierSeq()) out.push([name.text ?? "", typeOk(specifierText(ctx.declSpecifierSeq()!, 1))]);
+    }
+  } else if (ctx instanceof SimpleDeclarationContext) {
+    const seq = ctx.declSpecifierSeq();
+    const list = ctx.declarationTail().initDeclaratorList();
+    if (list && seq && !typedefs(ctx)) {
+      for (const init of list.initDeclarator()) {
+        const decl = init.declarator();
+        const id = decl && declaredIdentifier(decl);
+        if (id) out.push([id.text ?? "", plain(decl) && !declaresFunction(decl) && typeOk(specifierText(seq))]);
+      }
+    } else if (!list && seq && !typedefs(ctx)) {
+      const name = specifierName(seq);
+      if (name) out.push([name.text ?? "", typeOk(specifierText(seq, 1))]);
+    }
+  }
+  return out;
+}
+
+/** The class a type spelled by a name stands for, its last name (`const league::Club&` → `Club`); null when it is no plain name. */
+function valueTypeName(seq: string): string | null {
+  const words = seq.replace(/\b(?:const|volatile|static|register|mutable|constexpr)\b/g, " ").replace(/&/g, " ").replace(/<.*>/s, "").trim();
+  // A library's container or string is no project class, whatever a project class of the same last name declares.
+  if (!/^[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*$/.test(words) || /^(?:std|boost|absl)\s*::/.test(words)) return null;
+  return words.split("::").at(-1)!.trim();
+}
+
+/** The specifiers' text, the last `drop` of them left off, words kept apart. */
+function specifierText(seq: DeclSpecifierSeqContext, drop = 0): string {
+  const all = seq.declSpecifier();
+  return all.slice(0, all.length - drop).map((d) => d.getText()).join(" ");
+}
+
+/**
+ * `Club operator+(const Club& a, const Club& b) {…}` outside any class and with no `Class::` in front: the key
+ * `Club|operator+` of its first parameter's type, the left operand it is called on. Null for a member, a friend defined in
+ * its class, or a first parameter no plain name types.
+ */
+function freeOperatorOf(def: FunctionDefinitionContext, name: string): string | null {
+  for (let up: ParserRuleContext | null = def.parent; up; up = up.parent) if (up instanceof ClassSpecifierContext) return null;
+  const top = def.declarator().pointerDeclarator()?.noPointerDeclarator() ?? def.declarator().noPointerDeclarator();
+  const id = top?.noPointerDeclarator()?.declaratorId()?.idExpression();
+  if (!top || !id || id.qualifiedId()) return null;
+  const first = top.parametersAndQualifiers()?.parameterDeclarationClause()?.parameterDeclarationList()?.parameterDeclaration()[0];
+  if (!first || !first.declSpecifierSeq()) return null;
+  const decl = first.declarator();
+  if (decl && /[*\[]/.test(decl.getText())) return null;
+  const type = valueTypeName(specifierText(first.declSpecifierSeq()!));
+  return type && !NOT_A_CLASS.test(type) ? `${type}|${name}` : null;
 }
 
 /** The macro standing for `try` or `catch (…)` that opens a try block or a handler: a first token the keyword's own text is not. */
@@ -403,7 +524,7 @@ function previousName(scope: ParserRuleContext): Token | null {
 }
 
 /** The calls a postfix chain makes: each `(…)` calls what comes before it, named by the patterns first. */
-function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[], text: string, stream: readonly Token[]): void {
+function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[], text: string, stream: readonly Token[], objects?: ReadonlyMap<string, string>): void {
   const chain: PostfixExpressionContext[] = [];
   for (let link: PostfixExpressionContext | null = outer; link; ) {
     chain.push(link);
@@ -439,6 +560,10 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       if (member) steps.push(...idSteps(member as IdExpressionContext).slice(-1));
       else if (keyword) steps.push(idStep((keyword as TerminalNode).symbol));
       else steps.push({ kind: "other", bare: false });
+    } else if (type === CPP14Lexer.LeftBracket && steps.length === 1 && steps[0]!.kind === "id" && objects?.has(steps[0]!.name)) {
+      // `squad[i]` on a typed receiver calls its `operator[]`; the chain goes on as an unnamed step, so `squad[i].sign()` reads on.
+      calls.push({ name: `${steps[0]!.name}.operator[]`, leafName: "operator[]", line: op.symbol.line, column: op.symbol.column });
+      steps.push({ kind: "other", bare: false });
     } else {
       steps.push({ kind: "other", bare: false });
     }
