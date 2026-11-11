@@ -38,6 +38,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   browserNavigations: "optional",
   appMount: "optional",
   dataSources: "required",
+  busContracts: "optional",
   dataMutations: "required",
   stringConstants: "optional",
   propBindings: "optional",

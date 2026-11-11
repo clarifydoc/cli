@@ -79,7 +79,7 @@ export const openapiMeta: LanguagePluginMeta = {
           const { classes, relations, dataSources } = extractAsyncApi(splitLines(rawSource));
           analysis.classes = classes;
           if (relations.length > 0) analysis.entityRelations = relations;
-          analysis.dataSources.push(...dataSources);
+          if (dataSources.length > 0) analysis.busContracts = dataSources;
         },
       };
     }

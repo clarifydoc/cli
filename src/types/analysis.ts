@@ -401,6 +401,13 @@ export interface FileAnalysis {
     routed?: true;
   };
   dataSources: DataSourceInfo[];
+  /**
+   * Queue rows an API contract document states (an AsyncAPI channel operation, `fromContract`): what the system
+   * declares it sends or receives, not code that does. Kept apart from `dataSources` so no code reader takes the
+   * document for a publisher or consumer; the data-access graph marks the queue node each names `contract`, and
+   * `unimplemented` when no code row meets it.
+   */
+  busContracts?: DataSourceInfo[];
   dataMutations: DataMutationInfo[];
   /**
    * Named string constants defined in this file (`#define CUE_TABLE "cues"`,

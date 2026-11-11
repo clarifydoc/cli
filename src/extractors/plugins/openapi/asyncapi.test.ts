@@ -153,9 +153,19 @@ describe("AsyncAPI contracts on the data-access graph", () => {
 
     const edges: DataAccessEdge[] = result.dataAccessGraph?.edges ?? [];
     expect(edges.some((e) => e.source === "file::src/publisher.ts" && e.target === "queue::kafka::league.club.signed")).toBe(true);
-    expect(edges.some((e) => e.source === "file::docs/club-events.asyncapi.yaml" && e.target === "queue::kafka::league.club.signed")).toBe(true);
+    // A contract document neither sends nor receives: it marks the queue nodes and draws no edge of its own.
+    expect(edges.filter((e) => /asyncapi/.test(e.source) || /asyncapi/.test(e.target))).toEqual([]);
+  });
+
+  it("states its rows apart from the code's, with the direction each operation names", async () => {
     // 2.x `subscribe` is what the application sends; 3.x `receive` what it consumes.
-    expect(edges.some((e) => e.source === "queue::amqp::player.transferred" && e.target === "file::docs/transfers.asyncapi.yaml")).toBe(true);
+    const kafka = extractAsyncApi(V2_KAFKA.split("\n")).dataSources.find((d) => d.target === "league.club.signed");
+    expect(kafka?.kind).toBe("queue-publish");
+    const amqp = extractAsyncApi(V3_AMQP.split("\n")).dataSources.find((d) => d.target === "player.transferred");
+    expect(amqp?.kind).toBe("queue-consume");
+    const { result } = await queues();
+    const entries = (result.entryPoints ?? []).map((e: { filePath?: string }) => e.filePath ?? "");
+    expect(entries.filter((p: string) => /asyncapi/.test(p))).toEqual([]);
   });
 
   it("reads payloads as classes and leaves OpenAPI rows alone", async () => {

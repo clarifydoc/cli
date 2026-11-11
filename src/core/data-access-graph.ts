@@ -170,7 +170,7 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
         const edge = ds.kind === "queue-publish" ? edgeFor(fileId, qId) : edgeFor(qId, fileId);
         edge.calls.push({ name: ds.name, line: ds.line, ...(ds.entity ? { entity: ds.entity } : {}) });
         edge.total += 1;
-        if (qTarget !== null) (ds.fromContract ? contractQueues : codeQueues).add(qId);
+        if (qTarget !== null) codeQueues.add(qId);
         continue;
       }
       if (ds.kind !== "database") continue;
@@ -194,6 +194,14 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
     }
   }
 
+  // A contract's channel names a queue node and marks it; it draws no edge, since the document neither sends nor receives.
+  for (const a of analyses) {
+    for (const ds of a.busContracts ?? []) {
+      const qTarget = ds.target && ds.target.trim() !== "" ? ds.target.trim() : null;
+      if (qTarget === null) continue;
+      contractQueues.add(ensureQueue(brokerOf(ds), qTarget, a.filePath, ds.line, ds.unresolvedReason));
+    }
+  }
   for (const id of contractQueues) {
     const node = nodes.get(id);
     if (!node) continue;
