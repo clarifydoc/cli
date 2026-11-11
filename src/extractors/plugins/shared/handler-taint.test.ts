@@ -98,6 +98,19 @@ router.get("/f", (req, res) => {
 `)).toEqual([]);
   });
 
+  it("lets a file name clear a path traversal only, never a command injection", async () => {
+    expect(await js(`
+app.get("/kits", (req, res) => {
+  const name = path.basename(req.query.file);
+  fs.readFileSync(name);
+  exec("cat " + name);
+  res.sendFile(path.join(KITS, path.basename(req.query.kit)));
+  exec(\`zip \${path.join(KITS, path.basename(req.query.kit))}\`);
+  fs.readFileSync(path.join(KITS, req.query.raw));
+});
+`)).toEqual([["command-injection", 5], ["command-injection", 7], ["path-traversal", 8]]);
+  });
+
   it("clears taint through parseInt", async () => {
     expect(await js(`
 router.get("/n", (req, res) => {

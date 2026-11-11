@@ -61,7 +61,9 @@ const spec: TaintSpec = {
     }
     return null;
   },
-  sanitizer: /^\s*(?:intval|floatval|boolval|\(int\)|\(float\)|htmlspecialchars|htmlentities|strip_tags|escapeshellarg|escapeshellcmd|basename|filter_var|filter_input|urlencode|rawurlencode|addslashes|mysqli_real_escape_string|pg_escape_string|\$\w+->quote|e)\s*\(/,
+  sanitizer: /^\s*(?:intval|floatval|boolval|\(int\)|\(float\)|htmlspecialchars|htmlentities|strip_tags|escapeshellarg|escapeshellcmd|filter_var|filter_input|urlencode|rawurlencode|addslashes|mysqli_real_escape_string|pg_escape_string|\$\w+->quote|e)\s*\(/,
+  // A file name stops a path traversal, never a command or SQL injection.
+  partialSanitizers: [{ call: /^\s*basename\s*\(/, clears: ["path-traversal"] }],
   propagator: /^(?:sprintf|vsprintf|implode|join|str_replace|trim|ltrim|rtrim|strtolower|strtoupper|substr|urldecode|rawurldecode|base64_decode|json_decode|.+->(?:trim|lower|upper|toString))$/,
   ifTypes: new Set(["if_statement"]),
   stringTypes: new Set(["encapsed_string", "heredoc", "nowdoc"]),

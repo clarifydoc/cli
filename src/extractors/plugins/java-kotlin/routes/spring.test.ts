@@ -163,6 +163,25 @@ class AppController {
 });
 
 describe("Spring routes — confirmed-finding regressions", () => {
+  it("@RequestMapping with no method serves every verb (ALL), not GET", async () => {
+    const JAVA = `package x;
+import org.springframework.web.bind.annotation.*;
+@RestController
+@RequestMapping("/api/clubs")
+public class ClubController {
+    @RequestMapping("/all")
+    public String all() { return ""; }
+
+    @RequestMapping(value = "/squad", method = RequestMethod.POST)
+    public String squad() { return ""; }
+}
+`;
+    expect(await routesOf(JAVA, "java")).toEqual(["ALL /api/clubs/all", "POST /api/clubs/squad"]);
+    const routes: RouteInfo[] = [];
+    extractSpringRoutesRegex(JAVA, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["ALL /api/clubs/all", "POST /api/clubs/squad"]);
+  });
+
   it("Kotlin @RequestMapping(method=[GET, POST]) emits one route per method", async () => {
     const KOTLIN = `package x
 import org.springframework.web.bind.annotation.*

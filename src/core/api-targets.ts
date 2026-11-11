@@ -358,11 +358,13 @@ export function expandRequestFactories(
       }
       // A bare call in a package-scoped language (Go) never reaches another package.
       const packageScoped = pluginFor(a.language)?.directoryScope && importsNameDirectories(a.language);
-      if (!rows && !source && !chain?.inClass && !packageScoped) {
+      // A function the caller's own file declares is that one, factory or not: never a namesake elsewhere.
+      const declaredHere = !rows && functionsIn(a.filePath).some((f) => f.name === site.callee);
+      if (!rows && !source && !chain?.inClass && !packageScoped && !declaredHere) {
         // An import the index cannot resolve — a bundler's source-root path
         // (`'Store/Actions/Creators/createFetchHandler'`): the ONE factory in
-        // the project with that name, or nothing.
-        const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`));
+        // the caller's sub-project with that name, or nothing.
+        const named = [...factories.keys()].filter((k) => k.endsWith(`::${site.callee}`) && byFile.get(k.slice(0, k.indexOf("::")))?.projectId === a.projectId);
         if (named.length === 1) rows = factories.get(named[0]!);
       }
       if (!rows && source) {

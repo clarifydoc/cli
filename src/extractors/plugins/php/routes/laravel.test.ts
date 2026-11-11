@@ -358,6 +358,21 @@ Other\\Route::get('/nope', [ClubController::class, 'nope']);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["GET /clubs ClubController#index", "POST /clubs ClubController#store"]);
   });
 
+  it("names a controller imported under an alias by its class, not the alias", async () => {
+    const routes = await routesOf(`<?php
+use App\\Http\\Controllers\\Admin\\OrderController as AdminOrders;
+use App\\Http\\Controllers\\OrderController;
+Route::get('/admin/orders', [AdminOrders::class, 'index']);
+Route::get('/orders', [OrderController::class, 'index']);
+Route::resource('admin/kits', AdminOrders::class)->only(['show']);
+`);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler} ${r.owner ?? ""}`)).toEqual([
+      "GET /admin/orders OrderController#index App\\Http\\Controllers\\Admin\\OrderController",
+      "GET /orders OrderController#index App\\Http\\Controllers\\OrderController",
+      "GET /admin/kits/{kit} OrderController#show App\\Http\\Controllers\\Admin\\OrderController",
+    ]);
+  });
+
   it("gives the bare actions of Route::controller(X::class)->group the controller", async () => {
     const routes = await routesOf(`<?php
 use App\\Http\\Controllers\\MatchController;

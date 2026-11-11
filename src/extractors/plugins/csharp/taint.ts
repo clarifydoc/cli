@@ -68,7 +68,9 @@ const spec: TaintSpec = {
     }
     return null;
   },
-  sanitizer: /^\s*(?:int|long|Guid|decimal|double|bool|DateTime)\.(?:Parse|TryParse)|^\s*(?:Path\.GetFileName|HtmlEncoder\.\w+\.Encode|WebUtility\.(?:HtmlEncode|UrlEncode)|HttpUtility\.(?:HtmlEncode|UrlEncode)|Uri\.EscapeDataString|Convert\.ToInt\d+)\s*\(/,
+  sanitizer: /^\s*(?:int|long|Guid|decimal|double|bool|DateTime)\.(?:Parse|TryParse)|^\s*(?:HtmlEncoder\.\w+\.Encode|WebUtility\.(?:HtmlEncode|UrlEncode)|HttpUtility\.(?:HtmlEncode|UrlEncode)|Uri\.EscapeDataString|Convert\.ToInt\d+)\s*\(/,
+  // A file name stops a path traversal, never a command or SQL injection.
+  partialSanitizers: [{ call: /^\s*Path\.GetFileName\s*\(/, clears: ["path-traversal"] }],
   propagator: /^(?:string\.(?:Format|Concat|Join)|String\.(?:Format|Concat|Join)|Path\.(?:Combine|Join|GetFullPath)|new Uri|.+\.(?:Trim|ToLower|ToUpper|ToLowerInvariant|ToUpperInvariant|Replace|Substring|ToString|Append|AppendFormat))$/,
   ifTypes: new Set(["if_statement"]),
   stringTypes: new Set(["string_literal", "verbatim_string_literal", "raw_string_literal", "interpolated_string_expression"]),

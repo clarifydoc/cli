@@ -595,6 +595,11 @@ function emitVerbRoute(
     return q ? { owner: q } : {};
   };
   const emit = (r: RouteInfo, handlerArg?: Node): void => {
+    // `use …\Admin\OrderController as AdminOrders; [AdminOrders::class, 'index']`: the handler is the
+    // class's own method (`OrderController#index`), the alias only the file's local name for it.
+    const sep = r.handler?.lastIndexOf("#") ?? -1;
+    const leaf = r.owner?.split("\\").pop();
+    if (sep > 0 && leaf && /^\w+$/.test(r.handler!.slice(0, sep))) r.handler = `${leaf}${r.handler!.slice(sep)}`;
     applyMiddleware(r, scope.middleware, own);
     applyRouteMeta(r, { params: closureParams(handlerArg, r.path) });
     routes.push(r);

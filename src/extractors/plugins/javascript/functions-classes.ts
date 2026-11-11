@@ -685,8 +685,9 @@ function memberChainText(node: Node): string | null {
  * (`usePublicApi(slug).explore`).
  */
 function initializerLocal(value: Node, name: string): { local: LocalType; annotated: boolean } | null {
-  const awaited = value.type === "await_expression";
-  const expr = awaited ? value.namedChild(0) : value;
+  // `await http.get<Player>(url)` mis-nests the await inside the call (call(function: await_expression)): awaited too.
+  const awaited = value.type === "await_expression" || (value.type === "call_expression" && value.childForFieldName("function")?.type === "await_expression");
+  const expr = value.type === "await_expression" ? value.namedChild(0) : value;
   let from: string | null = null;
   if (expr?.type === "call_expression") from = callChainText(expr, "typescript");
   // `stores[props.kind].actions` off a record of call results: `stores[].actions`, whichever entry the key picks.

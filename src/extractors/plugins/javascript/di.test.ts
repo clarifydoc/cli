@@ -258,6 +258,8 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
       { name: "port", type: "", from: "app.get()" },
       { name: "route", type: "", from: "app.get()" },
       { name: "value", type: "", from: "compute()" },
+      // An awaited generic call (tree-sitter nests the await inside it) is a call initializer like any other.
+      { name: "res", type: "", from: "this.http.get()", awaited: true },
     ]);
   });
 

@@ -139,9 +139,19 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // `this['clubs/update']()` where `mapActions(['clubs/update'])` bound that name: `this.clubs/update`, keyed by the action.
   resolveCallName: (node) => {
     if (loadedMemberCall(node) || requiredSource(node)) return null;
-    const callee = node.childForFieldName("function");
+    let callee = node.childForFieldName("function");
+    // `await pick<Club>(id)` mis-nests as call(function: await_expression(pick), type_arguments, arguments):
+    // the generic makes the await bind to the callee alone. The call is still `pick`.
+    const awaitedGeneric = callee?.type === "await_expression";
+    if (awaitedGeneric) {
+      callee = callee!.namedChild(callee!.namedChildCount - 1);
+      if (!callee) return null;
+    }
     const record = callee?.type === "member_expression" && callee.text.includes("[") ? recordCallee(callee) : null;
-    return record ?? genericResolveCallName(node, { extraCallee: (c) => dispatchMapCallee(c) ?? mappedActionCallee(c) });
+    return record ?? genericResolveCallName(node, {
+      ...(awaitedGeneric ? { calleeOverride: callee } : {}),
+      extraCallee: (c) => dispatchMapCallee(c) ?? mappedActionCallee(c),
+    });
   },
 
   // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.

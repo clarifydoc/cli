@@ -52,7 +52,9 @@ const spec: TaintSpec = {
     const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "keyword_argument" && a.type !== "comment");
     return { callee: callee.replace(/\s+/g, ""), args };
   },
-  sanitizer: /^\s*(?:int|float|bool|abs|len|uuid\.UUID|UUID|shlex\.quote|quote|secure_filename|os\.path\.basename|basename|html\.escape|escape|bleach\.clean|markupsafe\.escape|urllib\.parse\.quote)\s*\(|^\s*(?:pathlib\.)?(?:Pure)?Path\s*\(.*\)\.name\s*$/s,
+  sanitizer: /^\s*(?:int|float|bool|abs|len|uuid\.UUID|UUID|shlex\.quote|quote|secure_filename|html\.escape|escape|bleach\.clean|markupsafe\.escape|urllib\.parse\.quote)\s*\(|^\s*(?:pathlib\.)?(?:Pure)?Path\s*\(.*\)\.name\s*$/s,
+  // A file name stops a path traversal, never a command or SQL injection.
+  partialSanitizers: [{ call: /^\s*(?:os\.path\.basename|basename)\s*\(/, clears: ["path-traversal"] }],
   propagator: /^(?:os\.path\.(?:join|abspath|normpath|realpath|expanduser)|(?:pathlib\.)?(?:Pure)?Path|str|f|urljoin|urllib\.parse\.(?:urljoin|urlunparse)|.+\.(?:joinpath|format|replace|strip|lstrip|rstrip|lower|upper|encode|decode|join|get|copy|urlencode|split))$/,
   ifTypes: new Set(["if_statement", "elif_clause"]),
   sinks: [

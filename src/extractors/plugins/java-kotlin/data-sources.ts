@@ -1326,11 +1326,14 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // destination; a string literal is unquoted, any other expression's source
     // text is kept as a join label.
     if (MQ_TEMPLATE_PUBLISH.has(method) && this.isMqTemplate(node, receiver)) {
-      const ref = constantRef(call.firstArg);
+      // `kafkaTemplate.send(record)` / `rabbitTemplate.convertAndSend(payload)`: the one argument is the
+      // message (a ProducerRecord, a Message, a payload for the default destination), never its address.
+      const stated = callArguments(node).length >= 2;
+      const ref = stated ? constantRef(call.firstArg) : null;
       sources.push(this.ds({
         kind: "queue-publish",
         name: `MQ: ${method}`,
-        target: destinationLabel(call.firstArg),
+        target: stated ? destinationLabel(call.firstArg, this.stringConsts) : null,
         ...(ref ? { targetRef: ref } : {}),
         line,
       }));
@@ -1343,7 +1346,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       sources.push(this.ds({
         kind: method === "basicPublish" ? "queue-publish" : "queue-consume",
         name: `MQ: ${method}`,
-        target: destinationLabel(call.firstArg),
+        target: destinationLabel(call.firstArg, this.stringConsts),
         ...(constantRef(call.firstArg) ? { targetRef: constantRef(call.firstArg)! } : {}),
         line,
       }));
@@ -1776,11 +1779,22 @@ function constantRef(arg: Node | null): string | null {
   return m ? m[1]! : null;
 }
 
-function destinationLabel(arg: Node | null): string | null {
+/**
+ * The destination a call names, as a join label: a literal unquoted, a constant's or another
+ * expression's text kept (the project pass fills constants through `targetRef`). Never a value only
+ * known at run time — a local or parameter (`send(topic, …)` would meet every other `topic`) or a
+ * Kotlin template (`"orders-$env"`). Kotlin's escaped `"\${league.topic}"` is the placeholder Java writes `"${…}"`.
+ */
+function destinationLabel(arg: Node | null, consts?: ReadonlyMap<string, string>): string | null {
   if (!arg) return null;
-  const text = /string/.test(arg.type)
-    ? arg.text.replace(/^"|"$/g, "")
-    : arg.text.replace(/\s+/g, " ");
+  if (/string/.test(arg.type)) {
+    const unescaped = arg.text.replace(/^"|"$/g, "").replace(/\\\$/g, "\u0000");
+    if (/\$[\w{]/.test(unescaped) && arg.children.some((c) => c.type === "interpolated_expression" || c.type === "interpolated_identifier" || c.type === "interpolation")) return null;
+    const text = unescaped.replace(/\u0000/g, "$");
+    return text && text.length <= 64 ? text : null;
+  }
+  if ((arg.type === "identifier" || arg.type === "simple_identifier") && /^[a-z]/.test(arg.text)) return consts?.get(arg.text) ?? null;
+  const text = arg.text.replace(/\s+/g, " ");
   return text && text.length <= 64 ? text : null;
 }
 

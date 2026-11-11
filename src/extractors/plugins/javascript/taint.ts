@@ -35,7 +35,9 @@ const spec: TaintSpec = {
     const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
     return { callee: callee.replace(/\s+/g, "").replace(/\?\./g, "."), args };
   },
-  sanitizer: /^\s*(?:parseInt|parseFloat|Number|Boolean|encodeURIComponent|path\.basename|basename|escape|escapeHtml|validator\.\w+|DOMPurify\.sanitize|sanitize\w*|Math\.\w+)\s*\(/,
+  sanitizer: /^\s*(?:parseInt|parseFloat|Number|Boolean|encodeURIComponent|escape|escapeHtml|validator\.\w+|DOMPurify\.sanitize|sanitize\w*|Math\.\w+)\s*\(/,
+  // A file name stops a path traversal, never a command or SQL injection.
+  partialSanitizers: [{ call: /^\s*(?:path\.basename|basename)\s*\(/, clears: ["path-traversal"] }],
   propagator: /^(?:path\.(?:join|resolve|normalize)|String|URL|new URL|decodeURIComponent|.+\.(?:concat|replace|replaceAll|trim|toLowerCase|toUpperCase|join|toString|slice|substring|split))$/,
   ifTypes: new Set(["if_statement"]),
   sinks: [

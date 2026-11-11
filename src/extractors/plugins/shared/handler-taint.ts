@@ -39,8 +39,14 @@ export interface TaintSpec {
   assignment(node: Node): { names: string[]; value: Node } | null;
   /** A call in a body: callee text and its arguments in order. */
   call(node: Node): { callee: string; args: Node[] } | null;
-  /** A value wrapped whole in a sanitizer call. */
+  /** A value wrapped whole in a sanitizer call: clean for every sink. */
   sanitizer: RegExp;
+  /**
+   * Calls that make a value safe for some sinks only (`path.basename` stops a path
+   * traversal, not a command injection): the value stays tainted for the others,
+   * and the call carries its argument's taint like a propagator.
+   */
+  partialSanitizers?: ReadonlyArray<{ call: RegExp; clears: readonly SecurityCategory[] }>;
   /**
    * Calls whose result carries their arguments' taint — path joins, string
    * formatting, URL joins. Any other function's result is not followed: what
@@ -72,7 +78,8 @@ export interface TaintSpec {
 type Step = { line: number; note: string };
 
 export type { TaintFacts } from "../../../types/analysis.js";
-type Taint = { line: number; path: Step[] };
+/** `cleared`: the sinks a partial sanitizer on the way made this value safe for. */
+type Taint = { line: number; path: Step[]; cleared?: ReadonlySet<SecurityCategory> };
 /** How deep calls into the file's own functions are followed. */
 const MAX_DEPTH = 2;
 
@@ -231,21 +238,47 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     return null;
   };
 
+  /** The sinks a partial sanitizer wrapping `n` whole makes it safe for. */
+  const partialOf = (n: Node): readonly SecurityCategory[] | null => {
+    for (const p of spec.partialSanitizers ?? []) if (p.call.test(n.text)) return p.clears;
+    return null;
+  };
+  /**
+   * `from` as the value of `n`, with what partial sanitizers cleared on the way: one wrapping `n` whole,
+   * or ones inside it that every tainted part passes through (`path.join(root, path.basename(name))`).
+   */
+  const through = (from: Taint | null, n: Node): Taint | null => {
+    if (!from || !spec.partialSanitizers?.length) return from;
+    let clears: readonly SecurityCategory[] | null = partialOf(n);
+    if (!clears) {
+      const inner: Array<readonly SecurityCategory[]> = [];
+      const collect = (c: Node): void => {
+        const kinds = spec.call(c) ? partialOf(c) : null;
+        if (kinds) inner.push(kinds);
+        else for (const k of c.namedChildren) collect(k);
+      };
+      collect(n);
+      if (inner.length && isTainted(codeText(n, true)) === null) clears = inner.reduce((a, b) => a.filter((k) => b.includes(k)));
+    }
+    return clears?.length ? { ...from, cleared: new Set([...(from.cleared ?? []), ...clears]) } : from;
+  };
+  const isPartial = (callee: string): boolean => (spec.partialSanitizers ?? []).some((p) => p.call.test(`${callee}(`));
   /**
    * A node's text with string literal contents left out and interpolations
    * kept (`"… WHERE name = %s"` names no variable, `f"… {name}"` does), and
    * with the arguments of calls that do not propagate taint dropped (their
    * callee, receiver included, is kept).
    */
-  const codeText = (n: Node): string => {
+  const codeText = (n: Node, stripPartial = false): string => {
     if (stringTypes.has(n.type)) {
-      return n.namedChildren.filter((c) => interpolations.has(c.type)).map(codeText).join(" ");
+      return n.namedChildren.filter((c) => interpolations.has(c.type)).map((c) => codeText(c, stripPartial)).join(" ");
     }
     if (n.childCount === 0) return n.text;
-    // A sanitizer anywhere in an expression cleans what it wraps (`build_sql(int(request.GET["n"]))`).
-    if (spec.call(n) && spec.sanitizer.test(n.text)) return "";
+    // A sanitizer anywhere in an expression cleans what it wraps (`build_sql(int(request.GET["n"]))`);
+    // with `stripPartial`, so do the partial ones (what is left is what they did not wrap).
+    if (spec.call(n) && (spec.sanitizer.test(n.text) || (stripPartial && partialOf(n)))) return "";
     const call = spec.call(n);
-    if (call && !spec.propagator.test(call.callee) && !spec.source.test(n.text)) {
+    if (call && !spec.propagator.test(call.callee) && !isPartial(call.callee) && !spec.source.test(n.text)) {
       // A helper of this file that returns a tainted argument carries it.
       const carried = helperReturn(call);
       return carried ? `${call.callee} ${carried}` : call.callee;
@@ -253,7 +286,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     // Tokens joined as written, with a space only where two words would fuse
     // (`not name`), so `request.args` stays one expression.
     let out = "";
-    for (const part of n.children.map(codeText)) {
+    for (const part of n.children.map((c) => codeText(c, stripPartial))) {
       // PHP's `$name` is two tokens, `$` and `name`: no space after a bare sigil.
       if (out && part && /[\w$]$/.test(out) && !/(?:^|[^\w$])\$$/.test(out) && /^[\w$]/.test(part)) out += " ";
       out += part;
@@ -281,11 +314,11 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     call.args.forEach((arg, i) => {
       const param = target.params[i + target.offset];
       if (!param || spec.sanitizer.test(arg.text)) return;
-      const from = isTainted(codeText(arg));
-      if (from) into.set(param, { line: from.line, path: [...from.path, { line, note: `passed to ${call.callee}() as ${param}` }] });
+      const from = through(isTainted(codeText(arg)), arg);
+      if (from) into.set(param, { ...from, path: [...from.path, { line, note: `passed to ${call.callee}() as ${param}` }] });
     });
     if (into.size === 0) return null;
-    const key = `${target.fn.id}\u0000${[...into.keys()].sort().join(",")}`;
+    const key = `${target.fn.id}\u0000${[...into].map(([p, t]) => `${p}${t.cleared ? `/${[...t.cleared].sort().join("+")}` : ""}`).sort().join(",")}`;
     const memo = ctx.summaries.get(key);
     if (memo) return memo;
     const ret = { out: null as Taint | null };
@@ -324,7 +357,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       // The value is evaluated before the names are bound: calls inside it first.
       walk(a.value);
       sourceLine = node.startPosition.row + 1;
-      const from = spec.sanitizer.test(a.value.text) ? null : isTainted(codeText(a.value));
+      const from = spec.sanitizer.test(a.value.text) ? null : through(isTainted(codeText(a.value)), a.value);
       for (const n of a.names) {
         if (from === null) {
           tainted.delete(n);
@@ -332,7 +365,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
         }
         const last = from.path[from.path.length - 1];
         const step = { line: sourceLine, note: `${n} carries it` };
-        tainted.set(n, { line: from.line, path: last?.line === sourceLine ? [...from.path.slice(0, -1), { line: sourceLine, note: `${last.note}; ${n} carries it` }] : [...from.path, step] });
+        tainted.set(n, { ...from, path: last?.line === sourceLine ? [...from.path.slice(0, -1), { line: sourceLine, note: `${last.note}; ${n} carries it` }] : [...from.path, step] });
       }
       return;
     }
@@ -343,8 +376,8 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
         if (!sink.callee.test(c.callee)) continue;
         const arg = c.args[sink.arg ?? 0];
         if (!arg || spec.sanitizer.test(arg.text)) continue;
-        const from = isTainted(codeText(arg));
-        if (from === null) continue;
+        const from = through(isTainted(codeText(arg)), arg);
+        if (from === null || from.cleared?.has(sink.category)) continue;
         const line = node.startPosition.row + 1;
         const sinkNote = `reaches ${sink.what} of ${c.callee}()`;
         const flow = from.path[from.path.length - 1]?.line === line
@@ -370,7 +403,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
         else if (ctx.facts && depth === 0 && !calleeOf(c) && !spec.propagator.test(c.callee) && !spec.sanitizer.test(node.text)) {
           const line = node.startPosition.row + 1;
           const args = c.args.flatMap((arg, index) => {
-            if (spec.sanitizer.test(arg.text)) return [];
+            if (spec.sanitizer.test(arg.text) || partialOf(arg)) return [];
             const from = isTainted(codeText(arg));
             return from ? [{ index, from: from.line, path: from.path }] : [];
           });

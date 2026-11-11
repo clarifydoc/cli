@@ -588,9 +588,10 @@ function parseSpringAnnotation(
 
   let methods: string[];
   if (httpMethod === null) {
-    // @RequestMapping: one route per declared method (default GET when unspecified).
+    // @RequestMapping: one route per declared method. With no `method`, Spring serves
+    // every verb, so the route is ALL — a POST call to it is not a method mismatch.
     methods = args ? extractAnnotationMethods(args) : [];
-    if (methods.length === 0) methods = ["GET"];
+    if (methods.length === 0) methods = ["ALL"];
   } else {
     methods = [httpMethod];
   }
@@ -634,11 +635,11 @@ function pathFromArgText(argText: string): string | null {
   return positional ? positional[1]! : null;
 }
 
-/** HTTP methods named in a regex-scanned `method = ...` attribute (default GET when absent). */
+/** HTTP methods named in a regex-scanned `method = ...` attribute (ALL when absent: Spring serves every verb). */
 function methodsFromArgText(argText: string): string[] {
   const attr = argText.match(/method\s*=\s*(\[[^\]]*\]|\{[^}]*\}|[\w.]+)/);
   const verbs = attr ? [...attr[1]!.matchAll(HTTP_VERB_RE)].map((m) => m[1]!) : [];
-  return verbs.length ? verbs : ["GET"];
+  return verbs.length ? verbs : ["ALL"];
 }
 
 export function extractSpringRoutesRegex(source: string, routes: RouteInfo[]): void {

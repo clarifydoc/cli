@@ -360,6 +360,39 @@ class TransferSvc {
     expect(publishes(s).map((p) => p.target)).toEqual(["transfers", "player-events"]);
   });
 
+  it("names no destination a call only knows at run time (real-repo FP)", async () => {
+    const src = `package x;
+class TransferSvc {
+  private static final String SQUAD_TOPIC = "squad-events";
+  private KafkaTemplate<String, String> kafkaTemplate;
+  private RabbitTemplate rabbitTemplate;
+  void m(String topic, ProducerRecord<String, String> record, String payload) {
+    kafkaTemplate.send(record);
+    rabbitTemplate.convertAndSend(payload);
+    kafkaTemplate.send(topic, payload);
+    kafkaTemplate.send(SQUAD_TOPIC, payload);
+    kafkaTemplate.send("\${league.topic}", payload);
+  }
+}`;
+    const tree = await parseSource(src, "java" as any, "TransferSvc.java");
+    const s = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    expect(publishes(s).map((p) => p.target)).toEqual([null, null, null, "SQUAD_TOPIC", "\${league.topic}"]);
+  });
+
+  it("reads Kotlin's escaped placeholder as Java's and a string template as unknown", async () => {
+    const src = `package x
+class TransferSvc(private val kafkaTemplate: KafkaTemplate<String, String>) {
+  fun m(env: String, payload: String) {
+    kafkaTemplate.send("\\\${league.topic}", payload)
+    kafkaTemplate.send("orders-\$env", payload)
+    kafkaTemplate.send("orders-\${env}", payload)
+  }
+}`;
+    const tree = await parseSource(src, "kotlin" as any, "TransferSvc.kt");
+    const s = new JavaKotlinDataSourceExtractor().extract(tree, src);
+    expect(publishes(s).map((p) => p.target)).toEqual(["\${league.topic}", null, null]);
+  });
+
   it("ignores send on a non-template receiver", async () => {
     const s = await javaSourcesOf(`    emailService.send("welcome", payload);`);
     expect(publishes(s)).toHaveLength(0);
