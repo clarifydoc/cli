@@ -56,7 +56,7 @@ export interface McpServerConfig {
   coldStartRefusal?: string;
   analyzeSettings?: AnalyzeSettings;
   /** Serve over HTTP (`POST /mcp`) instead of stdio. */
-  http?: { host?: string; port?: number; token?: string };
+  http?: { host?: string; port?: number; token?: string; sessionTtlMs?: number; maxSessions?: number };
   /** Reported in `serverInfo.version`. */
   version?: string;
   log?: (message: string) => void;
@@ -279,6 +279,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
         ? `${rewriteHiddenTools(INSTRUCTIONS, hidden)}\n\nThis server was started with a narrower tool set: ${listed.map((t) => t.name).join(", ")}. The other tools are not callable in this session; where an answer or the text above names one as \`clarifydoc ask <tool> key=value\`, run that in a shell.`
         : INSTRUCTIONS,
     ...(rewrite ? { rewrite } : {}),
+    listChanged: config.http !== undefined,
     tools: listed,
     resources,
     resourceTemplates,
@@ -346,9 +347,28 @@ export async function startMcpServer(config: McpServerConfig = {}): Promise<void
   if (config.http) {
     const { serveHttp } = await import("./http.js");
     const handle = await serveHttp(server, { ...config.http, log });
+    // A refreshed analysis changes what the lists answer: tell every open stream.
+    const pushChanged = () => {
+      for (const method of ["notifications/tools/list_changed", "notifications/resources/list_changed"]) handle.broadcast({ method });
+    };
+    // The summary also changes when another process (the editor, the CLI) re-analyzes.
+    let seen = (await statSummary(store.summaryPath))?.mtimeMs;
+    store.onAnalysisChanged(() => {
+      void statSummary(store.summaryPath).then((info) => {
+        if (info) seen = info.mtimeMs;
+        pushChanged();
+      });
+    });
+    const watcher = setInterval(() => {
+      void statSummary(store.summaryPath).then((info) => {
+        if (info && seen !== undefined && info.mtimeMs !== seen) pushChanged();
+        if (info) seen = info.mtimeMs;
+      });
+    }, 5000);
+    watcher.unref();
     log(`listening on ${handle.url}${config.http.token ? " (bearer token required)" : ""}`);
     await new Promise<void>((resolve) => {
-      const stop = () => void handle.close().then(resolve);
+      const stop = () => void handle.close().then(() => (clearInterval(watcher), resolve()));
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
     });
@@ -372,3 +392,11 @@ export async function startMcpServer(config: McpServerConfig = {}): Promise<void
   });
 }
 
+
+async function statSummary(path: string): Promise<{ mtimeMs: number } | null> {
+  try {
+    return await (await import("node:fs/promises")).stat(path);
+  } catch {
+    return null;
+  }
+}

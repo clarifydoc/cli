@@ -329,8 +329,11 @@ Or, in a config file (Claude Code, Cursor, Windsurf, …):
 
 One server for several local agents at once: `clarifydoc mcp --http` listens on `http://127.0.0.1:3737/mcp`
 (`--port`, `--host`) and shares one loaded analysis between them; point a client at that URL. It is loopback-only
-unless you pass `--token <t>` (or set `CLARIFYDOC_MCP_TOKEN`), which clients then send as `Authorization: Bearer <t>`;
-binding another host without a token is refused. The stdio server accepts newline-delimited JSON and `Content-Length`
+unless you give it a token — `--token-file <path>` (first line of a file), `CLARIFYDOC_MCP_TOKEN`, or `--token <t>`
+(visible in the process list, so it warns; precedence in that order) — which clients then send as
+`Authorization: Bearer <t>`; binding another host without a token is refused. Sessions expire after 30 idle minutes
+(`CLARIFYDOC_MCP_SESSION_TTL_MS`; a client then initializes again), and `GET /mcp` with `Accept: text/event-stream`
+opens a stream that carries `notifications/tools/list_changed` when the analysis is refreshed. The stdio server accepts newline-delimited JSON and `Content-Length`
 framing alike.
 
 Without a global install, the same entry runs it through npx: `"command": "npx", "args": ["-y", "clarifydoc", "mcp"]`

@@ -1012,10 +1012,11 @@ program
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot | all")
-  .option("--http", "Serve over HTTP (POST /mcp, JSON responses) instead of stdio; one analysis shared by every client", false)
+  .option("--http", "Serve over HTTP (POST /mcp, plus a GET event stream for notifications) instead of stdio; one analysis shared by every client", false)
   .option("--port <n>", "HTTP port with --http (0 = any free port)", wholeNumber(0), 3737)
   .option("--host <host>", "HTTP bind address with --http. Anything but loopback needs --token", "127.0.0.1")
-  .option("--token <token>", "Bearer token HTTP clients must send (or CLARIFYDOC_MCP_TOKEN); required for a non-loopback --host")
+  .option("--token <token>", "Bearer token HTTP clients must send; visible in the process list, so prefer --token-file or CLARIFYDOC_MCP_TOKEN. Required for a non-loopback --host")
+  .option("--token-file <path>", "Read the bearer token from a file (first line, trimmed). Wins over CLARIFYDOC_MCP_TOKEN, which wins over --token")
   .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {
@@ -1034,6 +1035,24 @@ program
         console.log(`# ${c} — add to ${file} (or: clarifydoc install --client ${c})\n${snippet}`);
       }
       return;
+    }
+    // Token precedence: --token-file, then CLARIFYDOC_MCP_TOKEN, then --token.
+    let httpToken: string | undefined;
+    if (options.http) {
+      try {
+        if (options.tokenFile) {
+          const { readTokenFile } = await import("./mcp/http.js");
+          httpToken = readTokenFile(resolve(options.tokenFile), (m) => process.stderr.write(`[clarifydoc-mcp] warning: ${m}\n`));
+        } else if (process.env.CLARIFYDOC_MCP_TOKEN) {
+          httpToken = process.env.CLARIFYDOC_MCP_TOKEN;
+        } else if (options.token) {
+          httpToken = options.token;
+          process.stderr.write("[clarifydoc-mcp] warning: --token is visible in the process list; use --token-file or CLARIFYDOC_MCP_TOKEN instead\n");
+        }
+      } catch (err) {
+        process.stderr.write(`[clarifydoc-mcp] fatal: ${(err as Error).message}\n`);
+        process.exit(1);
+      }
     }
     // Nothing may write to stdout from here on — it is the JSON-RPC wire.
     const { startMcpServer, locateProjectRoot } = await import("./mcp/server.js");
@@ -1054,7 +1073,7 @@ program
         version: program.version() ?? undefined,
         tools: options.tools,
         ...(options.http
-          ? { http: { host: options.host, port: options.port, token: options.token ?? process.env.CLARIFYDOC_MCP_TOKEN } }
+          ? { http: { host: options.host, port: options.port, token: httpToken } }
           : {}),
         analyzeSettings: {
           incremental: true,

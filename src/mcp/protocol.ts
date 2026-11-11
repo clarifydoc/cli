@@ -128,6 +128,8 @@ export interface McpServerOptions {
   revision?: () => Promise<string | null>;
   /** Cut longer answers at a line (default `CLARIFYDOC_MCP_MAX_TOKENS`, else 20000). A call's own `maxTokens` overrides it. */
   maxAnswerTokens?: number;
+  /** Declare `listChanged` on tools and resources: the HTTP transport pushes the list_changed notifications after a refresh. */
+  listChanged?: boolean;
 }
 
 export const PARSE_ERROR = -32700;
@@ -266,8 +268,8 @@ export class McpServer {
     return {
       protocolVersion: version,
       capabilities: {
-        tools: { listChanged: false },
-        ...(this.resources.size > 0 || this.templates.length > 0 ? { resources: { listChanged: false, subscribe: false } } : {}),
+        tools: { listChanged: this.options.listChanged === true },
+        ...(this.resources.size > 0 || this.templates.length > 0 ? { resources: { listChanged: this.options.listChanged === true, subscribe: false } } : {}),
         ...(this.prompts.size > 0 ? { prompts: { listChanged: false } } : {}),
       },
       serverInfo: { name: this.options.name, version: this.options.version },

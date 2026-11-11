@@ -1,7 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { PassThrough } from "stream";
 import { McpServer, FrameReader, serveStdio, type McpTool } from "./protocol.js";
-import { serveHttp, type HttpHandle } from "./http.js";
+import { mkdtempSync, writeFileSync, chmodSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { serveHttp, readTokenFile, type HttpHandle } from "./http.js";
 
 const tool: McpTool = {
   name: "kickoff",
@@ -132,5 +135,79 @@ describe("serveHttp", () => {
     expect((await send()).status).toBe(401);
     expect((await send("Bearer wrong")).status).toBe(401);
     expect((await send("Bearer secret")).status).toBe(200);
+  });
+
+  it("expires idle sessions, evicts past the cap and ends one on DELETE", async () => {
+    handle = await serveHttp(build(), { port: 0, sessionTtlMs: 80, maxSessions: 2 });
+    const open = async () => (await post(init)).headers.get("mcp-session-id")!;
+    const first = await open();
+    await new Promise((r) => setTimeout(r, 160));
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": first })).status).toBe(404);
+
+    const a = await open();
+    const b = await open();
+    const c = await open();
+    expect(handle.sessionCount()).toBe(2);
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": a })).status).toBe(404);
+    const del = await fetch(handle.url, { method: "DELETE", headers: { "mcp-session-id": b } });
+    expect(del.status).toBe(200);
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": b })).status).toBe(404);
+    expect((await post({ jsonrpc: "2.0", id: 2, method: "ping" }, { "mcp-session-id": c })).status).toBe(200);
+  });
+
+  it("streams notifications to an open event stream and closes it on DELETE", async () => {
+    handle = await serveHttp(build(), { port: 0, keepAliveMs: 30 });
+    const session = (await post(init)).headers.get("mcp-session-id")!;
+    expect((await fetch(handle.url, { headers: { "mcp-session-id": session } })).status).toBe(405);
+    expect((await fetch(handle.url, { headers: { accept: "text/event-stream", "mcp-session-id": "nope" } })).status).toBe(404);
+
+    const res = await fetch(handle.url, { headers: { accept: "text/event-stream", "mcp-session-id": session } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const until = async (needle: string) => {
+      while (!text.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        text += decoder.decode(value);
+      }
+      return true;
+    };
+    expect(await until("keep-alive")).toBe(true);
+    expect(handle.broadcast({ method: "notifications/tools/list_changed" })).toBe(1);
+    expect(await until("notifications/tools/list_changed")).toBe(true);
+    expect(text).toContain('"jsonrpc":"2.0"');
+
+    await fetch(handle.url, { method: "DELETE", headers: { "mcp-session-id": session } });
+    let ended = false;
+    for (let i = 0; i < 50 && !ended; i++) ended = (await reader.read()).done === true;
+    expect(ended).toBe(true);
+  });
+
+  it("checks the token on the event stream too", async () => {
+    handle = await serveHttp(build(), { host: "0.0.0.0", port: 0, token: "secret" });
+    const url = handle.url.replace("0.0.0.0", "127.0.0.1");
+    const res = await fetch(url, { headers: { accept: "text/event-stream" } });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("readTokenFile", () => {
+  it("reads the first line trimmed, and refuses an empty file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "token-"));
+    const file = join(dir, "tok");
+    writeFileSync(file, "  striker-9 \nignored\n");
+    chmodSync(file, 0o600);
+    const warnings: string[] = [];
+    expect(readTokenFile(file, (m) => warnings.push(m))).toBe("striker-9");
+    expect(warnings).toEqual([]);
+    chmodSync(file, 0o644);
+    readTokenFile(file, (m) => warnings.push(m));
+    if (process.platform !== "win32") expect(warnings).toHaveLength(1);
+    writeFileSync(file, "\n");
+    expect(() => readTokenFile(file)).toThrow(/empty/);
+    expect(() => readTokenFile(join(dir, "missing"))).toThrow(/Cannot read/);
   });
 });

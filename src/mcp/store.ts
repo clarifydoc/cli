@@ -255,11 +255,29 @@ export class AnalysisStore {
   private manifest: { key: string; manifest: Manifest | null } | null = null;
   /** Per-file verdicts by the mtime they were judged at, so a moved mtime is hashed once. */
   private judged = new Map<string, { mtime: number; changed: boolean }>();
+  private readonly changeListeners = new Set<() => void>();
   /** Diagnostics → stderr in a session; tools running their own long tasks log through it too. */
   readonly log: (message: string) => void;
 
   constructor(private readonly options: AnalysisStoreOptions) {
     this.log = options.log ?? (() => {});
+  }
+
+  /** Called after an analysis this store ran replaced the summary. Returns the unsubscribe. */
+  onAnalysisChanged(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => void this.changeListeners.delete(listener);
+  }
+
+  /** Tell the listeners the analysis changed (also used when another process rewrote the summary). */
+  notifyAnalysisChanged(): void {
+    for (const l of this.changeListeners) {
+      try {
+        l();
+      } catch (e) {
+        this.log(`change listener failed: ${(e as Error).message}`);
+      }
+    }
   }
 
   get projectRoot(): string {
@@ -530,6 +548,7 @@ export class AnalysisStore {
       this.cached = null;
       this.cacheKey = "";
       this.loading = null;
+      this.notifyAnalysisChanged();
       return result;
     } finally {
       this.running = null;
