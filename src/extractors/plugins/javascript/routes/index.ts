@@ -12,7 +12,7 @@ import { visitVueRouterRoute } from "./vue-router.js";
 import { mayDeclareAngularJsRoutes, visitAngularJsRoute } from "./angularjs.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
-import { convexCustomBuilders, convexModulePath, mayDefineConvex, visitConvexFunction, visitConvexHttpRoute } from "./convex.js";
+import { convexCustomBuilders, convexExportedBuilders, relativeImportNames, stringConstants, convexModulePath, mayDefineConvex, visitConvexFunction, visitConvexHttpRoute } from "./convex.js";
 import { collectCdkRoutes } from "./cdk.js";
 import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
@@ -44,9 +44,16 @@ export const javascriptRouteExtractor: RouteExtractor = {
     const maybeTrpc = mayDefineTrpc(sourceText);
     const convex: RouteInfo[] = [];
     // Convex: exported query/mutation/action builders of a functions-directory module, and `http.route` on its router.
-    const convexModule = mayDefineConvex(sourceText) && _filePath ? convexModulePath(_filePath, sourceText) : null;
+    // A module may also only USE a builder imported from a sibling (`convex/lib/auth.ts`), without naming the generated server.
+    const inConvexDir = !!_filePath && /(?:^|\/)convex\//.test(_filePath.replace(/\\/g, "/"));
+    const convexModule = (mayDefineConvex(sourceText) || (inConvexDir && /\bimport\b[^;]*from\s*["']\.{1,2}\//.test(sourceText))) && _filePath ? convexModulePath(_filePath, sourceText) : null;
     const convexCustom = convexModule !== null ? convexCustomBuilders(sourceText) : null;
+    const convexImported = convexModule !== null && facts ? relativeImportNames(sourceText) : undefined;
     const convexHttp = mayDefineConvex(sourceText) && sourceText.includes("httpRouter");
+    const convexConsts = convexHttp ? stringConstants(sourceText) : undefined;
+    if (facts && mayDefineConvex(sourceText)) {
+      for (const b of convexExportedBuilders(sourceText)) facts.push({ kind: "convex-builder", line: 1, data: b });
+    }
     const navigation: RouteInfo[] = [];
     const maybeNavigation = mayDeclareReactNavigation(sourceText);
     const maybeTanstack = sourceText.includes("FileRoute(") || sourceText.includes("createRoute(");
@@ -62,8 +69,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
       if (maybeAngularJs) visitAngularJsRoute(node, vueRouter);
       if (maybeTanstack) visitTanstackFileRoute(node, tanstack);
       if (maybeTrpc) visitTrpcRouter(node, trpc, facts);
-      if (convexModule !== null) visitConvexFunction(node, convex, convexModule, convexCustom!);
-      if (convexHttp) visitConvexHttpRoute(node, convex);
+      if (convexModule !== null) visitConvexFunction(node, convex, convexModule, convexCustom!, convexImported, facts);
+      if (convexHttp) visitConvexHttpRoute(node, convex, convexConsts);
       if (maybeNavigation) {
         visitReactNavigationScreen(node, navigation);
         visitStaticNavigator(node, navigation);

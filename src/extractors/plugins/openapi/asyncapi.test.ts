@@ -119,6 +119,8 @@ describe("AsyncAPI contracts on the data-access graph", () => {
   write("docs/transfers.asyncapi.yaml", V3_AMQP);
   write("docs/players.openapi.yaml", OPENAPI);
   write("docs/events.asyncapi.json", JSON.stringify({ asyncapi: "2.6.0", servers: { s: { protocol: "mqtt", url: "x" } }, channels: { "club/{clubId}/signed": { subscribe: { message: { name: "ClubSigned" } } } } }));
+  write("docs/holes.asyncapi.json", JSON.stringify({ asyncapi: "2.6.0", servers: { k: { protocol: "kafka", url: "x" } }, channels: { "club.{clubId}.signed": { subscribe: { message: { name: "ClubSigned" } } }, "club.{clubId}.retired": { subscribe: { message: { name: "ClubRetired" } } } } }));
+  write("src/holes.ts", "export async function announce(producer: any, id: string) {\n  await producer.send({ topic: `club.${id}.signed`, messages: [] });\n}\n");
   write("src/publisher.ts", "export async function announce(producer: any) {\n  await producer.send({ topic: 'league.club.signed', messages: [] });\n}\n");
   write("src/consumer.ts", "export async function listen(ch: any) {\n  await ch.consume('player.transferred', () => {});\n}\n");
 
@@ -155,6 +157,17 @@ describe("AsyncAPI contracts on the data-access graph", () => {
     expect(edges.some((e) => e.source === "file::src/publisher.ts" && e.target === "queue::kafka::league.club.signed")).toBe(true);
     // A contract document neither sends nor receives: it marks the queue nodes and draws no edge of its own.
     expect(edges.filter((e) => /asyncapi/.test(e.source) || /asyncapi/.test(e.target))).toEqual([]);
+  });
+
+  it("meets a channel parameter and the code's templated destination on one node", async () => {
+    const { nodes } = await queues();
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const signed = byId.get("queue::kafka::club.*.signed");
+    expect(signed?.contract).toBe(true);
+    expect(signed?.unimplemented).toBeUndefined();
+    expect(byId.get("queue::kafka::club.*.retired")?.unimplemented).toBe(true);
+    expect(byId.has("queue::kafka::club.{clubId}.signed")).toBe(false);
+    expect(byId.has("queue::amqp::club.*.signed")).toBe(false);
   });
 
   it("states its rows apart from the code's, with the direction each operation names", async () => {

@@ -128,7 +128,7 @@ export function buildDataAccessGraph(analyses: FileAnalysis[]): DataAccessGraph 
    * so unrelated unresolved ones never share a node and never pair.
    */
   function ensureQueue(broker: string, target: string | null, filePath: string, line: number, reason: string | undefined): string {
-    const id = target !== null ? `queue::${broker}::${target}` : `queue::${broker}::?${filePath}:${line}`;
+    const id = target !== null ? `queue::${broker}::${queueHoleKey(target)}` : `queue::${broker}::?${filePath}:${line}`;
     if (!nodes.has(id)) {
       nodes.set(id, {
         id,
@@ -392,4 +392,13 @@ export function attributeDataAccessToSymbols(
       byOrdinal(a.entity, b.entity),
   );
   return out;
+}
+
+/**
+ * A destination's identity: the holes a name carries (`club.${id}.signed`, an
+ * f-string's `club.{id}.signed`, a contract's `club.{clubId}.signed`) all read as
+ * one `*`, so a document's channel and the code that sends to it meet on one node.
+ */
+function queueHoleKey(target: string): string {
+  return target.replace(/\$?\{[^{}]*\}/g, "*");
 }

@@ -18,6 +18,7 @@ import { nextMiddlewareGuards } from "./routes/next-middleware.js";
 import { nestInheritedGuards } from "./routes/nestjs.js";
 import { pathHelperResolver } from "./routes/path-helpers.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
+import { convexBuilderResolver } from "./routes/convex.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
@@ -298,7 +299,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

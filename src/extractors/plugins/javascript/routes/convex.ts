@@ -1,5 +1,7 @@
 import type { Node } from "web-tree-sitter";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
+import type { ProjectContext } from "../../../../types/project.js";
+import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { collectCallNames } from "../../../routes/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 
@@ -90,6 +92,41 @@ export function convexCustomBuilders(sourceText: string): Map<string, Builder> {
   return out;
 }
 
+/**
+ * A builder this file EXPORTS and defines through convex-helpers' `customQuery(query, …)`:
+ * a fact, so a module that imports it (`import { authedQuery } from "./lib/auth"`) serves its
+ * functions. Gated on the file importing the helper from convex-helpers (or on the
+ * `convex/server` family), so another library's `customQuery` defines nothing.
+ */
+export function convexExportedBuilders(sourceText: string): Array<{ name: string; method: string; internal: boolean }> {
+  if (!/["']convex-helpers\/server\/customFunctions(?:\.js)?["']/.test(sourceText)) return [];
+  const out: Array<{ name: string; method: string; internal: boolean }> = [];
+  for (const m of sourceText.matchAll(/\bexport\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*custom(Query|Mutation|Action)\s*\(\s*(internal)?/g)) {
+    const base = BUILDERS[m[2]!.toLowerCase()]!;
+    out.push({ name: m[1]!, method: base.method, internal: base.internal || !!m[3] });
+  }
+  return out;
+}
+
+/** Names this file imports from a relative module: `import { authedQuery as aq } from "./lib/auth"` → local `aq`, exported `authedQuery`. */
+export function relativeImportNames(sourceText: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of sourceText.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["']\.{1,2}\//g)) {
+    for (const part of m[1]!.split(",")) {
+      const mm = /^\s*(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(part);
+      if (mm) out.set(mm[2] ?? mm[1]!, mm[1]!);
+    }
+  }
+  return out;
+}
+
+/** Top-level `const NAME = "text"` values of this file, for an `http.route` that names its path or method by one. */
+export function stringConstants(sourceText: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of sourceText.matchAll(/^(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w\s"'|]+)?=\s*(["'])([^"'\n]*)\2\s*(?:as\s+const)?\s*;?\s*$/gm)) out.set(m[1]!, m[3]!);
+  return out;
+}
+
 const keyOf = (pair: Node): string | null => {
   const k = pair.childForFieldName("key");
   if (!k) return null;
@@ -114,7 +151,7 @@ function handlerOf(call: Node): { node: Node | null; ref: string | null } {
 }
 
 /** Per-node visitor: an exported `const list = query({ … })`. */
-export function visitConvexFunction(node: Node, routes: RouteInfo[], modulePath: string, custom: Map<string, Builder>): void {
+export function visitConvexFunction(node: Node, routes: RouteInfo[], modulePath: string, custom: Map<string, Builder>, imported?: Map<string, string>, facts?: RouteFact[]): void {
   if (node.type !== "variable_declarator") return;
   if (node.parent?.parent?.type !== "export_statement") return;
   const name = node.childForFieldName("name");
@@ -123,8 +160,19 @@ export function visitConvexFunction(node: Node, routes: RouteInfo[], modulePath:
   const callee = value.childForFieldName("function");
   if (callee?.type !== "identifier") return;
   const builder = BUILDERS[callee.text] ?? custom.get(callee.text);
-  if (!builder) return;
   const h = handlerOf(value);
+  if (!builder) {
+    // A builder another module of the project exports: the resolver places the route once it knows what that module defines.
+    const from = imported?.get(callee.text);
+    if (from && facts) {
+      facts.push({
+        kind: "convex-use",
+        line: node.startPosition.row + 1,
+        data: { local: callee.text, name: name.text, modulePath, handler: h.ref ?? name.text, calls: h.node ? collectCallNames(h.node) : [] },
+      });
+    }
+    return;
+  }
   routes.push({
     path: `${CONVEX_PREFIX}${modulePath}.${name.text}`,
     httpMethod: builder.method,
@@ -138,7 +186,7 @@ export function visitConvexFunction(node: Node, routes: RouteInfo[], modulePath:
 }
 
 /** `http.route({ path: "/clubs", method: "POST", handler: httpAction(…) })` on an `httpRouter()`. */
-export function visitConvexHttpRoute(node: Node, routes: RouteInfo[]): void {
+export function visitConvexHttpRoute(node: Node, routes: RouteInfo[], consts?: Map<string, string>): void {
   if (node.type !== "call_expression") return;
   const fn = node.childForFieldName("function");
   if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "route") return;
@@ -153,10 +201,11 @@ export function visitConvexHttpRoute(node: Node, routes: RouteInfo[]): void {
     const k = keyOf(p);
     const v = p.childForFieldName("value");
     if (!v) continue;
-    if ((k === "path" || k === "pathPrefix") && v.type === "string") {
-      path = stripQuotes(v.text);
+    const text = v.type === "string" ? stripQuotes(v.text) : v.type === "identifier" ? (consts?.get(v.text) ?? null) : null;
+    if ((k === "path" || k === "pathPrefix") && text !== null) {
+      path = text;
       prefix = k === "pathPrefix";
-    } else if (k === "method" && v.type === "string") method = stripQuotes(v.text).toUpperCase();
+    } else if (k === "method" && text !== null) method = text.toUpperCase();
     else if (k === "handler") handler = v;
   }
   if (path === null) return;
@@ -171,3 +220,55 @@ export function visitConvexHttpRoute(node: Node, routes: RouteInfo[]): void {
     line: node.startPosition.row + 1,
   });
 }
+
+interface UseData {
+  local: string;
+  name: string;
+  modulePath: string;
+  handler: string;
+  calls: RouteInfo["calls"];
+}
+
+/**
+ * Functions built with a custom builder another module defines
+ * (`export const list = authedQuery({ … })`, `authedQuery` exported by
+ * `convex/lib/auth.ts` from `customQuery(query, …)`): the import graph names the
+ * defining file, whose exported builders say the verb. A callee the project
+ * does not define as a Convex builder serves nothing.
+ */
+export const convexBuilderResolver: RouteResolver = {
+  id: "convex-imported-builders",
+  languages: ["typescript", "javascript"],
+  priority: 38,
+  resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
+    const defined = new Map<string, { method: string; internal: boolean }>();
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind === "convex-builder") defined.set(`${a.filePath}#${(f.data as { name: string }).name}`, f.data as { method: string; internal: boolean });
+      }
+    }
+    if (defined.size === 0) return;
+    for (const a of analyses) {
+      const uses = (a.routeFacts ?? []).filter((f) => f.kind === "convex-use");
+      if (uses.length === 0) continue;
+      const added: RouteInfo[] = [];
+      for (const f of uses) {
+        const u = f.data as UseData;
+        const file = ctx.importIndex.localFor(a.filePath, u.local);
+        const builder = file ? defined.get(`${file}#${u.local}`) : undefined;
+        if (!builder) continue;
+        added.push({
+          path: `${CONVEX_PREFIX}${u.modulePath}.${u.name}`,
+          httpMethod: builder.method,
+          kind: "api",
+          handler: u.handler,
+          calls: u.calls,
+          middleware: [u.local],
+          line: f.line,
+          ...(builder.internal ? { internal: true as const } : {}),
+        });
+      }
+      if (added.length > 0) a.routes = [...a.routes, ...added];
+    }
+  },
+};

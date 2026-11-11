@@ -74,9 +74,9 @@ function refKey(node: SpecNode): string | null {
   return ref?.startsWith("#/") ? decodeURIComponent(ref.split("/").pop()!).replace(/~1/g, "/") : null;
 }
 
-/** `{playerId}` channel parameters stay holes; an MQTT topic spells a one-level hole `+`. */
+/** `{playerId}` channel parameters are holes: `*` (the form code's destinations use), and a one-level `+` on an MQTT topic. */
 function addressOf(address: string, broker: string | undefined): string {
-  return broker === "mqtt" ? address.replace(/\{[^}]*\}/g, "+") : address;
+  return address.replace(/\{[^}]*\}/g, broker === "mqtt" ? "+" : "*");
 }
 
 interface Msg {
