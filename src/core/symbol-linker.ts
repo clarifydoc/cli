@@ -6394,7 +6394,7 @@ function filesByDirectory(analyses: FileAnalysis[]): Map<string, string[]> {
 }
 
 /** Longest receiver chain followed through member and return types (`this.a.b.c.m()`, `a.getB().getC().m()`). */
-const MAX_RECEIVER_CHAIN = 3;
+const MAX_RECEIVER_CHAIN = 4;
 
 /**
  * Strategy 2: resolve a qualified call through its receiver's DECLARED type.

@@ -316,6 +316,17 @@ function scanBody(
   // name → every binding seen (null = a binding whose type is not stated).
   const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
   const reassigned = new Set<string>();
+  // Flow order, for an alias of a name bound more than once: each declaration or `=` of a name, at what offset (source order), whether
+  // (`nested`: inside a block of its own) and the type it states (null when it states none).
+  const timeline = new Map<string, Array<{ at: number; nested: boolean; type: string | null; declared: boolean }>>();
+  // An alias declarator's offset, and whether a loop encloses it.
+  const aliasSites = new Map<string, { at: number; inLoop: boolean }>();
+  const noteEvent = (name: string, at: number, nested: boolean, type: string | null, declared = false): void => {
+    const list = timeline.get(name);
+    const event = { at, nested, type, declared };
+    if (list) list.push(event);
+    else timeline.set(name, [event]);
+  };
   /** Class names this body declares that are not reported: a local typed by one states no class we know. */
   const hiddenTypes = new Set<string>();
   const bindUntyped = (name: string): void => {
@@ -596,6 +607,21 @@ function scanBody(
           const list = bindings.get(name.text);
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
+          {
+            const line = node.startIndex;
+            const only = locals.length === 1 ? locals[0] : null;
+            noteEvent(name.text, line, node.parent?.parent?.id !== body.id, only && only.local.type && !only.local.qualifier && !only.local.aliasOf ? only.local.type : null, true);
+            if (only?.local.aliasOf !== undefined && !aliasSites.has(name.text)) {
+              let up: Node | null = node.parent;
+              let inLoop = false;
+              while (up && up.id !== body.id) {
+                // A loop, or a closure that may run after a later reassignment, makes the order unknowable.
+                if (LOOP_STATEMENTS.has(up.type) || FUNCTION_EXPRESSIONS.has(up.type)) inLoop = true;
+                up = up.parent;
+              }
+              aliasSites.set(name.text, { at: line, inLoop });
+            }
+          }
           // A record of call results (`const stores = { [Kind.Club]: useClubStore(), … }`): under `stores[]`, each call.
           const record = recordEntries(node);
           for (const call of record?.calls ?? []) {
@@ -628,10 +654,33 @@ function scanBody(
         } else bindPattern(left);
       } else if (type === "assignment_expression" || type === "augmented_assignment_expression") {
         const left = children[0];
-        if (left?.type === "identifier") reassigned.add(left.text);
+        if (left && (left.type === "array_pattern" || left.type === "object_pattern")) {
+          // `[p] = pair`, `({ p } = pair)`: a write the timeline cannot type.
+          const stack: Node[] = [left];
+          while (stack.length > 0) {
+            const n = stack.pop()!;
+            if (n.type === "identifier" || n.type === "shorthand_property_identifier_pattern") {
+              reassigned.add(n.text);
+              noteEvent(n.text, node.startIndex, true, null);
+            } else stack.push(...n.namedChildren);
+          }
+        }
+        if (left?.type === "identifier") {
+          reassigned.add(left.text);
+          const right = node.childForFieldName("right");
+          let stated: string | null = null;
+          if (type === "assignment_expression" && right) {
+            const init = initializerType(right, ctx.tokenTypes);
+            if (init?.type && !init.qualifier && namesReceiverType(init.type)) stated = init.type;
+          }
+          noteEvent(left.text, node.startIndex, node.parent?.parent?.id !== body.id, stated);
+        }
       } else if (type === "update_expression") {
         const operand = node.childForFieldName("argument");
-        if (operand?.type === "identifier") reassigned.add(operand.text);
+        if (operand?.type === "identifier") {
+          reassigned.add(operand.text);
+          noteEvent(operand.text, node.startIndex, true, null);
+        }
       }
     }
 
@@ -646,6 +695,22 @@ function scanBody(
     const first = list[0];
     if (!first || list.some((b) => !b)) continue;
     if (reassigned.has(name) && !list.every((b) => b!.annotated)) continue;
+    // `q = p` where `p` is bound or assigned more than once: `p` as it stands at the alias's line.
+    const site = list.length === 1 && first.local.aliasOf !== undefined ? aliasSites.get(name) : undefined;
+    const head = site ? timeline.get(first.local.aliasOf!) : undefined;
+    if (site && head && (head.length >= 2 || paramNames.has(first.local.aliasOf!))) {
+      // A loop around the alias, or a binding of the head the timeline does not see (a loop variable, a `catch`).
+      if (site.inLoop || (bindings.get(first.local.aliasOf!)?.length ?? 0) !== head.filter((e) => e.declared).length) continue;
+      const before = head.filter((e) => e.at < site.at);
+      if (before.length === 0) {
+        if (!paramNames.has(first.local.aliasOf!)) continue;
+      } else {
+        const last = before[before.length - 1]!;
+        if (before.some((e) => e.nested) || !last.type || hiddenTypes.has(last.type)) continue;
+        localTypes.push({ name, type: last.type });
+        continue;
+      }
+    }
     // Initialized by calls that state no type: one entry per distinct call, so
     // the linker can require them to agree. A stated type alongside decides nothing.
     if (list.some((b) => b!.local.from)) {
@@ -663,6 +728,9 @@ function scanBody(
   }
   return { extraCalls, localTypes, returnedSpreads, returnedFrom };
 }
+
+/** Statements that run their body more than once. */
+const LOOP_STATEMENTS: ReadonlySet<string> = new Set(["for_statement", "for_in_statement", "while_statement", "do_statement"]);
 
 /**
  * The type one `variable_declarator` states for its name: the TypeScript
