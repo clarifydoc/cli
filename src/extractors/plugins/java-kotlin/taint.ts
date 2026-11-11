@@ -71,8 +71,7 @@ const spec: TaintSpec = {
     return null;
   },
   sanitizer: /^\s*(?:Integer\.(?:parseInt|valueOf)|Long\.(?:parseLong|valueOf)|Double\.parseDouble|Boolean\.parseBoolean|UUID\.fromString|HtmlUtils\.htmlEscape|StringEscapeUtils\.escape\w*|Encode\.\w+|ESAPI\.encoder\(\)\.\w+|URLEncoder\.encode)\s*\(/,
-  // A file name stops a path traversal, never a command or SQL injection.
-  partialSanitizers: [{ call: /^\s*FilenameUtils\.getName\s*\(/, clears: ["path-traversal"] }],
+  fileNameSanitizers: [{ call: /^\s*FilenameUtils\.getName\s*\(/ }],
   propagator: /^(?:String\.(?:format|join|valueOf)|Paths\.get|Path\.of|new File|new URL|URI\.create|new URI|.+\.(?:concat|replace|replaceAll|trim|strip|toLowerCase|toUpperCase|substring|formatted|resolve|toString|append))$/,
   ifTypes: new Set(["if_statement"]),
   stringTypes: new Set(["string_literal", "text_block"]),
@@ -151,8 +150,7 @@ const kotlinSpec: TaintSpec = {
     return { callee: /^(?:File|FileInputStream|FileReader|FileOutputStream|FileWriter|RandomAccessFile|ProcessBuilder|URL)$/.test(callee) ? `new ${callee}` : callee, args };
   },
   sanitizer: /^\s*(?:Integer\.(?:parseInt|valueOf)|Long\.(?:parseLong|valueOf)|UUID\.fromString|HtmlUtils\.htmlEscape|URLEncoder\.encode)\s*\(|\.(?:toInt|toLong|toDouble|toBoolean|toIntOrNull|toLongOrNull)\s*\(\s*\)\s*$/,
-  // A file name stops a path traversal, never a command or SQL injection.
-  partialSanitizers: [{ call: /^\s*FilenameUtils\.getName\s*\(/, clears: ["path-traversal"] }],
+  fileNameSanitizers: [{ call: /^\s*FilenameUtils\.getName\s*\(/ }],
   propagator: /^(?:String\.format|Paths\.get|Path\.of|new File|new URL|URI\.create|.+\.(?:plus|replace|trim|lowercase|uppercase|substring|format|resolve|toString|joinToString))$|^(?:buildString|listOf|arrayOf)$/,
   ifTypes: new Set(["if_expression"]),
   condition: (n) => n.namedChildren[0] ?? null,

@@ -36,8 +36,7 @@ const spec: TaintSpec = {
     return { callee: callee.replace(/\s+/g, "").replace(/\?\./g, "."), args };
   },
   sanitizer: /^\s*(?:parseInt|parseFloat|Number|Boolean|encodeURIComponent|escape|escapeHtml|validator\.\w+|DOMPurify\.sanitize|sanitize\w*|Math\.\w+)\s*\(/,
-  // A file name stops a path traversal, never a command or SQL injection.
-  partialSanitizers: [{ call: /^\s*(?:path\.basename|basename)\s*\(/, clears: ["path-traversal"] }],
+  fileNameSanitizers: [{ call: /^\s*(?:path\.basename|basename)\s*\(/ }],
   propagator: /^(?:path\.(?:join|resolve|normalize)|String|URL|new URL|decodeURIComponent|.+\.(?:concat|replace|replaceAll|trim|toLowerCase|toUpperCase|join|toString|slice|substring|split))$/,
   ifTypes: new Set(["if_statement"]),
   sinks: [

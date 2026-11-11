@@ -42,11 +42,11 @@ export interface TaintSpec {
   /** A value wrapped whole in a sanitizer call: clean for every sink. */
   sanitizer: RegExp;
   /**
-   * Calls that make a value safe for some sinks only (`path.basename` stops a path
-   * traversal, not a command injection): the value stays tainted for the others,
-   * and the call carries its argument's taint like a propagator.
+   * File-name calls (`path.basename`, `os.path.basename`, `FilenameUtils.getName`, `Path.GetFileName`):
+   * the value is safe for a path-traversal sink only and stays tainted for the others (a file name
+   * is no defence against command or SQL injection); the call carries its argument's taint like a propagator.
    */
-  partialSanitizers?: ReadonlyArray<{ call: RegExp; clears: readonly SecurityCategory[] }>;
+  fileNameSanitizers?: ReadonlyArray<{ call: RegExp }>;
   /**
    * Calls whose result carries their arguments' taint — path joins, string
    * formatting, URL joins. Any other function's result is not followed: what
@@ -78,8 +78,8 @@ export interface TaintSpec {
 type Step = { line: number; note: string };
 
 export type { TaintFacts } from "../../../types/analysis.js";
-/** `cleared`: the sinks a partial sanitizer on the way made this value safe for. */
-type Taint = { line: number; path: Step[]; cleared?: ReadonlySet<SecurityCategory> };
+/** `pathSafe`: a file-name sanitizer on the way made this value safe for path-traversal sinks. */
+type Taint = { line: number; path: Step[]; pathSafe?: true };
 /** How deep calls into the file's own functions are followed. */
 const MAX_DEPTH = 2;
 
@@ -238,31 +238,28 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     return null;
   };
 
-  /** The sinks a partial sanitizer wrapping `n` whole makes it safe for. */
-  const partialOf = (n: Node): readonly SecurityCategory[] | null => {
-    for (const p of spec.partialSanitizers ?? []) if (p.call.test(n.text)) return p.clears;
-    return null;
-  };
+  /** Whether `text` starts with a file-name sanitizer call. */
+  const isFileName = (text: string): boolean => (spec.fileNameSanitizers ?? []).some((p) => p.call.test(text));
+  const partialOf = (n: Node): boolean => isFileName(n.text);
+  const isPartial = (callee: string): boolean => isFileName(`${callee}(`);
   /**
-   * `from` as the value of `n`, with what partial sanitizers cleared on the way: one wrapping `n` whole,
-   * or ones inside it that every tainted part passes through (`path.join(root, path.basename(name))`).
+   * `from` as the value of `n`, path-safe when a file-name sanitizer wraps `n` whole, or sits inside it
+   * with every tainted part passing through (`path.join(root, path.basename(name))`).
    */
   const through = (from: Taint | null, n: Node): Taint | null => {
-    if (!from || !spec.partialSanitizers?.length) return from;
-    let clears: readonly SecurityCategory[] | null = partialOf(n);
-    if (!clears) {
-      const inner: Array<readonly SecurityCategory[]> = [];
+    if (!from || !spec.fileNameSanitizers?.length) return from;
+    let safe = partialOf(n);
+    if (!safe) {
+      let inner = false;
       const collect = (c: Node): void => {
-        const kinds = spec.call(c) ? partialOf(c) : null;
-        if (kinds) inner.push(kinds);
+        if (spec.call(c) && partialOf(c)) inner = true;
         else for (const k of c.namedChildren) collect(k);
       };
       collect(n);
-      if (inner.length && isTainted(codeText(n, true)) === null) clears = inner.reduce((a, b) => a.filter((k) => b.includes(k)));
+      safe = inner && isTainted(codeText(n, true)) === null;
     }
-    return clears?.length ? { ...from, cleared: new Set([...(from.cleared ?? []), ...clears]) } : from;
+    return safe ? { ...from, pathSafe: true } : from;
   };
-  const isPartial = (callee: string): boolean => (spec.partialSanitizers ?? []).some((p) => p.call.test(`${callee}(`));
   /**
    * A node's text with string literal contents left out and interpolations
    * kept (`"… WHERE name = %s"` names no variable, `f"… {name}"` does), and
@@ -318,7 +315,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       if (from) into.set(param, { ...from, path: [...from.path, { line, note: `passed to ${call.callee}() as ${param}` }] });
     });
     if (into.size === 0) return null;
-    const key = `${target.fn.id}\u0000${[...into].map(([p, t]) => `${p}${t.cleared ? `/${[...t.cleared].sort().join("+")}` : ""}`).sort().join(",")}`;
+    const key = `${target.fn.id}\u0000${[...into].map(([p, t]) => `${p}${t.pathSafe ? "/safe" : ""}`).sort().join(",")}`;
     const memo = ctx.summaries.get(key);
     if (memo) return memo;
     const ret = { out: null as Taint | null };
@@ -377,7 +374,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
         const arg = c.args[sink.arg ?? 0];
         if (!arg || spec.sanitizer.test(arg.text)) continue;
         const from = through(isTainted(codeText(arg)), arg);
-        if (from === null || from.cleared?.has(sink.category)) continue;
+        if (from === null || (from.pathSafe && sink.category === "path-traversal")) continue;
         const line = node.startPosition.row + 1;
         const sinkNote = `reaches ${sink.what} of ${c.callee}()`;
         const flow = from.path[from.path.length - 1]?.line === line
