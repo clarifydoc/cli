@@ -1114,15 +1114,25 @@ export function extractCallsFromBody(
   const calls: CallInfo[] = [];
   const add = callRecorder(calls);
   const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
+  // Each pattern as a global one, made once for this body and not once a line:
+  // a search that runs to its end leaves the pattern where the next line starts.
+  let globals: RegExp[] | undefined;
+  const globalOf = (k: number): RegExp => {
+    globals ??= extraCallPatterns.map((cp) => new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g"));
+    const re = globals[k]!;
+    re.lastIndex = 0;
+    return re;
+  };
 
   const scanLine = (raw: string, i: number, offset: number): void => {
     const line = blankStringLiterals(raw, commentPrefixes);
     // Text a language pattern already read as a call (`CommentView::read(`).
     const matched: Array<[number, number]> = [];
     // Language-specific call patterns first (they produce more-qualified names)
-    for (const cp of extraCallPatterns) {
+    for (let k = 0; k < extraCallPatterns.length; k++) {
+      const cp = extraCallPatterns[k]!;
       if (cp.notAfter && offset === 0 && i > 0 && cp.notAfter.test(blankStringLiterals(lines[i - 1] ?? "", commentPrefixes))) continue;
-      const re = new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g");
+      const re = globalOf(k);
       let pm: RegExpExecArray | null;
       while ((pm = re.exec(line)) !== null) {
         const built = cp.buildName(pm, raw);
