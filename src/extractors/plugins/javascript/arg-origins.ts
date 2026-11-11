@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { FUNCTION_NODE } from "../../shared/node-helpers.js";
 import type { CallArgOrigin, ValueStep } from "../../../types/analysis.js";
 
 /**
@@ -480,7 +481,7 @@ function routeObject(n: Node, depth: number): boolean {
 function requestObject(n: Node): boolean {
   if (n.type !== "identifier") return false;
   for (let fn: Node | null = n.parent; fn; fn = fn.parent) {
-    if (!FUNCTION_NODES.has(fn.type)) continue;
+    if (!FUNCTION_NODE.test(fn.type)) continue;
     const single = fn.childForFieldName("parameter");
     const params = single ? [single] : fn.childForFieldName("parameters")?.namedChildren.filter((p): p is Node => !!p && p.type !== "comment") ?? [];
     for (const p of params) {
@@ -504,7 +505,6 @@ function routerObject(n: Node): boolean {
   return false;
 }
 
-const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
 const SCOPE_NODES = new Set(["statement_block", "program", "class_body"]);
 
 /**
@@ -514,7 +514,7 @@ const SCOPE_NODES = new Set(["statement_block", "program", "class_body"]);
  */
 function paramOf(at: Node, name: string): Found | null {
   for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
-    if (!FUNCTION_NODES.has(fn.type)) continue;
+    if (!FUNCTION_NODE.test(fn.type)) continue;
     const single = fn.childForFieldName("parameter");
     if (single?.type === "identifier") {
       if (single.text === name) {
@@ -643,7 +643,7 @@ function propsObject(n: Node, depth: number): boolean {
 /** The innermost function declaring `name` as a parameter, its position, and whether it is the whole parameter. */
 function paramSite(at: Node, name: string): { fn: Node; index: number; plain: boolean } | null {
   for (let fn: Node | null = at.parent; fn; fn = fn.parent) {
-    if (!FUNCTION_NODES.has(fn.type)) continue;
+    if (!FUNCTION_NODE.test(fn.type)) continue;
     const single = fn.childForFieldName("parameter");
     if (single?.type === "identifier") {
       if (single.text === name) return { fn, index: 0, plain: true };

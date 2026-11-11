@@ -9,7 +9,7 @@ Utilities used by multiple language plugins. If something's only used by one lan
 | [call-graph.ts](call-graph.ts) | `extractCalls`, `extractTopLevelCalls`, `classifyCalls`, `extractVariableAliases` | all tree-sitter plugins |
 | [call-patterns.ts](call-patterns.ts) | `isApiCall`, `isDatabaseCall` (per-language roots pushed in by the registry from plugin metas) | `classifyCalls`, `plugins/javascript/data-sources` |
 | [link-scoring.ts](link-scoring.ts) | `buildLinkGraph`, `resolveTarget`, `buildFilePathMap` | `core/analyzer.ts`, `core/symbol-linker.ts` |
-| [node-helpers.ts](node-helpers.ts) | `getVisibility`, `getNameFromNode`, `getCallName`, `stripQuotes`, decorator extractors | all tree-sitter plugins |
+| [node-helpers.ts](node-helpers.ts) | `getVisibility`, `getNameFromNode`, `getCallName`, `stripQuotes`, `literalString` (through `as const`/`satisfies`/parens/`!`), `FUNCTION_NODE`, `enclosingFunctionNode`, `paramNames`, decorator extractors | all tree-sitter plugins |
 | [builtin-types.ts](builtin-types.ts) | `isBuiltinType` (per-language sets pushed in by the registry from plugin metas), `COMMON_PRIMITIVES` | `type-parser`, `core/type-reference-extractor.ts` |
 | [destructuring.ts](destructuring.ts) | `destructuredProps`, `patternBindings` — a destructuring parameter named by its pattern (`{ table, onRemove: remove }`): the props it takes, the names it binds | `core/file-analyzer` (a call shadowed by a parameter), `plugins/javascript/dispatch` (prop callbacks) |
 | [type-ref-helpers.ts](type-ref-helpers.ts) | `emitParsed`, `findChildByType`, `lineOf` | `plugins/<lang>/type-references.ts` walkers |

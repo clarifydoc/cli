@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { ProxyRule } from "../../../types/analysis.js";
+import { literalString } from "../../shared/node-helpers.js";
 import { jsBaseRefOf } from "./service-config.js";
 import { isHttpTarget, prefixOfPattern, rewritePrefix } from "../shared/proxy-kit.js";
 
@@ -22,12 +23,7 @@ function keyOf(pair: Node): string | null {
   return null;
 }
 
-function stringValue(node: Node | null | undefined): string | null {
-  if (!node) return null;
-  if (node.type === "string") return node.text.slice(1, -1);
-  if (node.type === "template_string" && !node.namedChildren.some((c) => c?.type === "template_substitution")) return node.text.slice(1, -1);
-  return null;
-}
+const stringValue = (node: Node | null | undefined): string | null => literalString(node);
 
 function pairsOf(obj: Node): Map<string, Node> {
   const out = new Map<string, Node>();

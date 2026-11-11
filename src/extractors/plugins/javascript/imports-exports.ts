@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/base.js";
-import { stripQuotes } from "../../shared/node-helpers.js";
+import { FUNCTION_NODE, stripQuotes } from "../../shared/node-helpers.js";
 import { spawnImports } from "../shared/process-spawns.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { wrappedDefaultName } from "./wrapped-functions.js";
@@ -582,9 +582,6 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
 }
 
 /** `require("./x")` → `./x`; anything else → null. */
-/** A node whose body runs when it is called, not when the file loads. */
-const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration|generator_function)$/;
-
 /** `module.exports = function kickoff() {…}` / `= class Kickoff {…}` / `= kickoff` → `kickoff`; anything else → null. */
 function cjsDefaultName(node: Node | null): string | null {
   if (node?.type !== "assignment_expression" || node.childForFieldName("left")?.text.replace(/\s+/g, "") !== "module.exports") return null;

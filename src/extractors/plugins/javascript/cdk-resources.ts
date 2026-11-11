@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DeployedResourceFact, DeployedServiceKind } from "../../../types/analysis.js";
-import { stripQuotes } from "../../shared/node-helpers.js";
+import { literalString, stripQuotes } from "../../shared/node-helpers.js";
 
 /**
  * AWS CDK constructs as deployment evidence — what a stack creates and how it
@@ -28,7 +28,7 @@ const CONSTRUCTS: Array<{ re: RegExp; kind: DeployedServiceKind; family: string;
 ];
 
 const args = (n: Node): Node[] => n.childForFieldName("arguments")?.namedChildren ?? [];
-const str = (n: Node | null | undefined): string | null => (n && (n.type === "string" || (n.type === "template_string" && !n.text.includes("${"))) ? stripQuotes(n.text) : null);
+const str = (n: Node | null | undefined): string | null => literalString(n);
 function propOf(obj: Node | null | undefined, key: string): Node | null {
   for (const p of obj?.type === "object" ? obj.namedChildren : []) {
     if (p.type === "pair" && stripQuotes(p.childForFieldName("key")?.text ?? "") === key) return p.childForFieldName("value");

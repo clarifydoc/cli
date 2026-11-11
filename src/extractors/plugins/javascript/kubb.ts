@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FileAnalysis, FunctionInfo, GeneratedClientConfig, RouteInfo } from "../../../types/analysis.js";
+import { literalString } from "../../shared/node-helpers.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { ProjectApiCall } from "../../data-sources/base.js";
 
@@ -57,12 +58,7 @@ function pairsOf(obj: Node): Map<string, Node> {
   return out;
 }
 
-function stringOf(node: Node | null | undefined): string | null {
-  if (!node) return null;
-  if (node.type === "string") return node.text.slice(1, -1);
-  if (node.type === "template_string" && !node.namedChildren.some((c) => c?.type === "template_substitution")) return node.text.slice(1, -1);
-  return null;
-}
+const stringOf = (node: Node | null | undefined): string | null => literalString(node);
 
 /** `x: 'dir'` or `x: { path: 'dir' }` — Kubb has spelled both. */
 function pathOf(node: Node | undefined): string | null {

@@ -41,6 +41,7 @@ app.post(
 );
 mountProgress(app, "/api/clubs/:id/progress");
 mountProgress(app, "/api/players/:id/progress");
+mountProgress(app, ("/api/seasons/:id/progress" as const));
 app.listen(3000);
 `,
   "web/package.json": JSON.stringify({ name: "league-web", dependencies: { react: "18.0.0", axios: "1.6.0" } }),
@@ -92,6 +93,7 @@ describe("Express route shapes", () => {
       "GET /api/clubs/:id/progress",
       "GET /api/fixtures",
       "GET /api/players/:id/progress",
+      "GET /api/seasons/:id/progress",
     ]);
   });
 

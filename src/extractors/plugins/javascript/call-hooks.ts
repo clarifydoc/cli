@@ -6,6 +6,7 @@ import { receiverTypeOfCall } from "./di.js";
 import { signalReceiverTypeOfCall } from "./signal-receivers.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
 import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember, recordCallee } from "./dispatch-maps.js";
+import { enclosingFunctionNode, FUNCTION_NODE, paramNames } from "../../shared/node-helpers.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
@@ -240,9 +241,6 @@ const SENDER = /send|emit|broadcast|publish|notify/i;
 const BARE_SENDER = new Set(["send", "emit", "$emit", "publish", "notify", "broadcast"]);
 const EVENT_NAME = /^['"][\w.:-]+['"]$/;
 
-/** Function-like nodes whose parameters an argument may name. */
-const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"]);
-
 /**
  * A function call handing something on (`useStore("club", store, api.clubs)`,
  * `useStoreActions(key, api)` where `api` is the enclosing function's own
@@ -298,18 +296,8 @@ function callbackTarget(arg: Node): string {
 
 /** Names the innermost enclosing function binds as parameters (`(key, api, { page })`). */
 function enclosingParams(node: Node): Set<string> {
-  const out = new Set<string>();
-  let fn: Node | null = node.parent;
-  while (fn && !FUNCTION_NODES.has(fn.type)) fn = fn.parent;
-  if (!fn) return out;
-  const single = fn.childForFieldName("parameter");
-  if (single?.type === "identifier") out.add(single.text);
-  for (const p of fn.childForFieldName("parameters")?.namedChildren ?? []) {
-    const pattern = p?.childForFieldName("pattern") ?? p;
-    const name = pattern?.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
-    if (name?.type === "identifier") out.add(name.text);
-  }
-  return out;
+  const fn = enclosingFunctionNode(node);
+  return new Set(fn ? paramNames(fn).filter(Boolean) : []);
 }
 
 /**

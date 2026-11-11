@@ -1,4 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
+import { literalString } from "../../shared/node-helpers.js";
 import type { ContextValue } from "../../../types/analysis.js";
 
 /**
@@ -73,8 +74,5 @@ function contextValueOf(call: Node): ContextValue | null {
 
 /** `'transferPlayer'`, `"transferPlayer"`, `` `transferPlayer` `` (no substitution). */
 function literalKey(arg: Node | undefined): string | null {
-  if (!arg) return null;
-  if (arg.type === "string") return arg.text.slice(1, -1) || null;
-  if (arg.type === "template_string" && !arg.namedChildren.some((c) => c?.type === "template_substitution")) return arg.text.slice(1, -1) || null;
-  return null;
+  return literalString(arg) || null;
 }

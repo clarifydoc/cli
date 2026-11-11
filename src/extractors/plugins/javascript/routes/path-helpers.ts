@@ -1,7 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
-import { stripQuotes } from "../../../shared/node-helpers.js";
+import { enclosingFunctionNode, literalString, paramNames } from "../../../shared/node-helpers.js";
 
 /**
  * A helper handed the router and the path, registering the route itself:
@@ -61,9 +61,7 @@ export function collectPathHelperCalls(root: Node, sourceText: string, facts: Ro
     if (!callee || NOT_HELPERS.has(callee)) continue;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
     if (!args.some((a) => a.type === "identifier" && (ROUTER_ARG.test(a.text) || made.has(a.text.toLowerCase())))) continue;
-    const literal = (a: Node): string | null =>
-      (a.type === "string" || (a.type === "template_string" && !a.namedChildren.some((c) => c.type === "template_substitution"))) ? stripQuotes(a.text) : null;
-    const values = args.map(literal);
+    const values = args.map((a) => literalString(a));
     if (!values.some((v) => v !== null && v.startsWith("/"))) continue;
     facts.push({ kind: PATH_HELPER_CALL, line: call.startPosition.row + 1, data: { callee, args: values } satisfies PathHelperCall });
   }
@@ -71,20 +69,12 @@ export function collectPathHelperCalls(root: Node, sourceText: string, facts: Ro
 
 /** The function `node` sits in and its parameter names, for a route whose path is one of them. */
 export function enclosingFunction(node: Node): { name: string; params: string[] } | null {
-  for (let n: Node | null = node.parent; n; n = n.parent) {
-    if (!/^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration)$/.test(n.type)) continue;
-    const named = n.childForFieldName("name")?.text
-      ?? (n.parent?.type === "variable_declarator" ? n.parent.childForFieldName("name")?.text : undefined)
-      ?? (n.parent?.type === "pair" ? n.parent.childForFieldName("key")?.text : undefined);
-    if (!named) return null;
-    const params = (n.childForFieldName("parameters")?.namedChildren ?? (n.childForFieldName("parameter") ? [n.childForFieldName("parameter")!] : []))
-      .map((p) => {
-        const id = p.type === "identifier" ? p : p.childForFieldName("pattern") ?? p.childForFieldName("left") ?? p.namedChildren.find((c) => c.type === "identifier");
-        return id?.type === "identifier" ? id.text : "";
-      });
-    return { name: named, params };
-  }
-  return null;
+  const n = enclosingFunctionNode(node);
+  if (!n) return null;
+  const named = n.childForFieldName("name")?.text
+    ?? (n.parent?.type === "variable_declarator" ? n.parent.childForFieldName("name")?.text : undefined)
+    ?? (n.parent?.type === "pair" ? n.parent.childForFieldName("key")?.text : undefined);
+  return named ? { name: named, params: paramNames(n) } : null;
 }
 
 /** Serves each helper's route at the paths its calls hand it. */

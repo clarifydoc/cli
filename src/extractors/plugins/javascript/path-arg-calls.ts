@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { PathArgCall } from "../../../types/analysis.js";
-import { stripQuotes } from "../../shared/node-helpers.js";
+import { enclosingFunctionNode, FUNCTION_NODE, paramNames, stripQuotes } from "../../shared/node-helpers.js";
 
 /** Cheap gate: some call takes a string/template starting with `/` (or `./`, `api/`, `${BASE}/`…) as an argument. */
 const PATH_ARGUMENT = /[(,]\s*(?:['"`](?:\/[\w-]|[.]?[\w-]+\/)|`\$\{[\w$.]+\}(?:\/[\w-]|[\w-]+\/))/;
@@ -105,15 +105,8 @@ const URL_PARAM = /^(?:url|uri|path|endpoint|route|href|\w+(?:Url|Uri|Path|Endpo
 
 /** The URL-named parameters of the function a call sits in. */
 function urlParamsOf(call: Node): Set<string> {
-  let fn: Node | null = call.parent;
-  while (fn && !/^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration)$/.test(fn.type)) fn = fn.parent;
-  const params = fn?.childForFieldName("parameters") ?? fn?.childForFieldName("parameter");
-  const out = new Set<string>();
-  for (const p of params?.type === "identifier" ? [params] : params?.namedChildren ?? []) {
-    const name = p?.type === "identifier" ? p.text : p?.childForFieldName("left")?.text ?? p?.childForFieldName("pattern")?.text;
-    if (name && URL_PARAM.test(name)) out.add(name);
-  }
-  return out;
+  const fn = enclosingFunctionNode(call);
+  return new Set(fn ? paramNames(fn).filter((name) => URL_PARAM.test(name)) : []);
 }
 
 /**
@@ -195,8 +188,6 @@ function localString(fn: Node, call: Node, id: string): string | null {
   }
   return count === 1 ? found : null;
 }
-
-const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration)$/;
 
 /** A string, or a template as written (its substitutions kept as `${…}` holes); anything else null. */
 function literalArg(node: Node): string | null {

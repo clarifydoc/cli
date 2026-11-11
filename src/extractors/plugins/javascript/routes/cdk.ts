@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
-import { stripQuotes } from "../../../shared/node-helpers.js";
+import { literalString, stripQuotes } from "../../../shared/node-helpers.js";
 import { joinRelPath, lambdaModuleHandler } from "../../shared/lambda-handlers.js";
 
 /**
@@ -53,7 +53,7 @@ const propOfRaw = (obj: Node | null | undefined, key: string): Node | null => {
 };
 const propOf = propOfRaw;
 const args = (call: Node): Node[] => call.childForFieldName("arguments")?.namedChildren ?? [];
-const str = (n: Node | null | undefined): string | null => (n && (n.type === "string" || (n.type === "template_string" && !n.text.includes("${"))) ? stripQuotes(n.text) : null);
+const str = (n: Node | null | undefined): string | null => literalString(n);
 
 /** A path expression: a literal (the app's working directory), or `path.join(__dirname, …)` / `` `${__dirname}/…` `` (the file's). */
 function pathOf(n: Node | null): { rel: string; base: "file" | "cwd" } | null {

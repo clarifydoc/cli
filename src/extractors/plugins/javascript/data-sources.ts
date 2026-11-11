@@ -9,7 +9,7 @@ import { resolveUrlBuilders } from "./url-builders.js";
 import { dropCollectionLookups } from "./collection-lookups.js";
 import { confirmImportedClients } from "./imported-clients.js";
 import { extractCalls } from "../../shared/call-graph.js";
-import { stripQuotes } from "../../shared/node-helpers.js";
+import { literalString as sharedLiteralString, stripQuotes } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
 import { astToValueExpr, buildScope } from "./value-capture.js";
@@ -2229,30 +2229,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
  * value isn't a literal (e.g. `url: getXUrl().url.toString()`).
  */
 function literalString(node: Node | null): string | null {
-  let n = node;
-  while (n) {
-    if (
-      n.type === "as_expression" ||
-      n.type === "satisfies_expression" ||
-      n.type === "parenthesized_expression" ||
-      n.type === "non_null_expression"
-    ) {
-      n = n.namedChild(0);
-      continue;
-    }
-    // `` `/users/{id}`.replace('{id}', id) `` — the literal before the
-    // substitution is the template; its `{id}` stays a parameter.
-    const fn = n.type === "call_expression" ? n.childForFieldName("function") : null;
-    if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "replace") {
-      n = fn.childForFieldName("object");
-      continue;
-    }
-    break;
-  }
-  if (n && (n.type === "string" || n.type === "template_string")) {
-    return stripQuotes(n.text);
-  }
-  return null;
+  return sharedLiteralString(node, { holes: true, replace: true });
 }
 
 /** Value node of `obj`'s property named `key` (handles bare and quoted keys). */

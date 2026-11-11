@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { literalString } from "../../../shared/node-helpers.js";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
@@ -34,8 +35,7 @@ export interface ScreenSwitchFact {
   bindLine?: number;
 }
 
-const stringValue = (n: Node | null): string | null =>
-  n && n.type === "string" ? n.text.slice(1, -1) : n && n.type === "template_string" && !n.text.includes("${") ? n.text.slice(1, -1) : null;
+const stringValue = (n: Node | null): string | null => literalString(n);
 
 /** `const routes = [{ path: '/home', screen: 'Home' }, …]` at the top level: the table, when two entries or more name a screen. */
 export function collectScreenTables(root: Node, sourceText: string, facts: RouteFact[]): void {

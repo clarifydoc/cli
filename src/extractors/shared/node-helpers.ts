@@ -12,6 +12,54 @@ export function stripQuotes(s: string): string {
   return s;
 }
 
+/** A node whose body runs when it is called, not when the file loads (JS/TS grammars). */
+export const FUNCTION_NODE = /^(?:function_declaration|function_expression|function|arrow_function|method_definition|generator_function_declaration|generator_function)$/;
+
+/** The function (or method, arrow, callback) `node` sits in; null at module level. */
+export function enclosingFunctionNode(node: Node): Node | null {
+  let fn: Node | null = node.parent;
+  while (fn && !FUNCTION_NODE.test(fn.type)) fn = fn.parent;
+  return fn;
+}
+
+/** The names a function binds as parameters, in order (a destructured one is a blank). */
+export function paramNames(fn: Node): string[] {
+  const single = fn.childForFieldName("parameter");
+  if (single) return [single.text];
+  return (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p): p is Node => !!p && p.type !== "comment").map((p) => {
+    const pattern = p.childForFieldName("pattern") ?? p;
+    const name = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
+    return name?.type === "identifier" ? name.text : "";
+  });
+}
+
+/** `x as T`, `x satisfies T`, `(x)`, `x!` — the expression underneath (the node itself when it wraps nothing). */
+export function unwrapExpression(node: Node | null): Node | null {
+  let n = node;
+  while (n && (n.type === "as_expression" || n.type === "satisfies_expression" || n.type === "parenthesized_expression" || n.type === "non_null_expression")) {
+    n = n.namedChild(0);
+  }
+  return n;
+}
+
+/**
+ * The text of a string literal, through `as const` / `satisfies` / parentheses / `!`; null when
+ * the value is not a literal. A template with a substitution is null unless `holes` keeps it as
+ * written; `replace` also looks through a template's `.replace('{id}', id)` call to the template.
+ */
+export function literalString(node: Node | null | undefined, opts: { holes?: boolean; replace?: boolean } = {}): string | null {
+  let n: Node | null = unwrapExpression(node ?? null);
+  while (n && opts.replace && n.type === "call_expression") {
+    const fn = n.childForFieldName("function");
+    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "replace") break;
+    n = unwrapExpression(fn.childForFieldName("object"));
+  }
+  if (!n) return null;
+  if (n.type === "string") return stripQuotes(n.text);
+  if (n.type === "template_string" && (opts.holes || !n.namedChildren.some((c) => c?.type === "template_substitution"))) return stripQuotes(n.text);
+  return null;
+}
+
 /** Determine access visibility from a node's text or children. */
 export function getVisibility(
   node: Node,

@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { BusEventSite, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { FUNCTION_NODE, paramNames } from "../../shared/node-helpers.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { EMITTER_NAME_RE } from "./data-sources.js";
 import { innermostAt, spansOf, type SymbolSpan } from "./dispatch.js";
@@ -11,7 +12,6 @@ const BUS_METHODS = new Map([["emit", "emit"], ["$emit", "emit"], ["on", "listen
 const CREATES_BUS = /^(?:mitt|createNanoEvents|emitter)\s*\(|^new\s+(?:\w+\.)?(?:EventEmitter\d*|Vue|TinyEmitter|Emitter)\s*\(/;
 /** A constant's name: `CMD_RELOAD`, `LEAGUE_EVENTS.CLUB_SAVED`. */
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
-const FUNCTION_NODES = new Set(["function_declaration", "generator_function_declaration", "function_expression", "function", "generator_function", "arrow_function", "method_definition"]);
 
 /**
  * The calls a file makes on an app-wide event bus (`FileAnalysis.busEvents`):
@@ -62,7 +62,7 @@ export function busEvents(tree: Tree, sourceText: string): BusEventSite[] {
   /** `#n` when `name` is parameter n of the named function enclosing `at` (its name in `within`). */
   const paramOf = (name: string, at: Node): { ref: string; within: string } | null => {
     for (let fn = at.parent; fn; fn = fn.parent) {
-      if (!FUNCTION_NODES.has(fn.type)) continue;
+      if (!FUNCTION_NODE.test(fn.type)) continue;
       const index = paramNames(fn).indexOf(name);
       if (index < 0) continue;
       const within = functionName(fn);
@@ -133,17 +133,6 @@ function literalText(n: Node): string | null {
   if (n.type !== "string" && !(n.type === "template_string" && !n.text.includes("${"))) return null;
   const value = n.text.slice(1, -1);
   return /^[\w:./-]{1,80}$/.test(value) ? value : null;
-}
-
-/** The names a function binds as parameters, in order (a destructured one is a blank). */
-function paramNames(fn: Node): string[] {
-  const single = fn.childForFieldName("parameter");
-  if (single) return [single.text];
-  return (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p): p is Node => !!p && p.type !== "comment").map((p) => {
-    const pattern = p.childForFieldName("pattern") ?? p;
-    const name = pattern.type === "assignment_pattern" ? pattern.childForFieldName("left") : pattern;
-    return name?.type === "identifier" ? name.text : "";
-  });
 }
 
 /** A function's own name, or the variable or member it is assigned to; null for an anonymous callback. */
