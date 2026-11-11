@@ -300,3 +300,78 @@ describe("C# accessors and chained constructors link", () => {
     expect(from("Giants.Giants")).toEqual(["new Club -> Club.Club@6 [constructor]"]);
   });
 });
+
+describe("construction without a written constructor call", () => {
+  const relations = (analyses: FileAnalysis[], from: string) =>
+    buildSymbolLinks(analyses)
+      .filter((l) => l.sourceFile === from && l.relation === "instantiates")
+      .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
+      .sort();
+
+  it("Java: `new Club()` with no declared constructor reaches the same-package class, never a namesake", async () => {
+    const analyses = await analyzeAll({
+      "com/example/league/Club.java": "package com.example.league;\npublic class Club { public String name; }\n",
+      "com/example/other/Club.java": "package com.example.other;\npublic class Club { public Club(int x) {} }\n",
+      "com/example/league/Main.java": "package com.example.league;\npublic class Main { void run() { Club c = new Club(); } }\n",
+    }, "java");
+    expect(relations(analyses, "com/example/league/Main.java")).toEqual(["new Club -> com/example/league/Club.java::Club"]);
+  });
+
+  it("Java: `super(...)` and `this(...)` reach the constructor the language runs", async () => {
+    const analyses = await analyzeAll({
+      "com/example/league/Base.java": "package com.example.league;\npublic class Base { public Base(String n) {} }\n",
+      "com/example/other/Base.java": "package com.example.other;\npublic class Base { public Base(String n) {} }\n",
+      "com/example/league/Derived.java": [
+        "package com.example.league;",
+        "public class Derived extends Base {",
+        "  public Derived() { this(\"x\"); }",
+        "  public Derived(String s) { super(s); }",
+        "}",
+        "",
+      ].join("\n"),
+    }, "java");
+    expect(relations(analyses, "com/example/league/Derived.java")).toEqual([
+      "new Base -> com/example/league/Base.java::Base.Base",
+      "new Derived -> com/example/league/Derived.java::Derived.Derived",
+    ]);
+  });
+
+  it("Go: a composite literal constructs its struct; a namesake package and a slice literal link nothing", async () => {
+    const analyses = await analyzeAll({
+      "models/club.go": "package models\ntype Club struct { Name string }\nfunc New() Club { return Club{} }\n",
+      "other/club.go": "package other\ntype Club struct { ID int }\n",
+      "svc/svc.go": "package svc\nimport \"example.com/league/models\"\nfunc Make() *models.Club { c := &models.Club{Name: \"x\"}; s := []string{\"a\"}; _ = s; return c }\n",
+    }, "go");
+    expect(relations(analyses, "svc/svc.go")).toEqual(["models.Club -> models/club.go::Club"]);
+  });
+
+  it("Rust: a struct expression constructs its struct, not `Club::new`; a match pattern constructs nothing", async () => {
+    const analyses = await analyzeAll({
+      "src/models.rs": "pub struct Club { pub name: String }\nimpl Club {\n    pub fn new() -> Club { Club { name: String::new() } }\n}\n",
+      "src/other.rs": "pub struct Club { pub id: u32 }\n",
+      "src/main.rs": "mod models;\nmod other;\nmod svc;\nfn main() {}\n",
+      "src/svc.rs": "use crate::models::Club;\npub fn make() -> Club { let c = Club { name: String::from(\"x\") }; c }\npub fn check(c: Club) -> bool { match c { Club { name } => name.is_empty() } }\n",
+    }, "rust");
+    expect(relations(analyses, "src/svc.rs")).toEqual(["Club -> src/models.rs::Club"]);
+  });
+});
+
+describe("struct literals of foreign or non-literal shape", () => {
+  it("Go: `http.Client{}` never reaches a project `Client`; `a && b {` and a rune holding a quote are read right", async () => {
+    const analyses = await analyzeAll({
+      "net/client.go": "package net\ntype Client struct { ID int }\ntype Garage struct { Cars int }\n",
+      "svc/svc.go": [
+        "package svc",
+        "import \"net/http\"",
+        "func Make(ok bool, Garage bool) {",
+        "  c := http.Client{}",
+        "  if ok && Garage {",
+        "  }",
+        "  q := '\"'; _ = q; _ = c",
+        "}",
+        "",
+      ].join("\n"),
+    }, "go");
+    expect(buildSymbolLinks(analyses).filter((l) => l.relation === "instantiates")).toEqual([]);
+  });
+});

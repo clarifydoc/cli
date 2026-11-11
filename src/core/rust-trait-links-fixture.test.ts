@@ -33,6 +33,8 @@ describe("Rust trait and impl links (sample-rust-traits)", () => {
       .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
       .sort();
     expect(fromMain).toEqual([
+      // The struct expression `ClubShow { … }` builds the struct itself.
+      "ClubShow -> app/src/main.rs::ClubShow",
       "ClubShow.with_query -> league/src/lib.rs::MatchPath.with_query",
       "Fixtures.new -> league/src/lib.rs::Fixtures.new",
       "Fixtures.new().add -> league/src/lib.rs::Fixtures.add",

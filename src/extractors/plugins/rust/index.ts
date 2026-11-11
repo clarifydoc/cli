@@ -1,3 +1,4 @@
+import { withStructLiteralCalls } from "../shared/struct-literals.js";
 import { markRustTests } from "./inline-tests.js";
 import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
@@ -71,6 +72,14 @@ function structLiteralReceivers(lines: string[], fns: FunctionInfo[]): FunctionI
   return fns;
 }
 
+/** A struct expression `Club { name }` / `league::Club { name }` constructs its struct (`shared/struct-literals.ts`). */
+const RUST_LITERALS = {
+  separator: "::",
+  capitalized: true,
+  leadWords: ["return", "=>", "break", "Some", "Ok", "Err"],
+  notTypes: new Set(["Self", "Some", "None", "Ok", "Err", "Box", "Vec", "Arc", "Rc", "Option", "Result"]),
+} as const;
+
 export const rustSpec: RegexLangSpec = {
   // `mod x;` / `#[path]` / `include!` — the module tree dead-code analysis
   // walks (see reachability.ts).
@@ -93,7 +102,12 @@ export const rustSpec: RegexLangSpec = {
   blockEnds: RUST_CODE.blockEnds,
   callSourceLines: RUST_CODE.callSourceLines,
   // `#[test]` functions and the helpers of a `#[cfg(test)]` module are test code (inline-tests.ts).
-  postProcessFunctions: (lines, fns) => markRustTests(lines, structLiteralReceivers(lines, fns), RUST_CODE.blockEnds),
+  postProcessFunctions: (lines, fns) => markRustTests(lines, withStructLiteralCalls(lines, structLiteralReceivers(lines, fns), RUST_LITERALS, "//"), RUST_CODE.blockEnds),
+  // The methods of an `impl` block build struct literals too.
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) withStructLiteralCalls(lines, cls.methods, RUST_LITERALS, "//");
+    return classes;
+  },
 
   parseParam: parseRustParam,
   parseReturnType: parseRustReturnType,

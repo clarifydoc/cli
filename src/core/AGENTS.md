@@ -1,5 +1,6 @@
 # src/core — Analysis pipeline & analyzers
 
+- **Construction without a written constructor call.** A struct literal (`CallInfo.construction: "literal"` — Go `Club{…}`, Rust `Club { … }`, added by [plugins/shared/struct-literals.ts](../extractors/plugins/shared/struct-literals.ts) in expression position only; slice/map literals and match patterns are not) links `instantiates` to the struct itself and never to a `New`/`new` function (`constructionLink`, Strategy 5's `literal`). Java `this(…)`/`super(…)` are the calls `new <ownClass>` / `new <superclass>` (the Java plugin's `explicit_constructor_invocation`), settled by argument kinds like any construction. A bare type name in a package-scoped language (`importsDeclaredPackages`) is the class its own package declares before any namesake (`typeFileFor`), so `new Club()` beside a same-named class elsewhere links the right one.
 The analysis pipeline orchestrator and all cross-file analyzers live here. Pure functions in / out — no tree-sitter parsing happens at this layer (that's delegated to extractors).
 
 **Core is language-agnostic.** Anything per-language — extensions, parse

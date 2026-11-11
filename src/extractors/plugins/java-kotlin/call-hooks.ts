@@ -19,6 +19,7 @@ import { javaArgKinds, javaOverloadTypeKey, kotlinArgKinds, kotlinOverloadTypeKe
  * (controller→service→dao), so traces never reached the data layer.
  */
 function resolveJvmCallName(node: Node): string | null {
+  if (node.type === "explicit_constructor_invocation") return chainedConstructorName(node);
   if (node.type === "method_invocation") {
     const nameNode = node.childForFieldName("name");
     const obj = node.childForFieldName("object");
@@ -35,6 +36,27 @@ function resolveJvmCallName(node: Node): string | null {
     }
   }
   return genericResolveCallName(node);
+}
+
+/**
+ * `this(…)` / `super(…)` at the head of a constructor runs another constructor: the same class's, or the
+ * superclass's. Named as the construction `new Club` / `new Base` the linker settles by argument kinds. An
+ * outer-instance `outer.super(…)`, an enum or record (no `extends`) and a class extending nothing name none.
+ */
+function chainedConstructorName(node: Node): string | null {
+  if (node.childForFieldName("object")) return null;
+  const keyword = node.childForFieldName("constructor")?.type ?? node.children.find((c) => c.type === "this" || c.type === "super")?.type;
+  let cls: Node | null = node.parent;
+  while (cls && cls.type !== "class_declaration" && cls.type !== "enum_declaration" && cls.type !== "record_declaration") cls = cls.parent;
+  if (!cls || cls.type !== "class_declaration") return null;
+  if (keyword === "this") {
+    const name = cls.childForFieldName("name")?.text;
+    return name ? `new ${name}` : null;
+  }
+  if (keyword !== "super") return null;
+  const base = cls.childForFieldName("superclass")?.namedChildren.find((c) => c.type !== "line_comment" && c.type !== "block_comment");
+  const text = base?.text.replace(/<[\s\S]*$/, "").replace(/\s+/g, "");
+  return text && /^[\w.]+$/.test(text) ? `new ${text}` : null;
 }
 
 /**
@@ -147,7 +169,7 @@ function lookupType(recv: Node): { type: string; qualifier?: string } | null {
 export const javaCallHooks: CallExtractionHooks = {
   // No default parameters: a call's argument count must fit a declared method.
   strictArity: true,
-  callNodeTypes: new Set(["method_invocation", "object_creation_expression"]),
+  callNodeTypes: new Set(["method_invocation", "object_creation_expression", "explicit_constructor_invocation"]),
   nestedScopeTypes: JAVA_NESTED_SCOPE_TYPES,
   // A lambda passed as an argument (`orders.forEach(o -> repo.save(o))`,
   // `stream().map(x -> mapper.toDto(x))`) runs on behalf of the method that

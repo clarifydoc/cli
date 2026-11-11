@@ -1,3 +1,4 @@
+import { withStructLiteralCalls } from "../shared/struct-literals.js";
 import { extractGoPathArgCalls } from "./path-arg-calls.js";
 import { goFuncVars, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoModuleValues } from "./module-values.js";
@@ -120,6 +121,14 @@ function withGoDeclaredReturns(lines: string[], fns: FunctionInfo[]): FunctionIn
   return fns;
 }
 
+/** A composite literal `Club{…}` / `&models.Club{…}` constructs its struct (`shared/struct-literals.ts`). */
+const GO_LITERALS = {
+  separator: ".",
+  capitalized: false,
+  leadWords: ["return", "case"],
+  notTypes: new Set(["struct", "interface", "map", "func", "chan", "var", "type", "if", "for", "switch", "else", "select", "go", "defer", "range"]),
+} as const;
+
 export const goSpec: RegexLangSpec = {
   language: "go",
   extensions: [".go"],
@@ -174,8 +183,9 @@ export const goSpec: RegexLangSpec = {
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
   // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
   // Where each call's arguments come from (a parameter, a request read), for `paramColumns`.
-  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, fns))),
+  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, withStructLiteralCalls(lines, fns, GO_LITERALS, "//")))),
   postProcessClasses: (lines, classes) => {
+    for (const cls of classes) withStructLiteralCalls(lines, cls.methods, GO_LITERALS, "//");
     for (const cls of classes) withGoDeclaredReturns(lines, cls.methods);
     return withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes));
   },

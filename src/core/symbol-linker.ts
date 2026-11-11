@@ -1327,6 +1327,14 @@ function ownConstructor(cls: ClassInfo, language: string | undefined, spelledNew
  * without calling it (no arguments are read), so it stays on the class.
  */
 function constructionLink(link: SymbolLink, call: CallInfo, ctx: LinkContext): SymbolLink {
+  // A struct literal builds the struct itself: no constructor function runs, whatever `new`/`New` the type declares.
+  if (call.construction === "literal") {
+    const built = ctx.classAt.get(memberKey(link.targetFile, link.targetSymbol));
+    const leaf = call.name.split(/\.|::/).pop();
+    return built && leaf === link.targetSymbol.split(/\.|::/).pop()
+      ? { ...link, strategy: "constructor", relation: relationForStrategy("constructor") }
+      : link;
+  }
   const spelledNew = /^new\s/i.test(call.name);
   if (call.argCount === undefined && !spelledNew) return link;
   const cls = ctx.classAt.get(memberKey(link.targetFile, link.targetSymbol));
@@ -5269,7 +5277,10 @@ function resolveCallToDefinitionBody(
   if (!def) {
     // `new App\Invoice` qualifies with PHP's `\` as `new a.b.C` does with `.`.
     // Type arguments name no class (`new Models.Box<int>`).
-    const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)(?:<.*>)?$/s);
+    // A struct literal (`Club{...}`, `Club { ... }`) names its type the same way, a path written with `::` as one with `.`.
+    const literal = call.construction === "literal";
+      const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)(?:<.*>)?$/s)
+      ?? (literal && /^[\w.:]+$/.test(call.name) ? [call.name, call.name.replace(/::/g, ".")] : null);
     const className = ctorMatch
       ? ctorMatch[1]!.split(/[.\\]/).pop()!
       : !isQualified
@@ -5287,41 +5298,41 @@ function resolveCallToDefinitionBody(
       }
       if (inPackage.length === 1) {
         const cls = inPackage[0]!.classes.find((c) => c.name === className)!;
-        const ctor = ownConstructor(cls, inPackage[0]!.language, true);
+        const ctor = ownConstructor(cls, inPackage[0]!.language, !literal);
         return mkLink(inPackage[0]!.filePath, ctor ? `${className}.${ctor.name}` : className, ctor?.line ?? cls.line, "INFERRED", "constructor");
       }
     }
     // `new Garage(4)` beside `class Garage` (or inside it): the calling file's own class, by name alone.
-    const own = ctorMatch && className ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
+    const own = ctorMatch && className && !(literal && qualifier) ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
     if (own) {
-      const ctor = ownConstructor(own, analysis.language, !!ctorMatch);
+      const ctor = ownConstructor(own, analysis.language, !!ctorMatch && !literal);
       return mkLink(sourceFile, ctor ? `${className}.${ctor.name}` : className!, ctor?.line ?? own.line, "EXTRACTED", "constructor");
     }
     // A class an import renames (`new Footballer()` for `use App\Models\Player as Footballer`,
     // Kotlin `Fixer()` for `import garage.Mechanic as Fixer`): the module's class, or nothing.
-    const imported = className ? importedTypeRef(ctx, className, sourceFile, analysis.projectId) : undefined;
+    const imported = className && !(literal && qualifier) ? importedTypeRef(ctx, className, sourceFile, analysis.projectId) : undefined;
     if (imported) {
       const cls = imported.typeFile ? ctx.classAt.get(memberKey(imported.typeFile, imported.typeName)) : undefined;
       if (!cls) return null;
-      const ctor = ownConstructor(cls, ctx.languageOf.get(imported.typeFile!), !!ctorMatch);
+      const ctor = ownConstructor(cls, ctx.languageOf.get(imported.typeFile!), !!ctorMatch && !literal);
       return mkLink(imported.typeFile!, ctor ? `${imported.typeName}.${ctor.name}` : imported.typeName, ctor?.line ?? cls.line, "INFERRED", "constructor");
     }
-    if (className) {
+    if (className && !(literal && qualifier)) {
       // `new Lap(…)` inside `LapLog`, which nests `LapLog::Lap`.
       const dot = sourceSymbol.indexOf(".");
       const nested = dot > 0 && !sourceSymbol.startsWith("route:") ? nestedTypeRef(ctx, sourceSymbol.slice(0, dot), className, sourceFile, false) : null;
       const nestedCls = nested ? ctx.classAt.get(memberKey(nested.typeFile, nested.typeName)) : undefined;
       if (nested && nestedCls) {
-        const ctor = ownConstructor(nestedCls, ctx.languageOf.get(nested.typeFile), !!ctorMatch);
+        const ctor = ownConstructor(nestedCls, ctx.languageOf.get(nested.typeFile), !!ctorMatch && !literal);
         return mkLink(nested.typeFile, ctor ? `${nested.typeName}.${ctor.name}` : nested.typeName, ctor?.line ?? nestedCls.line, "INFERRED", "constructor");
       }
       const entry = classEntryFor(classCatalog.get(className), sourceFile);
       // A name declared in several namespaces: the one the caller's namespace and usings reach.
-      if (entry && entry.count > 1 && manifestFor(analysis.language as Language)?.nestedPackageLookup) {
+      if (entry && entry.count > 1 && (manifestFor(analysis.language as Language)?.nestedPackageLookup || manifestFor(analysis.language as Language)?.importsDeclaredPackages)) {
         const file = typeFileFor(ctx, className, sourceFile, analysis.projectId);
         const cls = file ? ctx.classAt.get(memberKey(file, className)) : undefined;
         if (file && cls) {
-          const ctor = ownConstructor(cls, ctx.languageOf.get(file), !!ctorMatch);
+          const ctor = ownConstructor(cls, ctx.languageOf.get(file), !!ctorMatch && !literal);
           return mkLink(file, ctor ? `${className}.${ctor.name}` : className, ctor?.line ?? cls.line, "INFERRED", "constructor");
         }
       }
@@ -5331,8 +5342,8 @@ function resolveCallToDefinitionBody(
       if (entry && isSafeHeuristicTarget(entry, sourceFile, analysis.projectId, { allowCrossProject: true }) && !unboundAcrossModules(ctx, analysis, className, entry.file)) {
         return mkLink(
           entry.file,
-          entry.ctorSymbol ?? className,
-          entry.ctorLine ?? entry.classLine,
+          literal ? className : entry.ctorSymbol ?? className,
+          literal ? entry.classLine : entry.ctorLine ?? entry.classLine,
           "INFERRED",
           "constructor",
         );
@@ -8021,6 +8032,14 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
       && ctx.analysisByFile!.get(f)?.packageName === source.packageName && ctx.analysisByFile!.get(f)?.projectId === projectId
       && (sourceIsTest || !isTestFile(f, (ctx.languageOf.get(f) ?? source.language) as Language))));
     if (inPackage.length === 1) return inPackage[0]!;
+  }
+  // Where an import names the package a file declares (Java), a bare type no import names is the class the caller's
+  // own package declares: the compiler's rule, and a namesake of another package never.
+  if (source?.packageName && manifestFor(source.language as Language)?.importsDeclaredPackages && !manifestFor(source.language as Language)?.packageScope) {
+    const here = declaredFirst((ctx.classFiles.get(typeName) ?? []).filter((f) =>
+      f !== sourceFile && sameTypeSpace(sourceFile, ctx.languageOf.get(sourceFile) ?? "", f, ctx.languageOf.get(f) ?? "") && reachable(f)
+      && ctx.analysisByFile!.get(f)?.packageName === source.packageName && ctx.analysisByFile!.get(f)?.projectId === projectId));
+    if (here.length === 1) return here[0]!;
   }
   // A language whose types live in nested namespaces finds the name the compiler would.
   if (source && manifestFor(source.language as Language)?.nestedPackageLookup) {

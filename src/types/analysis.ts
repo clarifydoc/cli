@@ -1082,6 +1082,11 @@ export interface CallInfo {
    */
   boundLocally?: true;
   /**
+   * The name is a struct built by a literal, not called (Go `Club{…}`, Rust `Club { … }`): it constructs the
+   * struct itself and runs no function of the name — never a `new`/`New` associated function.
+   */
+  construction?: "literal";
+  /**
    * The name is handed on, not invoked here: an argument (`register(onSave)`), a JSX
    * attribute value (`onClick={saveClub}`, `renderItem={CarTile}`), a value the function
    * returns (`return { save, latest: loadLatest }`, `return [state, refresh]`), a value of a
