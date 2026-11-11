@@ -128,6 +128,37 @@ interface Ctx {
   guice: boolean;
   /** The file spells `module {` — scan for Koin modules. */
   koin: boolean;
+  /** The enclosing class's `@Profile` / `@Conditional*`, which its `@Bean` methods inherit. */
+  inherited?: DiBinding["conditional"];
+}
+
+/**
+ * What switches a bean on besides its mere presence: `@Profile("test")`,
+ * `@Profile({"a", "!b"})`, `@ConditionalOnProperty` and the other
+ * `@Conditional*` (not `@ConditionalOnMissingBean`, which is `ifAbsent`).
+ */
+function conditionOf(anns: Node[]): DiBinding["conditional"] | undefined {
+  let profiles: string[] | undefined;
+  let condition: string | undefined;
+  for (const a of anns) {
+    const n = annotationName(a);
+    if (!n) continue;
+    if (n === "Profile") profiles = [...(profiles ?? []), ...(annotationValues(a, ["value"]) ?? [])];
+    else if (n.startsWith("Conditional") && n !== "ConditionalOnMissingBean") condition ??= n;
+  }
+  if (!profiles && !condition) return undefined;
+  // Only negated profiles (`!prod`) are on unless named: the bean is a default, not a conditional extra.
+  if (profiles && !condition && profiles.length > 0 && profiles.every((x) => x.startsWith("!"))) return undefined;
+  const c: NonNullable<DiBinding["conditional"]> = {};
+  if (profiles && profiles.length > 0) c.profiles = profiles;
+  if (condition) c.condition = condition;
+  if (!c.profiles && !c.condition) c.condition = "Profile";
+  return c;
+}
+
+function withCondition(b: DiBinding, c: DiBinding["conditional"] | undefined): DiBinding {
+  if (c) b.conditional = c;
+  return b;
 }
 
 const CLASS_LIKE: ReadonlySet<string> = new Set([
@@ -144,7 +175,13 @@ function visitDeclarations(node: Node, ctx: Ctx): void {
     if (CLASS_LIKE.has(t)) {
       classBindings(child, ctx);
       const body = child.childForFieldName("body") ?? child.children.find((c) => BODY_TYPES.has(c.type));
-      if (body) visitDeclarations(body, ctx);
+      if (body) {
+        const outer = ctx.inherited;
+        // Only the class's own @Bean methods inherit — never a nested class's components.
+        ctx.inherited = conditionOf(annotationNodes(child));
+        visitDeclarations(body, ctx);
+        ctx.inherited = outer;
+      }
     } else if (BODY_TYPES.has(t) || t === "companion_object" || t === "program" || t === "source_file") {
       visitDeclarations(child, ctx);
     } else if (t === "method_declaration" || t === "function_declaration") {
@@ -198,6 +235,7 @@ function classBindings(node: Node, ctx: Ctx): void {
       (byName.has("Named") ? annotationValues(byName.get("Named")!, ["value"])?.[0] : undefined);
     const beanName = explicit || decapitalize(className);
     const primary = byName.has("Primary");
+    const cond = conditionOf(anns);
     const qualifierAnn = byName.get("Qualifier");
     const extra = qualifierAnn ? annotationValues(qualifierAnn, ["value"])?.[0] : undefined;
     for (const service of inherits ? [...services, ""] : services) {
@@ -205,11 +243,13 @@ function classBindings(node: Node, ctx: Ctx): void {
       // …and under an abstract base class: a bean is injected by any supertype.
       if (!service) Object.assign(b, { allInterfaces: true, abstractBases: true });
       if (primary) b.primary = true;
+      withCondition(b, cond);
       ctx.out.push(b);
       if (extra && extra !== beanName) {
         const q: DiBinding = { service, implementation: className, line, via: "@Qualifier", qualifier: extra };
         if (!service) Object.assign(q, { allInterfaces: true, abstractBases: true });
         if (primary) q.primary = true;
+        withCondition(q, cond);
         ctx.out.push(q);
       }
     }
@@ -287,10 +327,12 @@ function providerBindings(fn: Node, ctx: Ctx): void {
     const beanNames = annotationValues(bean, ["name", "value"]) ?? [];
     const primary = names.includes("Primary");
     const ifAbsent = names.includes("ConditionalOnMissingBean");
+    const cond = conditionOf(anns) ?? ctx.inherited;
     for (const qualifier of beanNames.length > 0 ? beanNames : [methodName]) {
       const b: DiBinding = { service, implementation, line, via: "@Bean", qualifier, matchesMemberName: true };
       if (primary) b.primary = true;
       if (ifAbsent) b.ifAbsent = true;
+      withCondition(b, cond);
       ctx.out.push(b);
     }
     const q = anns.find((a) => annotationName(a) === "Qualifier");
@@ -298,6 +340,7 @@ function providerBindings(fn: Node, ctx: Ctx): void {
     if (extra && !beanNames.includes(extra) && extra !== methodName) {
       const b: DiBinding = { service, implementation, line, via: "@Qualifier", qualifier: extra };
       if (primary) b.primary = true;
+      withCondition(b, cond);
       ctx.out.push(b);
     }
     return;

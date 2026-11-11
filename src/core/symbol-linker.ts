@@ -9126,7 +9126,7 @@ function boundImplementation(
     const own = cands.filter((c) => c.projectId === analysis.projectId);
     if (own.length > 0) cands = own;
 
-    const chosen = decideBinding(cands, member, (c) => `${implFile(c) ?? "?"}\0${c.binding.implementation}`);
+    const chosen = decideBinding(cands, member, sourceIsTest, (c) => `${implFile(c) ?? "?"}\0${c.binding.implementation}`);
     if (!chosen) return null;
     let implName = chosen.binding.implementation;
     let classFile = locateClass(ctx, implName, chosen.file, chosen.projectId)
@@ -9190,11 +9190,14 @@ function buildFunctionsByName(analyses: FileAnalysis[]): Map<string, Array<{ fil
 function decideBinding(
   cands: IndexedBinding[],
   member: string,
+  sourceIsTest: boolean,
   implKey: (c: IndexedBinding) => string,
 ): IndexedBinding | null {
   if (cands.length === 0) return null;
   // A default (`TryAdd*`, `@ImplementedBy`) yields to any real registration.
   if (cands.some((c) => !c.binding.ifAbsent)) cands = cands.filter((c) => !c.binding.ifAbsent);
+  // A registration active only under a condition (a profile) yields to an unconditional one.
+  if (!sourceIsTest && cands.some((c) => !c.binding.conditional)) cands = cands.filter((c) => !c.binding.conditional || c.binding.primary);
   // Registrations agree when they name the same CLASS — the same definition,
   // not merely the same name.
   const single = (list: IndexedBinding[]): IndexedBinding | null =>

@@ -40,7 +40,7 @@ export const javaKotlinReachability = conventionReachability({
     [/(?:^|\/)db\/migration\//, "Flyway migration"],
   ],
   configFiles:
-    /(?:^|\/)(?:AndroidManifest\.xml|src\/main\/res\/[^/]+\/[^/]+\.xml|web\.xml|[^/]*[Cc]ontext[^/]*\.xml|faces-config\.xml|persistence\.xml|plugin\.xml|META-INF\/services\/[^/]+|META-INF\/spring[^/]*|[^/]*\.factories|application[^/]*\.(?:properties|ya?ml))$/,
+    /(?:^|\/)(?:AndroidManifest\.xml|src\/main\/res\/[^/]+\/[^/]+\.xml|web\.xml|[^/]*[Cc]ontext[^/]*\.xml|faces-config\.xml|persistence\.xml|plugin\.xml|META-INF\/services\/[^/]+|META-INF\/spring(?:\/[^/]+)?[^/]*|[^/]*\.factories|application[^/]*\.(?:properties|ya?ml))$/,
   async extend(_ctx, kit, base) {
     const keeps: RegExp[] = [];
     for (const rel of await kit.listFiles()) {

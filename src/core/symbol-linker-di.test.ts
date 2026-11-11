@@ -276,6 +276,24 @@ describe("symbol-linker — dependency injection", () => {
     }
   });
 
+  it("lets an unconditional registration override a conditional one (a profile) in any order", () => {
+    for (const order of [["cond", "plain"], ["plain", "cond"]]) {
+      const bindings = order.map((k) =>
+        k === "cond" ? bind("INotifier", "MailNotifier", { conditional: { profiles: ["test"] } }) : bind("INotifier", "SmsNotifier"));
+      const program = file("Api/Program.cs", [], { diBindings: bindings });
+      const links = buildSymbolLinks([...notifiers(), program, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+      expect(callsFrom(links, "App/CarService.cs")[0]!.targetSymbol, order.join(",")).toBe("SmsNotifier.Send");
+    }
+  });
+
+  it("does not choose between conditional registrations when no unconditional one exists", () => {
+    const program = file("Api/Program.cs", [], {
+      diBindings: [bind("INotifier", "MailNotifier", { conditional: { profiles: ["dev"] } }), bind("INotifier", "SmsNotifier", { conditional: { profiles: ["prod"] } })],
+    });
+    const links = buildSymbolLinks([...notifiers(), program, consumer("App/CarService.cs", [call("_notifier.Send")])]);
+    expect(callsFrom(links, "App/CarService.cs").map((l) => l.targetSymbol)).toEqual(["INotifier.Send"]);
+  });
+
   it("resolves a registration naming a provider function through its declared result", () => {
     const go = (path: string, classes: ReturnType<typeof cls>[], functions: unknown[] = [], diBindings?: DiBinding[]) =>
       file(path, classes, { language: "go", functions, ...(diBindings ? { diBindings } : {}) });

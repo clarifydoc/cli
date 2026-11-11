@@ -75,3 +75,23 @@ describe("Java/Kotlin reachability — classes a framework loads by name", () =>
     }
   });
 });
+
+describe("Java/Kotlin reachability — Spring auto-configuration lists", () => {
+  it("keeps a class listed in META-INF/spring/*.AutoConfiguration.imports or spring.factories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "autoconfig-"));
+    try {
+      mkdirSync(join(root, "src/main/resources/META-INF/spring"), { recursive: true });
+      writeFileSync(
+        join(root, "src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports"),
+        "com.example.league.GarageAutoConfiguration\n",
+      );
+      writeFileSync(join(root, "src/main/resources/META-INF/spring.factories"), "x.EnableAutoConfiguration=com.example.league.ClubAutoConfiguration\n");
+      const m = await javaKotlinReachability.load({ projectRoot: root, roots: [], files: new Set<string>() });
+      expect(m.configMentions?.has("GarageAutoConfiguration")).toBe(true);
+      expect(m.configMentions?.has("ClubAutoConfiguration")).toBe(true);
+      expect(m.configMentions?.has("MatchOrphan")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -800,6 +800,14 @@ export interface DiBinding {
    */
   ifAbsent?: boolean;
   /**
+   * Active only under a condition the container evaluates at start-up (a
+   * Spring `@Profile`, `@ConditionalOnProperty`): `profiles` as written
+   * (`"!prod"` included), `condition` the annotation's name. Yields to an
+   * unconditional registration of the same service; several conditional ones
+   * and no unconditional one stay undecided.
+   */
+  conditional?: { profiles?: string[]; condition?: string };
+  /**
    * Exposed under EVERY interface `implementation` has (Autofac
    * `AsImplementedInterfaces()` on a class declared in another file, a Spring
    * bean whose interfaces come from its base class): `service` is ignored and

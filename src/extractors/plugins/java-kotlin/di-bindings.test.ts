@@ -91,6 +91,28 @@ public class AppConfig {
     ]);
   });
 
+  it("marks a @Profile / @Conditional* bean, on a stereotype class, a @Bean method and a @Configuration class", async () => {
+    expect(await factsOf(`@Repository @Profile("test")
+class FakeClubRepo implements ClubRepo {}`, "java")).toEqual([
+      { service: "ClubRepo", implementation: "FakeClubRepo", via: "@Repository", qualifier: "fakeClubRepo", matchesMemberName: true, conditional: { profiles: ["test"] } },
+    ]);
+    expect(await factsOf(`@Configuration
+public class GarageConfig {
+  @Bean @Profile({"dev", "!prod"}) Garage devGarage() { return new TinyGarage(); }
+  @Bean @ConditionalOnProperty("garage.big") Garage bigGarage() { return new BigGarage(); }
+  @Bean Garage plain() { return new MainGarage(); }
+}
+@Configuration @Profile("test")
+class TestGarageConfig {
+  @Bean Garage fake() { return new FakeGarage(); }
+}`, "java")).toEqual([
+      { service: "Garage", implementation: "TinyGarage", via: "@Bean", qualifier: "devGarage", matchesMemberName: true, conditional: { profiles: ["dev", "!prod"] } },
+      { service: "Garage", implementation: "BigGarage", via: "@Bean", qualifier: "bigGarage", matchesMemberName: true, conditional: { condition: "ConditionalOnProperty" } },
+      { service: "Garage", implementation: "MainGarage", via: "@Bean", qualifier: "plain", matchesMemberName: true },
+      { service: "Garage", implementation: "FakeGarage", via: "@Bean", qualifier: "fake", matchesMemberName: true, conditional: { profiles: ["test"] } },
+    ]);
+  });
+
   it("registers the declared type itself when the body is no single construction — so it still competes", async () => {
     expect(await factsOf(`class C {
   @Bean Notifier sms() { return factory.create(); }
