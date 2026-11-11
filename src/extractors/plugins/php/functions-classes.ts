@@ -675,6 +675,14 @@ function injectionQualifier(decorators: string[]): string | undefined {
   return undefined;
 }
 
+/** Statements and clauses that hold a block of their own: a write inside one is not in the straight line after it. */
+const PHP_BLOCKS: ReadonlySet<string> = new Set([
+  "compound_statement", "colon_block", "if_statement", "else_clause", "else_if_clause", "for_statement", "foreach_statement",
+  "while_statement", "do_statement", "switch_block", "case_statement", "default_statement", "try_statement", "catch_clause",
+  "finally_clause", "match_block", "match_conditional_expression", "match_default_expression", "conditional_expression",
+]);
+const PHP_LOOPS: ReadonlySet<string> = new Set(["for_statement", "foreach_statement", "while_statement", "do_statement"]);
+
 /** Whether the text binds `$name` other than by a plain assignment: a `foreach` target, a `catch` variable, `global`/`static`, a `list()`/`[...]` target, a reference. */
 function rebinds(text: string, name: string): boolean {
   const v = `\\$${name}\\b`;
@@ -713,6 +721,17 @@ function extractLocalTypes(
   // `$q = $p`: the variable another one was assigned from; a name also assigned anything else is no alias.
   const aliasFroms = new Map<string, Set<string>>();
   const otherAssigned = new Set<string>();
+  // Flow order: each name's writes in text order (a stated type, or null), and where each alias was written, so an
+  // alias of a name written more than once takes the write before it when that one states a type.
+  const writes = new Map<string, Array<{ type: string | null; block: number }>>();
+  const aliasSites = new Map<string, Array<{ head: string; type: string | null; inLoop: boolean }>>();
+  const blockOf = (n: Node): number => {
+    for (let p = n.parent; p; p = p.parent) if (p.id === body.id || PHP_BLOCKS.has(p.type)) return p.id;
+    return body.id;
+  };
+  const write = (n: Node, name: string, type: string | null): void => {
+    (writes.get(name) ?? writes.set(name, []).get(name)!).push({ type, block: blockOf(n) });
+  };
   const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
     if (!name || seen.has(name)) return;
     if (!type && !qualifier) {
@@ -762,15 +781,34 @@ function extractLocalTypes(
       if (bound?.type === "variable_name" && source && varName(bound)) loops.push({ name: varName(bound)!, source });
       else if (target) for (const v of target.descendantsOfType("variable_name")) if (varName(v)) loopNames.add(varName(v)!);
     }
+    if (n.type === "augmented_assignment_expression") {
+      const target = varName(n.childForFieldName("left") ?? n.child(0));
+      if (target) write(n, target, null);
+    }
     if (n.type === "assignment_expression") {
       const left = n.childForFieldName("left") ?? n.child(0);
       const right = n.childForFieldName("right") ?? n.child(n.childCount - 1);
       const name = varName(left);
       if (name && right) {
         const aliasHead = varName(right);
-        if (aliasHead && aliasHead !== "this" && aliasHead !== name && left?.type === "variable_name") (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(aliasHead);
-        else otherAssigned.add(name);
         const looked = phpLocatorType(right, aliases);
+        if (aliasHead && aliasHead !== "this" && aliasHead !== name && left?.type === "variable_name") {
+          (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(aliasHead);
+          const headWrites = writes.get(aliasHead);
+          const last = headWrites?.[headWrites.length - 1];
+          let open = false;
+          let inLoop = false;
+          for (let p: Node | null = n.parent; p; p = p.parent) {
+            if (last && p.id === last.block) open = true;
+            if (PHP_LOOPS.has(p.type)) inLoop = true;
+            if (p.id === body.id) break;
+          }
+          (aliasSites.get(name) ?? aliasSites.set(name, []).get(name)!).push({ head: aliasHead, type: last && open ? last.type : null, inLoop });
+          write(n, name, null);
+        } else {
+          otherAssigned.add(name);
+          write(n, name, looked && looked.type && !looked.qualifier ? looked.type : null);
+        }
         if (looked) add(name, looked.type, looked.qualifier);
         // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
         else add(name, "", undefined, callChainText(right, "php") ?? undefined);
@@ -816,7 +854,18 @@ function extractLocalTypes(
   }
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
   for (const [name, heads] of aliasFroms) {
-    if (heads.size === 1 && !seen.has(name) && !fromCalls.has(name) && !otherAssigned.has(name) && !rebinds(body.text, name)) out.push({ name, type: "", aliasOf: [...heads][0]! });
+    if (heads.size === 1 && !seen.has(name) && !fromCalls.has(name) && !otherAssigned.has(name) && !rebinds(body.text, name)) {
+      const head = [...heads][0]!;
+      const sites = aliasSites.get(name) ?? [];
+      // A head written more than once: the write before the alias, when it states a type (not in a loop, not
+      // rebound by a `foreach`, `catch`, `list()` or reference).
+      if (sites.length === 1 && (writes.get(head)?.length ?? 0) >= 2) {
+        const site = sites[0]!;
+        if (site.type && !site.inLoop && !rebinds(body.text, head)) out.push({ name, type: site.type });
+        continue;
+      }
+      out.push({ name, type: "", aliasOf: head });
+    }
   }
   return out;
 }

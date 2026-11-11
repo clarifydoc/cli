@@ -1,10 +1,15 @@
 import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { AliasFlow } from "../shared/alias-flow.js";
 
 type LocalTypes = NonNullable<FunctionInfo["localTypes"]>;
 
 /** Lowercase words a `let` may be assigned that name no value of ours. */
 const RUST_VALUE_WORDS: ReadonlySet<string> = new Set(["self", "true", "false", "super", "crate"]);
+
+/** A write to a name that starts a statement or follows a brace: `p = Garage::new()`, `p += 1`. */
+const WRITE = /(?:^|[{}])\s*([a-z_]\w*)\s*((?:[-+*/%&|^]|<<|>>)?)=(?![=>])\s*(.*)$/;
+const WRITE_LINE = /(?:^|[{}])\s*[a-z_]\w*\s*(?:[-+*/%&|^]|<<|>>)?=(?![=>])/;
 
 /** `let [mut] name[: Type] = rhs` — the rest after `=` is read separately. */
 const LET_RE = /\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::\s*([^=;]+?))?\s*(?:=\s*(.*))?$/;
@@ -39,8 +44,11 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
   // `let q = &p;`: the name another name was assigned from, for the linker to type.
   const aliasFroms = new Map<string, Set<string>>();
   const aliasBinds = new Map<string, number>();
+  // The bindings of every name in text order, so an alias of a name bound more than once takes the one before it.
+  const flow = new AliasFlow();
   const record = (name: string, type: string | null): void => {
     if (name === "_" || name === "self") return;
+    flow.bind(name, type === null ? null : type.replace(/\s+/g, " ").trim());
     if (type === null) { unknown.add(name); return; }
     let set = seen.get(name);
     if (!set) seen.set(name, (set = new Set()));
@@ -48,13 +56,22 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
   };
 
   for (const raw of bodyLines) {
-    if (!raw.includes("let") && !raw.includes("for") && !raw.includes("|")) continue;
+    if (!raw.includes("let") && !raw.includes("for") && !raw.includes("|") && !WRITE_LINE.test(raw)) {
+      // Binds nothing, but may open or close a block the alias flow follows.
+      if (raw.includes("{") || raw.includes("}")) flow.advance(blankStringLiterals(raw.replace(/\/\/.*$/, "")));
+      continue;
+    }
     const line = blankStringLiterals(raw.replace(/\/\/.*$/, ""));
     const statements = line.split(";");
     for (const [at, statement] of statements.entries()) {
       // A `;` ends it on this line; the last piece may go on below (`let club = league` / `.clubs.first()`).
       const ended = at < statements.length - 1;
       const m = LET_RE.exec(statement);
+      // A write at the statement's start or after `{` / `}`: `p = Garage::new()`, `if c { p = Garage::new()`.
+      const write = WRITE.exec(statement);
+      let advanced = 0;
+      const upto = (i: number): void => { flow.advance(statement.slice(advanced, i)); advanced = i; };
+      if (m) upto(m.index);
       if (m && !/\b(?:if|while)\s+let\b/.test(statement.slice(0, m.index + 3))) {
         const stated = m[2] ? m[2].trim() : m[3] !== undefined ? initializerType(m[3]) : null;
         const call = !stated && m[3] !== undefined ? initializerCall(m[3]) : null;
@@ -62,7 +79,10 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
         if (alias && alias !== m[1] && !RUST_VALUE_WORDS.has(alias)) {
           (aliasFroms.get(m[1]!) ?? aliasFroms.set(m[1]!, new Set()).get(m[1]!)!).add(alias);
           aliasBinds.set(m[1]!, (aliasBinds.get(m[1]!) ?? 0) + 1);
+          flow.alias(m[1]!, alias);
+          flow.bind(m[1]!, null);
         } else if (call) {
+          flow.bind(m[1]!, null);
           const calls = fromCalls.get(m[1]!) ?? fromCalls.set(m[1]!, new Map()).get(m[1]!)!;
           calls.set(`${call.awaited ? "?" : ""}${call.from}`, call);
         } else record(m[1]!, stated);
@@ -76,6 +96,12 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
           }
         }
       }
+      if (write) {
+        upto(write.index + write[0].indexOf(write[1]!));
+        flow.bind(write[1]!, write[2] ? null : initializerType(write[3]!));
+      }
+      upto(statement.length);
+      if (ended) flow.terminate();
       const iflet = /\b(?:if|while)\s+let\s+(.+?)=/.exec(statement);
       if (iflet) for (const id of iflet[1]!.matchAll(/\b([a-z_]\w*)\b/g)) if (id[1] !== "mut" && id[1] !== "ref") record(id[1]!, null);
     }
@@ -95,6 +121,12 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
     // Nothing assigns the name again (`q = other;`, `q += 1`); the only `name =` is its own `let`.
     const assigned = text.match(new RegExp(`(?<![\\w.>!<=])${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)`, "g"))?.length ?? 0;
     if (assigned !== aliasBinds.get(name)) continue;
+    // A head bound more than once: the binding before the alias, when it states a type.
+    const flowed = flow.typeOf(name);
+    if (flowed !== undefined) {
+      if (flowed) out.push({ name, type: flowed });
+      continue;
+    }
     out.push({ name, type: "", aliasOf: [...heads][0]! });
   }
   for (const [name, types] of seen) {

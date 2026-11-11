@@ -405,8 +405,27 @@ class FactTable {
   private readonly declared = new Map<string, ValueFact | null>();
   private readonly assigned = new Map<string, ValueFact | null>();
   private readonly order = new Set<string>();
+  /** The block (a statement's parent) the binding being recorded sits in; -1 for one no later statement can rely on. */
+  cursor = -1;
+  private readonly last = new Map<string, { fact: ValueFact | null; block: number }>();
+  private readonly binds = new Map<string, number>();
+
+  private note(name: string, fact: ValueFact | null): void {
+    this.last.set(name, { fact, block: this.cursor });
+    this.binds.set(name, (this.binds.get(name) ?? 0) + 1);
+  }
+
+  /** The name's latest binding so far in text order, and the block it sits in. */
+  lastBinding(name: string): { fact: ValueFact | null; block: number } | undefined {
+    return this.last.get(name);
+  }
+
+  bindCount(name: string): number {
+    return this.binds.get(name) ?? 0;
+  }
 
   declare(name: string, fact: ValueFact): void {
+    this.note(name, fact);
     this.order.add(name);
     const prev = this.declared.get(name);
     if (prev === undefined) this.declared.set(name, fact);
@@ -414,6 +433,7 @@ class FactTable {
   }
 
   assign(name: string, fact: Fact): void {
+    this.note(name, fact === NONE || fact === UNKNOWN ? null : fact);
     this.order.add(name);
     if (fact === NONE) return;
     const prev = this.assigned.get(name);
@@ -448,6 +468,8 @@ const STATEMENT_HOLDERS: ReadonlySet<string> = new Set([
 ]);
 
 interface StatementVisitor {
+  /** Before each statement-level node below is handed to its handler. */
+  enter?(node: Node): void;
   /** An `expression_statement` (assignments, yields, calls). */
   statement?(stmt: Node): void;
   /** A `return_statement`. */
@@ -473,6 +495,7 @@ interface StatementVisitor {
 function walkStatements(node: Node, v: StatementVisitor): void {
   for (const child of node.namedChildren) {
     const t = child.type;
+    v.enter?.(child);
     if (t === "expression_statement") {
       v.statement?.(child);
       continue;
@@ -587,6 +610,28 @@ export function collectLocalTypes(
   const aliasFrom = (name: string, head: string): void => {
     (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(head);
   };
+  /**
+   * `q = p` where `p` is bound more than once: `q` takes the type of the binding of `p` nearest before it, when that
+   * binding states a plain type and sits in a block still open at the alias, and the alias is in no loop. Otherwise
+   * `q` stays an alias of `p` (which the linker types only when `p` is bound once).
+   */
+  const aliasAt = (name: string, head: string, at: Node): void => {
+    const last = table.lastBinding(head);
+    if (last?.fact?.type && !last.fact.qualifier && table.bindCount(head) >= 2 && !paramNames.has(head)) {
+      let open = false;
+      let looped = false;
+      for (let p = at.parent; p; p = p.parent) {
+        if (p.id === last.block) open = true;
+        if (p.type === "for_statement" || p.type === "while_statement") looped = true;
+      }
+      if (open && !looped) {
+        table.assign(name, last.fact);
+        return;
+      }
+    }
+    table.assign(name, UNKNOWN);
+    aliasFrom(name, head);
+  };
   // Class-valued registries the body annotates (`table: dict[Kind, type[Base]] = {...}`) and the locals picked
   // out of one (`ctor = table.get(kind)`, `ctor = table[kind]`): calling such a local constructs the stated base.
   const registries = new Map<string, string>();
@@ -697,6 +742,9 @@ export function collectLocalTypes(
     }
   };
   walkStatements(body, {
+    enter(node) {
+      table.cursor = node.type === "expression_statement" || node.type === "if_statement" || node.type === "elif_clause" || node.type === "while_statement" ? node.parent?.id ?? -1 : -1;
+    },
     loop: bindLoop,
     condition(cond) {
       const stack: Node[] = [cond];
@@ -707,7 +755,7 @@ export function collectLocalTypes(
           const value = node.childForFieldName("value");
           if (target?.type === "identifier") {
             const fact = value ? valueFact(value, scope) : UNKNOWN;
-            table.assign(target.text, fact);
+            if (!(fact === UNKNOWN && value?.type === "identifier" && value.text !== target.text)) table.assign(target.text, fact);
             const call = fact === UNKNOWN && value ? initializerCall(value) : null;
             if (fact !== UNKNOWN) {
               // `(q := Club())`: a construction, as an assignment states one.
@@ -715,7 +763,7 @@ export function collectLocalTypes(
             } else if (call) {
               const calls = fromCalls.get(target.text) ?? fromCalls.set(target.text, new Map()).get(target.text)!;
               calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
-            } else if (value?.type === "identifier" && value.text !== target.text) aliasFrom(target.text, value.text);
+            } else if (value?.type === "identifier" && value.text !== target.text) aliasAt(target.text, value.text, node);
             else untyped.add(target.text);
           }
         }
@@ -783,7 +831,7 @@ export function collectLocalTypes(
       }
       classValued.delete(name);
       const fact = right ? valueFact(right, scope) : UNKNOWN;
-      table.assign(name, fact);
+      if (!(fact === UNKNOWN && right?.type === "identifier" && right.text !== name)) table.assign(name, fact);
       if (fact !== UNKNOWN) {
         // A construction beside a call: the two disagree and neither types it.
         if (fact !== NONE) untyped.add(name);
@@ -791,7 +839,7 @@ export function collectLocalTypes(
       }
       const call = right ? initializerCall(right) : null;
       if (!call) {
-        if (right?.type === "identifier" && right.text !== name) aliasFrom(name, right.text);
+        if (right?.type === "identifier" && right.text !== name) aliasAt(name, right.text, stmt);
         else untyped.add(name);
         return;
       }

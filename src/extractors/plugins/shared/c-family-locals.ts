@@ -1,5 +1,6 @@
 import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "./regex-base.js";
+import { AliasFlow } from "./alias-flow.js";
 
 type LocalTypes = NonNullable<FunctionInfo["localTypes"]>;
 
@@ -60,7 +61,11 @@ export function extractCFamilyLocalTypes(
   const code: string[] = [];
   // `for (auto& p : <source>)`: what the loop variable is the element of, settled once every declaration is read.
   const ranges: Array<{ name: string; source: string }> = [];
-  const record = (d: Declared): void => {
+  // Every name's bindings in text order: an alias of a name bound more than once takes the one before it.
+  const flow = new AliasFlow();
+  const record = (d: Declared, outside = false): void => {
+    flow.bind(d.name, d.rangeOver === undefined && d.alias === undefined && d.from === undefined ? d.type : null, outside);
+    if (d.alias !== undefined) flow.alias(d.name, d.alias);
     if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver }); return; }
     if (d.alias !== undefined) {
       (aliasFroms.get(d.name) ?? aliasFroms.set(d.name, new Set()).get(d.name)!).add(d.alias);
@@ -90,14 +95,23 @@ export function extractCFamilyLocalTypes(
       if (close < 0) continue;
       // `for (int i = 0; i < n; i++)`, `if (auto c = pick(); c)`: the declaration is the first clause.
       const inner = line.slice(open + 1, close).split(";")[0]!;
-      for (const d of declarations(inner, m[1] !== "catch")) record(d);
+      for (const d of declarations(inner, m[1] !== "catch")) record(d, true);
       rest = rest.slice(0, open) + " ".repeat(close - open + 1) + rest.slice(close + 1);
     }
     code.push(rest);
     // Only a statement a `;` ends on this line is an alias: `auto club = league` may go on below (`.first();`).
     const pieces = rest.split(";");
     for (const [at, piece] of pieces.entries()) {
-      for (const d of declarations(piece, false)) record(at < pieces.length - 1 || d.alias === undefined ? d : { name: d.name, type: null });
+      const lead = /^(?:\s*(?:[{}]|else\b|do\b|(?:case\b[^:]*|default|public|private|protected)\s*:(?!:)))*\s*/.exec(piece)![0].length;
+      flow.advance(piece.slice(0, lead));
+      const declared = declarations(piece, false);
+      // `p = new Garage();` writes a name declared earlier.
+      const write = declared.length === 0 ? /^((?:else\s+)?(?:(?:if|while|for)\b\s*)?)([A-Za-z_]\w*)\s*((?:[-+*/%&|^]|<<|>>)?)=(?![=>])\s*(.*)$/s.exec(piece.slice(lead)) : null;
+      // A braceless `if (c) p = …;` / `else p = …;` writes in a block of its own.
+      if (write) flow.bind(write[2]!, write[3] ? null : constructedType(write[4]!), write[1]! !== "" || /\belse\b/.test(piece.slice(0, lead)));
+      for (const d of declared) record(at < pieces.length - 1 || d.alias === undefined ? d : { name: d.name, type: null });
+      flow.advance(piece.slice(lead));
+      if (at < pieces.length - 1) flow.terminate();
     }
   }
 
@@ -148,6 +162,13 @@ export function extractCFamilyLocalTypes(
     const assigned = text.match(new RegExp(`(?<![\\w.>!<=])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
     if (heads.size !== 1 || seen.has(name) || unknown.has(name) || fromCalls.has(name) || params.some((p) => p.name === name) || assigned !== aliasBinds.get(name)) {
       untold.add(name);
+      continue;
+    }
+    // A head bound more than once: the binding before the alias, when it states a type.
+    const flowed = flow.typeOf(name);
+    if (flowed !== undefined) {
+      if (flowed && !PRIMITIVES.has(flowed.split(/[ <]/)[0]!)) { untold.delete(name); out.push({ name, type: flowed }); }
+      else untold.add(name);
       continue;
     }
     untold.delete(name);
