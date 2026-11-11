@@ -1089,19 +1089,19 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
   // parameters, locals and fields type a variable argument). Read from the link's own file, one file's calls at a
   // time and only for the files a link into an overloaded symbol comes from.
   type Site = { call: CallInfo; fn: FunctionInfo; cls: ClassInfo | null };
-  const sitesOf = new Map<string, Map<string, Site | null>>();
-  const siteAt = (file: string, line: number, callName: string): Site | undefined => {
+  const sitesOf = new Map<string, Map<string, Site[]>>();
+  /** Every distinct call of `callName` on `line`: a link names a line, not a column, so two calls there are both its candidates. */
+  const sitesAt = (file: string, line: number, callName: string): Site[] => {
     let sites = sitesOf.get(file);
     if (!sites) {
       sites = new Map();
       const record = (fn: FunctionInfo, cls: ClassInfo | null): void => {
         for (const call of fn.calls) {
           if (call.argCount === undefined) continue;
-          // Links name a line, not a column: two calls of one name on one line that pass different arguments cannot be told apart.
           const key = `${call.line}\u0000${call.name}`;
-          const had = sites!.get(key);
-          const same = had && had.call.argCount === call.argCount && had.call.argKinds?.join() === call.argKinds?.join() && had.call.templateArgs?.join() === call.templateArgs?.join();
-          sites!.set(key, had === undefined || same ? { call, fn, cls } : null);
+          const had = sites!.get(key) ?? sites!.set(key, []).get(key)!;
+          const same = (h: Site) => h.call.argCount === call.argCount && h.call.argKinds?.join() === call.argKinds?.join() && h.call.templateArgs?.join() === call.templateArgs?.join();
+          if (!had.some(same)) had.push({ call, fn, cls });
         }
       };
       const a = analysisAt.get(file);
@@ -1111,7 +1111,7 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       }
       sitesOf.set(file, sites);
     }
-    return sites.get(`${line}\u0000${callName}`) ?? undefined;
+    return sites.get(`${line}\u0000${callName}`) ?? [];
   };
   let hierarchy: TypeHierarchy | null = null;
   const typesOf = (): TypeHierarchy => (hierarchy ??= projectTypeHierarchy(analyses));
@@ -1127,8 +1127,14 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
    * `process(long)` with `42`).
    */
   const choose = (list: Overload[], link: SymbolLink): { line: number } | { tie: number } | undefined => {
-    const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
-    const n = site?.call.argCount;
+    // Several calls of the name on the link's line (`f(a) || f(a, b)`): only a choice they all agree on is the link's.
+    const results = sitesAt(link.sourceFile, link.sourceLine, link.callName).map((site) => chooseAt(list, site));
+    if (results.length === 0) return undefined;
+    const first = JSON.stringify(results[0]);
+    return results.every((r) => JSON.stringify(r) === first) ? results[0] : undefined;
+  };
+  const chooseAt = (list: Overload[], site: Site): { line: number } | { tie: number } | undefined => {
+    const n = site.call.argCount;
     if (n === undefined) return undefined;
     let fits = list.filter((o) => n >= o.min && n <= o.max);
     // A call writing its template arguments (`convert<int>(x)`) reaches the explicit specialization naming them, else the primary template.
@@ -1171,8 +1177,8 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       if (callLeaf !== leafOf(link.targetSymbol) && !ctorOfCalled) continue;
       // A call no definition's arity accepts, where arity is checked: the name is another's (a library's).
       if (list[0]!.strict) {
-        const n = siteAt(link.sourceFile, link.sourceLine, link.callName)?.call.argCount;
-        if (n !== undefined && !list.some((o) => n >= o.min && n <= o.max)) {
+        const counts = sitesAt(link.sourceFile, link.sourceLine, link.callName).map((x) => x.call.argCount);
+        if (counts.length > 0 && counts.every((n) => n !== undefined && !list.some((o) => n >= o.min && n <= o.max))) {
           unfit.add(link);
           continue;
         }

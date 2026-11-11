@@ -140,6 +140,21 @@ public class Scorer {
   "java/src/main/java/com/example/league/Club.java": `package com.example.league;
 public class Club { }
 `,
+  "java/src/main/java/com/example/league/Formation.java": `package com.example.league;
+public class Formation {
+    private Formation left;
+    private Formation right;
+    public boolean has(String role) {
+        return role.isEmpty() || has(left, role) || has(right, role);
+    }
+    private boolean has(Formation side, String role) {
+        return side != null && side.has(role);
+    }
+    public static Formation of(String name, String... roles) { return new Formation(); }
+    public static Formation of(String name, boolean home, String... roles) { return new Formation(); }
+    public void pair() { java.util.List.of(of("away", "keeper", "striker"), of("home", "keeper")); }
+}
+`,
   "java/src/main/java/com/example/league/Player.java": `package com.example.league;
 public class Player { }
 `,
@@ -217,6 +232,14 @@ describe("same-name precision in the symbol linker", () => {
       "scorer.format -> java/src/main/java/com/example/league/Scorer.java::Scorer.format",
     ]);
     expect(from("java/src/main/java/com/example/league/Match.java", "Match.none")).toEqual([]);
+  });
+
+  it("Java: calls of one name on one line choose an overload when they all agree on it", () => {
+    const at = (sym: string, call: string) => summary.symbolLinks.filter((l) => l.sourceSymbol === sym && l.callName === call).map((l) => l.targetLine);
+    // `has(left, role) || has(right, role)`: both two-argument calls, so the two-argument overload.
+    expect(at("Formation.has", "has")).toEqual([8]);
+    // `of("away", "keeper", "striker")` and `of("home", "keeper")`: neither fits a boolean second parameter.
+    expect(at("Formation.pair", "of")).toEqual([11]);
   });
 
   it("overloads the arguments cannot tell apart: the method is linked, said to be one of several bodies", () => {
