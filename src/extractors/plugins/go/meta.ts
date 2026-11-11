@@ -12,6 +12,7 @@ import { goReachability } from "./reachability.js";
 import { humaBaseResolver } from "./huma-resolver.js";
 import { GO_SECURITY_RULES } from "./security-rules.js";
 import { goGrpcStub, goGrpcService } from "../shared/grpc-stubs.js";
+import { firstStub, goThriftStub } from "../shared/thrift-stubs.js";
 
 const GO_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -70,7 +71,7 @@ export const goMeta: LanguagePluginMeta = {
   knownPackages: goPackages,
   entities: new GoEntityExtractor(),
   requestSchema: goRequestSchema,
-  grpcStubService: goGrpcStub,
+  grpcStubService: firstStub(goGrpcStub, goThriftStub),
   grpcServiceOf: goGrpcService,
   complexity: {
     branchNodes: new Set([

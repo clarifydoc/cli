@@ -41,6 +41,7 @@ import { extractJavaClientProxies } from "./client-proxies.js";
 import { joinWrappedConstructors, terminateAnnotatedDeclarations } from "./kotlin-preprocess.js";
 import { JVM_SECURITY_RULES, jvmSecurityPostScan } from "./security-rules.js";
 import { jvmGrpcStub, jvmGrpcService } from "../shared/grpc-stubs.js";
+import { firstService, firstStub, jvmThriftStub, thriftServiceOf } from "../shared/thrift-stubs.js";
 import { inheritedClassGuards } from "../shared/class-guards.js";
 
 /** Spring / JAX-RS / Micronaut: a class-level guard a controller inherits from its base class. */
@@ -108,8 +109,8 @@ function jvmMeta(language: Language, opts: {
     routeResolvers: [springInheritedGuards, jaxrsSubResourceResolver, springSecurityResolver, cxfServiceBeanResolver, cxfAddressResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver, haloGvkResolver],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
-    grpcStubService: jvmGrpcStub,
-    grpcServiceOf: jvmGrpcService,
+    grpcStubService: firstStub(jvmGrpcStub, jvmThriftStub),
+    grpcServiceOf: firstService(jvmGrpcService, thriftServiceOf),
     importsExports: jvmImportsExports,
     dataSources: jvmDataSources,
     dataMutations: jvmDataMutations,

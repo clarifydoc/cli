@@ -34,6 +34,7 @@ import { extractCsharpTopLevelLocalTypes } from "./local-types.js";
 import { preprocessCsharp } from "./extension-blocks.js";
 import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.js";
 import { csharpGrpcStub, csharpGrpcService } from "../shared/grpc-stubs.js";
+import { csharpThriftStub, firstService, firstStub, thriftServiceOf } from "../shared/thrift-stubs.js";
 import { hotChocolateResolver } from "./graphql.js";
 
 export const csharpMeta: LanguagePluginMeta = {
@@ -52,8 +53,8 @@ export const csharpMeta: LanguagePluginMeta = {
   dispatchResolvers: [new CSharpMediatrResolver(), new CsharpUiBridgeResolver()],
   routeResolvers: [aspnetControllerInheritance, razorPageRoutes, minimalApiGroupGuards, fastEndpointPrefixes, hotChocolateResolver],
   requestSchema: csharpRequestSchema,
-  grpcStubService: csharpGrpcStub,
-  grpcServiceOf: csharpGrpcService,
+  grpcStubService: firstStub(csharpGrpcStub, csharpThriftStub),
+  grpcServiceOf: firstService(csharpGrpcService, thriftServiceOf),
   builtinTypes: CSHARP_BUILTINS,
   knownPackages: nugetPackages,
   complexity: {

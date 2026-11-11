@@ -75,6 +75,7 @@ import { javascriptTaint } from "./taint.js";
 import { reactRouterResolver } from "./routes/react-router-resolver.js";
 import { angularRouterResolver } from "./routes/angular-router-resolver.js";
 import { jsGrpcStub } from "../shared/grpc-stubs.js";
+import { firstStub, jsThriftStub } from "../shared/thrift-stubs.js";
 import { judgeHtmlAssignment } from "./html-escapes.js";
 import { nuxtAutoImports } from "./nuxt-auto-imports.js";
 
@@ -327,7 +328,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   ast: astHooks("typescript"),
   calls: typescriptCallHooks,
   requestSchema: javascriptRequestSchema,
-  grpcStubService: jsGrpcStub,
+  grpcStubService: firstStub(jsGrpcStub, jsThriftStub),
   reachability: javascriptReachability,
   componentTags: angularSelectorsOf,
 };
@@ -358,7 +359,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   ast: astHooks("javascript"),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
-  grpcStubService: jsGrpcStub,
+  grpcStubService: firstStub(jsGrpcStub, jsThriftStub),
   reachability: javascriptReachability,
   componentTags: angularSelectorsOf,
 };

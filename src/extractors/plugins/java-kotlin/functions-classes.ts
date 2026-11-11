@@ -846,8 +846,12 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
       if (from) fromCalls.set(name, (fromCalls.get(name) ?? new Set()).add(from));
       return;
     }
-    const simple = simpleTypeName(declared);
+    let simple = simpleTypeName(declared);
     if (!simple || !/^[A-Z]/.test(simple) || simple === "String") return;
+    // A generated RPC stub is a class nested in its service (`ClubService.Client`, `.Iface`): the leaf
+    // alone (`Client`) names no service, so the enclosing class stays.
+    const nested = declared && /(?:^|[\s.])([A-Z]\w*)\.(?:Client|AsyncClient|Iface|AsyncIface)\b/.exec(declared.split("<")[0]!);
+    if (nested) simple = `${nested[1]}.${simple}`;
     seen.add(name);
     const entry: LocalType = { name, type: simple };
     if (fact?.qualifier) entry.qualifier = fact.qualifier;

@@ -18,7 +18,7 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   elixir: "Elixir", erlang: "Erlang", objc: "Objective-C", haskell: "Haskell", clojure: "Clojure", blazor: "Blazor", html: "HTML",
   erb: "ERB", heex: "HEEx/EEx", handlebars: "Handlebars", liquid: "Liquid", velocity: "Velocity", razor: "Razor", gotemplate: "Go templates", freemarker: "FreeMarker", ejs: "EJS", qml: "QML",
   qtui: "Qt Designer", xaml: "XAML", jsp: "JSP", springxml: "Spring XML / MyBatis mappers / Android navigation graphs", jsight: "JSight",
-  storyboard: "Interface Builder storyboards", terraform: "Terraform", protobuf: "Protocol Buffers", openapi: "OpenAPI", graphql: "GraphQL",
+  storyboard: "Interface Builder storyboards", terraform: "Terraform", protobuf: "Protocol Buffers", thrift: "Apache Thrift", openapi: "OpenAPI", graphql: "GraphQL",
   wsdl: "WSDL", groovy: "Groovy, with Jenkinsfiles", powershell: "PowerShell", batch: "Windows batch", coffeescript: "CoffeeScript",
   crystal: "Crystal", raku: "Raku", racket: "Racket", scheme: "Scheme", commonlisp: "Common Lisp", haxe: "Haxe", mojo: "Mojo",
   scss: "SCSS", sass: "Sass", less: "Less", autohotkey: "AutoHotkey", autoit: "AutoIt", applescript: "AppleScript", nim: "Nim",

@@ -30,6 +30,7 @@ import { extractPythonDiBindings, pythonTopLevelLocalTypes } from "./di.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { pythonTaint } from "./taint.js";
 import { pythonGrpcStub, pythonGrpcService } from "../shared/grpc-stubs.js";
+import { firstService, firstStub, pythonThriftStub, thriftServiceOf } from "../shared/thrift-stubs.js";
 
 const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -218,7 +219,7 @@ export const pythonMeta: LanguagePluginMeta = {
   },
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,
-  grpcStubService: pythonGrpcStub,
-  grpcServiceOf: pythonGrpcService,
+  grpcStubService: firstStub(pythonGrpcStub, pythonThriftStub),
+  grpcServiceOf: firstService(pythonGrpcService, thriftServiceOf),
   reachability: pythonReachability,
 };
