@@ -1450,12 +1450,15 @@ export interface FunctionInfo {
    * `destructured`: the name is a member destructured from that call's result (`const { actions } = useClubData()`,
    * `from` = `useClubData().actions`); only the argument pass reads it — to find the factory a local handed to a
    * composable came from — and no receiver is typed by it.
+   * `aliasOf`: the name was assigned from another name (`const q = p`, `q := p`, `$q = $p`, `let q = &p`, `(q := p)`),
+   * with `type: ""` and no `from`: the linker types it as that name, sharing the initializer depth cap. A name bound
+   * twice, or from two different names, stays untyped.
    * `field`: the name is the instance's own field written without `self.` (a Ruby `@club`, whose calls are named
    * `club.x`), typed for this function by what assigns it before the body reads it: the function's own assignment,
    * or a callback that runs first (a controller's `before_action`). The linker reads it as any local; the plugin's
    * project pass reads the marker to hand a callback's fields on to the functions it runs before.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true; field?: true }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true; field?: true; aliasOf?: string }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

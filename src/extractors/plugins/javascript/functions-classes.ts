@@ -589,9 +589,12 @@ function scanBody(
             else bindPattern(p);
           });
         } else bindPattern(left);
-      } else if (type === "assignment_expression") {
+      } else if (type === "assignment_expression" || type === "augmented_assignment_expression") {
         const left = children[0];
         if (left?.type === "identifier") reassigned.add(left.text);
+      } else if (type === "update_expression") {
+        const operand = node.childForFieldName("argument");
+        if (operand?.type === "identifier") reassigned.add(operand.text);
       }
     }
 
@@ -617,7 +620,7 @@ function scanBody(
       }
       continue;
     }
-    if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier)) continue;
+    if (list.some((b) => b!.local.type !== first.local.type || b!.local.qualifier !== first.local.qualifier || b!.local.aliasOf !== first.local.aliasOf)) continue;
     if (hiddenTypes.has(first.local.type)) continue;
     localTypes.push(first.local);
   }
@@ -630,6 +633,9 @@ function scanBody(
  * initializer constructs / looks up / casts to — with the token a lookup
  * named either way (`const m: IMailer = container.get(TYPES.Mailer)`).
  */
+/** Identifiers that are values of no type of ours: assigning one is no alias. */
+const NOT_AN_ALIAS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity", "arguments"]);
+
 function declaredLocal(
   declarator: Node,
   children: readonly Node[],
@@ -658,6 +664,8 @@ function declaredLocal(
     // `const api = useUserApi()`, `const u = await repo.find(id)`: the call is
     // kept, and the linker types the local by what that call is declared to return.
     if (annotation || !value) return null;
+    // `const q = p`: the name another name was assigned from; the linker types it as that name.
+    if (value.type === "identifier" && value.text !== name && !NOT_AN_ALIAS.has(value.text)) return { local: { name, type: "", aliasOf: value.text }, annotated: false };
     return initializerLocal(value, name);
   }
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };

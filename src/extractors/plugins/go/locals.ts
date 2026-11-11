@@ -88,6 +88,9 @@ export function extractGoLocalTypes(
   const unknownCount = new Map<string, number>();
   const elementFroms = new Map<string, Set<string>>();
   const elementBinds = new Map<string, number>();
+  // `q := p` (or `&p`): the name another name was assigned from, kept for the linker to type.
+  const aliasFroms = new Map<string, Set<string>>();
+  const aliasBinds = new Map<string, number>();
   const record = (name: string, type: string | null): void => {
     if (name === "_") return;
     declared?.add(name);
@@ -112,6 +115,13 @@ export function extractGoLocalTypes(
       }
       // The element of a collection, a channel's payload, a type assertion: the type the right side states.
       type = goElementInit(rhs, typed, typeOfName);
+    }
+    const alias = type === null && index === 0 && count === 1 && name !== "_" ? /^\s*&?\s*([A-Za-z_]\w*)\s*;?\s*$/.exec(rhs)?.[1] : undefined;
+    if (alias && alias !== name && !GO_TYPE_KEYWORDS.has(alias) && alias !== "nil" && alias !== "true" && alias !== "false" && alias !== "iota") {
+      (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(alias);
+      aliasBinds.set(name, (aliasBinds.get(name) ?? 0) + 1);
+      record(name, null);
+      return;
     }
     const call = type === null && index === 0 ? singleCall(rhs) ?? fieldAlias(rhs) : null;
     if (call === null || name === "_") { record(name, type); return; }
@@ -200,6 +210,13 @@ export function extractGoLocalTypes(
     if ((unknownCount.get(name) ?? 0) !== (elementBinds.get(name) ?? 0)) continue;
     for (const from of froms) out.push({ name, type: "", from, element: true });
   }
+  for (const [name, aliases] of aliasFroms) {
+    if (aliases.size !== 1 || seen.has(name) || fromCalls.has(name) || elementFroms.has(name) || params.some((p) => p.name === name) || name === receiver?.name) continue;
+    // Every other binding of the name was this alias too, and nothing assigns it again.
+    if ((unknownCount.get(name) ?? 0) !== (aliasBinds.get(name) ?? 0)) continue;
+    if (bodyLines.some((l) => !/^\s*var\s/.test(l) && statements(blankStringLiterals(stripGoComment(l))).some((st) => assignsTo(st, name)))) continue;
+    out.push({ name, type: "", aliasOf: [...aliases][0]! });
+  }
   return out;
 }
 
@@ -217,6 +234,12 @@ function rangeSource(expr: string): string | null {
 
 /** A type without its pointer: `*Club` and `Club` are one for a member call. */
 const bareType = (type: string): string => type.replace(/^[*&]/, "");
+
+/** A plain assignment (`q = x`, `a, q = f()`, `q += 1`) of `name` on this line; a `:=` declaration is not one. */
+function assignsTo(line: string, name: string): boolean {
+  const lhs = /^[\s{};]*([\w\s,.*[\]]+?)\s*(?:[-+*/%&|^]|<<|>>|&\^)?=(?!=)/.exec(line);
+  return !!lhs && lhs[1]!.split(",").some((part) => part.trim() === name);
+}
 
 /** `s.ordersClient` — a local standing for a field of a value, which a pass may type through the field. */
 function fieldAlias(rhs: string): string | null {

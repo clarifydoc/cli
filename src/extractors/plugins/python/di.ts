@@ -416,6 +416,8 @@ interface StatementVisitor {
   statement?(stmt: Node): void;
   /** A `return_statement`. */
   ret?(stmt: Node): void;
+  /** The condition of an `if` / `elif` / `while`, where an assignment expression (`(q := p)`) may bind a name. */
+  condition?(cond: Node): void;
   /** A name bound by something other than an assignment (loop target, `as` alias). */
   rebind?(name: string): void;
   /** A `for` statement; true when it bound its targets itself (typed by what it loops over). */
@@ -444,6 +446,10 @@ function walkStatements(node: Node, v: StatementVisitor): void {
       continue;
     }
     if (NESTED_SCOPES.has(t)) continue;
+    if (v.condition && (t === "if_statement" || t === "elif_clause" || t === "while_statement")) {
+      const cond = child.childForFieldName("condition");
+      if (cond) v.condition(cond);
+    }
     if (v.rebind) {
       // `for x in …` / `with … as x` bind names to values no annotation types.
       if (t === "for_statement" && !v.loop?.(child)) boundNames(child.childForFieldName("left"), v.rebind);
@@ -540,6 +546,11 @@ export function collectLocalTypes(
   const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number; element?: true }>>();
   // Also assigned something other than a call (or `None`): hides its `from` calls.
   const untyped = new Set<string>();
+  // `q = p` / `(q := p)`: names assigned from another plain name, which the linker types as that name.
+  const aliasFroms = new Map<string, Set<string>>();
+  const aliasFrom = (name: string, head: string): void => {
+    (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(head);
+  };
   // Class-valued registries the body annotates (`table: dict[Kind, type[Base]] = {...}`) and the locals picked
   // out of one (`ctor = table.get(kind)`, `ctor = table[kind]`): calling such a local constructs the stated base.
   const registries = new Map<string, string>();
@@ -598,6 +609,31 @@ export function collectLocalTypes(
   };
   walkStatements(body, {
     loop: bindLoop,
+    condition(cond) {
+      const stack: Node[] = [cond];
+      while (stack.length > 0) {
+        const node = stack.pop()!;
+        if (node.type === "named_expression") {
+          const target = node.childForFieldName("name");
+          const value = node.childForFieldName("value");
+          if (target?.type === "identifier") {
+            const fact = value ? valueFact(value, scope) : UNKNOWN;
+            table.assign(target.text, fact);
+            const call = fact === UNKNOWN && value ? initializerCall(value) : null;
+            if (fact !== UNKNOWN) {
+              // `(q := Club())`: a construction, as an assignment states one.
+              if (fact !== NONE) untyped.add(target.text);
+            } else if (call) {
+              const calls = fromCalls.get(target.text) ?? fromCalls.set(target.text, new Map()).get(target.text)!;
+              calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
+            } else if (value?.type === "identifier" && value.text !== target.text) aliasFrom(target.text, value.text);
+            else untyped.add(target.text);
+          }
+        }
+        if (node.type === "lambda" || NESTED_SCOPES.has(node.type)) continue;
+        for (const c of node.namedChildren) stack.push(c);
+      }
+    },
     ret(stmt) { comprehensions(stmt); },
     statement(stmt) {
       comprehensions(stmt);
@@ -662,7 +698,11 @@ export function collectLocalTypes(
         return;
       }
       const call = right ? initializerCall(right) : null;
-      if (!call) { untyped.add(name); return; }
+      if (!call) {
+        if (right?.type === "identifier" && right.text !== name) aliasFrom(name, right.text);
+        else untyped.add(name);
+        return;
+      }
       const calls = fromCalls.get(name) ?? fromCalls.set(name, new Map()).get(name)!;
       calls.set(`${call.awaited ? "await " : ""}${call.from}`, call);
     },
@@ -704,7 +744,9 @@ export function collectLocalTypes(
     if (!fact) {
       // A stated type wins (handled above); only calls, or calls and `None`, remain.
       const calls = fromCalls.get(name);
-      if (!calls || untyped.has(name)) continue;
+      const heads = aliasFroms.get(name);
+      if (heads && !calls && !untyped.has(name) && heads.size === 1) out.push({ name, type: "", aliasOf: [...heads][0]! });
+      if (!calls || untyped.has(name) || heads) continue;
       for (const c of calls.values()) {
         out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}), ...(c.element ? { element: true as const } : {}) });
       }

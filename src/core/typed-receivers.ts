@@ -55,7 +55,7 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     const names = new Set(members);
     for (const p of fn.params) if (declared(p.type) || p.qualifier) names.add(fold(p.name));
     // A local typed only by its initializer call (`from`) counts too: the linker types it by that call's declared return type.
-    for (const l of fn.localTypes ?? []) if (declared(l.type) || l.qualifier || (!l.type && l.from && !l.destructured)) names.add(fold(l.name));
+    for (const l of fn.localTypes ?? []) if (declared(l.type) || l.qualifier || (!l.type && l.from && !l.destructured) || (!l.type && l.aliasOf !== undefined)) names.add(fold(l.name));
     return names;
   };
 

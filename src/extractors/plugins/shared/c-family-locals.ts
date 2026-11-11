@@ -49,7 +49,16 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
   const fromCalls = new Map<string, Set<string>>();
+  // `auto& q = p;`: the name another name was assigned from; `code` is the cleaned text, searched for later assignments.
+  const aliasFroms = new Map<string, Set<string>>();
+  const aliasBinds = new Map<string, number>();
+  const code: string[] = [];
   const record = (d: Declared): void => {
+    if (d.alias !== undefined) {
+      (aliasFroms.get(d.name) ?? aliasFroms.set(d.name, new Set()).get(d.name)!).add(d.alias);
+      aliasBinds.set(d.name, (aliasBinds.get(d.name) ?? 0) + 1);
+      return;
+    }
     if (d.type === null && d.from === undefined) { unknown.add(d.name); return; }
     if (d.from !== undefined) {
       const calls = fromCalls.get(d.name) ?? fromCalls.set(d.name, new Set()).get(d.name)!;
@@ -76,18 +85,29 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
       for (const d of declarations(inner, m[1] !== "catch")) record(d);
       rest = rest.slice(0, open) + " ".repeat(close - open + 1) + rest.slice(close + 1);
     }
+    code.push(rest);
     for (const piece of rest.split(";")) for (const d of declarations(piece, false)) record(d);
   }
 
   const out: LocalTypes = [];
   // Names the body declares whose binding at a call cannot be told.
-  const untold = new Set(unknown);
+  const untold = new Set([...unknown, ...aliasFroms.keys()]);
   for (const [name, calls] of fromCalls) {
     if (seen.has(name) || unknown.has(name) || params.some((p) => p.name === name)) {
       untold.add(name);
       continue;
     }
     for (const from of calls) out.push({ name, type: "", from });
+  }
+  const text = code.join("\n");
+  for (const [name, heads] of aliasFroms) {
+    const assigned = text.match(new RegExp(`(?<![\\w.>!<=])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
+    if (heads.size !== 1 || seen.has(name) || unknown.has(name) || fromCalls.has(name) || params.some((p) => p.name === name) || assigned !== aliasBinds.get(name)) {
+      untold.add(name);
+      continue;
+    }
+    untold.delete(name);
+    out.push({ name, type: "", aliasOf: [...heads][0]! });
   }
   for (const [name, types] of seen) {
     if (unknown.has(name) || types.size !== 1 || fromCalls.has(name)) {
@@ -113,6 +133,8 @@ interface Declared {
   type: string | null;
   /** The call that initializes it, when that is all that says its type. */
   from?: string;
+  /** The plain name that initializes it (`auto& q = p`, `= *p`, `= &p`). */
+  alias?: string;
 }
 
 /** The declarations one statement makes: `Crate a, *b = make(), c(3)` declares three; `needsInit` in a condition. */
@@ -179,7 +201,9 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
     const built = constructedType(value);
     if (built) return [{ name, type: built }];
     const from = initializerCall(value);
-    return from ? [{ name, type: null, from }] : [{ name, type: null }];
+    if (from) return [{ name, type: null, from }];
+    const alias = /^[*&]?\s*([A-Za-z_]\w*)$/.exec(value.replace(/;\s*$/, ""))?.[1];
+    return alias && alias !== name && !NOT_A_TYPE.has(alias) && alias !== "nullptr" && alias !== "true" && alias !== "false" ? [{ name, type: null, alias }] : [{ name, type: null }];
   }
   const type = cFamilyTypeName(typeText);
   return type ? [{ name, type }] : null;

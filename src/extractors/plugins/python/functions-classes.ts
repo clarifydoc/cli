@@ -37,6 +37,14 @@ const ORM_FIELD_CALLS = new Set(["mapped_column", "Column", "relationship"]);
  */
 const LOCAL_TYPE_GATE = /^\s*[A-Za-z_]\w*\s*:\s*[^\s#]|^\s*[A-Za-z_]\w*\s*=\s*(?:await\s+)?[\w.]+\s*[([]|#\s*type:|\.(?:get|resolve)\s*\(\s*(?:[\w.]+\.)?[A-Z]|ontainer|\bcast\s*\(|\bwith\s[^\n]*\sas\s|\bexcept\s[^\n]*\sas\s|^\s*[A-Za-z_]\w*\s*(?:,\s*[A-Za-z_]\w*\s*)+=\s*(?:await\s+)?[\w.]+\s*\(/m;
 
+/**
+ * A name assigned from another name (`q = p`): it types a local only through a typed parameter (a local typed by a
+ * call has its own gate above), so a function with none skips it.
+ */
+const ALIAS_GATE = /^\s*[A-Za-z_]\w*\s*=\s*[A-Za-z_]\w*\s*(?:#.*)?$/m;
+/** An assignment expression binding a name to a name or a construction: `(q := p)`, `if (q := Club()):`. */
+const WALRUS_GATE = /:=\s*[A-Za-z_][\w.]*\s*[(:)]/;
+
 /** A body with a `for` loop or comprehension: over a typed collection parameter it types the target. */
 const LOOP_GATE = /\bfor\s+(?:[\w,()]+\s+)+?in\s/;
 
@@ -243,7 +251,7 @@ export class PythonExtractor extends FunctionClassExtractor {
       if (access.length > 0) fn.requestAccess = access;
     }
     let collections: ReturnType<typeof collectionParams> | undefined;
-    if (body && (LOCAL_TYPE_GATE.test(bodyText) || ((collections = collectionParams(params)), LOOP_GATE.test(bodyText)))) {
+    if (body && (LOCAL_TYPE_GATE.test(bodyText) || (params.some((p) => p.type) && ALIAS_GATE.test(bodyText)) || WALRUS_GATE.test(bodyText) || ((collections = collectionParams(params)), LOOP_GATE.test(bodyText)))) {
       const locals = collectLocalTypes(body, params, typeComments, collections);
       if (locals.length > 0) fn.localTypes = locals;
     }

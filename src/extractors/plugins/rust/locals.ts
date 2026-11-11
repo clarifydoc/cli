@@ -3,6 +3,9 @@ import { blankStringLiterals } from "../shared/regex-base.js";
 
 type LocalTypes = NonNullable<FunctionInfo["localTypes"]>;
 
+/** Lowercase words a `let` may be assigned that name no value of ours. */
+const RUST_VALUE_WORDS: ReadonlySet<string> = new Set(["self", "true", "false", "super", "crate"]);
+
 /** `let [mut] name[: Type] = rhs` — the rest after `=` is read separately. */
 const LET_RE = /\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::\s*([^=;]+?))?\s*(?:=\s*(.*))?$/;
 /** Any other binding the body makes: `let (a, b)`, `if let Some(x)`, `for x in`, `|x, y|`. */
@@ -33,6 +36,9 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
   const unknown = new Set<string>();
   // `let m = upgrade_manager(x)?;` — typed later through the callee's declared return type.
   const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean }>>();
+  // `let q = &p;`: the name another name was assigned from, for the linker to type.
+  const aliasFroms = new Map<string, Set<string>>();
+  const aliasBinds = new Map<string, number>();
   const record = (name: string, type: string | null): void => {
     if (name === "_" || name === "self") return;
     if (type === null) { unknown.add(name); return; }
@@ -49,7 +55,11 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
       if (m && !/\b(?:if|while)\s+let\b/.test(statement.slice(0, m.index + 3))) {
         const stated = m[2] ? m[2].trim() : m[3] !== undefined ? initializerType(m[3]) : null;
         const call = !stated && m[3] !== undefined ? initializerCall(m[3]) : null;
-        if (call) {
+        const alias = !stated && !call && m[3] !== undefined ? /^(?:&\s*(?:mut\s+)?)?([a-z_]\w*)\s*;?\s*$/.exec(m[3])?.[1] : undefined;
+        if (alias && alias !== m[1] && !RUST_VALUE_WORDS.has(alias)) {
+          (aliasFroms.get(m[1]!) ?? aliasFroms.set(m[1]!, new Set()).get(m[1]!)!).add(alias);
+          aliasBinds.set(m[1]!, (aliasBinds.get(m[1]!) ?? 0) + 1);
+        } else if (call) {
           const calls = fromCalls.get(m[1]!) ?? fromCalls.set(m[1]!, new Map()).get(m[1]!)!;
           calls.set(`${call.awaited ? "?" : ""}${call.from}`, call);
         } else record(m[1]!, stated);
@@ -75,6 +85,14 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
     // a value to use it: the calls on the name come after).
     if (seen.has(name) || unknown.has(name)) continue;
     for (const c of calls.values()) out.push(c.awaited ? { name, type: "", from: c.from, awaited: true } : { name, type: "", from: c.from });
+  }
+  const text = bodyLines.map((l) => blankStringLiterals(l.replace(/\/\/.*$/, ""))).join("\n");
+  for (const [name, heads] of aliasFroms) {
+    if (heads.size !== 1 || seen.has(name) || unknown.has(name) || fromCalls.has(name) || params.some((p) => p.name === name)) continue;
+    // Nothing assigns the name again (`q = other;`, `q += 1`); the only `name =` is its own `let`.
+    const assigned = text.match(new RegExp(`(?<![\\w.>!<=])${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)`, "g"))?.length ?? 0;
+    if (assigned !== aliasBinds.get(name)) continue;
+    out.push({ name, type: "", aliasOf: [...heads][0]! });
   }
   for (const [name, types] of seen) {
     // Bound again by a call: which binding a later call sees cannot be told.

@@ -666,6 +666,19 @@ function injectionQualifier(decorators: string[]): string | undefined {
   return undefined;
 }
 
+/** Whether the text binds `$name` other than by a plain assignment: a `foreach` target, a `catch` variable, `global`/`static`, a `list()`/`[...]` target, a reference. */
+function rebinds(text: string, name: string): boolean {
+  const v = `\\$${name}\\b`;
+  const forms = [
+    `\\bas\\s+(?:&?\\$\\w+\\s*=>\\s*)?&?${v}`,
+    `\\bcatch\\s*\\([^)]*${v}`,
+    `\\b(?:global|static)\\s+[^;]*${v}`,
+    `\\b(?:list\\s*\\(|\\[)[^\\]=;)]*${v}[^\\]=;)]*[\\])]\\s*=(?!=)`,
+    `&\\s*${v}`,
+  ];
+  return forms.some((f) => new RegExp(f).test(text));
+}
+
 /**
  * Locals whose type the body states, so the symbol linker can resolve
  * `$x->method()` to `Type::method`:
@@ -686,6 +699,9 @@ function extractLocalTypes(
   // distinct call is kept (`$t = $v->createText()` / `$t = $v->createTextRun()`);
   // the linker types the local only when their return types agree.
   const fromCalls = new Map<string, Set<string>>();
+  // `$q = $p`: the variable another one was assigned from; a name also assigned anything else is no alias.
+  const aliasFroms = new Map<string, Set<string>>();
+  const otherAssigned = new Set<string>();
   const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
     if (!name || seen.has(name)) return;
     if (!type && !qualifier) {
@@ -727,6 +743,9 @@ function extractLocalTypes(
       const right = n.childForFieldName("right") ?? n.child(n.childCount - 1);
       const name = varName(left);
       if (name && right) {
+        const aliasHead = varName(right);
+        if (aliasHead && aliasHead !== "this" && aliasHead !== name && left?.type === "variable_name") (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(aliasHead);
+        else otherAssigned.add(name);
         const looked = phpLocatorType(right, aliases);
         if (looked) add(name, looked.type, looked.qualifier);
         // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
@@ -737,6 +756,9 @@ function extractLocalTypes(
   };
   walk(body);
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
+  for (const [name, heads] of aliasFroms) {
+    if (heads.size === 1 && !seen.has(name) && !fromCalls.has(name) && !otherAssigned.has(name) && !rebinds(body.text, name)) out.push({ name, type: "", aliasOf: [...heads][0]! });
+  }
   return out;
 }
 

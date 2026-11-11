@@ -7344,6 +7344,13 @@ function scopedName(
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   const key = nameKey(analysis.language, name);
   let local = callable?.localTypes?.find((l) => nameKey(analysis.language, l.name) === key);
+  if (local?.aliasOf !== undefined && !local.type && !local.qualifier && !local.from) {
+    // `const q = p`: the alias is typed as the name it was assigned from, when every binding of it names the same one.
+    const same = callable!.localTypes!.filter((l) => nameKey(analysis.language, l.name) === key).every((l) => !l.type && !l.qualifier && !l.from && l.aliasOf === local!.aliasOf);
+    if (!same || depth >= MAX_INITIALIZER_DEPTH || nameKey(analysis.language, local.aliasOf) === key) return null;
+    const aliased = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, local.aliasOf, depth + 1, branches);
+    return aliased ? { ...aliased, member: name } : null;
+  }
   if (local?.from && !local.type && !local.qualifier) {
     // Every call the local is initialized from (one per branch) must agree.
     const inits = callable!.localTypes!.filter((l) => nameKey(analysis.language, l.name) === key && l.from);
