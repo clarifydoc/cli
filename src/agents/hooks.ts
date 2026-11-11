@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "fs";
+import { spawn } from "child_process";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative } from "path";
 import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/server.js";
 
@@ -23,6 +24,9 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  *  - `post-edit` (after Edit/Write): who depends on the file just changed,
  *    which routes and screens pass through it, the tests that reach it, and
  *    the decision records that name it.
+ *  - `post-git` (after a shell `git commit|checkout|switch|merge|pull|rebase|reset|cherry-pick|revert|stash|am`): one incremental refresh of the
+ *    analysis, started detached and coalesced while one is running; the hook itself prints nothing and returns
+ *    at once, and any other command exits before the analysis is even located.
  *  - `session-start`: what the map covers and how fresh it is.
  *  - `subagent-start`: the same, and how to ask the map from the shell
  *    (`clarifydoc ask <tool> key=value`) — a subagent may run without the
@@ -32,8 +36,8 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  * has no analysis, and on any error — a hook must never stand in the way.
  * Nothing is analyzed here: the hook reads what the last analysis wrote.
  */
-export type HookEvent = "pre-search" | "post-search" | "pre-write" | "post-edit" | "session-start" | "subagent-start";
-export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-search", "pre-write", "post-edit", "session-start", "subagent-start"];
+export type HookEvent = "pre-search" | "post-search" | "pre-write" | "post-edit" | "post-git" | "session-start" | "subagent-start";
+export const HOOK_EVENTS: readonly HookEvent[] = ["pre-search", "post-search", "pre-write", "post-edit", "post-git", "session-start", "subagent-start"];
 
 /** How a host frames the answer: Claude Code's `hookSpecificOutput`, or Copilot's top-level `additionalContext`. */
 export type HookDialect = "claude" | "copilot";
@@ -45,6 +49,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "post-search": "PostToolUse",
   "pre-write": "PreToolUse",
   "post-edit": "PostToolUse",
+  "post-git": "PostToolUse",
   "session-start": "SessionStart",
   "subagent-start": "SubagentStart",
 };
@@ -85,8 +90,25 @@ export function normalizeHookInput(input: HookInput): HookInput {
  * The hook's output for one event and payload, or null to stay silent. `ask` is how this CLI is started from a
  * shell (`clarifydoc`, or `node <script>`), for the commands a subagent is given.
  */
-export async function runHook(event: HookEvent, raw: HookInput, fallbackCwd = process.cwd(), dialect: HookDialect = "claude", ask = "clarifydoc"): Promise<string | null> {
+export async function runHook(
+  event: HookEvent,
+  raw: HookInput,
+  fallbackCwd = process.cwd(),
+  dialect: HookDialect = "claude",
+  ask = "clarifydoc",
+  refresh: RefreshStarter = startRefresh,
+): Promise<string | null> {
   const input = normalizeHookInput(raw);
+  if (event === "post-git") {
+    // Before anything is loaded: most Bash commands are not a git change of the working tree.
+    if (input.tool_name !== "Bash" || !isTreeMovingGit(input.tool_input?.command ?? "")) return null;
+    const cwd = input.cwd && isAbsolute(input.cwd) ? input.cwd : fallbackCwd;
+    const { root } = locateProjectRoot(cwd);
+    const analysisDir = defaultAnalysisDir(root);
+    // Never a cold start: the hook only keeps an existing analysis current.
+    if (existsSync(join(analysisDir, "project-summary.json"))) refresh(root, analysisDir);
+    return null;
+  }
   const search = event === "pre-search" || event === "post-search";
   // Before anything is loaded: VS Code's Copilot ignores matchers and calls this after every tool, and most are not searches.
   if (search && dialect === "copilot" && input.tool_name && !Object.values(SEARCH_TOOL).includes(input.tool_name)) return null;
@@ -236,4 +258,102 @@ export function readHookInput(): HookInput {
   } catch {
     return {};
   }
+}
+
+/** The git subcommands that move HEAD or the working tree. */
+const TREE_MOVING = new Set(["commit", "checkout", "switch", "merge", "pull", "rebase", "reset", "cherry-pick", "revert", "stash", "am"]);
+/** Global options that take their value as the next word. */
+const GIT_VALUE_OPTIONS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"]);
+
+/**
+ * Whether a shell command line runs `git commit|checkout|switch|merge|pull|rebase` — also behind global options
+ * (`git -C dir commit`), env assignments and `&&` / `;` / `|` chains. Quoted text is blanked first, so a commit
+ * message or an `echo "git commit"` never counts.
+ */
+export function isTreeMovingGit(command: string): boolean {
+  if (!/\bgit\b/.test(command)) return false;
+  const blanked = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""');
+  for (const segment of blanked.split(/&&|\|\||[;|\n&]/)) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    // Env assignments and the wrappers a command may sit behind: `FOO=1 git …`, `command git …`, `(git …`.
+    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!) || /^(command|sudo|time|exec|env|nice|\()$/.test(words[i]!))) i++;
+    if (words[i]?.startsWith("(")) words[i] = words[i]!.replace(/^\(+/, "");
+    if (words[i] !== "git" && !/(^|[\\/])git(\.exe)?$/.test(words[i] ?? "")) continue;
+    for (i++; i < words.length; i++) {
+      const w = words[i]!;
+      if (GIT_VALUE_OPTIONS.has(w)) i++;
+      else if (w.startsWith("-")) continue;
+      else break;
+    }
+    if (TREE_MOVING.has(words[i] ?? "")) return true;
+  }
+  return false;
+}
+
+/** Starts one refresh of the analysis in `analysisDir`; a seam the tests replace. */
+export type RefreshStarter = (root: string, analysisDir: string) => void;
+
+const REFRESH_LOCK = ".hook-refresh.lock";
+const PENDING_MS = 30_000;
+/** A lock older than this is stale whatever its pid says (a recycled pid must not hold it forever). */
+const MAX_LOCK_MS = 10 * 60_000;
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * One incremental analysis in the background, never two at once: a lock file holds the child's pid, and while
+ * that process lives (or, in the moment between the lock and the pid, for thirty seconds) another hook does
+ * nothing. The child is detached with no stdio, so the hook returns at once and the agent never waits for it.
+ */
+export function startRefresh(root: string, analysisDir: string): void {
+  const lock = join(analysisDir, REFRESH_LOCK);
+  const claim = (): boolean => {
+    try {
+      writeFileSync(lock, JSON.stringify({ pid: 0, at: Date.now() }), { flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!claim()) {
+    let held = false;
+    try {
+      const l = JSON.parse(readFileSync(lock, "utf8")) as { pid?: number; at?: number };
+      const age = Date.now() - (l.at ?? 0);
+      held = l.pid ? alive(l.pid) && age < MAX_LOCK_MS : age < PENDING_MS;
+    } catch {
+      held = false;
+    }
+    if (held) return;
+    try {
+      rmSync(lock, { force: true });
+    } catch {
+      return;
+    }
+    if (!claim()) return;
+  }
+  void import("./install.js").then(({ selfCommand }) => {
+    const self = selfCommand();
+    try {
+      const child = spawn(self.command, [...self.args, "analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--no-pretty"], {
+        cwd: root,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.on("error", () => rmSync(lock, { force: true }));
+      if (child.pid) writeFileSync(lock, JSON.stringify({ pid: child.pid, at: Date.now() }));
+      child.unref();
+    } catch {
+      rmSync(lock, { force: true });
+    }
+  }).catch(() => rmSync(lock, { force: true }));
 }

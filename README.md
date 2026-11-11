@@ -413,9 +413,10 @@ The hooks run `clarifydoc hook <event>`, which reads the host's JSON payload on 
 | `pre-search` | before Grep/Glob, or a grep/rg in the shell | what the map knows about the name being searched for, and where |
 | `post-search` | after a search (Copilot, `--dialect copilot`) | the same, beside the search's results |
 | `post-edit` | after Edit/Write | who depends on the file just changed, and what to run before finishing |
+| `post-git` | after a shell `git commit`, `checkout`, `switch`, `merge`, `pull` or `rebase` | nothing: starts one background incremental refresh (coalesced while one runs; never without an existing analysis) |
 | `session-start` | a new session | what the map covers and how fresh it is |
 
-A hook never blocks a tool call, never analyzes, and stays silent on any error.
+A hook never blocks a tool call and stays silent on any error; only `post-git` starts an analysis, detached.
 
 ## Detection details
 

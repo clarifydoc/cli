@@ -322,6 +322,7 @@ export function planClaudeHooks(root: string, self = selfCommand()): Planned {
   add("PreToolUse", "Grep|Glob|Bash", "pre-search");
   add("PreToolUse", "Write", "pre-write");
   add("PostToolUse", "Edit|Write|MultiEdit", "post-edit");
+  add("PostToolUse", "Bash", "post-git");
   add("SessionStart", undefined, "session-start");
   add("SubagentStart", undefined, "subagent-start");
   if (read === null) return { file, content: pretty({ hooks }), skip: "it is not plain JSON (comments?), so it was not rewritten — add these hooks by hand" };
@@ -357,7 +358,11 @@ export function planCodexHooks(self: Launcher = selfCommand(), configToml?: stri
     if (json === null) return { file: hooksJson, content: pretty({ hooks: { PreToolUse: [entry] } }), skip: "it is not plain JSON, so it was not rewritten — add this hook by hand" };
     const hooks = { ...((json.hooks as Record<string, unknown[]>) ?? {}) };
     const list = ((hooks.PreToolUse as Array<{ hooks?: Array<{ command?: string }> }>) ?? []).filter((h) => !h.hooks?.some((x) => (x.command ?? "").endsWith(" hook pre-search")));
-    return { file: hooksJson, content: pretty({ ...json, hooks: { ...hooks, PreToolUse: [...list, entry] } }), note };
+    // After a git command that moves the working tree: one background refresh.
+    const gitCommand = shellLine([launcher.command, ...launcher.args, "hook", "post-git"]);
+    const gitEntry = { matcher: "Bash", hooks: [{ type: "command", command: gitCommand, timeout: 10 }] };
+    const post = ((hooks.PostToolUse as Array<{ hooks?: Array<{ command?: string }> }>) ?? []).filter((h) => !h.hooks?.some((x) => (x.command ?? "").endsWith(" hook post-git")));
+    return { file: hooksJson, content: pretty({ ...json, hooks: { ...hooks, PreToolUse: [...list, entry], PostToolUse: [...post, gitEntry] } }), note };
   }
   const file = join(codexDir, "config.toml");
   const existing = configToml ?? (existsSync(file) ? readFileSync(file, "utf8") : "");
@@ -383,7 +388,10 @@ export function planCopilotHooks(self: Launcher = selfCommand(), home = copilotH
   const launcher = pinnedLauncher(self);
   const words = [launcher.command, ...launcher.args, "hook", "post-search", "--dialect", "copilot"];
   const entry = { type: "command", matcher: "Bash|Grep|Glob|bash|powershell|grep|rg|glob", bash: shellLine(words), powershell: powershellLine(words), timeoutSec: 10 };
-  return { file: join(home, "hooks", "clarifydoc.json"), content: pretty({ version: 1, hooks: { PostToolUse: [entry] } }) };
+  // After a git command that moves the working tree: one background refresh (the hook prints nothing).
+  const gitWords = [launcher.command, ...launcher.args, "hook", "post-git", "--dialect", "copilot"];
+  const gitEntry = { type: "command", matcher: "Bash|bash|powershell", bash: shellLine(gitWords), powershell: powershellLine(gitWords), timeoutSec: 10 };
+  return { file: join(home, "hooks", "clarifydoc.json"), content: pretty({ version: 1, hooks: { PostToolUse: [entry, gitEntry] } }) };
 }
 
 /**

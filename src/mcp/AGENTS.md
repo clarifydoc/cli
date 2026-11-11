@@ -51,7 +51,7 @@ write. That is what lets an external agent be configured as nothing but a comman
   `freshnessBanner` (tools/context.ts) while the analysis no longer describes the source — files changed, removed
   or added since (`assessFreshness`: added files come from `git ls-files`, in directories the analysis covers,
   written after its manifest), and HEAD against the commit it was made at (`sourceRevision`, also in the
-  manifest). An analysis a NEWER engine wrote is not stale (`engine-older`, versions compared as numbers): the
+  manifest) — then one bounded `rev-list --left-right --count` (`commitRelation`, core/source-revision.ts) says how: HEAD N commits ahead, older, diverged, or the analyzed commit gone from the repository (rebased away); `clarifydoc_status` shows it on its commit row even when HEAD moved without touching an analyzed file. The `post-git` hook (agents/hooks.ts) keeps it current: after a shell git command that moves the tree it starts one detached incremental `analyze`, coalesced by a lock file. An analysis a NEWER engine wrote is not stale (`engine-older`, versions compared as numbers): the
   banner says the server is older and wants a restart, and `clarifydoc_analyze` refuses to write the older reading
   over it (`EngineOlderError`). One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze` are
   left alone, since they are about exactly that. Per file, the subject of `clarifydoc_file`,

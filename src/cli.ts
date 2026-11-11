@@ -813,7 +813,7 @@ program
 program
   .command("hook")
   .description("Agent-host hook (Claude Code protocol): reads the hook payload on stdin, prints context from the analysis. Wired by `clarifydoc install --hooks`")
-  .argument("<event>", "pre-search | post-search | pre-write | post-edit | session-start | subagent-start")
+  .argument("<event>", "pre-search | post-search | pre-write | post-edit | post-git | session-start | subagent-start")
   .option("--dialect <name>", "The host's payload and answer format: claude (Claude Code, Codex) | copilot (GitHub Copilot CLI and VS Code)", "claude")
   .action(async (event: string, options) => {
     // A hook must never stand in the agent's way: any failure is silence.

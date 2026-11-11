@@ -39,3 +39,50 @@ export async function untrackedAmong(projectRoot: string, paths: readonly string
   const out = await git(projectRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...paths], 5000);
   return out === null ? null : new Set(out.split("\0").filter(Boolean));
 }
+
+/** How HEAD stands to the commit an analysis was made at. */
+export type CommitRelation =
+  | { state: "current" }
+  | { state: "behind"; behind: number }
+  | { state: "diverged"; ahead: number; behind: number }
+  /** HEAD is an ancestor of the analyzed commit (checked out older, or reset). */
+  | { state: "older"; ahead: number }
+  /** The analyzed commit is not in this repository (rebased away, another clone). */
+  | { state: "missing" };
+
+/**
+ * Compares the analyzed commit with HEAD using one bounded
+ * `rev-list --left-right --count`. Null without git, outside a work tree or
+ * when HEAD cannot be read — a caller then says nothing.
+ */
+export async function commitRelation(projectRoot: string, analyzed: string): Promise<CommitRelation | null> {
+  if (!/^[0-9a-f]{7,64}$/.test(analyzed)) return null;
+  const head = await headCommit(projectRoot);
+  if (!head) return null;
+  if (head === analyzed) return { state: "current" };
+  const out = await git(projectRoot, ["rev-list", "--left-right", "--count", `${analyzed}...${head}`], 3000);
+  const m = out?.trim().match(/^(\d+)\s+(\d+)$/);
+  if (!m) {
+    // A timeout or failure says nothing about the commit; only a commit this repository lacks is "missing".
+    const kind = (await git(projectRoot, ["cat-file", "-t", analyzed], 2000))?.trim();
+    return kind === "commit" ? null : { state: "missing" };
+  }
+  const ahead = Number(m[1]); // reachable from the analyzed commit only
+  const behind = Number(m[2]); // reachable from HEAD only
+  if (ahead === 0 && behind === 0) return { state: "current" };
+  if (ahead === 0) return { state: "behind", behind };
+  if (behind === 0) return { state: "older", ahead };
+  return { state: "diverged", ahead, behind };
+}
+
+/** One readable clause for a relation, or null when the analysis is at HEAD. */
+export function describeCommitRelation(r: CommitRelation): string | null {
+  const n = (k: number) => `${k} commit${k === 1 ? "" : "s"}`;
+  switch (r.state) {
+    case "current": return null;
+    case "behind": return `HEAD is ${n(r.behind)} ahead of the analyzed commit`;
+    case "older": return `HEAD is ${n(r.ahead)} older than the analyzed commit`;
+    case "diverged": return `HEAD diverged from the analyzed commit (${r.ahead} ahead, ${r.behind} behind)`;
+    case "missing": return "the analyzed commit is not in this repository (rebased away?)";
+  }
+}

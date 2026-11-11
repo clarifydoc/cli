@@ -8,6 +8,7 @@ import { STATUS_HINT } from "../empty.js";
 import { nearNames } from "../validate.js";
 import { contextIndex } from "./decisions.js";
 import type { ToolCallRecord } from "../usage.js";
+import { commitRelation, describeCommitRelation } from "../../core/source-revision.js";
 import { isTestFile } from "../../core/test-file-detector.js";
 
 export interface ToolContext {
@@ -44,6 +45,13 @@ export function mustResolveFile(loaded: LoadedAnalysis, query: string): string {
 export function projectName(summary: ProjectAnalysis): string {
   const root = (summary.projectRoot ?? "").replace(/\\/g, "/").replace(/\/$/, "");
   return root.split("/").pop() || root || "project";
+}
+
+/** ` — current` / ` — HEAD is N commits ahead…`; empty without git. */
+async function commitRelationNote(store: AnalysisStore, analyzed: string): Promise<string> {
+  const r = await commitRelation(store.projectRoot, analyzed).catch(() => null);
+  if (!r) return "";
+  return r.state === "current" ? " — current with HEAD" : ` — ${describeCommitRelation(r)}`;
 }
 
 /**
@@ -155,11 +163,15 @@ export function freshnessBanner(store: AnalysisStore, ttlMs = 10_000): () => Pro
     if (Date.now() - at < ttlMs) return last;
     at = Date.now();
     last = assessFreshness(store.analysisDir, store.projectRoot, { maxStats: 2000 })
-      .then((f) => {
+      .then(async (f) => {
         if (f.state === "engine-older") return `⚠ Server older than the analysis: ${engineOlderNote(f)}.`;
         if (f.state === "extractor-changed") return `⚠ Stale: the extractor changed since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze full=true" : "re-run `clarifydoc analyze`"} refreshes it.`;
+        // The commit relation costs one `rev-list`, and only where HEAD moved.
+        // A HEAD that moved without touching an analyzed file leaves the analysis right: no banner (status still says so).
         if (f.state !== "changed") return null;
-        return `⚠ Stale: ${changeSummary(f)} since this analysis — ${store.allowAnalyze ? "clarifydoc_analyze" : "re-run `clarifydoc analyze --incremental`"} refreshes it.`;
+        const rel = f.head ? await commitRelation(store.projectRoot, f.head.analyzed).then((r) => (r && r.state !== "behind" ? describeCommitRelation(r) : null), () => null) : null; // "behind" is the HEAD → clause already in changeSummary
+        const refresh = store.allowAnalyze ? "clarifydoc_analyze" : "re-run `clarifydoc analyze --incremental`";
+        return `⚠ Stale: ${changeSummary(f)}${rel ? ` and ${rel}` : ""} since this analysis — ${refresh} refreshes it.`;
       })
       .catch(() => null);
     return last;
@@ -187,7 +199,7 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
     facts([
       ["root", summary.projectRoot],
       ["analyzed", `${summary.analyzedAt} (${ago(summary.analyzedAt)})`],
-      ["commit", summary.sourceRevision ? `${summary.sourceRevision.commit.slice(0, 12)}${summary.sourceRevision.branch ? ` on ${summary.sourceRevision.branch}` : ""}${summary.sourceRevision.dirty ? `, ${plural(summary.sourceRevision.dirty, "uncommitted file")}` : ""}` : undefined],
+      ["commit", summary.sourceRevision ? `${summary.sourceRevision.commit.slice(0, 12)}${summary.sourceRevision.branch ? ` on ${summary.sourceRevision.branch}` : ""}${summary.sourceRevision.dirty ? `, ${plural(summary.sourceRevision.dirty, "uncommitted file")}` : ""}${await commitRelationNote(store, summary.sourceRevision.commit)}` : undefined],
       ["source", await sourceFreshness(store)],
       ["read", coverageLine(summary.coverage)],
       ["tests run", summary.testCoverage?.total
