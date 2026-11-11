@@ -1,3 +1,4 @@
+import { phpCollectionElement } from "./collection-element.js";
 import { phpMigrationFiles } from "./migration-files.js";
 import { phpProjectCommands } from "./project-commands.js";
 import { phpTestCommand } from "./test-command.js";
@@ -18,6 +19,7 @@ export const phpManifest: LanguagePluginManifest = {
   testCommand: phpTestCommand,
   projectCommands: phpProjectCommands,
   language: "php",
+  collectionElementOf: phpCollectionElement,
   callPathsFromHead: true,
   family: "php",
   // A userland function ignores arguments past its parameters; too few is the error.

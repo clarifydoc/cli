@@ -1,3 +1,4 @@
+import { rustCollectionElement } from "./collection-element.js";
 import { rustMigrationFiles } from "./migration-files.js";
 import { rustProjectCommands } from "./project-commands.js";
 import { resolveRustImport } from "./module-resolver.js";
@@ -23,6 +24,7 @@ export const rustManifest: LanguagePluginManifest = {
   // flutter_rust_bridge and wasm-pack configurations: generated Dart / JS modules bound to Rust functions.
   foreignBindings: rustForeignBindings,
   language: "rust",
+  collectionElementOf: rustCollectionElement,
   family: "rust",
   // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`
   // ignore (a .NET build-output directory) would otherwise skip them.

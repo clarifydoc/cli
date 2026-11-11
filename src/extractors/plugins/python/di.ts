@@ -88,6 +88,42 @@ export function collectionElement(type: string | null | undefined): { element: s
   return { element, map: isMap };
 }
 
+/** What a written type says about the rows a loop over it unpacks: a list of tuples, or a dict's key and value. */
+export interface RowShape {
+  /** `list[tuple[Club, Player]]` → `Club`, `Player` (null where a position is no class). */
+  rows?: Array<string | null>;
+  /** `dict[Club, Player]` → the pair `.items()` yields. */
+  kv?: [string | null, string | null];
+}
+
+const NOT_ROW_CLASSES = /^(?:Any|None|Self|Optional|Union|Callable|Dict|List|Set|Tuple|Type)$/;
+
+function rowClass(text: string): string | null {
+  const t = text.trim().replace(/^(['"])(.*)\1$/, "$2");
+  return isClassName(t) && !NOT_ROW_CLASSES.test(lastSegment(t)) ? t : null;
+}
+
+/** The unpackable rows a collection annotation states: `list[tuple[Club, Player]]`, `dict[Club, Player]`. */
+export function rowShape(type: string | null | undefined): RowShape | null {
+  let t = collapse(type ?? "").replace(/\b(?:typing|collections(?:\.abc)?)\./g, "");
+  t = t.split("|").map((p) => p.trim()).filter((p) => p && p !== "None").join("|");
+  const opt = /^Optional\[(.+)\]$/.exec(t);
+  if (opt) t = opt[1]!;
+  if (!t || t.includes("|")) return null;
+  const seq = /^(?:list|List|Sequence|MutableSequence|Iterable|Iterator|Collection|set|Set|FrozenSet|frozenset|Deque|deque)\[(.+)\]$/.exec(t);
+  if (seq) {
+    const row = /^(?:tuple|Tuple)\[(.+)\]$/.exec(seq[1]!.trim());
+    const args = row ? splitTopLevel(row[1]!).map((a) => a.trim()) : [];
+    return args.length >= 2 && !args.includes("...") ? { rows: args.map(rowClass) } : null;
+  }
+  const map = /^(?:dict|Dict|Mapping|MutableMapping|OrderedDict|DefaultDict|defaultdict)\[(.+)\]$/.exec(t);
+  if (map) {
+    const args = splitTopLevel(map[1]!).map((a) => a.trim());
+    return args.length === 2 ? { kv: [rowClass(args[0]!), rowClass(args[1]!)] } : null;
+  }
+  return null;
+}
+
 /** Positional (non-keyword) argument nodes of a call. */
 function positionalArgs(call: Node): Node[] {
   const args = call.childForFieldName("arguments");
@@ -555,6 +591,12 @@ export function collectLocalTypes(
   // out of one (`ctor = table.get(kind)`, `ctor = table[kind]`): calling such a local constructs the stated base.
   const registries = new Map<string, string>();
   const classValued = new Map<string, string>();
+  // Collections of tuples and dicts, by name, whose rows a loop target unpacks (`for i, (club, player) in enumerate(pairs)`).
+  const shapes = new Map<string, RowShape>();
+  for (const p of params) {
+    const shape = rowShape(p.type);
+    if (shape) shapes.set(p.name, shape);
+  }
   const scope = (name: string): Fact => {
     if (paramNames.has(name)) return paramFact(params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
@@ -565,6 +607,7 @@ export function collectLocalTypes(
     const left = clause.childForFieldName("left");
     const over = left ? loopOver(clause.childForFieldName("right"), collections) : null;
     if (!left) return false;
+    if (unpackRows(clause.childForFieldName("right"), left)) return true;
     const targets = left.type === "identifier" ? [left] : left.type === "pattern_list" || left.type === "tuple_pattern" ? left.namedChildren : [];
     if (!over) {
       // A loop over a field or a call's result (`for c in self.clubs`, `for c in repo.load()`): the element of the
@@ -592,6 +635,52 @@ export function collectLocalTypes(
         untyped.add(t.text);
       } else boundNames(t, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
     }
+    return true;
+  };
+  /**
+   * `for club, player in pairs`, `for i, (club, player) in enumerate(pairs)`, `for club, player in roster.items()`:
+   * every unpacked name takes the class its position states, over a collection the source annotates.
+   */
+  const unpackRows = (right: Node | null, left: Node): boolean => {
+    let node = right;
+    let counted = false;
+    for (let hop = 0; node && hop < 3; hop++) {
+      if (node.type !== "call") break;
+      const fn = node.childForFieldName("function");
+      const args = node.childForFieldName("arguments")?.namedChildren.filter((c) => c.type !== "comment") ?? [];
+      if (fn?.type !== "identifier" || args.length !== 1) break;
+      if (fn.text === "enumerate" && !counted) counted = true;
+      else if (!["reversed", "sorted", "list", "iter"].includes(fn.text)) break;
+      node = args[0]!;
+    }
+    let shape: RowShape | undefined;
+    let types: Array<string | null> | undefined;
+    if (node?.type === "identifier") {
+      shape = shapes.get(node.text);
+      types = shape?.rows;
+    } else if (node?.type === "call") {
+      const fn = node.childForFieldName("function");
+      const object = fn?.type === "attribute" ? fn.childForFieldName("object") : null;
+      if (fn?.type === "attribute" && fn.childForFieldName("attribute")?.text === "items" && object?.type === "identifier") {
+        shape = shapes.get(object.text);
+        types = shape?.kv;
+      }
+    }
+    if (!types || (left.type !== "pattern_list" && left.type !== "tuple_pattern")) return false;
+    let row: Node[] = left.namedChildren;
+    let counter: Node | undefined;
+    if (counted) {
+      [counter] = row;
+      const pattern = row[1];
+      if (row.length !== 2 || !pattern || (pattern.type !== "tuple_pattern" && pattern.type !== "pattern_list")) return false;
+      row = pattern.namedChildren;
+    }
+    if (row.length !== types.length || row.some((n) => n.type !== "identifier") || (counter && counter.type !== "identifier")) return false;
+    if (counter) boundNames(counter, (n) => { table.assign(n, UNKNOWN); untyped.add(n); });
+    row.forEach((n, i) => {
+      table.assign(n.text, types![i] ? { type: types![i]! } : UNKNOWN);
+      untyped.add(n.text);
+    });
     return true;
   };
   /** The comprehensions of a statement (`[c.rank() for c in clubs]`): their targets are names of their own. */
@@ -659,6 +748,7 @@ export function collectLocalTypes(
         return;
       }
       const name = left.text;
+      shapes.delete(name);
       const annotation = a.childForFieldName("type");
       if (annotation) {
         const registry = REGISTRY_TYPE.exec(annotation.text.replace(/\s+/g, ""));
@@ -666,6 +756,8 @@ export function collectLocalTypes(
         table.declare(name, { type: collapse(annotation.text) });
         const stated = collectionElement(annotation.text);
         if (stated) collections.set(name, stated);
+        const rows = rowShape(annotation.text);
+        if (rows) shapes.set(name, rows);
         return;
       }
       const comment = typeComments ? trailingTypeComment(stmt) : null;

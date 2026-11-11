@@ -7,6 +7,7 @@ import { extractCppConnectElements } from "./connect-elements.js";
 import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.js";
 import { markLocalCallables } from "../shared/c-family-callables.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
+import { cppCollectionElement } from "./collection-element.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
@@ -294,7 +295,7 @@ export const cppSpec: RegexLangSpec = {
   },
   postProcessClasses: tagQmlElementClasses,
   markLocalCalls: markLocalCallables,
-  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params),
+  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params, cppCollectionElement),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,
   // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition.

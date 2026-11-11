@@ -53,7 +53,7 @@ function parseType(language: JkLang): ChainRules["parseType"] {
     if (!g) return null;
     if (g.name === "[]") return { kind: "coll", elem: g.args[0]! };
     if (collections.has(g.name) && g.args.length === 1) return { kind: "coll", elem: g.args[0]! };
-    if (MAPS.has(g.name) && g.args.length === 2) return { kind: "map", elem: g.args[1]! };
+    if (MAPS.has(g.name) && g.args.length === 2) return { kind: "map", elem: g.args[1]!, key: g.args[0]! };
     if (OPTIONALS.has(g.name) && g.args.length === 1) return { kind: "optional", elem: g.args[0]! };
     return null;
   };
@@ -68,6 +68,7 @@ const JAVA_RULES: ChainRules = {
   toOptional: set("findFirst", "findAny", "min", "max"),
   optionalValue: set("get", "orElseThrow", "orElse", "orElseGet", "block"),
   values: set("values"),
+  keys: set("keySet", "navigableKeySet"),
   filterByType: set(),
   indexer: true,
   callbacks: new Map<string, readonly number[]>([
@@ -98,6 +99,7 @@ const KOTLIN_RULES: ChainRules = {
   toOptional: set(),
   optionalValue: set("get", "orElseThrow", "orElse", "orElseGet", "block"),
   values: set("values"),
+  keys: set("keys"),
   filterByType: set("filterIsInstance"),
   indexer: true,
   callbacks: new Map<string, readonly number[]>([
@@ -435,9 +437,20 @@ export function jvmElementFacts(
           const t = decl.children.find((x) => x.type === "user_type" || x.type === "nullable_type")?.text;
           bindFrom(nameOf(decl), iterable, t ? classOf(t) : iterable ? loopElement(iterable.text, rootState, rules) : null);
         } else {
+          // `for ((club, player) in roster)`, `roster.entries`, `clubs.withIndex()`: a pair per step — a map's key and
+          // value, an index and its element.
           const vars = decl.namedChildren;
-          const state = iterable ? chainState(iterable.text, rootState, rules) : null;
-          vars.forEach((v, i) => bind(nameOf(v), state?.kind === "map" && vars.length === 2 && i === 1 ? rules.classOf(state.elem) : null));
+          const text = iterable?.text.trim() ?? "";
+          const indexed = /^([\s\S]+?)\.withIndex\(\)$/.exec(text);
+          const entries = /^([\s\S]+?)\.entries$/.exec(text);
+          const state = text ? chainState(indexed?.[1] ?? entries?.[1] ?? text, rootState, rules) : null;
+          const classOfElem = (t: string | undefined): string | null => (t ? rules.classOf(t) : null);
+          vars.forEach((v, i) => {
+            let type: string | null = null;
+            if (vars.length === 2 && state?.kind === "map" && !indexed) type = classOfElem(i === 0 ? state.key : state.elem);
+            else if (vars.length === 2 && state?.kind === "coll" && indexed && i === 1) type = classOfElem(state.elem);
+            bind(nameOf(v), type);
+          });
         }
         break;
       }

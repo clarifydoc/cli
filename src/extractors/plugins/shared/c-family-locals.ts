@@ -45,7 +45,12 @@ const HEADS = /\b(for|if|while|switch|catch)\s*\(/g;
  * in `Shadow(Engine T)`), is written untyped (`type: ""`): which binding a call sees cannot be told, and neither the
  * parameter nor a field of that name may answer it.
  */
-export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: readonly ParamInfo[]): LocalTypes {
+export function extractCFamilyLocalTypes(
+  bodyLines: readonly string[],
+  params: readonly ParamInfo[],
+  /** C++: the element a declared container type states (`vector<Club>` → `Club`); unset where there is no range-for. */
+  elementOf?: (type: string) => string | null,
+): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
   const fromCalls = new Map<string, Set<string>>();
@@ -53,7 +58,10 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
   const aliasFroms = new Map<string, Set<string>>();
   const aliasBinds = new Map<string, number>();
   const code: string[] = [];
+  // `for (auto& p : <source>)`: what the loop variable is the element of, settled once every declaration is read.
+  const ranges: Array<{ name: string; source: string }> = [];
   const record = (d: Declared): void => {
+    if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver }); return; }
     if (d.alias !== undefined) {
       (aliasFroms.get(d.name) ?? aliasFroms.set(d.name, new Set()).get(d.name)!).add(d.alias);
       aliasBinds.set(d.name, (aliasBinds.get(d.name) ?? 0) + 1);
@@ -90,8 +98,37 @@ export function extractCFamilyLocalTypes(bodyLines: readonly string[], params: r
   }
 
   const out: LocalTypes = [];
+  // A range-for over a name typed as a container takes its element; over a call or a field it is the linker's to read.
+  const elementFroms = new Map<string, Set<string>>();
+  const rangeUnknown = new Set<string>();
+  for (const { name, source } of ranges) {
+    const text = source.replace(/;?\s*$/, "").replace(/\s*->\s*/g, ".").replace(/^\*+/, "").trim();
+    let element: string | null = null;
+    let from: string | null = null;
+    if (/^[A-Za-z_]\w*$/.test(text)) {
+      const param = params.find((p) => p.name === text);
+      const types = seen.get(text);
+      const declared = param ? cFamilyTypeName(param.type ?? "") : types?.size === 1 && !unknown.has(text) && !fromCalls.has(text) ? [...types][0]! : null;
+      element = declared ? elementOf!(declared) : null;
+      // A name the body does not declare is a field of the class: read off its declaration.
+      if (!element && !param && !seen.has(text) && !unknown.has(text) && !fromCalls.has(text)) from = text;
+    } else if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(text)) from = text;
+    else from = initializerCall(text);
+    if (element && !PRIMITIVES.has(element)) {
+      (seen.get(name) ?? seen.set(name, new Set()).get(name)!).add(element);
+    } else if (from) (elementFroms.get(name) ?? elementFroms.set(name, new Set()).get(name)!).add(from);
+    else rangeUnknown.add(name);
+  }
+  for (const name of rangeUnknown) unknown.add(name);
   // Names the body declares whose binding at a call cannot be told.
   const untold = new Set([...unknown, ...aliasFroms.keys()]);
+  for (const [name, froms] of elementFroms) {
+    if (seen.has(name) || unknown.has(name) || fromCalls.has(name) || params.some((p) => p.name === name)) {
+      untold.add(name);
+      continue;
+    }
+    for (const from of froms) out.push({ name, type: "", from, element: true });
+  }
   for (const [name, calls] of fromCalls) {
     if (seen.has(name) || unknown.has(name) || params.some((p) => p.name === name)) {
       untold.add(name);
@@ -140,6 +177,8 @@ interface Declared {
   alias?: string;
   /** A structured binding's position among the names bound from that call's result. */
   fromIndex?: number;
+  /** A range-for's source expression, when the variable's type is `auto` (the element of what it iterates). */
+  rangeOver?: string;
 }
 
 /** The declarations one statement makes: `Crate a, *b = make(), c(3)` declares three; `needsInit` in a condition. */
@@ -207,6 +246,7 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
   if (init && !/^(?:=(?!=)|\(|\{|\[|:(?!:))/.test(init)) return null;
   // `Crate c(3)` constructs, `Crate f(int)` would declare a function: both name a Crate as far as calls on it go.
   if (typeText === "auto") {
+    if (init.startsWith(":")) return [{ name, type: null, rangeOver: init.slice(1).trim() }];
     if (!init.startsWith("=")) return [{ name, type: null }];
     const value = init.slice(1).trim();
     const built = constructedType(value);

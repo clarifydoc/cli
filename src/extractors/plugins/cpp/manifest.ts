@@ -1,3 +1,4 @@
+import { cppCollectionElement } from "./collection-element.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 import { cppFrameworkRules } from "./frameworks.js";
@@ -52,6 +53,7 @@ export const cppManifest: LanguagePluginManifest = {
   tupleElementsOf: cppTupleElements,
   docComments: C_STYLE_DOCS,
   language: "cpp",
+  collectionElementOf: cppCollectionElement,
   family: "cfam",
   packageManagers: [vcpkgPackageManager, conanPackageManager],
   packageEcosystems: ["vcpkg", "conan"],

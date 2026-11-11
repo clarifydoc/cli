@@ -227,9 +227,30 @@ export function extractGoLocalTypes(
 function rangeSource(expr: string): string | null {
   const text = expr.trim().replace(/^&/, "");
   if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(text)) return text;
-  const call = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
-  if (call && matchingClose(text, call[0].length - 1) === text.length - 1) return `${call[1]}()`;
-  return null;
+  // A chain of calls and fields off a name — `league.Players()`, `league.Club(id).Players()`, `r.repo.All()` — each
+  // call spelled without its arguments, as a call chain is written for the linker.
+  const head = /^[A-Za-z_]\w*/.exec(text);
+  if (!head) return null;
+  let rest = text.slice(head[0].length);
+  let out = head[0];
+  let calls = 0;
+  let first = true;
+  while (rest !== "") {
+    // `Load()`: the head is itself the call.
+    const step = first && rest.startsWith("(") ? ["", ""] : /^\.([A-Za-z_]\w*)/.exec(rest);
+    if (!step) return null;
+    if (step[1]) out += `.${step[1]}`;
+    rest = rest.slice(step[0].length);
+    first = false;
+    if (rest.startsWith("(")) {
+      const close = matchingClose(rest, 0);
+      if (close < 0) return null;
+      out += "()";
+      calls++;
+      rest = rest.slice(close + 1);
+    }
+  }
+  return calls > 0 ? out : null;
 }
 
 /** A type without its pointer: `*Club` and `Club` are one for a member call. */

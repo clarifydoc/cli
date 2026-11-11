@@ -9,13 +9,13 @@
 /** What an expression is, as far as the source states it. */
 export type ElementState =
   | { kind: "coll"; elem: string }
-  | { kind: "map"; elem: string }
+  | { kind: "map"; elem: string; /** The key type as written, when the plugin reads it (`Map<Club, Player>` → `Club`). */ key?: string }
   | { kind: "optional"; elem: string }
   | { kind: "value"; type: string };
 
 export interface ChainRules {
   /** A declared type as written → collection / map / optional (element text as written), else null. */
-  parseType(text: string): { kind: "coll" | "map" | "optional"; elem: string } | null;
+  parseType(text: string): { kind: "coll" | "map" | "optional"; elem: string; key?: string } | null;
   /** A type text that names a class a member call can land on (`Car`, `a.b.Car<T>` → written back), else null. */
   classOf(text: string): string | null;
   /** Collection → one element (`get`, `first`, `FirstOrDefault`). */
@@ -30,6 +30,8 @@ export interface ChainRules {
   optionalValue: ReadonlySet<string>;
   /** Map → its values as a collection (`values`, `Values`). */
   values: ReadonlySet<string>;
+  /** Map → its keys as a collection (`keys`, `keySet`); needs the plugin to state the key type. */
+  keys?: ReadonlySet<string>;
   /** Collection → collection of the type argument (`filterIsInstance<Car>()`, `OfType<Car>()`). */
   filterByType: ReadonlySet<string>;
   /** `x[i]` is the element (Kotlin, C#, a Java array's `[]` is the same). */
@@ -154,6 +156,7 @@ function apply(state: ElementState, step: Step, rules: ChainRules): ElementState
       return null;
     case "map":
       if (rules.values.has(name)) return { kind: "coll", elem: state.elem };
+      if (rules.keys?.has(name) && state.key) return { kind: "coll", elem: state.key };
       if (!step.call) return null;
       if (rules.mapValueOf.has(name)) return stateOfType(state.elem, rules);
       return null;

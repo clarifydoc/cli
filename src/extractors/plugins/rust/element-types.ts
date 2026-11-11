@@ -270,8 +270,13 @@ export function addRustElementTypes(fn: FunctionInfo, bodyLines: readonly string
   const code = clean.join("\n");
   if (!/\bfor\b|\|[^|]*\||\blet\b|\bmatch\b|\[|\.unwrap|\.lock/.test(code)) return;
   const bound = new Map<string, Set<string | null>>();
+  // Names a `for` binds over a field or a call's result the file does not type, and how often each name is bound.
+  const elementFroms = new Map<string, Set<string>>();
+  const bindCount = new Map<string, number>();
+  const elementCount = new Map<string, number>();
   const bind = (name: string, type: string | null): void => {
     if (name === "_" || name === "self") return;
+    bindCount.set(name, (bindCount.get(name) ?? 0) + 1);
     let set = bound.get(name);
     if (!set) bound.set(name, (set = new Set()));
     set.add(type === null ? null : bare(type));
@@ -313,6 +318,14 @@ export function addRustElementTypes(fn: FunctionInfo, bodyLines: readonly string
         const one = /^&?\s*(?:ref\s+|mut\s+)?([a-z_]\w*)$/.exec(pat);
         for (const n of patternNames(pat)) {
           bind(n, y && ((y.kind === "pair" && pair && n === pair[1]) || (y.kind === "one" && one && n === one[1])) ? y.item : null);
+        }
+        // Over a field or a call the file does not type (`for p in league.players()`): the element of the type that
+        // declaration states, which the linker reads.
+        const from = !t && one ? loopSourceText(forIn[2]!) : null;
+        if (from) {
+          const name = one![1]!;
+          (elementFroms.get(name) ?? elementFroms.set(name, new Set()).get(name)!).add(from);
+          elementCount.set(name, (elementCount.get(name) ?? 0) + 1);
         }
       }
       const matchHead = /^match\s+([\s\S]+)$/.exec(s);
@@ -375,7 +388,45 @@ export function addRustElementTypes(fn: FunctionInfo, bodyLines: readonly string
   out = out.filter((l) => !(l.from && !l.type && typedNow.has(l.name)));
   const have = new Set(out.map((l) => l.name));
   for (const [name, cls] of typedNow) if (!have.has(name)) out.push({ name, type: cls });
+  // Every binding of the name was such a loop, and nothing else says its type.
+  for (const [name, froms] of elementFroms) {
+    if (have.has(name) || typedNow.has(name) || fn.params.some((p) => p.name === name) || bindCount.get(name) !== elementCount.get(name)) continue;
+    for (const from of froms) out.push({ name, type: "", from, element: true });
+  }
   if (out.length > 0) fn.localTypes = out;
+}
+
+/**
+ * What a `for` loops over when it is a field or a call's result, spelled as a receiver chain for `localTypes[].from`:
+ * `&self.players`, `league.players()`, `self.roster.iter()`, `league.club(id).players()`. Null for a name the body
+ * binds (it has its own type), a literal, a range, an index or any other expression.
+ */
+function loopSourceText(expr: string): string | null {
+  const text = expr.trim().replace(/\s*\{[\s\S]*$/, "").replace(/^(?:&\s*(?:mut\s+)?)+/, "").replace(/\.(?:iter|iter_mut|into_iter)\(\)$/, "").trim();
+  const head = /^[A-Za-z_]\w*/.exec(text);
+  if (!head || /^(?:vec|Vec|String|Some|None)$/.test(head[0])) return null;
+  let out = head[0];
+  let rest = text.slice(head[0].length);
+  let steps = 0;
+  while (rest !== "") {
+    const step = /^\.([A-Za-z_]\w*)/.exec(rest);
+    if (!step) return null;
+    out += `.${step[1]}`;
+    rest = rest.slice(step[0].length);
+    steps++;
+    if (rest.startsWith("(")) {
+      let depth = 0;
+      let close = -1;
+      for (let i = 0; i < rest.length && close < 0; i++) {
+        if (rest[i] === "(") depth++;
+        else if (rest[i] === ")" && --depth === 0) close = i;
+      }
+      if (close < 0) return null;
+      out += "()";
+      rest = rest.slice(close + 1);
+    }
+  }
+  return steps > 0 ? out : null;
 }
 
 /** The expression text before `.method(` at `index`: the receiver chain that ends there, starting at its head. */

@@ -397,7 +397,7 @@ export interface DocTypes {
 export function parseDocblock(text: string): DocTypes {
   const out: DocTypes = { named: new Map(), properties: new Map() };
   if (!text.startsWith("/**")) return out;
-  const re = /@(var|param|property(?:-read|-write)?|return)\s+([^\s*]+(?:<[^>]*>)?)(?:\s+(?:\.\.\.)?\$(\w+))?/g;
+  const re = /@(var|param|property(?:-read|-write)?|return)\s+([^\s*<]+(?:<[^>]*>)?(?:\[\])*)(?:\s+(?:\.\.\.)?\$(\w+))?/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const [, tag, rawType, name] = m;

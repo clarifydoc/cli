@@ -6,6 +6,7 @@ import { receiverTypeName } from "../../shared/type-parser.js";
 import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries, ruleType } from "./request-access.js";
 import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
 import { extractPhpResponses } from "./responses.js";
+import { phpCollectionElement } from "./collection-element.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -112,7 +113,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: true,
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
-      localTypes: extractLocalTypes(body, this.fileAliases),
+      localTypes: extractLocalTypes(body, this.fileAliases, params, doc),
+      ...docCollectionReturn(this.parseReturnType(node), doc),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -230,7 +232,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       isExported: this.isPublicMember(node),
       decorators: this.parseAttributes(node),
       calls: extractCalls(body, "php"),
-      localTypes: extractLocalTypes(body, this.fileAliases),
+      localTypes: extractLocalTypes(body, this.fileAliases, params, doc),
+      ...docCollectionReturn(this.parseReturnType(node), doc),
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
@@ -645,6 +648,12 @@ function markContainerInjectedParams(className: string, extendsName: string | nu
   }
 }
 
+/** A native `array` result the docblock states the elements of (`@return Player[]`): kept beside `returnType`. */
+function docCollectionReturn(native: string | null, doc: DocTypes | undefined): { declaredReturnType?: string } {
+  if (!native || !/^\??(?:array|iterable)$/i.test(native) || !doc?.returnType || !phpCollectionElement(doc.returnType)) return {};
+  return { declaredReturnType: doc.returnType };
+}
+
 /** The docblock above a declaration, parsed (undefined when there is none). */
 function docTypesAbove(node: Node): DocTypes | undefined {
   const text = docblockAbove(node);
@@ -691,6 +700,8 @@ function rebinds(text: string, name: string): boolean {
 function extractLocalTypes(
   body: Node | null,
   aliases: ReadonlyMap<string, string>,
+  params: readonly ParamInfo[] = [],
+  doc?: DocTypes,
 ): LocalType[] {
   if (!body) return [];
   const out: LocalType[] = [];
@@ -717,6 +728,10 @@ function extractLocalTypes(
     n?.type === "variable_name"
       ? n.childForFieldName("name")?.text ?? n.children.find((c) => c.type === "name")?.text
       : undefined;
+  // `foreach (<source> as [$key =>] $value)`: the value is the element of what the source is, settled once every
+  // typed local is known.
+  const loops: Array<{ name: string; source: Node }> = [];
+  const loopNames = new Set<string>();
   const walk = (n: Node): void => {
     if (
       n.type === "anonymous_function" || // tree-sitter-php ≥0.23 name
@@ -738,6 +753,15 @@ function extractLocalTypes(
         if (assign?.type === "assignment_expression") add(varName(assign.childForFieldName("left")), doc.varType);
       }
     }
+    if (n.type === "foreach_statement") {
+      const [source, target] = n.namedChildren;
+      const value = target?.type === "pair" ? target.namedChildren[1] : target;
+      const bound = value?.type === "by_ref" ? value.namedChildren[0] : value;
+      // Any other binding the head makes (a destructuring list, a key) shadows an earlier typed one.
+      for (const v of target?.type === "pair" ? [target.namedChildren[0]] : []) if (varName(v)) loopNames.add(varName(v)!);
+      if (bound?.type === "variable_name" && source && varName(bound)) loops.push({ name: varName(bound)!, source });
+      else if (target) for (const v of target.descendantsOfType("variable_name")) if (varName(v)) loopNames.add(varName(v)!);
+    }
     if (n.type === "assignment_expression") {
       const left = n.childForFieldName("left") ?? n.child(0);
       const right = n.childForFieldName("right") ?? n.child(n.childCount - 1);
@@ -755,11 +779,61 @@ function extractLocalTypes(
     for (const c of n.children) walk(c);
   };
   walk(body);
+  // A loop variable over a typed array (a parameter or a `@var` local) takes its element; over a call or a property
+  // it is the linker's to read off the declaration. Any other binding of the name leaves it untyped.
+  const typedAs = (name: string): string | null => {
+    const local = out.filter((l) => l.name === name && l.type);
+    if (local.length === 1) return local[0]!.type;
+    if (local.length > 0) return null;
+    const param = params.find((p) => p.name === name)?.type ?? null;
+    // A native `array` says nothing of its elements; the docblock's `@param Player[] $players` does.
+    return param && /^\??(?:array|iterable)$/i.test(param) ? doc?.named.get(name) ?? param : param;
+  };
+  const elements: LocalType[] = [];
+  for (const { name, source } of loops) {
+    if (loopNames.has(name) || seen.has(name) || fromCalls.has(name) || params.some((p) => p.name === name)) continue;
+    let from: string | null = null;
+    let elementType: string | null = null;
+    if (source.type === "variable_name") {
+      const sourceName = varName(source);
+      const written = sourceName ? typedAs(sourceName) : null;
+      elementType = written ? phpCollectionElement(written) : null;
+    } else if (source.type === "member_call_expression" || source.type === "nullsafe_member_call_expression" || source.type === "scoped_call_expression") {
+      from = callChainText(source, "php");
+    } else if (source.type === "member_access_expression" || source.type === "nullsafe_member_access_expression") {
+      from = propertyChainText(source);
+    }
+    if (elementType) elements.push({ name, type: elementType });
+    else if (from) elements.push({ name, type: "", from, element: true });
+  }
+  // Two loops binding one name to different types leave it untyped; unresolved ones are the linker's to agree on.
+  const byName = new Map<string, LocalType[]>();
+  for (const e of elements) byName.set(e.name, [...(byName.get(e.name) ?? []), e]);
+  for (const list of byName.values()) {
+    const typed = list.filter((e) => e.type);
+    if (typed.length === 0) out.push(...list);
+    else if (typed.length === list.length && new Set(typed.map((e) => e.type)).size === 1) out.push(typed[0]!);
+  }
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
   for (const [name, heads] of aliasFroms) {
     if (heads.size === 1 && !seen.has(name) && !fromCalls.has(name) && !otherAssigned.has(name) && !rebinds(body.text, name)) out.push({ name, type: "", aliasOf: [...heads][0]! });
   }
   return out;
+}
+
+/** `$this->players`, `$club->roster->players`: a property chain off a variable, spelled for `localTypes[].from`. */
+function propertyChainText(node: Node): string | null {
+  const parts: string[] = [];
+  let cur: Node | null = node;
+  while (cur?.type === "member_access_expression" || cur?.type === "nullsafe_member_access_expression") {
+    const name = cur.childForFieldName("name");
+    if (name?.type !== "name") return null;
+    parts.unshift(name.text);
+    cur = cur.childForFieldName("object");
+  }
+  if (cur?.type !== "variable_name") return null;
+  parts.unshift(cur.text.replace(/^\$/, ""));
+  return parts.length >= 2 ? parts.join(".") : null;
 }
 
 /**
