@@ -227,6 +227,21 @@ function describeEntity(
   return lines;
 }
 
+/**
+ * Queues a contract document (AsyncAPI) declares: those no code publishes or
+ * consumes (`unimplemented`) are the interesting ones, since no flow can name
+ * them. Empty when the analysis holds none, or the filters point elsewhere.
+ */
+function contractQueueNotes(nodes: readonly { kind: string; name: string; contract?: boolean; unimplemented?: boolean }[], effect: string | undefined, resource: string | undefined): string[] {
+  if (effect && effect !== "queue-publish" && effect !== "queue-consume") return [];
+  const queues = nodes.filter((n) => n.kind === "queue" && n.contract && (!resource || contains(n.name, resource)));
+  if (queues.length === 0) return [];
+  const bare = queues.filter((n) => n.unimplemented);
+  return [
+    `Contract queues: ${plural(queues.length, "queue")} declared by a contract document${bare.length ? `; ${plural(bare.length, "queue")} with no code publishing or consuming (${cap(bare.map((n) => n.name), 6).shown.join(", ")}), so no flow reaches them` : ""}.`,
+  ];
+}
+
 const EFFECTS = ["db", "db-read", "db-write", "queue-publish", "queue-consume", "api-call"] as const;
 
 /**
@@ -280,7 +295,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
             headline:
               "No data flows were computed — this project has no resolved data access reachable from a route " +
               "or screen.",
-            holds: `The analysis holds ${plural(entities.length, "entity", "entities")}.`,
+            holds: [`The analysis holds ${plural(entities.length, "entity", "entities")}.`, ...contractQueueNotes(loaded.summary.dataAccessGraph?.nodes ?? [], undefined, undefined)],
             next: [
               entities.length > 0 && "clarifydoc_data_model — the entities and who reads or writes them",
               "clarifydoc_file path=… — the data section, for the raw access that exists",
@@ -368,6 +383,7 @@ export function dataFlowsTool(ctx: ToolContext): McpTool {
           `effects: ${countMap(tally(rows, (f) => f.effect))}`,
           "",
           ...body,
+          ...(offset === 0 ? contractQueueNotes(loaded.summary.dataAccessGraph?.nodes ?? [], effect, resource) : []),
           pageFooter(pg, entries.length, "more entry points", "or filter"),
         ]),
       };

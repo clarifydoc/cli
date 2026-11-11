@@ -375,6 +375,7 @@ export function buildReportPayload(summary: ProjectAnalysis): ReportPayload {
       if (r.requestSchema) row.requestSchema = r.requestSchema;
       if (r.webhook) row.webhook = r.webhook;
       if (r.consumed) row.consumed = true;
+      if (r.internal) row.internal = true;
       const fed = feeds.get(`${r.filePath}:${r.line}`);
       if (fed) Object.assign(row, fed);
       return row;

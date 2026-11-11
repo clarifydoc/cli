@@ -279,12 +279,17 @@ async function routeGaps(ctx: ToolContext, loaded: LoadedAnalysis, stats: ApiRou
     (!pathFilter || contains(m.url, pathFilter)) && (!fileFilter || contains(m.file, fileFilter)));
   const uncalled = (stats?.uncalled ?? []).filter((r) =>
     (!pathFilter || contains(r.path, pathFilter)) && (!fileFilter || contains(r.file, fileFilter)));
+  const internalSkipped = ((loaded.summary.routeMap ?? []) as RouteWithFile[]).filter((r) =>
+    r.internal && r.kind === "api" && (!pathFilter || contains(r.path, pathFilter)) && (!fileFilter || contains(r.filePath ?? "", fileFilter))).length;
   if (misses.length === 0 && uncalled.length === 0 && contractRows.length === 0) {
     return noResults({
       headline: pathFilter || fileFilter ? "No route gaps match the filter." : "No route gaps: every joinable call reaches a route, and every route of a called service is called.",
-      holds: stats
-        ? `${plural(stats.calls, "api call")}, ${stats.linked} linked; ${stats.uncalledCount ?? 0} uncalled route(s).`
-        : "The analysis holds no API calls.",
+      holds: [
+        stats
+          ? `${plural(stats.calls, "api call")}, ${stats.linked} linked; ${stats.uncalledCount ?? 0} uncalled route(s).`
+          : "The analysis holds no API calls.",
+        internalSkipped > 0 && `${plural(internalSkipped, "internal route")} skipped: only the platform's own functions call them, so they are not judged uncalled.`,
+      ],
       next: [(pathFilter || fileFilter) && "clarifydoc_routes gaps=true without `path`/`file`", "clarifydoc_routes kind=\"api\""],
     });
   }
@@ -308,6 +313,7 @@ async function routeGaps(ctx: ToolContext, loaded: LoadedAnalysis, stats: ApiRou
       const hint = !b ? "" : !b.searchable ? " — path has no fixed segment to search" : n ? ` — path literal in ${plural(n, "file")} (${code} not tests), e.g. ${loc(b.files[0]!.file, b.files[0]!.line)}` : "";
       return `${routeLabel(r.method, r.path)} (${loc(r.file, r.line)})${hint}`;
     }),
+    ...(internalSkipped > 0 ? [`${plural(internalSkipped, "internal route")} skipped: only the platform's own functions call them, so they are not judged uncalled.`] : []),
     ...(contractRows.length > 0
       ? [
         "",
