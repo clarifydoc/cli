@@ -21,14 +21,14 @@ const WIDENS_TO: Readonly<Record<string, readonly string[]>> = {
 
 /**
  * The widenings that are promotions where a language ranks them above conversions (C++: `char`/`short`/`bool` to `int`,
- * `int` to `long`, `float` to `double`); every other entry of `WIDENS_TO` is then a conversion (`int` to `double`).
+ * `float` to `double`); every other entry of `WIDENS_TO` is then a conversion (`int` to `long`, `int` to `double` — so
+ * `f(5)` beside `f(long)` and `f(double)` is a tie, as the compiler calls it ambiguous).
  */
 const PROMOTES_TO: Readonly<Record<string, readonly string[]>> = {
   byte: ["int"],
   short: ["int"],
   char: ["int"],
   boolean: ["int"],
-  int: ["long"],
   float: ["double"],
 };
 

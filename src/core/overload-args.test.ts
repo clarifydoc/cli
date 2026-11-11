@@ -67,5 +67,8 @@ describe("ranked conversions (C++)", () => {
     expect(bestOverload(["float"], [{ types: ["int"], variadic: false }, { types: ["double"], variadic: false }], types, true)).toBe(1);
     expect(bestOverload(["int"], [{ types: ["double"], variadic: false }, { types: ["float"], variadic: false }], types, true)).toBe(-1);
     expect(bestOverload(["int"], [{ types: ["long"], variadic: false }, { types: ["double"], variadic: false }], types)).toBe(-1);
+    // `int` to `long` is a conversion, like `int` to `double`: the compiler calls `f(5)` ambiguous.
+    expect(argFit("int", "long", types, true)).toBe(2);
+    expect(bestOverload(["int"], [{ types: ["long"], variadic: false }, { types: ["double"], variadic: false }], types, true)).toBe(-1);
   });
 });
