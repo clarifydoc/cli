@@ -303,7 +303,14 @@ const OPERATOR_SPELLING = new Map<number, string>([
 ]);
 
 /** One operand of an operator expression: the class it is a value of, its overload key, and how a call names it. */
-interface Operand { cls: string | false; key: string; /** The receiver as written, for a local; absent when only its class is known (a field, a dereference). */ receiver?: string }
+interface Operand {
+  cls: string | false;
+  key: string;
+  /** The receiver as written, for a local; absent when only its class is known (a field, a dereference). */
+  receiver?: string;
+  /** A member of the function's own class that this file does not declare (`kit`, `this->kit`): the class is in a header, the linker types the field. */
+  member?: string;
+}
 
 const UNKNOWN: Operand = { cls: false, key: "?" };
 
@@ -318,7 +325,8 @@ function operandOf(ctx: ParserRuleContext, scope: Scope, stream: readonly Token[
     const viaThis = m[1] !== undefined;
     const local = viaThis ? undefined : scope.locals.get(m[2]!);
     const d = local ?? (scope.owner ? scope.fields().get(scope.owner)?.get(m[2]!) : undefined);
-    if (!d) return UNKNOWN;
+    // An out-of-line `Club::play` whose class a header declares: the name is a member the linker types from the class's fields.
+    if (!d) return scope.owner && !local ? { ...UNKNOWN, member: `${viaThis ? "this." : ""}${m[2]!}` } : UNKNOWN;
     return { cls: d.cls, key: d.key, ...(local && d.cls ? { receiver: m[2]! } : {}) };
   }
   m = /^\*([A-Za-z_]\w*)$/.exec(t);
@@ -345,7 +353,7 @@ function operatorCall(ctx: BinaryExpressionContext, calls: PatternCallName[], sc
   const op = ops[0];
   if (!op || operands.length < 2 || !op.start) return;
   const left = operandOf(operands[0]!, scope, stream);
-  if (!left.cls) return;
+  if (!left.cls && !left.member) return;
   const first = op.start;
   let spelling = OPERATOR_SPELLING.get(first.type);
   // `a << b` is `Less Less`; `a < b` a single `Less` followed by something other than a second `<`.
@@ -353,6 +361,11 @@ function operatorCall(ctx: BinaryExpressionContext, calls: PatternCallName[], sc
   if (!spelling) return;
   const leaf = `operator${spelling}`;
   const at = { line: first.line, column: first.column };
+  // A member a header's class declares: named as the member is (`kit.operator+`), so the linker takes the field's own class; no free overload is chosen for it.
+  if (!left.cls) {
+    calls.push({ name: `${left.member}.${leaf}`, leafName: leaf, ...at });
+    return;
+  }
   if (left.receiver) calls.push({ name: `${left.receiver}.${leaf}`, leafName: leaf, ...at });
   else calls.push({ name: `${left.cls}.${leaf}`, leafName: leaf, receiverType: left.cls, ...at });
   // A chain's second operand is the first's right side only when it is a single operator.
@@ -718,32 +731,61 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
   const start = chain[0]!.start!;
   // `*u` over a smart pointer or an iterator is what it points at, which the overloads compare.
   const deref = scope ? (name: string): string | null => wrappedPointee(lookupIn(scope, name), scope) : undefined;
-  let arrow = false;
-  let afterArrow = false;
+  // The class the head of the chain is known to be (`it->`, `(*it).`, `std::next(it)->`): the head step then reads as that class.
+  let typed: { cls: string; deref: boolean; orig?: CalleeStep } | null = null;
+  // The element class of `std::next(it)`'s iterator, until the arrow that takes it.
+  let advanced: string | null = null;
   for (const link of chain) {
     const kids = link.children;
     const first = kids[0];
     if (!(first instanceof PostfixExpressionContext)) {
+      // `(*it).kick(`: the element an iterator or smart pointer reaches is the receiver's type, as `it->kick(` states it.
+      const pointee = scope && derefHead(link, scope);
+      if (pointee) {
+        typed = { cls: pointee, deref: true };
+        steps.push({ kind: "id", name: pointee, line: start.line, column: start.column });
+        continue;
+      }
       steps.push(...headSteps(link));
       continue;
     }
     const op = kids[1];
     if (!(op instanceof TerminalNode)) continue;
     const type = op.symbol.type;
-    afterArrow = arrow;
-    arrow = type === CPP14Lexer.Arrow;
     if (type === CPP14Lexer.LeftParen) {
       const source = `${text.slice(start.start, op.symbol.start)}(`;
       const byPattern = patternNamedCall(source, cppSpec.callPatterns ?? [], start.line, start.column);
       let named = byPattern === undefined ? memberPathCall(steps) ?? nameCall(steps, CHAIN_DEPTH) : byPattern;
       // `it->sign(` over a container's iterator: the member of the element the container holds (a smart pointer, a pointer is typed by the linker).
-      if (named && afterArrow && scope && steps.length === 2 && steps[0]!.kind === "id" && steps[1]!.kind === "id" && named.name === `${steps[0]!.name}.${steps[1]!.name}`) {
-        const element = iteratorElement(lookupIn(scope, steps[0]!.name), scope);
-        if (element) named = { ...named, name: `${element}.${steps[1]!.name}`, receiverType: element };
+      // A chain (`it->club().sign()`) goes on from the typed head, named as the class's own.
+      if (named && typed && steps.length === 2 && steps[0]!.kind === "id" && steps[1]!.kind === "id") {
+        named = { ...named, name: `${typed.cls}.${steps[1]!.name}`, receiverType: typed.cls };
+      } else if (typed && byPattern === undefined && steps.length > 2 && steps.every((s) => s.kind === "id")) {
+        // A path through the element's fields (`it->first.lace(`) is not the class's own: named as before, from the head as written.
+        const path = typed.orig ? [typed.orig, ...steps.slice(1)] : null;
+        named = path ? memberPathCall(path) ?? nameCall(path, CHAIN_DEPTH) : null;
       }
+      // `std::next(it)` / `std::prev(it)`: the iterator the standard function steps (a project function of that name is not it).
+      const advance = scope && /^(?:::)?std::(?:next|prev)$/.test(first.getText())
+        ? /^[A-Za-z_]\w*$/.exec(link.expressionList()?.initializerList().initializerClause()[0]?.getText() ?? "")?.[0] : undefined;
+      if (advance) advanced = iteratorElement(lookupIn(scope!, advance), scope!);
       if (named) calls.push(withArguments(named, argumentsOf(link.expressionList(), stream, calleeTemplateArgs(first, text), deref)));
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
+      if (type === CPP14Lexer.Arrow && scope && !typed) {
+        // `it->` over an iterator, `std::next(it)->`: the head reads as the element class.
+        const head = steps.length === 1 && steps[0]!.kind === "id" ? iteratorElement(lookupIn(scope, steps[0]!.name), scope) : advanced;
+        if (head) {
+          typed = { cls: head, deref: false, ...(steps[0]!.kind === "id" && steps.length === 1 ? { orig: steps[0] } : {}) };
+          steps.length = 0;
+          steps.push({ kind: "id", name: head, line: start.line, column: start.column });
+        }
+      } else if (type === CPP14Lexer.Arrow && typed?.deref && steps.length === 1) {
+        // `(*it)->kick(`: the element is itself a pointer, which no name spells.
+        typed = null;
+        steps[0] = { kind: "other", bare: false };
+      }
+      advanced = null;
       // `p->kick(` is `p.kick`, as `p.kick(` is: the linker types `p` through its declaration, a field's or a local's.
       // A member after `->` on what no name spells (`(*it)->kick(`, `this->kick(`) is named alone, as the patterns read it.
       if (type === CPP14Lexer.Arrow && steps.at(-1)?.kind === "other") steps.push({ kind: "other", bare: true });
@@ -761,6 +803,15 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       steps.push({ kind: "other", bare: false });
     }
   }
+}
+
+/** The class `(*it)` is over an iterator, a smart pointer or a pointer, when the link is exactly that parenthesized dereference. */
+function derefHead(link: PostfixExpressionContext, scope: Scope): string | null {
+  const primary = link.children[0];
+  if (!(primary instanceof PrimaryExpressionContext) || primary.idExpression()) return null;
+  const m = /^\(\*([A-Za-z_]\w*)\)$/.exec(primary.getText());
+  if (!m) return null;
+  return m[1] === "this" ? scope.owner : pointeeOf(lookupIn(scope, m[1]!), scope);
 }
 
 /**
