@@ -6,6 +6,7 @@ import {
   dedupeRoutes,
   pairContractTwins,
   implementedContracts,
+  isJoinableRoute,
 } from "./route-linker.js";
 import type { CallInfo, DataSourceInfo, RouteInfo } from "../types/analysis.js";
 
@@ -1148,6 +1149,34 @@ describe("route aliases", () => {
     const r = ci("/showroom/index", ["/autos"]);
     const { links } = linkApiCallsToRoutesDetailed([apiCall("views/home.php", "GET", "/autos")], [r]);
     expect(links[0]?.routePath).toBe("/showroom/index");
+  });
+});
+
+describe("one predicate: a call can name this route by URL", () => {
+  const joined = (call: string, routes: Array<RouteInfo & { filePath: string }>) =>
+    linkApiCallsToRoutes([apiCall("web/a.ts", "get", call)], routes).map((l) => l.routePath);
+
+  it("joins a route with no path of its own by its alias", () => {
+    const r = { ...route("server/clubs.php", "GET", "", "clubs"), aliases: ["/api/clubs"] };
+    expect(isJoinableRoute(r)).toBe(true);
+    expect(joined("/api/clubs", [r])).toEqual([""]);
+  });
+
+  it("joins a holed route by an alias that states no hole, and not by the holed path", () => {
+    const r = { ...route("server/clubs.ts", "GET", "/api/${Paths.MISSING}/clubs", "clubs"), pathUnresolved: ["Paths.MISSING"], aliases: ["/api/clubs", "/api/${Paths.MISSING}/teams"] };
+    expect(isJoinableRoute(r)).toBe(true);
+    expect(joined("/api/clubs", [r])).toHaveLength(1);
+    expect(joined("/api/x/teams", [r])).toEqual([]);
+    expect(isJoinableRoute({ ...r, aliases: ["/api/${Paths.MISSING}/teams"] })).toBe(false);
+  });
+
+  it("never joins a mount or a contract-jar row by path", () => {
+    const mount = { ...route("server.ts", "", "/static", "serveStatic"), httpMethod: null, mount: true as const, aliases: ["/assets"] };
+    const jar = { ...route("api/ClubApi.java", "GET", "/clubs", "list"), prefixUnresolved: "contract:com.example.league.ClubApi", aliases: ["/teams"] };
+    expect(isJoinableRoute(mount)).toBe(false);
+    expect(isJoinableRoute(jar)).toBe(false);
+    expect(joined("/assets", [mount])).toEqual([]);
+    expect(joined("/teams", [jar])).toEqual([]);
   });
 });
 
