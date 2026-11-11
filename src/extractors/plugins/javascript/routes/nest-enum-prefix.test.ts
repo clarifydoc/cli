@@ -117,6 +117,11 @@ describe("an enum reference behind an import the resolver cannot follow", () => 
     expect(got).not.toContain("/teams/statistics");
   }, 180_000);
 
+  it("is left alone when the file imports that name from a module the table is not in", async () => {
+    const got = await paths({ "package.json": NEST_PKG("league"), "src/a/enum.ts": ENUM, "src/club.controller.ts": CONTROLLER.replace("@league/shared/enum", "route-kit") });
+    expect(got).not.toContain("/clubs/statistics");
+  }, 180_000);
+
   it("is left alone when only another sub-project declares the enum", async () => {
     const got = await paths({
       "api/package.json": NEST_PKG("league-api"),

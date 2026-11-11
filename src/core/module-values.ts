@@ -188,6 +188,11 @@ export function buildModuleValueLookup(
     const fromTest = isTestFile(a.filePath, a.language);
     const owners = (headOwners.get(expr.slice(0, dot)) ?? []).filter((f) => f.projectId === a.projectId && extensionFamily(f.filePath) === family && (fromTest || !isTestFile(f.filePath, f.language)));
     if (owners.length !== 1 || owners[0]!.filePath === a.filePath) return null;
+    // An import naming the head from elsewhere (`import { RouteKey } from "some-lib"`) is that module's, not this table's:
+    // fill only when what it imports from names the owner's file (`@app/route-keys` → `src/route-keys.ts`).
+    const head = expr.slice(0, dot);
+    const imp = (a.imports ?? []).find((i) => !i.executes && i.specifiers.includes(head));
+    if (imp && !importNamesFile(imp.source, owners[0]!.filePath)) return null;
     const v = owners[0]!.moduleValues?.[expr];
     return v === undefined ? null : { value: v, file: owners[0]!.filePath };
   };
@@ -317,4 +322,12 @@ export function resolveRouteTemplates(analyses: readonly FileAnalysis[], lookup:
     }
   }
   return n;
+}
+
+/** Whether an import source's last segment names the file or a directory it is in (`@app/enums` → `src/enums.ts`, `src/enums/route-key.ts` behind a barrel). */
+function importNamesFile(source: string, filePath: string): boolean {
+  const leaf = source.replace(/\.[^./]+$/, "").split(/[/\\]/).filter((seg) => seg && seg !== "." && seg !== "..").pop();
+  if (!leaf) return false;
+  const segs = filePath.replace(/\.[^./]+$/, "").split("/");
+  return segs.includes(leaf);
 }
