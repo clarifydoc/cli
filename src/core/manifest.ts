@@ -105,10 +105,13 @@ export interface Manifest {
  * absolute path. The fingerprints above are hashes and cannot be turned back into these.
  */
 export interface RunOptions {
-  /** `--include` / `--exclude` globs and `--max-files`, as given. Inputs that name files outside the tree (`--spec`, `--coverage`) are not recorded. */
+  /** `--include` / `--exclude` globs and `--max-files`, as given. `--spec` and `--coverage` files are recorded relative to the project root; one outside the tree is not recorded. */
   include?: string[];
   exclude?: string[];
   maxFiles?: number;
+  /** `--spec` / `--coverage` files, project-relative POSIX paths. */
+  spec?: string[];
+  coverage?: string[];
   /** Whether LSP enhancement was on (`analyze` runs it unless `--no-lsp`). */
   lsp: boolean;
   /** `--feature` names that deviate from the defaults, as `analyze --feature` takes them (`no-antlr`, `tree-sitter:swift`). */

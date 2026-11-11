@@ -58,6 +58,8 @@ function tokenMatches(given: string | undefined, token: string): boolean {
 
 export const DEFAULT_SESSION_TTL_MS = 30 * 60_000;
 export const DEFAULT_MAX_SESSIONS = 64;
+/** Event streams one session may hold open; opening one more closes its oldest. */
+export const MAX_STREAMS_PER_SESSION = 4;
 
 interface Session {
   createdAt: number;
@@ -239,6 +241,11 @@ export async function serveHttp(server: McpServer, options: HttpOptions = {}): P
       if (!session) return send(res, 400, { error: "an event stream needs an Mcp-Session-Id" });
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
       res.write(": connected\n\n");
+      while (session.streams.size >= MAX_STREAMS_PER_SESSION) {
+        const oldest = session.streams.values().next().value as ServerResponse;
+        session.streams.delete(oldest);
+        oldest.end();
+      }
       session.streams.add(res);
       const beat = setInterval(() => {
         session.lastSeen = Date.now();

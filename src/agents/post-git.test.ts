@@ -80,6 +80,9 @@ describe("post-git hook", () => {
       expect(refreshArgs(root, dir)).toEqual(["analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--no-git-history", "--feature", "no-antlr", "--no-pretty"]);
       writeFileSync(join(dir, "manifest.json"), JSON.stringify({ version: 1, entries: {}, runOptions: { lsp: true, gitHistory: true, features: [], exclude: ["generated/**", "--evil"], maxFiles: 50 } }));
       expect(refreshArgs(root, dir)).toEqual(["analyze", ".", "-o", ".clarifydoc", "--incremental", "--exclude", "generated/**", "--max-files", "50", "--no-pretty"]);
+      // The spec and coverage files it was given go on; an absolute or escaping one never does.
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify({ version: 1, entries: {}, runOptions: { lsp: false, gitHistory: true, features: [], spec: ["docs/openapi.yaml", "/home/coach/secret.yaml", "../x.yaml", "--evil"], coverage: ["coverage/lcov.info"] } }));
+      expect(refreshArgs(root, dir)).toEqual(["analyze", ".", "-o", ".clarifydoc", "--incremental", "--no-lsp", "--spec", "docs/openapi.yaml", "--coverage", "coverage/lcov.info", "--no-pretty"]);
       // The directory the hook found decides where it writes.
       const other = join(root, "build", "out", "garage");
       mkdirSync(other, { recursive: true });

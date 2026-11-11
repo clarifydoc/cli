@@ -181,3 +181,48 @@ describe("clarifydoc_rename_plan — route registrations", () => {
     }
   });
 });
+
+describe("clarifydoc_rename_plan — a Rails-shaped project analyzed here", () => {
+  let dir = "";
+  let rails: ReturnType<typeof buildMcpServer>["server"];
+  const ask = async (args: Record<string, unknown>): Promise<string> => {
+    const res = (await rails.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "clarifydoc_rename_plan", arguments: args } })) as { result: { content: Array<{ text: string }> } };
+    return res.result.content[0]!.text;
+  };
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "clarifydoc-rename-rails-"));
+    const files: Record<string, string> = {
+      "Gemfile": "source 'https://rubygems.org'\ngem 'rails', '7.1.0'\n",
+      "config/routes.rb": ["Rails.application.routes.draw do", "  get 'clubs', to: 'clubs#index'", "  resources :players", "end", ""].join("\n"),
+      "app/controllers/clubs_controller.rb": ["class ClubsController < ApplicationController", "  def index", "    render json: []", "  end", "end", ""].join("\n"),
+      "app/controllers/players_controller.rb": ["class PlayersController < ApplicationController", "  def show", "    render json: {}", "  end", "end", ""].join("\n"),
+    };
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, name)), { recursive: true });
+      writeFileSync(join(dir, name), text);
+    }
+    rails = buildMcpServer({ projectRoot: dir, analysisDir: join(dir, "out"), allowAnalyze: true, analyzeSettings: { gitHistory: false }, log: () => {} }).server;
+    await rails.handleMessage({ jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: "clarifydoc_analyze", arguments: {} } });
+  }, 120_000);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("spells `index` once inside the 'clubs#index' string of the analyzed routes file", async () => {
+    const at = await registrationSpan(new Sources(dir), "config/routes.rb", 2, "index");
+    expect(at).toMatchObject({ span: { line: 2, col: 27, end: 32 }, inString: true });
+    const row = readFileSync(join(dir, "config/routes.rb"), "utf-8").split("\n")[1]!;
+    expect(row.slice(26, 31)).toBe("index");
+    // `resources :players` spells no `show`: that line refuses.
+    expect((await registrationSpan(new Sources(dir), "config/routes.rb", 3, "show")).why).toMatch(/does not spell `show`/);
+  });
+
+  // The analysis moves a Rails route onto the controller method it names, so the plan sees the definition and no
+  // registration line: the route is "own" (its link source is the method's line), and nothing is listed or refused.
+  it("plans the definition alone when the analysis anchors the route on the method", async () => {
+    for (const [symbol, file] of [["index", "app/controllers/clubs_controller.rb"], ["show", "app/controllers/players_controller.rb"]] as const) {
+      const text = await ask({ symbol, file, to: "renamed" });
+      expect(text).toContain("## Definition");
+      expect(text).not.toContain("## Route registrations");
+      expect(text).not.toMatch(/config\/routes\.rb/);
+    }
+  });
+});

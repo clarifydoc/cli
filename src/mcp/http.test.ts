@@ -186,6 +186,24 @@ describe("serveHttp", () => {
     expect(ended).toBe(true);
   });
 
+  it("caps event streams per session: a fifth closes the oldest", async () => {
+    handle = await serveHttp(build(), { port: 0, keepAliveMs: 30 });
+    const session = (await post(init)).headers.get("mcp-session-id")!;
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(handle.url, { headers: { accept: "text/event-stream", "mcp-session-id": session } });
+      expect(res.status).toBe(200);
+      readers.push(res.body!.getReader());
+      await readers[i].read();
+    }
+    // The first stream was closed by the server; the other four are live.
+    let ended = false;
+    for (let i = 0; i < 50 && !ended; i++) ended = (await readers[0].read()).done === true;
+    expect(ended).toBe(true);
+    expect(handle.broadcast({ method: "notifications/tools/list_changed" })).toBe(4);
+    for (const r of readers) await r.cancel().catch(() => undefined);
+  });
+
   it("checks the token on the event stream too", async () => {
     handle = await serveHttp(build(), { host: "0.0.0.0", port: 0, token: "secret" });
     const url = handle.url.replace("0.0.0.0", "127.0.0.1");

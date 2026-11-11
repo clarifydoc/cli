@@ -461,8 +461,21 @@ async function docsOnlyResult(args: {
 }
 
 /** The switches of this run a background refresh repeats: globs and flags only — no path, token or environment value. */
-function runOptionsOf(options: AnalyzeOptions): RunOptions {
+function runOptionsOf(options: AnalyzeOptions, projectRoot: string): RunOptions {
+  /** A `--spec` / `--coverage` file as a path under the root; one outside it is dropped, never recorded absolute. */
+  const inTree = (given: readonly string[] | undefined): string[] => {
+    const out: string[] = [];
+    for (const g of given ?? []) {
+      const rel = relative(pathResolve(projectRoot), pathResolve(g)).split(sep).join("/");
+      if (rel && !rel.startsWith("..") && !/^[a-zA-Z]:/.test(rel) && !rel.startsWith("/") && !rel.startsWith("-") && !out.includes(rel)) out.push(rel);
+    }
+    return out;
+  };
+  const specs = inTree(options.specs);
+  const coverage = inTree(options.coverage);
   return {
+    ...(specs.length ? { spec: specs } : {}),
+    ...(coverage.length ? { coverage } : {}),
     ...(options.include?.length ? { include: [...options.include] } : {}),
     ...(options.exclude?.length ? { exclude: [...options.exclude] } : {}),
     ...(options.maxFiles ? { maxFiles: options.maxFiles } : {}),
@@ -2689,7 +2702,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       ...(sourceRevision ? { revision: { commit: sourceRevision.commit, branch: sourceRevision.branch } } : {}),
       ...(fingerprint ? { fingerprint } : {}),
       ...(fingerprints ? { codeFingerprint: fingerprints.code } : {}),
-      runOptions: runOptionsOf(options),
+      runOptions: runOptionsOf(options, projectRoot),
     };
     await saveManifest(outputDir, manifest);
     // Remove per-file JSON for sources that disappeared since the last run so

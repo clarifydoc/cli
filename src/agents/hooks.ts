@@ -311,12 +311,12 @@ function alive(pid: number): boolean {
 /**
  * The `analyze` arguments of a refresh: the options the analysis in `analysisDir` was made with, which its manifest
  * records (`runOptions`) — its output directory is the one it already sits in; its include and exclude globs, file
- * cap, extraction features, LSP and git-history settings — and always `--incremental`. Inputs outside the tree
- * (`--spec`, `--coverage`) are not recorded, so a refresh runs without them. Without a record (an older analysis) the plain default:
+ * cap, extraction features, LSP and git-history settings — and always `--incremental`. The `--spec` and
+ * `--coverage` files it was given (recorded relative to the root) are passed on again. Without a record (an older analysis) the plain default:
  * `.clarifydoc`, no LSP.
  */
 export function refreshArgs(root: string, analysisDir: string): string[] {
-  let rec: { lsp?: unknown; features?: unknown; gitHistory?: unknown; include?: unknown; exclude?: unknown; maxFiles?: unknown } | undefined;
+  let rec: { lsp?: unknown; features?: unknown; gitHistory?: unknown; include?: unknown; exclude?: unknown; maxFiles?: unknown; spec?: unknown; coverage?: unknown } | undefined;
   try {
     rec = (JSON.parse(readFileSync(join(analysisDir, "manifest.json"), "utf8")) as { runOptions?: typeof rec }).runOptions;
   } catch {
@@ -333,6 +333,9 @@ export function refreshArgs(root: string, analysisDir: string): string[] {
   if (rec && globs(rec.include).length) args.push("--include", ...globs(rec.include));
   if (rec && globs(rec.exclude).length) args.push("--exclude", ...globs(rec.exclude));
   if (rec && typeof rec.maxFiles === "number" && Number.isInteger(rec.maxFiles) && rec.maxFiles > 0) args.push("--max-files", String(rec.maxFiles));
+  const files = (v: unknown): string[] => (Array.isArray(v) ? v.filter((f): f is string => typeof f === "string" && f.length > 0 && !f.startsWith("-") && !isAbsolute(f) && !f.split("/").includes("..")) : []);
+  if (rec && files(rec.spec).length) args.push("--spec", ...files(rec.spec));
+  if (rec && files(rec.coverage).length) args.push("--coverage", ...files(rec.coverage));
   args.push("--no-pretty");
   return args;
 }
