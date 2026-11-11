@@ -50,12 +50,15 @@ export function extractRustLocalTypes(bodyLines: string[], params: readonly Para
   for (const raw of bodyLines) {
     if (!raw.includes("let") && !raw.includes("for") && !raw.includes("|")) continue;
     const line = blankStringLiterals(raw.replace(/\/\/.*$/, ""));
-    for (const statement of line.split(";")) {
+    const statements = line.split(";");
+    for (const [at, statement] of statements.entries()) {
+      // A `;` ends it on this line; the last piece may go on below (`let club = league` / `.clubs.first()`).
+      const ended = at < statements.length - 1;
       const m = LET_RE.exec(statement);
       if (m && !/\b(?:if|while)\s+let\b/.test(statement.slice(0, m.index + 3))) {
         const stated = m[2] ? m[2].trim() : m[3] !== undefined ? initializerType(m[3]) : null;
         const call = !stated && m[3] !== undefined ? initializerCall(m[3]) : null;
-        const alias = !stated && !call && m[3] !== undefined ? /^(?:&\s*(?:mut\s+)?)?([a-z_]\w*)\s*;?\s*$/.exec(m[3])?.[1] : undefined;
+        const alias = ended && !stated && !call && m[3] !== undefined ? /^(?:&\s*(?:mut\s+)?)?([a-z_]\w*)\s*$/.exec(m[3])?.[1] : undefined;
         if (alias && alias !== m[1] && !RUST_VALUE_WORDS.has(alias)) {
           (aliasFroms.get(m[1]!) ?? aliasFroms.set(m[1]!, new Set()).get(m[1]!)!).add(alias);
           aliasBinds.set(m[1]!, (aliasBinds.get(m[1]!) ?? 0) + 1);

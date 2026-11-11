@@ -94,7 +94,11 @@ export function extractCFamilyLocalTypes(
       rest = rest.slice(0, open) + " ".repeat(close - open + 1) + rest.slice(close + 1);
     }
     code.push(rest);
-    for (const piece of rest.split(";")) for (const d of declarations(piece, false)) record(d);
+    // Only a statement a `;` ends on this line is an alias: `auto club = league` may go on below (`.first();`).
+    const pieces = rest.split(";");
+    for (const [at, piece] of pieces.entries()) {
+      for (const d of declarations(piece, false)) record(at < pieces.length - 1 || d.alias === undefined ? d : { name: d.name, type: null });
+    }
   }
 
   const out: LocalTypes = [];

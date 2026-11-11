@@ -4,6 +4,8 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
+import { extractWithRegex } from "./regex-extractor.js";
+import { ensureLanguagesLoaded } from "../extractors/registry.js";
 
 /**
  * A local assigned from another name (`const q = p`, `q := p`, `$q = $p`, `auto& q = p`, `let q = &p`, `(q := p)`) is
@@ -119,5 +121,20 @@ describe("alias of a typed local", () => {
     const wrong = links.filter((l) => /^(neg|Neg)/.test(l));
     expect(wrong).toEqual([]);
     expect(links.filter((l) => l.includes("Garage."))).toEqual([]);
+  });
+});
+
+describe("an initializer that goes on past its line (real-repo FP)", () => {
+  beforeAll(async () => {
+    await ensureLanguagesLoaded(["rust", "cpp"]);
+  });
+  it("is no alias in Rust or C++", () => {
+    const rust = extractWithRegex(
+      "pub async fn kickoff(league: League) {\n  let club = league\n    .clubs\n    .first()\n    .unwrap();\n  club.sign();\n}\n",
+      "src/lib.rs", "rust",
+    );
+    expect(rust.functions.flatMap((f) => f.localTypes ?? []).filter((l) => l.aliasOf)).toEqual([]);
+    const cpp = extractWithRegex("void kickoff(League& league) {\n  auto club = league\n    .first();\n  club.sign();\n}\n", "src/match.cpp", "cpp");
+    expect(cpp.functions.flatMap((f) => f.localTypes ?? []).filter((l) => l.aliasOf)).toEqual([]);
   });
 });
