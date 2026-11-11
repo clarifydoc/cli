@@ -158,7 +158,7 @@ clarifydoc lint <outputDir>            # Check an analysis for contradictions in
 clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json
 clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, openapi.json, sbom.cdx.json, Mermaid, GraphML, Cypher, CSV, an Obsidian vault (--format obsidian), linked screen specs with user flows and story drafts (--format screens)
 clarifydoc facts <path> --check doc.md  # Check the fact IDs a document cites ([R-3fa2c1]) against the analysis
-clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio)
+clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio, or --http)
 clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (--list for all)
 clarifydoc install --hooks --skills    # Wire ClarifyDoc into agent hosts (MCP entry, hooks, skills)
 clarifydoc install --git-hooks         # Refresh the analysis in the background after commit, merge, checkout
@@ -326,6 +326,12 @@ Or, in a config file (Claude Code, Cursor, Windsurf, …):
   }
 }
 ```
+
+One server for several local agents at once: `clarifydoc mcp --http` listens on `http://127.0.0.1:3737/mcp`
+(`--port`, `--host`) and shares one loaded analysis between them; point a client at that URL. It is loopback-only
+unless you pass `--token <t>` (or set `CLARIFYDOC_MCP_TOKEN`), which clients then send as `Authorization: Bearer <t>`;
+binding another host without a token is refused. The stdio server accepts newline-delimited JSON and `Content-Length`
+framing alike.
 
 Without a global install, the same entry runs it through npx: `"command": "npx", "args": ["-y", "clarifydoc", "mcp"]`
 (`clarifydoc@0.12.1` to pin the version). The first start downloads the package, about 9 MB.

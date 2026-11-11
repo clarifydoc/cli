@@ -55,6 +55,8 @@ export interface McpServerConfig {
    */
   coldStartRefusal?: string;
   analyzeSettings?: AnalyzeSettings;
+  /** Serve over HTTP (`POST /mcp`) instead of stdio. */
+  http?: { host?: string; port?: number; token?: string };
   /** Reported in `serverInfo.version`. */
   version?: string;
   log?: (message: string) => void;
@@ -292,7 +294,7 @@ export function buildMcpServer(config: McpServerConfig = {}): BuiltMcpServer {
 }
 
 /**
- * Serve MCP on stdio until the client disconnects.
+ * Serve MCP on stdio until the client disconnects, or over HTTP until stopped.
  *
  * The analyzer and its plugins log freely, and stdout is the protocol wire, so
  * `console.log`/`info` are pinned to stderr for the whole session (the store
@@ -339,6 +341,18 @@ export async function startMcpServer(config: McpServerConfig = {}): Promise<void
         ? "no analysis yet — the first tool call will run one"
         : "no analysis yet and analysis is disabled — tools will report that",
     );
+  }
+
+  if (config.http) {
+    const { serveHttp } = await import("./http.js");
+    const handle = await serveHttp(server, { ...config.http, log });
+    log(`listening on ${handle.url}${config.http.token ? " (bearer token required)" : ""}`);
+    await new Promise<void>((resolve) => {
+      const stop = () => void handle.close().then(resolve);
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
   }
 
   await serveStdio(server, {

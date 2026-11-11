@@ -993,7 +993,7 @@ program
 program
   .command("mcp")
   .description(
-    "Serve the analysis to an AI agent over the Model Context Protocol (stdio). Used by the VS Code extension and by any MCP client.",
+    "Serve the analysis to an AI agent over the Model Context Protocol (stdio, or --http for several local agents at once). Used by the VS Code extension and by any MCP client. stdio accepts newline-delimited JSON and Content-Length framing.",
   )
   .argument("[path]", "Path to project root. Omit to use the project containing the working directory", "")
   .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`)", ".clarifydoc")
@@ -1012,6 +1012,10 @@ program
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
   .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot | all")
+  .option("--http", "Serve over HTTP (POST /mcp, JSON responses) instead of stdio; one analysis shared by every client", false)
+  .option("--port <n>", "HTTP port with --http (0 = any free port)", wholeNumber(0), 3737)
+  .option("--host <host>", "HTTP bind address with --http. Anything but loopback needs --token", "127.0.0.1")
+  .option("--token <token>", "Bearer token HTTP clients must send (or CLARIFYDOC_MCP_TOKEN); required for a non-loopback --host")
   .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {
@@ -1049,6 +1053,9 @@ program
         allowColdStart: options.coldStart !== false,
         version: program.version() ?? undefined,
         tools: options.tools,
+        ...(options.http
+          ? { http: { host: options.host, port: options.port, token: options.token ?? process.env.CLARIFYDOC_MCP_TOKEN } }
+          : {}),
         analyzeSettings: {
           incremental: true,
           lsp: options.lsp === true,

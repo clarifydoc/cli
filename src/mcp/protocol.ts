@@ -130,8 +130,8 @@ export interface McpServerOptions {
   maxAnswerTokens?: number;
 }
 
-const PARSE_ERROR = -32700;
-const INVALID_REQUEST = -32600;
+export const PARSE_ERROR = -32700;
+export const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
@@ -513,11 +513,105 @@ export interface StdioOptions {
   onClose?: () => void;
 }
 
+/** One message read off the wire, with the framing it arrived in. */
+export interface WireFrame {
+  text: string;
+  /** True for `Content-Length: N` framing, false for one JSON message per line. */
+  framed: boolean;
+}
+
+const CL_PREFIX = "content-length:";
+
 /**
- * Serve a session over newline-delimited JSON. Messages are dispatched as they
+ * Splits a byte stream into messages. Each message is framed either LSP-style
+ * (`Content-Length: N\r\n\r\n<N bytes>`) or as one line of JSON; which one is
+ * decided per message from its first bytes, so a client may use either (or mix).
+ * Chunks may split a header, a body or a multi-byte character anywhere.
+ */
+export class FrameReader {
+  private buf: Buffer = Buffer.alloc(0);
+
+  push(chunk: string | Buffer): WireFrame[] {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    this.buf = this.buf.length ? Buffer.concat([this.buf, bytes]) : bytes;
+    return this.drain(false);
+  }
+
+  /** The stream ended: a final unterminated line still counts. */
+  end(): WireFrame[] {
+    return this.drain(true);
+  }
+
+  private drain(final: boolean): WireFrame[] {
+    const frames: WireFrame[] = [];
+    for (;;) {
+      // Blank lines between messages carry nothing.
+      let skip = 0;
+      while (skip < this.buf.length && (this.buf[skip] === 0x0a || this.buf[skip] === 0x0d)) skip++;
+      if (skip) this.buf = this.buf.subarray(skip);
+      if (!this.buf.length) break;
+
+      const head = this.buf.subarray(0, CL_PREFIX.length).toString("latin1").toLowerCase();
+      const maybeFramed = CL_PREFIX.startsWith(head) || head === CL_PREFIX;
+      if (head === CL_PREFIX) {
+        const sep = this.headerEnd();
+        if (!sep) {
+          if (final) this.buf = Buffer.alloc(0);
+          break;
+        }
+        const header = this.buf.subarray(0, sep.at).toString("latin1");
+        const match = /content-length:\s*(\d+)/i.exec(header);
+        const length = match ? Number(match[1]) : NaN;
+        if (!Number.isSafeInteger(length)) {
+          // Unreadable header: drop it and keep going rather than wedge the stream.
+          this.buf = this.buf.subarray(sep.at + sep.len);
+          frames.push({ text: "", framed: true });
+          continue;
+        }
+        const start = sep.at + sep.len;
+        if (this.buf.length < start + length) {
+          if (final) this.buf = Buffer.alloc(0);
+          break;
+        }
+        frames.push({ text: this.buf.subarray(start, start + length).toString("utf8"), framed: true });
+        this.buf = this.buf.subarray(start + length);
+        continue;
+      }
+      if (maybeFramed && !final && this.buf.length < CL_PREFIX.length) break; // too short to tell
+      const newline = this.buf.indexOf(0x0a);
+      if (newline === -1) {
+        if (!final) break;
+        frames.push({ text: this.buf.toString("utf8"), framed: false });
+        this.buf = Buffer.alloc(0);
+        break;
+      }
+      frames.push({ text: this.buf.subarray(0, newline).toString("utf8"), framed: false });
+      this.buf = this.buf.subarray(newline + 1);
+    }
+    return frames;
+  }
+
+  private headerEnd(): { at: number; len: number } | null {
+    const crlf = this.buf.indexOf("\r\n\r\n");
+    const lf = this.buf.indexOf("\n\n");
+    if (crlf !== -1 && (lf === -1 || crlf < lf)) return { at: crlf, len: 4 };
+    if (lf !== -1) return { at: lf, len: 2 };
+    return null;
+  }
+}
+
+/** A message as written on the wire in the given framing. */
+export function encodeFrame(message: unknown, framed: boolean): string {
+  const body = JSON.stringify(message);
+  return framed ? `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}` : body + "\n";
+}
+
+/**
+ * Serve a session over stdio: newline-delimited JSON or `Content-Length`
+ * framing, answered in the framing each message used. Messages are dispatched as they
  * arrive without waiting for the previous one to finish, so a slow tool call
- * (an analysis run) never blocks a `ping`; each response is written as a single
- * line, which keeps interleaving safe.
+ * (an analysis run) never blocks a `ping`; each response is written in one
+ * piece, which keeps interleaving safe.
  */
 export function serveStdio(server: McpServer, options: StdioOptions = {}): Promise<void> {
   // Annotated (not inferred): process.stdin's concrete type unions its `on`
@@ -526,23 +620,25 @@ export function serveStdio(server: McpServer, options: StdioOptions = {}): Promi
   const output: NodeJS.WritableStream = options.output ?? process.stdout;
 
   return new Promise<void>((resolve) => {
-    let buffer = "";
+    const reader = new FrameReader();
+    let lastFramed = false;
     const pending = new Set<Promise<void>>();
 
     const emit = options.writeLine ?? ((line: string) => void output.write(line));
-    const write = (response: JsonRpcResponse) => {
-      emit(JSON.stringify(response) + "\n");
+    const write = (response: JsonRpcResponse, framed: boolean) => {
+      emit(encodeFrame(response, framed));
     };
-    server.setNotifier((message) => emit(JSON.stringify(message) + "\n"));
+    server.setNotifier((message) => emit(encodeFrame(message, lastFramed)));
 
-    const handleLine = (line: string) => {
-      const trimmed = line.trim();
+    const handleFrame = ({ text, framed }: WireFrame) => {
+      lastFramed = framed;
+      const trimmed = text.trim();
       if (!trimmed) return;
       let parsed: unknown;
       try {
         parsed = JSON.parse(trimmed);
       } catch {
-        write({ jsonrpc: "2.0", id: null, error: { code: PARSE_ERROR, message: "Parse error" } });
+        write({ jsonrpc: "2.0", id: null, error: { code: PARSE_ERROR, message: "Parse error" } }, framed);
         return;
       }
       // JSON-RPC batches were dropped in MCP 2025-06-18 but cost nothing to accept.
@@ -553,26 +649,18 @@ export function serveStdio(server: McpServer, options: StdioOptions = {}): Promi
         const task: Promise<void> = server
           .handleMessage(message)
           .then((response) => {
-            if (response) write(response);
+            if (response) write(response, framed);
           })
           .finally(() => pending.delete(task));
         pending.add(task);
       }
     };
 
-    input.setEncoding?.("utf8");
     input.on("data", (chunk: string | Buffer) => {
-      buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        handleLine(line);
-      }
+      for (const frame of reader.push(chunk)) handleFrame(frame);
     });
     input.on("end", () => {
-      handleLine(buffer);
-      buffer = "";
+      for (const frame of reader.end()) handleFrame(frame);
       void Promise.allSettled([...pending]).then(() => {
         options.onClose?.();
         resolve();

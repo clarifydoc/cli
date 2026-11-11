@@ -24,6 +24,13 @@ write. That is what lets an external agent be configured as nothing but a comman
 - **Stdout is the wire.** Only JSON-RPC frames may reach stdout. `startMcpServer` pins `console.log/info/debug` to
   stderr for the session, and `AnalysisStore.refresh` does the same around an analysis run (the analyzer and its
   plugins log freely). Anything diagnostic goes through the `log` sink → stderr.
+- **Two transports, one server.** `serveStdio` reads newline-delimited JSON or `Content-Length: N` frames, decided per
+  message by `FrameReader` (bytes, so split chunks and multi-byte text are safe) and answers in the framing each
+  message used. `http.ts` `serveHttp` (`clarifydoc mcp --http [--port] [--host] [--token]`) is the Streamable HTTP
+  subset: `POST /mcp` JSON-RPC message or batch → JSON, notifications → 202, `GET` → 405, an `Mcp-Session-Id` issued on
+  `initialize`, body capped at 4 MB, every request sharing the one `McpServer` (analysis loaded once). Loopback only by
+  default (`Host`/`Origin` must be loopback); any other `--host` refuses to start without `--token` /
+  `CLARIFYDOC_MCP_TOKEN`, checked as a bearer with a constant-time compare. The URL goes to stderr only.
 - **No new dependencies.** The whole transport is hand-rolled precisely because this code is bundled into the VS Code
   extension, whose bundle script ships the analyzer's production closure.
 - **One source of truth.** Every answer comes from `loadReportSummary` — the same denormalized, LSP-merged
