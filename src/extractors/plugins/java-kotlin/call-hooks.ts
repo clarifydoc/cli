@@ -4,6 +4,7 @@ import type { CallInfo } from "../../../types/analysis.js";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { containerLookup, expressionFact } from "./di-expressions.js";
+import { anonymousSubjectsOf } from "./java-anonymous.js";
 import { javaArgKinds, javaOverloadTypeKey, kotlinArgKinds, kotlinOverloadTypeKey } from "./arg-kinds.js";
 
 /**
@@ -242,6 +243,8 @@ export const javaCallHooks: CallExtractionHooks = {
   // Where each argument comes from: a parameter, a request value, a literal.
   argOriginsOf: jvmArgOriginsOf,
   collectExtraCalls: javaMethodReference,
+  // A bare call inside an anonymous class body is its base's member before the enclosing class's.
+  withSubjectsOf: anonymousSubjectsOf,
 };
 
 /**

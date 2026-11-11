@@ -14,6 +14,8 @@ import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { withCallNarrowing } from "./call-hooks.js";
 import { typeVariableArgs } from "./arg-kinds.js";
+import { anonymousBaseOf, anonymousClassName, isAnonymousClassCreation } from "./java-anonymous.js";
+import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
@@ -40,7 +42,32 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   }
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
-    this.walkClasses(node, classes, detectLang(node));
+    const lang = detectLang(node);
+    this.walkClasses(node, classes, lang);
+    if (lang === "java") this.collectAnonymousClasses(node, classes);
+  }
+
+  /**
+   * `Runnable handler = new Runnable() { public void run() { … } }`: the anonymous class a local is initialized
+   * by, as a class of the file named `Runnable$<line>` (the local is typed by it, so `handler.run()` reaches
+   * its `run`; a member it does not declare is its base's). Its members are synthetic and carry no calls — the
+   * calls inside are the enclosing method's, which stays where they are attributed.
+   */
+  private collectAnonymousClasses(root: Node, classes: ClassInfo[]): void {
+    for (const creation of root.descendantsOfType("object_creation_expression")) {
+      if (!isAnonymousClassCreation(creation) || creation.parent?.type !== "variable_declarator") continue;
+      const name = anonymousClassName(creation);
+      const base = anonymousBaseOf(creation);
+      const body = creation.children.find((c) => c.type === "class_body");
+      if (!name || !base || !body) continue;
+      // The calls inside stay the enclosing method's (recorded once); the anonymous methods are only what a call reaches.
+      const methods = body.children.filter((m) => m.type === "method_declaration").map((m) => ({ ...this.parseMethod(m, "java"), calls: [], synthetic: true as const }));
+      if (methods.length === 0) continue;
+      classes.push({
+        name, extends: base, implements: [], decorators: [], methods, properties: [], isExported: false, kind: "class", synthetic: true,
+        line: creation.startPosition.row + 1, endLine: creation.endPosition.row + 1,
+      });
+    }
   }
 
   private walkClasses(node: Node, classes: ClassInfo[], lang: JkLang): void {
@@ -327,7 +354,15 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
    */
   private parsePrimaryConstructor(node: Node): FunctionInfo | null {
     const ctor = this.findChildByType(node, "primary_constructor");
-    if (!ctor) return null;
+    if (!ctor) {
+      // `class Derived : Base()` writes no primary constructor, but it runs `Base`'s.
+      const bare = kotlinSuperConstruction(node);
+      if (!bare) return null;
+      return {
+        name: "constructor", params: [], returnType: null, isAsync: false, isExported: true, decorators: [], synthetic: true,
+        calls: [bare], line: node.startPosition.row + 1, endLine: node.startPosition.row + 1,
+      };
+    }
     const ctorAnns = annotationNodes(ctor);
     const explicit = isInjectMarked(ctorAnns);
     const params: ParamInfo[] = [];
@@ -344,7 +379,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       if (qualifier) param.qualifier = qualifier;
       params.push(param);
     }
-    if (params.length === 0) return null;
+    // `class Derived : Base()` declares no parameters, yet its primary constructor runs `Base`'s.
+    const superCall = kotlinSuperConstruction(node);
+    if (params.length === 0 && !superCall) return null;
     // `private constructor(…)` — read the constructor's own modifiers, not its
     // text (which carries every `private val` parameter).
     const isPrivate = ctor.children
@@ -357,7 +394,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       isAsync: false,
       isExported: !isPrivate,
       decorators: this.extractAnnotations(ctor).map((a) => a.replace(/\s+/g, " ")),
-      calls: [],
+      calls: superCall ? [superCall] : [],
       line: ctor.startPosition.row + 1,
       endLine: ctor.endPosition.row + 1,
     };
@@ -505,7 +542,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const body =
       node.childForFieldName("body") ??
       this.findChildByType(node, "function_body") ??
-      this.findChildByType(node, "constructor_body");
+      this.findChildByType(node, "constructor_body") ??
+      // A Kotlin secondary constructor's statements follow its delegation call directly.
+      (node.type === "secondary_constructor" ? this.findChildByType(node, "statements") : null);
 
     // Check visibility: Java defaults to package-private, Kotlin defaults to public
     const vis = sharedGetVisibility(node);
@@ -537,6 +576,13 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     const reqParam = params.find((p) => !p.isReceiver && /^(?:io\.javalin\.http\.)?Context$|^(?:spark\.)?Request$/.test(p.type ?? ""));
     const requestAccess = reqParam && body ? javalinSparkAccess(body.text, reqParam.name, /Context$/.test(reqParam.type!) ? "javalin" : "spark") : [];
     const calls = withCallNarrowing(elements?.narrowedOf, () => extractCalls(body, language));
+    // Kotlin `constructor(…) : this(…)` sits beside the body, not in it.
+    const delegation = node.type === "secondary_constructor" ? kotlinDelegationCall(node) : null;
+    if (delegation) {
+      // `: this(compute(x))` — the calls its arguments make precede the construction.
+      const argCalls = extractCalls(node.children.find((c) => c.type === "constructor_delegation_call") ?? null, language);
+      calls.unshift(...argCalls, delegation);
+    }
     if (elements) {
       for (const call of calls) {
         const type = elements.receiverOf(call);
@@ -865,7 +911,15 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
         push(n.childForFieldName("name")?.text, type);
       } else {
         for (const c of n.children) {
-          if (c.type === "variable_declarator") push(c.childForFieldName("name")?.text, type, c.childForFieldName("value"));
+          if (c.type !== "variable_declarator") continue;
+          const value = c.childForFieldName("value");
+          const local = c.childForFieldName("name")?.text;
+          // Initialized by an anonymous class: the local is that class (see `collectAnonymousClasses`).
+          const anonymous = value && local && isAnonymousClassCreation(value) ? anonymousClassName(value) : null;
+          if (anonymous && !seen.has(local!)) {
+            seen.add(local!);
+            out.push({ name: local!, type: anonymous });
+          } else push(local, type, value);
         }
       }
     } else if (language === "kotlin" && n.type === "property_declaration") {
