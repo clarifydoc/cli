@@ -140,6 +140,19 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("App/bin/Debug/Gen.cs");
   });
 
+  it("reads a Ruby project's bin/ beside a Gemfile or gemspec, never a .NET project's", async () => {
+    write("app/Gemfile", "source 'https://rubygems.org'\n");
+    write("app/bin/club.rb", "Club.run\n");
+    write("gem/league.gemspec", "Gem::Specification.new\n");
+    write("gem/bin/league.rb", "League.run\n");
+    write("Dotnet/Dotnet.csproj", "<Project/>\n");
+    write("Dotnet/bin/Gen.rb", "x\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toContain("app/bin/club.rb");
+    expect(files).toContain("gem/bin/league.rb");
+    expect(files).not.toContain("Dotnet/bin/Gen.rb");
+  });
+
   it("reads a JVM package named like build output, never a build tool's output (real-repo FP)", async () => {
     write("league/pom.xml", "<project/>\n");
     for (const pkg of ["target", "out", "bin", "obj", "dist", "vendor"]) {

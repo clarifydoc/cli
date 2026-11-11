@@ -198,7 +198,7 @@ function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): vo
  */
 function topLevelSetup(lines: string[], analysis: FileAnalysis, spec: RegexLangSpec, filePath: string, parsed?: ParsedStructure): FunctionInfo | null {
   const on = spec.topLevelCalls;
-  const typeless = spec.topLevelCallsInTypelessFiles === true && analysis.classes.length === 0 && analysis.routes.length === 0;
+  const typeless = spec.topLevelCallsInTypelessFiles === true && !spec.typelessSetupExcluded?.test(filePath) && analysis.classes.length === 0 && analysis.routes.length === 0;
   if (!typeless && (!on || (on instanceof RegExp && !on.test(filePath)))) return null;
   if (on === "parsed" && !typeless && !parsed?.topLevelCalls.length) return null;
   // The lines as the call scan reads them (block comments, heredocs blanked), as a function body's are.

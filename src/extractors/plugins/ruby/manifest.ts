@@ -22,6 +22,8 @@ export const rubyManifest: LanguagePluginManifest = {
   language: "ruby",
   callPathsFromHead: true,
   family: "ruby",
+  // A gem's or app's executables (`bin/club`); `bin/` is .NET build output elsewhere.
+  sourceDirs: [{ dir: "bin", marker: "Gemfile" }, { dir: "bin", marker: "*.gemspec" }],
   // `Foo.new(…)` runs `initialize`.
   constructorCalls: ["new"],
   importsNameDirectories: true,

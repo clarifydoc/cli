@@ -189,6 +189,8 @@ export interface RegexLangSpec {
    * and a route file's blocks (`get "/x" do`) are the routes' own.
    */
   topLevelCallsInTypelessFiles?: boolean;
+  /** Paths `topLevelCallsInTypelessFiles` leaves out: tests and framework configuration run by something else, not scripts. */
+  typelessSetupExcluded?: RegExp;
   /**
    * Top-level blocks that run LATER, not when the script loads — a route's
    * `do` block, a registered callback (1-based, inclusive line spans).

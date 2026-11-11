@@ -199,7 +199,9 @@ async function findMarkers(
   return own.map((s) => {
     // The ignores this marker keeps that the shared walk did not apply.
     const keep = dropped.filter((p) => s.ignore.includes(p)).map((p) => `/${stem(p)}/`);
-    const markers = hits.filter((h) => (h === s.marker || h.endsWith(`/${s.marker}`)) && !keep.some((seg) => `/${h}`.includes(seg)));
+    // A marker may be a glob (`*.gemspec`): `*` is any run of characters inside one segment.
+    const named = new RegExp(`(?:^|/)${s.marker.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+    const markers = hits.filter((h) => named.test(h) && !keep.some((seg) => `/${h}`.includes(seg)));
     return { dir: s.dir, marker: s.marker, ...(s.markerMatches ? { markerMatches: s.markerMatches } : {}), markers };
   });
 }
@@ -270,7 +272,8 @@ export async function discoverFiles(
     for (const { dir, marker, markerMatches, markers } of await findMarkers(root, ignore, prune)) {
       for (const m of markers) {
         if (markerMatches && !markerMatches.test(readText(resolve(root, m)))) continue;
-        const parent = m.slice(0, m.length - marker.length).replace(/\/$/, "");
+        // The marker's own segments come off the hit; what is left is the directory beside it.
+        const parent = m.split("/").slice(0, -marker.split("/").length).join("/");
         dirs.add(parent ? `${parent}/${dir}` : dir);
       }
     }

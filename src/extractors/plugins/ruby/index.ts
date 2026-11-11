@@ -1159,6 +1159,8 @@ export const rubySpec: RegexLangSpec = {
   // are its `<setup>`.
   topLevelCalls: /\.(?:rake|jbuilder)$|(?:^|\/)script\/.+\.rb$|(?:^|\/)db\/seeds(?:\.rb$|\/.+\.rb$)/,
   topLevelCallsInTypelessFiles: true,
+  // Specs and tests are read by their runners; `config/` is read by the framework (`config.ru`, at the root, is no `config/` file and keeps its setup).
+  typelessSetupExcluded: /(?:^|\/)(?:spec|test)\/|_(?:spec|test)\.rb$|(?:^|\/)config\//,
   lineCommentPrefixes: ["#"],
 
   inlineBodyColumn: rubyInlineBodyColumn,
