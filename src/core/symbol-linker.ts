@@ -1148,6 +1148,8 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       const best = bestOverload(kinds, fits.map((o) => ({
         types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
         variadic: o.variadic,
+        // A variadic parameter is where the untyped arguments begin; a function-level `...` begins past them all.
+        ...(o.variadic && !o.params.some((p) => p.variadic) ? { restFrom: o.params.length } : {}),
       })), typesOf(), fits[0]!.ranked);
       if (best >= 0) return { line: fits[best]!.line };
     }

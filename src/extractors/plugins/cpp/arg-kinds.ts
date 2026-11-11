@@ -1,8 +1,9 @@
 /**
  * How a declared C++ parameter or variable type folds to the key the overload chooser compares an argument kind with
  * (`calls.overloadTypeKey`; the arguments' own kinds are read by `antlr.ts`): qualifiers, references and pointers
- * left off, the arithmetic types and their fixed-width spellings folded to `int`, `long`, `float`, …, the string
- * types to `string`, any other type to its simple name.
+ * left off, the arithmetic types and their fixed-width spellings folded to `int`, `long`, `float`, …, a C string
+ * (`const char*`) to `string` — what a string literal is — and the string classes (`std::string`, `string_view`,
+ * `QString`) to `basic_string`, which a literal reaches only by a conversion, any other type to its simple name.
  */
 
 const KEYS: Readonly<Record<string, string>> = {
@@ -11,7 +12,8 @@ const KEYS: Readonly<Record<string, string>> = {
   int64_t: "long", uint64_t: "long", size_t: "long", ssize_t: "long", ptrdiff_t: "long", intptr_t: "long", uintptr_t: "long",
   int8_t: "char", uint8_t: "char",
   bool: "boolean", boolean: "boolean",
-  string: "string", wstring: "string", string_view: "string", u8string: "string", cstring: "string", QString: "string",
+  string: "basic_string", wstring: "basic_string", string_view: "basic_string", u8string: "basic_string", QString: "basic_string",
+  cstring: "string",
   void: "object", object: "object",
 };
 
@@ -25,7 +27,7 @@ function arithmeticKey(words: readonly string[]): string | null {
   return words.includes("long") ? "long" : "int";
 }
 
-/** `const std::string&` → `string`, `unsigned long long` → `long`, `const Club *` → `Club`, `const char *` → `string`, `std::vector<Club>` → `vector<Club>`, `long unsigned int` → `long`. */
+/** `const std::string&` → `basic_string`, `unsigned long long` → `long`, `const Club *` → `Club`, `const char *` → `string`, `std::vector<Club>` → `vector<Club>`, `long unsigned int` → `long`. */
 export function cppOverloadTypeKey(type: string): string {
   if (type === "?" || type.startsWith("->")) return type;
   let t = type.replace(/\b(?:const|volatile|constexpr|static|register|mutable|struct|class|enum|union|typename)\b/g, " ");

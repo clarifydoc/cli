@@ -113,7 +113,8 @@ function stripCppType(raw: string): string {
 function parseCppParam(paramText: string): ParamInfo | null {
   const trimmed = paramText.trim().replace(/\/\*.*?\*\//g, "");
   if (!trimmed || trimmed === "void") return null;
-  if (trimmed === "...") return { name: "...", type: null, defaultValue: null };
+  // C's `...`: the arguments past the typed parameters, any number of them.
+  if (trimmed === "...") return { name: "...", type: null, defaultValue: null, variadic: true };
 
   // Split off a default value (`= expr`) — keep it for the param info.
   let defaultValue: string | null = null;
@@ -130,7 +131,10 @@ function parseCppParam(paramText: string): ParamInfo | null {
     return { name: "_", type: stripCppType(arrayStripped), defaultValue };
   }
   const typePart = (m[1] + m[2]).trim();
-  return { name: m[3]!, type: stripCppType(typePart), defaultValue };
+  // A pointer to a character is a C string, which a string literal is: the pointer stays, so overloads can tell
+  // `log(const char*)` from `log(char)` (every other pointer and reference is dropped, as a receiver's type is).
+  const type = stripCppType(typePart);
+  return { name: m[3]!, type: type && /\bchar\s*\*/.test(typePart) ? `${type}*` : type, defaultValue };
 }
 
 function parseCppReturnType(line: string): string | null {

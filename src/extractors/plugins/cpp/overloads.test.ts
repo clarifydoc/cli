@@ -36,6 +36,11 @@ void convertAll(int x) {
   convert<int>(x);
   convert<std::string>("a");
 }
+void log(int level, const std::string& line) { }
+void log(int level, const char* format, ...) { }
+void report() {
+  log(1, "Full time");
+}
 `;
 
 const analysis = () => {
@@ -60,6 +65,8 @@ describe("C++ overloads", () => {
     expect(lineOf(links, 11).map((l) => l.targetLine)).toEqual([3]); // 42L -> long
     expect(lineOf(links, 12).map((l) => l.targetLine)).toEqual([4]); // 1.5f -> double (promotion), not int
     expect(lineOf(links, 13).map((l) => l.targetLine)).toEqual([5]); // "Nine" -> std::string
+    // A literal is a `const char*` exactly; `std::string` is a conversion away, so the C-string overload wins.
+    expect(links.filter((l) => l.callName === "log").map((l) => l.targetLine)).toEqual([29]);
   });
 
   it("keeps two calls of one name in a function as two links to different overloads", () => {
@@ -80,6 +87,6 @@ describe("C++ overloads", () => {
 
   it("folds declared types to the overload keys", () => {
     expect(["const std::string&", "unsigned long long", "const Club *", "const char *", "std::vector<Club>", "long unsigned int", "bool", "float"].map(cppOverloadTypeKey))
-      .toEqual(["string", "long", "Club", "string", "vector<Club>", "long", "boolean", "float"]);
+      .toEqual(["basic_string", "long", "Club", "string", "vector<Club>", "long", "boolean", "float"]);
   });
 });

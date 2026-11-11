@@ -97,6 +97,12 @@ function plainFit(arg: string, param: string | null, types: TypeHierarchy): numb
 export interface OverloadParams {
   types: readonly (string | null)[];
   variadic: boolean;
+  /**
+   * Where the arguments no parameter types begin, when the function is variadic: the variadic parameter's own
+   * position (Java `String... lines` — its default, the last parameter) or past every parameter (C's `...`, which is
+   * no parameter: `log(int, const char*, ...)` still compares its format argument).
+   */
+  restFrom?: number;
 }
 
 /**
@@ -113,7 +119,7 @@ export function bestOverload(argKinds: readonly string[], candidates: readonly O
     let score = 0;
     for (let a = 0; a < argKinds.length; a++) {
       // Arguments past a variadic parameter's position are not compared.
-      const fit = o.variadic && a >= o.types.length - 1 ? 1 : argFit(argKinds[a]!, o.types[a] ?? null, types, ranked);
+      const fit = o.variadic && a >= (o.restFrom ?? o.types.length - 1) ? 1 : argFit(argKinds[a]!, o.types[a] ?? null, types, ranked);
       if (fit === 0) return;
       score += fit;
     }
