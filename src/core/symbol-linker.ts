@@ -965,6 +965,12 @@ function buildSymbolIndex(
       for (const method of cls.methods) {
         const qualified = `${cls.name}.${method.name}`;
         const prev = fileSymbols.get(qualified);
+        // A class-level member beside an instance one of its name (a Kotlin companion's `foo` and the
+        // class's own): the instance one answers `x.foo()`, the class-level one `X.foo()` (`X.self.foo`).
+        if (method.classLevel && prev && !prev.classLevel && prev.line !== method.line) {
+          fileSymbols.set(`${cls.name}.self.${method.name}`, { name: qualified, line: method.line, endLine: method.endLine, classLevel: true });
+          continue;
+        }
         fileSymbols.set(qualified, {
           name: qualified,
           line: method.line,
@@ -1039,38 +1045,41 @@ function buildSymbolIndex(
  */
 function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): Set<SymbolLink> {
   const touched = new Set<SymbolLink>();
-  type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string };
+  type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string; strict?: boolean };
   const overloads = new Map<string, Overload[]>();
   // `${file}\0${Class}` → the symbol its constructors share (`Club.constructor`, `Garage.Garage`): a call
   // naming the class (`Club(3)`, `new Garage(4)`) reaches one of them, whether its link names the class or one.
   const ctorsOf = new Map<string, string>();
-  const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined): void => {
+  const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined, strict?: boolean): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
     const variadic = !!fn.variadic || params.some((p) => p.variadic);
     const min = params.filter((p) => !p.variadic && !p.optional && p.defaultValue == null).length;
     const key = `${file}\u0000${name}`;
     let list = overloads.get(key);
     if (!list) overloads.set(key, (list = []));
-    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey });
+    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey, ...(strict ? { strict } : {}) });
   };
   for (const a of analyses) {
     const calls = pluginFor(a.language)?.calls;
     // A second definition is no overload where the language has none (a TS overload signature, a typing stub).
     if (calls?.noOverloads) continue;
     const typeKey = calls?.overloadTypeKey;
+    const strict = calls?.strictArity;
     // A function nested in another is its own scope's, never an overload of a namesake elsewhere in the file.
     const names = new Set<string>();
     const twins = a.functions.some((fn) => names.size === names.add(fn.name).size);
     const nesting = twins ? callableNesting(a) : null;
-    for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn, typeKey);
+    for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn, typeKey, strict);
     for (const cls of a.classes) {
-      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey);
+      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey, strict);
       const ctor = cls.methods.find((m) => isConstructor(m, cls));
       if (ctor) ctorsOf.set(`${a.filePath}\u0000${cls.name}`, `${cls.name}.${ctor.name}`);
     }
   }
-  for (const [key, list] of overloads) if (list.length < 2) overloads.delete(key);
+  // A lone definition is kept only where its arity is checked (`strictArity`): a call it cannot accept reaches nothing.
+  for (const [key, list] of overloads) if (list.length < 2 && !list[0]!.strict) overloads.delete(key);
   if (overloads.size === 0) return touched;
+  const unfit = new Set<SymbolLink>();
 
   // Each call site's argument count and kinds, with the function and class it
   // is made from (whose parameters, locals and fields type a variable argument),
@@ -1098,7 +1107,11 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
   // argument made (`Assert.Throws<MyException>(…)` → `MyException`'s constructor).
   const leafOf = (name: string): string =>
     name.replace(/^new\s+/, "").replace(/<.*$/s, "").split(/\.|::/).pop() ?? "";
-  /** The line of the one overload in `list` the call behind `link` can mean, if the arguments tell. */
+  /**
+   * The line of the one overload in `list` the call behind `link` can mean, if the arguments tell;
+   * minus the number that fit when several do and nothing tells them apart (`process(int)` /
+   * `process(long)` with `42`).
+   */
   const choose = (list: Overload[], link: SymbolLink): number | undefined => {
     const site = siteAt(link.sourceFile, link.sourceLine, link.callName);
     const n = site?.call.argCount;
@@ -1114,7 +1127,17 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
       })), typesOf());
       if (best >= 0) return fits[best]!.line;
     }
-    return undefined;
+    return fits.length > 1 ? -fits.length : undefined;
+  };
+  /** A tie leaves the link on the body it found, said to be one of several (`SymbolLink.overloadsFit`). */
+  const settle = (link: SymbolLink, line: number | undefined): boolean => {
+    if (line !== undefined && line < 0) {
+      link.overloadsFit = -line;
+      return false;
+    }
+    if (line === undefined) return false;
+    link.targetLine = line;
+    return true;
   };
   for (const link of links) {
     const callLeaf = leafOf(link.callName);
@@ -1125,21 +1148,34 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[]): 
       const ctorOfCalled = dot > 0 && ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol.slice(0, dot)}`) === link.targetSymbol
         && leafOf(link.targetSymbol.slice(0, dot)) === callLeaf;
       if (callLeaf !== leafOf(link.targetSymbol) && !ctorOfCalled) continue;
+      // A call no definition's arity accepts, where arity is checked: the name is another's (a library's).
+      if (list[0]!.strict) {
+        const n = siteAt(link.sourceFile, link.sourceLine, link.callName)?.call.argCount;
+        if (n !== undefined && !list.some((o) => n >= o.min && n <= o.max)) {
+          unfit.add(link);
+          continue;
+        }
+        if (list.length < 2) continue;
+      }
       touched.add(link);
-      const line = choose(list, link);
-      if (line !== undefined) link.targetLine = line;
+      settle(link, choose(list, link));
       continue;
     }
     // A link to the class itself (`Club(3)` beside `class Club`): to the constructor the arguments choose.
     const ctor = callLeaf === leafOf(link.targetSymbol) ? ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol}`) : undefined;
     const ctors = ctor ? overloads.get(`${link.targetFile}\u0000${ctor}`) : undefined;
     const line = ctors ? choose(ctors, link) : undefined;
-    if (line === undefined) continue;
+    if (line !== undefined && line < 0) link.overloadsFit = -line;
+    if (line === undefined || line < 0) continue;
     link.targetSymbol = ctor!;
     link.targetLine = line;
     link.strategy = "constructor";
     link.relation = relationForStrategy("constructor");
     touched.add(link);
+  }
+  if (unfit.size > 0) {
+    const kept = links.filter((l) => !unfit.has(l));
+    links.splice(0, links.length, ...kept);
   }
   return touched;
 }
@@ -4820,6 +4856,14 @@ function resolveCallToDefinitionBody(
     && findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) !== null;
   if (ownerClass !== undefined && (!def || memberClassOf(ctx, sourceFile, def) !== null || memberFirst)) {
     const hit = ownerClass ? findMethodInClass(ctx, ownerClass, sourceFile, leafName, undefined, callerSide()) : null;
+    // Two classes of one name in the file (`namespace First { class Twin }`, `namespace Second { class Twin }`):
+    // the caller's is the one around the call, and a member of the other is no member of its.
+    // A `partial` class written twice is one class.
+    const twins = ownerClass ? analysis.classes.filter((c) => c.name === ownerClass) : [];
+    const around = twins.length > 1 && !twins.every((c) => c.partial) ? twins.find((c) => c.line <= call.line && call.line <= c.endLine) : undefined;
+    if (around && hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`) && (hit.line < around.line || hit.line > around.endLine)) {
+      return null;
+    }
     if (hit && hit.file === sourceFile && hit.symbol.startsWith(`${ownerClass}.`)) {
       if (def?.name !== hit.symbol) def = symbolIn(ctx, sourceFile, hit.symbol);
     } else if (hit) {
@@ -4948,13 +4992,28 @@ function resolveCallToDefinitionBody(
     const walked = ownerClass ?? (isQualified ? callerClass(ctx, analysis, sourceSymbol, call.line) || undefined : undefined);
     const currentClasses = walked === undefined ? analysis.classes : analysis.classes.filter((c) => c.name === walked);
     for (const cls of currentClasses) {
+      // What the class's own lookup (C3 order where bases are several) finds: a bare match in a base's file stands
+      // only when it is that member, or a member of the base itself.
+      let resolved: ReturnType<typeof findMethodInClass> | undefined;
+      const resolvedHere = () => (resolved ??= findMethodInClass(ctx, cls.name, sourceFile, leafName));
+      // The supertypes the chain's classes name as written (`class ModelTestCase(TestCase)`): a bare match in a base's
+      // file stands for one of those, even where several classes of the name keep `parentClassOf` from choosing.
+      const simple = (t: string) => t.replace(/[<[(].*$/s, "").trim().split(/\.|::|\\/).pop() ?? "";
+      const named = new Set([cls.extends, ...cls.implements].filter((t): t is string => !!t).map(simple));
       let parentInfo = parentClassOf(ctx, cls.name, sourceFile);
       const visited = new Set<string>();
       while (parentInfo && !visited.has(memberKey(parentInfo.parentFile, parentInfo.parentClass))) {
         visited.add(memberKey(parentInfo.parentFile, parentInfo.parentClass));
         const parentSymbols = symbolIndex.get(parentInfo.parentFile);
         if (parentSymbols) {
-          const parentDef = symbolIn(ctx, parentInfo.parentFile, leafName)
+          // The base's own member — never another class's of the base's file (`class Coach : Staff` beside
+          // `class Scout { void Report() }`: `Report()` in Coach is no inherited call).
+          const bare = symbolIn(ctx, parentInfo.parentFile, leafName);
+          const bareOwner = bare ? memberClassOf(ctx, parentInfo.parentFile, bare) : null;
+          const base = ctx.classAt.get(memberKey(parentInfo.parentFile, parentInfo.parentClass));
+          for (const t of [base?.extends, ...(base?.implements ?? [])]) if (t) named.add(simple(t));
+          const reached = bare && bareOwner !== null && bareOwner !== parentInfo.parentClass && !named.has(bareOwner) ? resolvedHere() : null;
+          const parentDef = (bare && (bareOwner === null || bareOwner === parentInfo.parentClass || named.has(bareOwner) || (reached?.file === parentInfo.parentFile && reached.symbol === bare.name)) ? bare : undefined)
             ?? symbolIn(ctx, parentInfo.parentFile, `${parentInfo.parentClass}.${leafName}`);
           if (parentDef) {
             // A property the base reads through an accessor the caller's class overrides: that override.
@@ -4984,6 +5043,13 @@ function resolveCallToDefinitionBody(
       const own = sourceSymbol.slice(0, sourceSymbol.indexOf("."));
       if (!mixed.symbol.startsWith(`${own}.`)) Object.assign(link, { viaType: own, viaTypeFile: sourceFile });
       return link;
+    }
+    // In a method whose class and bases do not declare it: a type's member an import puts in scope by
+    // bare name (C# `using static League.Rules`, Java `import static …`), as the compiler looks next.
+    // A whole module in scope (a Dart import, a Go dot import) keeps the steps below.
+    if (!isQualified && !reference && ownerClass) {
+      const hit = inScopeMember(ctx, analysis, call.name, true);
+      if (hit && memberClassOf(ctx, hit.file, hit.def) !== null) return mkLink(hit.file, hit.def.name, hit.def.line, hit.named ? "EXTRACTED" : "INFERRED", "import-file");
     }
   }
 
@@ -5158,12 +5224,23 @@ function resolveCallToDefinitionBody(
   }
   if (!def) {
     // `new App\Invoice` qualifies with PHP's `\` as `new a.b.C` does with `.`.
-    const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)$/);
+    // Type arguments name no class (`new Models.Box<int>`).
+    const ctorMatch = call.name.match(/^[Nn]ew\s+\\?([\w.\\]+)(?:<.*>)?$/s);
     const className = ctorMatch
       ? ctorMatch[1]!.split(/[.\\]/).pop()!
       : !isQualified
         ? call.name
         : null;
+    // `new B.Foo()` where `A.Foo` and `B.Foo` exist: the namespace written decides, never the caller's own.
+    const qualifier = ctorMatch ? ctorMatch[1]!.split(/[.\\]/).slice(0, -1).join(".") : "";
+    if (qualifier && className) {
+      const inPackage = ctx.analyses.filter((f) => f.packageName && (f.packageName === qualifier || f.packageName.endsWith(`.${qualifier}`)) && f.classes.some((c) => c.name === className));
+      if (inPackage.length === 1) {
+        const cls = inPackage[0]!.classes.find((c) => c.name === className)!;
+        const ctor = ownConstructor(cls, inPackage[0]!.language, true);
+        return mkLink(inPackage[0]!.filePath, ctor ? `${className}.${ctor.name}` : className, ctor?.line ?? cls.line, "INFERRED", "constructor");
+      }
+    }
     // `new Garage(4)` beside `class Garage` (or inside it): the calling file's own class, by name alone.
     const own = ctorMatch && className ? ctx.classAt.get(memberKey(sourceFile, className)) : undefined;
     if (own) {
@@ -6005,6 +6082,8 @@ function inScopeMember(
   ctx: LinkContext,
   analysis: FileAnalysis,
   name: string,
+  /** The type the import names may be declared in the caller's own file (a bare call no class member answered). */
+  ownFile = false,
 ): { file: string; def: SymbolDef; named: boolean } | null {
   // An alias the import gives the member (`import league.util.formatScore as fmt`) is looked up by its exported name.
   const scopes: Array<{ scope: NonNullable<ImportInfo["inScope"]>; from: string; aliases?: Record<string, string> }> = [];
@@ -6022,7 +6101,7 @@ function inScopeMember(
     if (scope.names && !scope.names.includes(exported)) continue;
     if (scope.except?.includes(exported)) continue;
     for (const hit of moduleMembers(ctx, analysis, scope.module, from, exported)) {
-      if (hit.file !== analysis.filePath) hits.set(`${hit.file}\0${hit.def.name}`, { ...hit, named: !!scope.names });
+      if (ownFile || hit.file !== analysis.filePath) hits.set(`${hit.file}\0${hit.def.name}`, { ...hit, named: !!scope.names });
     }
   }
   return hits.size === 1 ? [...hits.values()][0]! : null;
@@ -8140,7 +8219,8 @@ function linkThroughPoint(
     }
   }
 
-  const target = findMethodInClass(ctx, point.typeName, point.typeFile, method, sourceFile);
+  // A value of the type: its class-level members (a Kotlin companion's) are no answer — a base's member may be.
+  const target = findMethodInClass(ctx, point.typeName, point.typeFile, method, sourceFile, "instance", !point.classSide);
   if (target) {
     const link = mkLink(target.file, target.symbol, target.line, "INFERRED", "injection");
     // Inherited: say on which class it was called (see `SymbolLink.viaType`).
@@ -8563,7 +8643,7 @@ function findMethodInClass(
   nearFile?: string,
   /** "class": a member called on the class object itself (see `methodAlongAncestors`). */
   side: "instance" | "class" = "instance",
-  /** With "class": a class's (and its bases') own members count only when they are class-level (`SymbolDef.classLevel`). */
+  /** Strictly on `side`: with "class", only class-level members (`SymbolDef.classLevel`) count; with "instance", only the others. */
   classLevelOnly = false,
 ): { file: string; symbol: string; line: number } | null {
   // Several class bases (Python): the C3 method resolution order decides.
@@ -8622,7 +8702,9 @@ function methodAlongAncestors(
     const prepended = mixins && side === "instance" ? viaMixins("prepend") : null;
     if (prepended) return prepended;
     const def = symbolIn(ctx, file, `${name}.${method}`);
-    if (def && (!classLevelOnly || side !== "class" || def.classLevel)) {
+    // Strictly on one side: an instance never reaches a class-level member (Ruby `def self.x`, a Kotlin
+    // companion's) — look further up —, a class object reaches only those.
+    if (def && (!classLevelOnly || (side === "class" ? !!def.classLevel : !def.classLevel))) {
       // A base's property read through its accessor (`Count` → `GetCount`) runs the accessor as the
       // class the lookup started from overrides it, as a virtual getter dispatches.
       const accessor = depth > 0 ? accessorOverride(ctx, def.name, method, className, classFile, nearFile) : null;

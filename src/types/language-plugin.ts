@@ -1115,6 +1115,11 @@ export interface CallExtractionHooks {
    * argument count, and the linker never picks a definition by it.
    */
   noOverloads?: boolean;
+  /**
+   * A call must match a declared arity — no default parameters, varargs as written (Java): a call fitting
+   * no definition of the name (`format()` beside `format(int level, String... args)`) is linked to none.
+   */
+  strictArity?: boolean;
 }
 
 /**

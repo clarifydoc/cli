@@ -247,6 +247,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       kind,
       ...(kind === "class" && this.hasModifier(node, "abstract") ? { abstract: true as const } : {}),
+      ...(this.hasModifier(node, "partial") ? { partial: true as const } : {}),
     };
   }
 

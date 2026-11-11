@@ -642,6 +642,12 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (fn.name.includes(".")) localSymbols.add(fn.name.slice(0, fn.name.indexOf(".")));
     }
     for (const cls of analysis.classes) localSymbols.add(cls.name);
+    // Top-level functions — none nested in another's body: what a bare call names over an import of its name.
+    // A test block (`describe('useClub', …)`) is named for its title and declares nothing.
+    const ownFunctions = new Set(analysis.functions
+      .filter((fn) => !fn.testCase && !fn.name.includes(".") && !fn.name.startsWith("<") &&
+        !analysis.functions.some((o) => o !== fn && !o.name.startsWith("<") && o.line <= fn.line && fn.endLine <= o.endLine && (o.line < fn.line || fn.endLine < o.endLine)))
+      .map((fn) => fn.name));
     // A dispatch map the file declares whose every value is a function the file defines or a
     // name it imports (`const ACTIONS = { save: saveClub, list: loadMatches }`): `ACTIONS.save()`
     // is a call through it, whatever its key is called. A map of members (`{ get: client.get }`)
@@ -684,11 +690,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       return out;
     };
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn), receiverOrigins(fn));
+      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn), receiverOrigins(fn), ownFunctions);
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls), receiverOrigins(method));
+        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls), receiverOrigins(method), ownFunctions);
       }
     }
     for (const route of analysis.routes) {

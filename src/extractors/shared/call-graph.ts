@@ -601,6 +601,8 @@ export function classifyCalls(
    * is a database handle, whatever its own name says.
    */
   receiverOrigins?: ReadonlyMap<string, string>,
+  /** The file's own top-level functions: a bare call of one is to it, never to an import of its name (step 1). */
+  ownFunctions?: ReadonlySet<string>,
 ): CallInfo[] {
   const { importMap, defaultImports } = buildImportMaps(imports);
   const hooks = callHooksByLanguage.get(language);
@@ -626,8 +628,11 @@ export function classifyCalls(
     if (call.boundLocally && variableAliases?.has(call.name)) delete call.boundLocally;
     const ownParam = call.boundLocally === true || ownBindings?.has(call.name.split(".")[0]!) === true;
 
-    // 1. Check cross-file: exact match on import specifier
-    const directMatch = ownParam ? undefined : importMap.get(call.name);
+    // 1. Check cross-file: exact match on import specifier — unless the file declares the name itself:
+    // a later `def save` rebinds an imported `save` (Python), a file's own top-level `fun save` wins over
+    // `import utils.save` (Kotlin); where the two clash (TS, PHP) the code does not compile.
+    const ownDefinition = !call.name.includes(".") && ownFunctions?.has(call.name) === true;
+    const directMatch = ownParam || ownDefinition ? undefined : importMap.get(call.name);
     if (directMatch) {
       call.kind = "cross-file";
       call.target = directMatch;

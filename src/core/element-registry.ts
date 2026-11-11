@@ -134,6 +134,8 @@ export interface NormSymbolLink {
   relation?: SymbolLinkRelation;
   /** `SymbolLink.viaUsage`: each binding site as [file element index, line]. */
   viaUsage?: Array<[number, number]>;
+  /** `SymbolLink.overloadsFit`. */
+  overloadsFit?: number;
 }
 
 /** Normalized FileComplexityInfo — filePath → file element; each function → a function element. */
@@ -790,6 +792,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     if (l.confidence !== undefined) out.confidence = l.confidence;
     if (l.strategy !== undefined) out.strategy = l.strategy;
     if (l.relation !== undefined) out.relation = l.relation;
+    if (l.overloadsFit !== undefined) out.overloadsFit = l.overloadsFit;
     if (usage) out.viaUsage = usage.map(([file, line]) => [remap[file]!, line]);
     return out;
   });
@@ -985,6 +988,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     if (nl.confidence !== undefined) out.confidence = nl.confidence;
     if (nl.strategy !== undefined) out.strategy = nl.strategy;
     if (nl.relation !== undefined) out.relation = nl.relation;
+    if (nl.overloadsFit !== undefined) out.overloadsFit = nl.overloadsFit;
     if (nl.viaUsage) out.viaUsage = nl.viaUsage.map(([file, line]) => ({ file: fileOf(elements, file), line }));
     return out;
   });

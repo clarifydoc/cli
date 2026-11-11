@@ -145,6 +145,8 @@ function lookupType(recv: Node): { type: string; qualifier?: string } | null {
 }
 
 export const javaCallHooks: CallExtractionHooks = {
+  // No default parameters: a call's argument count must fit a declared method.
+  strictArity: true,
   callNodeTypes: new Set(["method_invocation", "object_creation_expression"]),
   nestedScopeTypes: JAVA_NESTED_SCOPE_TYPES,
   // A lambda passed as an argument (`orders.forEach(o -> repo.save(o))`,

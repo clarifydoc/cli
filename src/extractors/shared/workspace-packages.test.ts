@@ -59,6 +59,13 @@ describe("workspace members", () => {
     }
   });
 
+  it("map no package a workspace leaves out, though no other declares its name", () => {
+    const root = repo({ "package.json": JSON.stringify({ name: "league" }), "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n", ...decoy });
+    const pkgs = loadWorkspacePackages(root);
+    expect(pkgs.has("@league/kit")).toBe(false);
+    expect(applyWorkspacePackages("@league/kit", join(root, "packages/app/src/main.ts"), pkgs, root)).toBe("@league/kit");
+  });
+
   it("leave a name declared twice with no single member unresolved, and say it names a package", () => {
     const root = repo({ "package.json": JSON.stringify({ name: "league" }), ...kit, ...decoy });
     const pkgs = loadWorkspacePackages(root);

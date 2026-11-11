@@ -17,7 +17,8 @@ import { clearDirectoryListings, listEntries, rememberListing } from "./dir-list
  * package a workspace lists as a member (root `workspaces`, array or
  * `{ packages }`, or `pnpm-workspace.yaml`) — an `examples/` copy is not one;
  * with no single member it maps to nothing: which one an import means
- * depends on the installer.
+ * depends on the installer. A package under a workspace root that does not
+ * list it is never one the installer links, so it maps to nothing either.
  */
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "build", "dist", "out", "coverage", ".next", ".nuxt", ".svelte-kit", "vendor", "target"]);
@@ -71,11 +72,17 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
     const rel = relative(w.dir, dir).split(sep).join("/");
     return !rel.startsWith("..") && rel !== "" && matchesWorkspace(rel, w.globs);
   });
+  const underWorkspace = (dir: string): boolean => workspaces.some((w) => {
+    const rel = relative(w.dir, dir).split(sep).join("/");
+    return !rel.startsWith("..") && rel !== "";
+  });
   const out = new Map<string, WorkspacePackage>();
   const named = new Map<string, string>();
   for (const [name, list] of found) {
-    // Declared twice: the one a workspace lists as its member.
-    const members = list.length > 1 ? list.filter((c) => isMember(c.dir)) : list;
+    // Declared twice: the one a workspace lists as its member. Declared once under a workspace that does
+    // not list it (`examples/excluded` beside `packages: [apps/*, packages/*]`): the installer never links
+    // it, so the name means the published package.
+    const members = list.length > 1 ? list.filter((c) => isMember(c.dir)) : list.filter((c) => isMember(c.dir) || !underWorkspace(c.dir));
     if (members.length !== 1) continue;
     const { dir, pkg } = members[0]!;
     named.set(name, dir);

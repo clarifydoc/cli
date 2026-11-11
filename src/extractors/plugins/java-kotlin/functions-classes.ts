@@ -295,7 +295,10 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         // Flatten companion / nested object members onto the class so their
         // calls and data access still attribute to a trace symbol.
         const inner = this.findChildByType(member, "class_body");
+        const before = methods.length;
         if (inner) this.collectMembers(inner, lang, methods, properties, null);
+        // A companion's functions are called on the class (`Logger.create()`), never on an instance.
+        if (member.type === "companion_object") for (let i = before; i < methods.length; i++) methods[i]!.classLevel = true;
       }
     }
   }
@@ -414,9 +417,18 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // `@Inject` / `@Autowired` on the method or constructor makes every
     // parameter an explicit injection point (custom qualifier annotations count).
     const explicit = isInjectMarked(annotationNodes(node));
+    // A parameter list the grammar could not read in full: how many arguments it takes is unknown.
+    let unreadParams = false;
 
     if (paramsNode) {
       for (const p of paramsNode.children) {
+        if (p.type === "ERROR") {
+          // `String @Nullable ... items` (an annotated varargs type, which tree-sitter-java does not parse).
+          const m = /^([\w.<>[\],?\s]+?)\s+(?:@[\w.]+(?:\([^)]*\))?\s*)+\.\.\.\s*([A-Za-z_$][\w$]*)$/.exec(p.text.trim());
+          if (m) params.push({ name: m[2]!, type: m[1]!.trim(), defaultValue: null, variadic: true });
+          else unreadParams = true;
+          continue;
+        }
         if (
           p.type === "formal_parameter" ||
           p.type === "parameter" ||
@@ -534,6 +546,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       ...(localTypes.length > 0 ? { localTypes } : {}),
       // `abstract void send(…);` — a class method without a body (an interface's stays unmarked).
       ...(!body && isAbstract(node) ? { abstract: true as const } : {}),
+      ...(unreadParams ? { variadic: true } : {}),
     };
   }
 

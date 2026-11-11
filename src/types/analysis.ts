@@ -1669,6 +1669,8 @@ export interface ClassInfo {
   namespace?: string;
   /** Generated, not written (a Lombok `@Builder`'s builder class): see `FunctionInfo.synthetic`. Omitted for written code. */
   synthetic?: true;
+  /** One declaration of a class written in several (C# `partial class`): its namesakes in the file are the same class. */
+  partial?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
   doc?: string;
   /**
@@ -3566,6 +3568,12 @@ export interface SymbolLink {
   targetFile: string;
   targetSymbol: string;
   targetLine: number;
+  /**
+   * The call fits this many overloads of the target and its arguments do not tell
+   * which (`save(Club)` / `save(Player)` handed an untyped value): `targetLine` is one
+   * of them. The method is certain, its body is not. Absent when the call chose one.
+   */
+  overloadsFit?: number;
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
   /**
