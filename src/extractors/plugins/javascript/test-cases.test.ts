@@ -127,4 +127,17 @@ describe("league", () => {
     const fns = await functionsOf(code);
     expect(fns.find((f) => f.name === "league")!.calls.map((c) => c.name)).toEqual(["open"]);
   });
+
+  it("keeps an it.each table's calls in the suite, where the table runs (real-repo FP)", async () => {
+    const code = `
+describe("kit", () => {
+  it.each([
+    ["the home kit", () => homeColours().shirt],
+  ])("shows %s", (_, expected) => { paint(expected()); });
+});
+`;
+    const fns = await functionsOf(code);
+    expect(fns.find((f) => f.name === "kit")!.calls.map((c) => c.name)).toContain("homeColours");
+    expect(fns.find((f) => f.name === "kit")!.calls.map((c) => c.name)).not.toContain("paint");
+  });
 });

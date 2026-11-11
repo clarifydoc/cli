@@ -70,9 +70,13 @@ export function testCaseFunctions(root: Node, sourceText: string, build: (name: 
     const title = HOOKS.has(reg) ? reg : titleOf(args[0] === callback ? undefined : args[0]);
     return title ? { reg, callback, title } : null;
   };
-  // A callback's body is read once, without the registrations below it: those are functions of
-  // their own, each read once as its own body, so a suite carries only its own calls and locals.
-  const skip = (node: Node): boolean => registered(node) !== null;
+  // A callback's body is read once, without the callbacks registered below it: those are functions of
+  // their own, each read once as its own body, so a suite carries only its own calls and locals. The rest of a
+  // registration runs in the suite — an `it.each([...])` table, a computed title — and stays the suite's.
+  const skip = (node: Node): boolean => {
+    if (!isFunction(node) || node.parent?.type !== "arguments" || !node.parent.parent) return false;
+    return registered(node.parent.parent)?.callback.id === node.id;
+  };
   const visit = (node: Node, path: string[]): void => {
     for (const child of node.namedChildren) {
       const found = registered(child);
