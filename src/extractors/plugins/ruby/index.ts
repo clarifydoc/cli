@@ -1158,6 +1158,7 @@ export const rubySpec: RegexLangSpec = {
   // (`script/`, `db/seeds.rb`, `db/seeds/`) are the file's own: their calls
   // are its `<setup>`.
   topLevelCalls: /\.(?:rake|jbuilder)$|(?:^|\/)script\/.+\.rb$|(?:^|\/)db\/seeds(?:\.rb$|\/.+\.rb$)/,
+  topLevelCallsInTypelessFiles: true,
   lineCommentPrefixes: ["#"],
 
   inlineBodyColumn: rubyInlineBodyColumn,

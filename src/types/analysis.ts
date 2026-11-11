@@ -963,6 +963,11 @@ export interface ModuleBindingInfo {
   line: number;
   /** Visible to the files that import the module, not only to its own functions. */
   exported: boolean;
+  /**
+   * A binding declared inside a namespace (Ruby `module League`): `name` is its qualified name
+   * (`League::SERVICE`); within the 1-based line span of that namespace's body the bare `name` stands for it too.
+   */
+  lexical?: { name: string; line: number; endLine: number };
 }
 
 /** A module-level name bound to another: `name` stands for `target`, as written (`s = attrs`). */

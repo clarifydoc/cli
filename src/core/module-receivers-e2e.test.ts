@@ -129,3 +129,62 @@ describe("a module alias picks the module a qualified type is written through", 
     expect(save("unbound.py")).toEqual([]);
   });
 });
+
+describe("Ruby scripts and module constants", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-ruby-script-"));
+    summary = await scan(
+      {
+        "lib/club_service.rb": ["class ClubService", "  def process(club)", "    club", "  end", "end"],
+        "lib/garage_service.rb": ["class GarageService", "  def process(car)", "    car", "  end", "end"],
+        "lib/league.rb": [
+          'require_relative "club_service"',
+          "module League",
+          "  SERVICE = ClubService.new",
+          "  def self.kickoff(club)",
+          "    SERVICE.process(club)",
+          "  end",
+          "  class Round",
+          "    def play(club)",
+          "      SERVICE.process(club)",
+          "    end",
+          "  end",
+          "end",
+        ],
+        // A plain script: its statements run, so they are its <setup>.
+        "tools/season.rb": ['require_relative "../lib/league"', 'require_relative "../lib/garage_service"', "SERVICE = GarageService.new", "SERVICE.process(1)", "League::SERVICE.process(2)"],
+        // A top-level namesake in a file nothing requires.
+        "lib/other.rb": ['require_relative "garage_service"', "SERVICE = GarageService.new", "def other(car)", "  SERVICE.process(car)", "end"],
+        "lib/elsewhere.rb": ["module Elsewhere", "  def self.go(car)", "    SERVICE.process(car)", "  end", "end"],
+        // Defines a class: its top-level statements are not a <setup>.
+        "lib/loader.rb": ['require_relative "club_service"', "require 'set'", "class Loader", "  def go; end", "end"],
+      },
+      dir,
+    );
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const hits = (file: string, name: string) => calls(summary, name).filter((l) => l.sourceFile === file).map((l) => `${l.sourceSymbol} -> ${l.targetFile}:${l.targetSymbol}`);
+
+  it("links a script's top-level calls through the constant it binds, and through the module's qualified one", () => {
+    expect(hits("tools/season.rb", "SERVICE.process")).toEqual(["<setup> -> lib/garage_service.rb:GarageService.process"]);
+    expect(hits("tools/season.rb", "League::SERVICE.process")).toEqual(["<setup> -> lib/club_service.rb:ClubService.process"]);
+  });
+
+  it("resolves the bare constant inside the module body before a top-level namesake", () => {
+    expect(hits("lib/league.rb", "SERVICE.process").map((h) => h.split(" -> ")[1])).toEqual([
+      "lib/club_service.rb:ClubService.process",
+      "lib/club_service.rb:ClubService.process",
+    ]);
+  });
+
+  it("links nothing for a namesake no file in reach binds, and gives a class-defining file no <setup>", () => {
+    expect(hits("lib/elsewhere.rb", "SERVICE.process")).toEqual([]);
+    const loader = summary.symbolLinks.filter((l) => l.sourceFile === "lib/loader.rb" && l.sourceSymbol === "<setup>");
+    expect(loader).toEqual([]);
+  });
+});

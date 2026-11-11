@@ -184,6 +184,12 @@ export interface RegexLangSpec {
    */
   topLevelCalls?: boolean | RegExp | "parsed";
   /**
+   * Also run top-level code as `<setup>` in a file that declares no class, module or similar type and no route (a plain
+   * script beside the path-matched ones `topLevelCalls` names): a file that defines types keeps its statements out,
+   * and a route file's blocks (`get "/x" do`) are the routes' own.
+   */
+  topLevelCallsInTypelessFiles?: boolean;
+  /**
    * Top-level blocks that run LATER, not when the script loads — a route's
    * `do` block, a registered callback (1-based, inclusive line spans).
    * `<setup>` leaves their calls out, as the tree-sitter path leaves out a

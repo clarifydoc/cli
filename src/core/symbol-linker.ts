@@ -6635,6 +6635,14 @@ function chainPoint(
   } else {
     point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
     rest = receiver.slice(1);
+    // `League::SERVICE.process` — a variable a namespace declares, written by its qualified name
+    // (`ModuleBindingInfo.name` of a binding inside a namespace).
+    for (let k = receiver.length; !point && k >= 2 && /^[A-Z]/.test(head.name); k--) {
+      const segments = receiver.slice(0, k);
+      if (segments.some((r) => r.call)) continue;
+      point = moduleBindingPoint(ctx, analysis, sourceFile, consumer, segments.map((r) => r.name).join("::"));
+      if (point) rest = receiver.slice(k);
+    }
     // `League::Club.find(id)` where constants are looked up lexically: the class at that path heads the chain.
     let names = 1;
     while (!point && names < receiver.length && !receiver[names]!.call && /^[A-Z]/.test(receiver[names]!.name)) names++;
@@ -7452,7 +7460,7 @@ function scopedName(
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
   return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name)
-    ?? moduleBindingPoint(ctx, analysis, sourceFile, consumer, name);
+    ?? moduleBindingPoint(ctx, analysis, sourceFile, consumer, name, callable?.line);
 }
 
 /**
@@ -7462,7 +7470,7 @@ function scopedName(
  * `uses`; `ImportInfo.inScope`: a Dart library, its parts and barrels — `inScopeModuleBindings`).
  * Its type is read where it is declared. Two such files typing the name differently decide nothing.
  */
-function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string): InjectionPoint | null {
+function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string, at?: number): InjectionPoint | null {
   const key = nameKey(analysis.language, name);
   const point = (holder: FileAnalysis, written: string): InjectionPoint | null => {
     const typeName = receiverTypeName(written, holder.language);
@@ -7470,7 +7478,9 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
     const ref = typeRefFor(ctx, typeName, holder.filePath, holder.projectId);
     return { typeName: ref?.typeName ?? typeName, typeFile: ref?.typeFile ?? null, member: name, consumer, container: false };
   };
-  const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
+  // A name inside the namespace body that declares it (Ruby `module League; SERVICE = …`) comes before a top-level namesake.
+  let own = at === undefined ? undefined : innermostLexicalBinding(analysis, name, at);
+  own ??= analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
   if (own) return point(analysis, own.type);
   const held: Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> = inScopeModuleBindings(ctx, analysis, name);
   if (pluginFor(analysis.language)?.moduleBindingsFollowImports) {
@@ -7491,6 +7501,17 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
     found = p;
   }
   return found;
+}
+
+/** The binding whose namespace body (`ModuleBindingInfo.lexical`) encloses line `at` and which stands for the bare `name` there — the innermost body wins. */
+function innermostLexicalBinding(analysis: FileAnalysis, name: string, at: number): ModuleBindingInfo | undefined {
+  let best: ModuleBindingInfo | undefined;
+  for (const b of analysis.moduleBindings ?? []) {
+    const l = b.lexical;
+    if (!l || l.name !== name || at < l.line || at > l.endLine) continue;
+    if (!best || l.endLine - l.line < best.lexical!.endLine - best.lexical!.line) best = b;
+  }
+  return best;
 }
 
 /**
