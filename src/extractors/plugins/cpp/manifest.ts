@@ -51,6 +51,7 @@ export function cppTupleElements(returnType: string): string[] | null {
 
 export const cppManifest: LanguagePluginManifest = {
   tupleElementsOf: cppTupleElements,
+  bindsStructFields: true,
   docComments: C_STYLE_DOCS,
   language: "cpp",
   collectionElementOf: cppCollectionElement,

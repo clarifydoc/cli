@@ -6927,6 +6927,14 @@ function initializerPoint(
     const plugin = pluginFor((ctx.languageOf.get(declared.file) ?? "") as Language);
     const written = local.awaited ? awaitedType(declared.type.trim(), plugin?.asyncResultTypes) : declared.type.trim();
     const element = local.fromIndex !== undefined ? plugin?.tupleElementsOf?.(written)?.[local.fromIndex] : plugin?.collectionElementOf?.(written);
+    if (!element && local.fromIndex !== undefined && plugin?.bindsStructFields) {
+      // `auto [club, rank] = standing()` over a class the project declares: its data members, in declaration order.
+      const holder = returnedPoint(ctx, written, declared.file, { typeName: "", typeFile: null, consumer });
+      const cls = holder?.typeFile ? ctx.classAt.get(memberKey(holder.typeFile, holder.typeName)) : undefined;
+      const members = cls && !cls.extends ? cls.properties.filter((p) => !p.isStatic) : [];
+      const field = members.every((p) => p.type) ? members[local.fromIndex] : undefined;
+      return field?.type && holder?.typeFile ? returnedPoint(ctx, field.type, holder.typeFile, { typeName: "", typeFile: null, consumer }) : null;
+    }
     if (!element) return null;
     return returnedPoint(ctx, element, declared.file, { typeName: "", typeFile: null, consumer });
   }

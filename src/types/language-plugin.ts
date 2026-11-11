@@ -1523,6 +1523,12 @@ export interface LanguagePluginManifest {
    */
   tupleElementsOf?(returnType: string): string[] | null;
   /**
+   * A structured binding over a class the project declares (`auto [club, rank] = standing()`, C++17) takes the
+   * class's own data members in declaration order: with no `tupleElementsOf` reading, a local bound by position
+   * (`localTypes[].fromIndex`) is the type of that field. Not for a class with a base (its members span classes).
+   */
+  bindsStructFields?: boolean;
+  /**
    * The element a declared collection type states (`Club[]`, `list[Club]`, `List<Club>`, `[]*Club` → `Club`), or null
    * for any other type. Reads the declared type of a field or a call's result for a loop variable
    * (`localTypes[].element`); whether the element is a project class is the linker's call.

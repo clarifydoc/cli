@@ -67,9 +67,9 @@ struct Iter { int operator*() const { return 0; } };
     expect(links(java).filter((l) => l.includes("Referee"))).toEqual([]);
   });
 
-  it("links an operator expression to the operator of its left operand's class, never a primitive's, a `_t` number's, a pointer's, or one of a free overload set (real-repo FP)", () => {
+  it("links an operator expression to the operator of its left operand's class, never a primitive's, a `_t` number's, or a pointer's, and choosing a free overload set by both operands (real-repo FP)", () => {
     const l = links(cpp).filter((x) => x.startsWith("tally>"));
-    expect(l).toEqual(["tally>main.cpp:Car.operator+", "tally>main.cpp:Player.operator+", "tally>main.cpp:operator+"]);
+    expect(l).toEqual(["tally>main.cpp:Car.operator+", "tally>main.cpp:Player.operator+", "tally>main.cpp:operator+", "tally>main.cpp:operator=="]);
   });
 
   it("links a call on a forward-declared class to its out-of-line definition", () => {

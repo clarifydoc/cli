@@ -155,7 +155,7 @@ describe("C++ overloads, typed variables", () => {
     expect(at(links, 32)).toEqual([3]);
     expect(at(links, 33)).toEqual([4]);
     expect(at(links, 36)).toEqual([3]);
-    // A smart pointer's pointee is not read off its declared type: the call stays a tie.
-    expect(links.find((l) => l.sourceLine === 41)?.overloadsFit).toBe(2);
+    // A smart pointer's pointee is what `*u` is.
+    expect(at(links, 41)).toEqual([3]);
   });
 });
