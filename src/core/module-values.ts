@@ -26,7 +26,9 @@ import { isTestFile } from "./test-file-detector.js";
  * caller (an import, the caller's own package, a namespace it uses) — a
  * class's own constants (`ClassInfo.fieldValues`: `static final String`,
  * `const string`, a class attribute), a bare name inside the class's file
- * reading the same. Candidates stay in the caller's
+ * reading the same; and, for a name an import puts in scope without binding
+ * it (a static import, a package wildcard), in the type or the package's
+ * files it names. Candidates stay in the caller's
  * language family, and production code never takes a value from a test file.
  * Two different values for one name decide nothing. A value that itself holds
  * holes (`DownloadUri = ApiUri + "/dl"` → `${ApiUri}/dl`) is resolved in the
@@ -132,10 +134,43 @@ export function buildModuleValueLookup(
     return null;
   };
 
+  let byPackage: Map<string, FileAnalysis[]> | null = null;
+  const packageFiles = (pkg: string): FileAnalysis[] => {
+    if (!byPackage) {
+      byPackage = new Map();
+      for (const f of analyses) if (f.packageName && f.moduleValues) (byPackage.get(f.packageName) ?? byPackage.set(f.packageName, []).get(f.packageName)!).push(f);
+    }
+    return byPackage.get(pkg) ?? [];
+  };
+
+  /**
+   * A name an import puts in scope without binding it: a member a static import names
+   * (`import static a.b.Paths.BASE`, `a.b.Paths.*` — the type's constant), a package member an
+   * import names (Kotlin `import a.b.PLAYERS_ROOT`), or a name under a package wildcard
+   * (`import a.b.*`) — a value the files declaring that package state.
+   */
+  const importedInScope = (a: FileAnalysis, expr: string): { value: string; file: string } | null => {
+    const dot = expr.indexOf(".");
+    const head = dot < 0 ? expr : expr.slice(0, dot);
+    for (const imp of a.imports ?? []) {
+      const s = imp.inScope;
+      if (s && !s.shared && (s.names ? s.names.includes(head) : !s.except?.includes(head))) {
+        const hit = classConstant(a, `${s.module}.${expr}`) ?? unique(packageFiles(s.module), expr, a);
+        if (hit) return hit;
+      }
+    }
+    for (const imp of a.imports ?? []) {
+      if (!imp.isNamespace || imp.specifiers.length > 0 || imp.executes) continue;
+      const hit = unique(packageFiles(imp.source.replace(/\.\*$/, "")), expr, a);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
   const find = (fromFile: string, expr: string): { value: string; file: string } | null => {
     const a = byFile.get(fromFile);
     if (!a || !NAME.test(expr)) return null;
-    return findIn(a, fromFile, expr) ?? classConstant(a, expr);
+    return findIn(a, fromFile, expr) ?? classConstant(a, expr) ?? importedInScope(a, expr);
   };
 
   const findIn = (a: FileAnalysis, fromFile: string, expr: string): { value: string; file: string } | null => {
@@ -209,25 +244,51 @@ export function resolveTargetRefs(analyses: readonly FileAnalysis[], lookup: Mod
 /**
  * Routes whose path names another module's constants (`RouteInfo.pathTemplate`:
  * `@GetMapping(ApiPaths.CLUB)` → `${ApiPaths.CLUB}`) take the path the
- * defining modules state, when they state every hole. Returns the number of
- * routes resolved.
+ * defining modules state. What nothing states is never guessed away — the
+ * prefix alone would merge the route into another:
+ *
+ *   - leading segments that are unknown, then a literal tail
+ *     (`${Paths.BASE}/squad`): the tail is what a caller requests under an
+ *     unknown prefix (`prefixUnresolved: "constant:${Paths.BASE}"`), joined
+ *     only as a suffix;
+ *   - any other unknown hole (`/api/${Paths.MISSING}`) stays in the path,
+ *     named in `pathUnresolved`: the URL is unknown and never joins a call.
+ *
+ * Returns the number of routes resolved in full.
  */
 export function resolveRouteTemplates(analyses: readonly FileAnalysis[], lookup: ModuleValueLookup): number {
   let n = 0;
   for (const a of analyses) {
     for (const r of a.routes ?? []) {
       if (!r.pathTemplate) continue;
-      let unresolved = false;
-      const path = r.pathTemplate.replace(HOLE, (_hole, inner: string) => {
+      const unknown: string[] = [];
+      const path = r.pathTemplate.replace(HOLE, (hole, inner: string) => {
         const v = lookup(a.filePath, inner.trim());
-        if (v === null || v.includes("${")) unresolved = true;
-        return v ?? "";
+        if (v === null || v.includes("${")) {
+          unknown.push(inner.trim());
+          return hole;
+        }
+        // A parameter's constraint or default in the constant (`{id:int}`, `{page?}`) is no part of the path.
+        return v.replace(/\{(\*{0,2})([^}:=?]+)[:=?][^}]*\}/g, (_m, star: string, name: string) => `{${star ? "*" : ""}${name}}`);
       });
-      if (unresolved) continue;
-      // A parameter's constraint or default in the constant (`{id:int}`, `{page?}`) is no part of the path.
-      const joined = ("/" + path).replace(/\/{2,}/g, "/").replace(/\{(\*{0,2})([^}:=?]+)[:=?][^}]*\}/g, (_m, star: string, name: string) => `{${star ? "*" : ""}${name}}`);
-      r.path = joined.length > 1 ? joined.replace(/\/$/, "") : joined;
-      n++;
+      const joined = ("/" + path).replace(/\/{2,}/g, "/");
+      const full = joined.length > 1 ? joined.replace(/\/$/, "") : joined;
+      if (unknown.length === 0) {
+        r.path = full;
+        n++;
+        continue;
+      }
+      const segs = full.split("/").filter(Boolean);
+      let k = 0;
+      while (k < segs.length && /^(?:\$\{[^{}]*\})+$/.test(segs[k]!)) k++;
+      const tail = segs.slice(k);
+      if (k > 0 && tail.length > 0 && !tail.some((s) => s.includes("${"))) {
+        r.path = "/" + tail.join("/");
+        r.prefixUnresolved ??= `constant:${segs.slice(0, k).join("/")}`;
+      } else {
+        r.path = full;
+        r.pathUnresolved = unknown;
+      }
     }
   }
   return n;

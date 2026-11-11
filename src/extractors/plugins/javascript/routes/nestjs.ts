@@ -91,6 +91,38 @@ function firstString(call: Node): string | null {
   return null;
 }
 
+/** A constant's name as written (`ClubPaths.DETAIL`, `CLUBS`): a value another module may state. */
+const CONSTANT_REF = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/;
+
+/**
+ * The paths a route decorator's first argument declares: each alternative of
+ * `@Get(['squad', 'roster'])`, the one string of `@Get(':id')`, or — for a
+ * constant (`@Get(ClubPaths.DETAIL)`) — a `${…}` hole the project pass fills
+ * from the module that states it (`RouteInfo.pathTemplate`). A template
+ * literal whose holes are names is a template too. No argument is `""`.
+ */
+function pathArgs(call: Node): Array<{ path: string; template?: string }> {
+  const first = callArgs(call)[0];
+  if (!first) return [{ path: "" }];
+  const one = (n: Node): { path: string; template?: string } | null => {
+    if (n.type === "string") return { path: stripQuotes(n.text) };
+    if (n.type === "template_string") {
+      const subs = n.namedChildren.filter((c) => c.type === "template_substitution");
+      if (subs.length === 0) return { path: stripQuotes(n.text) };
+      return subs.every((c) => CONSTANT_REF.test(c.namedChildren[0]?.text ?? "")) ? { path: "", template: stripQuotes(n.text) } : null;
+    }
+    if ((n.type === "member_expression" || n.type === "identifier") && CONSTANT_REF.test(n.text)) return { path: "", template: `\${${n.text}}` };
+    return null;
+  };
+  if (first.type === "array") {
+    const all = first.namedChildren.map(one).filter((x): x is { path: string; template?: string } => x !== null);
+    return all.length > 0 ? all : [{ path: "" }];
+  }
+  if (first.type === "object") return [{ path: objectStringField(first, "path") ?? "" }];
+  // A path nothing here can read (a call, a ternary) is still a hole, never the controller's own path.
+  return [one(first) ?? { path: "", template: `\${${first.text.replace(/[{}]/g, "")}}` }];
+}
+
 /** Every string in an argument list, flattening one array level: `'2'`, `['2', '3']`. */
 function allStrings(call: Node): string[] {
   const out: string[] = [];
@@ -204,7 +236,7 @@ function controllerScope(classBody: Node): ControllerScope {
         scope.prefix = objectStringField(first, "path") ?? "";
         const v = objectStringField(first, "version");
         if (v) scope.versions.push(v);
-      } else if (first?.type === "member_expression" && /^[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*$/.test(first.text)) {
+      } else if ((first?.type === "member_expression" || first?.type === "identifier") && CONSTANT_REF.test(first.text)) {
         scope.prefixRef = first.text;
       } else {
         scope.prefix = firstString(d.call) ?? "";
@@ -309,7 +341,27 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
 
   const scope = controllerScope(classBody);
   const { decorators, method } = decoratorRun(node);
-  const fullPath = joinPath(scope.prefix, firstString(d.call) ?? "");
+  // One route per path the decorator maps; a constant prefix or path is a template the project pass fills.
+  for (const { path, template } of pathArgs(d.call)) {
+    const fullPath = joinPath(scope.prefix, path);
+    const pathTemplate = scope.prefixRef || template !== undefined
+      ? joinPath(scope.prefixRef ? `\${${scope.prefixRef}}` : scope.prefix, template ?? path)
+      : undefined;
+    pushNestRoute(node, d, scope, decorators, method, fullPath, pathTemplate, routes, facts);
+  }
+}
+
+function pushNestRoute(
+  node: Node,
+  d: { name: string; call: Node },
+  scope: ControllerScope,
+  decorators: Node[],
+  method: Node | null,
+  fullPath: string,
+  pathTemplate: string | undefined,
+  routes: RouteInfo[],
+  facts: RouteFact[] | undefined,
+): void {
 
   const guards: GuardAttr[] = [];
   const methodVersions: string[] = [];
@@ -346,6 +398,7 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
   if (scope.prefixRef) facts?.push({ kind: NEST_PREFIX_FACT, line: node.startPosition.row + 1, data: { ref: scope.prefixRef, path: fullPath } });
   const route: RouteInfo = {
     path: fullPath,
+    ...(pathTemplate !== undefined ? { pathTemplate } : {}),
     httpMethod: d.name.toUpperCase(),
     kind: "api",
     handler: method?.childForFieldName("name")?.text ?? null,
@@ -397,7 +450,21 @@ export const nestPrefixResolver: RouteResolver = {
         if (pick.length !== 1) continue;
         const prefix = pick[0]!.values[member];
         if (prefix === undefined) continue;
-        for (const r of a.routes) if (r.line === f.line && r.path === path) r.path = joinPath(prefix, path);
+        // The project pass could not follow the member (the enum sits behind an import it cannot resolve): it left
+        // the tail under `constant:${ref}`, or — with no tail — the hole in the path.
+        const hole = `\${${ref}}`;
+        for (const r of a.routes) {
+          if (r.line !== f.line) continue;
+          if (r.prefixUnresolved === `constant:${hole}`) {
+            r.path = joinPath(prefix, r.path);
+            delete r.prefixUnresolved;
+          } else if (r.path.includes(hole)) {
+            r.path = joinPath(prefix, r.path.replace(hole, ""));
+            const left = r.pathUnresolved?.filter((u) => u !== ref);
+            if (left?.length) r.pathUnresolved = left;
+            else delete r.pathUnresolved;
+          } else if (r.path === path && !r.pathTemplate) r.path = joinPath(prefix, path);
+        }
       }
     }
   },

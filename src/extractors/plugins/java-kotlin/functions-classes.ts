@@ -881,6 +881,11 @@ function typeAliasClass(node: Node): ClassInfo | null {
   };
 }
 
+/** A Kotlin file's top-level `const val PLAYERS_ROOT = "/api/players"` → `FileAnalysis.moduleValues`. */
+export function kotlinModuleValues(tree: { rootNode: Node }): Record<string, string> {
+  return stringConstants(tree.rootNode) ?? {};
+}
+
 /**
  * The string constants a Java class body declares — `static final String GROUP = "league.example.com";`,
  * an enum's after its constants too, an interface's implicitly — so another file's `Constant.GROUP`

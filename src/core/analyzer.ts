@@ -143,7 +143,7 @@ import { vendoredMinoritySet } from "./security-scanner.js";
 import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
-import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoutePath, pairContractTwins, implementedContracts } from "./route-linker.js";
+import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoute, pairContractTwins, implementedContracts } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
 import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-values.js";
 import { applyRouteBases } from "./route-bases.js";
@@ -1935,7 +1935,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if ((link.sourceRole ?? "production") === "production" && link.targetProject !== undefined) calledProjects.add(link.targetProject);
     }
     const uncalled = allRoutes.filter((r) =>
-      r.kind === "api" && !r.consumed && isJoinableRoutePath(r.path) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
+      r.kind === "api" && !r.consumed && isJoinableRoute(r) && !isContractRoute(r) && !isUnauthored(r.filePath) &&
       // A webhook receiver is called by its sender, never by the repository.
       !r.webhook && calledProjects.has(r.projectId ?? "") && !reached.has(`${r.filePath}\u0000${r.line}`));
     if (uncalled.length > 0) {

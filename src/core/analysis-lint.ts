@@ -197,7 +197,8 @@ export function lintAnalysis(project: ProjectAnalysis, files?: ReadonlyMap<strin
   for (const r of project.routeMap ?? []) {
     checkLine(`route ${r.httpMethod ?? "*"} ${r.path}`, r.filePath ?? "", r.line);
     const versions = r.versions?.length ? [...r.versions].sort().join(",") : "";
-    const where = r.prefixUnresolved ? ` ${r.filePath} ${r.owner ?? ""}` : "";
+    const holed = !!r.pathUnresolved;
+    const where = r.prefixUnresolved || holed ? ` ${r.filePath} ${r.owner ?? ""}${holed ? ` ${r.line}` : ""}` : "";
     const consumes = r.consumes?.length ? ` ${r.consumes.join(",")}` : "";
     const key = `${r.projectId ?? ""} ${r.kind} ${(r.httpMethod ?? "").toUpperCase()} ${r.path} ${versions}${where}${consumes}`;
     seen.set(key, (seen.get(key) ?? 0) + 1);

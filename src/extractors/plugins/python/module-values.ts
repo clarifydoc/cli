@@ -6,7 +6,8 @@ import type { Node, Tree } from "web-tree-sitter";
  * `class Paths: MATCHES = "/api/v2/matches"` (as `Paths.MATCHES`). A value
  * built from others (`CLUB_URL = CLUBS_URL + "/{id}"`, `f"{BASE}/clubs"`)
  * keeps each name it reads as a `${…}` hole, which the project pass fills in
- * this file's scope (`core/module-values.ts`). A name bound twice, bound to
+ * this file's scope (`core/module-values.ts`); so does an alias of a constant
+ * (`SNAP = API_V1` → `${API_V1}`). A name bound twice, bound to
  * anything else, or rebound by a function through `global`, is left out.
  */
 /**
@@ -39,8 +40,11 @@ export function extractPythonModuleValues(tree: Tree): Record<string, string> {
       const right = a.childForFieldName("right");
       if (left?.type !== "identifier" || !right) continue;
       const built = stringExpr(right, prefix, 0);
-      // A value must hold some text of its own: `router = api_router` is no string.
-      const value = built !== null && built.replace(/\$\{[^}]*\}/g, "") ? built : null;
+      // A value must hold some text of its own: `router = api_router` is no string. A constant
+      // aliasing another (`SNAP = API_V1`, `= paths.API_V1`) stands for it, which the project pass
+      // reads where it is defined — or leaves a hole.
+      const alias = /^[A-Z][A-Z0-9_]*$/.test(left.text) && (right.type === "identifier" || right.type === "attribute") && /(?:^|\.)[A-Z][A-Z0-9_]*$/.test(right.text);
+      const value = built !== null && (alias || built.replace(/\$\{[^}]*\}/g, "")) ? built : null;
       const key = prefix + left.text;
       if (value === null || (out.has(key) && out.get(key) !== value)) {
         if (out.has(key) || value === null) clash.add(key);

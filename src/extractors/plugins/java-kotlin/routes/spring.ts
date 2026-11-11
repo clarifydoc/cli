@@ -577,11 +577,12 @@ function parseSpringAnnotation(
   if (httpMethod === undefined) return [];
 
   const args = annotationArgsNode(node);
-  // `|| "/"` (not `??`) so an explicit empty path "" also falls back to the prefix.
-  const declared = args ? extractAnnotationPaths(args) : [];
-  const paths = [...new Set((declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classPrefix, p || "/")))];
   // A path (or class prefix) that is another class's constant: the template the project pass fills.
-  const methodTemplate = declared.length === 0 && args ? constantPathTemplate(args) : null;
+  // It wins over the literals inside it — Kotlin's `Paths.BASE + "/players"` is not `"/players"`.
+  const methodTemplate = args ? constantPathTemplate(args) : null;
+  // `|| "/"` (not `??`) so an explicit empty path "" also falls back to the prefix.
+  const declared = args && methodTemplate === null ? extractAnnotationPaths(args) : [];
+  const paths = [...new Set((declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classPrefix, p || "/")))];
   const templates = classTemplate !== null || methodTemplate !== null
     ? (methodTemplate !== null ? [methodTemplate] : declared.length > 0 ? declared : [""]).map((p) => mergePrefix(classTemplate ?? classPrefix, p || "/"))
     : null;

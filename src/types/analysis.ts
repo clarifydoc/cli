@@ -1880,10 +1880,18 @@ export interface RouteInfo {
    * (`@GetMapping(ApiPaths.CLUB)`, `[HttpGet(ApiRoutes.Club)]`,
    * `@app.route(CLUBS_URL + "/<id>")`): the full path with each such name a
    * `${…}` hole. A project pass (`core/module-values.ts` `resolveRouteTemplates`)
-   * sets `path` from it when the defining modules state every hole; otherwise
-   * `path` stays what the plugin could read alone.
+   * sets `path` from it when the defining modules state every hole. Otherwise
+   * an unknown leading part makes the rest a tail under `prefixUnresolved`
+   * (`constant:${Paths.BASE}`), and any other unknown hole stays in `path`,
+   * named in `pathUnresolved`.
    */
   pathTemplate?: string;
+  /**
+   * The constants in `path` nothing in the analysis states, as written
+   * (`Paths.MISSING`): the route exists but its URL is unknown, so it never
+   * joins a call and is never judged uncalled.
+   */
+  pathUnresolved?: string[];
   calls: CallInfo[];
   /**
    * Guards and filters applied to the route, as readable strings: Express

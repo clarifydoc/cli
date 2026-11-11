@@ -29,7 +29,7 @@ import { extractJavaKotlinTypeReferences } from "./type-references.js";
 import { javaCallHooks, kotlinCallHooks } from "./call-hooks.js";
 import { jvmPackageName } from "./package-name.js";
 import { jvmPackages } from "./packages.js";
-import { JavaKotlinExtractor } from "./functions-classes.js";
+import { JavaKotlinExtractor, kotlinModuleValues } from "./functions-classes.js";
 import { JavaKotlinImportExportExtractor } from "./imports-exports.js";
 import { JavaKotlinDataSourceExtractor, extractJavaPathArgCalls } from "./data-sources.js";
 import { JavaKotlinMutationExtractor } from "./data-mutations.js";
@@ -128,7 +128,7 @@ function jvmMeta(language: Language, opts: {
     dbRootTypes: JVM_DB_ROOT_TYPES,
     ast: {
       typeReferences: (tree, filePath) => extractJavaKotlinTypeReferences(tree, language, filePath),
-      ...(language === "kotlin" ? { facadeClass: kotlinFacadeClass } : {}),
+      ...(language === "kotlin" ? { facadeClass: kotlinFacadeClass, moduleValues: (tree) => kotlinModuleValues(tree) } : {}),
       // `package com.example.league;` — what an `import com.example.league.Club` names, whatever directory holds the file.
       packageName: (tree) => jvmPackageName(tree),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).

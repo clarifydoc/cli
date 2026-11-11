@@ -35,6 +35,21 @@ export function isRoutePath(path: string): boolean {
   return path === "*" || path.startsWith("/");
 }
 
+/**
+ * A route path given as a constant — `router.get(ROUTES.CARS, h)`, `CARS_PATH`,
+ * `ApiRoutes.club` — as a `${…}` hole the project pass fills from the module
+ * stating it. Only a name that says it holds a path: `db.get(QUERY, params, cb)`
+ * has the same shape.
+ */
+function constantRoutePath(arg: Node | null): string | null {
+  if (!arg || (arg.type !== "member_expression" && arg.type !== "identifier")) return null;
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/.test(arg.text)) return null;
+  return arg.text.split(".").some((seg) => /(?:paths?|routes?|urls?|endpoints?)$/i.test(seg)) ? `\${${arg.text}}` : null;
+}
+
+/** Every hole of a path names a value (`/${SEASON}/clubs`, `${ROUTES.CARS}`) — what the project pass can fill. */
+const NAME_HOLES = /^(?:[^$]|\$(?!\{)|\$\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\})*$/;
+
 /** The immediate object a member expression is called on, lowercased (e.g. `$.get` → "$"). */
 export function receiverName(memberExpr: Node): string | null {
   const object = memberExpr.childForFieldName("object");
@@ -218,6 +233,8 @@ interface ExpressRouteMeta {
   params: RouteParamInfo[];
   /** Guards on the same-file mounts this route was composed through (`app.use("/admin", requireAdmin, admin)`). */
   mountGuards?: GuardAttr[];
+  /** The path is a constant (`router.get(ROUTES.CARS, h)`): a route only on a receiver the file shows is a router. */
+  constantPath?: true;
 }
 const routeMeta = new WeakMap<RouteInfo, ExpressRouteMeta>();
 
@@ -321,7 +338,8 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
         const args = node.childForFieldName("arguments");
         if (args) {
           const firstArg = args.child(1); // skip '('
-          const paths =
+          const constant = method !== "use" ? constantRoutePath(firstArg) : null;
+          const paths = constant !== null ? [constant] :
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&
             isRoutePath(stripQuotes(firstArg.text)) &&
@@ -424,7 +442,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
               };
               if (method === "use") route.mount = true;
               if (mountModule !== null) route.mountModule = mountModule;
-              routeMeta.set(route, { receiver, guards, params });
+              routeMeta.set(route, { receiver, guards, params, ...(constant !== null ? { constantPath: true as const } : {}) });
               routes.push(route);
             }
           }
@@ -444,9 +462,13 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
  * `cors()`, `csurf()`, a validator) are inherited as `filters` instead.
  */
 export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceText?: string): void {
+  dropUnprovenConstantRoutes(routes, sourceText ?? root.text);
   if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
   if (sourceText === undefined || sourceText.includes("basePath(")) applyHonoBasePaths(root, routes);
   composeLocalMounts(routes);
+  // A path holding names (`${ROUTES.CARS}`, `/${SEASON}/clubs`), with this file's prefixes composed: the template
+  // the project pass fills from the modules stating them. A mount keeps its prefix as written.
+  for (const r of routes) if (!r.mount && !r.pathTemplate && r.path.includes("${") && NAME_HOLES.test(r.path)) r.pathTemplate = r.path;
   /** `scope`: the plugin function a Fastify hook sits in — it guards the routes written inside it, nothing outside. */
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
@@ -486,6 +508,31 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
   }
+}
+
+/** `const router = express.Router()`, `app = express()`, `new Hono()`, `new Router()`, `fastify()`: a receiver made a router. */
+const ROUTER_FACTORY = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:require\(\s*['"][\w@/.-]+['"]\s*\)\s*\.\s*)?(?:express\s*\.\s*)?(?:express|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/gi;
+
+/**
+ * A route whose path is a constant (`router.get(ROUTES.CARS, h)`) has the shape of a client
+ * request (`this.requests.put(routes.password, payload)`): it stays only on a receiver the file
+ * shows is a router — one made by a router factory, or one registering a route by a literal path.
+ */
+function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): void {
+  if (!routes.some((r) => routeMeta.get(r)?.constantPath)) return;
+  const routers = new Set<string>();
+  for (const r of routes) {
+    const meta = routeMeta.get(r);
+    if (meta?.receiver && !meta.constantPath) routers.add(meta.receiver);
+  }
+  for (const m of sourceText.matchAll(ROUTER_FACTORY)) routers.add(m[1]!.toLowerCase());
+  const kept = routes.filter((r) => {
+    const meta = routeMeta.get(r);
+    if (!meta?.constantPath || (meta.receiver && routers.has(meta.receiver))) return true;
+    routeMeta.delete(r);
+    return false;
+  });
+  routes.splice(0, routes.length, ...kept);
 }
 
 /**

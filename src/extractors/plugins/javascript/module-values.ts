@@ -1,10 +1,14 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
 
-/** Cheap gate: a string literal containing a `/` somewhere in the file, or a member named like a route path. */
-const URLISH_LITERAL = /['"`][^'"`\n]*\/|\b\w*(?:[pP]ath|[rR]oute)\s*:/;
-/** A member whose value is a route path even without a `/` (`detailsPath: 'squad'`). */
-const PATH_MEMBER = /(?:^|\.)\w*(?:[pP]ath|[rR]oute)$/;
+/** Cheap gate: a string literal containing a `/` somewhere in the file, or a name like a route path or a table of them. */
+const URLISH_LITERAL = /['"`][^'"`\n]*\/|\b\w*(?:[pP]ath|[rR]oute)\s*:|\b\w*(?:[pP]aths|[rR]outes|PATHS|ROUTES|[pP]refix(?:es)?|PREFIX(?:ES)?)\s*[:=]/;
+/**
+ * A member whose value is a route path even without a `/`: one named like a path (`detailsPath: 'squad'`), or
+ * any member of a table of paths, routes or prefixes (`ClubPaths.DETAIL = ':id'`, `PREFIXES.legacy = 'legacy'`)
+ * — what `@Get(ClubPaths.DETAIL)` names.
+ */
+const PATH_MEMBER = /(?:^|\.)\w*(?:[pP]ath|[rR]oute)$|^\w*(?:[pP]aths|[rR]outes|PATHS|ROUTES|[pP]refix(?:es)?|PREFIX(?:ES)?)\./;
 
 /**
  * URL-shaped values a module defines at its top level, keyed by name (an
