@@ -1,6 +1,7 @@
 import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { thriftInheritance, thriftSpec } from "./index.js";
 import { thriftManifest } from "./manifest.js";
+import { thriftHandlers } from "../shared/thrift-handlers.js";
 import { thriftRequestSchema } from "./request-schema.js";
 
 /**
@@ -11,6 +12,6 @@ export const thriftMeta: LanguagePluginMeta = {
   ...thriftManifest,
   regexSpec: thriftSpec,
   requestSchema: thriftRequestSchema,
-  routeResolvers: [thriftInheritance],
+  routeResolvers: [thriftInheritance, thriftHandlers],
   skipSecurityScan: true,
 };

@@ -10,6 +10,7 @@ import type { RouteExtractor } from "../../routes/base.js";
 import { scanRequestAccess } from "./request-access.js";
 import { splitGeneric, unwrapNullable } from "./request-schema.js";
 import { DJANGO_GATE, collectDjangoFacts, collectDjangoTextFacts } from "./django/facts.js";
+import { thriftHandlerFacts } from "../shared/thrift-handlers.js";
 import { PY_GRAPHQL_GATE, extractPythonGraphqlRoutes } from "./graphql.js";
 import { PY_ROUTER_CLASS, PY_ROUTER_CTOR, PY_VIEW_CLASS, type PyRouterClassFact, type PyRouterCtorFact, type PyViewClassFact } from "./fastapi-guards.js";
 
@@ -851,6 +852,7 @@ export const pythonRouteExtractor: RouteExtractor = {
     extractPythonRoutes(tree.rootNode, routes, facts && /Router|Depends|Security/.test(sourceText) ? facts : undefined);
     // Code-first GraphQL (Strawberry, Graphene): the root fields a schema class serves.
     if (PY_GRAPHQL_GATE.test(sourceText)) extractPythonGraphqlRoutes(tree.rootNode, routes);
+    if (facts) facts.push(...thriftHandlerFacts(sourceText, "python"));
     // Django / DRF routing is only facts per file; `django-urlconf` joins them.
     if (facts && DJANGO_GATE.test(sourceText)) collectDjangoFacts(tree.rootNode, facts);
     if (facts && (sourceText.includes("MIGRATION_MODULES") || sourceText.includes("INSTALLED_APPS"))) collectDjangoTextFacts(sourceText, facts);

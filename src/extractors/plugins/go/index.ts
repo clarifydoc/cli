@@ -17,6 +17,7 @@ import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
+import { thriftHandlerFacts } from "../shared/thrift-handlers.js";
 import { blankCodeInStrings, goContainerResult, goResultTextAt, goResultTypes } from "./syntax.js";
 import { extractGoImports } from "./imports.js";
 import { extractGoResponses } from "./responses.js";
@@ -208,6 +209,7 @@ export const goSpec: RegexLangSpec = {
     const callLines = GO_CODE.callSourceLines(lines) as string[];
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
     const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts, closureCalls)];
+    if (facts) facts.push(...thriftHandlerFacts(code.join("\n"), "go"));
     const members = [...(fns ?? []), ...classes.flatMap((c) => c.methods)];
     // The ANTLR front end reads method values handed on itself; the regex reading does it here — also for a file
     // that front end gave up on (syntax errors), whose functions the patterns read.

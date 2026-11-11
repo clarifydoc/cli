@@ -112,3 +112,134 @@ describe("Thrift as a contract", () => {
     expect((s.apiRouteLinks ?? []).some((l) => l.source.includes("Decoy"))).toBe(false);
   });
 });
+
+/** Handlers the generated code never names: Go, Python and Node servers, a Node client, and decoys. */
+const DYNAMIC: Record<string, string> = {
+  "idl/league.thrift": `namespace java com.example.league
+struct Club { 1: string name }
+service ClubService {
+  Club getClub(1: string id),
+  list<Club> clubs(1: i32 limit)
+}
+`,
+  "go/server.go": `package main
+
+import "github.com/apache/thrift/lib/go/thrift"
+
+type clubHandler struct{}
+
+func (h *clubHandler) GetClub(ctx context.Context, id string) (*Club, error) { return nil, nil }
+func (h *clubHandler) Clubs(ctx context.Context, limit int32) ([]*Club, error) { return nil, nil }
+
+func serve() {
+	processor := league.NewClubServiceProcessor(&clubHandler{})
+	_ = thrift.NewTSimpleServer4(processor, nil, nil, nil)
+}
+`,
+  "go/decoy.go": `package main
+
+type FanClient struct{}
+type fanHandler struct{}
+
+func (h *fanHandler) GetClub(id string) {}
+
+func run(c FanClient) { c.GetClub("x") }
+`,
+  "py/server.py": `from thrift.server import TServer
+from league import ClubService
+
+class ClubHandler:
+    def getClub(self, id):
+        return None
+    def clubs(self, limit):
+        return []
+
+def serve():
+    handler = ClubHandler()
+    processor = ClubService.Processor(handler)
+    return TServer.TSimpleServer(processor, None)
+`,
+  "py/decoy.py": `class StandsHandler:
+    def getClub(self, id):
+        return None
+`,
+  "node/scout.js": `const thrift = require("thrift");
+const ClubService = require("./gen/ClubService");
+async function visit(conn) {
+  const client = thrift.createClient(ClubService, conn);
+  return client.getClub("c1");
+}
+`,
+  "node/server.js": `const thrift = require("thrift");
+const ClubService = require("./gen/ClubService");
+class NodeClubHandler {
+  getClub(id, result) { result(null, {}); }
+  clubs(limit, result) { result(null, []); }
+}
+const handler = new NodeClubHandler();
+thrift.createServer(ClubService, handler);
+`,
+  "node/decoy.js": `function createClient(Service, conn) { return conn; }
+function visit(conn) {
+  const client = createClient(Service, conn);
+  return client.getClub("c1");
+}
+`,
+};
+
+describe("Thrift handlers and clients the generated code does not name", () => {
+  let dir: string;
+  let out: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-thrift-dyn-"));
+    for (const [p, text] of Object.entries(DYNAMIC)) {
+      await mkdir(dirname(join(dir, "src", p)), { recursive: true });
+      await writeFile(join(dir, "src", p), text);
+    }
+    out = join(dir, "out");
+    await analyze({ projectRoot: join(dir, "src"), outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("gives a processor's handler class, in Go, Python and Node, the rows it implements", async () => {
+    const s = await loadReportSummary(out);
+    const served = (f: string) => s.routeMap.filter((r) => r.filePath === f && r.contract).map((r) => `${r.contract!.method}:${r.handler}`).sort();
+    expect(served("go/server.go")).toEqual(["clubs:clubHandler.Clubs", "getClub:clubHandler.GetClub"]);
+    expect(served("py/server.py")).toEqual(["clubs:ClubHandler.clubs", "getClub:ClubHandler.getClub"]);
+    expect(served("node/server.js")).toEqual(["clubs:NodeClubHandler.clubs", "getClub:NodeClubHandler.getClub"]);
+    // Classes no processor receives serve nothing.
+    expect(served("go/decoy.go")).toEqual([]);
+    expect(served("py/decoy.py")).toEqual([]);
+  });
+
+  it("links a Node client's call to the row, and an unrelated createClient to nothing", async () => {
+    const s = await loadReportSummary(out);
+    const links = (s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method} ${l.url}`);
+    expect(links).toEqual(["node/scout.js POST /com.example.league.ClubService/getClub"]);
+  });
+});
+
+describe("Thrift row joined to the one Python handler", () => {
+  let dir: string;
+  let out: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-thrift-py-"));
+    for (const p of ["idl/league.thrift", "py/server.py", "py/decoy.py"]) {
+      await mkdir(dirname(join(dir, "src", p)), { recursive: true });
+      await writeFile(join(dir, "src", p), DYNAMIC[p]!);
+    }
+    out = join(dir, "out");
+    await analyze({ projectRoot: join(dir, "src"), outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("finds the handler's methods through the spec join, and the decoy's none", async () => {
+    const s = await loadReportSummary(out);
+    const targets = s.symbolLinks.filter((l) => l.strategy === "spec-join" && l.sourceSymbol.startsWith("route:POST /com.example.league.ClubService/")).map((l) => `${l.sourceSymbol.split("/").pop()} -> ${l.targetFile}`);
+    expect(targets.sort()).toEqual(["clubs -> py/server.py", "getClub -> py/server.py"]);
+  });
+});

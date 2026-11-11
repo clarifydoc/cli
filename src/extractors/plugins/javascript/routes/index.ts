@@ -13,6 +13,7 @@ import { mayDeclareAngularJsRoutes, visitAngularJsRoute } from "./angularjs.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
 import { mayDefineTrpc, visitTrpcRouter } from "./trpc.js";
 import { convexCustomBuilders, convexExportedBuilders, relativeImportNames, stringConstants, convexModulePath, mayDefineConvex, visitConvexFunction, visitConvexHttpRoute } from "./convex.js";
+import { thriftHandlerFacts } from "../../shared/thrift-handlers.js";
 import { collectCdkRoutes } from "./cdk.js";
 import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-first.js";
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
@@ -118,6 +119,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
 
     // grpc-js servers: the handlers `addService` registers per rpc.
     const grpc = extractGrpcJsServices(sourceText);
+    if (facts) facts.push(...thriftHandlerFacts(sourceText, "js"));
 
     return [...express, ...routeObjects, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...convex, ...navigation, ...graphql, ...grpc];
   },

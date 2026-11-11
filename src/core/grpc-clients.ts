@@ -40,6 +40,24 @@ type ApiCall = DataSourceInfo & { filePath: string };
 /** Stub members that are not rpcs: call options, channel plumbing, object methods. */
 const NOT_RPC = /^(?:with[A-Z]\w*|getChannel|close|waitForReady|makeUnaryRequest|makeClientStreamRequest|makeServerStreamRequest|makeBidiStreamRequest|Dispose|DisposeAsync|ToString|Equals|GetHashCode|getClass|hashCode|toString|equals)$/;
 
+/**
+ * A call that states its service in an argument (`thrift.createClient(ClubService, conn)`) written
+ * with the names it hands on, on its own line and after it: `thrift.createClient(ClubService)`.
+ * The plugin's hook is asked with this spelling only when the bare one answered nothing.
+ */
+function spellingWithArgs(fn: FunctionInfo, call: FunctionInfo["calls"][number]): string | null {
+  let passed = passedArguments.get(fn);
+  if (!passed) {
+    passed = fn.calls.filter((c) => c.passed === "argument").sort((a, b) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0));
+    passedArguments.set(fn, passed);
+  }
+  if (passed.length === 0) return null;
+  // The call's own arguments: after it on its line, or on the lines of a wrapped argument list.
+  const args = passed.filter((c) => (c.line === call.line && (c.column ?? 0) > (call.column ?? 0)) || (c.line > call.line && c.line <= call.line + 3));
+  return args.length ? `${call.name}(${args.map((c) => c.name).join(",")})` : null;
+}
+const passedArguments = new WeakMap<FunctionInfo, FunctionInfo["calls"]>();
+
 export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: readonly RouteInfo[]): ApiCall[] {
   // The services the analysis declares, by simple name → qualified names and their rpcs.
   const declared = new Map<string, Map<string, Set<string>>>();
@@ -66,7 +84,7 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
     const built = new Map<string, number[]>();
     for (const fn of [...a.functions, ...a.classes.flatMap((c) => c.methods)]) {
       for (const c of fn.calls) {
-        const s = serviceOf(`${c.name}()`);
+        const s = serviceOf(`${c.name}()`) ?? serviceOf(spellingWithArgs(fn, c));
         if (s) (built.get(s) ?? built.set(s, []).get(s)!).push(c.line);
       }
     }
@@ -140,7 +158,10 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
       for (const l of fn.localTypes ?? []) {
         // `paymentService := cs.paymentSvcClient`: the member's stub.
         const alias = l.from ? /^(\w+)\.(\w+)$/.exec(l.from) : null;
-        const s = serviceOf(l.type) ?? serviceOf(l.from) ?? (alias && selfNames.has(alias[1]!) ? members.get(alias[2]!) : undefined);
+        // `client = thrift.createClient(ClubService, conn)`: the initializer's service is in its arguments.
+        const viaCalls = l.from && !l.type ? fn.calls.filter((c) => `${c.name}()` === l.from).map((c) => serviceOf(spellingWithArgs(fn, c))) : [];
+        const viaArgs = viaCalls.length > 0 && viaCalls.every((b) => b === viaCalls[0]) ? viaCalls[0] : null;
+        const s = serviceOf(l.type) ?? serviceOf(l.from) ?? viaArgs ?? (alias && selfNames.has(alias[1]!) ? members.get(alias[2]!) : undefined);
         if (s) scope.set(l.name, s);
       }
       return scope;

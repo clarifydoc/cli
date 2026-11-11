@@ -27,9 +27,15 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  * entities: they are what goes over the wire.
  */
 
-/** Comments (`//`, `#`, block) blanked, strings kept, newlines kept so offsets still give line numbers. */
+/**
+ * Comments (`//`, `#`, block) and the contents of string literals blanked, quotes and newlines kept so offsets
+ * still give line numbers. A string's contents are default values and annotation text, never declarations: a
+ * default `"2: i32 fake"` must not read as a field, nor an escaped quote end the string early.
+ */
 function blankComments(text: string): string {
-  return text.replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*/g, (m) => (m[0] === '"' || m[0] === "'" ? m : m.replace(/[^\n]/g, " ")));
+  return text.replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*/g, (m) =>
+    m[0] === '"' || m[0] === "'" ? m[0] + " ".repeat(m.length - 2) + m[0] : m.replace(/[^\n]/g, " "),
+  );
 }
 
 const CACHE = new WeakMap<string[], { text: string; lineAt: (offset: number) => number }>();
@@ -62,9 +68,11 @@ function matching(text: string, open: number, o: string, c: string): number {
   for (let i = open; i < text.length; i++) {
     const ch = text[i];
     if (ch === '"' || ch === "'") {
+      // Strings are blanked already (no escapes or brackets inside); a lone quote, unterminated on its
+      // line, is an ordinary character and never starts a string that swallows the rest of the file.
       const close = text.indexOf(ch, i + 1);
-      if (close < 0) return -1;
-      i = close;
+      const eol = text.indexOf("\n", i + 1);
+      if (close >= 0 && (eol < 0 || close < eol)) i = close;
     } else if (ch === o) depth++;
     else if (ch === c && --depth === 0) return i;
   }

@@ -74,3 +74,29 @@ describe("thrift generated names", () => {
     expect(thriftServiceOf(cls({ implements: ["Runnable"] }))).toBeNull();
   });
 });
+
+describe("string literals in Thrift", () => {
+  const lines = (s: string) => s.split("\n");
+
+  it("does not read a field out of a default value", () => {
+    const [club] = extractThriftClasses(lines(`struct Club {\n  1: string note = "2: i32 fake",\n  3: i32 founded\n}`));
+    expect(club!.properties.map((p) => p.name)).toEqual(["note", "founded"]);
+  });
+
+  it("keeps an escaped quote inside its string", () => {
+    const routes = extractThriftRoutes(lines(`service ClubService {\n  string say(1: string a = "he said \\"hi\\" ) {"),\n  void ping()\n}`));
+    expect(routes.map((r) => r.path)).toEqual(["/ClubService/say", "/ClubService/ping"]);
+  });
+
+  it("does not let a lone quote swallow the rest of the file", () => {
+    const routes = extractThriftRoutes(lines(`service ClubService {\n  void ping() ( note = it's )\n  void pong()\n}`));
+    expect(routes.map((r) => r.path)).toEqual(["/ClubService/ping", "/ClubService/pong"]);
+  });
+
+  it("reads a Go stub type only in a file importing the Thrift runtime", () => {
+    const file = (source: string) => ({ imports: [{ source }] }) as unknown as FileAnalysis;
+    expect(goThriftStub("ClubServiceClient", file("net/http"))).toBeNull();
+    expect(goThriftStub("ClubServiceClient", file("github.com/apache/thrift/lib/go/thrift"))).toEqual({ service: "ClubService", certain: true });
+    expect(jsThriftStub("thrift.createClient(ClubService,conn)", file("thrift"))).toEqual({ service: "ClubService", certain: true });
+  });
+});

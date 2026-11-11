@@ -31,13 +31,29 @@ export function nestedThriftStub(runtime: RegExp) {
 export const jvmThriftStub = nestedThriftStub(/^org\.apache\.thrift(?:\.|$)/);
 export const csharpThriftStub = nestedThriftStub(/^Thrift(?:\.|$)/);
 export const pythonThriftStub = nestedThriftStub(/^thrift(?:\.|$)/);
-export const jsThriftStub = nestedThriftStub(/^thrift(?:\/|$)/);
+const jsNestedThriftStub = nestedThriftStub(/^thrift(?:\/|$)/);
+
+/**
+ * JS/TS: the nested `ClubService.Client` the compiler generates, or the node library's
+ * `thrift.createClient(ClubService, connection)` / `createHttpClient` / `createWSClient` /
+ * `createXHRClient`, whose first argument names the service (core hands the names a call passes on
+ * as `createClient(ClubService)`). Certain only in a file importing `thrift`.
+ */
+export function jsThriftStub(spelling: string, file?: FileAnalysis): Stub {
+  const m = /^(?:[\w$]+\.)?create(?:Http|Connection|WS|XHR)?Client\((?:[\w$]+\.)*([A-Z]\w*)\b/.exec(spelling);
+  // `redis.createClient(Config)` is any library's: only a file importing `thrift` builds one.
+  if (m) return imports(file, /^thrift(?:\/|$)/) ? { service: m[1]!, certain: true } : null;
+  return jsNestedThriftStub(spelling, file);
+}
 
 /** Go: `NewClubServiceClientFactory(trans, pf)`, `NewClubServiceClient(c)`, `NewClubServiceClientProtocol(…)`. */
 export function goThriftStub(spelling: string, file?: FileAnalysis): Stub {
-  const m = /^(?:\w+\.)?New(\w+)Client(?:Factory|Protocol)?\(\)$/.exec(spelling) ?? /^\*?(?:\w+\.)?(\w+)Client$/.exec(spelling);
+  const thrift = imports(file, /^github\.com\/apache\/thrift(?:\/|$)/);
+  // The constructor is the compiler's own name; a bare type `ClubServiceClient` is any client of any
+  // library, so it counts only in a file that imports the Thrift runtime.
+  const m = /^(?:\w+\.)?New(\w+)Client(?:Factory|Protocol)?\(\)$/.exec(spelling) ?? (thrift ? /^\*?(?:\w+\.)?(\w+)Client$/.exec(spelling) : null);
   if (!m || !/^[A-Z]/.test(m[1]!) || /^(?:HTTP|Http|Rest|REST|Redis|S3)$/.test(m[1]!)) return null;
-  return { service: m[1]!, certain: imports(file, /^github\.com\/apache\/thrift(?:\/|$)/) };
+  return { service: m[1]!, certain: thrift };
 }
 
 /** The first hook with an answer. */

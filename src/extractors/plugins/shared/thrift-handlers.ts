@@ -1,0 +1,134 @@
+import type { FileAnalysis, Language, RouteFact, RouteInfo } from "../../../types/analysis.js";
+import type { RouteResolver } from "../../route-resolvers/base.js";
+
+/**
+ * Thrift servers whose handler class the generated code never names. Java, Kotlin and C# state it
+ * (`implements ClubService.Iface`, read by `thriftServiceOf`); Go, Python and Node hand any object to the
+ * generated processor:
+ *
+ *   processor := league.NewClubServiceProcessor(&clubHandler{})        // Go
+ *   processor = ClubService.Processor(ClubHandler())                   # Python
+ *   thrift.createServer(ClubService, new ClubHandler())                // Node
+ *
+ * A language's route extractor reports the call as a `thrift-handler` fact (the service and the handler's
+ * type as written, `handler` being a variable the file assigns from a literal or constructor call). The
+ * resolver below joins it, once every file is read, with the service a `.thrift` declares and the class that
+ * defines the handler: each rpc the class has a method for becomes a contract row ON that method, which the
+ * `.thrift` row's spec join then finds — the same shape a grpc-js `addService` handler has. A service no
+ * `.thrift` declares, a handler type no unique class carries, and a method the class lacks yield nothing, so
+ * an unrelated class with the same method names that no processor receives links to nothing.
+ */
+export const THRIFT_HANDLER = "thrift-handler";
+
+export interface ThriftHandlerFact {
+  /** The service's simple name (`ClubService`). */
+  service: string;
+  /** The handler's type or constructor as written, `New` stripped (`clubHandler`, `ClubHandler`). */
+  handler: string;
+}
+
+type Dialect = "go" | "python" | "js";
+
+/** `x := &clubHandler{}`, `x := NewClubHandler()` / `x = ClubHandler()` / `const x = new ClubHandler()` → the type name. */
+function typeOfVariable(text: string, name: string, dialect: Dialect): string | null {
+  const id = name.replace(/\$/g, "\\$");
+  const re =
+    dialect === "go" ? new RegExp(String.raw`\b${id}\s*(?::=|=(?!=))\s*&?(?:[\w]+\.)?(?:New)?(\w+)\s*[({]`)
+    : dialect === "python" ? new RegExp(String.raw`^\s*${id}\s*=(?!=)\s*(?:[\w]+\.)*(\w+)\s*\(`, "m")
+    : new RegExp(String.raw`\b${id}\s*=(?!=)\s*new\s+(?:[\w$]+\.)*([\w$]+)\s*\(`);
+  const hits = new Set([...text.matchAll(new RegExp(re.source, re.flags + "g"))].map((m) => m[1]!));
+  return hits.size === 1 ? [...hits][0]! : null;
+}
+
+/** The argument naming the handler: a literal or constructor call (the type), or a variable (its assignment's type). */
+function handlerOf(arg: string, text: string, dialect: Dialect): string | null {
+  const a = arg.trim();
+  const direct =
+    dialect === "go" ? /^&?(?:[\w]+\.)?(?:New)?(\w+)\s*[({]/.exec(a)
+    : dialect === "python" ? /^(?:[\w]+\.)*(\w+)\s*\(/.exec(a)
+    : /^new\s+(?:[\w$]+\.)*([\w$]+)\s*\(/.exec(a);
+  if (direct) return direct[1]!;
+  const ident = /^[\w$]+$/.exec(a)?.[0];
+  return ident ? typeOfVariable(text, ident, dialect) : null;
+}
+
+const ARG = String.raw`((?:[^(),]|\((?:[^()]|\([^()]*\))*\))+)`;
+
+/** The `thrift-handler` facts a file's text states. */
+export function thriftHandlerFacts(sourceText: string, dialect: Dialect): RouteFact[] {
+  const re =
+    dialect === "go" ? new RegExp(String.raw`\bNew([A-Z]\w*)Processor(?:WithOptions)?\(\s*${ARG}`, "g")
+    : dialect === "python" ? new RegExp(String.raw`\b([A-Z]\w*)\.Processor\(\s*${ARG}`, "g")
+    : new RegExp(String.raw`\bcreate(?:Multiplexed)?Server\(\s*(?:[\w$]+\.)*([A-Z]\w*)\s*,\s*${ARG}`, "g");
+  if (!(dialect === "go" ? /Processor/ : dialect === "python" ? /\.Processor\(/ : /createServer|createMultiplexedServer/).test(sourceText)) return [];
+  // Whole-line comments are not code.
+  const text = sourceText.replace(dialect === "js" ? /^\s*\/\/.*$/gm : dialect === "python" ? /^\s*#.*$/gm : /^\s*\/\/.*$/gm, (c) => c.replace(/[^\n]/g, " "));
+  const out: RouteFact[] = [];
+  for (const m of text.matchAll(re)) {
+    const handler = handlerOf(m[2]!, text, dialect);
+    if (!handler) continue;
+    const line = text.slice(0, m.index!).split("\n").length;
+    out.push({ kind: THRIFT_HANDLER, line, data: { service: m[1]!, handler } satisfies ThriftHandlerFact });
+  }
+  return out;
+}
+
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
+/** Join each `thrift-handler` fact to the rpcs of the declared service and the handler class's methods. */
+export const thriftHandlers: RouteResolver = {
+  id: "thrift-handlers",
+  languages: ["thrift", "go", "python", "javascript", "typescript"] satisfies Language[],
+  // After the service-extends pass, so a handler of a derived service also serves the base's rpcs.
+  priority: 60,
+  resolve(analyses: FileAnalysis[]): void {
+    // The rpcs of each declared service: simple name → qualified type → methods.
+    const declared = new Map<string, Map<string, Set<string>>>();
+    for (const a of analyses) {
+      if (a.language !== "thrift") continue;
+      for (const r of a.routes) {
+        if (!r.contract) continue;
+        const leaf = r.contract.type.slice(r.contract.type.lastIndexOf(".") + 1);
+        const byType = declared.get(leaf) ?? declared.set(leaf, new Map()).get(leaf)!;
+        (byType.get(r.contract.type) ?? byType.set(r.contract.type, new Set()).get(r.contract.type)!).add(r.contract.method);
+      }
+    }
+    if (declared.size === 0) return;
+
+    for (const a of analyses) {
+      if (a.language === "thrift") continue;
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== THRIFT_HANDLER) continue;
+        const fact = f.data as ThriftHandlerFact;
+        const types = declared.get(fact.service);
+        // Two services of one name in different namespaces: the source does not say which.
+        if (!types || types.size !== 1) continue;
+        const methods = [...types.values()][0]!;
+        // The handler's class: the one of that name, own file and language first, never an ambiguous pick.
+        const classes = analyses.flatMap((x) => x.classes.filter((c) => sameName(c.name, fact.handler)).map((cls) => ({ file: x, cls })));
+        const own = classes.filter((c) => c.file === a);
+        const pick = own.length === 1 ? own : classes.filter((c) => c.file.language === a.language);
+        if (pick.length !== 1) continue;
+        const { file, cls } = pick[0]!;
+        for (const method of methods) {
+          const m = cls.methods.filter((x) => sameName(x.name, method));
+          if (m.length !== 1) continue;
+          const handler = `${cls.name}.${m[0]!.name}`;
+          if (file.routes.some((r) => r.contract?.type === fact.service && r.contract.method === method && r.handler === handler)) continue;
+          const route: RouteInfo = {
+            path: `${fact.service}#${method}`,
+            httpMethod: null,
+            kind: "api",
+            handler,
+            contract: { type: fact.service, method },
+            prefixUnresolved: `contract:${fact.service}`,
+            calls: [],
+            middleware: [],
+            line: m[0]!.line,
+          };
+          file.routes.push(route);
+        }
+      }
+    }
+  },
+};
