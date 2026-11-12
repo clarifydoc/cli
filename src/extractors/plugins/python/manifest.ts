@@ -25,6 +25,7 @@ export const pythonManifest: LanguagePluginManifest = {
   projectCommands: pythonProjectCommands,
   testSetupRuns: djangoTestSetupRuns,
   language: "python",
+  shebangInterpreter: /^python\d*(?:\.\d+)*$/,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   tupleElementsOf(returnType) {

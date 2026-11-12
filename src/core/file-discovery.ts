@@ -1,10 +1,10 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "fs";
 import { byOrdinal } from "./ordinal.js";
 import { basename, dirname, relative, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
-import { EXTENSION_TO_LANGUAGE, getLanguageForFile } from "../parsers/language-map.js";
-import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, READMIT_FILES, SOURCE_DIRS } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE, getLanguageForFile, getLanguageForShebang } from "../parsers/language-map.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, READMIT_FILES, SHEBANG_INTERPRETERS, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
@@ -184,7 +184,7 @@ async function findMarkers(
   root: string,
   ignore: readonly string[],
   prune: (dir: string) => boolean,
-): Promise<Array<{ dir: string; marker: string; markerMatches?: RegExp; markers: string[] }>> {
+): Promise<Array<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[]; markers: string[] }>> {
   const stem = (p: string) => p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "");
   const own = SOURCE_DIRS.map((s) => ({ ...s, ignore: ignore.filter((p) => !s.marker.startsWith(stem(p) + "/")) }));
   const shared = ignore.filter((p) => own.every((s) => s.ignore.includes(p)));
@@ -202,7 +202,13 @@ async function findMarkers(
     // A marker may be a glob (`*.gemspec`): `*` is any run of characters inside one segment.
     const named = new RegExp(`(?:^|/)${s.marker.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
     const markers = hits.filter((h) => named.test(h) && !keep.some((seg) => `/${h}`.includes(seg)));
-    return { dir: s.dir, marker: s.marker, ...(s.markerMatches ? { markerMatches: s.markerMatches } : {}), markers };
+    return {
+      dir: s.dir,
+      marker: s.marker,
+      ...(s.markerMatches ? { markerMatches: s.markerMatches } : {}),
+      ...(s.requiresAnyOf ? { requiresAnyOf: s.requiresAnyOf } : {}),
+      markers,
+    };
   });
 }
 
@@ -269,11 +275,12 @@ export async function discoverFiles(
   if (!options.include?.length && SOURCE_DIRS.length > 0) {
     const seen = new Set(entries);
     const dirs = new Set<string>();
-    for (const { dir, marker, markerMatches, markers } of await findMarkers(root, ignore, prune)) {
+    for (const { dir, marker, markerMatches, requiresAnyOf, markers } of await findMarkers(root, ignore, prune)) {
       for (const m of markers) {
         if (markerMatches && !markerMatches.test(readText(resolve(root, m)))) continue;
         // The marker's own segments come off the hit; what is left is the directory beside it.
         const parent = m.split("/").slice(0, -marker.split("/").length).join("/");
+        if (requiresAnyOf && !requiresAnyOf.some((p) => existsSync(resolve(root, parent, p)))) continue;
         dirs.add(parent ? `${parent}/${dir}` : dir);
       }
     }
@@ -302,6 +309,23 @@ export async function discoverFiles(
     }
   }
 
+  // Extension-less scripts whose `#!` line names an interpreter a plugin declares.
+  const shebangLanguage = new Map<string, Language>();
+  if (!options.include?.length && SHEBANG_SCRIPT_GLOBS.length > 0) {
+    const seen = new Set(entries);
+    const lifted = ignore.filter((p) => p !== "**/bin/**");
+    for (const e of await glob(SHEBANG_SCRIPT_GLOBS, { cwd: root, ignore: lifted, prune })) {
+      const name = e.slice(e.lastIndexOf("/") + 1);
+      if (seen.has(e) || name.includes(".") || SCRIPT_CREDENTIAL_NAME.test(name) || isSensitive(e)) continue;
+      const abs = resolve(root, e);
+      const language = shebangScriptLanguage(abs);
+      if (!language) continue;
+      shebangLanguage.set(e, language);
+      seen.add(e);
+      entries.push(e);
+    }
+  }
+
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];
   const skippedSymlinks: string[] = [];
@@ -317,7 +341,7 @@ export async function discoverFiles(
       }
     }
 
-    const language = getLanguageForFile(relativePath);
+    const language = getLanguageForFile(relativePath) ?? shebangLanguage.get(relativePath) ?? null;
     if (!language) continue;
 
     if (isSensitive(relativePath, language)) {
@@ -344,6 +368,41 @@ export async function discoverFiles(
   }
 
   return { files: results, skippedSensitive, skippedSymlinks };
+}
+
+/** Where an extension-less script is admitted: the root and the usual script directories at any depth. */
+const SHEBANG_SCRIPT_GLOBS = SHEBANG_INTERPRETERS.length > 0 ? ["*", "**/bin/*", "**/script/*", "**/scripts/*"] : [];
+
+/** Names that look like credentials are never admitted as scripts, whatever their first line says. */
+const SCRIPT_CREDENTIAL_NAME = /^id_|key|secret|token|passw|credential|htpasswd/i;
+
+/** Largest script read as source; a bigger file with a `#!` line is data or generated. */
+const MAX_SHEBANG_SCRIPT_BYTES = 512 * 1024;
+
+/**
+ * The language of a regular (not linked) file from its `#!` line; only the
+ * first bytes are read to decide. Executability is not required: a checkout
+ * on a filesystem without mode bits (or a zip) still holds the script, and a
+ * `#!` line is the author saying what runs it.
+ */
+function shebangScriptLanguage(abs: string): Language | null {
+  let fd: number | undefined;
+  try {
+    const st = lstatSync(abs);
+    if (!st.isFile() || st.size > MAX_SHEBANG_SCRIPT_BYTES) return null;
+    fd = openSync(abs, "r");
+    const buf = Buffer.alloc(1024);
+    const n = readSync(fd, buf, 0, 1024, 0);
+    if (n < 2 || buf[0] !== 0x23 || buf[1] !== 0x21) return null;
+    const lines = buf.subarray(0, n).toString("utf8").split(/\r?\n/);
+    // A generated script (autoconf's `configure`, a build tool's wrapper) says so in its first lines.
+    if (lines.slice(1, 6).some((l) => /\b(?:generated|auto-?generated)\b/i.test(l))) return null;
+    return getLanguageForShebang(lines[0]!);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function readText(path: string): string {

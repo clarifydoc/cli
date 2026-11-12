@@ -181,6 +181,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   routerOutlet: JS_ROUTER_OUTLET,
   testCommand: jsTestCommand,
   language: "javascript",
+  shebangInterpreter: /^(?:node(?:js)?|tsx|ts-node|bun|deno)$/,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   family: "script",

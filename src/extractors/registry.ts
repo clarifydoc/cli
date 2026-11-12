@@ -332,6 +332,11 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
 export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
   claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
 
+/** The interpreters of extension-less scripts, by language (`shebangInterpreter`). */
+export const SHEBANG_INTERPRETERS: ReadonlyArray<{ language: Language; pattern: RegExp }> = ALL_MANIFESTS.flatMap((m) =>
+  m.shebangInterpreter ? [{ language: m.language, pattern: m.shebangInterpreter }] : [],
+);
+
 /** Language → the prefix its partials carry (`_` for Sass). See `LanguagePluginManifest.partialPrefix`. */
 export const PARTIAL_PREFIX_BY_LANGUAGE: ReadonlyMap<string, string> = new Map(
   ALL_MANIFESTS.filter((m) => m.partialPrefix).map((m) => [m.language, m.partialPrefix!]),
@@ -383,7 +388,7 @@ export function importsNameDirectories(language: string): boolean {
 export const MIGRATION_FILE_RULES: readonly MigrationFileRule[] = ALL_MANIFESTS.flatMap((m) => m.migrationFiles ?? []);
 
 /** Every manifest's `sourceDirs` (`bin/` beside a `META6.json`, …): skipped directories that are source. */
-export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
+export const SOURCE_DIRS: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[] }> = ALL_MANIFESTS.flatMap((m) => m.sourceDirs ?? []);
 /** Every manifest's `packageRoots` (`src/main/java/`, …): below them, a directory named like build output is a package. */
 export const PACKAGE_ROOTS: readonly RegExp[] = ALL_MANIFESTS.flatMap((m) => m.packageRoots ?? []);
 /** Files a default ignore skips that a marker says are source (`readmitFiles`). */

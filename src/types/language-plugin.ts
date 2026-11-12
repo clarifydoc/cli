@@ -1834,9 +1834,18 @@ export interface LanguagePluginManifest {
    * distribution's scripts). The marker path is relative to the directory's
    * parent; the directory is read with the default ignores below it.
    * `markerMatches` narrows it to markers whose text matches (`package.json`
-   * declaring `"bin"`).
+   * declaring `"bin"`). `requiresAnyOf` (paths beside the marker) additionally needs
+   * one of them to exist: a Gemfile kept only for tooling, with no `app/` or `lib/`, is no gem.
    */
-  sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp }>;
+  sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[] }>;
+  /**
+   * The interpreter name (the program a `#!` line runs — `ruby` in
+   * `#!/usr/bin/env ruby`, after `env` and its flags) of this language's
+   * extension-less scripts: `/^ruby\d*$/`. Discovery then admits such a
+   * script in a `bin/`, `script/` or `scripts/` directory (and the project
+   * root) as a file of this language. Two languages must not claim one name.
+   */
+  shebangInterpreter?: RegExp;
   /**
    * Files a default ignore skips that are this ecosystem's SOURCE where a
    * marker says so: below each `marker` file whose text `markerIs` accepts,

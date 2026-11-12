@@ -73,3 +73,5 @@ If a pattern is used by multiple plugins but not all, it probably belongs here w
 - **Line-by-line processing** — all pattern matching operates on one line at a time
 - **Indent-based languages** need `indentBased: true` and correct indentation — ragged inputs will produce bad end-line estimates
 - **Params/properties are best-effort** — the regex won't handle every corner case (default values with commas, generic brackets with commas). That's OK; tree-sitter is the accurate path when available.
+
+- [shebang-scripts.ts](shebang-scripts.ts) `findShebangScripts` reads extension-less `#!` scripts for the reachability models' name mentions. Discovery admits the same scripts as analyzed files through each manifest's `shebangInterpreter` (core/file-discovery.ts); the two share the bounds (regular files, no dotfiles or credential-looking names, first bytes before the whole file).

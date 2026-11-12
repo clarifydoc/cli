@@ -10,6 +10,7 @@ import { HASH_DOCS } from "../../shared/doc-comment-specs.js";
 export const bashManifest: LanguagePluginManifest = {
   docComments: HASH_DOCS,
   language: "bash",
+  shebangInterpreter: /^(?:bash|sh|dash)$/,
   family: "shell",
   parsing: "tree-sitter",
   extensions: [".sh", ".bash"],

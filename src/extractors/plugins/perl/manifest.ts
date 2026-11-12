@@ -11,6 +11,7 @@ import { cpanPackageManager } from "./package-manifests.js";
 export const perlManifest: LanguagePluginManifest = {
   docComments: PERL_DOCS,
   language: "perl",
+  shebangInterpreter: /^perl\d*(?:\.\d+)*$/,
   family: "perl",
   packageManagers: [cpanPackageManager],
   packageEcosystems: ["cpan"],

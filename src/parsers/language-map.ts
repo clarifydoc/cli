@@ -1,5 +1,5 @@
 import type { Language } from "../types/analysis.js";
-import { EXTENSION_TO_LANGUAGE as REGISTRY_EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE as REGISTRY_EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE, SHEBANG_INTERPRETERS } from "../extractors/registry.js";
 
 /**
  * Map file extensions to Language — aggregated from every plugin's meta
@@ -20,4 +20,27 @@ export function getLanguageForFile(filePath: string): Language | null {
   if (lastDot < 0) return null;
   const ext = filePath.slice(lastDot).toLowerCase();
   return EXTENSION_TO_LANGUAGE[ext] ?? null;
+}
+
+/**
+ * The language of an extension-less script from its first line: the program a
+ * `#!` line runs, looking through `env` and its flags/assignments
+ * (`#!/usr/bin/env -S ruby -w` -> `ruby`). Null when the line is no shebang or
+ * names an interpreter no plugin declares.
+ */
+export function getLanguageForShebang(firstLine: string): Language | null {
+  if (!firstLine.startsWith("#!")) return null;
+  const words = firstLine.slice(2).trim().split(/\s+/);
+  const leaf = (w: string) => w.slice(w.lastIndexOf("/") + 1);
+  let program = leaf(words[0] ?? "");
+  if (program === "env") {
+    // Options that take a value (`-u NAME`, `-C DIR`) are skipped with it.
+    let i = 1;
+    while (i < words.length && (words[i]!.startsWith("-") || words[i]!.includes("="))) {
+      i += /^(?:-u|-C|--unset|--chdir)$/.test(words[i]!) ? 2 : 1;
+    }
+    program = leaf(words[i] ?? "");
+  }
+  if (!program) return null;
+  return SHEBANG_INTERPRETERS.find((s) => s.pattern.test(program))?.language ?? null;
 }

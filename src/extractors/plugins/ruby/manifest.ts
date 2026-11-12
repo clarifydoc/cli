@@ -23,7 +23,9 @@ export const rubyManifest: LanguagePluginManifest = {
   callPathsFromHead: true,
   family: "ruby",
   // A gem's or app's executables (`bin/club`); `bin/` is .NET build output elsewhere.
-  sourceDirs: [{ dir: "bin", marker: "Gemfile" }, { dir: "bin", marker: "*.gemspec" }],
+  // A Gemfile alone may only serve tooling: it makes `bin/` source beside an `app/` or `lib/`.
+  sourceDirs: [{ dir: "bin", marker: "Gemfile", requiresAnyOf: ["app", "lib"] }, { dir: "bin", marker: "*.gemspec" }],
+  shebangInterpreter: /^ruby\d*(?:\.\d+)*$/,
   // `Foo.new(…)` runs `initialize`.
   constructorCalls: ["new"],
   importsNameDirectories: true,
