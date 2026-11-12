@@ -5322,9 +5322,10 @@ function resolveCallToDefinitionBody(
       const spread = factoryAt ? spreadMember(ctx, factoryAt, factory.def.name, member, 0) : null;
       if (spread) return mkLink(spread.file, spread.symbol, spread.line, "INFERRED", "direct");
     }
-    if (fwd) return mkLink(fwd.file, fwd.def.name, fwd.def.line, "INFERRED", "factory-via");
-    if (viaDef) {
-      return mkLink(targetFile, viaDef.name, viaDef.line, "INFERRED", "factory-via");
+    // A construction is no factory: `const league: League = new League(); league.promoteClub()` names a member
+    // the class lacks, so the call links nothing — never the class itself.
+    if (factory && !ctx.classAt.has(memberKey(factory.file, factory.def.name))) {
+      return mkLink(factory.file, factory.def.name, factory.def.line, "INFERRED", "factory-via");
     }
   }
 
