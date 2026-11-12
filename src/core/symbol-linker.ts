@@ -549,7 +549,11 @@ export function buildSymbolLinks(
       const existing = deduped[existingIdx]!;
       const existingRank = existing.confidence ? CONFIDENCE_RANK[existing.confidence] : 0;
       const newRank = link.confidence ? CONFIDENCE_RANK[link.confidence] : 0;
-      if (newRank > existingRank) deduped[existingIdx] = link;
+      const winner = newRank > existingRank ? link : existing;
+      // One link per caller and name: it stands at the earliest line either record gave it,
+      // whichever record (two passes list one name in no fixed order) wins on confidence.
+      const earliest = Math.min(existing.sourceLine, link.sourceLine);
+      deduped[existingIdx] = Number.isFinite(earliest) && winner.sourceLine !== earliest ? { ...winner, sourceLine: earliest } : winner;
     }
   }
 
