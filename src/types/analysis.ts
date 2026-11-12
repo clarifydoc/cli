@@ -2885,8 +2885,11 @@ export interface DataSourceInfo {
    * whose origin is known — a parameter of the enclosing function, or a value
    * of the request (`where: { username: name }`, `findOneBy({ slug })`), by
    * dotted path. Literal comparisons are left out. Absent when there is none.
+   * `fieldOf`: set while `field` is a MEMBER of the struct type it names (a struct
+   * literal used as the condition: `Where(&Club{ID: id})`), until a project pass
+   * replaces `field` with the column the type's tag or naming convention gives it.
    */
-  whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string }>;
+  whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string; fieldOf?: string }>;
   /**
    * For `database`: an object whose fields ARE the statement's filter, each
    * compared with the column of its name — a condition the function is handed
@@ -2898,8 +2901,10 @@ export interface DataSourceInfo {
    * `&Club{ID: id}` handed in) becomes a filter on the column of that name.
    * `except`: fields the function writes before the statement, whose values
    * are no longer the ones handed in.
+   * `columns`: member → physical column, for the members whose column is not
+   * their name (a struct tag, a naming convention) — a project pass fills it.
    */
-  whereObjects?: Array<{ origin: CallArgOrigin["origin"]; except?: string[] }>;
+  whereObjects?: Array<{ origin: CallArgOrigin["origin"]; except?: string[]; columns?: Record<string, string> }>;
   /**
    * For an api-call: the URL's leading base was a runtime value no pass could
    * resolve (`this.baseUrl`, `environment.apiBaseUrl`, a client's base), so it

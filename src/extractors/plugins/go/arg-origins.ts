@@ -43,6 +43,9 @@ type Origin = CallArgOrigin["origin"];
  * filtered on whole in the helper — a condition parameter (`Where(cond)`) or
  * a bean xorm conditions on its set fields (`s.Get(c)`, `club = *c;
  * s.Get(&club)`): `DataSourceInfo.whereObjects`.
+ *
+ * A struct literal used as the condition (`Where(&Club{ID: id})`) names MEMBERS, not columns: its rows carry the
+ * type (`whereFields[].fieldOf`) and the Go entity pass maps them through the struct's tags — struct-columns.ts.
  */
 
 const ROUTE_READS: RegExp[] = [
@@ -401,7 +404,7 @@ const COND_SLICE = /^\[\]builder\.Cond\s*\{/;
  * a `[]builder.Cond{…}` and what is `append`ed to it, and a local holding one of them, built before
  * line `line0` (`conds := []builder.Cond{…}` … `builder.And(conds...)`). Null when `expr` is none of these.
  */
-function conditionPairs(expr: string, scope: Scope, line0: number | undefined, depth = 0): Array<[string, string]> | null {
+function conditionPairs(expr: string, scope: Scope, line0: number | undefined, depth = 0): Array<[string, string, string?]> | null {
   const e = expr.trim().replace(/\.\.\.$/, "");
   if (depth > 4 || !e) return null;
   const whole = (open: number) => closeAt(e, open) === e.length - 1;
@@ -502,11 +505,11 @@ function statementAt(lines: readonly string[], line0: number, scope: Scope): str
 }
 
 /** `builder.Eq{"id": x, "repo_id": y}` / `&Label{RepoID: x}` pairs → field and value text. */
-function pairsOf(body: string, quotedKeys: boolean): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
+function pairsOf(body: string, quotedKeys: boolean, owner?: string): Array<[string, string, string?]> {
+  const out: Array<[string, string, string?]> = [];
   for (const part of splitTopLevel(body)) {
     const m = quotedKeys ? /^"([\w.`"]+)"\s*:\s*([\s\S]+)$/.exec(part) : /^([A-Z]\w*)\s*:\s*([\s\S]+)$/.exec(part);
-    if (m) out.push([m[1]!.replace(/[`"]/g, ""), m[2]!.trim()]);
+    if (m) out.push(owner ? [m[1]!.replace(/[`"]/g, ""), m[2]!.trim(), owner] : [m[1]!.replace(/[`"]/g, ""), m[2]!.trim()]);
   }
   return out;
 }
@@ -515,8 +518,8 @@ function pairsOf(body: string, quotedKeys: boolean): Array<[string, string]> {
  * Fields a statement filters on, each with the value text it compares with, and the objects it
  * filters on whole (`objects`: xorm only — a bean conditions on its set fields, GORM's on its key).
  */
-function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm: boolean): { pairs: Array<[string, string]>; objects: NonNullable<DataSourceInfo["whereObjects"]> } {
-  const out: Array<[string, string]> = [];
+function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm: boolean): { pairs: Array<[string, string, string?]>; objects: NonNullable<DataSourceInfo["whereObjects"]> } {
+  const out: Array<[string, string, string?]> = [];
   const objects: NonNullable<DataSourceInfo["whereObjects"]> = [];
   // `.Where("a = ? AND b = ?", x, y)` / `.And(…)` / `.Or(…)` / gorm `.Not(…)`.
   for (const m of stmt.matchAll(/\.\s*(?:Where|And|Or|Not|Having)\s*\(/g)) {
@@ -562,10 +565,18 @@ function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm
     const o = bean ? objectOrigin(bean, scope, line0) : null;
     if (o && !objects.some((x) => JSON.stringify(x.origin) === JSON.stringify(o.origin))) objects.push(o);
   }
-  for (const m of stmt.matchAll(/\.\s*(?:Get|Exist|Where|Find|First|Delete|Count)\s*\(\s*&[A-Za-z_][\w.]*\s*\{/g)) {
+  // The literal's fields are MEMBERS of its type, named as the struct declares them (`ID`, not the column
+  // `club_id`): the type travels with them (`fieldOf`) for the project pass that reads its tags.
+  for (const m of stmt.matchAll(/\.\s*(?:Get|Exist|Where|Find|First|Delete|Count)\s*\(\s*&([A-Za-z_][\w.]*)\s*\{/g)) {
     const open = m.index! + m[0].length - 1;
     const close = closeAt(stmt, open);
-    if (close > 0) out.push(...pairsOf(stmt.slice(open + 1, close), false));
+    if (close > 0) out.push(...pairsOf(stmt.slice(open + 1, close), false, m[1]!));
+  }
+  // `Find(&clubs, &Club{LeagueID: id})` — the bean is the second argument.
+  for (const m of stmt.matchAll(/\.\s*(?:Find|FindAndCount|Iterate)\s*\(\s*[^,(){}]+,\s*&([A-Za-z_][\w.]*)\s*\{/g)) {
+    const open = m.index! + m[0].length - 1;
+    const close = closeAt(stmt, open);
+    if (close > 0) out.push(...pairsOf(stmt.slice(open + 1, close), false, m[1]!));
   }
   return { pairs: out, objects };
 }
@@ -581,10 +592,10 @@ export function addGoWhereFields(lines: readonly string[], sources: DataSourceIn
     const verb = d.name.replace(/^[^:]*:\s*/, "");
     const fields: NonNullable<DataSourceInfo["whereFields"]> = [];
     const { pairs, objects } = filtersOf(statementAt(lines, d.line - 1, scope), verb, scope, d.line - 1, d.name.startsWith("xorm"));
-    for (const [field, value] of pairs) {
+    for (const [field, value, owner] of pairs) {
       const o = goValueOrigin(value, scope, 0, d.line - 1);
       if (!o || o.origin.kind === "literal" || o.origin.kind === "receiver" || fields.some((f) => f.field === field)) continue;
-      fields.push({ field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}) });
+      fields.push({ field, origin: o.origin, ...(o.transform ? { transform: o.transform } : {}), ...(owner ? { fieldOf: owner } : {}) });
     }
     if (fields.length > 0) d.whereFields = fields;
     if (objects.length > 0) d.whereObjects = objects;

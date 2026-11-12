@@ -1,4 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { mapStructFilterColumns } from "./struct-columns.js";
 import { simpleTypeName, stripTypeModifiers } from "../../shared/type-parser.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 
@@ -215,6 +216,8 @@ export class GoEntityExtractor extends EntityExtractor {
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
     const go = analyses.filter((a) => a.language === "go");
+    // A filter written as a struct names its members; the table has columns.
+    mapStructFilterColumns(go);
     const entityOrm = new Map<string, string>();
     // The entities each package (directory) declares, for the foreign-key pass below.
     const byDir = new Map<string, string[]>();

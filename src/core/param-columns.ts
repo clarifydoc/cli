@@ -166,7 +166,7 @@ export function computeParamColumns(input: {
       // unless the filter compares that value with a column it names itself, which says it better.
       for (const o of d.whereObjects ?? []) {
         if (named || slot.kind !== "field" || !handsObject(o.origin, slot) || o.except?.includes(slot.name)) continue;
-        out.push({ column: column(slot.name), hops, confidence });
+        out.push({ column: column(o.columns?.[slot.name] ?? slot.name), hops, confidence });
       }
     }
     for (const call of calls) {
