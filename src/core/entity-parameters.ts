@@ -16,8 +16,11 @@ import { innermostAt, spansOf } from "./api-route-symbol-links.js";
  * an entity, this adds a row of the same access at the call site naming that
  * class, in the caller's file — so the data-access pass attributes it to the
  * calling function and every route reaching that function reaches the table.
- * An argument naming anything else (a non-entity class, a local, the caller's
- * own parameter) binds nothing. One level deep, like the channel factories.
+ * A model passed by keyword (`model_count(model=Club)`, reported as `model=Club`
+ * after the positional arguments) binds the parameter of that name. A function that hands
+ * its own parameter on to such a helper (`def total(model): return model_count(model)`)
+ * is a helper of that parameter itself, up to three levels. An argument naming anything
+ * else (a non-entity class, a local, a parameter nothing hands on) binds nothing.
  * In memory only; per-file JSON is untouched.
  *
  * Returns the number of rows added.
@@ -59,19 +62,61 @@ export function expandEntityParameters(analyses: readonly FileAnalysis[], links:
     return at ? functionAt(a, at.symbol, at.line) : undefined;
   };
   const leafOf = (name: string) => name.replace(/\(.*$/, "").split(/\.|->|::/).pop()!;
+  // The argument a call hands a parameter: by keyword (`name=value`), else by position.
+  const argFor = (call: { args?: string[] }, param: string, index: number): string => {
+    const kw = call.args?.find((x) => x.startsWith(`${param}=`) && x[param.length + 1] !== "=");
+    if (kw) return kw.slice(param.length + 1).trim();
+    const at = call.args?.[index] ?? "";
+    return /^[A-Za-z_]\w*=(?!=)/.test(at) ? "" : at;
+  };
+  const helpersOf = (link: SymbolLink) => {
+    const all = helpers.get(`${link.targetFile}::${link.targetSymbol}`);
+    // Two nested helpers of one name in a file: the link's target line says which.
+    return all && new Set(all.map((h) => h.line)).size > 1 ? all.filter((h) => h.line === link.targetLine) : all;
+  };
+  const callsOf = (link: SymbolLink) => {
+    const caller = byFile.get(link.sourceFile);
+    const leaf = leafOf(link.callName);
+    const fn = caller ? callerOf(caller, link.sourceLine) : undefined;
+    return { caller, fn, calls: fn?.calls?.filter((c) => c.args && leafOf(c.name) === leaf) ?? [] };
+  };
+
+  // A function that hands its own parameter on to a helper's model parameter is a helper of that
+  // parameter itself: the helper's rows are carried to it, at its own parameter's position.
+  for (let pass = 0; pass < 2; pass++) {
+    let grew = false;
+    for (const link of links) {
+      if (link.confidence === "AMBIGUOUS") continue;
+      const rows = helpersOf(link);
+      if (!rows?.length) continue;
+      const { caller, fn, calls } = callsOf(link);
+      if (!caller || !fn) continue;
+      const key = `${link.sourceFile}::${link.sourceSymbol}`;
+      for (const call of calls) {
+        for (const { row, index } of rows) {
+          const arg = argFor(call, row.entityParameter!, index);
+          const own = /^[a-z_]\w*$/.test(arg) ? fn.params.findIndex((p) => p.name === arg) : -1;
+          if (own < 0) continue;
+          const held = helpers.get(key) ?? helpers.set(key, []).get(key)!;
+          if (held.some((h) => h.index === own && h.row.name === row.name && h.row.line === row.line && h.row.access === row.access)) continue;
+          held.push({ row: { ...row, entityParameter: arg }, index: own, line: fn.line });
+          grew = true;
+        }
+      }
+    }
+    if (!grew) break;
+  }
 
   let added = 0;
   for (const link of links) {
     if (link.confidence === "AMBIGUOUS") continue;
-    const all = helpers.get(`${link.targetFile}::${link.targetSymbol}`);
-    // Two nested helpers of one name in a file: the link's target line says which.
-    const rows = all && new Set(all.map((h) => h.line)).size > 1 ? all.filter((h) => h.line === link.targetLine) : all;
-    const caller = rows?.length ? byFile.get(link.sourceFile) : undefined;
-    if (!rows || !caller) continue;
-    const leaf = leafOf(link.callName);
-    for (const call of callerOf(caller, link.sourceLine)?.calls?.filter((c) => c.args && leafOf(c.name) === leaf) ?? []) {
+    const rows = helpersOf(link);
+    if (!rows?.length) continue;
+    const { caller, calls } = callsOf(link);
+    if (!caller) continue;
+    for (const call of calls) {
       for (const { row, index } of rows) {
-        const model = /^(?:[A-Za-z_]\w*(?:\.|::))*([A-Z]\w*)$/.exec(call.args![index] ?? "")?.[1];
+        const model = /^(?:[A-Za-z_]\w*(?:\.|::))*([A-Z]\w*)$/.exec(argFor(call, row.entityParameter!, index))?.[1];
         if (!model || !entities.has(model)) continue;
         const exists = caller.dataSources.some((d) => d.kind === "database" && d.line === call.line && d.entity === model && d.access === row.access);
         if (exists) continue;

@@ -138,15 +138,43 @@ function pythonClassArgs(node: Node): string[] | null {
   return (base ? positional.some((t) => /^[A-Za-z_]\w*$/.test(t)) : handsClass) ? positional : null;
 }
 
-/** `model_count(Club)`, `self._count(session, models.Player)`: the positional arguments when one is a class by name. */
+/**
+ * `model_count(Club)`, `self._count(session, models.Player)`, `model_count(model=Club)`: the positional
+ * arguments, then each keyword one as `name=value`, when one is a class by name — or, to follow a
+ * helper that hands its own parameter on (`def a(model): return b(model)`), a parameter of the
+ * enclosing function.
+ */
 function helperClassArgs(node: Node, fn: Node): string[] | null {
   if (fn.type === "identifier" ? TYPE_TAKING_BUILTINS.has(fn.text) : !/^(?:self|cls)\.[a-z_]\w*$/.test(fn.text)) return null;
-  const positional: string[] = [];
+  const out: string[] = [];
+  const values: string[] = [];
   for (const a of node.childForFieldName("arguments")?.namedChildren ?? []) {
     if (a.type === "comment") continue;
-    if (a.type === "keyword_argument" || a.type === "dictionary_splat") break;
+    if (a.type === "keyword_argument") {
+      const name = a.childForFieldName("name")?.text;
+      const value = a.childForFieldName("value")?.text;
+      if (name && value) {
+        out.push(`${name}=${value}`);
+        values.push(value);
+      }
+      continue;
+    }
     if (a.type === "list_splat") return null;
-    positional.push(a.text);
+    if (a.type === "dictionary_splat") break;
+    out.push(a.text);
+    values.push(a.text);
   }
-  return positional.some((t) => /^(?:[a-z_]\w*\.)*[A-Z](?=\w*[a-z])\w*$/.test(t)) ? positional : null;
+  const isClass = (t: string) => /^(?:[a-z_]\w*\.)*[A-Z](?=\w*[a-z])\w*$/.test(t);
+  return values.some((t) => isClass(t) || (/^[a-z_]\w*$/.test(t) && t !== "self" && t !== "cls" && isParameterOfEnclosing(t, node))) ? out : null;
+}
+
+/** `name` is a parameter of the function that encloses `at`. */
+function isParameterOfEnclosing(name: string, at: Node): boolean {
+  let fn: Node | null = at.parent;
+  while (fn && fn.type !== "function_definition" && fn.type !== "lambda") fn = fn.parent;
+  if (fn?.type !== "function_definition") return false;
+  return (fn.childForFieldName("parameters")?.namedChildren ?? []).some((p) => {
+    const id = p.type === "identifier" ? p : p.childForFieldName("name") ?? (p.type === "typed_parameter" ? p.namedChildren[0] : null);
+    return id?.type === "identifier" && id.text === name;
+  });
 }

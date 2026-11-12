@@ -474,9 +474,14 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           // `select(func.count(model.id))` in `def model_count(model)` names the function's parameter, which core binds per call.
           let entityAttribute: string | undefined;
           let entityParameter: string | undefined;
+          // `for model in (Tag, Tool): select(model)` reads every class the loop lists: a row of its own for each after the first.
+          let loopAlso: string[] = [];
           if (!table && !tableRef && !instance && !relatedField) {
             const stated = statementModel(node);
-            if (stated?.model) table = stated.model;
+            if (stated?.model) {
+              table = stated.model;
+              loopAlso = stated.more ?? [];
+            }
             else if (stated?.attribute) entityAttribute = stated.attribute;
             else if (stated?.parameter) entityParameter = stated.parameter;
             if (stated) access ??= stated.access;
@@ -500,6 +505,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(access ? { access } : {}),
           }));
           sources.push(...joined);
+          for (const model of loopAlso) sources.push(this.ds({ kind: "database", name: fnName, target: model, entity: model, line: node.startPosition.row + 1, ...(access ? { access } : {}) }));
           for (const model of addedAlso) sources.push(this.ds({ kind: "database", name: fnName, target: model, entity: model, line: node.startPosition.row + 1, access: "write" }));
         }
       }
@@ -556,7 +562,7 @@ const PY_SESSION_STATEMENT_LEAVES = new Set(["exec", "scalars", "scalar"]);
 const PY_STATEMENT_LEAVES = new Set(["execute", "exec", "scalars", "scalar", "query"]);
 
 /** The model a statement names: a class, an attribute of the instance, or a parameter of the enclosing function. */
-type StatedModel = { model?: string; attribute?: string; parameter?: string; access: "read" | "write" };
+type StatedModel = { model?: string; attribute?: string; parameter?: string; more?: string[]; access: "read" | "write" };
 
 /**
  * The model a SQLAlchemy call reaches, as the statement handed to the session
@@ -588,7 +594,7 @@ function statementModel(call: Node): StatedModel | null {
   const found = new Map<string, StatedModel>();
   for (const value of arg.type === "identifier" ? assignedValues(arg.text, handed) : [arg]) {
     const stmt = rootStatement(value);
-    if (stmt) found.set(`${stmt.model ?? ""}|${stmt.attribute ?? ""}|${stmt.parameter ?? ""}|${stmt.access}`, stmt);
+    if (stmt) found.set(`${stmt.model ?? ""}|${stmt.attribute ?? ""}|${stmt.parameter ?? ""}|${(stmt.more ?? []).join(",")}|${stmt.access}`, stmt);
   }
   return found.size === 1 ? [...found.values()][0]! : null;
 }
@@ -614,19 +620,72 @@ function rootStatement(expr: Node): StatedModel | null {
  * an SQL function over a column (`func.count(Club.id)`) → that column's class; `model` /
  * `model.id` where `model` is a parameter the enclosing function never rebinds → the parameter.
  */
-function modelExpression(node: Node): { model?: string; attribute?: string; parameter?: string } | null {
+function modelExpression(node: Node): { model?: string; attribute?: string; parameter?: string; more?: string[] } | null {
   if (node.type === "call" && /^(?:sqlalchemy\.)?func\.\w+$/.test(node.childForFieldName("function")?.text ?? "")) {
     const column = positional(node)[0];
     return column ? modelExpression(column) : null;
   }
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(node.text)) return null;
   const parts = node.text.split(".");
+  if (parts.length <= 2 && /^[a-z_]/.test(parts[0]!)) {
+    const listed = loopModels(parts[0]!, node);
+    if (listed?.length) return { model: listed[0]!, ...(listed.length > 1 ? { more: listed.slice(1) } : {}) };
+  }
   if ((parts[0] === "self" || parts[0] === "cls") && parts.length >= 2 && parts.length <= 3 && /^[a-z_]/.test(parts[1]!)) return { attribute: parts[1]! };
   if (parts.length <= 2 && /^[a-z_]/.test(parts[0]!) && parts[0] !== "self" && parts[0] !== "cls" && heldByParameter(parts[0]!, node)) return { parameter: parts[0]! };
   const at = parts.findIndex((p) => /^[A-Z]/.test(p));
   // A module path before the class (`models.Club`), a column after it (`Club.id`) — never a member of a member.
   if (at < 0 || parts.slice(0, at).some((p) => !/^[a-z_]/.test(p)) || parts.length - at > 2) return null;
   return { model: parts[at]! };
+}
+
+/**
+ * The classes a loop variable takes when the loop enclosing `at` walks a literal:
+ * `for field, model in {"tags": Tag, "tools": Tool}.items():`, `.values()`, or
+ * `for model in (Tag, Tool):` / `[Tag, Tool]`. Undefined when `name` is not such a variable
+ * or an item is no class by name.
+ */
+function loopModels(name: string, at: Node): string[] | undefined {
+  for (let cur: Node | null = at, child: Node | null = null; cur; child = cur, cur = cur.parent) {
+    if (cur.type === "function_definition" || cur.type === "class_definition") return undefined;
+    if (cur.type !== "for_statement" || !child || child.id !== cur.childForFieldName("body")?.id) continue;
+    const left = cur.childForFieldName("left");
+    let right = cur.childForFieldName("right");
+    if (!left || !right) continue;
+    const targets = left.type === "identifier" ? [left] : left.namedChildren;
+    const at1 = targets.findIndex((t) => t.type === "identifier" && t.text === name);
+    if (at1 < 0) continue;
+    // A loop variable the body rebinds is no longer one of the listed classes.
+    let rebound = false;
+    const scan = (n: Node): void => {
+      if (rebound) return;
+      if ((n.type === "assignment" || n.type === "augmented_assignment") && n.childForFieldName("left")?.text === name) rebound = true;
+      for (const c of n.namedChildren) scan(c);
+    };
+    scan(cur.childForFieldName("body")!);
+    if (rebound) return undefined;
+    let items: Node[] = [];
+    let pairs = false;
+    if (right.type === "call") {
+      const fn = right.childForFieldName("function");
+      const leaf = fn?.childForFieldName("attribute")?.text;
+      const obj = fn?.childForFieldName("object");
+      if (fn?.type !== "attribute" || obj?.type !== "dictionary" || (leaf !== "items" && leaf !== "values")) return undefined;
+      pairs = leaf === "items";
+      right = obj;
+    }
+    if (right.type === "dictionary") {
+      if (targets.length !== (pairs ? 2 : 1)) return undefined;
+      if (pairs && at1 !== 1) return undefined;
+      items = right.namedChildren.filter((c) => c.type === "pair").map((c) => c.childForFieldName("value")!);
+    } else if (right.type === "list" || right.type === "tuple" || right.type === "set") {
+      if (targets.length !== 1) return undefined;
+      items = right.namedChildren;
+    } else return undefined;
+    const names = items.map((i) => /^(?:[a-z_]\w*\.)*([A-Z]\w*)$/.exec(i?.text ?? "")?.[1]);
+    return names.length > 0 && names.every((n): n is string => !!n) ? [...new Set(names)] : undefined;
+  }
+  return undefined;
 }
 
 /** `name` is a parameter of the function enclosing `at`, which its body never assigns or loops over. */
