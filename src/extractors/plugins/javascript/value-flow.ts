@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { dispatchMapCallee, dispatchMapMember } from "./dispatch-maps.js";
+import { boundAtSite } from "./block-scope.js";
 import { heldFunction } from "./held-functions.js";
 
 /**
@@ -185,6 +186,8 @@ class Flow {
   root!: Node;
   /** `a.b(…)` calls on a local object: invoked only when the function stores into that member itself. */
   private readonly memberCalls: Array<{ cell: ValueCell; name: string; line: number }> = [];
+  /** Loop variables and element-callback parameters: bound where they are used, by construction. */
+  private readonly iterNames = new Set<string>();
   private fnDepth = 0;
   private plainDepth = 0;
   private tmp = 0;
@@ -445,6 +448,7 @@ class Flow {
     const list = this.refsOf(node.childForFieldName("right")).find((r) => r.cell)?.cell;
     if (list) {
       this.names.add(left.text);
+      this.iterNames.add(left.text);
       this.facts.push({ kind: "copy", from: elementOf(list), to: { name: left.text }, line: node.startPosition.row + 1 });
     }
   }
@@ -476,6 +480,7 @@ class Flow {
         const [first] = parameterNames(cb);
         if (first) {
           this.names.add(first);
+          this.iterNames.add(first);
           this.facts.push({ kind: "copy", from: elementOf(receiver), to: { name: first }, line });
         }
       }
@@ -496,7 +501,9 @@ class Flow {
     // The invoke: a call that runs a held value.
     if (node.type !== "call_expression" || !callee) return;
     if (callee.type === "identifier") {
-      if (this.names.has(callee.text) || this.moduleView?.written.has(callee.text)) this.facts.push({ kind: "invoke", cell: { name: callee.text }, call: callee.text, line });
+      // Only where the name is bound at the site: a sibling block's `const save` does not hide the module's `save`.
+      const here = this.names.has(callee.text) && (this.formals.has(callee.text) || this.iterNames.has(callee.text) || boundAtSite(node, callee.text));
+      if (here || (!this.names.has(callee.text) && this.moduleView?.written.has(callee.text))) this.facts.push({ kind: "invoke", cell: { name: callee.text }, call: callee.text, line });
       return;
     }
     if (callee.type === "subscript_expression") {
