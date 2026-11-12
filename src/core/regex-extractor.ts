@@ -115,6 +115,8 @@ export function extractWithRegex(
   if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
   const moduleBindings = spec.extractModuleBindings?.(lines);
   if (moduleBindings && moduleBindings.length > 0) analysis.moduleBindings = moduleBindings;
+  const moduleValueFlow = spec.extractModuleValueFlow?.(lines, analysis);
+  if (moduleValueFlow && moduleValueFlow.length > 0) analysis.moduleValueFlow = moduleValueFlow;
   if (spec.extractStringConstants) {
     const consts = spec.extractStringConstants(lines);
     if (Object.keys(consts).length > 0) analysis.stringConstants = consts;

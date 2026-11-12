@@ -45,6 +45,7 @@ import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 import { rubyModuleBindings } from "./module-bindings.js";
+import { extractRubyModuleValueFlow, extractRubyValueFlow } from "./value-flow.js";
 
 /** The helper name of a `resources … as: :teams` route: `teams`, `team`, `new_team`, `edit_team`. */
 function resourceHelper(prefix: string, as: string, action: string, singular: boolean): string {
@@ -1356,6 +1357,8 @@ export const rubySpec: RegexLangSpec = {
         addSymbolListDispatchCalls(lines, code, cls, m);
         addBareStatementCalls(code, cls, m, bound);
         addSuperCalls(code, m);
+        const valueFlow = extractRubyValueFlow(code, m, cls);
+        if (valueFlow) m.valueFlow = valueFlow;
       }
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
@@ -1417,6 +1420,10 @@ export const rubySpec: RegexLangSpec = {
   // `SERVICE = ClubService.new` at the top level: the constant's type, for `SERVICE.process`.
   extractModuleBindings: (lines) => rubyModuleBindings(lines),
 
+  // `HANDLERS = { save: method(:save) }`: a constant holding function values, read by name from every method.
+  extractModuleValueFlow: (lines, analysis) =>
+    extractRubyModuleValueFlow(rubyCodeLinesOf(lines), [...analysis.functions.filter((f) => f.name !== "<setup>"), ...analysis.classes.flatMap((c) => c.methods)]),
+
   // `repo = UserRepo.new`, `repo = AppContainer[:user_repo]`.
   extractLocalTypes: (bodyLines, fn) => extractRubyLocalTypes(bodyLines, fn),
 
@@ -1437,6 +1444,11 @@ export const rubySpec: RegexLangSpec = {
     }
     addTypedCallsOverFunctions(lines, fns);
     withRubyArgOrigins(lines, fns);
+    const code = rubyCodeLinesOf(lines);
+    for (const fn of fns) {
+      const valueFlow = extractRubyValueFlow(code, fn, null);
+      if (valueFlow) fn.valueFlow = valueFlow;
+    }
     return fns;
   },
 

@@ -7,6 +7,7 @@ import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries,
 import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
 import { extractPhpResponses } from "./responses.js";
 import { phpCollectionElement } from "./collection-element.js";
+import { extractPhpValueFlow } from "./value-flow.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -118,6 +119,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    const valueFlow = extractPhpValueFlow(body, params.filter((p) => !p.type || /^\??(?:callable|Closure|array|string|iterable|mixed|object)$/i.test(p.type.replace(/^\\/, ''))).map((p) => p.name));
+    if (valueFlow) fn.valueFlow = valueFlow;
     this.attachRequestAccess(fn, body);
     if (body && this.fileMayRespond) {
       const responses = extractPhpResponses(body.text);
@@ -238,6 +241,8 @@ export class PhpExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
     };
     if (!body && node.children.some((c) => c.type === "abstract_modifier")) fn.abstract = true;
+    const valueFlow = extractPhpValueFlow(body, params.filter((p) => !p.type || /^\??(?:callable|Closure|array|string|iterable|mixed|object)$/i.test(p.type.replace(/^\\/, ''))).map((p) => p.name));
+    if (valueFlow) fn.valueFlow = valueFlow;
     this.attachRequestAccess(fn, body);
     if (body && this.fileMayRespond) {
       const responses = extractPhpResponses(body.text);
