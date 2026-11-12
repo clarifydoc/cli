@@ -32,7 +32,10 @@ import { extractGoImports } from "./imports.js";
  * as an Echo router's declared type or constructor, or a file importing no
  * other router library, says) and wrappers around the handler
  * (`mux.Handle("/x", auth(h))`, `timeout.New(timeout.WithHandler(h))`) are the
- * route's own guards. Every guard text
+ * route's own guards. Echo's `e.Add("GET", "/x", h, m…)` is a route with that verb, and the middleware after an
+ * inline closure (`e.GET("/x", func(c echo.Context) error {…}, authRequired)`) is recorded. A handler built by a
+ * call whose arguments are variables the file declares (`r.GET("/x", handlers.GetClubs(db))`) is the factory
+ * `handlers.GetClubs`, never `db`. Every guard text
  * lands in `middleware`; the ones whose name reads as an auth check
  * (`AuthRequired`, `jwtauth.Verifier`, `RequireRole("admin")`) also fill
  * `auth` — a scheme when the name says how (jwt/bearer/basic/oauth), roles
@@ -92,6 +95,9 @@ const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|
 const ECHO_IMPORT_RE = /(?:^|\/)labstack\/echo(?:\/v\d+)?$/;
 /** Router libraries other than Echo: with one imported, a receiver of unstated type may be theirs. */
 const OTHER_ROUTER_IMPORT_RE = /(?:^|\/)(?:gin-gonic\/gin|gofiber\/fiber|go-chi\/chi|gorilla\/mux|julienschmidt\/httprouter|kataras\/iris|beego|macaron|hertz)(?:\/|$)/;
+
+/** `e.Add("GET", "/x", h, m…)` — Echo's registration with the verb as an argument. */
+const ECHO_ADD_RE = /(\w+|\))\.\s*Add\s*\(/;
 
 /** `r.Use(a, b)` — router-level middleware. */
 const USE_RE = /(\w+)\.\s*Use\s*\(/;
@@ -276,20 +282,30 @@ const CALL_SHAPE_RE = /^([\w.]+)\s*\(([\s\S]*)\)$/;
  * `timeout.New(…)`. Inside a wrapper the handler is the one function value its arguments hold, searched through
  * nested calls (`otelhttp.NewHandler(http.HandlerFunc(h), "x")`); an option that says it takes the handler
  * (`WithHandler`) names it among several values. Two candidates and none stated (`chain(h.A, h.B)`) is no handler.
- * An inline closure (`func(c *gin.Context) {`) has no name.
+ * An inline closure (`func(c *gin.Context) {`) has no name. A call that is neither a guard nor a conversion and whose
+ * only arguments are variables (`handlers.GetClubs(db)`) is a handler FACTORY: the function it names is the handler
+ * (it builds the closure), and its arguments are never one — `db` is not.
  */
-function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr[] } {
+function unwrapHandler(arg: string, isValue?: (name: string) => boolean): { handler: string | null; guards: GuardAttr[] } {
   const cur = arg.trim();
   if (/^[\w.]+$/.test(cur)) return { handler: cur, guards: [] };
   const top = CALL_SHAPE_RE.exec(cur);
   if (!top) return { handler: null, guards: [] };
   /** Function values found, with the calls wrapping each (outermost first) and whether a call says it is the handler. */
   const found: Array<{ name: string; wrappers: Array<{ callee: string; text: string }>; stated: boolean }> = [];
+  /** Factories: the calls whose variable arguments built the handler, kept as the handler only when nothing else is one. */
+  const factories: Array<{ name: string; wrappers: Array<{ callee: string; text: string }> }> = [];
   const visit = (inner: string, wrappers: Array<{ callee: string; text: string }>, stated: boolean, depth: number): void => {
     for (const a of parseArgs(`(${inner})`, 0).args) {
       if (STRING_RE.test(a)) continue;
       if (/^[A-Za-z_][\w.]*$/.test(a)) {
-        if (!NOT_A_FUNCTION.has(a)) found.push({ name: a, wrappers, stated });
+        if (NOT_A_FUNCTION.has(a)) continue;
+        const own = wrappers[wrappers.length - 1]!.callee;
+        if (isValue?.(a) && !stated && !TRANSPARENT_WRAPPERS.has(own) && !namesGuard(own)) {
+          if (!factories.some((f) => f.name === own)) factories.push({ name: own, wrappers: wrappers.slice(0, -1) });
+          continue;
+        }
+        found.push({ name: a, wrappers, stated });
         continue;
       }
       const call = depth < 4 ? CALL_SHAPE_RE.exec(a) : null;
@@ -299,10 +315,62 @@ function unwrapHandler(arg: string): { handler: string | null; guards: GuardAttr
   visit(top[2]!, [{ callee: top[1]!, text: cur }], STATES_HANDLER_RE.test(top[1]!), 1);
   const stated = found.filter((f) => f.stated);
   const pick = stated.length > 0 ? (stated.length === 1 ? stated[0]! : null) : found.length === 1 ? found[0]! : null;
+  if (found.length === 0 && factories.length === 1) {
+    const factory = factories[0]!;
+    return { handler: factory.name, guards: factory.wrappers.filter((w) => !TRANSPARENT_WRAPPERS.has(w.callee)).map((w) => classifyGuard(w.text)) };
+  }
   // The wrappers around the handler are middleware; a transparent conversion or an option naming the handler is not.
   const isGuard = (w: { callee: string }): boolean => !TRANSPARENT_WRAPPERS.has(w.callee) && !(STATES_HANDLER_RE.test(w.callee) && w.callee !== top[1]);
   const guards = (pick ? pick.wrappers : [{ callee: top[1]!, text: cur }]).filter(isGuard).map((w) => classifyGuard(w.text));
   return { handler: pick?.name ?? null, guards };
+}
+
+/** Whether a callee's name says it wraps a handler (`WithHandler`, `HandlerFunc`) rather than builds one. */
+function namesGuard(callee: string): boolean {
+  return STATES_HANDLER_RE.test(callee);
+}
+
+/** A parameter or variable whose type says it holds a function: it may be a handler, so it is never judged a plain value. */
+const FUNC_TYPE_RE = /Handler|^func\b|Middleware|Func\b/;
+
+/**
+ * The names the file declares as variables holding data — parameters (`db *sql.DB`), `var db …`, `db := open()` —
+ * so an argument of a handler-building call (`handlers.GetClubs(db)`) can be told from a handler value. A name a
+ * `func` declares, a parameter of function type and a local assigned a closure or another name are not values.
+ */
+function declaredValues(lines: readonly string[]): Set<string> {
+  const found = new Set<string>();
+  const functions = new Set<string>();
+  const notValues = new Set<string>();
+  for (const line of lines) {
+    const fn = /^func\s*(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[[(]/.exec(line);
+    if (fn) {
+      functions.add(fn[1]!);
+      let open = line.indexOf("(");
+      // A method's receiver group comes first; the parameters are the group after the name.
+      if (/^func\s*\(/.test(line)) open = line.indexOf("(", line.indexOf(")") + 1);
+      const params = open >= 0 ? parseArgs(line, open).args : [];
+      const typed = params.some((a) => /\s/.test(a.trim()));
+      for (const a of params) {
+        const tokens = a.trim().split(/\s+/);
+        if (tokens.length >= 2) {
+          const type = tokens.slice(1).join(" ");
+          (FUNC_TYPE_RE.test(type) ? notValues : found).add(tokens[0]!);
+        } else if (typed && /^[A-Za-z_]\w*$/.test(tokens[0]!)) found.add(tokens[0]!);
+      }
+      continue;
+    }
+    const decl = /^\s*var\s+([A-Za-z_]\w*)\s+(\S.*?)(?:\s*=.*)?$/.exec(line);
+    if (decl) (FUNC_TYPE_RE.test(decl[2]!) ? notValues : found).add(decl[1]!);
+    // `db := open()`, `db, err := sql.Open(…)`: every name on the left; a closure, another name or a handler-building call is no value.
+    const assign = /^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=\s*(.*)$/.exec(line);
+    if (assign) {
+      const fnLike = /^(?:func\b|&?[\w.]+\s*$|[\w.]*(?:[Hh]andler|Func)\w*\s*\()/.test(assign[2]!.trim());
+      for (const name of assign[1]!.split(",").map((n) => n.trim())) (fnLike ? notValues : found).add(name);
+    }
+  }
+  for (const name of [...functions, ...notValues]) found.delete(name);
+  return found;
 }
 
 /** `h := &handler.WebHandler{` / `h = pkg.Handler{` — a local assigned a composite literal (match ends at its `{`). */
@@ -372,7 +440,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
   const inlineRoutes: RouteInfo[] = [];
   let lastInline = false;
   /** Inline routes whose router takes the handler first (Echo): what follows the closure is middleware. */
-  const handlerFirstRoutes = new Set<RouteInfo>();
+  const handlerFirstRoutes = new Map<RouteInfo, { inherited: GuardAttr[]; own: GuardAttr[] }>();
   let lastHandlerFirst = false;
   /** Router variables in scope; those rooted at the function's router parameter map to true. */
   const routerVars = new Map<string, boolean>();
@@ -417,7 +485,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     if (auth) route.auth = auth;
     routes.push(route);
     if (lastInline) inlineRoutes.push(route);
-    if (lastInline && lastHandlerFirst) handlerFirstRoutes.add(route);
+    if (lastInline && lastHandlerFirst) handlerFirstRoutes.set(route, { inherited, own });
   };
 
   /**
@@ -432,7 +500,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     // A string literal between path and handler is a client call's content
     // type, not middleware (`client.Post("/api", "application/json", body)`).
     const guards = (handlerFirst ? rest.slice(1) : rest.slice(0, -1)).filter((a) => !STRING_RE.test(a)).map(classifyGuard);
-    const own = unwrapHandler(handlerArg);
+    const own = unwrapHandler(handlerArg, isValue);
     // An inline closure (`router.GET("/albums/:uid", func(c *gin.Context) {`)
     // has no name of its own: the route carries its body's calls (below).
     lastInline = !own.handler && /^func\s*\(/.test(handlerArg.trim());
@@ -450,6 +518,11 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
   let returnsRouter = false;
 
   const constants = stringConstants(lines);
+  let declared: Set<string> | undefined;
+  const isValue = (name: string): boolean => {
+    if (!declared) declared = declaredValues(lines);
+    return declared.has(name);
+  };
   /** Names the file's imports bind: `config` in `config.ApiUri` is a package. */
   const imports = extractGoImports(lines);
   const packages = new Set(imports.flatMap((i) => i.specifiers));
@@ -725,7 +798,19 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     } else {
       const chiMethod = line.match(CHI_METHOD_RE);
       const handle = chiMethod ? null : line.match(HANDLE_RE);
-      if (chiMethod) {
+      const echoAdd = chiMethod || handle ? null : line.match(ECHO_ADD_RE);
+      if (echoAdd && isEchoRouter(receiver(echoAdd[1]!))) {
+        // Echo `e.Add(method, path, h, m…)`: the verb is the first argument, whatever spelled it.
+        const recv = receiver(echoAdd[1]!);
+        const args = callArgs(i, echoAdd.index! + echoAdd[0].length - 1);
+        const method = /^["'`]([A-Za-z]+)["'`]$/.exec(args[0] ?? "")?.[1]?.toUpperCase() ?? /^\w+\.(?:Method)?([A-Za-z]+)$/.exec(args[0] ?? "")?.[1]?.toUpperCase();
+        const path = literal(args[1]);
+        // An absolute path only: `registry.Add("GET", "key", fn)` on an Echo-only file is not a route.
+        if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
+          const { handler, guards } = splitHandler(args.slice(2), true);
+          push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
+        }
+      } else if (chiMethod) {
         const recv = receiver(chiMethod[1]!);
         const args = callArgs(i, chiMethod.index! + chiMethod[0].length - 1);
         const method = literal(args[0])?.toUpperCase();
@@ -818,8 +903,22 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     spans.set(route, span);
     const after = span ? lines[span.endRow]!.slice(span.endColumn + 1) : "";
     const rest = /^\s*,(.*)$/.exec(after);
-    const trailing = rest ? parseArgs(`(${rest[1]!}`, 0).args : [];
-    const named = trailing.length > 0 && !handlerFirstRoutes.has(route) ? unwrapHandler(trailing[trailing.length - 1]!).handler : null;
+    let trailing = rest ? parseArgs(`(${rest[1]!}`, 0).args : [];
+    const first = handlerFirstRoutes.get(route);
+    if (first && span && rest) {
+      // Echo's closure is the handler, and what follows it — on the close's line or the lines below — is middleware.
+      let call = `(${rest[1]!}`;
+      for (let k = span.endRow + 1; k < Math.min(lines.length, span.endRow + 8) && !parseArgs(call, 0).closed; k++) call += ` ${lines[k]!.trim()}`;
+      const after = parseArgs(call, 0);
+      trailing = after.args;
+      const own = after.args.filter((a) => !STRING_RE.test(a)).map(classifyGuard);
+      if (own.length > 0) {
+        route.middleware.push(...own.map((g) => g.text));
+        const auth = buildAuth(first.inherited.filter(isAuthGuard), [...first.own, ...own].filter(isAuthGuard));
+        if (auth) route.auth = auth;
+      }
+    }
+    const named = trailing.length > 0 && !handlerFirstRoutes.has(route) ? unwrapHandler(trailing[trailing.length - 1]!, isValue).handler : null;
     if (named) {
       route.handler = named;
       spans.delete(route);

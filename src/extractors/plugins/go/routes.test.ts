@@ -652,7 +652,7 @@ func registerTransfers(g *echo.Group) {
       "GET /table -> h.Table [h.Auth]",
       "HEAD /table -> h.Table [h.Auth]",
       // An inline closure is Echo's handler; what follows its close is middleware.
-      "GET /fixtures -> null []",
+      "GET /fixtures -> null [h.Auth]",
       "PATCH /transfers/:id -> h.TransferPlayer [h.Auth]",
     ]);
   });
