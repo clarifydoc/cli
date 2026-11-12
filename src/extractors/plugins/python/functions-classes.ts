@@ -76,6 +76,8 @@ export class PythonExtractor extends FunctionClassExtractor {
   private aliases: ReadonlyMap<string, string> = new Map();
   /** Module-level names the file's own statements bind (value-flow: a bare call of one runs a held value). */
   private moduleHeld: ReadonlySet<string> = new Set();
+  /** Names the file's imports bind from the standard library or an external package (value-flow: library calls). */
+  private moduleExternal: ReadonlySet<string> = new Set();
   /** The file being extracted mentions `lambda` (the only gate a named lambda needs). */
   private hasLambda = false;
 
@@ -83,13 +85,15 @@ export class PythonExtractor extends FunctionClassExtractor {
   private attachValueFlow(p: ParsedFunction, selfName: string | null, heldFields: ReadonlySet<string>): void {
     // A test's or a fixture's parameters are what pytest injects by name (`use_settings(API_HOST=…)` runs the fixture).
     const injected = /^test(?:_|[A-Z]|$)/.test(p.fn.name) || p.fn.decorators.some((d) => FIXTURE_DECORATOR.test(d.trim()));
-    const facts = functionValueFlow(p.node, p.fn.params, { selfName, heldFields, moduleHeld: this.moduleHeld, injected });
+    const facts = functionValueFlow(p.node, p.fn.params, { selfName, heldFields, moduleHeld: this.moduleHeld, injected, externalImports: this.moduleExternal });
     if (facts) p.fn.valueFlow = facts;
   }
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
-    this.moduleHeld = moduleFlowOf(tree.rootNode, sourceText).held;
+    const flow = moduleFlowOf(tree.rootNode, sourceText);
+    this.moduleHeld = flow.held;
+    this.moduleExternal = flow.external;
     this.hasLambda = sourceText.includes("lambda");
     try {
       return super.extractFunctions(tree, sourceText);
@@ -97,6 +101,7 @@ export class PythonExtractor extends FunctionClassExtractor {
       this.hasLambda = false;
       this.aliases = new Map();
       this.moduleHeld = new Set();
+      this.moduleExternal = new Set();
     }
   }
 

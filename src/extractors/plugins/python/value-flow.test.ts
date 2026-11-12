@@ -509,5 +509,77 @@ describe("Python value flow", () => {
       expect(links).toContain("held.py::run@5 cb -> held.py::refresh_table");
       expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
     });
+
+    describe("library calls in a lambda", () => {
+      const LIB = [
+        "import json",
+        "import logging",
+        "import time",
+        "from json import dumps",
+        "",
+        "def save_club():",
+        "    pass",
+        "",
+        "def kick_off():",
+        "    pass",
+        "",
+        "def run(cb):",
+        "    cb()",
+        "",
+      ];
+      it("does not count json.dumps, logging.info and time.sleep toward the four-name cap", async () => {
+        const links = flowLinks(await analyzeAll({
+          ...DECOY,
+          "lib.py": [
+            ...LIB,
+            "def go():",
+            "    run(lambda: (json.dumps({}), logging.info('x'), time.sleep(1), save_club(), kick_off()))",
+            "",
+          ].join("\n"),
+        }));
+        expect(links).toContain("lib.py::run@13 cb -> lib.py::save_club");
+        expect(links).toContain("lib.py::run@13 cb -> lib.py::kick_off");
+        expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+      });
+
+      it("does not count a bare name imported from the standard library", async () => {
+        const links = flowLinks(await analyzeAll({
+          ...DECOY,
+          "lib.py": [
+            ...LIB,
+            "def go():",
+            "    run(lambda: (dumps({}), time.sleep(1), logging.info('x'), json.loads('1'), save_club(), kick_off()))",
+            "",
+          ].join("\n"),
+        }));
+        expect(links).toContain("lib.py::run@13 cb -> lib.py::save_club");
+        expect(links).toContain("lib.py::run@13 cb -> lib.py::kick_off");
+      });
+
+      it("still counts a project module imported relatively or as a project package toward the cap", async () => {
+        const files = (names: string) => ({
+          ...DECOY,
+          "league/__init__.py": "",
+          "league/table.py": "def refresh_table():\n    pass\n",
+          "lib.py": [
+            "from . import league",
+            "from league import table",
+            "",
+            "def save_club():",
+            "    pass",
+            "",
+            "def run(cb):",
+            "    cb()",
+            "",
+            "def go():",
+            `    run(lambda: (${names}))`,
+            "",
+          ].join("\n"),
+        });
+        // Four names plus a fifth: the project modules' calls are counted (a library's would not be), so the cap is passed.
+        expect(flowLinks(await analyzeAll(files("league.a(), table.b(), league.c(), table.d(), save_club()")))).toEqual([]);
+        expect(flowLinks(await analyzeAll(files("league.a(), table.b(), save_club()")))).toContain("lib.py::run@8 cb -> lib.py::save_club");
+      });
+    });
   });
 });

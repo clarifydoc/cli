@@ -11,6 +11,8 @@
 import type { Node } from "web-tree-sitter";
 import type { ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { PY_BUILTIN_CALLS } from "./di.js";
+import { isStandardModule } from "./standard-library.js";
+import { pythonManifest } from "./manifest.js";
 
 type Fact = ValueFlowFact;
 
@@ -36,6 +38,8 @@ export interface FlowScope {
   injected: boolean;
   /** Module-level code: no parameters, no receiver. */
   atModule: boolean;
+  /** Names the file's imports bind from the standard library or a known external package (`json`, `dumps`): library calls, never project functions. */
+  externalImports?: ReadonlySet<string>;
 }
 
 const SCOPE_TYPES = new Set(["function_definition", "class_definition"]);
@@ -135,6 +139,36 @@ export function moduleAssignedNames(root: Node): Set<string> {
   return names;
 }
 
+const EXTERNAL_TOPS = new Set(pythonManifest.externalModulePrefixes ?? []);
+
+/**
+ * Names the file's non-relative imports bind from the standard library or the manifest's external prefixes.
+ * A project module that shadows a standard name (a local `json.py`) is treated as external here too: the
+ * worst case is a missed seed, never a wrong link.
+ */
+export function externalImportNames(root: Node): Set<string> {
+  const out = new Set<string>();
+  const external = (top: string): boolean => isStandardModule(top) || EXTERNAL_TOPS.has(top);
+  eachNode(root, (c) => {
+    if (c.type === "import_statement") {
+      for (const spec of c.namedChildren) {
+        const dotted = spec.type === "aliased_import" ? spec.childForFieldName("name") : spec.type === "dotted_name" ? spec : null;
+        const bound = spec.type === "aliased_import" ? spec.childForFieldName("alias") : dotted;
+        if (dotted && bound && external(dotted.text.split(".")[0]!)) out.add(bound.text.split(".")[0]!);
+      }
+    } else if (c.type === "import_from_statement") {
+      const mod = c.childForFieldName("module_name");
+      if (!mod || mod.type !== "dotted_name" || !external(mod.text.split(".")[0]!)) return;
+      for (const spec of c.namedChildren) {
+        if (spec === mod) continue;
+        const bound = spec.type === "aliased_import" ? spec.childForFieldName("alias") : spec.type === "dotted_name" ? spec : null;
+        if (bound) out.add(bound.text);
+      }
+    }
+  });
+  return out;
+}
+
 /** `self.<name>` attributes a class's methods assign (`self.cb = cb`, `self.cb: Callable = cb`). */
 export function selfAssignedAttributes(methods: ReadonlyArray<{ body: Node | null; selfName: string | null }>): Set<string> {
   const out = new Set<string>();
@@ -208,6 +242,9 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
   /** Whether a bare name may be a function the project declares or imports (not a builtin or a receiver). */
   const maybeFunctionName = (name: string): boolean => !PY_BUILTIN_CALLS.has(name) && !isReceiver(name) && name !== "self" && name !== "cls";
 
+  /** Whether a name is bound by an import of the standard library or an external package (and no local shadows it). */
+  const isExternal = (name: string): boolean => scope.externalImports?.has(name) === true && !isLocal(name);
+
   /**
    * A lambda that lands in `to` stands for the functions its body calls (it has no function of its own): each
    * project function it calls is a seed, a call of a name that holds a value a copy. A call on one of its own
@@ -240,7 +277,7 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
         const name = callee.text;
         if (own.has(name) || isShadowed(name) || scope.globals.has(name) || isReceiver(name)) continue;
         if (isLocal(name)) { copies.set(name, { name: cellName(name) }); continue; }
-        if (!maybeFunctionName(name) || /^[A-Z]/.test(name)) continue;
+        if (!maybeFunctionName(name) || /^[A-Z]/.test(name) || isExternal(name)) continue;
         seeds.add(name);
       } else if (callee.type === "attribute") {
         const obj = callee.childForFieldName("object");
@@ -249,7 +286,7 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
         if (isReceiver(obj.text)) {
           if (scope.heldFields.has(attr.text)) copies.set(`self.${attr.text}`, { name: "self", member: attr.text });
           else seeds.add(`self.${attr.text}`);
-        } else if (!isLocal(obj.text) && maybeFunctionName(obj.text)) seeds.add(callee.text);
+        } else if (!isLocal(obj.text) && maybeFunctionName(obj.text) && !isExternal(obj.text)) seeds.add(callee.text);
       }
     }
     if (seeds.size + copies.size > 4) return;
@@ -485,6 +522,10 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
 
     // What each argument holds, by written index (stops at a splat: the indices after it are unknown).
     if (name === null || !args) return;
+    // An argument handed to a library call (`json.dumps(x)`, `sleep(x)`) reaches no project parameter.
+    let head = callee;
+    while (head?.type === "attribute") head = unwrap(head.childForFieldName("object"));
+    if (head?.type === "identifier" && isExternal(head.text)) return;
     let index = 0;
     for (const a of args.namedChildren) {
       if (a.type === "comment") continue;
@@ -567,9 +608,9 @@ function prune(facts: Fact[], scope: FlowScope): Fact[] {
 }
 
 /** Facts of the module's own statements, plus assignments a function makes to a name it declares `global`. */
-export function pythonModuleValueFlow(root: Node, withGlobals = true): Fact[] {
+export function pythonModuleValueFlow(root: Node, withGlobals = true, external: ReadonlySet<string> = externalImportNames(root)): Fact[] {
   const assigned = moduleAssignedNames(root);
-  const base: FlowScope = { locals: assigned, params: new Set(), enclosing: new Set(), captured: new Set(), selfName: null, heldFields: new Set(), moduleHeld: new Set(), globals: new Set(), injected: false, atModule: true };
+  const base: FlowScope = { locals: assigned, params: new Set(), enclosing: new Set(), captured: new Set(), selfName: null, heldFields: new Set(), moduleHeld: new Set(), globals: new Set(), injected: false, atModule: true, externalImports: external };
   const facts = pythonValueFlow(root, base);
   // A function's assignment to a module name it declares `global`: a plain function name only.
   const walk = (node: Node): void => {
@@ -595,16 +636,17 @@ export function pythonModuleValueFlow(root: Node, withGlobals = true): Fact[] {
   return facts;
 }
 
-let moduleCache: { text: string; facts: Fact[]; held: Set<string> } | null = null;
+let moduleCache: { text: string; facts: Fact[]; held: Set<string>; external: Set<string> } | null = null;
 
 /** The module's facts and the names they bind, for one file (read by its functions and by the file-level hook). */
-export function moduleFlowOf(root: Node, sourceText: string): { facts: Fact[]; held: ReadonlySet<string> } {
+export function moduleFlowOf(root: Node, sourceText: string): { facts: Fact[]; held: ReadonlySet<string>; external: ReadonlySet<string> } {
   if (moduleCache?.text === sourceText) return moduleCache;
   // A `global` statement is the only way a function assigns a module name: look for them only then.
-  const facts = pythonModuleValueFlow(root, sourceText.includes("global "));
+  const external = externalImportNames(root);
+  const facts = pythonModuleValueFlow(root, sourceText.includes("global "), external);
   const held = new Set<string>();
   for (const f of facts) if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined && !f.to.name.startsWith("<")) held.add(f.to.name);
-  moduleCache = { text: sourceText, facts, held };
+  moduleCache = { text: sourceText, facts, held, external };
   return moduleCache;
 }
 
@@ -612,7 +654,7 @@ export function moduleFlowOf(root: Node, sourceText: string): { facts: Fact[]; h
 export function functionValueFlow(
   fnNode: Node,
   params: readonly ParamInfo[],
-  opts: { selfName: string | null; heldFields: ReadonlySet<string>; moduleHeld: ReadonlySet<string>; injected: boolean },
+  opts: { selfName: string | null; heldFields: ReadonlySet<string>; moduleHeld: ReadonlySet<string>; injected: boolean; externalImports?: ReadonlySet<string> },
 ): Fact[] | undefined {
   const body = fnNode.childForFieldName("body");
   if (!body) return undefined;
@@ -637,6 +679,7 @@ export function functionValueFlow(
     globals: own.globals,
     injected: opts.injected,
     atModule: false,
+    externalImports: opts.externalImports,
   };
   const facts = pythonValueFlow(body, scope);
   return facts.length > 0 ? facts : undefined;

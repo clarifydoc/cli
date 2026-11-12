@@ -27,6 +27,11 @@ const STANDARD_MODULES = new Set([
   "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
 ]);
 
+/** Whether `top` (an import's first segment) names a standard-library module, by name alone. */
+export function isStandardModule(top: string): boolean {
+  return STANDARD_MODULES.has(top);
+}
+
 /**
  * Whether `import <source>` in `importingFile` loads the standard library.
  *
