@@ -222,6 +222,137 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
     expect(flow).toEqual([]);
   });
 
+  it("a lambda in a local, handed to a wrapper that runs its parameter", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def refresh_table; end",
+        "  def boot",
+        "    cb = -> { refresh_table }",
+        "    run(cb)",
+        "  end",
+        "  def run(cb)",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def refresh_table; end", "end"),
+    });
+    expect(flow).toEqual(["Club.run@8 cb.call -> club.rb::Club.refresh_table"]);
+  });
+
+  it("an instance variable holding a proc, run in another method; a class call keeps its class", async () => {
+    const { flow } = await links({
+      "decoy.rb": rb("class Handler", "  def self.close; end", "  def call(x); end", "end"),
+      "season.rb": rb("class Season", "  def self.close; end", "end"),
+      "club.rb": rb(
+        "class Club",
+        "  def setup",
+        "    @on_done = lambda { Season.close }",
+        "  end",
+        "  def finish",
+        "    @on_done.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual(["Club.finish@6 on_done.call -> season.rb::Season.close"]);
+  });
+
+  it("a hash of lambdas run by key", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def kick_off; end",
+        "  def whistle; end",
+        "  def boot",
+        "    actions = { a: -> { kick_off }, b: proc { whistle } }",
+        "    actions[:a].call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def kick_off; end", "end"),
+    });
+    expect(flow).toEqual(["Club.boot@6 actions[:a].call -> club.rb::Club.kick_off"]);
+  });
+
+  it("a factory returning a lambda, run by the caller", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def close_match; end",
+        "  def make_handler",
+        "    return -> { close_match }",
+        "  end",
+        "  def boot",
+        "    cb = make_handler",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def close_match; end", "end"),
+    });
+    expect(flow).toEqual(["Club.boot@8 cb.call -> club.rb::Club.close_match"]);
+  });
+
+  it("a lambda that runs a held value hands on what it holds", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def persist; end",
+        "  def boot",
+        "    on_done = method(:persist)",
+        "    cb = -> { on_done.call }",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toContain("Club.boot@6 cb.call -> club.rb::Club.persist");
+  });
+
+  it("more than four calls state nothing", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def a1; end", "  def a2; end", "  def a3; end", "  def a4; end", "  def a5; end",
+        "  def boot",
+        "    cb = -> { a1; a2; a3; a4; a5 }",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual([]);
+  });
+
+  it("a call on the lambda's own parameter, a kernel method and a variable receiver state nothing", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def save; end",
+        "  def boot(player)",
+        "    a = ->(club) { club.save }",
+        "    a.call(1)",
+        "    b = -> { puts 'x' }",
+        "    b.call",
+        "    c = -> { player.save }",
+        "    c.call",
+        "    d = -> (save) { save }",
+        "    d.call(1)",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual([]);
+  });
+
   it("a value nobody stores links nothing", async () => {
     const { flow } = await links({
       "decoy.rb": decoy,

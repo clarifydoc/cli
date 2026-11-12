@@ -8,9 +8,14 @@ import { phpCallHooks } from "./call-hooks.js";
  * handed to a call, returned, and run through `$f()` / `($this->h)()` / `call_user_func($f)` / `array_map($f, …)`.
  *
  * Values read: `'save'`, `'Club::save'`, `[$this, 'save']`, `[Club::class, 'save']`, `save(...)`,
- * `$this->save(...)`, `Club::save(...)` and `Closure::fromCallable(…)` of those. A closure or arrow function is
- * no value here: its calls already belong to the function that writes it. A call never made through a held value
- * (`$this->$method()`) is not read.
+ * `$this->save(...)`, `Club::save(...)` and `Closure::fromCallable(…)` of those. A closure or arrow function held
+ * in a value (`$cb = fn() => $this->save()`, `$this->onDone = function () { Club::close(); }`, a list element, an
+ * argument, a return) stands for the project functions its body calls, at most four, spelled as a seed is
+ * (`save`, `this.save`, `Club.save`); one that runs a held value (`fn() => $onDone()`) copies that value's cell.
+ * It is no function of its own: its calls already belong to the function that writes it. A call on one of its
+ * parameters, a builtin and a receiver that cannot be spelled state nothing; a closure handed to a builtin that
+ * runs it (`array_map`) is a block, not a value. A call never made through a held value (`$this->$method()`) is
+ * not read.
  */
 
 /** Builtins that run a callback: the written index of the callback argument. */
@@ -22,6 +27,17 @@ const CALLBACK_FUNCTIONS: Readonly<Record<string, number>> = {
 const CLOSURES = new Set(["anonymous_function", "anonymous_function_creation_expression", "arrow_function"]);
 const DECLARATIONS = new Set(["function_definition", "method_declaration", "class_declaration", "interface_declaration", "trait_declaration", "enum_declaration", "anonymous_class"]);
 const CALL_NODES = new Set(["function_call_expression", "member_call_expression", "nullsafe_member_call_expression", "scoped_call_expression", "object_creation_expression"]);
+
+/** Builtin functions a closure body may call; a name here is no project function. */
+const BUILTIN_PREFIX = /^(?:array_|mb_|preg_|json_)/;
+const BUILTIN_NAMES = new Set(("is_null is_array is_string is_int is_numeric is_callable is_object is_bool str_contains str_starts_with str_ends_with str_replace str_pad str_repeat str_split intval floatval strval boolval count sizeof strlen strtolower strtoupper substr strpos sprintf printf print_r var_dump var_export implode explode join trim ltrim rtrim " +
+  "in_array isset empty unset compact extract min max abs round floor ceil sort rsort usort uasort uksort ksort krsort asort arsort range time microtime date sleep usleep define defined constant " +
+  "class_exists method_exists function_exists property_exists get_class get_object_vars call_user_func call_user_func_array error_log trigger_error assert serialize unserialize htmlspecialchars " +
+  "number_format uniqid password_hash password_verify md5 sha1 hash base64_encode base64_decode urlencode rawurlencode http_build_query header exit die fopen fclose fwrite fread").split(" "));
+const isBuiltinFunction = (name: string): boolean => {
+  const n = name.toLowerCase();
+  return BUILTIN_PREFIX.test(n) || BUILTIN_NAMES.has(n);
+};
 
 interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }> }
 
@@ -147,6 +163,11 @@ class Reader {
         if (op === "??") for (const p of n.namedChildren) this.valuesOf(p, into);
         return into;
       }
+      case "anonymous_function":
+      case "anonymous_function_creation_expression":
+      case "arrow_function":
+        this.closureValues(n, into);
+        return into;
       case "string":
       case "encapsed_string": {
         const text = plainString(n);
@@ -182,6 +203,79 @@ class Reader {
       if (name) into.results.push({ call: name, line: lineOf(n) });
     }
     return into;
+  }
+
+  /** The project functions a closure's body calls (or the held values it runs), when there are at most four. */
+  private closureValues(closure: Node, into: Values): void {
+    const body = closure.childForFieldName("body");
+    if (!body) return;
+    const paramsOf = (c: Node): string[] => {
+      const out: string[] = [];
+      for (const p of c.childForFieldName("parameters")?.namedChildren ?? []) {
+        const v = p.childForFieldName("name") ?? p.namedChildren.find((x) => x.type === "variable_name");
+        if (v) out.push(v.text.replace(/^\$/, ""));
+      }
+      return out;
+    };
+    const params = new Set(paramsOf(closure));
+    const names = new Set<string>();
+    const cells = new Map<string, ValueCell>();
+    const visit = (c: Node, scope: ReadonlySet<string>): void => {
+      if (DECLARATIONS.has(c.type)) return;
+      let here = scope;
+      // A nested closure's parameters hide names only inside it.
+      if (CLOSURES.has(c.type) && c !== closure) here = new Set([...scope, ...paramsOf(c)]);
+      if (CALL_NODES.has(c.type) && !firstClassCallable(c)) {
+        const held = this.closureHeld(c, here);
+        if (held) cells.set(`${held.name}.${held.member ?? ""}`, held);
+        else {
+          const fn = this.closureCallee(c);
+          if (fn) names.add(fn);
+        }
+      }
+      for (const k of c.namedChildren) visit(k, here);
+    };
+    visit(body, params);
+    if (names.size + cells.size > 4) return;
+    for (const fn of names) into.seeds.push(fn);
+    for (const cell of cells.values()) into.cells.push(cell);
+  }
+
+  /** `$onDone()` / `($this->onDone)()` inside a closure: the cell of the value it runs (not a closure parameter's). */
+  private closureHeld(call: Node, params: ReadonlySet<string>): ValueCell | null {
+    if (call.type !== "function_call_expression") return null;
+    const fn = call.childForFieldName("function") ?? call.namedChildren[0];
+    if (!fn) return null;
+    const held = fn.type === "parenthesized_expression" ? fn.namedChildren[0] : fn;
+    if (!held || !["variable_name", "member_access_expression"].includes(held.type)) return null;
+    const head = held.type === "variable_name" ? held : held.childForFieldName("object") ?? held.namedChildren[0];
+    if (!head || head.type !== "variable_name" || params.has(head.text.replace(/^\$/, ""))) return null;
+    return this.cellOf(held);
+  }
+
+  /** The spelling of a project function a call inside a closure runs, or null. */
+  private closureCallee(call: Node): string | null {
+    if (call.type === "function_call_expression") {
+      const fn = call.childForFieldName("function") ?? call.namedChildren[0];
+      if (!fn || (fn.type !== "name" && fn.type !== "qualified_name")) return null;
+      const name = lastSegment(fn.text);
+      return isBuiltinFunction(name) ? null : name;
+    }
+    if (call.type === "member_call_expression") {
+      const obj = call.childForFieldName("object");
+      const name = call.childForFieldName("name");
+      return obj?.type === "variable_name" && obj.text === "$this" && name?.type === "name" ? `this.${name.text}` : null;
+    }
+    if (call.type === "scoped_call_expression") {
+      const scope = call.childForFieldName("scope");
+      const name = call.childForFieldName("name");
+      if (!scope || name?.type !== "name" || (scope.type !== "name" && scope.type !== "qualified_name" && scope.type !== "relative_scope")) return null;
+      const text = scope.text;
+      if (/^parent$/i.test(text)) return null;
+      if (/^(self|static)$/i.test(text)) return `this.${name.text}`;
+      return /^\\?Closure$/.test(text) ? null : `${lastSegment(text)}.${name.text}`;
+    }
+    return null;
   }
 
   private tempCell(line: number): ValueCell {
@@ -263,7 +357,8 @@ class Reader {
     if (callbackAt >= 0) {
       const arg = argsOf(n)[callbackAt];
       const value = arg ? argValue(arg) : null;
-      if (value) this.invoke(value, name, line);
+      // A closure handed to a builtin that runs it is a block: its calls are already the enclosing function's.
+      if (value && !CLOSURES.has(value.type)) this.invoke(value, name, line);
       return;
     }
     this.argFacts(n, name, line);

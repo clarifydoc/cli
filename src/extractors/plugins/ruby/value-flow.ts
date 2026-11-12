@@ -10,12 +10,26 @@ import { splitTopLevel } from "../shared/regex-base.js";
  * `block.call(…)`.
  *
  * A bare identifier is a call, never a value: only a name the method binds (a parameter or an assignment) is a
- * cell. A lambda, a `proc` and a block are no value here (their calls already belong to the method that writes
- * them). `.call` on a receiver whose type is stated (`@runner = Runner.new`) is a method call the type decides,
+ * cell. A brace lambda or proc held in a value (`cb = -> { save }`, `@on_done = lambda { refresh_table }`,
+ * `{ a: -> { Club.close } }`, `return proc { kick_off }`) stands for the project functions its body calls, at most
+ * four, spelled as `method(:x)` is (`self.save`, `Club.close`); one that runs a held value (`-> { on_done.call }`)
+ * copies that value's cell. It is no function of its own — its calls already belong to the method that writes it
+ * — and a call on its parameters, a stdlib or kernel method, or a receiver that is a variable states nothing. A
+ * `do … end` closure and a block handed to a method are no value here. `.call` on a receiver whose type is stated (`@runner = Runner.new`) is a method call the type decides,
  * never an invoke; `x[…]` runs a value only when `x` was assigned a function in the same method.
  */
 
 const KEYWORDS = new Set(["if", "unless", "while", "until", "case", "when", "return", "yield", "puts", "print", "raise", "rescue", "ensure", "else", "elsif", "then", "do", "end", "def", "class", "module", "begin", "and", "or", "not", "in", "for", "break", "next", "self", "nil", "true", "false", "require", "require_relative", "include", "extend", "attr_reader", "attr_writer", "attr_accessor", "private", "public", "protected", "super", "lambda", "proc", "method"]);
+
+/** Kernel methods and standard classes a closure body may call: no project function. */
+const KERNEL_CALLS = new Set(["puts", "print", "p", "pp", "raise", "fail", "sleep", "rand", "srand", "sprintf", "printf", "loop", "block_given?", "binding", "catch", "throw", "Integer", "Float", "String", "Array", "Hash", "Rational", "gets", "exit", "abort", "at_exit", "lambda", "proc", "caller", "warn", "require_relative", "yield", "freeze", "dup", "clone", "tap", "then", "itself"]);
+const STDLIB_CONSTS = new Set(["Time", "File", "Dir", "JSON", "Math", "Kernel", "Rails", "Array", "Hash", "String", "Integer", "Float", "Struct", "Set", "Date", "DateTime", "Process", "Thread", "Mutex", "ENV", "ARGV", "IO", "Object", "Comparable", "Enumerable", "Regexp", "Random", "SecureRandom", "YAML", "Logger", "Digest", "Base64", "URI", "Net", "ObjectSpace", "Signal", "Marshal", "Rational", "Complex", "Symbol", "Proc", "Method", "Class", "Module", "Fiber", "Queue", "STDOUT", "STDERR", "STDIN", "Benchmark", "Open3", "FileUtils", "Pathname", "ERB", "CGI", "Timeout", "Forwardable"]);
+const CLOSURE_HEAD = /^(?:->\s*(?:\(([^)]*)\)|([A-Za-z_][\w\s,*&=]*?))?\s*\{|(?:lambda|proc|Proc\.new)\s*\{)/;
+
+/** Names in a parameter list text (`a, b = 1, *rest, &blk, k:`). */
+const paramNames = (text: string): string[] => text.split(",").map((x) => /^\s*[*&]*([a-z_]\w*)/.exec(x)?.[1]).filter((x): x is string => !!x);
+/** A line with its string literals emptied, so what is inside one is no call. */
+const blankStrings = (text: string): string => text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
 
 interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }> }
 
@@ -127,6 +141,8 @@ class Reader {
   /** What an expression holds. */
   valuesOf(expr: string, line: number, into: Values = { cells: [], seeds: [], results: [] }): Values {
     let e = expr.trim();
+    const closure = this.closureOf(e);
+    if (closure) { this.closureValues(closure, into); return into; }
     // A trailing `if`/`unless` modifier, never one inside a string literal.
     if (!/["']/.test(e)) e = e.replace(/\s+(?:if|unless)\s+.*$/, "");
     if (e === "") return into;
@@ -159,6 +175,56 @@ class Reader {
       into.results.push({ call: this.label(call[1]!), line });
     }
     return into;
+  }
+
+  /** `-> { … }`, `->(a) { … }`, `lambda { |a| … }`, `proc { … }`, `Proc.new { … }` written whole: its parameters and body. */
+  private closureOf(e: string): { params: Set<string>; body: string } | null {
+    const m = CLOSURE_HEAD.exec(e);
+    if (!m) return null;
+    const open = m[0].length - 1;
+    const close = balanced(e, open + 1, "{", "}");
+    if (!close || close.end !== e.length - 1) return null;
+    let body = close.inner;
+    const params = new Set(paramNames(m[1] ?? m[2] ?? ""));
+    const block = /^\s*\|([^|]*)\|/.exec(body);
+    if (block) { for (const n of paramNames(block[1]!)) params.add(n); body = body.slice(block[0].length); }
+    return { params, body };
+  }
+
+  /** What a closure held in a value runs: the project functions its body calls, or the values it runs, at most four. */
+  private closureValues(closure: { params: Set<string>; body: string }, into: Values): void {
+    const body = blankStrings(closure.body);
+    const hidden = new Set(closure.params);
+    for (const m of body.matchAll(/(?:\{|\bdo)\s*\|([^|]*)\|/g)) for (const n of paramNames(m[1]!)) hidden.add(n);
+    for (const m of body.matchAll(/(?<![\w@$.:])([a-z_]\w*)\s*(?:\|\||&&)?=(?![=~>])/g)) hidden.add(m[1]!);
+    const seeds = new Set<string>();
+    const cells = new Map<string, ValueCell>();
+    for (const m of body.matchAll(/(?<![\w@$.:])(@?[a-z_]\w*)\.(?:call\b|\()/g)) {
+      const head = m[1]!;
+      if (hidden.has(head) || this.typed.has(head)) continue;
+      const cell = this.cellOf(head);
+      if (cell) cells.set(`${cell.name}.${cell.member ?? ""}`, cell);
+    }
+    const heldHeads = new Set([...cells.values()].map((c) => (c.member ?? c.name)));
+    for (const m of body.matchAll(/(?<![\w@$.:])(@{0,2}[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*[?!]?)((?:\.[a-z_]\w*[?!]?)*)/g)) {
+      const head = m[1]!;
+      const tail = m[2]!;
+      const after = body.slice((m.index ?? 0) + m[0].length);
+      if (head.startsWith("@") || /^:(?!:)/.test(after) || /^\s*(?:\|\||&&)?=(?![=~>])/.test(after)) continue;
+      if (/^[a-z_]/.test(head)) {
+        if (tail !== "" || KEYWORDS.has(head) || KERNEL_CALLS.has(head) || hidden.has(head) || this.locals.has(head) || heldHeads.has(head)) continue;
+        seeds.add(`self.${head}`);
+      } else if (head === "self") {
+        const one = /^\.([a-z_]\w*[?!]?)$/.exec(tail);
+        if (one && one[1] !== "call") seeds.add(`self.${one[1]}`);
+      } else if (/^[A-Z]/.test(head)) {
+        const one = /^\.([a-z_]\w*[?!]?)$/.exec(tail);
+        if (one && one[1] !== "new" && !STDLIB_CONSTS.has(head.split("::")[0]!)) seeds.add(`${head}.${one[1]}`);
+      }
+    }
+    if (seeds.size + cells.size > 4) return;
+    for (const fn of seeds) into.seeds.push(fn);
+    for (const cell of cells.values()) into.cells.push(cell);
   }
 
   private tempCell(line: number): ValueCell {
@@ -276,7 +342,7 @@ class Reader {
       if (/^[a-z_]\w*$/.test(asg.lhs.trim())) this.bindLocal(asg.lhs.trim());
       const v = asg.rhs.trim();
       this.assign(targets.length > 0 ? targets : /^[a-z_]\w*$/.test(asg.lhs.trim()) ? [{ name: this.paramNames.get(asg.lhs.trim()) ?? asg.lhs.trim() }] : [], v, line);
-      if (/^[a-z_]\w*$/.test(asg.lhs.trim()) && /^(?:(?:self|[A-Z][\w:]*|@?[a-z_]\w*)\.)?method\(/.test(v)) this.seeded.add(asg.lhs.trim());
+      if (/^[a-z_]\w*$/.test(asg.lhs.trim()) && (/^(?:(?:self|[A-Z][\w:]*|@?[a-z_]\w*)\.)?method\(/.test(v) || this.closureOf(v))) this.seeded.add(asg.lhs.trim());
     }
     this.callFacts(text, line, s);
   }
@@ -292,7 +358,7 @@ class Reader {
   /** The value of a method's last expression, when it is one of ours. */
   implicitReturn(text: string, line: number): void {
     if (/^(?:return|if|unless|while|until|case|begin|end|else|elsif|when|puts|raise)\b/.test(text)) return;
-    if (/^(?:(?:self|[A-Z][\w:]*|@?[a-z_]\w*)\.)?method\(\s*:\w+[?!]?\s*\)$/.test(text) || (/^@?[a-z_]\w*$/.test(text) && (text.startsWith("@") || this.locals.has(text))) || /^@?[a-z_]\w*\[[^\[\]]*\]$/.test(text)) this.returnFact(text, line);
+    if (/^(?:(?:self|[A-Z][\w:]*|@?[a-z_]\w*)\.)?method\(\s*:\w+[?!]?\s*\)$/.test(text) || (/^@?[a-z_]\w*$/.test(text) && (text.startsWith("@") || this.locals.has(text))) || /^@?[a-z_]\w*\[[^\[\]]*\]$/.test(text) || this.closureOf(text)) this.returnFact(text, line);
   }
 
   private callFacts(text: string, line: number, s: { text: string; line: number; offsets: number[] }): void {

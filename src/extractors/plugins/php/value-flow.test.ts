@@ -38,7 +38,7 @@ async function flow(files: Record<string, string>): Promise<string[]> {
 }
 
 // Decoys: a same-named function in another file, which no name tier may pick for a held value.
-const decoys = ["<?php", "function handler() {}", "function cb() {}", "function onSave() {}", "function save() {}", ""].join("\n");
+const decoys = ["<?php", "function handler() {}", "function cb() {}", "function onSave() {}", "function save() {}", "function saveClub() {}", "function refreshTable() {}", "function kickOff() {}", "function closeMatch() {}", "class Season { public static function close() {} public function save() {} }", ""].join("\n");
 
 describe("PHP value flow: the matrix", () => {
   it("a string callable in a local, copied, handed to a wrapper and invoked there", async () => {
@@ -168,6 +168,105 @@ describe("PHP value flow: decoys", () => {
     const links = await flow({
       "decoys.php": decoys,
       "src/Club.php": ["<?php", "function saveClub() {}", "function boot($xs) {", "    $cb = 'saveClub';", "    array_map(function ($cb) { $cb(); }, $xs);", "}", ""].join("\n"),
+    });
+    expect(links).toEqual([]);
+  });
+});
+
+describe("PHP value flow: closures held in a value", () => {
+  it("a local arrow function handed to a wrapper that runs its parameter", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Runner.php": ["<?php", "function run($cb) {", "    $cb();", "}", ""].join("\n"),
+      "src/Club.php": ["<?php", "require_once __DIR__ . '/Runner.php';", "function refreshTable() {}", "function boot() {", "    $cb = fn() => refreshTable();", "    run($cb);", "}", ""].join("\n"),
+    });
+    expect(links).toEqual(["run@3 cb -> src/Club.php::refreshTable"]);
+  });
+
+  it("a closure written in the argument list, and its $this call", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "class Club {", "    public function save() {}", "    public function boot() {", "        $this->run(function () { $this->save(); });", "    }",
+        "    public function run($cb) {", "        $cb();", "    }", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["Club.run@8 cb -> src/Club.php::Club.save"]);
+  });
+
+  it("a property holding a closure, run in another method; a static call keeps its class", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Season.php": ["<?php", "class Season {", "    public static function close() {}", "}", ""].join("\n"),
+      "src/Club.php": [
+        "<?php", "class Club {", "    private $onDone;", "    public function setup() {", "        $this->onDone = fn() => Season::close();", "    }",
+        "    public function finish() {", "        ($this->onDone)();", "    }", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["Club.finish@8 this.onDone -> src/Season.php::Season.close"]);
+  });
+
+  it("an array of closures run by key", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function kickOff() {}", "function whistle() {}", "function boot($key) {",
+        "    $actions = ['a' => fn() => kickOff(), 'b' => function () { whistle(); }];", "    $actions['a']();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["boot@6 actions[a] -> src/Club.php::kickOff"]);
+  });
+
+  it("a factory returning a closure, run by the caller", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function closeMatch() {}", "function makeHandler() {", "    return fn() => closeMatch();", "}",
+        "function boot() {", "    $cb = makeHandler();", "    $cb();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["boot@8 cb -> src/Club.php::closeMatch"]);
+  });
+
+  it("a closure that runs a held value hands on what it holds", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function saveClub() {}", "function boot() {", "    $onDone = 'saveClub';", "    $cb = fn() => $onDone();", "    $cb();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["boot@5 onDone -> src/Club.php::saveClub", "boot@6 cb -> src/Club.php::saveClub"]);
+  });
+
+  it("more than four calls state nothing", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function a1() {}", "function a2() {}", "function a3() {}", "function a4() {}", "function a5() {}",
+        "function boot() {", "    $cb = function () { a1(); a2(); a3(); a4(); a5(); };", "    $cb();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual([]);
+  });
+
+  it("a call on the closure's own parameter, a builtin and an untyped receiver state nothing", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function boot($player) {",
+        "    $a = fn($club) => $club->save();", "    $a(1);",
+        "    $b = fn($x) => strlen($x);", "    $b(1);",
+        "    $c = fn() => $player->save();", "    $c();",
+        "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual([]);
+  });
+
+  it("a closure given to array_map is a block, not a value", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": ["<?php", "function refreshTable() {}", "function boot($xs) {", "    array_map(fn($x) => refreshTable(), $xs);", "}", ""].join("\n"),
     });
     expect(links).toEqual([]);
   });
