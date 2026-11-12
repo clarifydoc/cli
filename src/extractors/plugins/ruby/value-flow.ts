@@ -37,7 +37,9 @@ const paramNames = (text: string): string[] => text.split(",").map((x) => /^\s*[
 /** A line with its string literals emptied, so what is inside one is no call. */
 const blankStrings = (text: string): string => text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
 
-interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }> }
+/** `lambda` names the held closure each seed (`s<index>`) and cell (`c<index>`) came from, for core's cap. */
+const MAX_CLOSURE_NAMES = 16;
+interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }>; lambda?: Map<string, string> }
 
 const IDENT = "[a-z_]\\w*";
 const stripSigil = (name: string): string => name.replace(/^[&*]+/, "");
@@ -100,6 +102,7 @@ class Reader {
   private readonly seeded = new Set<string>();
   private readonly paramNames = new Map<string, string>();
   private temp = 0;
+  private lambdas = 0;
   /** Receiver names whose type the method or class states: `.call` on them is an ordinary method call. */
   private readonly typed = new Set<string>();
 
@@ -157,7 +160,7 @@ class Reader {
   valuesOf(expr: string, line: number, into: Values = { cells: [], seeds: [], results: [] }): Values {
     let e = expr.trim();
     const closure = this.closureOf(e);
-    if (closure) { this.closureValues(closure, into); return into; }
+    if (closure) { this.closureValues(closure, into, line); return into; }
     // A trailing `if`/`unless` modifier, never one inside a string literal.
     if (!/["']/.test(e)) e = e.replace(/\s+(?:if|unless)\s+.*$/, "");
     if (e === "") return into;
@@ -214,8 +217,8 @@ class Reader {
     return { params, body };
   }
 
-  /** What a closure held in a value runs: the project functions its body calls, or the values it runs, at most four. */
-  private closureValues(closure: { params: Set<string>; body: string }, into: Values): void {
+  /** What a closure held in a value runs: the project functions its body calls, or the values it runs (core keeps a closure standing for at most four). */
+  private closureValues(closure: { params: Set<string>; body: string }, into: Values, line: number): void {
     const body = blankStrings(closure.body);
     const hidden = new Set(closure.params);
     for (const m of body.matchAll(/(?:\{|\bdo)\s*\|([^|]*)\|/g)) for (const n of paramNames(m[1]!)) hidden.add(n);
@@ -245,9 +248,12 @@ class Reader {
         if (one && one[1] !== "new" && !STDLIB_CONSTS.has(head.split("::")[0]!)) seeds.add(`${head}.${one[1]}`);
       }
     }
-    if (seeds.size + cells.size > 4) return;
-    for (const fn of seeds) into.seeds.push(fn);
-    for (const cell of cells.values()) into.cells.push(cell);
+    // Core counts the project functions among them and drops the group above four; this only bounds the output.
+    if (seeds.size + cells.size > MAX_CLOSURE_NAMES) return;
+    const id = `${line}:${this.lambdas++}`;
+    const tags = (into.lambda ??= new Map());
+    for (const fn of seeds) { tags.set(`s${into.seeds.length}`, id); into.seeds.push(fn); }
+    for (const cell of cells.values()) { tags.set(`c${into.cells.length}`, id); into.cells.push(cell); }
   }
 
   private tempCell(line: number): ValueCell {
@@ -255,11 +261,16 @@ class Reader {
   }
 
   private fill(to: ValueCell, v: Values, line: number): void {
-    for (const from of v.cells) {
-      this.facts.push({ kind: "copy", from, to, line });
+    v.cells.forEach((from, i) => {
+      const lambda = v.lambda?.get(`c${i}`);
+      const tag = lambda === undefined ? {} : { lambda };
+      this.facts.push({ kind: "copy", from, to, line, ...tag });
       this.facts.push({ kind: "copy", from: elementOf(from), to: elementOf(to), line });
-    }
-    for (const fn of v.seeds) this.facts.push({ kind: "seed", to, fn, line });
+    });
+    v.seeds.forEach((fn, i) => {
+      const lambda = v.lambda?.get(`s${i}`);
+      this.facts.push(lambda === undefined ? { kind: "seed", to, fn, line } : { kind: "seed", to, fn, line, lambda });
+    });
     for (const r of v.results) this.facts.push({ kind: "result", call: r.call, line: r.line, to });
   }
 
@@ -374,7 +385,7 @@ class Reader {
     const v = this.valuesOf(expr, line);
     if (v.cells.length === 0 && v.seeds.length === 0) return;
     const from = v.seeds.length === 0 && v.cells.length === 1 ? v.cells[0]! : this.tempCell(line);
-    if (v.seeds.length > 0 || v.cells.length > 1) this.fill(from, { cells: v.cells, seeds: v.seeds, results: [] }, line);
+    if (v.seeds.length > 0 || v.cells.length > 1) this.fill(from, { cells: v.cells, seeds: v.seeds, results: [], lambda: v.lambda }, line);
     this.facts.push({ kind: "return", from, line });
   }
 

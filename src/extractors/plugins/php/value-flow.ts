@@ -39,7 +39,9 @@ const isBuiltinFunction = (name: string): boolean => {
   return BUILTIN_PREFIX.test(n) || BUILTIN_NAMES.has(n);
 };
 
-interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }> }
+/** `lambda` names the held closure each seed (`s<index>`) and cell (`c<index>`) came from, for core's cap. */
+const MAX_CLOSURE_NAMES = 16;
+interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }>; lambda?: Map<string, string> }
 
 const plainString = (n: Node): string | null => {
   if (n.type === "string") return n.text.slice(1, -1);
@@ -205,7 +207,7 @@ class Reader {
     return into;
   }
 
-  /** The project functions a closure's body calls (or the held values it runs), when there are at most four. */
+  /** The project functions a closure's body calls (or the held values it runs), (core keeps a closure standing for at most four). */
   private closureValues(closure: Node, into: Values): void {
     const body = closure.childForFieldName("body");
     if (!body) return;
@@ -236,9 +238,12 @@ class Reader {
       for (const k of c.namedChildren) visit(k, here);
     };
     visit(body, params);
-    if (names.size + cells.size > 4) return;
-    for (const fn of names) into.seeds.push(fn);
-    for (const cell of cells.values()) into.cells.push(cell);
+    // Core counts the project functions among them and drops the group above four; this only bounds the output.
+    if (names.size + cells.size > MAX_CLOSURE_NAMES) return;
+    const id = `${lineOf(closure)}:${closure.startPosition.column + 1}`;
+    const tags = (into.lambda ??= new Map());
+    for (const fn of names) { tags.set(`s${into.seeds.length}`, id); into.seeds.push(fn); }
+    for (const cell of cells.values()) { tags.set(`c${into.cells.length}`, id); into.cells.push(cell); }
   }
 
   /** `$onDone()` / `($this->onDone)()` inside a closure: the cell of the value it runs (not a closure parameter's). */
@@ -292,12 +297,17 @@ class Reader {
   }
 
   private fill(to: ValueCell, v: Values, line: number): void {
-    for (const from of v.cells) {
-      this.facts.push({ kind: "copy", from, to, line });
-      // A list copied carries its elements.
+    v.cells.forEach((from, i) => {
+      const lambda = v.lambda?.get(`c${i}`);
+      const tag = lambda === undefined ? {} : { lambda };
+      this.facts.push({ kind: "copy", from, to, line, ...tag });
+      // A list copied carries its elements; only the cell copy is the lambda's (core counts one per held value).
       this.facts.push({ kind: "copy", from: elementOf(from), to: elementOf(to), line });
-    }
-    for (const fn of v.seeds) this.facts.push({ kind: "seed", to, fn, line });
+    });
+    v.seeds.forEach((fn, i) => {
+      const lambda = v.lambda?.get(`s${i}`);
+      this.facts.push(lambda === undefined ? { kind: "seed", to, fn, line } : { kind: "seed", to, fn, line, lambda });
+    });
     for (const r of v.results) this.facts.push({ kind: "result", call: r.call, line: r.line, to });
   }
 
@@ -407,7 +417,7 @@ class Reader {
         // `return f()` hands on what `f` returns only through its own result cell: not read.
         if (v.cells.length > 0 || v.seeds.length > 0) {
           const from = v.seeds.length === 0 && v.cells.length === 1 ? v.cells[0]! : this.tempCell(lineOf(n));
-          if (v.seeds.length > 0 || v.cells.length > 1) this.fill(from, { cells: v.cells, seeds: v.seeds, results: [] }, lineOf(n));
+          if (v.seeds.length > 0 || v.cells.length > 1) this.fill(from, { cells: v.cells, seeds: v.seeds, results: [], lambda: v.lambda }, lineOf(n));
           this.facts.push({ kind: "return", from, line: lineOf(n) });
         }
       }

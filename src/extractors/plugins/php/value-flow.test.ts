@@ -249,6 +249,32 @@ describe("PHP value flow: closures held in a value", () => {
     expect(links).toEqual([]);
   });
 
+  it("a closure calling four project methods and three library calls links all four", async () => {
+    const body = (n: number): string[] => [
+      "<?php", "function a1() {}", "function a2() {}", "function a3() {}", "function a4() {}", "function a5() {}",
+      "function boot($logger, $x) {",
+      `    $cb = function () use ($logger, $x) { a1(); a2(); a3(); ${n === 5 ? "a4(); a5();" : "a4();"} $logger->info('x'); array_keys($x); $x->foo(); vendorLog(); };`,
+      "    $cb();", "}", "",
+    ];
+    const four = await flow({ "decoys.php": ["<?php", "function a1() {}", "function a2() {}", "function a3() {}", "function a4() {}", ""].join("\n"), "src/Club.php": body(4).join("\n") });
+    expect(four).toEqual(["boot@9 cb -> src/Club.php::a1", "boot@9 cb -> src/Club.php::a2", "boot@9 cb -> src/Club.php::a3", "boot@9 cb -> src/Club.php::a4"]);
+    const five = await flow({ "decoys.php": decoys, "src/Club.php": body(5).join("\n") });
+    expect(five).toEqual([]);
+  });
+
+  it("a closure running three held values and calling a project function is not over the cap", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "function a1() {}", "function a2() {}", "function a3() {}", "function a4() {}",
+        "function boot() {", "    $x = 'a1'; $y = 'a2'; $z = 'a3';",
+        "    $cb = function () use ($x, $y, $z) { $x(); $y(); $z(); a4(); };", "    $cb();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toContain("boot@9 cb -> src/Club.php::a4");
+    expect(links).toContain("boot@9 cb -> src/Club.php::a1");
+  });
+
   it("a call on the closure's own parameter, a builtin and an untyped receiver state nothing", async () => {
     const links = await flow({
       "decoys.php": decoys,

@@ -331,6 +331,40 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
     expect(flow).toEqual([]);
   });
 
+  it("a lambda calling four project methods and three library calls links all four", async () => {
+    const club = (n: number): string => rb(
+      "class Club",
+      "  def a1; end", "  def a2; end", "  def a3; end", "  def a4; end", "  def a5; end",
+      "  def boot(items, other)",
+      `    cb = -> { a1; a2; a3; a4${n === 5 ? "; a5" : ""}; Rails.logger.info('x'); items.map { |i| i }; other.foo }`,
+      "    cb.call",
+      "  end",
+      "end",
+    );
+    const four = await links({ "decoy.rb": rb("class Other", "  def a1; end", "  def a2; end", "  def a3; end", "  def a4; end", "end"), "club.rb": club(4) });
+    expect(four.flow).toEqual(["Club.boot@9 cb.call -> club.rb::Club.a1", "Club.boot@9 cb.call -> club.rb::Club.a2", "Club.boot@9 cb.call -> club.rb::Club.a3", "Club.boot@9 cb.call -> club.rb::Club.a4"]);
+    const five = await links({ "decoy.rb": decoy, "club.rb": club(5) });
+    expect(five.flow).toEqual([]);
+  });
+
+  it("a lambda running three held values and calling a project method is not over the cap", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def a1; end", "  def a2; end", "  def a3; end", "  def a4; end",
+        "  def boot",
+        "    x = method(:a1)", "    y = method(:a2)", "    z = method(:a3)",
+        "    cb = -> { x.call; y.call; z.call; a4 }",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toContain("Club.boot@11 cb.call -> club.rb::Club.a4");
+    expect(flow).toContain("Club.boot@11 cb.call -> club.rb::Club.a1");
+  });
+
   it("a call on the lambda's own parameter, a kernel method and a variable receiver state nothing", async () => {
     const { flow } = await links({
       "decoy.rb": decoy,
