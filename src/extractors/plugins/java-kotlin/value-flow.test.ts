@@ -505,3 +505,72 @@ describe("calls into a library state no argument facts", () => {
     expect(argCalls(analyses.find((a) => a.filePath === "league/Match.java")!, "wire")).toEqual(["later"]);
   });
 });
+
+describe("a held lambda's cap counts project functions only (real-repo FP)", () => {
+  const javaFiles = (body: string) => ({
+    "league/Club.java": ["package league;", "public class Club { public void save() { } }", ""].join("\n"),
+    "league/Match.java": [
+      "package league;",
+      "import static org.leaguelib.Stats.tally;",
+      "import java.util.*;",
+      "public class Match {",
+      "    private final Object audit = null;",
+      "    void kickOff() { }",
+      "    void closeMatch() { }",
+      "    void refreshTable() { }",
+      "    void sendOff() { }",
+      "    void swap() { }",
+      `    void run1(Club club, List<Club> list) { Runnable m = () -> { ${body} }; m.run(); }`,
+      "}",
+      "",
+    ].join("\n"),
+    "league/Decoy.java": ["package league;", "public class Decoy { public void run() { } public void kickOff() { } public void closeMatch() { } public void refreshTable() { } public void sendOff() { } public void tally() { } }", ""].join("\n"),
+  });
+  const kotlinFiles = (body: string) => ({
+    "league/Club.kt": ["package league", "class Club { fun save() {} }", ""].join("\n"),
+    "league/Match.kt": [
+      "package league",
+      "import org.leaguelib.tally",
+      "class Match {",
+      "    fun kickOff() {}",
+      "    fun closeMatch() {}",
+      "    fun refreshTable() {}",
+      "    fun sendOff() {}",
+      "    fun swap() {}",
+      `    fun run1(club: Club, list: List<Club>) { val m = { ${body} }; m() }`,
+      "}",
+      "",
+    ].join("\n"),
+    "league/Decoy.kt": ["package league", "class Decoy { fun invoke() {}; fun kickOff() {}; fun closeMatch() {}; fun refreshTable() {}; fun sendOff() {}; fun tally() {}; fun m() {} }", ""].join("\n"),
+  });
+
+  it("Java: four project functions beside library and unknown names link all four", async () => {
+    const out = links(await analyzeAll(javaFiles("kickOff(); closeMatch(); tally(1); list.stream(); audit.record(); refreshTable(); club.save(); log.info(\"x\");"), "java"), "value-flow");
+    expect(out).toEqual([
+      "Match.run1: m.run -> Club.java::Club.save",
+      "Match.run1: m.run -> Match.java::Match.closeMatch",
+      "Match.run1: m.run -> Match.java::Match.kickOff",
+      "Match.run1: m.run -> Match.java::Match.refreshTable",
+    ]);
+  });
+
+  it("Java: five project functions link nothing", async () => {
+    const out = links(await analyzeAll(javaFiles("kickOff(); closeMatch(); refreshTable(); sendOff(); swap(); tally(1);"), "java"), "value-flow");
+    expect(out).toEqual([]);
+  });
+
+  it("Kotlin: four project functions beside library and unknown names link all four", async () => {
+    const out = links(await analyzeAll(kotlinFiles("kickOff(); closeMatch(); tally(1); list.stream(); audit.record(); refreshTable(); club.save(); log.info(\"x\")"), "kotlin"), "value-flow");
+    expect(out).toEqual([
+      "Match.run1: m -> Club.kt::Club.save",
+      "Match.run1: m -> Match.kt::Match.closeMatch",
+      "Match.run1: m -> Match.kt::Match.kickOff",
+      "Match.run1: m -> Match.kt::Match.refreshTable",
+    ]);
+  });
+
+  it("Kotlin: five project functions link nothing", async () => {
+    const out = links(await analyzeAll(kotlinFiles("kickOff(); closeMatch(); refreshTable(); sendOff(); swap(); tally(1)"), "kotlin"), "value-flow");
+    expect(out).toEqual([]);
+  });
+});

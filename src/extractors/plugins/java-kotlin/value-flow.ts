@@ -12,7 +12,9 @@
  * A lambda has no function of its own here (its calls belong to the enclosing function), but a lambda that lands in
  * a cell (a local, a field, a collection, an argument, a return, a field initializer) stands for the project
  * functions its body calls: it seeds the cell with each (`save`, `this.save`, `club.save`, `Club.save`) and copies
- * a held function its body runs (`() -> onDone.run()`). Past four distinct names, a call on one of the lambda's own
+ * a held function its body runs (`() -> onDone.run()`). The facts of one lambda share an id (`lambda`, its line:column) and
+ * core drops the group when it resolves to more than four project functions, a library's name counting for none; this
+ * plugin only bounds its output (16 names). A call on one of the lambda's own
  * parameters (Kotlin's implicit `it` too), a chain or a call no project function could be, it states nothing.
  * The lambda's body is also walked for the facts it states about the enclosing function's names (its parameters
  * shadow them).
@@ -23,6 +25,9 @@ import { javaMethodRefName, kotlinReferenceName } from "./call-hooks.js";
 import { javaManifest } from "./manifest.js";
 
 type Lang = "java" | "kotlin";
+
+/** The most names one lambda's facts state: only bounds the output, core counts the project functions among them. */
+const LAMBDA_NAMES = 16;
 
 /** Interface methods that run a held function (Java names; a Kotlin function value also has `invoke`). */
 const INVOKE_METHODS = new Set(["run", "apply", "accept", "get", "call", "test", "compare", "handle"]);
@@ -757,7 +762,7 @@ class Flow {
     return out;
   }
 
-  /** What a lambda stands for: the functions its body calls (at most four) and the held functions it runs. */
+  /** What a lambda stands for: the functions its body calls (at most 16 names; core caps at four project functions) and the held functions it runs. */
   private lambdaTargets(node: Node): { seeds: string[]; copies: ValueCell[] } | null {
     const seeds = new Set<string>();
     const copies = new Map<string, ValueCell>();
@@ -769,7 +774,7 @@ class Flow {
       if (n.id !== node.id && Flow.isLambda(n)) scope = new Set([...hidden, ...this.lambdaParamNames(n)]);
       if (n.type === "method_invocation" || n.type === "call_expression") {
         this.lambdaCall(n, scope, seeds, copies);
-        if (seeds.size + copies.size > 4) over = true;
+        if (seeds.size + copies.size > LAMBDA_NAMES) over = true;
       }
       for (const c of n.children) walk(c, scope);
     };
@@ -818,6 +823,7 @@ class Flow {
     // A bare or `this.` call is the class's own member (Kotlin's standard functions aside); the platform's names are those on a receiver.
     if (bare) {
       if (hidden.has(name) || (this.lang === "kotlin" && (/^[A-Z]/.test(name) || KOTLIN_STD.has(name)))) return;
+      if (isLibraryCall(this.library, this.lang, name)) return;
       seeds.add(name);
     } else if (head?.type === "this" || head?.type === "this_expression") seeds.add(`this.${name}`);
     else if (headText !== null && !LIBRARY_HEADS.has(headText) && !LIBRARY_CALLS.has(name)) seeds.add(`${headText}.${name}`);
@@ -828,8 +834,9 @@ class Flow {
     const targets = this.lambdaTargets(node);
     if (!targets) return false;
     const line = node.startPosition.row + 1;
-    for (const fn of targets.seeds) this.push({ kind: "seed", to: dest, fn, line });
-    for (const from of targets.copies) this.push({ kind: "copy", from, to: dest, line });
+    const lambda = `${line}:${node.startPosition.column + 1}`;
+    for (const fn of targets.seeds) this.push({ kind: "seed", to: dest, fn, line, lambda });
+    for (const from of targets.copies) this.push({ kind: "copy", from, to: dest, line, lambda });
     return true;
   }
 
