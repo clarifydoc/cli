@@ -408,6 +408,15 @@ class Flow {
   }
   private callIndex: Set<string> | null = null;
 
+  /** The call list has a row of this call's name, on whatever line (rows of one name in a method are kept once). */
+  private callNamed(node: Node): boolean {
+    const written = this.calleeText(node);
+    if (!written || !this.calls) return false;
+    this.callNames ??= new Set(this.calls.map((c) => c.name));
+    return this.callNames.has(written);
+  }
+  private callNames: Set<string> | null = null;
+
   /** The call's name as the call list spells it. */
   private calleeText(node: Node): string | null {
     if (node.type === "method_invocation") {
@@ -699,8 +708,10 @@ class Flow {
         if (ref?.fn) { copies.set(JSON.stringify(ref.cell), ref.cell); return; }
       }
     }
-    // A lambda bound to a local is no call-list owner (its calls are on no row), so the call list cannot vouch for a
-    // call here: the library's own names and classes are left out by name instead.
+    // The call must be a row of the call list (a lambda bound to a local is read on its method's behalf); a row cannot
+    // tell a library's call from a project's, so the platform's own names and classes are left out by name.
+    // (A repeated call of one name in a method is one row, so a second `get(…)` on another line is vouched for by the name.)
+    if (this.calls && !this.matchCall(n) && !this.callNamed(n)) return;
     // A bare or `this.` call is the class's own member (Kotlin's standard functions aside); the platform's names are those on a receiver.
     if (bare) {
       if (hidden.has(name) || (this.lang === "kotlin" && (/^[A-Z]/.test(name) || KOTLIN_STD.has(name)))) return;

@@ -73,13 +73,13 @@ config.Get<Options>().Validate();`);
     expect(receivers(calls)).toEqual([]);
   });
 
-  it("attributes an argument lambda's calls to the member, not a named lambda's or local function's", async () => {
+  it("attributes an argument lambda's calls to the member, one bound to a local, not a local function's", async () => {
     const calls = await callsOf(`items.ForEach(i => _repo.Save(i));
 services.AddScoped<IMailer>(sp => new SmtpMailer(sp.GetRequiredService<IConfig>()));
 Func<int> f = () => Compute();
 void Local() { Helper(); }`);
     expect(names(calls)).toEqual([
-      "items.ForEach", "_repo.Save", "services.AddScoped<IMailer>", "new SmtpMailer", "sp.GetRequiredService<IConfig>",
+      "items.ForEach", "_repo.Save", "services.AddScoped<IMailer>", "new SmtpMailer", "sp.GetRequiredService<IConfig>", "Compute",
     ]);
   });
 });

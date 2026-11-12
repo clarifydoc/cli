@@ -304,6 +304,8 @@ describe("Java lambdas as values", () => {
       "Match.use: f.run -> Match.java::Match.closeMatch",
       // a lambda that runs a held function holds what it holds
       "Match.wire: chained.run -> Match.java::Match.refreshTable",
+      // `onDone.run()` inside the local lambda is a call of `wire` itself now (the lambda is read on its behalf), as in Kotlin
+      "Match.wire: onDone.run -> Match.java::Match.refreshTable",
       // a lambda handed to a wrapper that runs its parameter; a body of two calls is both of them
       "Match.wrapIt: w.run -> Club.java::Club.save",
       "Match.pair: m.run -> Match.java::Match.closeMatch",
@@ -311,6 +313,36 @@ describe("Java lambdas as values", () => {
     ].sort());
     // Five calls, a call on the lambda's own parameter and a construction state nothing; the namesake is never reached.
     expect(out.filter((l) => /^Match\.(many|viaParam|constructed):/.test(l))).toEqual([]);
+    expect(out.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+});
+
+describe("Java lambda bound to a local: its calls are the method's", () => {
+  const files = {
+    "league/Club.java": ["package league;", "public class Club {", "    public void save() { }", "}", ""].join("\n"),
+    "league/Match.java": [
+      "package league;",
+      "public class Match {",
+      "    private final Runnable kick = () -> kickOff();",
+      "    void kickOff() { }",
+      "    void wire(Club club) {",
+      "        Runnable r = () -> club.save();",
+      "        runIt(r);",
+      "    }",
+      "    void runIt(Runnable w) { w.run(); }",
+      "}",
+      "",
+    ].join("\n"),
+    "league/Decoy.java": ["package league;", "public class Decoy {", "    public void save() { }", "    public void kickOff() { }", "}", ""].join("\n"),
+  };
+
+  it("records the lambda's calls on the enclosing method and links them", async () => {
+    const analyses = await analyzeAll(files, "java");
+    const match = analyses.find((a) => a.filePath.endsWith("Match.java"));
+    const wire = match?.classes.flatMap((c) => c.methods).find((m) => m.name === "wire");
+    expect(wire?.calls.filter((c) => c.name === "club.save").map((c) => c.line)).toEqual([6]);
+    const out = links(analyses, "value-flow");
+    expect(out).toContain("Match.runIt: w.run -> Club.java::Club.save");
     expect(out.filter((l) => l.includes("Decoy"))).toEqual([]);
   });
 });

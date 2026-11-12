@@ -204,13 +204,15 @@ export const javaCallHooks: CallExtractionHooks = {
   nestedScopeTypes: JAVA_NESTED_SCOPE_TYPES,
   // A lambda passed as an argument (`orders.forEach(o -> repo.save(o))`,
   // `stream().map(x -> mapper.toDto(x))`) runs on behalf of the method that
-  // wires it: its calls are the method's. A lambda bound to a local
-  // (`Runnable r = () -> …`) stays a boundary (see call-graph.ts).
+  // wires it: its calls are the method's. So is a lambda bound to a local
+  // (`Runnable r = () -> …`; `localDeclarationTypes`) — no function of its own, it runs
+  // where it is called; one in a field initializer stays outside every method.
   // So does an anonymous class (`cache.get(new Task<Boolean>() { public
   // Boolean get() { return getService().find(id); } })`) or a local class: a
   // `class_body` met inside a method body is no member class, its methods are
   // no symbol of their own, and the method that builds it is where they run.
   anonymousScopeTypes: ["lambda_expression", "class_body"],
+  localDeclarationTypes: ["local_variable_declaration"],
   // No `callbackArgNodeTypes`: a Java identifier handed to a call is always a
   // value — a method is passed as `this::save` (a method reference, below) —
   // so `execute(ruleUuid, slots)` never calls the record accessors `slots()`.

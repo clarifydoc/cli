@@ -34,6 +34,7 @@ const NESTED_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const ANONYMOUS_SCOPE_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 /** Per language: the parents that bind an anonymous scope to a name (`variable_declarator` always does). */
 const NAMED_BINDING_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
+const LOCAL_DECLARATION_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const NO_TYPES: ReadonlySet<string> = new Set();
 
 /** Per language: call node types whose arguments are scanned for callback identifiers. */
@@ -65,6 +66,7 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   NESTED_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.nestedScopeTypes ?? []));
   ANONYMOUS_SCOPE_BY_LANGUAGE.set(language, new Set(hooks.anonymousScopeTypes ?? []));
   NAMED_BINDING_BY_LANGUAGE.set(language, new Set(["variable_declarator", ...(hooks.namedBindingTypes ?? [])]));
+  LOCAL_DECLARATION_BY_LANGUAGE.set(language, new Set(hooks.localDeclarationTypes ?? []));
   CALLBACK_ARG_BY_LANGUAGE.set(language, new Set(hooks.callbackArgNodeTypes ?? []));
   BINDINGS_BY_LANGUAGE.set(language, { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) });
 }
@@ -116,10 +118,14 @@ function collectPatternNames(pattern: Node, into: Set<string>, patterns: FieldTa
  * an anonymous scope) is no symbol either: it runs on behalf of the function
  * that constructs the object.
  */
-function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>, named: ReadonlySet<string> = DEFAULT_NAMED_BINDING): boolean {
+function isAnonymousFnExpression(node: Node, anonymous: ReadonlySet<string>, named: ReadonlySet<string> = DEFAULT_NAMED_BINDING, locals: ReadonlySet<string> = NO_TYPES): boolean {
   const parent = node.parent;
   if (!anonymous.has(node.type)) return !!parent && anonymous.has(parent.type);
-  return !parent || !named.has(parent.type);
+  if (!parent || !named.has(parent.type)) return true;
+  // A declarator of a local (`Runnable r = () -> …`) names a value, not a function the plugin extracts.
+  // The declaration is the declarator's parent or, where a grammar nests a list between them, its grandparent.
+  const declaration = parent.parent;
+  return !!declaration && (locals.has(declaration.type) || (!!declaration.parent && locals.has(declaration.parent.type)));
 }
 const DEFAULT_NAMED_BINDING: ReadonlySet<string> = new Set(["variable_declarator"]);
 
@@ -181,6 +187,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
+  const locals = LOCAL_DECLARATION_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const callbackArgTypes = CALLBACK_ARG_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const bindings = BINDINGS_BY_LANGUAGE.get(language) ?? NO_BINDINGS;
 
@@ -248,7 +255,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     // body itself) — those are symbols of their own. Anonymous function
     // expressions are the exception: `onClick={() => addToCart(id)}` has no
     // symbol, so its calls attribute here.
-    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous, named)) return;
+    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous, named, locals)) return;
     // A callback the plugin extracts as a function of its own: handed on from here, its calls its own.
     const held = !isRoot && nested.has(node.type) ? hooks?.heldFunction?.(node) : null;
     if (held) {
@@ -460,6 +467,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
+  const locals = LOCAL_DECLARATION_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   const results: CallInfo[] = [];
   const seen = new Set<string>();
@@ -480,7 +488,7 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
       return;
     }
     if (nested.has(node.type)) {
-      if (inCallback && isAnonymousFnExpression(node, anonymous, named)) { /* read on */ }
+      if (inCallback && isAnonymousFnExpression(node, anonymous, named, locals)) { /* read on */ }
       else if (hooks!.runsAtTopLevel?.(node)) inCallback = true;
       else return;
     }

@@ -48,9 +48,10 @@ export const csharpCallHooks: CallExtractionHooks = {
   nestedScopeTypes: ["local_function_statement", "anonymous_method_expression", "lambda_expression"],
   // A lambda passed as an argument (a LINQ predicate, a DI factory
   // `sp => new Foo(..)`, a `Task.Run(() => …)`, an event handler) runs on
-  // behalf of the member that wires it — its calls are that member's. One
-  // bound to a name (`Func<int> f = () => …`) stays a scope of its own.
+  // behalf of the member that wires it — its calls are that member's. So is
+  // one bound to a local (`Func<int> f = () => …`: `localDeclarationTypes`); a field's stays outside every member.
   anonymousScopeTypes: ["lambda_expression", "anonymous_method_expression"],
+  localDeclarationTypes: ["local_declaration_statement"],
 
   // `new global::League.Match()` is `new League.Match()`: `global::` only anchors the namespace at the root.
   resolveCallName: (node) => dropGlobalAlias(genericResolveCallName(node, {

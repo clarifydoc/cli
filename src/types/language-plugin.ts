@@ -925,6 +925,12 @@ export interface CallExtractionHooks {
    */
   namedBindingTypes?: readonly string[];
   /**
+   * Declaration node types whose declarators are locals (Java `local_variable_declaration`). A function
+   * expression bound there is a value the plugin does not extract as a function, so it is anonymous: its
+   * calls are the enclosing function's (`Runnable r = () -> club.save();`). Unset, a declarator names it.
+   */
+  localDeclarationTypes?: readonly string[];
+  /**
    * A function expression the plugin extracts as a function of its own though no declarator names it — a
    * callback handed on to run later (`toast.action = () => …`, a dialog output's `subscribe(() => …)`): its
    * name, else null. The walk stops there, as at a named function, and records the function it sits in
