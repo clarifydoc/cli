@@ -475,16 +475,17 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   const seedTargets = new Map<ValueFlowFact, Target | null>();
   const droppedLambdas = new Set<string>();
   for (const s of scopes) {
-    const groups = new Map<string, { targets: Set<string>; copies: number }>();
+    const groups = new Map<string, { targets: Set<string>; copies: Set<string> }>();
     for (const f of s.facts) {
       if ((f.kind !== "seed" && f.kind !== "copy") || f.lambda === undefined) continue;
-      const g = groups.get(f.lambda) ?? groups.set(f.lambda, { targets: new Set(), copies: 0 }).get(f.lambda)!;
-      if (f.kind === "copy") { g.copies++; continue; }
+      const g = groups.get(f.lambda) ?? groups.set(f.lambda, { targets: new Set(), copies: new Set() }).get(f.lambda)!;
+      // A held value counts once, however many facts copy it (a cell and its elements, a lambda read twice).
+      if (f.kind === "copy") { g.copies.add(JSON.stringify(f.from)); continue; }
       const t = host.resolveSeed(s.file, s.symbol, f.fn, f.line);
       seedTargets.set(f, t);
       if (t) g.targets.add(`${t.file}\0${t.symbol}\0${t.line}`);
     }
-    for (const [id, g] of groups) if (g.targets.size + g.copies > LAMBDA_TARGETS) droppedLambdas.add(`${s.file}\0${s.symbol}\0${id}`);
+    for (const [id, g] of groups) if (g.targets.size + g.copies.size > LAMBDA_TARGETS) droppedLambdas.add(`${s.file}\0${s.symbol}\0${id}`);
   }
   const dropped = (s: Scope, f: ValueFlowFact): boolean =>
     (f.kind === "seed" || f.kind === "copy") && f.lambda !== undefined && droppedLambdas.has(`${s.file}\0${s.symbol}\0${f.lambda}`);
