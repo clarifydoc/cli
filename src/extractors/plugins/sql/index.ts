@@ -101,6 +101,29 @@ function findParenEnd(lines: string[], startIdx: number): number {
 }
 
 /**
+ * The end of a trigger that has no body block: PostgreSQL `… FOR EACH ROW EXECUTE FUNCTION f();`, MySQL's
+ * `FOR EACH ROW SET …;` — the statement's own `;` (outside parentheses), or the line before the next `CREATE`.
+ * A trigger whose header opens a body (`BEGIN`, `DECLARE`, a `$$` quote, T-SQL's `AS` / Oracle's `IS` before its
+ * statements) is null: its block is read by the caller, so the statements after a one-statement trigger are
+ * never taken for its body.
+ */
+function triggerWithoutBody(lines: string[], startIdx: number): number | null {
+  if (!/^\s*(?:CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?(?:CONSTRAINT\s+)?|RECREATE\s+)TRIGGER\b/i.test(lines[startIdx]!)) return null;
+  let depth = 0;
+  for (let i = startIdx; i < lines.length && i < startIdx + 40; i++) {
+    const code = codeOf(lines[i]!).replace(/\/\*.*?\*\//g, " ");
+    if (i > startIdx && (GO_LINE.test(code) || /^\s*CREATE\b/i.test(code))) return i;
+    if (/\bBEGIN\b|\bDECLARE\b|\bCOMPOUND\b|\$\$|\b(?:AS|IS)\s*$|\b(?:AS|IS)\s+(?:BEGIN|DECLARE|SELECT|INSERT|UPDATE|DELETE|IF|SET|EXEC(?:UTE)?|WITH|RETURN)\b/i.test(code)) return null;
+    for (const ch of code) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      else if (ch === ";" && depth <= 0) return i + 1;
+    }
+  }
+  return null;
+}
+
+/**
  * Find the matching `END;` (with optional label) for a routine body. A block
  * is `BEGIN` … `END`; `BEGIN TRAN` opens a transaction, not a block, and a
  * `CASE` closes with its own `END`, while PL/SQL's `END IF` / `END LOOP` close
@@ -108,6 +131,8 @@ function findParenEnd(lines: string[], startIdx: number): number {
  * the count says.
  */
 function findRoutineEnd(lines: string[], startIdx: number): number {
+  const headless = triggerWithoutBody(lines, startIdx);
+  if (headless !== null) return headless;
   let depth = 0;
   let sawBegin = false;
   let dollarDepth = 0;
@@ -787,7 +812,9 @@ export function fixSqlFunctionEndLines(lines: string[], fns: FunctionInfo[]): Fu
     const idx = fn.line - 1;
     if (idx < 0 || idx >= lines.length) return fn;
     const endLine = findRoutineEnd(lines, idx);
-    const calls = extractCallsFromBody(lines, idx + 1, endLine, ["--", "#"]).filter((c) => isRoutineCall(c, lines));
+    // A trigger's header states what it runs (`… FOR EACH ROW EXECUTE FUNCTION audit_club();`), so it is read too.
+    const from = triggerWithoutBody(lines, idx) !== null ? idx : idx + 1;
+    const calls = extractCallsFromBody(lines, from, endLine, ["--", "#"]).filter((c) => isRoutineCall(c, lines));
     // The shared pattern stops at the first quote: `[dbo].[usp_Sign]` is read whole here.
     const head = ROUTINE_HEAD.exec(lines[idx]!);
     const name = head ? unquoteName(head[1]!) : fn.name;
@@ -800,12 +827,26 @@ export function fixSqlFunctionEndLines(lines: string[], fns: FunctionInfo[]): Fu
  * table of `INSERT INTO t (cols)` / `REFERENCES t(id)`, are no calls.
  */
 const NOT_CALLED = new Set(["VALUES", "IN", "EXISTS", "AS", "OVER", "KEY", "UNIQUE", "CHECK", "ANY", "ALL", "SOME", "NOT", "AND", "OR", "WHEN", "THEN", "RETURNS", "RETURN", "TABLE", "IF", "WHILE", "ELSE", "USING", "WITH", "ON", "INTO", "FROM", "WHERE", "SELECT", "TOP"]);
-const TABLE_BEFORE = /\b(?:INTO|TABLE|REFERENCES|UPDATE|MERGE)\s+$/i;
+const OBJECT_NAME = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\`[^\`]+\`|[\w$]+)\.)*`;
+/** What a DDL/DML head puts before the name of the table, view or type it creates or fills (`CREATE TABLE IF NOT EXISTS x (`). */
+const TABLE_BEFORE = new RegExp(String.raw`(?<!%)\b(?:INTO|TABLE|REFERENCES|UPDATE|MERGE|VIEW|TYPE|ONLY|IF\s+(?:NOT\s+)?EXISTS)\s+${OBJECT_NAME}$`, "i");
+/** `CREATE [UNIQUE] INDEX name ON x (cols)` and the access method that follows (`USING btree (col)`). */
+const INDEX_TARGET = new RegExp(String.raw`^\s*CREATE\s+(?:UNIQUE\s+|CLUSTERED\s+|NONCLUSTERED\s+)?INDEX\b[^;]*\bON\s+(?:ONLY\s+)?${OBJECT_NAME}$`, "i");
+/** A line that starts with `ON` or `USING`: its index head is on the line above. */
+const ON_OR_USING = /^\s*(?:ON|USING)\s+(?:ONLY\s+)?$/i;
+const INDEX_METHODS = new Set(["BTREE", "HASH", "GIST", "GIN", "BRIN", "SPGIST"]);
 
 function isRoutineCall(call: CallInfo, lines: string[]): boolean {
-  if (NOT_CALLED.has(call.name.toUpperCase())) return false;
+  const upper = call.name.toUpperCase();
+  if (NOT_CALLED.has(upper)) return false;
+  if (typeof call.column !== "number") return true;
   const line = lines[call.line - 1] ?? "";
-  return typeof call.column !== "number" || !TABLE_BEFORE.test(line.slice(0, call.column));
+  let before = codeOf(line.slice(0, call.column));
+  // A name on the line below its keyword (`INSERT INTO⏎  clubs (id)`) is read with that keyword.
+  if ((!before.trim() || ON_OR_USING.test(before)) && call.line > 1) before = codeOf(lines[call.line - 2]!) + " " + before.trimStart();
+  if (TABLE_BEFORE.test(before) || INDEX_TARGET.test(before)) return false;
+  if (upper === "ENUM" && /\bAS\s+$/i.test(before)) return false;
+  return !(INDEX_METHODS.has(upper) && /\bUSING\s+$/i.test(before));
 }
 
 // Suppress unused-import warnings for types we re-export indirectly.

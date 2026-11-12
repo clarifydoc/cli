@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractSqlClasses, sqlSpec } from "./index.js";
+import { extractSqlClasses, fixSqlFunctionEndLines, sqlSpec } from "./index.js";
+import type { FunctionInfo } from "../../../types/analysis.js";
 import { sqlManifest } from "./manifest.js";
 
 const rows = (sql: string) => sqlSpec.extractDataSources!(sql.split("\n"), []);
@@ -308,5 +309,99 @@ describe("CTE names are never tables", () => {
   });
   it("names no table for a WITH in plain prose", () => {
     expect(read("'Play with fans as one'")).toEqual([]);
+  });
+});
+
+describe("SQL trigger extents and DDL heads", () => {
+  const routines = (sql: string): Record<string, { span: string; calls: string[] }> => {
+    const lines = sql.split("\n");
+    const fns = lines.flatMap((l, i) => {
+      const m = sqlSpec.functionPatterns![0]!.pattern.exec(l);
+      return m ? [{ name: m[1]!, line: i + 1, endLine: i + 1, calls: [] } as unknown as FunctionInfo] : [];
+    });
+    return Object.fromEntries(fixSqlFunctionEndLines(lines, fns).map((f) => [f.name, { span: `${f.line}-${f.endLine}`, calls: f.calls.map((c) => c.name) }]));
+  };
+
+  it("ends a PostgreSQL trigger at its own semicolon, not at a BEGIN further down (real-repo FP)", () => {
+    const out = routines(`CREATE TRIGGER club_audit AFTER UPDATE ON club
+  FOR EACH ROW EXECUTE FUNCTION audit_club();
+
+CREATE TABLE squad (
+  id int
+);
+INSERT INTO squad (id) VALUES (1);
+CREATE TRIGGER car_audit BEFORE INSERT ON car FOR EACH ROW EXECUTE PROCEDURE audit_car();
+CREATE TABLE garage (id int);
+BEGIN;
+SELECT 1;
+COMMIT;`);
+    expect(out.club_audit).toEqual({ span: "1-2", calls: ["audit_club"] });
+    expect(out.car_audit).toEqual({ span: "8-8", calls: ["audit_car"] });
+  });
+
+  it("ends a trigger with a commented BEGIN in its header at its semicolon, and keeps an Oracle compound trigger whole", () => {
+    const out = routines(`CREATE TRIGGER club_note AFTER UPDATE ON club /* BEGIN audit */
+  FOR EACH ROW EXECUTE FUNCTION audit_club();
+CREATE TABLE squad (id int);
+BEGIN;
+COMMIT;
+CREATE OR REPLACE TRIGGER car_totals FOR INSERT ON car COMPOUND TRIGGER
+  v_count NUMBER;
+  AFTER STATEMENT IS BEGIN
+    recount_cars(v_count);
+  END AFTER STATEMENT;
+END car_totals;`);
+    expect(out.club_note).toEqual({ span: "1-2", calls: ["audit_club"] });
+    expect(out.car_totals!.calls).toEqual(["recount_cars"]);
+  });
+
+  it("keeps the block of a MySQL, SQLite and SQL Server trigger, and the calls in it", () => {
+    const out = routines(`CREATE TRIGGER trg_goal AFTER INSERT ON goals
+FOR EACH ROW
+BEGIN
+  CALL refresh_rank(NEW.club_id);
+END;
+CREATE TABLE stadium (id int);
+CREATE TRIGGER trg_car AFTER DELETE ON car
+BEGIN
+  DELETE FROM garage WHERE car_id = OLD.id;
+END;
+CREATE TABLE tyre (id int);
+GO
+CREATE TRIGGER trg_mssql ON dbo.Car AFTER INSERT AS
+BEGIN
+  SELECT recalc_cars(1);
+END
+GO
+CREATE TABLE engine (id int);`);
+    expect(out.trg_goal).toEqual({ span: "1-5", calls: ["refresh_rank"] });
+    expect(out.trg_car).toEqual({ span: "7-10", calls: [] });
+    expect(out.trg_mssql).toEqual({ span: "13-16", calls: ["recalc_cars"] });
+  });
+
+  it("reads no call from a DDL or DML head naming a table, view or index", () => {
+    const out = routines(`CREATE PROCEDURE seed_league()
+LANGUAGE plpgsql AS $$
+BEGIN
+  CREATE TABLE IF NOT EXISTS club_cache (
+    id int
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_a ON club_cache (id);
+  CREATE INDEX idx_b ON public.club_cache USING btree (id);
+  INSERT INTO
+    club_cache (id) VALUES (2);
+  CREATE VIEW v_club (id) AS SELECT 1;
+  CREATE TYPE kit_t AS ENUM ('a');
+  CREATE TABLE
+    pitch_cache (id int);
+  CREATE INDEX idx_c
+    ON club_cache (id);
+  CREATE TABLE kit_log (v club.id%TYPE, w int DEFAULT make_kit(1));
+  PERFORM recalc_table();
+  SELECT * FROM club_cache c JOIN club_log (id) ON true;
+END;
+$$;`);
+    // club_log: a name after JOIN may be a table function, so it stays a call; a same-named table head does not.
+    expect(out.seed_league!.calls).toEqual(["make_kit", "recalc_table", "club_log"]);
   });
 });
