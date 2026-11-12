@@ -232,9 +232,9 @@ class Reader {
 
   private argFacts(argsText: string, call: string, line: number): void {
     splitTopLevel(argsText).forEach((raw, index) => {
-      let text = raw.trim();
-      if (text === "" || text.startsWith("*") || /^[a-z_]\w*:\s/.test(text) || /=>/.test(text)) return;
-      text = text.replace(/^&/, "");
+      const text = raw.trim();
+      // A block argument (`&m`) binds the callee's `&blk` formal, which a written index cannot name: not stated.
+      if (text === "" || text.startsWith("*") || text.startsWith("&") || /^[a-z_]\w*:\s/.test(text) || /=>/.test(text)) return;
       const from = this.cellFor(text, line);
       if (from) this.facts.push({ kind: "arg", call, line, index, from });
     });

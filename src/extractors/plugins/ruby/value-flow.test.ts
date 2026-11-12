@@ -149,7 +149,27 @@ describe("Ruby value flow: the matrix", () => {
 });
 
 describe("Ruby value flow: blocks, objects and decoys", () => {
-  it("a block captured with &block, handed on as &method(:x), and called", async () => {
+  it("a block argument (&m) binds no positional formal: `run(&m)` never reaches `cb.call` of `def run(cb, &blk)`", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def persist; end",
+        "  def run(cb, &blk)",
+        "    cb.call(1)",
+        "  end",
+        "  def boot",
+        "    m = method(:persist)",
+        "    run(&m)",
+        "    run(&method(:persist))",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual([]);
+  });
+
+  it("a block captured with &block is run by block.call, but a value handed as &x is not followed into it", async () => {
     const { flow } = await links({
       "decoy.rb": decoy,
       "club.rb": rb(
@@ -164,7 +184,7 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
         "end",
       ),
     });
-    expect(flow).toEqual(["Club.each_player@4 block.call -> club.rb::Club.persist"]);
+    expect(flow).toEqual([]);
   });
 
   it("`.call` on an object of a stated type is its own method, never an invoke", async () => {
