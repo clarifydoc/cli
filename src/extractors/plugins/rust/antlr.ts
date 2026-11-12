@@ -9,6 +9,7 @@ import {
   DelimTokenTreeContext,
   ExpressionContext,
   Function_Context,
+  InherentImplContext,
   InnerAttributeContext,
   LiteralExpressionContext,
   MacroInvocationContext,
@@ -21,11 +22,15 @@ import {
   PathInExpressionContext,
   QualifiedPathInExpressionContext,
   StatementExpressionContext,
+  StaticItemContext,
   StructExpressionContext,
   TokenTreeContext,
+  TraitImplContext,
 } from "../../../parsers/antlr/rust/RustParser.js";
 import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
+import type { ValueFlowFact } from "../../../types/analysis.js";
+import { rustValueFlow, type RustFlowHooks } from "./value-flow.js";
 
 /**
  * How many calls deep a chain is named: deeper than the Rust spec's `callChainPatterns` (3), since builder chains
@@ -58,6 +63,8 @@ const MACRO_DEPTH = 3;
 interface Source {
   text: string;
   depth: number;
+  /** The crate's module-level function-value facts, collected at depth 0. */
+  module?: ValueFlowFact[];
 }
 
 function read(text: string, depth: number): ParsedStructure {
@@ -68,9 +75,10 @@ function read(text: string, depth: number): ParsedStructure {
     (parser) => parser.crate(),
   );
   const functions: ParsedFunctionSpan[] = [];
-  walk(tree, [], functions, { text, depth });
+  const module: ValueFlowFact[] = [];
+  walk(tree, [], functions, { text, depth, module });
   functions.sort((a, b) => a.line - b.line);
-  return { functions, topLevelCalls: [], syntaxErrors: errors };
+  return { functions, topLevelCalls: [], syntaxErrors: errors, ...(module.length > 0 ? { moduleValueFlow: module } : {}) };
 }
 
 /**
@@ -187,6 +195,16 @@ function macroArgumentCalls(group: DelimTokenTreeContext, owner: PatternCallName
   const open = group.start!;
   const close = group.stop!;
   if (close.start <= open.stop + 1) return true;
+  const parsed = parseMacroArguments(group, source);
+  if (!parsed) return false;
+  walk(parsed.tree, owner, functions, { text: parsed.text, depth: source.depth + 1, ...(source.module ? { module: source.module } : {}) });
+  return true;
+}
+
+/** A `(…)` / `[…]` macro's arguments parsed as call parameters, at their own lines and columns; null when they do not read as such. */
+function parseMacroArguments(group: DelimTokenTreeContext, source: Source): { tree: ParserRuleContext; text: string } | null {
+  const open = group.start!;
+  const close = group.stop!;
   const padded = "\n".repeat(open.line - 1) + " ".repeat(open.column + 1) + source.text.slice(open.start + 1, close.stop);
   let complete = false;
   const { tree, errors } = parseWithAntlr(
@@ -199,9 +217,7 @@ function macroArgumentCalls(group: DelimTokenTreeContext, owner: PatternCallName
       return params;
     },
   );
-  if (errors > 0 || !complete) return false;
-  walk(tree, owner, functions, { text: padded, depth: source.depth + 1 });
-  return true;
+  return errors > 0 || !complete ? null : { tree, text: padded };
 }
 
 /** Macros whose body is code to emit (proc-macro `quote`), whatever the path they are named by (`quote::quote!`). */
@@ -220,12 +236,21 @@ function walk(root: ParseTree, owner: PatternCallName[], functions: ParsedFuncti
     const ctx = node as ParserRuleContext;
     // An attribute's arguments (`#[cfg(feature = "x")]`) call nothing.
     if (ctx instanceof OuterAttributeContext || ctx instanceof InnerAttributeContext) continue;
+    // A static names a cell the module holds: stated bound, so `CALLBACK.set(f)` and `CALLBACK.get()` meet.
+    if (ctx instanceof StaticItemContext && source.module && /^[A-Z][A-Z0-9_]+$/.test(ctx.identifier().getText())) {
+      const cell = { name: ctx.identifier().getText() };
+      source.module.push({ kind: "copy", from: cell, to: cell, line: ctx.start?.line ?? 0 });
+    }
     if (ctx instanceof Function_Context) {
       const body = ctx.blockExpression();
       const name = ctx.identifier();
       const calls: PatternCallName[] = [];
       if (body) walk(body, calls, functions, source);
-      functions.push({ name: unraw(name.getText()), line: name.start!.line, endLine: ctx.stop?.line ?? name.start!.line, calls: recordPatternCalls(calls) });
+      const span: ParsedFunctionSpan = { name: unraw(name.getText()), line: name.start!.line, endLine: ctx.stop?.line ?? name.start!.line, calls: recordPatternCalls(calls) };
+      const { facts: valueFlow, moduleFacts } = rustValueFlow(ctx, flowHooks(source), implTypeOf(ctx), !ctx.functionParameters()?.selfParam());
+      if (valueFlow.length > 0) span.valueFlow = valueFlow;
+      source.module?.push(...moduleFacts);
+      functions.push(span);
       continue;
     }
     // A `quote! { … }` body is the code a procedural macro WRITES, not code this crate runs: its calls are the
@@ -259,6 +284,33 @@ function walk(root: ParseTree, owner: PatternCallName[], functions: ParsedFuncti
     }
     for (let i = ctx.children.length - 1; i >= 0; i--) stack.push(ctx.children[i]!);
   }
+}
+
+/** The syntax the value-flow reading shares with the call walk. */
+function flowHooks(source: Source): RustFlowHooks {
+  return {
+    pathNames: (node) => pathNames(node)?.map((n) => ({ name: n.name, line: n.token.line, column: n.token.column })) ?? null,
+    callName: (node) => {
+      if (node instanceof MethodCallExpressionContext || isShaped(node, "method")) return methodCallName(node.children[0]!, node.children[2] as PathExprSegmentContext);
+      return pathCallName(node.children[0]!);
+    },
+    valueName: (node) => pathCallName(node)?.name ?? null,
+    macroArguments: (group) => (source.depth >= MACRO_DEPTH || !(group.LPAREN() || group.LSQUAREBRACKET()) ? null : parseMacroArguments(group, source)?.tree ?? null),
+  };
+}
+
+/** The type of the `impl` a function is declared in (`Club` of `impl<T> Club<T>`, `Club` of `impl Garage for Club`), or null. */
+function implTypeOf(fn: ParserRuleContext): string | null {
+  for (let node: ParserRuleContext | null = fn.parent; node; node = node.parent) {
+    if (node instanceof InherentImplContext || node instanceof TraitImplContext) {
+      // `&'a mut Club<T>` reads `&'amutClub<T>` as text: the reference, lifetime and `mut` come off, then the generics.
+      const text = node.type_().getText().replace(/^&(?:'[a-z_]+?(?=mut[A-Z]|[A-Z]))?(?:mut(?=[A-Z]))?/, "").replace(/<.*$/, "").split("::").pop() ?? "";
+      // A blanket impl's type is one of its own generic parameters: no type of the project.
+      const generics = new Set([...(node.genericParams()?.getText().matchAll(/[<,]([A-Z]\w*)/g) ?? [])].map((m) => m[1]!));
+      return /^[A-Z]\w*$/.test(text) && !generics.has(text) ? text : null;
+    }
+  }
+  return null;
 }
 
 /** `statementExpression` mirrors `expression` without labels: tell its call shapes by their children. */

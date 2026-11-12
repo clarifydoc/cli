@@ -37,6 +37,7 @@ export function extractWithRegex(
   const lines = presplit ?? splitLines(sourceText);
 
   analysis.functions = parsed ? extractFunctionsFromParse(lines, spec, parsed.functions) : extractFunctionsWithSpec(lines, spec);
+  if (parsed?.moduleValueFlow?.length) analysis.moduleValueFlow = parsed.moduleValueFlow;
   if (parsed && spec.declarationCallPatterns) addDeclarationCalls(spec.callSourceLines?.(lines) ?? lines, spec, analysis.functions);
   analysis.classes = spec.extractClasses
     ? spec.extractClasses(lines, analysis.functions)

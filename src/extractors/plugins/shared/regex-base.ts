@@ -558,6 +558,7 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
     };
     if (span.isConstructor) fn.isConstructor = true;
     if (span.specializedOn) fn.specializedOn = span.specializedOn;
+    if (span.valueFlow?.length) fn.valueFlow = span.valueFlow;
     attachRequestAccess(fn, lines, span.line, span.endLine, spec);
     attachLocalTypes(fn, lines, i, inline, span.endLine, spec);
     return fn;

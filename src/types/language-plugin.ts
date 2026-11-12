@@ -27,6 +27,7 @@ import type {
   GeneratedClientConfig,
   MigrationInfo,
   CallInfo,
+  ValueFlowFact,
 } from "./analysis.js";
 import type { ProjectInfo } from "./plugin.js";
 import type { RouteExtractor } from "../extractors/routes/base.js";
@@ -1939,6 +1940,8 @@ export interface ParsedFunctionSpan {
   /** The template arguments of an explicit specialization (`FunctionInfo.specializedOn`). */
   specializedOn?: string[];
   calls: CallInfo[];
+  /** The function-value steps its body states (`FunctionInfo.valueFlow`). */
+  valueFlow?: ValueFlowFact[];
 }
 
 /** What a parser front end reads from one file. */
@@ -1947,6 +1950,8 @@ export interface ParsedStructure {
   functions: ParsedFunctionSpan[];
   /** Calls outside every function: the file's own statements, `<setup>` for a spec with `topLevelCalls`. */
   topLevelCalls: CallInfo[];
+  /** The function-value steps the file's own statements state (`FileAnalysis.moduleValueFlow`). */
+  moduleValueFlow?: ValueFlowFact[];
   /** Syntax errors the parser recovered from. Any makes core keep the regex reading of the file. */
   syntaxErrors: number;
 }

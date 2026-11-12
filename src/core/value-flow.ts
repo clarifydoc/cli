@@ -156,11 +156,20 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   };
   /** Names the file's module facts bind. */
   const moduleBound = new Map<string, Set<string>>();
+  /** Names a file's module facts give a value of their own (a call's result, another name's value), not only functions stored into them. */
+  const moduleRebound = new Map<string, Set<string>>();
   for (const s of scopes) {
     if (s.symbol !== "<setup>") continue;
     const set = new Set<string>();
-    for (const f of s.facts) if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined) set.add(f.to.name);
+    const rebound = new Set<string>();
+    for (const f of s.facts) {
+      if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined) {
+        set.add(f.to.name);
+        if (f.kind === "result" || (f.kind === "copy" && f.from.name !== f.to.name)) rebound.add(f.to.name);
+      }
+    }
     moduleBound.set(s.file, set);
+    moduleRebound.set(s.file, rebound);
   }
   // A function's write to a module name it does not declare (`ValueCell.module`) binds that name for the whole file.
   for (const s of scopes) {
@@ -212,8 +221,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     if (boundNames(s).has(name)) return { kind: "local", key: `L\0${s.file}\0${s.symbol}\0${name}` };
     const outer = enclosingBinder(s, name);
     if (outer) return { kind: "local", key: `L\0${outer.file}\0${outer.symbol}\0${name}` };
-    if (moduleBound.get(s.file)?.has(name)) return { kind: "module", file: s.file, name };
     const imported = host.importedBinding(s.file, name);
+    // A name the file imports is the exporting file's when this file's module facts only store functions into it
+    // (a static set from another module); one it gives a value of its own (`handler = wrap(handler)`) is rebound here.
+    if ((!imported || moduleRebound.get(s.file)?.has(name)) && moduleBound.get(s.file)?.has(name)) return { kind: "module", file: s.file, name };
     if (imported) return { kind: "module", file: imported.file, name: imported.name, namespace: imported.namespace };
     return null;
   };

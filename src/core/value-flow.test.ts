@@ -122,6 +122,34 @@ describe("value-flow: fields", () => {
     const clubs = file("src/api/clubs.ts", { functions: [fn("saveClub", 1)], exports: exp("saveClub") });
     expect(flowLinks([holder, writer, reader, clubs, onSaveDecoy])).toEqual(["src/fire.ts::fire@2 registry.onSave -> src/api/clubs.ts::saveClub"]);
   });
+
+  it("stores into an imported name through the importing file's module facts", () => {
+    const holder = file("src/hooks.ts", {
+      exports: exp("onKick"),
+      moduleValueFlow: [{ kind: "copy", from: { name: "onKick" }, to: { name: "onKick" }, line: 1 }],
+      functions: [fn("fire", 1, { valueFlow: [{ kind: "copy", from: { name: "onKick" }, to: { name: "f" }, line: 2 }, { kind: "invoke", cell: { name: "f" }, call: "f", line: 3 }], calls: [call("f", 3)] })],
+    });
+    const writer = file("src/boot.ts", {
+      imports: [imp("./hooks", ["onKick"])],
+      moduleValueFlow: [{ kind: "seed", to: { name: "onKick" }, fn: "saveClub", line: 2 }],
+      functions: [fn("saveClub", 1)],
+    });
+    expect(flowLinks([holder, writer])).toEqual(["src/hooks.ts::fire@3 f -> src/boot.ts::saveClub"]);
+  });
+
+  it("keeps a rebinding of an imported name local to the importing file", () => {
+    const holder = file("src/hooks.ts", {
+      exports: exp("onKick"),
+      moduleValueFlow: [{ kind: "copy", from: { name: "onKick" }, to: { name: "onKick" }, line: 1 }],
+      functions: [fn("fire", 1, { valueFlow: [{ kind: "copy", from: { name: "onKick" }, to: { name: "f" }, line: 2 }, { kind: "invoke", cell: { name: "f" }, call: "f", line: 3 }], calls: [call("f", 3)] })],
+    });
+    const writer = file("src/boot.ts", {
+      imports: [imp("./hooks", ["onKick"])],
+      moduleValueFlow: [{ kind: "result", call: "wrap", line: 2, to: { name: "onKick" } }, { kind: "seed", to: { name: "onKick" }, fn: "saveClub", line: 3 }],
+      functions: [fn("saveClub", 1)],
+    });
+    expect(flowLinks([holder, writer])).toEqual([]);
+  });
 });
 
 describe("value-flow: lists, returns, cycles and limits", () => {

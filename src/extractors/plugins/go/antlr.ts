@@ -13,12 +13,16 @@ import {
   OperandContext,
   ParametersContext,
   PrimaryExprContext,
+  RangeClauseContext,
+  ShortVarDeclContext,
   TypeArgsContext,
   TypeSwitchGuardContext,
   VarSpecContext,
 } from "../../../parsers/antlr/go/GoParser.js";
 import { parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { patternCallName, recordPatternCalls, type CalleeSegment, type PatternCallName } from "../shared/antlr-calls.js";
+import type { ValueFlowFact } from "../../../types/analysis.js";
+import { goFlowFileFacts, goValueFlow, type GoFlowEnv } from "./value-flow.js";
 
 /**
  * The Go lexer, retyping the `(` after a callee named `make` or `new` as `MakeParen` / `NewParen` (the grammar's
@@ -62,25 +66,60 @@ export function readGo(source: string): ParsedStructure {
   );
   const functions: ParsedFunctionSpan[] = [];
   const topLevel: PatternCallName[] = [];
+  const moduleValueFlow: ValueFlowFact[] = [];
+  const env = flowEnv(tree);
   for (const child of tree.children) {
     if (child instanceof FunctionDeclContext || child instanceof MethodDeclContext) {
       const name = child.IDENTIFIER()?.symbol;
       if (!name) continue;
       const found: PatternCallName[] = [];
-      collectCalls(child, found, undefined, callScope([child], child instanceof MethodDeclContext ? child.receiver() : undefined));
+      const scope = callScope([child], child instanceof MethodDeclContext ? child.receiver() : undefined);
+      collectCalls(child, found, undefined, scope);
       // A declaration ends at its body's `}`, or at its signature when it has none.
       const endLine = child.stop?.line ?? child.start!.line;
-      functions.push({ name: name.text ?? "", line: child.start!.line, endLine, calls: withPassedValues(recordPatternCalls(found), [child]) });
+      const span: ParsedFunctionSpan = { name: name.text ?? "", line: child.start!.line, endLine, calls: withPassedValues(recordPatternCalls(found), [child]) };
+      addValueFlow(span, [child], scope, env, moduleValueFlow);
+      functions.push(span);
     } else if (child instanceof DeclarationContext && child.varDecl()) {
       for (const spec of child.varDecl()!.varSpec()) {
-        const fn = varFunction(spec, topLevel);
+        const fn = varFunction(spec, topLevel, env, moduleValueFlow);
         if (fn) functions.push(fn);
       }
     } else if (!(child instanceof TerminalNode)) {
       collectCalls(child as ParserRuleContext, topLevel);
     }
   }
-  return { functions, topLevelCalls: recordPatternCalls(topLevel), syntaxErrors: errors };
+  return { functions, topLevelCalls: recordPatternCalls(topLevel), syntaxErrors: errors, ...(moduleValueFlow.length > 0 ? { moduleValueFlow } : {}) };
+}
+
+/** What the value-flow reading needs of the whole file: package variables, function types and function-typed fields. */
+function flowEnv(tree: ParserRuleContext): GoFlowEnv {
+  const packageVars = new Set<string>();
+  for (const child of tree.children) {
+    if (!(child instanceof DeclarationContext) || !child.varDecl()) continue;
+    for (const spec of child.varDecl()!.varSpec()) {
+      const names = spec.identifierList().IDENTIFIER();
+      const values = spec.expressionList()?.expression() ?? [];
+      const isFunction = names.length === 1 && values.length === 1 && names[0]!.getText() !== "_" && functionLiterals(values[0]!).length > 0;
+      if (!isFunction) for (const id of names) packageVars.add(id.getText());
+    }
+  }
+  const { funcFields, funcTypes } = goFlowFileFacts(tree);
+  return { applications: (ctx) => applications(ctx, undefined), packageVars, funcFields, funcTypes };
+}
+
+/**
+ * The function-value facts of `roots` onto `span`; those of a package variable assigned in it join `module`. Names the
+ * roots declare are theirs; a method's receiver is `this`.
+ */
+function addValueFlow(span: ParsedFunctionSpan, roots: readonly ParserRuleContext[], scope: CallScope, env: GoFlowEnv, module: ValueFlowFact[]): void {
+  const bound = new Map<string, Array<readonly [number, number]>>();
+  for (const root of roots) boundPositions(root, bound);
+  if (scope.receiver) bound.delete(scope.receiver);
+  const applicationsIn = (ctx: PrimaryExprContext): ReturnType<GoFlowEnv["applications"]> => applications(ctx, scope);
+  const { facts, moduleFacts } = goValueFlow(roots, { ...(scope.receiver ? { receiver: scope.receiver } : {}), bound, env: { ...env, applications: applicationsIn } });
+  if (facts.length > 0) span.valueFlow = facts;
+  module.push(...moduleFacts);
 }
 
 /**
@@ -90,20 +129,24 @@ export function readGo(source: string): ParsedStructure {
  * as does every call of a spec that binds no such literal: one binding several names, the blank `_`, or a literal
  * invoked on the spot (`var cfg = func() Config { … }()`).
  */
-function varFunction(spec: VarSpecContext, out: PatternCallName[]): ParsedFunctionSpan | null {
+function varFunction(spec: VarSpecContext, out: PatternCallName[], env: GoFlowEnv, module: ValueFlowFact[]): ParsedFunctionSpan | null {
   const names = spec.identifierList().IDENTIFIER();
   const values = spec.expressionList()?.expression() ?? [];
   const name = names.length === 1 && values.length === 1 ? names[0]!.symbol : null;
   const literals = name && name.text !== "_" ? functionLiterals(values[0]!) : [];
   if (!name || literals.length === 0) {
     collectCalls(spec, out);
+    // A package variable's initializer states its own value flow, at module scope.
+    module.push(...goValueFlow([spec], { bound: new Map(), env, moduleLevel: true }).moduleFacts);
     return null;
   }
   collectCalls(spec, out, new Set(literals));
   const found: PatternCallName[] = [];
   const scope = callScope(literals);
   for (const literal of literals) collectCalls(literal, found, undefined, scope);
-  return { name: name.text ?? "", line: name.line, endLine: spec.stop?.line ?? name.line, calls: withPassedValues(recordPatternCalls(found), literals) };
+  const span: ParsedFunctionSpan = { name: name.text ?? "", line: name.line, endLine: spec.stop?.line ?? name.line, calls: withPassedValues(recordPatternCalls(found), literals) };
+  addValueFlow(span, literals, scope, env, module);
+  return span;
 }
 
 /**
@@ -195,6 +238,35 @@ function declaredNames(root: ParserRuleContext, out: Set<string>): void {
   }
 }
 
+/**
+ * The names a function binds with the place each binding takes effect: a declaring statement's end for a short
+ * declaration, `var` spec or `range` clause (the scope starts after it, so `pool := pool()` still calls the
+ * function), the function's start for a parameter, receiver or type-switch variable.
+ */
+function boundPositions(root: ParserRuleContext, out: Map<string, Array<readonly [number, number]>>): void {
+  const stack: ParseTree[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node instanceof TerminalNode) continue;
+    const add = (name: string, from: readonly [number, number]): void => {
+      if (name === "_") return;
+      const list = out.get(name);
+      if (list) list.push(from);
+      else out.set(name, [from]);
+    };
+    if (node instanceof IdentifierListContext) {
+      const owner = node.parent;
+      const end = owner instanceof ShortVarDeclContext || owner instanceof VarSpecContext || owner instanceof RangeClauseContext ? owner.stop : null;
+      for (const id of node.IDENTIFIER()) add(id.getText(), end ? [end.line, end.column + (end.text?.length ?? 1)] : [0, 0]);
+    } else if (node instanceof TypeSwitchGuardContext) {
+      const id = node.IDENTIFIER();
+      if (id) add(id.getText(), [0, 0]);
+    }
+    const ctx = node as ParserRuleContext;
+    for (let i = ctx.children.length - 1; i >= 0; i--) stack.push(ctx.children[i]!);
+  }
+}
+
 /** The function literals of an initializer that are not invoked where they are written (outermost only). */
 function functionLiterals(root: ParserRuleContext): FunctionLitContext[] {
   const out: FunctionLitContext[] = [];
@@ -276,8 +348,14 @@ function collectCalls(root: ParserRuleContext, out: PatternCallName[], skip?: Re
 
 /** `primaryExpr: (operand | conversion) (. IDENTIFIER typeArgs? | index | slice | typeAssertion | arguments)*`. */
 function callsOfPrimary(ctx: PrimaryExprContext, out: PatternCallName[], scope?: CallScope): void {
+  for (const { named } of applications(ctx, scope)) if (named) out.push(named);
+}
+
+/** Each argument list of a primary expression (its index among the children) with the name the call is given, or null. */
+function applications(ctx: PrimaryExprContext, scope?: CallScope): Array<{ at: number; named: PatternCallName | null }> {
   const children = ctx.children;
-  if (children.length < 2) return;
+  const found: Array<{ at: number; named: PatternCallName | null }> = [];
+  if (children.length < 2) return found;
   const segments: CalleeSegment[] = baseSegments(children[0]!);
   for (let i = 1; i < children.length; i++) {
     const child = children[i]!;
@@ -289,13 +367,13 @@ function callsOfPrimary(ctx: PrimaryExprContext, out: PatternCallName[], scope?:
     // `lru.New[string, *Item](n)` calls `lru.New`.
     if (child instanceof TypeArgsContext) continue;
     if (child instanceof ArgumentsContext) {
-      const named = pathFromHead(segments, scope) ?? patternCallName(segments, CHAIN_DEPTH);
-      if (named) out.push(named);
+      found.push({ at: i, named: pathFromHead(segments, scope) ?? patternCallName(segments, CHAIN_DEPTH) });
       segments.push({ kind: "call" });
       continue;
     }
     segments.push({ kind: "other" });
   }
+  return found;
 }
 
 function idOf(token: Token): CalleeSegment {
