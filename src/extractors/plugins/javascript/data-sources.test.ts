@@ -1552,6 +1552,28 @@ describe("Nuxt $fetch and useFetch", () => {
   });
 });
 
+describe("Angular httpResource", () => {
+  const head = "import { httpResource } from '@angular/common/http';\n";
+  const rows = async (src: string) => (await apiCallsOf(src)).map((d) => `${d.name} ${d.target}`);
+
+  it("reads the URL a function or options object states, GET unless a method is", async () => {
+    expect(await rows(`${head}
+      const a = httpResource<Club[]>(() => '/api/clubs');
+      const b = httpResource(() => \`/api/clubs/\${id()}\`);
+      const c = httpResource(() => ({ url: '/api/transfers', method: 'POST' }));
+      const d = httpResource({ url: '/api/transfers', method: 'PUT' });
+      const e = httpResource.text(() => { return '/api/report'; });
+      const f = httpResource.blob('/api/badge');`)).toEqual([
+      "get /api/clubs", "get /api/clubs/${id()}", "post /api/transfers", "put /api/transfers", "get /api/report", "get /api/badge",
+    ]);
+  });
+
+  it("states nothing for a namesake from another module, or a request it cannot read", async () => {
+    expect(await rows(`import { httpResource } from './own-http';\nconst a = httpResource(() => '/api/clubs');`)).toEqual([]);
+    expect(await rows(`${head}const a = httpResource(() => id() ? { url: '/api/clubs' } : undefined);`)).toEqual([]);
+  });
+});
+
 describe("AdonisJS Lucid model statics", () => {
   it("reads findOrFail, all, findBy and updateOrCreate on a model the file imports", async () => {
     const ds = await dbOf(`

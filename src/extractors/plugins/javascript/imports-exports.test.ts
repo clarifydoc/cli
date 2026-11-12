@@ -126,6 +126,29 @@ routes.push({ component: () => import("./pages/Match") });`;
   });
 });
 
+describe("JS/TS async wrapper as the default export", () => {
+  it("binds the loaded module under a derived name and names it the default's source", async () => {
+    for (const src of [
+      `export default defineAsyncComponent(() => import("./ClubCard.vue"));`,
+      `export default createAsyncComponent(() => import("./ClubCard.vue"));`,
+      `export default lazy(() => import("./ClubCard.vue").then((m) => ({ default: m.Club })));`,
+    ]) {
+      const tree = await parseSource(src, "typescript" as any, "x.ts");
+      const x = new JavaScriptImportExportExtractor();
+      expect(x.extractImports(tree, src).map((i) => [i.source, i.specifiers, i.isDefault])).toEqual([["./ClubCard.vue", ["ClubCard"], true]]);
+      expect(x.extractExports(tree, src)).toMatchObject([{ name: "default", kind: "default", sourceName: "ClubCard" }]);
+    }
+  });
+
+  it("leaves a default export of any other call alone", async () => {
+    const src = `export default memoize(() => import("./ClubCard.vue"));`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const x = new JavaScriptImportExportExtractor();
+    expect(x.extractImports(tree, src).map((i) => [i.specifiers, i.isDefault])).toEqual([[[], false]]);
+    expect(x.extractExports(tree, src)[0]?.sourceName).toBeUndefined();
+  });
+});
+
 describe("JS/TS nested require()", () => {
   const importsOf = async (src: string) => {
     const tree = await parseSource(src, "typescript" as any, "x.ts");

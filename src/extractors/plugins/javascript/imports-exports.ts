@@ -496,7 +496,7 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
         const value = child.childForFieldName("value") ?? child.childForFieldName("declaration");
         const local = value?.type === "identifier" ? value.text : value && /^(?:class|function_declaration|abstract_class_declaration|class_declaration)$/.test(value.type) ? value.childForFieldName("name")?.text
           // `export default memo(function FancyBadge() {…})`, `export default observer(Garage)`: what the wrapper is handed.
-          : value ? wrappedDefaultName(value) ?? undefined : undefined;
+          : value ? wrappedDefaultName(value) ?? lazyDefaultOf(value) ?? undefined : undefined;
         // `export default new Agents()`: the module's default is an instance of its class.
         const instanceOf = value?.type === "new_expression" ? value.childForFieldName("constructor") : null;
         // `export default page => endPoints[page]`: an anonymous lookup into the module's table.
@@ -660,7 +660,7 @@ function loaderBindings(call: Node): ReturnType<typeof dynamicBindings> {
 }
 
 /** A loader that renders a module's default export once it arrives: `lazy`, `React.lazy`, `loadable`, `defineAsyncComponent`, `lazyWithRetry`. */
-const LAZY_LOADER = /(?:^|\.)(?:\w*[Ll]azy\w*|loadable|defineAsyncComponent)$/;
+const LAZY_LOADER = /(?:^|\.)(?:\w*[Ll]azy\w*|loadable|\w*[Aa]sync\w*Component\w*)$/;
 
 /**
  * The variable a dynamic import is bound to through a lazy loader —
@@ -678,8 +678,39 @@ function lazyBinding(importCall: Node): string | null {
   const call = args?.type === "arguments" ? args.parent : null;
   if (call?.type !== "call_expression" || !LAZY_LOADER.test(call.childForFieldName("function")?.text ?? "")) return null;
   const decl = call.parent;
+  // `export default defineAsyncComponent(() => import("./ClubCard.vue"))`: the module's default IS the loaded
+  // component; it has no name of its own, so the import is bound under one derived from the module it loads.
+  if (decl?.type === "export_statement" && decl.children.some((k) => k.type === "default")) {
+    const source = importCall.childForFieldName("arguments")?.child(1);
+    return source?.type === "string" ? lazyDefaultName(stripQuotes(source.text)) : null;
+  }
   const name = decl?.type === "variable_declarator" ? decl.childForFieldName("name") : null;
   return name?.type === "identifier" ? name.text : null;
+}
+
+/** The local name given to the component an anonymous lazy default export loads (`./ClubCard.vue` becomes `ClubCard`). */
+function lazyDefaultName(source: string): string {
+  const parts = source.split("/");
+  // `./ClubCard/index.vue` is named for its folder.
+  const stem = (/^index\.[A-Za-z]+$/.test(parts[parts.length - 1] ?? "") && parts.length > 1 ? parts[parts.length - 2]! : parts[parts.length - 1] ?? "").replace(/\.[A-Za-z]+$/, "");
+  const name = stem.replace(/(?:^|[-_.\s]+)(\w)/g, (_m, c: string) => c.toUpperCase()).replace(/\W/g, "");
+  return /^[A-Za-z_$]/.test(name) ? name : "LazyDefault";
+}
+
+/** The name a default export's lazy loader call binds (`export default lazy(() => import("./ClubPage"))`), else null. */
+function lazyDefaultOf(value: Node): string | null {
+  if (value.type !== "call_expression" || !LAZY_LOADER.test(value.childForFieldName("function")?.text ?? "")) return null;
+  const find = (n: Node, depth: number): Node | null => {
+    if (n.type === "call_expression" && n.childForFieldName("function")?.type === "import") return n;
+    if (depth > 6) return null;
+    for (const c of n.namedChildren) {
+      const hit = find(c, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const imp = find(value, 0);
+  return imp ? lazyBinding(imp) : null;
 }
 
 /** `page => endPoints[page]`, `function (page) { return endPoints[page]; }`: the table and parameter; else null. */

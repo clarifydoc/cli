@@ -734,6 +734,67 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return false;
   }
 
+  /** Whether the file imports `httpResource` from Angular's HTTP package. */
+  private angularHttpResource?: boolean;
+
+  /**
+   * `httpResource(() => `/api/clubs/${id()}`)`, `httpResource<Club[]>(() => "/api/clubs")`,
+   * `httpResource({ url, method: "POST" })`, `httpResource(() => ({ url, method }))`, `httpResource.text(…)`:
+   * the request is the URL the function (or options object) returns — a GET unless a method is stated. Only
+   * where the file imports `httpResource` from `@angular/common/http`.
+   */
+  private httpResourceCall(node: Node, fn: Node | null, sources: DataSourceInfo[]): boolean {
+    if (!this.sourceText.includes("httpResource")) return false;
+    const callee = fn?.type === "member_expression" && /^(?:text|json|blob|arrayBuffer)$/.test(fn.childForFieldName("property")?.text ?? "") ? fn.childForFieldName("object") : fn;
+    if (callee?.type !== "identifier" || callee.text !== "httpResource") return false;
+    if (!this.angularHttpResourceImported()) return false;
+    let value: Node | null = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment") ?? null;
+    if (value && (value.type === "arrow_function" || value.type === "function_expression" || value.type === "function")) {
+      const body: Node | null = value.childForFieldName("body");
+      if (body?.type === "statement_block") {
+        const returns = body.namedChildren.filter((c) => c.type === "return_statement");
+        value = returns.length === 1 ? returns[0]!.namedChild(0) : null;
+      } else value = body;
+    }
+    while (value?.type === "parenthesized_expression") value = value.namedChild(0);
+    let method = "get";
+    if (value?.type === "object") {
+      const stated = objectPropValue(value, "method");
+      if (stated) {
+        const verb = literalString(stated)?.toLowerCase();
+        if (!verb || !HTTP_VERBS.has(verb)) return true;
+        method = verb;
+      }
+      value = objectPropValue(value, "url");
+    }
+    const resolved = value ? this.resolveUrlArg(value) : null;
+    if (resolved) {
+      sources.push(this.ds({
+        kind: "api-call",
+        name: method,
+        target: resolved.url,
+        ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
+        line: node.startPosition.row + 1,
+      }));
+    }
+    return true;
+  }
+
+  /** Whether an object literal is what an `httpResource` call returns or is handed — read by `httpResourceCall`. */
+  private isHttpResourceOptions(obj: Node): boolean {
+    if (!this.sourceText.includes("httpResource")) return false;
+    let up: Node | null = obj.parent;
+    while (up && (up.type === "parenthesized_expression" || up.type === "arrow_function" || up.type === "return_statement" || up.type === "statement_block" || up.type === "function_expression")) up = up.parent;
+    if (up?.type !== "arguments") return false;
+    const callee = up.parent?.childForFieldName("function");
+    const head = callee?.type === "member_expression" ? callee.childForFieldName("object") : callee;
+    return head?.type === "identifier" && head.text === "httpResource" && this.angularHttpResourceImported();
+  }
+
+  private angularHttpResourceImported(): boolean {
+    return (this.angularHttpResource ??= /\bimport\s*(?:type\s*)?\{[^}]*\bhttpResource\b[^}]*\}\s*from\s*['"]@angular\/common\/http['"]/.test(this.sourceText));
+  }
+
   private rtkCall(node: Node, fn: Node | null, fnName: string, sources: DataSourceInfo[]): boolean {
     const line = node.startPosition.row + 1;
     if (fn?.type === "member_expression" && (fnName === "query" || fnName === "mutation" || fnName === "infiniteQuery")) {
@@ -823,6 +884,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.kyselyCtes = null;
     this.sqlTags = null;
     this.rtk = null;
+    this.angularHttpResource = undefined;
     this.rtkTriggers = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
@@ -1600,6 +1662,9 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       // RTK Query: an endpoint definition in an API slice, or a component's generated hook.
       if (fnName && this.rtkCall(node, fn, fnName, sources)) return;
 
+      // Angular's `httpResource(() => url)` (and `.text`/`.blob`/`.arrayBuffer`): a request at that URL.
+      if (fnName && this.httpResourceCall(node, fn, sources)) return;
+
       // tRPC client: `trpc.post.byId.useQuery(…)`, `api.post.create.useMutation()`,
       // `utils.post.byId.fetch()` request the procedure's path (see routes/trpc.ts).
       if (fnName && fn?.type === "member_expression" && TRPC_CLIENT_VERBS.has(fnName) && (this.trpcClient ??= /trpc/i.test(this.sourceText))) {
@@ -2198,7 +2263,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // endpoint literal lives in a `url` property rather than a string argument —
     // including the URL-builder helper `{ method, url: `/api/x` }` whose value is
     // referenced indirectly at the call site.
-    if (node.type === "object") {
+    if (node.type === "object" && !this.isHttpResourceOptions(node)) {
       // `type` is jQuery's spelling of the method (`$.ajax({ type: 'POST', url })`);
       // either only counts when its value IS an HTTP verb.
       const verb = literalString(objectPropValue(node, "method")) ?? literalString(objectPropValue(node, "type"));
