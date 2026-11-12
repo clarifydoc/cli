@@ -373,6 +373,51 @@ describe("C# value flow: lambdas as values", () => {
     expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
   });
 
+  it("counts only the project functions a lambda resolves to: library and unknown calls never use up the four", async () => {
+    const capFiles = {
+      "League/Squad.cs": lines(
+        "namespace League;",
+        "public class Squad {",
+        "  private readonly ILogger _logger;",
+        "  public void PickKeeper() {}",
+        "  public void PickDefender() {}",
+        "  public void PickMidfielder() {}",
+        "  public void PickStriker() {}",
+        "  public void PickCaptain() {}",
+        "  public void Four(List<int> list, Helper helper) {",
+        "    Action a = () => { Console.WriteLine(\"x\"); _logger.LogInformation(\"y\"); list.Add(1); helper.Frobnicate(); PickKeeper(); PickDefender(); PickMidfielder(); PickStriker(); };",
+        "    a();",
+        "  }",
+        "  public void Five() {",
+        "    Action b = () => { Console.WriteLine(\"x\"); PickKeeper(); PickDefender(); PickMidfielder(); PickStriker(); PickCaptain(); };",
+        "    b();",
+        "  }",
+        "}",
+      ),
+      "League/Decoy.cs": lines(
+        "namespace League;",
+        "public class Decoy {",
+        "  public void PickKeeper() {}",
+        "  public void PickDefender() {}",
+        "  public void PickMidfielder() {}",
+        "  public void PickStriker() {}",
+        "  public void PickCaptain() {}",
+        "  public void Frobnicate() {}",
+        "  public void a() {}",
+        "  public void b() {}",
+        "}",
+      ),
+    };
+    const links = flowLinks(await analyzeAll(capFiles));
+    expect(links).toEqual([
+      "Squad.Four@11 a -> League/Squad.cs::Squad.PickDefender",
+      "Squad.Four@11 a -> League/Squad.cs::Squad.PickKeeper",
+      "Squad.Four@11 a -> League/Squad.cs::Squad.PickMidfielder",
+      "Squad.Four@11 a -> League/Squad.cs::Squad.PickStriker",
+    ].sort());
+    expect(links.filter((l) => l.includes("Five") || l.includes("Decoy"))).toEqual([]);
+  });
+
   it("joins a lambda subscribed to an event to the raise inside the declaring class", async () => {
     const withEvent = {
       "League/Referee.cs": lines(

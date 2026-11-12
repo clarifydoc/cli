@@ -111,7 +111,10 @@ const LIBRARY_HEADS: ReadonlySet<string> = new Set([
   "log", "_log", "logger", "_logger", "Log", "Logger",
 ]);
 
-type LambdaSource = { kind: "seed"; fn: string; line: number } | { kind: "copy"; from: ValueCell };
+type LambdaSource = { kind: "seed"; fn: string; line: number; lambda?: string } | { kind: "copy"; from: ValueCell; lambda?: string };
+
+/** Bound on the names one lambda states, to keep output small; core's cap of four project functions is what counts. */
+const LAMBDA_NAMES_BOUND = 16;
 
 /** What a lambda's body is read against: which names hold a delegate, and which are local functions. */
 interface LambdaEnv {
@@ -138,14 +141,16 @@ function lambdaParamNames(lambda: Node): Set<string> {
 /**
  * A lambda or anonymous method held in a value stands for the project functions its body calls (`Save()`,
  * `this.Save()`, `club.Save()`, `Club.Save()`) and for the held delegates it runs (`onDone()`, `onDone.Invoke()`).
- * At most four distinct names: past that, or for a body whose calls are all on its own parameters, chains or the
- * platform's, it states nothing.
+ * Every seed and copy carries the lambda's `line:col` as `lambda`; core resolves them and drops the group above four
+ * project functions, so a library name this file cannot tell apart never uses up the cap. The plugin only bounds its
+ * output (16 names); a body whose calls are all on its own parameters, chains or the platform's states nothing.
  */
 function lambdaSourcesOf(lambda: Node, env: LambdaEnv): LambdaSource[] {
   const seeds = new Set<string>();
   const copies = new Map<string, ValueCell>();
   let over = false;
   const line = lambda.startPosition.row + 1;
+  const id = `${line}:${lambda.startPosition.column + 1}`;
   const callOf = (n: Node, hidden: ReadonlySet<string>): void => {
     const f0 = n.childForFieldName("function");
     if (!f0) return;
@@ -179,7 +184,7 @@ function lambdaSourcesOf(lambda: Node, env: LambdaEnv): LambdaSource[] {
     if (n.id !== lambda.id && LAMBDAS.has(n.type)) scope = new Set([...hidden, ...lambdaParamNames(n)]);
     if (n.type === "invocation_expression") {
       callOf(n, scope);
-      if (seeds.size + copies.size > 4) over = true;
+      if (seeds.size + copies.size > LAMBDA_NAMES_BOUND) over = true;
     }
     for (const c of n.namedChildren) walk(c, scope);
   };
@@ -187,8 +192,8 @@ function lambdaSourcesOf(lambda: Node, env: LambdaEnv): LambdaSource[] {
   for (const c of lambda.namedChildren) walk(c, params);
   if (over) return [];
   return [
-    ...[...seeds].map((fn): LambdaSource => ({ kind: "seed", fn, line })),
-    ...[...copies.values()].map((from): LambdaSource => ({ kind: "copy", from })),
+    ...[...seeds].map((fn): LambdaSource => ({ kind: "seed", fn, line, lambda: id })),
+    ...[...copies.values()].map((from): LambdaSource => ({ kind: "copy", from, lambda: id })),
   ];
 }
 
@@ -498,8 +503,8 @@ export function csharpValueFlow(
 
   const bindAt = (to: ValueCell, sources: readonly Source[], line: number): void => {
     for (const s of sources) {
-      if (s.kind === "seed") emit({ kind: "seed", to, fn: s.fn, line: s.line });
-      else if (s.kind === "copy") emit({ kind: "copy", from: s.from, to, line });
+      if (s.kind === "seed") emit({ kind: "seed", to, fn: s.fn, line: s.line, ...(s.lambda ? { lambda: s.lambda } : {}) });
+      else if (s.kind === "copy") emit({ kind: "copy", from: s.from, to, line, ...(s.lambda ? { lambda: s.lambda } : {}) });
       else emit({ kind: "result", call: s.call, line: s.line, to });
     }
   };
@@ -734,7 +739,7 @@ export function csharpFieldInitFacts(classBody: Node, ctx: ClassValueContext): V
           },
           isLocalFunction: () => false,
         };
-        for (const s of lambdaSourcesOf(v, env)) facts.push(s.kind === "seed" ? { kind: "seed", to, fn: s.fn, line: s.line } : { kind: "copy", from: s.from, to, line });
+        for (const s of lambdaSourcesOf(v, env)) facts.push(s.kind === "seed" ? { kind: "seed", to, fn: s.fn, line: s.line, ...(s.lambda ? { lambda: s.lambda } : {}) } : { kind: "copy", from: s.from, to, line, ...(s.lambda ? { lambda: s.lambda } : {}) });
       } else if (v.type === "identifier" && ctx.methods.has(v.text)) facts.push({ kind: "seed", to, fn: v.text, line });
       else if (own && ctx.methods.has(own)) facts.push({ kind: "seed", to, fn: `this.${own}`, line });
       else if (v.type === "object_creation_expression" && shapeOfType(v.childForFieldName("type")?.text, ctx.delegates) === "delegate") {
