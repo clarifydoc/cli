@@ -222,3 +222,23 @@ describe("symbol-linker — a cut receiver name is typed by no binding of the ca
     });
   });
 });
+
+describe("a module's typed locals make a <setup> only when a type is stated (real-repo FP)", () => {
+  it("gives an Options API component, whose only locals live in its methods, no <setup>", async () => {
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { analyzeFile } = await import("./file-analyzer.js");
+    const root = await mkdtemp(join(tmpdir(), "vue-options-setup-"));
+    const out = await mkdtemp(join(tmpdir(), "vue-options-setup-out-"));
+    await writeFile(
+      join(root, "CreateClub.vue"),
+      "<script>\nimport { useAlert } from 'league/composables';\nimport ClubForm from '../ClubForm.vue';\nimport router from '../../../../index';\nimport PageHeader from '../../SettingsHeader.vue';\n\nexport default {\n  components: {\n    ClubForm,\n    PageHeader,\n  },\n  data() {\n    return {\n      enabledFeatures: {},\n    };\n  },\n  methods: {\n    async createClub(data) {\n      try {\n        const club = await this.$store.dispatch('clubs/create', {\n          ...data,\n        });\n\n        router.replace({\n          name: 'settings_clubs_add_players',\n          params: {\n            page: 'new',\n            clubId: club.id,\n          },\n        });\n      } catch (error) {\n        useAlert(this.$t('CLUBS_SETTINGS.CLUB_FORM.ERROR_MESSAGE'));\n      }\n    },\n  },\n};\n</script>\n\n<template>\n  <div class=\"h-full w-full p-6 col-span-6 overflow-y-auto\">\n    <PageHeader\n      :header-title=\"$t('CLUBS_SETTINGS.CREATE_FLOW.CREATE.TITLE')\"\n      :header-content=\"$t('CLUBS_SETTINGS.CREATE_FLOW.CREATE.DESC')\"\n    />\n    <div class=\"flex flex-wrap\">\n      <ClubForm\n        :on-submit=\"createClub\"\n        :submit-in-progress=\"false\"\n        :submit-button-text=\"$t('CLUBS_SETTINGS.FORM.SUBMIT_CREATE')\"\n      />\n    </div>\n  </div>\n</template>\n",
+    );
+    const result = await analyzeFile({
+      file: { absolutePath: join(root, "CreateClub.vue"), relativePath: "CreateClub.vue", language: "typescript" },
+      frameworkIds: ["vue"], projectId: "root", outputOpts: { outputDir: out, pretty: false }, verbose: false, projectRoot: root, tsconfigAliases: new Map(),
+    } as never);
+    expect(result!.analysis.functions.map((f) => f.name)).not.toContain("<setup>");
+  });
+});

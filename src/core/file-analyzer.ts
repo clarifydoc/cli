@@ -592,9 +592,14 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
 
     // A module that only declares typed variables (`let ticket: SeasonTicket;`) has no statement to run, yet its
     // functions read those names (where the manifest's `moduleLocalsInScope` says they do): the pseudo-function is
-    // made for its locals too.
+    // made for its locals too, but only when the file has a function or class to read them (a module of constants,
+    // `export const routes: Routes = […]`, gets none).
     const topLocals = hooks?.topLevelLocalTypes?.(tree, sourceText);
-    if (topLevelCalls.length > 0 || (topLocals && topLocals.length > 0 && pluginFor(language)?.moduleLocalsInScope)) {
+    const localsRead = (analysis.functions.length > 0 || analysis.classes.length > 0) && !!pluginFor(language)?.moduleLocalsInScope;
+    // Only a local whose type is stated (`let ticket: SeasonTicket;`): one typed by its initializer alone is a value
+    // a statement makes, and a file with no top-level statement makes none (an Options API component's method locals).
+    const declaredLocals = !!topLocals?.some((l) => l.type !== "");
+    if (topLevelCalls.length > 0 || (declaredLocals && localsRead)) {
       const setupFn: FunctionInfo = {
         name: "<setup>",
         params: [],
