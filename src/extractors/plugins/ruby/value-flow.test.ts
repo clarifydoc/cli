@@ -361,3 +361,165 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
     expect(flow).toEqual([]);
   });
 });
+
+describe("Ruby value flow: do … end closures held in a value", () => {
+  it("`cb = lambda do |x| … end` handed to a wrapper that runs its parameter", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def refresh_table; end",
+        "  def boot",
+        "    cb = lambda do |x|",
+        "      refresh_table",
+        "    end",
+        "    run(cb)",
+        "  end",
+        "  def run(cb)",
+        "    cb.call(1)",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def refresh_table; end", "end"),
+    });
+    expect(flow).toEqual(["Club.run@10 cb.call -> club.rb::Club.refresh_table"]);
+  });
+
+  it("`@on_done = proc do … end` run in another method, a class call keeping its class", async () => {
+    const { flow } = await links({
+      "decoy.rb": rb("class Handler", "  def self.close; end", "  def call(x); end", "end"),
+      "season.rb": rb("class Season", "  def self.close; end", "end"),
+      "club.rb": rb(
+        "class Club",
+        "  def setup",
+        "    @on_done = proc do",
+        "      Season.close",
+        "    end",
+        "  end",
+        "  def finish",
+        "    @on_done.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual(["Club.finish@8 on_done.call -> season.rb::Season.close"]);
+  });
+
+  it("`h = -> do … end` with several body statements, and `Proc.new do`", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def kick_off; end",
+        "  def whistle; end",
+        "  def boot",
+        "    h = -> do",
+        "      kick_off",
+        "      whistle",
+        "    end",
+        "    h.call",
+        "    g = Proc.new do",
+        "      whistle",
+        "    end",
+        "    g.call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def kick_off; end", "  def whistle; end", "end"),
+    });
+    expect(flow).toEqual([
+      "Club.boot@13 g.call -> club.rb::Club.whistle",
+      "Club.boot@9 h.call -> club.rb::Club.kick_off",
+      "Club.boot@9 h.call -> club.rb::Club.whistle",
+    ]);
+  });
+
+  it("a factory returning a lambda do, explicitly and as the last expression", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def close_match; end",
+        "  def open_gate; end",
+        "  def make_a",
+        "    return lambda do",
+        "      close_match",
+        "    end",
+        "  end",
+        "  def make_b",
+        "    lambda do",
+        "      open_gate",
+        "    end",
+        "  end",
+        "  def boot",
+        "    a = make_a",
+        "    a.call",
+        "    b = make_b",
+        "    b.call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def close_match; end", "  def open_gate; end", "end"),
+    });
+    expect(flow).toEqual(["Club.boot@16 a.call -> club.rb::Club.close_match", "Club.boot@18 b.call -> club.rb::Club.open_gate"]);
+  });
+
+  it("a lambda do inside a hash, run by key", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def kick_off; end",
+        "  def boot",
+        "    actions = {",
+        "      a: lambda do",
+        "        kick_off",
+        "      end,",
+        "    }",
+        "    actions[:a].call",
+        "  end",
+        "end",
+      ),
+      "other.rb": rb("class Garage", "  def kick_off; end", "end"),
+    });
+    expect(flow).toEqual(["Club.boot@9 actions[:a].call -> club.rb::Club.kick_off"]);
+  });
+
+  it("a param-headed do closure, blocks handed to methods and loops state nothing; their lines stay the method's own", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def save; end",
+        "  def kick_off; end",
+        "  def boot(squad)",
+        "    a = ->(club) do",
+        "      club.save",
+        "    end",
+        "    a.call(1)",
+        "    squad.each do |p|",
+        "      kick_off",
+        "    end",
+        "    transaction do",
+        "      save",
+        "    end",
+        "    i = 0",
+        "    while i < 3 do",
+        "      kick_off",
+        "      i += 1",
+        "    end",
+        "    b = proc do",
+        "      kick_off",
+        "    end",
+        "    run(b)",
+        "  end",
+        "  def run(cb)",
+        "    cb.call",
+        "  end",
+        "end",
+      ),
+    });
+    // Only `b` (a no-parameter closure) is a value; its call stands for `kick_off`.
+    expect(flow).toEqual(["Club.run@26 cb.call -> club.rb::Club.kick_off"]);
+  });
+});

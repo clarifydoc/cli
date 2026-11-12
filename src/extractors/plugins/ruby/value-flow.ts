@@ -1,6 +1,7 @@
 import type { ClassInfo, FunctionInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { liveValueFlow } from "../shared/value-flow-live.js";
 import { splitTopLevel } from "../shared/regex-base.js";
+import { rubyBlockEndsOf } from "./blocks.js";
 
 /**
  * Ruby value-flow facts (see `ValueFlowFact`) read from a method's code lines (strings kept, comments and
@@ -15,7 +16,9 @@ import { splitTopLevel } from "../shared/regex-base.js";
  * four, spelled as `method(:x)` is (`self.save`, `Club.close`); one that runs a held value (`-> { on_done.call }`)
  * copies that value's cell. It is no function of its own — its calls already belong to the method that writes it
  * — and a call on its parameters, a stdlib or kernel method, or a receiver that is a variable states nothing. A
- * `do … end` closure and a block handed to a method are no value here. `.call` on a receiver whose type is stated (`@runner = Runner.new`) is a method call the type decides,
+ * `do … end` closure written as the value (`cb = lambda do |x| … end`, `h = -> do … end`) reads the same way, its
+ * lines joined into one statement; a block handed to a method (`each do |x|`, `transaction do`) or a loop's `do`
+ * is no value here. `.call` on a receiver whose type is stated (`@runner = Runner.new`) is a method call the type decides,
  * never an invoke; `x[…]` runs a value only when `x` was assigned a function in the same method.
  */
 
@@ -25,6 +28,9 @@ const KEYWORDS = new Set(["if", "unless", "while", "until", "case", "when", "ret
 const KERNEL_CALLS = new Set(["puts", "print", "p", "pp", "raise", "fail", "sleep", "rand", "srand", "sprintf", "printf", "loop", "block_given?", "binding", "catch", "throw", "Integer", "Float", "String", "Array", "Hash", "Rational", "gets", "exit", "abort", "at_exit", "lambda", "proc", "caller", "warn", "require_relative", "yield", "freeze", "dup", "clone", "tap", "then", "itself"]);
 const STDLIB_CONSTS = new Set(["Time", "File", "Dir", "JSON", "Math", "Kernel", "Rails", "Array", "Hash", "String", "Integer", "Float", "Struct", "Set", "Date", "DateTime", "Process", "Thread", "Mutex", "ENV", "ARGV", "IO", "Object", "Comparable", "Enumerable", "Regexp", "Random", "SecureRandom", "YAML", "Logger", "Digest", "Base64", "URI", "Net", "ObjectSpace", "Signal", "Marshal", "Rational", "Complex", "Symbol", "Proc", "Method", "Class", "Module", "Fiber", "Queue", "STDOUT", "STDERR", "STDIN", "Benchmark", "Open3", "FileUtils", "Pathname", "ERB", "CGI", "Timeout", "Forwardable"]);
 const CLOSURE_HEAD = /^(?:->\s*(?:\(([^)]*)\)|([A-Za-z_][\w\s,*&=]*?))?\s*\{|(?:lambda|proc|Proc\.new)\s*\{)/;
+/** A `do … end` closure's head, the block's own `do` ending the line: `lambda do |x|`, `-> do`, `->(club) do`. */
+const DO_LINE = /(?:\b(?:lambda|proc|Proc\.new)|->\s*(?:\([^)]*\))?)\s+do\b(?:\s*\|[^|]*\|)?\s*$/;
+const DO_HEAD = /^(?:->\s*(?:\(([^)]*)\))?|(?:lambda|proc|Proc\.new))\s+do\b/;
 
 /** Names in a parameter list text (`a, b = 1, *rest, &blk, k:`). */
 const paramNames = (text: string): string[] => text.split(",").map((x) => /^\s*[*&]*([a-z_]\w*)/.exec(x)?.[1]).filter((x): x is string => !!x);
@@ -41,20 +47,29 @@ function statementsOf(code: readonly string[], from: number, to: number): Array<
   const out: Array<{ text: string; line: number; offsets: number[] }> = [];
   let cur: { text: string; line: number; offsets: number[] } | null = null;
   let depth = 0;
+  const ends = rubyBlockEndsOf(code);
   for (let i = from; i < to && i < code.length; i++) {
     // Comments are already blanked in the code lines; a `#` left is inside a string (`"#{id}"`).
-    const raw = code[i] ?? "";
-    if (!cur && raw.trim() === "") continue;
+    const head = code[i] ?? "";
+    if (!cur && head.trim() === "") continue;
     if (!cur) cur = { text: "", line: i + 1, offsets: [] };
-    cur.offsets.push(cur.text.length);
-    cur.text += (cur.text ? " " : "") + raw.trim();
-    let quote: string | null = null;
-    for (const ch of raw) {
-      if (quote) { if (ch === quote) quote = null; continue; }
-      if (ch === '"' || ch === "'") quote = ch;
-      else if ("([{".includes(ch)) depth++;
-      else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
+    // A `lambda do |x|` / `-> do` closure carries the statement through its `end`, its body lines joined with `; `.
+    const blockEnd = DO_LINE.test(blankStrings(head.trim())) ? ends.get(i) : undefined;
+    const last = blockEnd !== undefined && blockEnd - 1 > i && blockEnd - 1 < to ? blockEnd - 1 : i;
+    for (let k = i; k <= last; k++) {
+      const raw = code[k] ?? "";
+      cur.offsets.push(cur.text.length);
+      if (raw.trim() !== "") cur.text += (cur.text ? (k <= i + 1 ? " " : "; ") : "") + raw.trim();
+      let quote: string | null = null;
+      for (const ch of raw) {
+        if (quote) { if (ch === quote) quote = null; continue; }
+        if (ch === '"' || ch === "'") quote = ch;
+        else if ("([{".includes(ch)) depth++;
+        else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
+      }
     }
+    i = last;
+    const raw = code[last] ?? "";
     if (depth > 0 || /[,\\]$|\|\|$|&&$/.test(raw.trim())) continue;
     out.push(cur);
     cur = null;
@@ -180,12 +195,20 @@ class Reader {
   /** `-> { … }`, `->(a) { … }`, `lambda { |a| … }`, `proc { … }`, `Proc.new { … }` written whole: its parameters and body. */
   private closureOf(e: string): { params: Set<string>; body: string } | null {
     const m = CLOSURE_HEAD.exec(e);
-    if (!m) return null;
-    const open = m[0].length - 1;
-    const close = balanced(e, open + 1, "{", "}");
-    if (!close || close.end !== e.length - 1) return null;
-    let body = close.inner;
-    const params = new Set(paramNames(m[1] ?? m[2] ?? ""));
+    const d = m ? null : DO_HEAD.exec(e);
+    if (!m && !d) return null;
+    let body: string;
+    if (m) {
+      const close = balanced(e, m[0].length, "{", "}");
+      if (!close || close.end !== e.length - 1) return null;
+      body = close.inner;
+    } else {
+      // `do … end` written whole: the final `end` closes it.
+      const tail = /(?:^|[\s;])end$/.exec(e);
+      if (!tail) return null;
+      body = e.slice(d![0].length, e.length - 3);
+    }
+    const params = new Set(paramNames((m ? m[1] ?? m[2] : d![1]) ?? ""));
     const block = /^\s*\|([^|]*)\|/.exec(body);
     if (block) { for (const n of paramNames(block[1]!)) params.add(n); body = body.slice(block[0].length); }
     return { params, body };
