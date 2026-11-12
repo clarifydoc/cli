@@ -436,7 +436,8 @@ describe("calls into a library state no argument facts", () => {
         "league/Table.kt": ["package league", "class Table { fun save() { } }", ""].join("\n"),
         "league/Routes.kt": [
           "package league",
-          "import io.ktor.server.routing.*",
+          "import io.ktor.server.routing.routing",
+          "import io.ktor.server.routing.post",
           "fun register(r: () -> Unit) { r() }",
           "fun Table.wire() {",
           "    routing {",
@@ -459,5 +460,48 @@ describe("calls into a library state no argument facts", () => {
     expect(argCalls(analyses.find((a) => a.filePath === "league/Routes.kt")!, "wire")).toEqual(["register"]);
     // A `post` the file declares (no library import) is the project's.
     expect(argCalls(analyses.find((a) => a.filePath === "league/Own.kt")!, "own")).toEqual(["post"]);
+  });
+
+  it("a wildcard import never makes a same-file class or a same-package function a library's (real-repo FP)", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/Table.kt": ["package league", "class Table { fun save() { } }", "fun register(r: () -> Unit) { r() }", ""].join("\n"),
+        "league/Fetcher.kt": [
+          "package league",
+          "import kotlinx.coroutines.*",
+          "class Fetcher(private val table: Table) {",
+          "    private fun onComplete() { table.save() }",
+          "    fun start() {",
+          "        val cb = Callback(::onComplete)",
+          "        register { table.save() }",
+          "    }",
+          "    private class Callback(private val done: () -> Unit) { fun fire() { done() } }",
+          "}",
+          "",
+        ].join("\n"),
+        "league/Decoy.kt": ["package league", "class Decoy { fun onComplete() { } }", ""].join("\n"),
+      },
+      "kotlin",
+    );
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Fetcher.kt")!, "start").sort()).toEqual(["Callback", "register"]);
+  });
+
+  it("Java: a wildcard static import of a class that extends another leaves bare calls to the project", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/Base.java": ["package league;", "public class Base {", "    protected void later(Runnable r) { r.run(); }", "}", ""].join("\n"),
+        "league/Match.java": [
+          "package league;",
+          "import static org.mockito.Mockito.*;",
+          "public class Match extends Base {",
+          "    void kickOff() { }",
+          "    void wire() { later(() -> kickOff()); }",
+          "}",
+          "",
+        ].join("\n"),
+      },
+      "java",
+    );
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Match.java")!, "wire")).toEqual(["later"]);
   });
 });

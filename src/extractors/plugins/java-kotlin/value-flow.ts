@@ -175,8 +175,10 @@ interface FileImport {
 export interface LibraryContext {
   pkg: string | null;
   imports: FileImport[];
-  /** Every method / function the file declares, in any class (a call to one of these is the project's own). */
+  /** Every method, function and class the file declares (a call to one of these is the project's own). */
   declared: Set<string>;
+  /** A class of the file extends another: a bare call may then be an inherited method the file cannot see. */
+  hasSuper: boolean;
 }
 
 /** The package a file belongs to as a project: its first two segments (`com.example`), one fewer for a two-segment package so `shop.billing` and `shop.catalog` are one project. */
@@ -187,7 +189,7 @@ const rootPackage = (pkg: string): string => {
 
 /** Read a file's package, imports and declared method names (`root`: the tree's root node). */
 export function libraryContextOf(root: Node): LibraryContext {
-  const ctx: LibraryContext = { pkg: null, imports: [], declared: new Set() };
+  const ctx: LibraryContext = { pkg: null, imports: [], declared: new Set(), hasSuper: false };
   const visit = (n: Node): void => {
     for (const c of n.children) {
       if (c.type === "package_declaration" || c.type === "package_header") {
@@ -202,6 +204,12 @@ export function libraryContextOf(root: Node): LibraryContext {
   for (const m of root.descendantsOfType(["method_declaration", "function_declaration"])) {
     const name = m.type === "method_declaration" ? m.childForFieldName("name")?.text : m.children.find((c) => c.type === "simple_identifier")?.text;
     if (name) ctx.declared.add(name);
+  }
+  // A class the file declares is constructed by its bare name (`FetchCallback(…)`), never a library's.
+  for (const c of root.descendantsOfType(["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "object_declaration"])) {
+    const name = c.childForFieldName("name")?.text ?? c.children.find((x) => x.type === "type_identifier")?.text;
+    if (name) ctx.declared.add(name);
+    if (c.childForFieldName("superclass")) ctx.hasSuper = true;
   }
   return ctx;
 }
@@ -220,10 +228,12 @@ function externalPath(lib: LibraryContext, path: string): boolean {
  * library class (`Javalin app`). A library call states no `arg` fact: core binds an argument only to the formals of a
  * project callee, so there is nothing to link.
  *
- * - `receiverType` null (a bare call, or a receiver of unknown type): never library when the file declares a method of
- *   that name; Java: a single or wildcard `import static` of a path outside the file's root package (its first two
- *   `package` segments, one fewer for a two-segment package) or under the manifest's `externalModulePrefixes`; Kotlin: a wildcard import, or an import of
- *   that very name, from such a path. A call on an untyped receiver (a lambda parameter) is the caller's to leave alone.
+ * - `receiverType` null (a bare call, or a receiver of unknown type): never library when the file declares a method or
+ *   class of that name; Java: a single `import static` of that name, or a wildcard one when no class of the file extends
+ *   another (an inherited method looks the same), from a path outside the file's root package (its first two `package`
+ *   segments, one fewer for a two-segment package) or under the manifest's `externalModulePrefixes`; Kotlin: an import of
+ *   that very name from such a path — never a wildcard, since a same-package function or class needs no import and looks
+ *   the same. A call on an untyped receiver (a lambda parameter) is the caller's to leave alone.
  * - `receiverType` given: library when it names a class the file imports from such a path.
  *
  * `name` is the callee's last segment.
@@ -238,7 +248,7 @@ export function isLibraryCall(lib: LibraryContext | null | undefined, lang: Lang
   return lib.imports.some((i) => {
     if (lang === "java" && !i.static) return false;
     if (lang === "kotlin" && i.static) return false;
-    if (!i.star && i.name !== name) return false;
+    if (i.star ? lang === "kotlin" || lib.hasSuper : i.name !== name) return false;
     return externalPath(lib, i.path);
   });
 }
@@ -293,7 +303,7 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
       decls.push({ name, type: kotlinDeclaredType(holder)?.text ?? null, init });
     }
   }
-  const flow = new Flow(lang, ctx, null, false);
+  const flow = new Flow(lang, ctx, null, false, ctx.library);
   for (const d of decls) {
     ctx.fields.add(d.name);
     if (isFunctionType(d.type) && !buildsObject(d.init)) ctx.fn.add(d.name);
@@ -332,7 +342,7 @@ class Flow {
     private readonly calls: readonly CallInfo[] | null,
     private readonly returnsFn: boolean,
     /** The file's imports and declared methods (a free function has no `ctx` to carry them). */
-    readonly library: LibraryContext | null = ctx?.library ?? null,
+    readonly library: LibraryContext | null,
   ) {}
 
   /** Declared types of the member's parameters, for a call on one (`Javalin app` → `app.get(…)`). */
@@ -1102,10 +1112,10 @@ export function methodValueFlow(
   calls: readonly CallInfo[],
   classFlow: ClassFlow | null,
   returnType: string | null,
-  library: LibraryContext | null = classFlow?.library ?? null,
+  library?: LibraryContext | null,
 ): ValueFlowFact[] {
   if (!body) return [];
-  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType), library);
+  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType), library === undefined ? classFlow?.library ?? null : library);
   flow.run(params, body);
   return flow.facts;
 }
