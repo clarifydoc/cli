@@ -426,8 +426,22 @@ function fieldValueFact(raw: string, code: string, at: number, bound: ReadonlySe
   const eq = code.indexOf("=", at);
   const flat = eq < 0 ? null : withoutArguments(code.slice(eq + 1).trim());
   if (!flat) return UNKNOWN;
-  const from = rubyCallChain(flat) ?? selfCallChain(flat, bound);
+  const from = rubyCallChain(flat) ?? selfCallChain(flat, bound) ?? bareSelfCall(flat, bound);
   return from ? { type: "", from } : UNKNOWN;
+}
+
+/**
+ * `@car = build_car` — a bare name that is no local or parameter of the method is a call of the instance's own
+ * method (Ruby needs no parens or `self.`), spelled as a one-step chain: `build_car()`. Core types it through the
+ * method's `returnedFrom`; a name no method of the class or its ancestors declares stays untyped there.
+ */
+/** Methods every object has: a bare use is Ruby's own, never a method the project declares. */
+const KERNEL_METHODS = new Set(["rand", "srand", "binding", "block_given?", "caller", "gets", "format", "sleep", "lambda", "proc", "loop", "args", "object_id", "class", "hash", "inspect", "to_s", "freeze", "dup", "clone"]);
+
+function bareSelfCall(text: string, bound: ReadonlySet<string>): string | null {
+  const m = /^(?:self\.)?([a-z_]\w*[?!]?)(?:\(\))?$/.exec(text.trim());
+  if (!m || bound.has(m[1]!) || FRAMEWORK_HEADS.has(m[1]!) || KERNEL_METHODS.has(m[1]!)) return null;
+  return `${m[1]}()`;
 }
 
 /**
@@ -513,8 +527,10 @@ export function assignedFieldTypes(lines: readonly string[], fn: FunctionInfo, b
 /**
  * A memoizing reader — `def club; @club ||= Club.find(params[:id]); end`, the body's last statement the
  * assignment, whose value the method returns — hands back what it assigns: `returnedFrom` (`Club.find()`), so
- * `club.award_honours` is typed through the reader. A method returning a value elsewhere (`return x`) is left alone,
- * and so is a construction, which already types the variable the reader returns.
+ * `club.award_honours` is typed through the reader. So does a method whose last statement is itself a call chain
+ * off a class (`def build_car; Car.find_by(name: n); end`, implicit return) or off the instance's own method: a
+ * last statement of anything else (a branch, a parameter, a literal) states nothing. A method returning a value
+ * elsewhere (`return x`) is left alone, and so is a construction, which already types the variable the reader returns.
  */
 export function memoizedReturn(lines: readonly string[], fn: FunctionInfo, bound: ReadonlySet<string>): string | null {
   if (fn.classLevel || fn.endLine <= fn.line + 1 || fn.returnType || fn.returnedFrom) return null;
@@ -527,6 +543,14 @@ export function memoizedReturn(lines: readonly string[], fn: FunctionInfo, bound
   const raw = lines[at]!;
   const code = codeOf(raw);
   const one = IVAR_ASSIGN_RE.exec(code);
+  // An implicit return: the last statement is a call chain off a class (`Car.find_by(…)`) or off the instance's own
+  // method (`current_garage.cars.create!(…)`), and the method hands back its value.
+  if (!one && !IVAR_MULTI_RE.test(code)) {
+    // A last line inside a `rescue`/`ensure`/`else` clause is one outcome of the method, not its return value.
+    for (let i = fn.line; i < at; i++) if (/^\s*(?:rescue|ensure|else|elsif|when|in)\b/.test(codeOf(lines[i]!))) return null;
+    const flat = withoutArguments(code.trim().replace(/^return\s+/, ""));
+    return flat ? (rubyCallChain(flat) ?? selfCallChain(flat, bound)) : null;
+  }
   if (!one || IVAR_MULTI_RE.test(code)) return null;
   const params = new Map(fn.params.map((p) => [p.name, p]));
   const fact = fieldValueFact(raw, code, code.indexOf("@" + one[1]!) + one[1]!.length + 1, bound, (n) => paramFact(params.get(n)));

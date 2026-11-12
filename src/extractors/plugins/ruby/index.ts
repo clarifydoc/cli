@@ -300,25 +300,44 @@ function mentionsInstanceVariable(line: string, name: string): boolean {
 /**
  * `self.class.empty_table` in an instance method calls the class method of the class it is written in: named
  * through that class (`Standings.empty_table`), as a call written on the class is, and the step it reads first
- * (`self.class.empty_table.except(…)`) is a call of its own. Only a class method the class itself declares: one
- * it inherits or a library adds (`self.class.get` through HTTParty) is not the instance method of that name. A
- * module's `self.class` is its includer's, which the module does not name, and a class method's `self.class` is
- * `Class`: both are left as written.
+ * (`self.class.empty_table.except(…)`) is a call of its own. The class need not declare the method: one a base
+ * class or an extended module declares is found by the linker walking the class's bases and `extend`s like any
+ * class-method call, and one nothing in the project declares stays unlinked. Left as written are a name the class
+ * itself declares only as an INSTANCE method (a library's `self.class.get` is not `ScoutClient#get`) and what every
+ * class answers (`self.class.name`, `new`). A statement of nothing else (`self.class.empty_table` as the last
+ * line) is no call to the patterns, so it is read here. A module's `self.class` is its includer's, which the
+ * module does not name, and a class method's `self.class` is `Class`: both are left as written.
  */
+/** Class and Module methods every class answers: `self.class.name` is Ruby's, whatever a base declares as an instance method. */
+const EVERY_CLASS_ANSWERS = new Set(["name", "new", "to_s", "inspect", "hash", "class", "superclass", "ancestors", "instance_methods", "method_defined?", "const_get", "constants", "allocate", "instance_method", "public_send", "send"]);
+
 function addOwnClassCalls(lines: readonly string[], cls: ClassInfo, fn: FunctionInfo): void {
   if (fn.classLevel || !/^\s*class\b/.test(lines[cls.line - 1] ?? "")) return;
   const classMethods = new Set(cls.methods.filter((x) => x.classLevel).map((x) => x.name));
-  if (classMethods.size === 0) return;
+  const instanceMethods = new Set(cls.methods.filter((x) => !x.classLevel).map((x) => x.name));
+  const reachable = (name: string): boolean => classMethods.has(name) || (!instanceMethods.has(name) && !EVERY_CLASS_ANSWERS.has(name));
   const have = new Set(fn.calls.map((c) => `${c.name}@${c.line}`));
   const extra: CallInfo[] = [];
+  const named = new Set<string>();
   for (const c of fn.calls) {
     const m = /^(?:self\.)?class\.([a-z_]\w*[?!]?)((?:\.[a-z_]\w*[?!]?)*)$/.exec(c.name);
-    if (!m || !classMethods.has(m[1]!)) continue;
+    if (!m || !reachable(m[1]!)) continue;
+    named.add(`${m[1]}@${c.line}`);
     c.name = `${cls.name}.${m[1]}${m[2]}`;
     const first = `${cls.name}.${m[1]}`;
     if (m[2] && !have.has(`${first}@${c.line}`)) {
       have.add(`${first}@${c.line}`);
       extra.push({ name: first, kind: "internal", target: null, line: c.line, ...(c.column !== undefined ? { column: c.column } : {}) });
+    }
+  }
+  // `self.class.x` the patterns read no call from (a reader-shaped statement of its own).
+  for (const [i, text] of bodyLines(lines, fn)) {
+    for (const m of text.matchAll(/(?<![\w.@$:])self\.class\.([a-z_]\w*[?!]?)/g)) {
+      const name = `${cls.name}.${m[1]}`;
+      if (!reachable(m[1]!)) continue;
+      if (named.has(`${m[1]}@${i + 1}`) || have.has(`${name}@${i + 1}`)) continue;
+      have.add(`${name}@${i + 1}`);
+      extra.push({ name, kind: "internal", target: null, line: i + 1 });
     }
   }
   fn.calls.push(...extra);
@@ -1342,7 +1361,7 @@ export const rubySpec: RegexLangSpec = {
       const mayFilter = /Controller$/.test(cls.name) || /^\s*module\b/.test(lines[cls.line - 1] ?? "");
       for (const m of cls.methods) {
         const bound = boundOf.get(m)!;
-        addOwnClassCalls(lines, cls, m);
+        addOwnClassCalls(code, cls, m);
         addImplicitReceiverCalls(code, m, bound);
         // `@club = Club.find(…)` types `@club.update_honours` in the method.
         const fields = assignedFieldTypes(lines, m, bound, mayFilter);
