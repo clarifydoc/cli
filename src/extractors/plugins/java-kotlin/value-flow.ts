@@ -20,6 +20,7 @@
 import type { Node } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javaMethodRefName, kotlinReferenceName } from "./call-hooks.js";
+import { javaManifest } from "./manifest.js";
 
 type Lang = "java" | "kotlin";
 
@@ -150,10 +151,96 @@ export interface ClassFlow {
   returnsFn: Set<string>;
   /** Facts the field initializers state; the class attaches them to one of its methods. */
   initFacts: ValueFlowFact[];
+  /** What the file around the class says about which names are a library's (see `isLibraryCall`). */
+  library: LibraryContext | null;
 }
 
-function emptyClassFlow(): ClassFlow {
-  return { fields: new Set(), fn: new Set(), elem: new Set(), returnsFn: new Set(), initFacts: [] };
+function emptyClassFlow(library: LibraryContext | null = null): ClassFlow {
+  return { fields: new Set(), fn: new Set(), elem: new Set(), returnsFn: new Set(), initFacts: [], library };
+}
+
+/** One `import` of the file. */
+interface FileImport {
+  /** Dotted path as written (`io.javalin.apibuilder.ApiBuilder`, `spark.Spark`; for a wildcard, without the `.*`). */
+  path: string;
+  /** `import static` (Java). */
+  static: boolean;
+  /** A wildcard import: every member of `path`. */
+  star: boolean;
+  /** The name it brings into scope: the last segment, or the `as` alias; null for a wildcard. */
+  name: string | null;
+}
+
+/** What one source file says about where its names come from: its package, its imports and the methods it declares. */
+export interface LibraryContext {
+  pkg: string | null;
+  imports: FileImport[];
+  /** Every method / function the file declares, in any class (a call to one of these is the project's own). */
+  declared: Set<string>;
+}
+
+/** The package a file belongs to as a project: its first two segments (`com.example`), one fewer for a two-segment package so `shop.billing` and `shop.catalog` are one project. */
+const rootPackage = (pkg: string): string => {
+  const parts = pkg.split(".");
+  return parts.slice(0, Math.max(1, Math.min(2, parts.length - 1))).join(".");
+};
+
+/** Read a file's package, imports and declared method names (`root`: the tree's root node). */
+export function libraryContextOf(root: Node): LibraryContext {
+  const ctx: LibraryContext = { pkg: null, imports: [], declared: new Set() };
+  const visit = (n: Node): void => {
+    for (const c of n.children) {
+      if (c.type === "package_declaration" || c.type === "package_header") {
+        ctx.pkg = /package\s+([\w.]+)/.exec(c.text)?.[1] ?? null;
+      } else if (c.type === "import_declaration" || c.type === "import_header") {
+        const m = /^import\s+(static\s+)?([\w.]+?)(\.\*)?(?:\s+as\s+(\w+))?\s*;?\s*$/.exec(c.text.trim());
+        if (m) ctx.imports.push({ path: m[2]!, static: !!m[1], star: !!m[3], name: m[3] ? null : m[4] ?? m[2]!.split(".").pop()! });
+      } else if (c.type === "import_list" || c.type === "source_file" || c.type === "program") visit(c);
+    }
+  };
+  visit(root);
+  for (const m of root.descendantsOfType(["method_declaration", "function_declaration"])) {
+    const name = m.type === "method_declaration" ? m.childForFieldName("name")?.text : m.children.find((c) => c.type === "simple_identifier")?.text;
+    if (name) ctx.declared.add(name);
+  }
+  return ctx;
+}
+
+/** A path that is the platform's or a library's: a known external prefix, or outside the file's own root package. */
+function externalPath(lib: LibraryContext, path: string): boolean {
+  if (javaManifest.externalModulePrefixes?.some((p) => path.startsWith(p))) return true;
+  if (lib.pkg === null) return false;
+  const root = rootPackage(lib.pkg);
+  return path !== root && !path.startsWith(`${root}.`);
+}
+
+/**
+ * Whether a call is made into a library rather than the project: `get("/x") { … }` of a statically imported route DSL
+ * (`import static spark.Spark.*`, Ktor's `routing { get(…) }`), or `app.get(…)` on a receiver typed by an imported
+ * library class (`Javalin app`). A library call states no `arg` fact: core binds an argument only to the formals of a
+ * project callee, so there is nothing to link.
+ *
+ * - `receiverType` null (a bare call, or a receiver of unknown type): never library when the file declares a method of
+ *   that name; Java: a single or wildcard `import static` of a path outside the file's root package (its first two
+ *   `package` segments, one fewer for a two-segment package) or under the manifest's `externalModulePrefixes`; Kotlin: a wildcard import, or an import of
+ *   that very name, from such a path. A call on an untyped receiver (a lambda parameter) is the caller's to leave alone.
+ * - `receiverType` given: library when it names a class the file imports from such a path.
+ *
+ * `name` is the callee's last segment.
+ */
+export function isLibraryCall(lib: LibraryContext | null | undefined, lang: Lang, name: string, receiverType?: string | null): boolean {
+  if (!lib) return false;
+  if (receiverType) {
+    const base = receiverType.replace(/<[\s\S]*$/, "").replace(/\?$/, "").trim().split(".").pop()!;
+    return lib.imports.some((i) => !i.star && !i.static && i.name === base && externalPath(lib, i.path));
+  }
+  if (lib.declared.has(name)) return false;
+  return lib.imports.some((i) => {
+    if (lang === "java" && !i.static) return false;
+    if (lang === "kotlin" && i.static) return false;
+    if (!i.star && i.name !== name) return false;
+    return externalPath(lib, i.path);
+  });
 }
 
 /** A Kotlin declaration's type node (after the `:` of its `variable_declaration` / parameter). */
@@ -173,8 +260,8 @@ function* members(body: Node): Generator<Node> {
 }
 
 /** Read a class body once: which members hold functions, and what its field initializers do with them. */
-export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<{ name: string; type: string | null }> = []): ClassFlow {
-  const ctx = emptyClassFlow();
+export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<{ name: string; type: string | null }> = [], library: LibraryContext | null = null): ClassFlow {
+  const ctx = emptyClassFlow(library);
   const decls: Array<{ name: string; type: string | null; init: Node | null }> = [];
   for (const h of headerFields) {
     ctx.fields.add(h.name);
@@ -244,7 +331,12 @@ class Flow {
     private readonly ctx: ClassFlow | null,
     private readonly calls: readonly CallInfo[] | null,
     private readonly returnsFn: boolean,
+    /** The file's imports and declared methods (a free function has no `ctx` to carry them). */
+    readonly library: LibraryContext | null = ctx?.library ?? null,
   ) {}
+
+  /** Declared types of the member's parameters, for a call on one (`Javalin app` → `app.get(…)`). */
+  private readonly paramTypes = new Map<string, string>();
 
   private push(f: ValueFlowFact): void {
     const key = JSON.stringify(f);
@@ -559,6 +651,7 @@ class Flow {
     for (const p of params) {
       if (p.isReceiver) continue;
       this.bind(p.name, isFunctionType(p.type), isFunctionCollectionType(p.type));
+      if (p.type) this.paramTypes.set(p.name, p.type);
     }
     // Kotlin `fun mk(): () -> Unit = ::load`: the body is the returned expression.
     if (this.lang === "kotlin" && body.type === "function_body" && body.children[0]?.type === "=") {
@@ -878,11 +971,28 @@ class Flow {
     // A lambda handed to the platform's own `forEach` / `map` / `run { }` is never run by a project function.
     const leaf = call.split(".").pop()!;
     const platform = LIBRARY_CALLS.has(leaf) || KOTLIN_STD.has(leaf);
+    // A call into an imported library (a route DSL, a typed client) runs no project function either.
+    if (this.libraryCall(call, line)) return;
     args.nodes.forEach((a, index) => {
       if (platform && Flow.isLambda(a)) return;
       const from = this.valueCell(a);
       if (from) this.push({ kind: "arg", call, line, index, from });
     });
+  }
+
+  /** `call` (as the call list spells it) goes into a library: see `isLibraryCall`. */
+  private libraryCall(call: string, line: number): boolean {
+    if (!this.library) return false;
+    const parts = call.split(".");
+    const name = parts[parts.length - 1]!;
+    if (parts.length === 1) return isLibraryCall(this.library, this.lang, name);
+    if (parts.length !== 2) return false;
+    // A receiver is library only by a type something states: the call row's, a parameter's, or a capitalized head
+    // that is the class itself (`Javalin.create(…)`, a static call) — all of which must be imported from a library.
+    const row = this.calls?.find((c) => c.name === call && c.line === line);
+    const head = parts[0]!.replace(/\?$/, "");
+    const type = row?.receiverType ?? this.paramTypes.get(head) ?? (/^[A-Z]/.test(head) ? head : null);
+    return type !== null && isLibraryCall(this.library, this.lang, name, type);
   }
 
   private argumentsOf(node: Node): { nodes: Node[]; named: boolean } {
@@ -992,9 +1102,10 @@ export function methodValueFlow(
   calls: readonly CallInfo[],
   classFlow: ClassFlow | null,
   returnType: string | null,
+  library: LibraryContext | null = classFlow?.library ?? null,
 ): ValueFlowFact[] {
   if (!body) return [];
-  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType));
+  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType), library);
   flow.run(params, body);
   return flow.facts;
 }

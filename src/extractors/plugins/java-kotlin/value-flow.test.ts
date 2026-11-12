@@ -346,3 +346,118 @@ describe("Java lambda bound to a local: its calls are the method's", () => {
     expect(out.filter((l) => l.includes("Decoy"))).toEqual([]);
   });
 });
+
+describe("calls into a library state no argument facts", () => {
+  /** The `call` of every `arg` fact the named member states. */
+  const argCalls = (a: FileAnalysis, member: string): string[] =>
+    [...a.functions, ...a.classes.flatMap((c) => c.methods ?? [])]
+      .filter((f) => f.name === member)
+      .flatMap((f) => (f.valueFlow ?? []).filter((v) => v.kind === "arg").map((v) => (v as { call: string }).call))
+      .sort();
+
+  it("Java: a statically imported route DSL states none, a project function still links, a declared `post` is the project's", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/Table.java": ["package league;", "public class Table {", "    public void save() { }", "}", ""].join("\n"),
+        "league/Routes.java": [
+          "package league;",
+          "import static spark.Spark.*;",
+          "public class Routes {",
+          "    private final Table table = new Table();",
+          "    static void register(Runnable r) { r.run(); }",
+          "    static void post(String path, Runnable r) { r.run(); }",
+          "    void wire() {",
+          "        patch(\"/clubs\", () -> table.save());",
+          "        register(() -> table.save());",
+          "        post(\"/own\", () -> table.save());",
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "league/Dsl.java": [
+          "package league;",
+          "import static spark.Spark.*;",
+          "public class Dsl {",
+          "    private final Table table = new Table();",
+          "    void wire() {",
+          "        path(\"/clubs\", () -> { after(\"/x\", (req, res) -> table.save()); });",
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "league/Decoy.java": ["package league;", "public class Decoy {", "    public void save() { }", "}", ""].join("\n"),
+      },
+      "java",
+    );
+    const dsl = analyses.find((a) => a.filePath === "league/Dsl.java")!;
+    expect(argCalls(dsl, "wire")).toEqual([]);
+    const routes = analyses.find((a) => a.filePath === "league/Routes.java")!;
+    // `patch` is the library's (imported, not declared); `register` and the file's own `post` are the project's.
+    expect(argCalls(routes, "wire")).toEqual(["post", "register"]);
+    expect(links(analyses, "value-flow").filter((l) => l.includes("Decoy"))).toEqual([]);
+    expect(links(analyses, "value-flow")).toContain("Routes.register: r.run -> Table.java::Table.save");
+  });
+
+  it("Java: a receiver typed by an imported library class is a library call", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/Table.java": ["package league;", "public class Table {", "    public void save() { }", "}", ""].join("\n"),
+        "league/Server.java": [
+          "package league;",
+          "import io.javalin.Javalin;",
+          "public class Server {",
+          "    void wire(Javalin app, Table table) {",
+          "        app.after(\"/x\", ctx -> table.save());",
+          "        Javalin.create(config -> table.save());",
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "league/Garage.java": [
+          "package league;",
+          "public class Garage {",
+          "    void wire(Table app, Table table) {",
+          "        app.after(\"/x\", ctx -> table.save());",
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+      },
+      "java",
+    );
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Server.java")!, "wire")).toEqual([]);
+    // The same shape on a project-typed receiver keeps its fact.
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Garage.java")!, "wire")).toEqual(["app.after"]);
+  });
+
+  it("Kotlin: routing { post(...) { } } states nothing, while a project function taking a lambda still links", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/Table.kt": ["package league", "class Table { fun save() { } }", ""].join("\n"),
+        "league/Routes.kt": [
+          "package league",
+          "import io.ktor.server.routing.*",
+          "fun register(r: () -> Unit) { r() }",
+          "fun Table.wire() {",
+          "    routing {",
+          "        post(\"/x\", { save() })",
+          "    }",
+          "    register { save() }",
+          "}",
+          "",
+        ].join("\n"),
+        "league/Decoy.kt": ["package league", "class Decoy { fun save() { } }", ""].join("\n"),
+        "league/Own.kt": [
+          "package league",
+          "fun post(path: String, r: () -> Unit) { r() }",
+          "fun Table.own() { post(\"/y\", { save() }) }",
+          "",
+        ].join("\n"),
+      },
+      "kotlin",
+    );
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Routes.kt")!, "wire")).toEqual(["register"]);
+    // A `post` the file declares (no library import) is the project's.
+    expect(argCalls(analyses.find((a) => a.filePath === "league/Own.kt")!, "own")).toEqual(["post"]);
+  });
+});

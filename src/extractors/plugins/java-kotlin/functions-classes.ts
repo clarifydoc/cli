@@ -17,7 +17,7 @@ import { typeVariableArgs } from "./arg-kinds.js";
 import { anonymousBaseOf, anonymousClassName, anonymousRefinesDeclared, isAnonymousClassCreation, mayHoldAnonymousClass } from "./java-anonymous.js";
 import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
-import { classFlowOf, constructorFieldFlow, methodValueFlow, type ClassFlow } from "./value-flow.js";
+import { classFlowOf, constructorFieldFlow, libraryContextOf, methodValueFlow, type ClassFlow, type LibraryContext } from "./value-flow.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -30,8 +30,19 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   /** What the class being read says about its function-valued members (value-flow facts); null outside a class body. */
   private classFlow: ClassFlow | null = null;
 
+  /** The file's package, imports and declared methods (value-flow: which calls go into a library); set at the tree's root. */
+  private library: LibraryContext | null = null;
+  private libraryTree: unknown = null;
+
+  private readLibrary(root: Node): void {
+    if (root.parent || this.libraryTree === root.tree) return;
+    this.libraryTree = root.tree;
+    this.library = libraryContextOf(root);
+  }
+
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     this.classFlow = null;
+    this.readLibrary(node);
     // Only Kotlin has top-level functions; Java doesn't.
     const lang = detectLang(node);
     for (const child of node.children) {
@@ -48,6 +59,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
     const lang = detectLang(node);
+    this.readLibrary(node);
     this.walkClasses(node, classes, lang);
     if (lang === "java") this.collectAnonymousClasses(node, classes);
   }
@@ -168,7 +180,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // an injection point too — copied into a property, or used by `init`), as
     // a `constructor` method the DI resolution reads.
     const headerFields = headerFieldsOf(node, lang);
-    this.classFlow = body ? classFlowOf(body, lang, headerFields) : null;
+    this.classFlow = body ? classFlowOf(body, lang, headerFields, this.library) : null;
     const primary = lang === "kotlin" ? this.parsePrimaryConstructor(node) : null;
     if (primary) {
       methods.push(primary);
@@ -625,7 +637,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     localTypes.push(...outerFieldLocals(node, language, params, localTypes, calls));
     if (language === "kotlin") calls.push(...kotlinInvokeCalls(node, params, localTypes, calls));
     typeVariableArgs(calls, params, body, language);
-    const valueFlow = methodValueFlow(language, params, body, calls, this.classFlow, returnType);
+    const valueFlow = methodValueFlow(language, params, body, calls, this.classFlow, returnType, this.library);
     return {
       name,
       params,
