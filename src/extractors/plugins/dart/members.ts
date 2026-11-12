@@ -129,7 +129,7 @@ function memberAt(
     : [];
   const fn: FunctionInfo = {
     name,
-    params: extractParamsFromDeclaration(lines, j, name, parseParam),
+    params: extractParamsFromDeclaration(lines, j, name, parseParam, true),
     returnType: named ? cls.name : sig ? spec.parseReturnType?.(line) ?? null : null,
     isAsync: /\basync\b/.test(after.slice(0, 8)),
     isExported: !name.startsWith("_"),

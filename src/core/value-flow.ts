@@ -101,7 +101,7 @@ export function hasValueFlowFacts(analyses: readonly FileAnalysis[]): boolean {
 
 interface Target { file: string; symbol: string; line: number }
 interface InvokeSite { scope: Scope; call: string; line: number; key: string }
-interface ArgUse { index: number; cell: number }
+interface ArgUse { index: number; cell: number; name?: string }
 
 /** Solve the value flow and return one `value-flow` link per (invoke site, target). */
 export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
@@ -215,6 +215,17 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     return cellOfKey(`F\0${file}\0${cls}\0${member}`);
   };
 
+  /** The declared type of the property `name` of class `cls` or the class it extends, or null. */
+  const propertyTypeOf = (file: string, cls: string, name: string): string | null => {
+    let cur: { file: string; name: string } | null = { file, name: cls };
+    for (let depth = 0; cur && depth < 16; depth++) {
+      const prop = host.classAt(cur.file, cur.name)?.properties.find((p) => p.name === name);
+      if (prop) return prop.type ?? null;
+      cur = host.parentOf(cur.file, cur.name);
+    }
+    return null;
+  };
+
   /** The base a name stands for: a local/param, a module name, or an imported one. */
   type Base = { kind: "local"; key: string } | { kind: "module"; file: string; name: string; namespace?: boolean };
   const baseOf = (s: Scope, name: string): Base | null => {
@@ -246,7 +257,12 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       return cellOfKey(`L\0${s.file}\0${s.symbol}\0${name}.${member}`);
     }
     const base = baseOf(s, name);
-    if (!base) return null;
+    if (!base) {
+      // A property of the enclosing class (or a base's) the plugin says is read by its bare name (`widget.onSave`): its type owns the member.
+      const type = cell.field && s.cls ? propertyTypeOf(s.file, s.cls.name, name) : null;
+      const owner = type ? host.classOfType(s.file, type) : null;
+      return owner ? fieldCell(owner.file, owner.name, member) : null;
+    }
     if (base.kind === "module") {
       return cellOfKey(base.namespace ? `M\0${base.file}\0${member}` : `M\0${base.file}\0${base.name}.${member}`);
     }
@@ -348,7 +364,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     if (!target) return;
     const { scope, offset } = target;
     for (const a of args ?? []) {
-      const formal = scope.fn!.params[a.index + offset];
+      const formal = a.name !== undefined ? scope.fn!.params.find((x) => x.name === a.name) : scope.fn!.params[a.index + offset];
       if (!formal || formal.variadic) continue;
       addEdge(a.cell, cellOfKey(`L\0${scope.file}\0${scope.symbol}\0${formal.name}`));
     }
@@ -391,7 +407,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
           const from = cellOf(s, f.from);
           if (from === null) break;
           const site = callSiteKey(s.file, s.symbol, f.line, f.call);
-          (argsOfSite.get(site) ?? argsOfSite.set(site, []).get(site)!).push({ index: f.index, cell: from });
+          (argsOfSite.get(site) ?? argsOfSite.set(site, []).get(site)!).push({ index: f.index, cell: from, ...(f.name !== undefined ? { name: f.name } : {}) });
           sitesWithFacts.add(site);
           break;
         }

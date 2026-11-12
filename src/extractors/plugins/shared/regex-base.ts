@@ -563,6 +563,7 @@ export function extractFunctionsFromParse(lines: string[], spec: RegexLangSpec, 
     if (span.valueFlow?.length) fn.valueFlow = span.valueFlow;
     attachRequestAccess(fn, lines, span.line, span.endLine, spec);
     attachLocalTypes(fn, lines, i, inline, span.endLine, spec);
+    if (span.valueFlow?.length) fn.valueFlow = span.valueFlow;
     return fn;
   });
 }
@@ -836,6 +837,8 @@ export function extractParamsFromDeclaration(
   i: number,
   name: string | null,
   parseParam: ParamParser = defaultParseParam,
+  /** Dart's optional groups (`{required this.a, this.b}`, `[int x = 0]`): each entry inside a brace or bracket pair is a parameter. */
+  groups = false,
 ): ParamInfo[] {
   const first = lines[i] ?? "";
   let start = -1;
@@ -881,11 +884,21 @@ export function extractParamsFromDeclaration(
   if (!closed || !text.trim()) return [];
 
   const result: ParamInfo[] = [];
-  for (const p of splitTopLevel(text)) {
+  const pieces = splitTopLevel(text);
+  for (const p of groups ? pieces.flatMap(ungroupParams) : pieces) {
     const param = parseParam(p);
     if (param && param.name && param.name.length > 0) result.push(param);
   }
   return result;
+}
+
+/** `{a, b}` / `[a, b]` as its entries; any other piece as it is. */
+function ungroupParams(piece: string): string[] {
+  const t = piece.trim();
+  const open = t[0];
+  if (open !== "{" && open !== "[") return [piece];
+  const close = open === "{" ? "}" : "]";
+  return t.endsWith(close) ? splitTopLevel(t.slice(1, -1)) : [piece];
 }
 
 /** Split on commas outside `()`, `[]`, `<>`, `{}` and quotes. */

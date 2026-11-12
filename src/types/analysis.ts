@@ -1067,6 +1067,8 @@ export interface ValueCell {
    * fact sits in a function's list, and the function's other facts keep their own locals.
    */
   module?: boolean;
+  /** `name` is a property of the enclosing class read by its bare name (a Dart State's `widget`): its declared type owns `member`. */
+  field?: true;
 }
 
 /**
@@ -1078,8 +1080,11 @@ export type ValueFlowFact =
   | { kind: "seed"; to: ValueCell; fn: string; line: number }
   /** `to` is assigned what `from` holds. */
   | { kind: "copy"; from: ValueCell; to: ValueCell; line: number }
-  /** `from` is passed as written argument `index` (0-based) of the call. */
-  | { kind: "arg"; call: string; line: number; index: number; from: ValueCell }
+  /**
+   * `from` is passed as written argument `index` (0-based) of the call; `name` instead says which formal a named
+   * argument (`Btn(onPressed: save)`) binds, `index` then being unused (-1).
+   */
+  | { kind: "arg"; call: string; line: number; index: number; from: ValueCell; name?: string }
   /** `to` receives what the call returns. */
   | { kind: "result"; call: string; line: number; to: ValueCell }
   /** The function returns what `from` holds. */

@@ -173,6 +173,8 @@ function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): vo
       if (fn === m) continue;
       m.calls = fn.calls;
       m.endLine = fn.endLine;
+      if (fn.valueFlow) m.valueFlow = fn.valueFlow;
+      else delete m.valueFlow;
       if (fn.localTypes) m.localTypes = fn.localTypes;
       else delete m.localTypes;
       if (fn.requestAccess) m.requestAccess = fn.requestAccess;

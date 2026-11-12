@@ -1,6 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type {
-  ValueFlowFact,
   ClassInfo,
   EntryPointInfo,
   Language,

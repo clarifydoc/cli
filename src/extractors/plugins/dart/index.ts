@@ -9,7 +9,7 @@ import type {
 import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo, UiComponentInfo } from "../../../types/analysis.js";
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
-import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, extractParamsFromDeclaration, splitTopLevel } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
@@ -158,7 +158,11 @@ function parseDartReturnType(line: string): string | null {
  * `@Named('x')` / `@Named.from(Impl)` is the key the parameter is injected by.
  */
 function parseDartParam(paramText: string): ParamInfo | null {
-  let trimmed = paramText.trim().replace(/^[{[]|[}\]]$/g, "").trim();
+  // A group's own brackets (`{Key? key}`) go; a literal's (`this.tags = const []`) stay.
+  let trimmed = paramText.trim().replace(/^[{[]/, "");
+  const closer = /[}\]]$/.exec(trimmed)?.[0];
+  if (closer && trimmed.split(closer).length > trimmed.split(closer === "}" ? "{" : "[").length) trimmed = trimmed.slice(0, -1);
+  trimmed = trimmed.trim();
   let qualifier: string | undefined;
   let ann: RegExpMatchArray | null;
   while ((ann = trimmed.match(/^@([\w.]+)\s*(?:\(([^)]*)\))?\s*/))) {
@@ -1148,6 +1152,7 @@ export const dartSpec: RegexLangSpec = {
   ],
 
   parseParam: parseDartParam,
+  extractParams: (lines, i, name) => extractParamsFromDeclaration(lines, i, name, parseDartParam, true),
   parseReturnType: parseDartReturnType,
   extractModuleBindings: (lines) => dartModuleBindings(lines),
 

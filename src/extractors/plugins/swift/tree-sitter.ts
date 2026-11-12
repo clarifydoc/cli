@@ -4,6 +4,8 @@ import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { swiftDiCallPatterns } from "./di.js";
+import { fileScopeOf, functionFacts, moduleFacts, propertyInitFacts, type CallRefs, type TypeScope } from "./value-flow.js";
+import type { ValueFlowFact } from "../../../types/analysis.js";
 
 /**
  * How many calls deep a chain is named. The Swift spec has no chain patterns — the baseline skips a method on a
@@ -45,19 +47,23 @@ export function loadSwiftReader(): Promise<(source: string) => ParsedStructure> 
  * string interpolation are calls. A subscript (`items[0]`) and a macro's name (`#expect(`) are none.
  */
 export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
-  const functions: Array<{ span: Omit<ParsedFunctionSpan, "calls">; calls: PatternCallName[] }> = [];
+  const functions: Array<{ span: Omit<ParsedFunctionSpan, "calls">; calls: PatternCallName[]; node: TSNode; cls: TypeScope | null; isInit: boolean }> = [];
   const topLevel: PatternCallName[] = [];
-  const stack: Array<{ node: TSNode; calls: PatternCallName[] | null }> = [{ node: root, calls: topLevel }];
+  const file = fileScopeOf(root, text);
+  const callRefs: CallRefs = new Map();
+  const typeNodes = new Map<TypeScope, TSNode>();
+  const stack: Array<{ node: TSNode; calls: PatternCallName[] | null; cls: TypeScope | null }> = [{ node: root, calls: topLevel, cls: null }];
   while (stack.length > 0) {
-    const { node, calls: owner } = stack.pop()!;
+    const { node, calls: owner, cls: outer } = stack.pop()!;
     let calls = owner;
+    let cls = outer;
     const type = node.type;
     if (FUNCTIONS.has(type)) {
       const name = functionName(node);
       calls = [];
       if (name) {
         const keyword = keywordRow(node, type === "init_declaration" ? "init" : "func");
-        functions.push({ span: { name, line: keyword + 1, endLine: node.endPosition.row + 1 }, calls });
+        functions.push({ span: { name, line: keyword + 1, endLine: node.endPosition.row + 1 }, calls, node, cls, isInit: type === "init_declaration" });
       }
     } else if (type === "property_declaration") {
       // A computed property (`var body: some View { … }`, `get`/`set`) or observed one (`didSet`) runs code on access:
@@ -65,25 +71,60 @@ export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
       const property = accessorProperty(node);
       if (property) {
         calls = [];
-        functions.push({ span: { name: property.name, line: property.row + 1, endLine: node.endPosition.row + 1 }, calls });
+        functions.push({ span: { name: property.name, line: property.row + 1, endLine: node.endPosition.row + 1 }, calls, node, cls, isInit: false });
       }
-    } else if (TYPES.has(type) && owner === topLevel) {
-      calls = null;
+    } else if (TYPES.has(type)) {
+      if (owner === topLevel) calls = null;
+      cls = file.types.get(node.id) ?? null;
+      if (cls) typeNodes.set(cls, node);
     } else if (type === "call_expression" && owner) {
-      const named = callName(node, text);
-      if (named) owner.push(named);
+      const named = callName(node, text) ?? subscriptCall(node);
+      if (named) {
+        owner.push(named);
+        // One call is kept per name and function, at its first line: a later call of the name states its facts there.
+        callRefs.set(node.id, { name: named.name, line: owner.find((c) => c.name === named.name)?.line ?? named.line });
+      }
     } else if (type === "constructor_expression" && owner) {
       const named = constructorName(node);
       if (named) owner.push(named);
     }
-    for (let i = node.namedChildCount - 1; i >= 0; i--) stack.push({ node: node.namedChild(i)!, calls });
+    for (let i = node.namedChildCount - 1; i >= 0; i--) stack.push({ node: node.namedChild(i)!, calls, cls });
   }
   functions.sort((a, b) => a.span.line - b.span.line);
+  // A stored property's initializer (`var handlers = ["save": save]`) belongs to no function: its facts go on the
+  // type's initializer, else its first member (the solver reads facts regardless of order).
+  const initOwner = new Map<TypeScope, (typeof functions)[number]>();
+  for (const f of functions) {
+    if (!f.cls) continue;
+    const held = initOwner.get(f.cls);
+    if (!held || (f.isInit && !held.isInit)) initOwner.set(f.cls, f);
+  }
+  const moduleFlow = moduleFacts(root, file, callRefs);
   return {
-    functions: functions.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) })),
+    functions: functions.map((f) => {
+      let initFacts: ValueFlowFact[] | undefined;
+      if (f.cls && initOwner.get(f.cls) === f) {
+        const typeNode = typeNodes.get(f.cls);
+        initFacts = typeNode ? propertyInitFacts(f.cls, typeNode, file, callRefs) : undefined;
+      }
+      const flow = functionFacts({ node: f.node, cls: f.cls, isInit: f.isInit, ...(initFacts?.length ? { initFacts } : {}) }, file, callRefs);
+      return { ...f.span, calls: recordPatternCalls(f.calls), ...(flow ? { valueFlow: flow.facts } : {}) };
+    }),
     topLevelCalls: recordPatternCalls(topLevel),
+    ...(moduleFlow.length ? { moduleValueFlow: moduleFlow } : {}),
     syntaxErrors: countSyntaxErrors(root),
   };
+}
+
+/** `handlers["save"]?()`, `queue[0]()`: a call of a collection's element, named for the collection. */
+function subscriptCall(node: TSNode): PatternCallName | null {
+  const callee = node.namedChild(0);
+  const suffix = node.namedChild(1);
+  if (callee?.type !== "call_expression" || suffix?.type !== "call_suffix") return null;
+  const inner = suffixOf(callee);
+  const head = callee.namedChild(0);
+  if (!inner?.subscript || head?.type !== "simple_identifier") return null;
+  return call(`${head.text}[]`, `${head.text}[]`, head);
 }
 
 /**
