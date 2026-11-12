@@ -246,7 +246,7 @@ describe("C# value flow: collections of handlers", () => {
 });
 
 describe("C# value flow: no link without a held function", () => {
-  it("leaves an ordinary Invoke method and a lambda-only delegate alone", async () => {
+  it("leaves an ordinary Invoke method and a parameter delegate alone; a lambda local stands for what it calls", async () => {
     const files = {
       "League/Plain.cs": lines(
         "namespace League;",
@@ -263,7 +263,8 @@ describe("C# value flow: no link without a held function", () => {
       ),
     };
     const links = flowLinks(await analyzeAll(files));
-    expect(links).toEqual([]);
+    // `a()` runs the lambda `() => Save()`; `cb()` (a parameter nothing hands a function) and `p.Invoke()` link nothing.
+    expect(links).toEqual(["Plain.Go@8 a -> League/Plain.cs::Plain.Save"]);
   });
 });
 
@@ -294,5 +295,110 @@ describe("C# value flow: a constructor stores what it is handed", () => {
     const links = flowLinks(await analyzeAll(files));
     expect(links).toContain("Button.Press@5 _onClick -> League/Menu.cs::Menu.Start");
     expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+});
+
+describe("C# value flow: lambdas as values", () => {
+  const files = {
+    "League/Club.cs": lines("namespace League;", "public class Club {", "  public void Save() {}", "}"),
+    "League/Match.cs": lines(
+      "namespace League;",
+      "public class Match {",
+      "  private Action _onDone;",
+      "  private readonly Action _kick = () => KickOff();",
+      "  private readonly Dictionary<string, Action> _handlers = new();",
+      "  public void KickOff() {}",
+      "  public void CloseMatch() {}",
+      "  public void RefreshTable() {}",
+      "  public void Wire(Club club) {",
+      "    Action a = () => club.Save();",
+      "    WrapIt(a);",
+      "    _onDone = () => RefreshTable();",
+      "    _handlers[\"close\"] = () => CloseMatch();",
+      "    Action chained = () => _onDone();",
+      "    chained();",
+      "    var v = () => this.KickOff();",
+      "    v.Invoke();",
+      "  }",
+      "  public void WrapIt(Action w) { w(); }",
+      "  public void Finish() { _onDone(); _kick(); }",
+      "  public void Dispatch() { _handlers[\"close\"](); }",
+      "  public Action Factory() { return () => CloseMatch(); }",
+      "  public Func<int> Counter() => () => { CloseMatch(); return 1; };",
+      "  public void Use() { var f = Factory(); f(); }",
+      "  public void Many() { Action m = () => { KickOff(); CloseMatch(); RefreshTable(); Wire(null); Finish(); }; m(); }",
+      "  public void Pair() { Action p = () => { KickOff(); CloseMatch(); }; p(); }",
+      "  public void ViaParam() { Action<Club> c = x => x.Save(); c(null); }",
+      "  public void Made() { Action t = () => new Club(); t(); }",
+      "  public void Wrap() { Action<Action> wr = cb => cb(); wr(null); }",
+      "  public void Quiet() { Action q = () => Console.WriteLine(\"x\"); q(); }",
+      "}",
+    ),
+    "League/Decoy.cs": lines(
+      "namespace League;",
+      "public class Decoy {",
+      "  public void KickOff() {}",
+      "  public void CloseMatch() {}",
+      "  public void RefreshTable() {}",
+      "  public void Save() {}",
+      "  public void Invoke() {}",
+      "  public void w() {}",
+      "  public void a() {}",
+      "  public void cb() {}",
+      "}",
+    ),
+  };
+
+  it("makes a lambda stand for the functions its body calls", async () => {
+    const links = flowLinks(await analyzeAll(files));
+    expect(links).toEqual([
+      // a local lambda handed to a wrapper that runs its parameter
+      "Match.WrapIt@19 w -> League/Club.cs::Club.Save",
+      // a lambda assigned to a field, a field initializer, an element read by key
+      "Match.Wire@14 _onDone -> League/Match.cs::Match.RefreshTable",
+      "Match.Finish@20 _onDone -> League/Match.cs::Match.RefreshTable",
+      "Match.Finish@20 _kick -> League/Match.cs::Match.KickOff",
+      "Match.Dispatch@21 _handlers[] -> League/Match.cs::Match.CloseMatch",
+      // a factory's lambda, run by its caller
+      "Match.Use@24 f -> League/Match.cs::Match.CloseMatch",
+      // a lambda that runs a held delegate holds what it holds
+      "Match.Wire@15 chained -> League/Match.cs::Match.RefreshTable",
+      "Match.Wire@17 v.Invoke -> League/Match.cs::Match.KickOff",
+      // two calls are both seeded
+      "Match.Pair@26 p -> League/Match.cs::Match.CloseMatch",
+      "Match.Pair@26 p -> League/Match.cs::Match.KickOff",
+    ].sort());
+    // Five calls, a call on the lambda's own parameter, a construction and a platform call state nothing.
+    expect(links.filter((l) => /^Match\.(Many|ViaParam|Made|Quiet|Wrap)@/.test(l))).toEqual([]);
+    expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+
+  it("joins a lambda subscribed to an event to the raise inside the declaring class", async () => {
+    const withEvent = {
+      "League/Referee.cs": lines(
+        "namespace League;",
+        "public class Referee {",
+        "  public event Action Whistled;",
+        "  public void Raise() { Whistled?.Invoke(); }",
+        "}",
+      ),
+      "League/Bench.cs": lines(
+        "namespace League;",
+        "public class Bench {",
+        "  public void Substitute() {}",
+        "  public void Listen(Referee r) { r.Whistled += () => Substitute(); }",
+        "}",
+      ),
+      "League/Other.cs": lines(
+        "namespace League;",
+        "public class Other {",
+        "  public event Action Whistled;",
+        "  public void Raise() { Whistled?.Invoke(); }",
+        "  public void Substitute() {}",
+        "}",
+      ),
+    };
+    const links = flowLinks(await analyzeAll(withEvent));
+    expect(links).toEqual(["Referee.Raise@4 Whistled?.Invoke -> League/Bench.cs::Bench.Substitute"]);
   });
 });

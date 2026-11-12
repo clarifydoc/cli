@@ -9,9 +9,13 @@
  * initializes from a method reference, a held function, a collection element of such, or a call of a method of the
  * same class declared to return a function. An ordinary class with its own `run()` states none of that.
  *
- * Lambdas have no function of their own here (their calls belong to the enclosing function), so a lambda is never a
- * seed: a lambda's body is walked for the facts it states about the enclosing function's names (its parameters
- * shadow them), and nothing more.
+ * A lambda has no function of its own here (its calls belong to the enclosing function), but a lambda that lands in
+ * a cell (a local, a field, a collection, an argument, a return, a field initializer) stands for the project
+ * functions its body calls: it seeds the cell with each (`save`, `this.save`, `club.save`, `Club.save`) and copies
+ * a held function its body runs (`() -> onDone.run()`). Past four distinct names, a call on one of the lambda's own
+ * parameters (Kotlin's implicit `it` too), a chain or a call no project function could be, it states nothing.
+ * The lambda's body is also walked for the facts it states about the enclosing function's names (its parameters
+ * shadow them).
  */
 import type { Node } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
@@ -39,6 +43,21 @@ const COLLECTIONS = new Set([
 ]);
 const LIST_LITERALS = new Set(["listOf", "mutableListOf", "arrayListOf", "setOf", "mutableSetOf", "hashSetOf", "linkedSetOf", "arrayOf", "sequenceOf", "arrayDequeOf"]);
 const MAP_LITERALS = new Set(["mapOf", "mutableMapOf", "hashMapOf", "linkedMapOf", "sortedMapOf"]);
+
+/** Methods the JDK and Kotlin's standard library own on nearly every value: a lambda calling one states no project function. */
+const LIBRARY_CALLS = new Set([
+  "toString", "equals", "hashCode", "println", "print", "printf", "format", "size", "isEmpty", "isNotEmpty", "length", "add", "addAll",
+  "get", "put", "remove", "contains", "forEach", "map", "filter", "stream", "collect", "join", "of", "asList", "listOf", "mapOf", "setOf",
+  "mutableListOf", "mutableMapOf", "error", "require", "check", "requireNotNull", "checkNotNull", "TODO", "lazy", "let", "also", "apply",
+  "with", "use", "getOrDefault", "computeIfAbsent", "info", "debug", "warn", "trace", "sleep", "orElse", "orElseGet", "ifPresent", "isPresent",
+]);
+/** Kotlin's standard functions, called bare. */
+const KOTLIN_STD = new Set([
+  "println", "print", "listOf", "mapOf", "setOf", "mutableListOf", "mutableMapOf", "mutableSetOf", "arrayOf", "error", "require", "check",
+  "requireNotNull", "checkNotNull", "TODO", "lazy", "run", "with", "apply", "let", "also", "use", "repeat", "synchronized", "to",
+]);
+/** Lowercase or library receivers whose calls are the platform's (`log.info`, `System.out`). */
+const LIBRARY_HEADS = new Set(["log", "logger", "LOG", "LOGGER", "System", "Math", "Objects", "Collections", "Arrays", "Optional", "Stream", "Thread", "String", "Integer", "Long", "Double", "Boolean", "Files", "Paths", "Instant", "Duration", "LocalDate", "LocalDateTime", "UUID", "List", "Map", "Set"]);
 
 const norm = (text: string): string => text.replace(/\s+/g, "");
 
@@ -364,6 +383,7 @@ class Flow {
   private isFnExpr(node: Node | null | undefined): boolean {
     if (!node) return false;
     if (node.type === "parenthesized_expression") return this.isFnExpr(node.namedChildren[0]);
+    if (Flow.isLambda(node)) return this.lambdaTargets(node) !== null;
     if (this.methodRefName(node)) return true;
     const ref = this.refOf(node);
     if (ref) return ref.fn;
@@ -411,6 +431,10 @@ class Flow {
     if (!node) return null;
     if (node.type === "parenthesized_expression") return this.valueCell(node.namedChildren[0]);
     const line = node.startPosition.row + 1;
+    if (Flow.isLambda(node)) {
+      const to = this.pseudo(node);
+      return this.lambdaInto(to, node) ? to : null;
+    }
     const named = this.methodRefName(node);
     if (named) {
       const to = this.pseudo(node);
@@ -433,6 +457,7 @@ class Flow {
     if (!node) return false;
     if (node.type === "parenthesized_expression") return this.flowInto(dest, node.namedChildren[0], destFn);
     const line = node.startPosition.row + 1;
+    if (Flow.isLambda(node)) return this.lambdaInto(dest, node);
     const named = this.methodRefName(node);
     if (named) { this.push({ kind: "seed", to: dest, fn: named, line }); return true; }
     const ref = this.refOf(node);
@@ -603,6 +628,97 @@ class Flow {
     return out;
   }
 
+  // ── lambdas as values ────────────────────────────────────────────────────
+  private static isLambda(node: Node): boolean {
+    return node.type === "lambda_expression" || node.type === "lambda_literal" || node.type === "anonymous_function";
+  }
+
+  /** A lambda's own parameter names (Kotlin's implicit `it` when it declares none). */
+  private lambdaParamNames(node: Node): Set<string> {
+    const out = new Set(this.lambdaParams(node));
+    if (node.type === "anonymous_function") {
+      for (const p of node.children.find((c) => c.type === "function_value_parameters")?.namedChildren ?? []) {
+        const n = p.children.find((c) => c.type === "simple_identifier")?.text;
+        if (n) out.add(n);
+      }
+    } else if (node.type === "lambda_literal" && !node.children.some((c) => c.type === "lambda_parameters")) out.add("it");
+    return out;
+  }
+
+  /** What a lambda stands for: the functions its body calls (at most four) and the held functions it runs. */
+  private lambdaTargets(node: Node): { seeds: string[]; copies: ValueCell[] } | null {
+    const seeds = new Set<string>();
+    const copies = new Map<string, ValueCell>();
+    let over = false;
+    const walk = (n: Node, hidden: ReadonlySet<string>): void => {
+      if (over) return;
+      if (n.type === "class_body" || n.type === "function_declaration" || n.type === "class_declaration" || n.type === "object_literal") return;
+      let scope = hidden;
+      if (n.id !== node.id && Flow.isLambda(n)) scope = new Set([...hidden, ...this.lambdaParamNames(n)]);
+      if (n.type === "method_invocation" || n.type === "call_expression") {
+        this.lambdaCall(n, scope, seeds, copies);
+        if (seeds.size + copies.size > 4) over = true;
+      }
+      for (const c of n.children) walk(c, scope);
+    };
+    const params = this.lambdaParamNames(node);
+    for (const c of node.children) walk(c, params);
+    if (over || seeds.size + copies.size === 0) return null;
+    return { seeds: [...seeds], copies: [...copies.values()] };
+  }
+
+  /** One call of a lambda's body: a seed name, or a copy when it runs a held function. */
+  private lambdaCall(n: Node, hidden: ReadonlySet<string>, seeds: Set<string>, copies: Map<string, ValueCell>): void {
+    let name: string | undefined;
+    let head: Node | null | undefined; // the receiver, when written
+    let bare = false;
+    if (n.type === "method_invocation") {
+      name = n.childForFieldName("name")?.text;
+      head = n.childForFieldName("object");
+      bare = !head;
+    } else {
+      const callee = n.children[0];
+      if (callee?.type === "simple_identifier") { name = callee.text; bare = true; }
+      else if (callee?.type === "navigation_expression" && callee.namedChildren.length === 2) {
+        head = callee.namedChildren[0];
+        const suffix = callee.namedChildren[1];
+        if (suffix?.type !== "navigation_suffix" || suffix.text.startsWith("::")) return;
+        name = suffix.namedChildren[0]?.text;
+      } else return;
+    }
+    if (!name) return;
+    const simple = (x: Node | null | undefined): string | null => (x?.type === "identifier" || x?.type === "simple_identifier" ? x.text : null);
+    const headText = simple(head);
+    if (headText !== null && hidden.has(headText)) return;
+    // A call of a held function: `onDone.run()`, Kotlin `onDone()` / `onDone.invoke()`.
+    const runs = bare ? (this.lang === "kotlin" ? n.children[0] : null) : head && (INVOKE_METHODS.has(name) || (this.lang === "kotlin" && name === "invoke")) ? head : null;
+    if (runs) {
+      const written = simple(runs);
+      if (written === null || !hidden.has(written)) {
+        const ref = this.refOf(runs);
+        if (ref?.fn) { copies.set(JSON.stringify(ref.cell), ref.cell); return; }
+      }
+    }
+    // A lambda bound to a local is no call-list owner (its calls are on no row), so the call list cannot vouch for a
+    // call here: the library's own names and classes are left out by name instead.
+    // A bare or `this.` call is the class's own member (Kotlin's standard functions aside); the platform's names are those on a receiver.
+    if (bare) {
+      if (hidden.has(name) || (this.lang === "kotlin" && (/^[A-Z]/.test(name) || KOTLIN_STD.has(name)))) return;
+      seeds.add(name);
+    } else if (head?.type === "this" || head?.type === "this_expression") seeds.add(`this.${name}`);
+    else if (headText !== null && !LIBRARY_HEADS.has(headText) && !LIBRARY_CALLS.has(name)) seeds.add(`${headText}.${name}`);
+  }
+
+  /** `dest` holds the lambda: a seed per function its body calls, a copy per held function it runs. */
+  private lambdaInto(dest: ValueCell, node: Node): boolean {
+    const targets = this.lambdaTargets(node);
+    if (!targets) return false;
+    const line = node.startPosition.row + 1;
+    for (const fn of targets.seeds) this.push({ kind: "seed", to: dest, fn, line });
+    for (const from of targets.copies) this.push({ kind: "copy", from, to: dest, line });
+    return true;
+  }
+
   private visitLambda(node: Node): void {
     // A parameter holds a function only where a `forEach` over a collection of functions binds it; else it is unknown.
     const names = new Map(this.lambdaParams(node).map((n) => [n, this.forEachParams.get(node.id) === n] as const));
@@ -748,7 +864,11 @@ class Flow {
     const { call, line } = hit;
     this.invokeOf(node, call, line);
     if (args.named) return;
+    // A lambda handed to the platform's own `forEach` / `map` / `run { }` is never run by a project function.
+    const leaf = call.split(".").pop()!;
+    const platform = LIBRARY_CALLS.has(leaf) || KOTLIN_STD.has(leaf);
     args.nodes.forEach((a, index) => {
+      if (platform && Flow.isLambda(a)) return;
       const from = this.valueCell(a);
       if (from) this.push({ kind: "arg", call, line, index, from });
     });
@@ -766,6 +886,9 @@ class Flow {
       const inner = a.namedChildren[a.namedChildren.length - 1];
       if (inner) nodes.push(inner);
     }
+    // A trailing lambda (`wrap { kickOff() }`) is the last argument.
+    const trailing = node.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "annotated_lambda")?.namedChildren.find((c) => c.type === "lambda_literal");
+    if (trailing) nodes.push(trailing);
     return { nodes, named };
   }
 

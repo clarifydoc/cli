@@ -192,3 +192,125 @@ describe("Kotlin callable references", () => {
     expect(all.filter((l) => /^Squad\./.test(l) && /Task\./.test(l))).toEqual([]);
   });
 });
+
+describe("Kotlin lambdas as values", () => {
+  const files = {
+    "league/Club.kt": ["package league", "class Club { fun save() {} }", ""].join("\n"),
+    "league/Match.kt": [
+      "package league",
+      "class Match(private val club: Club) {",
+      "    private var onDone: () -> Unit = { refreshTable() }",
+      "    private val handlers = mutableMapOf<String, () -> Unit>()",
+      "    fun kickOff() {}",
+      "    fun closeMatch() {}",
+      "    fun refreshTable() {}",
+      "    fun wire() {",
+      "        val cb = { kickOff() }",
+      "        cb()",
+      "        wrapIt { club.save() }",
+      "        handlers[\"close\"] = { closeMatch() }",
+      "        val again: () -> Unit = { onDone() }",
+      "        again()",
+      "    }",
+      "    fun wrapIt(w: () -> Unit) { w() }",
+      "    fun finish() { onDone() }",
+      "    fun dispatch() { handlers[\"close\"]?.invoke() }",
+      "    fun factory(): () -> Unit { return { closeMatch() } }",
+      "    fun use() { val f = factory(); f() }",
+      "    fun many() { val m = { kickOff(); closeMatch(); refreshTable(); wire(); finish() }; m() }",
+      "    fun viaIt() { val c: (Club) -> Unit = { it.save() }; c(club) }",
+      "    fun viaBare() { val h: (() -> Unit) -> Unit = { fn -> fn() }; h { kickOff() } }",
+      "    fun viaNamed() { val c: (Club) -> Unit = { x -> x.save() }; c(club) }",
+      "}",
+      "",
+    ].join("\n"),
+    "league/Decoy.kt": ["package league", "class Decoy { fun invoke() {}; fun kickOff() {}; fun closeMatch() {}; fun refreshTable() {}; fun save() {}; fun w() {}; fun cb() {}; fun f() {}; fun m() {}; fun c() {}; fun again() {}; fun fn() {} }", ""].join("\n"),
+  };
+
+  it("makes a lambda stand for the functions its body calls", async () => {
+    const out = links(await analyzeAll(files, "kotlin"), "value-flow");
+    expect(out).toEqual([
+      // a map of lambdas read by key, a field initializer, a factory's result, a local lambda
+      "Match.dispatch: handlers[\"close\"]?.invoke -> Match.kt::Match.closeMatch",
+      "Match.finish: onDone -> Match.kt::Match.refreshTable",
+      "Match.use: f -> Match.kt::Match.closeMatch",
+      "Match.wire: cb -> Match.kt::Match.kickOff",
+      // a lambda that runs a held function holds what it holds (and `onDone()` itself runs the initializer's lambda)
+      "Match.wire: again -> Match.kt::Match.refreshTable",
+      "Match.wire: onDone -> Match.kt::Match.refreshTable",
+      // a trailing lambda handed to a wrapper that runs its parameter
+      "Match.wrapIt: w -> Club.kt::Club.save",
+    ].sort());
+    // Five calls, and a call on the lambda's own parameter (implicit `it` or named), state nothing.
+    expect(out.filter((l) => /^Match\.(many|viaIt|viaNamed|viaBare):/.test(l))).toEqual([]);
+    expect(out.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+});
+
+describe("Java lambdas as values", () => {
+  const files = {
+    "league/Club.java": ["package league;", "public class Club {", "    public void save() { }", "}", ""].join("\n"),
+    "league/Match.java": [
+      "package league;",
+      "import java.util.*;",
+      "import java.util.function.*;",
+      "public class Match {",
+      "    private Runnable onDone;",
+      "    private final Map<String, Runnable> handlers = new HashMap<>();",
+      "    private final Runnable kick = () -> kickOff();",
+      "    void kickOff() { }",
+      "    void closeMatch() { }",
+      "    void refreshTable() { }",
+      "    void wire(Club club) {",
+      "        Runnable r = () -> club.save();",
+      "        wrapIt(r);",
+      "        this.onDone = () -> refreshTable();",
+      "        handlers.put(\"close\", () -> closeMatch());",
+      "        Runnable chained = () -> onDone.run();",
+      "        chained.run();",
+      "    }",
+      "    void wrapIt(Runnable w) { w.run(); }",
+      "    void finish() { onDone.run(); kick.run(); }",
+      "    void dispatch() { handlers.get(\"close\").run(); }",
+      "    Runnable factory() { return () -> closeMatch(); }",
+      "    void use() { Runnable f = factory(); f.run(); }",
+      "    void many() { Runnable m = () -> { kickOff(); closeMatch(); refreshTable(); wire(null); finish(); }; m.run(); }",
+      "    void pair() { Runnable m = () -> { kickOff(); closeMatch(); }; m.run(); }",
+      "    void viaParam() { Consumer<Club> c = club -> club.save(); c.accept(null); }",
+      "    void constructed() { Runnable t = () -> new Club(); t.run(); }",
+      "}",
+      "",
+    ].join("\n"),
+    "league/Decoy.java": [
+      "package league;",
+      "public class Decoy {",
+      "    public void run() { }",
+      "    public void kickOff() { }",
+      "    public void closeMatch() { }",
+      "    public void refreshTable() { }",
+      "    public void save() { }",
+      "}",
+      "",
+    ].join("\n"),
+  };
+
+  it("makes a lambda stand for the functions its body calls", async () => {
+    const out = links(await analyzeAll(files, "java"), "value-flow");
+    expect(out).toEqual([
+      // a map of lambdas read by key, a field a lambda was assigned to, a field initializer, a factory's result
+      "Match.dispatch: handlers.get(\"close\").run -> Match.java::Match.closeMatch",
+      "Match.finish: kick.run -> Match.java::Match.kickOff",
+      "Match.finish: onDone.run -> Match.java::Match.refreshTable",
+      "Match.use: f.run -> Match.java::Match.closeMatch",
+      // a lambda that runs a held function holds what it holds
+      "Match.wire: chained.run -> Match.java::Match.refreshTable",
+      // a lambda handed to a wrapper that runs its parameter; a body of two calls is both of them
+      "Match.wrapIt: w.run -> Club.java::Club.save",
+      "Match.pair: m.run -> Match.java::Match.closeMatch",
+      "Match.pair: m.run -> Match.java::Match.kickOff",
+    ].sort());
+    // Five calls, a call on the lambda's own parameter and a construction state nothing; the namesake is never reached.
+    expect(out.filter((l) => /^Match\.(many|viaParam|constructed):/.test(l))).toEqual([]);
+    expect(out.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+});

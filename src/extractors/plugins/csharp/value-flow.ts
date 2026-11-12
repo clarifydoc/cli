@@ -9,8 +9,11 @@ import { argumentsOf, unwrapExpression } from "./local-types.js";
  * dictionary — travels to the call that runs it (`x()`, `x.Invoke()`, `x?.Invoke()`, `Saved?.Invoke(this, e)`).
  * Only what the source states: core joins the steps and resolves every name (see `core/value-flow.ts`).
  *
- * Lambdas hold no function of their own here (their calls are already their enclosing member's), so a cell that
- * holds only lambdas holds nothing.
+ * A lambda or anonymous method has no function of its own here (its calls are its enclosing member's), but one that
+ * lands in a cell (a local, field, property, event, collection, argument, return or field initializer) stands for the
+ * project functions its body calls — `Save()`, `this.Save()`, `club.Save()`, `Club.Save()` — and the held delegates it
+ * runs (`onDone()`, `onDone.Invoke()`): the cell is seeded with each name, or copies the delegate's cell. More than
+ * four names, a call on one of the lambda's own parameters, a chain or the platform's own call state nothing.
  */
 
 /** What the enclosing class declares, as far as one file can say. */
@@ -95,6 +98,100 @@ export function fileDelegateNames(root: Node): Set<string> {
 
 const LAMBDAS: ReadonlySet<string> = new Set(["lambda_expression", "anonymous_method_expression"]);
 
+/** Methods the BCL owns on nearly every value: a lambda calling one states no project function. */
+const LIBRARY_CALLS: ReadonlySet<string> = new Set([
+  "ToString", "Equals", "GetHashCode", "GetType", "Add", "AddRange", "Remove", "Contains", "ContainsKey", "TryGetValue", "Clear", "Count",
+  "ToList", "ToArray", "Select", "Where", "First", "FirstOrDefault", "Any", "All", "OrderBy", "Sum", "WriteLine", "Write", "Format", "Join",
+  "Dispose", "Close", "Wait", "Run", "Delay", "FromResult", "CompletedTask", "Invoke", "Log", "LogInformation", "LogError", "LogWarning", "LogDebug",
+]);
+/** Receivers that are the platform's own (`Console.WriteLine`, `_logger.Log…`). */
+const LIBRARY_HEADS: ReadonlySet<string> = new Set([
+  "Console", "Math", "string", "String", "Convert", "Task", "Enumerable", "File", "Path", "Directory", "Environment", "Debug", "Trace",
+  "Guid", "DateTime", "DateTimeOffset", "TimeSpan", "Thread", "Interlocked", "Array", "Activator", "Encoding", "Regex", "GC",
+  "log", "_log", "logger", "_logger", "Log", "Logger",
+]);
+
+type LambdaSource = { kind: "seed"; fn: string; line: number } | { kind: "copy"; from: ValueCell };
+
+/** What a lambda's body is read against: which names hold a delegate, and which are local functions. */
+interface LambdaEnv {
+  /** The cell an expression names when it is a delegate holder (a local, parameter, field, property or event). */
+  holder(expr: Node): ValueCell | null;
+  isLocalFunction(name: string): boolean;
+}
+
+/** A lambda's own parameter names (`x =>`, `(a, b) =>`, `(int a) =>`, `delegate (int a) { … }`). */
+function lambdaParamNames(lambda: Node): Set<string> {
+  const out = new Set<string>();
+  const p = lambda.childForFieldName("parameters")
+    ?? (lambda.type === "lambda_expression" ? lambda.namedChildren.find((c) => c.type === "identifier" || c.type === "parameter_list" || c.type === "implicit_parameter_list") : undefined)
+    ?? lambda.namedChildren.find((c) => c.type === "parameter_list");
+  if (!p) return out;
+  if (p.type === "identifier") { out.add(p.text); return out; }
+  for (const c of p.namedChildren) {
+    if (c.type === "identifier" || c.type === "implicit_parameter") out.add(c.text);
+    else if (c.type === "parameter") { const n = c.childForFieldName("name")?.text; if (n) out.add(n); }
+  }
+  return out;
+}
+
+/**
+ * A lambda or anonymous method held in a value stands for the project functions its body calls (`Save()`,
+ * `this.Save()`, `club.Save()`, `Club.Save()`) and for the held delegates it runs (`onDone()`, `onDone.Invoke()`).
+ * At most four distinct names: past that, or for a body whose calls are all on its own parameters, chains or the
+ * platform's, it states nothing.
+ */
+function lambdaSourcesOf(lambda: Node, env: LambdaEnv): LambdaSource[] {
+  const seeds = new Set<string>();
+  const copies = new Map<string, ValueCell>();
+  let over = false;
+  const line = lambda.startPosition.row + 1;
+  const callOf = (n: Node, hidden: ReadonlySet<string>): void => {
+    const f0 = n.childForFieldName("function");
+    if (!f0) return;
+    const f = unwrapExpression(f0);
+    let head: Node | null = null;
+    let name: string | null = null;
+    if (f.type === "identifier") name = f.text;
+    else if (f.type === "member_access_expression") { head = f.childForFieldName("expression"); name = f.childForFieldName("name")?.text ?? null; }
+    else if (f.type === "conditional_access_expression") {
+      head = f.childForFieldName("condition");
+      const last = f.namedChildren[f.namedChildren.length - 1];
+      name = last?.type === "member_binding_expression" ? last.childForFieldName("name")?.text ?? null : null;
+    } else return;
+    if (!name || name === "nameof") return;
+    const headName = head?.type === "identifier" ? head.text : null;
+    if (headName !== null && hidden.has(headName)) return;
+    // A held delegate run: `onDone()`, `onDone.Invoke()`, `onDone?.Invoke()`.
+    const runs = head === null ? f : name === "Invoke" ? head : head.type === "this" ? f : null;
+    if (runs && !(runs.type === "identifier" && hidden.has(runs.text))) {
+      const cell = env.holder(runs);
+      if (cell) { copies.set(JSON.stringify(cell), cell); return; }
+    }
+    // A bare or `this.` call is the class's own member, whatever its name; the platform's names are those on a receiver.
+    if (head === null) { if (!hidden.has(name) && !env.isLocalFunction(name)) seeds.add(name); }
+    else if (head.type === "this") seeds.add(`this.${name}`);
+    else if (headName !== null && !LIBRARY_HEADS.has(headName) && !LIBRARY_CALLS.has(name)) seeds.add(`${headName}.${name}`);
+  };
+  const walk = (n: Node, hidden: ReadonlySet<string>): void => {
+    if (over || n.type === "local_function_statement") return;
+    let scope = hidden;
+    if (n.id !== lambda.id && LAMBDAS.has(n.type)) scope = new Set([...hidden, ...lambdaParamNames(n)]);
+    if (n.type === "invocation_expression") {
+      callOf(n, scope);
+      if (seeds.size + copies.size > 4) over = true;
+    }
+    for (const c of n.namedChildren) walk(c, scope);
+  };
+  const params = lambdaParamNames(lambda);
+  for (const c of lambda.namedChildren) walk(c, params);
+  if (over) return [];
+  return [
+    ...[...seeds].map((fn): LambdaSource => ({ kind: "seed", fn, line })),
+    ...[...copies.values()].map((from): LambdaSource => ({ kind: "copy", from })),
+  ];
+}
+
 const DELEGATE_WORDS_RE = /\b(?:Action|Func|Predicate|EventHandler|Comparison|Converter|Delegate|Invoke|AsyncCallback|ThreadStart|TimerCallback|WaitCallback)\b|\+=/;
 const NO_NAMES: ReadonlySet<string> = new Set();
 const escapeRe =(s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -105,8 +202,10 @@ const escapeRe =(s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * group), a parameter called like a function, or a `var` that is later called. The cheap gate before any
  * tree walk — most members mention none.
  */
-function mayStateFlow(text: string, params: readonly ParamInfo[], ctx: ClassValueContext | null): boolean {
+function mayStateFlow(text: string, params: readonly ParamInfo[], ctx: ClassValueContext | null, returnType: string | null): boolean {
   if (DELEGATE_WORDS_RE.test(text)) return true;
+  // A member declared to return a delegate hands on what it returns (`return () => Close();`).
+  if (shapeOfType(unwrapTask(returnType), ctx?.delegates ?? NO_NAMES) === "delegate") return true;
   if (text.length < 40000 && /\bvar\s+(\w+)\s*=[^;]*;[\s\S]*?\b\1\s*\(/.test(text)) return true;
   // A delegate parameter is a value to hand on, whatever the body says of it.
   if (params.some((p) => shapeOfType(p.type, ctx?.delegates ?? NO_NAMES))) return true;
@@ -135,7 +234,7 @@ export function csharpValueFlow(
   returnType: string | null,
   ctx: ClassValueContext | null,
 ): ValueFlowFact[] {
-  if (!body || !mayStateFlow(body.text, params, ctx)) return [];
+  if (!body || !mayStateFlow(body.text, params, ctx, returnType)) return [];
   const delegates = ctx?.delegates ?? new Set<string>();
   const members = ctx?.members ?? new Map<string, string | null>();
   const methods = ctx?.methods ?? new Set<string>();
@@ -154,7 +253,9 @@ export function csharpValueFlow(
     let shape = shapeOfType(type, delegates);
     if (shape === "unknown" && init) {
       const made = unwrapExpression(init);
-      if (made.type === "object_creation_expression") {
+      // `var v = () => Save();` (a natural-typed lambda) holds a delegate.
+      if (LAMBDAS.has(made.type)) shape = "delegate";
+      else if (made.type === "object_creation_expression") {
         const t = made.childForFieldName("type")?.text ?? null;
         const s = shapeOfType(t, delegates);
         if (s) { shape = s; type = t; }
@@ -303,7 +404,14 @@ export function csharpValueFlow(
   const wholeCollection = (h: Holder): ValueCell => (h.collapsed || h.cell.member !== undefined ? h.cell : { name: h.cell.name, member: "[]" });
 
   // ── Sources: what an expression hands over ─────────────────────────────────
-  type Source = { kind: "seed"; fn: string; line: number } | { kind: "copy"; from: ValueCell } | { kind: "result"; call: string; line: number };
+  type Source = LambdaSource | { kind: "result"; call: string; line: number };
+  const lambdaEnv: LambdaEnv = {
+    holder: (expr) => {
+      const h = holderOf(expr);
+      return h && (h.shape === "delegate" || (h.shape === "unknown" && h.local)) ? h.cell : null;
+    },
+    isLocalFunction: (name) => localFunctions.has(name),
+  };
   /**
    * `broad`: the destination is known to hold a delegate, so any PascalCase name that is not a local or a field
    * is taken as a method group; otherwise only a method the class declares, `this.X` and `new Delegate(…)`.
@@ -345,6 +453,9 @@ export function csharpValueFlow(
         }
         return [];
       }
+      case "lambda_expression":
+      case "anonymous_method_expression":
+        return lambdaSourcesOf(e, lambdaEnv);
       case "object_creation_expression": {
         const type = e.childForFieldName("type")?.text ?? null;
         if (shapeOfType(type, delegates) !== "delegate") return [];
@@ -543,6 +654,7 @@ export function csharpValueFlow(
     });
   };
 
+  let lambdaDepth = 0;
   const walk = (node: Node): void => {
     switch (node.type) {
       case "local_function_statement": return;
@@ -570,6 +682,7 @@ export function csharpValueFlow(
         break;
       }
       case "return_statement": {
+        if (lambdaDepth > 0) break; // a lambda's own return, not this member's
         const value = node.namedChildren[0];
         if (value && delegateReturn) {
           const from = cellFor(sourcesOf(value, true), `r${node.startPosition.row + 1}_`, node.startPosition.row + 1);
@@ -578,7 +691,10 @@ export function csharpValueFlow(
         break;
       }
     }
+    const isLambda = LAMBDAS.has(node.type);
+    if (isLambda) lambdaDepth++;
     for (const c of node.namedChildren) walk(c);
+    if (isLambda) lambdaDepth--;
   };
 
   if (body.type === "arrow_expression_clause") {
@@ -610,7 +726,16 @@ export function csharpFieldInitFacts(classBody: Node, ctx: ClassValueContext): V
       const line = v.startPosition.row + 1;
       if (depth > 3) return;
       const own = v.type === "member_access_expression" && v.childForFieldName("expression")?.type === "this" ? v.childForFieldName("name")?.text : undefined;
-      if (v.type === "identifier" && ctx.methods.has(v.text)) facts.push({ kind: "seed", to, fn: v.text, line });
+      if (v.type === "lambda_expression" || v.type === "anonymous_method_expression") {
+        const env: LambdaEnv = {
+          holder: (expr) => {
+            const own = expr.type === "identifier" ? expr.text : expr.type === "member_access_expression" && expr.childForFieldName("expression")?.type === "this" ? expr.childForFieldName("name")?.text : undefined;
+            return own !== undefined && shapeOfType(ctx.members.get(own), ctx.delegates) === "delegate" ? { name: "this", member: own } : null;
+          },
+          isLocalFunction: () => false,
+        };
+        for (const s of lambdaSourcesOf(v, env)) facts.push(s.kind === "seed" ? { kind: "seed", to, fn: s.fn, line: s.line } : { kind: "copy", from: s.from, to, line });
+      } else if (v.type === "identifier" && ctx.methods.has(v.text)) facts.push({ kind: "seed", to, fn: v.text, line });
       else if (own && ctx.methods.has(own)) facts.push({ kind: "seed", to, fn: `this.${own}`, line });
       else if (v.type === "object_creation_expression" && shapeOfType(v.childForFieldName("type")?.text, ctx.delegates) === "delegate") {
         const a = argumentsOf(v);
