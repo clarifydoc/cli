@@ -1113,8 +1113,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       for (const a of [...args].reverse()) {
         if (a.type !== "identifier") continue;
         const bound = this.bindings()?.lookup(a.text, a);
-        if (!bound || bound.confidence !== "EXTRACTED" || bound.url.includes("${") || /['"`\\]/.test(bound.url)) continue;
         const at = a.startIndex - arg.startIndex;
+        if (!bound || bound.confidence !== "EXTRACTED" || bound.url.includes("${") || /['"`\\]/.test(bound.url)) {
+          // `const path = `/cars/${slot(kind)}/${id}`; fetch(await garageUrl(path))`: a local the
+          // function sets once, to a template, is that template written in the call.
+          const held = this.heldTemplate(a);
+          if (held) text = `${text.slice(0, at)}${held}${text.slice(at + a.text.length)}`;
+          continue;
+        }
         text = `${text.slice(0, at)}'${bound.url}'${text.slice(at + a.text.length)}`;
       }
       return { url: text.replace(/\s+/g, " ").trim(), confidence: "INFERRED" };
@@ -1136,6 +1142,27 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     let scope: Node | null = value.parent;
     while (scope && !FUNCTION_SCOPES.has(scope.type)) scope = scope.parent;
     return scope ? objectPropValue(value, property.text) : null;
+  }
+
+  /**
+   * The text of the template literal a local is declared with, when nothing else in its
+   * function assigns it and the template nests no literal of its own; else null.
+   */
+  private heldTemplate(id: Node): string | null {
+    const value = this.bindings()?.valueOf(id.text, id);
+    if (value?.type !== "template_string") return null;
+    const decl = value.parent;
+    const kind = decl?.type === "variable_declarator" ? decl.parent?.childForFieldName("kind")?.text ?? decl.parent?.child(0)?.text : null;
+    if (kind !== "const") return null;
+    // Declared in the function that makes the call: a template from an outer scope is the module-value pass's.
+    const scopeOf = (n: Node): number | null => {
+      for (let p: Node | null = n.parent; p; p = p.parent) if (FUNCTION_SCOPES.has(p.type)) return p.id;
+      return null;
+    };
+    const home = scopeOf(value);
+    if (home === null || home !== scopeOf(id)) return null;
+    const text = value.text;
+    return text.indexOf("`", 1) === text.length - 1 && !/[\\\n]/.test(text) ? text : null;
   }
 
   /** {@link resolveUrlArg} on a value a local holds, guarded against a local built on itself. */

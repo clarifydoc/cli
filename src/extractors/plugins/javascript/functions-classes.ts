@@ -1020,7 +1020,9 @@ export function extractUrlTemplates(
     const pathOnly = !!handed && paramNames.has(handed) && URL_PARAM.test(handed);
     const tpl = pathOnly ? `{${handed}}` : stripUrlBase(text);
     // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
-    const ok = tpl.includes("/") || pathOnly || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
+    // A named base before the path the caller hands in (`${API_BASE}${path}`): the hole stays, the base filled where the project states it.
+    const basedPath = /^\$\{[A-Z][A-Z0-9_]*\}\{([A-Za-z_$][\w$]*)\}$/.exec(tpl)?.[1];
+    const ok = tpl.includes("/") || pathOnly || (!!basedPath && paramNames.has(basedPath) && URL_PARAM.test(basedPath)) || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
       // A helper handing back another of its class's URL methods (`${this.getResourceUrl({id}, 'download')}`).
       /^\$\{this\.[\w$]+\([^{}]*(?:\{[\w$]+\}[^{}]*)*\)\}$/.test(tpl);
     if (ok && !templates.includes(tpl)) templates.push(tpl);

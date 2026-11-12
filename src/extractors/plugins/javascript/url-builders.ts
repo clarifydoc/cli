@@ -172,6 +172,9 @@ function templatesOf(fn: FunctionInfo): string[] {
 interface HelperLookup {
   /** Helpers by bare name across the project; null = two different ones (ambiguous). */
   global: Map<string, UrlBuilder | null>;
+  /** The same index per sub-project, by the file's `projectId`: a namesake of another sub-project is no candidate for a call no import resolves. */
+  byProject?: Map<string, Map<string, UrlBuilder | null>>;
+  projectOf?: Map<string, string>;
   /** File-local helpers by their dotted name — a route table's `routes.tagsSlug`. */
   local: Map<string, Map<string, UrlBuilder>>;
   /** Free helpers by the file declaring them: the lexical (same-file) and import-resolved lookups. */
@@ -304,6 +307,10 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
     const from = lookup.imported?.(site.file, name);
     if (from) return lookup.byFile.get(from.file)?.get(from.exported) ?? null;
   }
+  // No import resolves it: the helper of that name the caller's own sub-project states, before the project-wide name.
+  const project = lookup.projectOf?.get(site.file);
+  const own = project !== undefined ? lookup.byProject?.get(project)?.get(name) : undefined;
+  if (own !== undefined) return own;
   return lookup.global.get(name) ?? null;
 }
 
@@ -591,6 +598,24 @@ function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): s
 export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
   const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
   keepHelperBases(lookup, analyses);
+  const perProject = new Map<string, FileAnalysis[]>();
+  lookup.projectOf = new Map();
+  for (const a of analyses) {
+    if (!a.projectId) continue;
+    lookup.projectOf.set(a.filePath, a.projectId);
+    const list = perProject.get(a.projectId);
+    if (list) list.push(a);
+    else perProject.set(a.projectId, [a]);
+  }
+  if (perProject.size > 1) {
+    lookup.byProject = new Map();
+    for (const [id, list] of perProject) {
+      const index = buildIndex(list);
+      // The same base-keeping the project-wide index got, on this project's own builders.
+      keepHelperBases({ global: index, local: lookup.local }, list);
+      lookup.byProject.set(id, index);
+    }
+  }
   lookup.byFile = buildFileIndex(analyses);
   if (ctx) {
     const wrappers = buildWrapperIndex(analyses, ctx.importIndex);
