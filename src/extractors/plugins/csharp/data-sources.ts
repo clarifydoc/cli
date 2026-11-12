@@ -330,10 +330,28 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
 
   /** The file works with Entity Framework: an unknown method on `context.X` may be a project extension on a set. */
   private efFile = false;
+  /** The file's members that declare a query as their result, by `<class node id>:<name>` (see `queryHelperEntity`). */
+  private queryHelpers = new Map<string, Node[]>();
+  /** The set each query helper is over (null: none, or its overloads disagree), memoized by member node id. */
+  private queryHelperSets = new Map<number, string | null>();
+  private queryHelpersOpen = new Set<number>();
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.dbSetNames = new Map();
     this.efLocals = new Map();
+    this.queryHelpers = new Map();
+    this.queryHelperSets = new Map();
+    this.queryHelpersOpen = new Set();
+    if (sourceText.includes("Queryable<") || sourceText.includes("DbSet<")) {
+      for (const m of tree.rootNode.descendantsOfType("method_declaration")) {
+        const type = m.childForFieldName("returns") ?? m.childForFieldName("type");
+        const name = m.childForFieldName("name")?.text;
+        const owner = enclosingType(m);
+        if (!type || !name || !owner || !QUERY_HELPER_TYPE.test(type.text.replace(/\s+/g, ""))) continue;
+        const key = `${owner.id}:${name}`;
+        this.queryHelpers.set(key, [...(this.queryHelpers.get(key) ?? []), m]);
+      }
+    }
     this.efFile = /\bMicrosoft\.EntityFrameworkCore\b|\bSystem\.Data\.Entity\b|\bDbContext\b|\bDbSet</.test(sourceText);
     if (sourceText.includes("DbSet<")) {
       const typeParams = new Set<string>();
@@ -820,6 +838,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     const receiver = parts.length > 1 ? parts[parts.length - 2]! : "";
     const root = parts[0]!;
     const base = chainBase(fn);
+    // `ClubsQuery(id).ExecuteDeleteAsync()`: a call of a query helper of this class runs on the set the helper is over.
+    const helperSet = NON_ENTITY_EF_METHODS.has(method) ? null : this.queryHelperEntity(fn, node);
+    if (helperSet) {
+      const own = efAccess(method, node);
+      if (own.access) return this.ds({ kind: "database", name: `EF: ${method}`, target: helperSet, entity: helperSet, ...own, line: node.startPosition.row + 1 });
+    }
     const local = base !== null ? this.efLocals.get(`${enclosingMember(node)?.id}:${base}`) : undefined;
     if (base !== null && (this.dbSetNames.has(base) || local)) {
       const entity = local ?? this.dbSetNames.get(base) ?? undefined;
@@ -871,6 +895,77 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     return null;
   }
 
+  /**
+   * The set a chain starts from when it starts at a call of a query helper — a method of the enclosing class
+   * (`ClubsQuery(id)`, `this.ClubsQuery(id)`) declared to return `IQueryable<T>` — else null. A same-named helper of
+   * another class is none of these.
+   */
+  private queryHelperEntity(fn: Node, at: Node): string | null {
+    if (this.queryHelpers.size === 0) return null;
+    const name = queryHelperCalled(fn);
+    const owner = name ? enclosingType(at) : null;
+    const members = name && owner ? this.queryHelpers.get(`${owner.id}:${name}`) : undefined;
+    if (!members) return null;
+    const sets = new Set<string | null>(members.map((m) => this.queryHelperSet(m)));
+    return sets.size === 1 ? [...sets][0] ?? null : null;
+  }
+
+  /** The set one query helper is over: what its returned expressions query, else the entity its declared type names. */
+  private queryHelperSet(member: Node): string | null {
+    if (this.queryHelperSets.has(member.id)) return this.queryHelperSets.get(member.id)!;
+    if (this.queryHelpersOpen.has(member.id)) return null; // a helper that returns a call of itself
+    this.queryHelpersOpen.add(member.id);
+    const body = member.childForFieldName("body");
+    const returned: Node[] = [];
+    if (body?.type === "arrow_expression_clause") {
+      const e = body.namedChildren[0];
+      if (e) returned.push(e);
+    } else if (body) {
+      for (const r of body.descendantsOfType("return_statement")) {
+        if (enclosingMember(r)?.id !== member.id) continue;
+        const e = r.namedChildren[0];
+        if (e) returned.push(e);
+      }
+    }
+    const sets = new Set<string | null>();
+    for (const expr of returned) sets.add(this.returnedSet(expr, member));
+    let set: string | null = sets.size === 1 ? [...sets][0] ?? null : null;
+    if (!set && sets.size === 1) {
+      // A body that states no set (a parameter handed through): the declared `IQueryable<Club>` names the entity.
+      const type = (member.childForFieldName("returns") ?? member.childForFieldName("type"))?.text.replace(/\s+/g, "") ?? "";
+      const m = /I(?:Ordered|Includable)?Queryable<([\w.]+?)(?:,[\w.<>]+)?>|DbSet<([\w.]+)>/.exec(type);
+      const declared = m ? (m[1] ?? m[2])!.slice((m[1] ?? m[2])!.lastIndexOf(".") + 1) : null;
+      set = declared && /^[A-Z]/.test(declared) && !/^T(?:[A-Z][a-z]\w*)?$/.test(declared) ? declared : null;
+    }
+    this.queryHelpersOpen.delete(member.id);
+    this.queryHelperSets.set(member.id, set);
+    return set;
+  }
+
+  /** The set a returned expression queries: a set or a call chain on one, or a local of the member initialized by one. */
+  private returnedSet(expr: Node, member: Node): string | null {
+    let value: Node | undefined = expr;
+    while (value?.type === "cast_expression" || value?.type === "parenthesized_expression") {
+      value = value.type === "cast_expression" ? value.childForFieldName("value") ?? undefined : value.namedChildren[0];
+    }
+    if (!value) return null;
+    if (value.type !== "identifier") return this.efSetOf(value, value);
+    const seen = new Set<string>();
+    let name = value.text;
+    for (let hop = 0; hop < 3 && !seen.has(name); hop++) {
+      seen.add(name);
+      const decl = member.descendantsOfType("variable_declarator").find((d) => (d.childForFieldName("name") ?? d.namedChildren[0])?.text === name);
+      let init: Node | undefined = decl?.namedChildren[decl.namedChildren.length - 1];
+      while (init?.type === "cast_expression" || init?.type === "parenthesized_expression") {
+        init = init.type === "cast_expression" ? init.childForFieldName("value") ?? undefined : init.namedChildren[0];
+      }
+      if (!decl || !init || init.id === decl.id) return null;
+      if (init.type !== "identifier") return this.efSetOf(init, decl);
+      name = init.text;
+    }
+    return null;
+  }
+
   /** `var q = <a query on a set>;`: remember which set the local holds. */
   private recordEfLocal(declarator: Node): void {
     const name = declarator.childForFieldName("name")?.text ?? declarator.namedChildren.find((c) => c.type === "identifier")?.text;
@@ -894,6 +989,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private efSetOf(expr: Node, at: Node): string | null {
     const fn = expr.type === "invocation_expression" ? expr.childForFieldName("function") : expr;
     if (!fn) return null;
+    const viaHelper = this.queryHelperEntity(expr, at);
+    if (viaHelper) return viaHelper;
     const base = chainBase(fn);
     if (base !== null && this.dbSetNames.has(base)) return this.dbSetNames.get(base) ?? null;
     const local = base !== null ? this.efLocals.get(`${enclosingMember(at)?.id}:${base}`) : undefined;
@@ -1684,6 +1781,44 @@ function enclosingMember(node: Node): Node | null {
   let cur: Node | null = node.parent;
   while (cur && !MEMBER_SCOPES.has(cur.type)) cur = cur.parent;
   return cur;
+}
+
+/** A member declared to return a query: `IQueryable<T>` and its ordered / including forms, a `DbSet<T>`, or a task of one. */
+const QUERY_HELPER_TYPE = /^(?:(?:[\w.]+\.)?(?:Task|ValueTask)<)?(?:[\w.]+\.)?(?:I(?:Ordered|Includable)?Queryable|I?DbSet)</;
+
+/** The innermost class, record, struct or interface `node` sits in. */
+function enclosingType(node: Node): Node | null {
+  let cur: Node | null = node.parent;
+  while (cur && !["class_declaration", "record_declaration", "struct_declaration", "record_struct_declaration", "interface_declaration"].includes(cur.type)) cur = cur.parent;
+  return cur;
+}
+
+/**
+ * The name of the method a chain starts at when it starts at a call of a bare or `this.` method
+ * (`ClubsQuery(id).Where(..).ExecuteDeleteAsync`): `ClubsQuery`. Null when it starts at anything else — a receiver
+ * (`_repo.Active()` is `_repo`'s), a set, a local.
+ */
+function queryHelperCalled(fn: Node): string | null {
+  let node: Node | null = fn;
+  while (node) {
+    if (node.type === "invocation_expression") {
+      const f: Node | null = node.childForFieldName("function");
+      if (f?.type === "identifier") return f.text;
+      if (f?.type === "generic_name") return f.namedChildren[0]?.text ?? null;
+      if (f?.type === "member_access_expression" && ["this", "this_expression"].includes(f.childForFieldName("expression")?.type ?? "")) {
+        const n = f.childForFieldName("name");
+        return n?.type === "generic_name" ? n.namedChildren[0]?.text ?? null : n?.text ?? null;
+      }
+      node = f;
+      continue;
+    }
+    if (node.type === "member_access_expression") {
+      node = node.childForFieldName("expression");
+      continue;
+    }
+    return null;
+  }
+  return null;
 }
 
 /** Unwrap `Set<Order>` → "Order"; strip generics/namespace; drop non-DbSet members. */

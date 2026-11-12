@@ -454,6 +454,41 @@ public class SquadRepository(LeagueContext context) {
     ]);
   });
 
+  it("sees a bulk write on the query a helper of the class returns, on that helper's entity (real-repo FP)", async () => {
+    const rows = await rowsOf(`namespace X;
+public class ClubRepository(LeagueContext context) {
+  public IQueryable<Club> ClubsQuery(int leagueId) => context.Clubs.Where(c => c.LeagueId == leagueId);
+  public IQueryable<Club> Active() {
+    var q = context.Clubs.Where(c => c.Active);
+    return q;
+  }
+  public Task<int> DropLeague(int leagueId) => ClubsQuery(leagueId).ExecuteDeleteAsync();
+  public async Task Deactivate() { await this.Active().ExecuteUpdateAsync(s => s.SetProperty(c => c.Active, false)); }
+  public async Task DropViaLocal(int id) { var q = ClubsQuery(id); await q.ExecuteDeleteAsync(); }
+  public int DropSync(int id) { return ClubsQuery(id).Where(c => c.Active).ExecuteDelete(); }
+  public async Task Page(int id) { await ClubsQuery(id).ToListAsync(); }
+}
+public class PlayerRepository(LeagueContext context) {
+  public IQueryable<Player> ClubsQuery(int leagueId) => context.Players.Where(p => p.LeagueId == leagueId);
+  public Task<int> DropPlayers(int id) => ClubsQuery(id).ExecuteDeleteAsync();
+}
+public class Svc {
+  public Task Run(Thing t) => Helper().ExecuteDeleteAsync();
+  private Thing Helper() => new Thing();
+  public Task Other(ClubRepository repo) => repo.ClubsQuery(1).ExecuteDeleteAsync();
+}`);
+    const at = (n: number) => rows.filter((d) => d.line === n).map((d) => `${d.name} ${d.entity} ${d.access ?? "-"}`);
+    expect(at(8)).toEqual(["EF: ExecuteDeleteAsync Clubs write"]);
+    expect(at(9)).toEqual(["EF: ExecuteUpdateAsync Clubs write"]);
+    expect(at(10)).toEqual(["EF: ExecuteDeleteAsync Clubs write"]);
+    expect(at(11)).toEqual(["EF: ExecuteDelete Clubs write"]);
+    expect(at(12)).toEqual(["EF: ToListAsync Clubs read"]);
+    // the same-named helper of another class is over Players; a helper that is no query, and another object's call, are nothing
+    expect(at(16)).toEqual(["EF: ExecuteDeleteAsync Players write"]);
+    expect(at(19)).toEqual([]);
+    expect(at(21)).toEqual([]);
+  });
+
   it("takes a parameter declared as a set for that set in its own member only (real-repo FP)", async () => {
     const rows = await rowsOf(`namespace X;
 public static class QueryableExtensions {
