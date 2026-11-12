@@ -208,6 +208,55 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
   /** Whether a bare name may be a function the project declares or imports (not a builtin or a receiver). */
   const maybeFunctionName = (name: string): boolean => !PY_BUILTIN_CALLS.has(name) && !isReceiver(name) && name !== "self" && name !== "cls";
 
+  /**
+   * A lambda that lands in `to` stands for the functions its body calls (it has no function of its own): each
+   * project function it calls is a seed, a call of a name that holds a value a copy. A call on one of its own
+   * parameters, on a local or on something the plugin cannot spell, and a body calling more than four names, state nothing.
+   */
+  const lambdaInto = (lambda: Node, to: ValueCell, line: number): void => {
+    const own = new Set<string>();
+    const calls: Node[] = [];
+    const scan = (node: Node): void => {
+      for (const c of node.namedChildren) {
+        if (c.type === "lambda") for (const p of c.childForFieldName("parameters")?.namedChildren ?? []) targetNames(p.type === "default_parameter" || p.type === "typed_default_parameter" ? p.childForFieldName("name") : p, own);
+        else if (c.type === "call") calls.push(c);
+        // Names the body binds itself (comprehension and loop variables, walrus targets) are no project functions.
+        else if (c.type === "for_in_clause") targetNames(c.childForFieldName("left"), own);
+        else if (c.type === "named_expression") targetNames(c.childForFieldName("name"), own);
+        scan(c);
+      }
+    };
+    for (const p of lambda.childForFieldName("parameters")?.namedChildren ?? []) targetNames(p.type === "default_parameter" || p.type === "typed_default_parameter" ? p.childForFieldName("name") : p, own);
+    const body = lambda.childForFieldName("body");
+    if (!body) return;
+    if (body.type === "call") calls.push(body);
+    scan(body);
+    const seeds = new Set<string>();
+    const copies = new Map<string, ValueCell>();
+    for (const call of calls) {
+      const callee = unwrap(call.childForFieldName("function"));
+      if (!callee) continue;
+      if (callee.type === "identifier") {
+        const name = callee.text;
+        if (own.has(name) || isShadowed(name) || scope.globals.has(name) || isReceiver(name)) continue;
+        if (isLocal(name)) { copies.set(name, { name: cellName(name) }); continue; }
+        if (!maybeFunctionName(name) || /^[A-Z]/.test(name)) continue;
+        seeds.add(name);
+      } else if (callee.type === "attribute") {
+        const obj = callee.childForFieldName("object");
+        const attr = callee.childForFieldName("attribute");
+        if (obj?.type !== "identifier" || !attr || own.has(obj.text) || isShadowed(obj.text)) continue;
+        if (isReceiver(obj.text)) {
+          if (scope.heldFields.has(attr.text)) copies.set(`self.${attr.text}`, { name: "self", member: attr.text });
+          else seeds.add(`self.${attr.text}`);
+        } else if (!isLocal(obj.text) && maybeFunctionName(obj.text)) seeds.add(callee.text);
+      }
+    }
+    if (seeds.size + copies.size > 4) return;
+    for (const fn of seeds) seed(to, fn, line);
+    for (const from of copies.values()) copy(from, to, line);
+  };
+
   /** Everything `expr` may hold flows into `to`. */
   const valueInto = (expr: Node | null, to: ValueCell, line: number): void => {
     const n = unwrap(expr);
@@ -243,6 +292,7 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
         if (sub) copy(sub.key !== undefined ? { name: sub.cell.name, member: sub.key } : sub.cell, to, line);
         return;
       }
+      case "lambda": lambdaInto(n, to, line); return;
       case "list": case "tuple": case "set": case "expression_list":
         for (const c of n.namedChildren) valueInto(c.type === "list_splat" ? c.namedChild(0) : c, to, line);
         return;
@@ -303,7 +353,7 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
       if (obj?.type === "identifier" && !isReceiver(obj.text) && isLocal(obj.text) && !isShadowed(obj.text)) return { name: obj.text, member: n.childForFieldName("attribute")!.text };
     }
     switch (n.type) {
-      case "identifier": case "attribute": case "call": case "subscript": case "conditional_expression": case "boolean_operator":
+      case "identifier": case "attribute": case "call": case "subscript": case "conditional_expression": case "boolean_operator": case "lambda":
       case "list": case "tuple": case "set": case "dictionary": case "expression_list": {
         const cell = fresh(kind, line);
         const before = facts.length;
@@ -319,6 +369,8 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
     if (!t) return;
     if (t.type === "identifier") {
       if (t.text === "_" || isShadowed(t.text) || scope.globals.has(t.text)) return;
+      // A module-level `name = lambda …` is a function of its own (its calls are its own): no value to follow.
+      if (scope.atModule && unwrap(value)?.type === "lambda") return;
       valueInto(value, { name: cellName(t.text) }, line);
       return;
     }

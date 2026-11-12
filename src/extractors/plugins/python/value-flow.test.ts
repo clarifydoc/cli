@@ -335,4 +335,179 @@ describe("Python value flow", () => {
     }));
     expect(links.some((l) => l.includes("::run@"))).toBe(false);
   });
+
+  describe("lambdas written inside a function", () => {
+    const DECOY = {
+      "decoy.py": [
+        "def save_club():",
+        "    pass",
+        "",
+        "def kick_off():",
+        "    pass",
+        "",
+        "def close_match():",
+        "    pass",
+        "",
+        "def refresh_table():",
+        "    pass",
+        "",
+      ].join("\n"),
+    };
+
+    it("follows a local lambda handed to a wrapper that invokes its parameter", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "club.py": [
+          "def save_club():",
+          "    pass",
+          "",
+          "def run(cb):",
+          "    cb()",
+          "",
+          "def go():",
+          "    h = lambda: save_club()",
+          "    run(h)",
+          "    run(lambda x: save_club())",
+          "",
+        ].join("\n"),
+      }));
+      expect(links).toContain("club.py::run@5 cb -> club.py::save_club");
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
+    it("follows self.cb = lambda invoked in another method, and a bound method called inside it", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "table.py": [
+          "def refresh_table():",
+          "    pass",
+          "",
+          "class Table:",
+          "    def __init__(self):",
+          "        self.on_done = lambda: refresh_table()",
+          "        self.on_save = lambda: self.persist()",
+          "",
+          "    def persist(self):",
+          "        pass",
+          "",
+          "    def finish(self):",
+          "        self.on_done()",
+          "        self.on_save()",
+          "",
+        ].join("\n"),
+      }));
+      expect(links).toContain("table.py::Table.finish@13 self.on_done -> table.py::refresh_table");
+      expect(links).toContain("table.py::Table.finish@14 self.on_save -> table.py::Table.persist");
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
+    it("follows a dict of lambdas invoked by key", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "plays.py": [
+          "def kick_off():",
+          "    pass",
+          "",
+          "def run(name):",
+          "    handlers = {\"a\": lambda: kick_off()}",
+          "    handlers[\"a\"]()",
+          "",
+        ].join("\n"),
+      }));
+      expect(links.some((l) => l.includes("-> plays.py::kick_off"))).toBe(true);
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
+    it("follows a factory returning a lambda invoked by the caller", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "factory.py": [
+          "def close_match():",
+          "    pass",
+          "",
+          "def make():",
+          "    return lambda: close_match()",
+          "",
+          "def use():",
+          "    f = make()",
+          "    f()",
+          "",
+        ].join("\n"),
+      }));
+      expect(links).toContain("factory.py::use@9 f -> factory.py::close_match");
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
+    it("states nothing for a lambda calling more than four names, a call on its own parameter or on a name it binds", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "many.py": [
+          "def a(): pass",
+          "def b(): pass",
+          "def c(): pass",
+          "def d(): pass",
+          "def e(): pass",
+          "def club(): pass",
+          "def f(): pass",
+          "",
+          "def run_many(cb):",
+          "    cb()",
+          "",
+          "def run_param(cb):",
+          "    cb()",
+          "",
+          "def run_bound(cb):",
+          "    cb()",
+          "",
+          "def go(handlers):",
+          "    run_many(lambda: (a(), b(), c(), d(), e()))",
+          "    run_param(lambda club: club())",
+          "    run_bound(lambda: [f() for f in handlers])",
+          "",
+        ].join("\n"),
+      }));
+      expect(links.filter((l) => l.startsWith("many.py::run_"))).toEqual([]);
+    });
+
+    it("keeps four names", async () => {
+      const links = flowLinks(await analyzeAll({
+        "four.py": [
+          "def a(): pass",
+          "def b(): pass",
+          "def c(): pass",
+          "def d(): pass",
+          "",
+          "def run(cb):",
+          "    cb()",
+          "",
+          "def go():",
+          "    run(lambda: (a(), b(), c(), d()))",
+          "",
+        ].join("\n"),
+      }));
+      expect(links).toHaveLength(4);
+    });
+
+    it("copies from a held name the lambda calls", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "held.py": [
+          "def refresh_table():",
+          "    pass",
+          "",
+          "def run(cb):",
+          "    cb()",
+          "",
+          "def go(on_done):",
+          "    run(lambda: on_done())",
+          "",
+          "def start():",
+          "    go(refresh_table)",
+          "",
+        ].join("\n"),
+      }));
+      expect(links).toContain("held.py::run@5 cb -> held.py::refresh_table");
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+  });
 });
