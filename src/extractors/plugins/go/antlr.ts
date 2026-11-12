@@ -15,6 +15,8 @@ import {
   PrimaryExprContext,
   RangeClauseContext,
   ShortVarDeclContext,
+  StructTypeContext,
+  InterfaceTypeContext,
   TypeArgsContext,
   TypeSwitchGuardContext,
   VarSpecContext,
@@ -247,7 +249,9 @@ function boundPositions(root: ParserRuleContext, out: Map<string, Array<readonly
   const stack: ParseTree[] = [root];
   while (stack.length > 0) {
     const node = stack.pop()!;
-    if (node instanceof TerminalNode) continue;
+    // A struct's fields and an interface's methods are no names the function binds (a table test's
+    // `[]struct{ newBackend func(…) }` leaves the package's `newBackend` callable by name).
+    if (node instanceof TerminalNode || node instanceof StructTypeContext || node instanceof InterfaceTypeContext) continue;
     const add = (name: string, from: readonly [number, number]): void => {
       if (name === "_") return;
       const list = out.get(name);

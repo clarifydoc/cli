@@ -345,3 +345,50 @@ describe("value-flow: a type's members, field paths and module writes", () => {
     expect(flowLinks([unit])).toEqual(["src/hook.c::fire@16 g_hook -> src/hook.c::on_kick"]);
   });
 });
+
+describe("value-flow: a call the facts cannot follow keeps the links it had (real-repo FP)", () => {
+  /** Every link out of `symbol`, as `call -> file::target`. */
+  const linksOf = (analyses: FileAnalysis[], symbol: string): string[] =>
+    buildSymbolLinks(analyses)
+      .filter((l) => l.sourceSymbol === symbol)
+      .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
+      .sort();
+
+  it("a plain name no fact writes (a wrapped callback) still links into its own file, never another's", () => {
+    // `const refreshLeague = useCallback(() => …)` is a function of its own; the call is marked an invoke, yet no
+    // fact writes `refreshLeague` — the value comes from a call the facts do not follow.
+    const page = file("src/pages/LeaguePage.ts", {
+      functions: [
+        fn("LeaguePage", 1, { valueFlow: [{ kind: "invoke", cell: { name: "refreshLeague" }, call: "refreshLeague", line: 5 }], calls: [call("refreshLeague", 5)] }),
+        fn("refreshLeague", 3),
+      ],
+    });
+    expect(linksOf([page], "LeaguePage")).toEqual(["refreshLeague -> src/pages/LeaguePage.ts::refreshLeague"]);
+    // The same when the only write is a call's result (`const reloadTable = debounce(loadTable, 50)`).
+    const table = file("src/pages/TablePage.ts", {
+      moduleValueFlow: [{ kind: "result", call: "debounce", line: 1, to: { name: "reloadTable" } }],
+      functions: [
+        fn("onSearch", 3, { valueFlow: [{ kind: "invoke", cell: { name: "reloadTable" }, call: "reloadTable", line: 4 }], calls: [call("reloadTable", 4)] }),
+        fn("reloadTable", 1),
+      ],
+    });
+    expect(linksOf([table], "onSearch")).toEqual(["reloadTable -> src/pages/TablePage.ts::reloadTable"]);
+    // A closure local no fact writes never links into another file's namesake.
+    const tests = file("src/league/table.test.ts", {
+      functions: [fn("tableSorts", 1, { valueFlow: [{ kind: "invoke", cell: { name: "check" }, call: "check", line: 4 }], calls: [call("check", 4)] })],
+    });
+    const decoy = file("src/league/check.ts", { functions: [fn("check", 1)], exports: exp("check") });
+    expect(linksOf([tests, decoy], "tableSorts")).toEqual([]);
+  });
+
+  it("a method called on a member no fact writes is left to the ordinary resolution", () => {
+    const model = file("src/squad/selection.ts", { classes: [cls("SelectionModel", 1, [fn("apply", 3)])], exports: exp("SelectionModel") });
+    const editor = file("src/squad/editor.ts", {
+      imports: [imp("./selection", ["SelectionModel"])],
+      classes: [cls("SquadEditor", 1, [
+        fn("onOpen", 5, { valueFlow: [{ kind: "invoke", cell: { name: "this", member: "selectionModel" }, call: "this.selectionModel.apply", line: 6 }], calls: [call("this.selectionModel.apply", 6, { receiverType: "SelectionModel" } as Partial<CallInfo>)] }),
+      ], [{ name: "selectionModel", type: "SelectionModel" }])],
+    });
+    expect(linksOf([model, editor], "SquadEditor.onOpen")).toEqual(["this.selectionModel.apply -> src/squad/selection.ts::SelectionModel.apply"]);
+  });
+});

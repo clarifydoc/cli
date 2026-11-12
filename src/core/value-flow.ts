@@ -80,13 +80,47 @@ function* scopesOf(analysis: FileAnalysis): Generator<Scope> {
 }
 
 /**
- * The call sites plugins marked as invoking a held value (`invoke` facts): the name tiers never resolve them, so a
- * global namesake cannot claim a call that runs whatever a cell holds.
+ * The call sites plugins marked as invoking a held value (`invoke` facts), and how far the name tiers may still
+ * resolve each: `suppress` — never, so a global namesake cannot claim a call that runs whatever a cell holds (the
+ * cell is a parameter, or a seed or copy writes it); `same-file` — a plain name only a call's result writes, or
+ * nothing (`const f = debounce(g)`, `useCallback(…)`: a value the facts do not follow), keeps a link into its own
+ * file only. A member no seed or copy writes anywhere (`this.model.apply()` on an object field) is left to the name tiers entirely.
  */
-export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Set<string> {
-  const out = new Set<string>();
+export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<string, "suppress" | "same-file"> {
+  const out = new Map<string, "suppress" | "same-file">();
+  const writtenMembers = new Set<string>();
+  // Only a seed or a copy says what a cell holds; a call's result (`debounce(load)`) is a value the facts do not follow.
+  const writes = (f: ValueFlowFact): ValueCell | null => (f.kind === "seed" || f.kind === "copy" ? f.to : null);
+  for (const a of analyses) for (const s of scopesOf(a)) for (const f of s.facts) {
+    const to = writes(f);
+    if (to?.member !== undefined) writtenMembers.add(to.member);
+  }
   for (const a of analyses) {
-    for (const s of scopesOf(a)) for (const f of s.facts) if (f.kind === "invoke") out.add(callSiteKey(s.file, s.symbol, f.line, f.call));
+    const moduleWritten = new Set<string>();
+    for (const s of scopesOf(a)) for (const f of s.facts) {
+      const to = writes(f);
+      if (!to) continue;
+      if (to.name === MODULE_CELL && to.member !== undefined) moduleWritten.add(to.member);
+      else if (to.module || s.fn === null || s.fn.name === "<setup>") moduleWritten.add(to.name);
+    }
+    for (const s of scopesOf(a)) {
+      let local: Set<string> | null = null;
+      for (const f of s.facts) {
+        if (f.kind !== "invoke") continue;
+        const key = callSiteKey(s.file, s.symbol, f.line, f.call);
+        const { name, member } = f.cell;
+        if (member !== undefined) {
+          if (writtenMembers.has(member) || name === MODULE_CELL) out.set(key, "suppress");
+          continue;
+        }
+        if (!local) {
+          local = new Set();
+          for (const g of s.facts) { const to = writes(g); if (to && to.member === undefined) local.add(to.name); }
+        }
+        const isParam = s.fn?.params.some((p) => p.name === name) ?? false;
+        out.set(key, isParam || local.has(name) || moduleWritten.has(name) ? "suppress" : "same-file");
+      }
+    }
   }
   return out;
 }

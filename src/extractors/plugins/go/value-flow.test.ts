@@ -240,4 +240,24 @@ describe("Go function values: registries, literal factories and name collisions"
     });
     expect(valueFlowLinks(analyses)).toEqual(["inner: h -> league/shadow.go::save"]);
   });
+  it("a table test's struct field never hides the package function of the same name (real-repo FP)", async () => {
+    const analyses = await analyzeAll({
+      "league/table.go": ["package league", "", "func newFixture(n string) error { return nil }", ""].join("\n"),
+      "league/table_test.go": [
+        "package league",
+        "",
+        "func TestFixture(t *testing.T) {",
+        "\terr := newFixture(\"cup\")",
+        "\t_ = err",
+        "\tcases := []struct {",
+        "\t\tnewFixture func(string) error",
+        "\t}{}",
+        "\t_ = cases",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    const links = buildSymbolLinks(analyses).filter((l) => l.sourceSymbol === "TestFixture" && l.callName === "newFixture");
+    expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["league/table.go::newFixture"]);
+  });
 });

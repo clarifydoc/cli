@@ -2094,7 +2094,7 @@ interface LinkContext {
    * Call sites a plugin states run a held function value (`ValueFlowFact` invoke, `callSiteKey`): the name tiers
    * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
    */
-  invokeSites?: Set<string>;
+  invokeSites?: Map<string, "suppress" | "same-file">;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
    * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
@@ -4718,8 +4718,10 @@ function resolveCallToDefinition(
   reference = false,
 ): SymbolLink | null {
   // A call on a local a project factory made (`CallInfo.via`) keeps its factory link beside the value-flow one.
-  if (ctx.invokeSites?.has(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) && !call.passed && !call.via) return null;
+  const invoke = !call.passed && !call.via ? ctx.invokeSites?.get(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) : undefined;
+  if (invoke === "suppress") return null;
   const link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  if (invoke === "same-file" && link && link.targetFile !== sourceFile) return null;
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");
   if (dot <= 0) return link;
