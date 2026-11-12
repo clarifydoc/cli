@@ -255,20 +255,22 @@ export const javaCallHooks: CallExtractionHooks = {
  * — which is nearly all method references — called nothing (Halo).
  */
 function javaMethodReference(node: Node, addResult: (name: string, node: Node) => void): void {
-  if (node.type !== "method_reference") return;
+  const name = javaMethodRefName(node);
+  if (name) addResult(name, node);
+}
+
+/** The call name a Java method reference stands for (`this::save` becomes `this.save`, `Club::new` becomes `Club`), or null. */
+export function javaMethodRefName(node: Node): string | null {
+  if (node.type !== "method_reference") return null;
   const parts = node.namedChildren;
   const target = parts[0];
   const member = parts[parts.length - 1];
   if (!target || !member || target === member) {
     // `Snapshot::new` — the grammar has no name node for `new`.
-    if (target && /::\s*new$/.test(node.text)) addResult(target.text.replace(/<.*>$/, ""), node);
-    return;
+    return target && /::\s*new$/.test(node.text) ? target.text.replace(/<.*>$/, "") : null;
   }
-  if (/::\s*new$/.test(node.text)) {
-    addResult(target.text.replace(/<.*>$/, ""), node);
-    return;
-  }
-  addResult(`${target.text.replace(/\s+/g, "")}.${member.text}`, node);
+  if (/::\s*new$/.test(node.text)) return target.text.replace(/<.*>$/, "");
+  return `${target.text.replace(/\s+/g, "")}.${member.text}`;
 }
 
 /**
@@ -276,7 +278,7 @@ function javaMethodReference(node: Node, addResult: (name: string, node: Node) =
  * `this@Club::save` (the labelled class's). `Club::class` is a class literal. The grammar reads `this::save`
  * as a navigation expression whose suffix is `::save`, every other head as a `callable_reference`.
  */
-function kotlinReferenceName(ref: Node): { name: string; ownMember?: boolean } | null {
+export function kotlinReferenceName(ref: Node): { name: string; ownMember?: boolean } | null {
   if (ref.type !== "callable_reference" && !(ref.type === "navigation_expression" && ref.namedChildren[0]?.type === "this_expression")) return null;
   const m = /^(this(?:@[A-Z]\w*)?|[A-Z][\w.]*)?::([A-Za-z_]\w*)$/.exec(ref.text.replace(/\s+/g, ""));
   if (!m || m[2] === "class") return null;

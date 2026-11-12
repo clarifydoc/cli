@@ -17,6 +17,7 @@ import { typeVariableArgs } from "./arg-kinds.js";
 import { anonymousBaseOf, anonymousClassName, anonymousRefinesDeclared, isAnonymousClassCreation, mayHoldAnonymousClass } from "./java-anonymous.js";
 import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
+import { classFlowOf, constructorFieldFlow, methodValueFlow, type ClassFlow } from "./value-flow.js";
 import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -26,7 +27,11 @@ type JkLang = "java" | "kotlin";
 export class JavaKotlinExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
+  /** What the class being read says about its function-valued members (value-flow facts); null outside a class body. */
+  private classFlow: ClassFlow | null = null;
+
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
+    this.classFlow = null;
     // Only Kotlin has top-level functions; Java doesn't.
     const lang = detectLang(node);
     for (const child of node.children) {
@@ -55,6 +60,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
    */
   private collectAnonymousClasses(root: Node, classes: ClassInfo[]): void {
     if (!mayHoldAnonymousClass(root.text)) return;
+    this.classFlow = null;
     for (const creation of root.descendantsOfType("object_creation_expression")) {
       if (!isAnonymousClassCreation(creation) || creation.parent?.type !== "variable_declarator") continue;
       const name = anonymousClassName(creation);
@@ -161,8 +167,15 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // Kotlin primary constructor: ALL its parameters (a plain `repo: Repo` is
     // an injection point too — copied into a property, or used by `init`), as
     // a `constructor` method the DI resolution reads.
+    const headerFields = headerFieldsOf(node, lang);
+    this.classFlow = body ? classFlowOf(body, lang, headerFields) : null;
     const primary = lang === "kotlin" ? this.parsePrimaryConstructor(node) : null;
-    if (primary) methods.push(primary);
+    if (primary) {
+      methods.push(primary);
+      // A `val cb: () -> Unit` parameter is the field of that name.
+      const fieldFlow = constructorFieldFlow(headerFields, primary.line);
+      if (fieldFlow.length > 0) primary.valueFlow = fieldFlow;
+    }
     if (body) this.collectMembers(body, lang, methods, properties, primary);
     // Kotlin `data class Dto(val a: String)` and a Java `record Dto(String a)`
     // declare their fields in the header, not the body — the request-model
@@ -202,6 +215,15 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     // An enum constant's own body (`FAST { void go() { sign(); } }`) declares methods of the enum's anonymous subclass:
     // the enum keeps those it does not declare itself, so their calls have a symbol to belong to.
     if (isEnum && body) this.collectConstantBodies(body, lang, methods);
+
+    // What the field initializers state (`private final Runnable task = this::save;`) belongs to the constructor,
+    // else to the first method: the solver reads the field as the class's.
+    const initFacts = this.classFlow?.initFacts ?? [];
+    this.classFlow = null;
+    if (initFacts.length > 0) {
+      const holder = methods.find((m) => m.name === "constructor") ?? methods.find((m) => !m.synthetic) ?? methods[0];
+      if (holder) holder.valueFlow = [...(holder.valueFlow ?? []), ...initFacts];
+    }
 
     const strings = body ? stringConstants(body) : null;
     return {
@@ -603,10 +625,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     localTypes.push(...outerFieldLocals(node, language, params, localTypes, calls));
     if (language === "kotlin") calls.push(...kotlinInvokeCalls(node, params, localTypes, calls));
     typeVariableArgs(calls, params, body, language);
+    const valueFlow = methodValueFlow(language, params, body, calls, this.classFlow, returnType);
     return {
       name,
       params,
       returnType,
+      ...(valueFlow.length > 0 ? { valueFlow } : {}),
       isAsync,
       isExported,
       decorators,
@@ -647,6 +671,26 @@ export function isAbstract(node: Node): boolean {
     if (m.type === "abstract" || m.text === "abstract" || m.text === "sealed") return true;
   }
   return false;
+}
+
+/** The header fields of a class: Kotlin `val`/`var` constructor parameters and Java record components, with their types. */
+function headerFieldsOf(node: Node, lang: JkLang): Array<{ name: string; type: string | null }> {
+  const out: Array<{ name: string; type: string | null }> = [];
+  if (node.type === "record_declaration") {
+    const params = node.childForFieldName("parameters") ?? node.children.find((c) => c.type === "formal_parameters");
+    for (const p of params?.children ?? []) {
+      if (p.type === "formal_parameter") out.push({ name: p.childForFieldName("name")?.text ?? "", type: p.childForFieldName("type")?.text ?? null });
+    }
+  } else if (lang === "kotlin") {
+    const ctor = node.children.find((c) => c.type === "primary_constructor");
+    for (const p of ctor?.children ?? []) {
+      if (p.type !== "class_parameter") continue;
+      const kind = p.children.find((c) => c.type === "binding_pattern_kind")?.text;
+      if (kind !== "val" && kind !== "var") continue;
+      out.push({ name: p.children.find((c) => c.type === "simple_identifier")?.text ?? "", type: kotlinTypeChild(p)?.text ?? null });
+    }
+  }
+  return out.filter((f) => f.name);
 }
 
 /** Kotlin parses to a `source_file` root; Java to a `program` root. */
