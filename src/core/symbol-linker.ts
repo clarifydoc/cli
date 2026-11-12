@@ -5631,7 +5631,7 @@ function resolveCallToDefinitionBody(
         // as a class of its own, may serve it. A chain the linker cannot type keeps the head's type as before.
         const chainType = parts.length > 2 && !call.receiverType ? chainReceiverType(ctx, analysis, sourceFile, sourceSymbol, call) : null;
         const declared = (call.receiverType ? receiverTypeName(call.receiverType, analysis.language) || call.receiverType : null)
-          ?? (chainType ? (chainType.project ? null : chainType.name) : receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")));
+          ?? (chainType ? (chainType.project ? null : chainType.name) : receiverCutName(analysis, call) ? null : receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")));
         const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
         const declEntry = declared ? classEntryFor(classCatalog.get(declared), sourceFile) : undefined;
         // An extension method is called on a type that does not declare it
@@ -5819,6 +5819,15 @@ type MkLink = (
 
 /** Receiver heads that name the parent class's implementation (`super.foo()`, PHP `parent::foo()`, C# `base.Foo()`). */
 const SUPER_HEADS: ReadonlySet<string> = new Set(["super", "parent", "base", "MyBase"]);
+
+/**
+ * The call names only the last names of its receiver (`items[0].league.markTable(` read as `league.markTable`), in a
+ * language whose names otherwise spell the receiver from its head: the first name is then no binding the caller has —
+ * not its field, module binding, local or parameter of that name — and nothing types the receiver.
+ */
+function receiverCutName(analysis: FileAnalysis, call: CallInfo): boolean {
+  return !!call.receiverCut && !!pluginFor(analysis.language)?.callPathsFromHead;
+}
 
 /**
  * DECLARED type of `head` as visible from `sourceSymbol`: a typed local of the
@@ -6575,7 +6584,7 @@ function resolveThroughDeclaredType(
   }
 
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
-  if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
+  if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
   // A parameter a nested block's own untyped declaration hides at this site (`CallInfo.boundLocally` on a dotted
   // call): its declared type is not the receiver's.
   if (call.boundLocally && !receiver[0]!.ctor && !receiver[0]!.call
@@ -6612,7 +6621,7 @@ function chainReceiverType(
   call: CallInfo,
 ): { name: string; project: boolean } | null {
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
-  if (!receiver || receiver.length < 2 || receiver.length > MAX_RECEIVER_CHAIN + 1) return null;
+  if (!receiver || receiver.length < 2 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
   const dot = sourceSymbol.indexOf(".");
   const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
@@ -6642,7 +6651,7 @@ function receiverTypeRefuses(
 ): boolean {
   if (ctx.extensionMethods.has(`${target.file}\0${target.symbol}`)) return false;
   // The call states its receiver's type: Strategy 7's own veto reads it as written.
-  if (call.receiverType || call.receiverQualifier) return false;
+  if (call.receiverType || call.receiverQualifier || receiverCutName(analysis, call)) return false;
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return false;
   // A head the callable itself binds — a local (typed as written or by its initializer) or a parameter —, its
@@ -7570,7 +7579,10 @@ function scopedName(
   // or a parameter (`const api = useUserApi()` above `function save() { api.x.y() }`).
   if (sourceSymbol !== "<setup>" && pluginFor(analysis.language)?.moduleLocalsInScope) {
     const setup = analysis.functions.find((f) => f.name === "<setup>");
-    if (setup?.localTypes?.some((l) => nameKey(analysis.language, l.name) === key)) {
+    // The callable (or a function it is written in) rebinds the name: the module's binding is not what it reads.
+    const rebound = (f: FunctionInfo) => !!f.boundNames?.includes(name) || f.params.some((p) => nameKey(analysis.language, p.name) === key);
+    if (setup?.localTypes?.some((l) => nameKey(analysis.language, l.name) === key) && !(!!callable && (rebound(callable) ||
+      analysis.functions.some((f) => f !== callable && !f.name.startsWith("<") && f.line <= callable.line && callable.endLine <= f.endLine && rebound(f))))) {
       return scopedName(ctx, analysis, sourceFile, "<setup>", consumer, name, depth, branches);
     }
   }

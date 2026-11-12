@@ -1,4 +1,5 @@
 import { constantString } from "./constant-expr.js";
+import type { ModuleBindingInfo } from "../../../types/analysis.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
@@ -1080,4 +1081,30 @@ function stringConstants(body: Node): Record<string, string> | null {
   };
   visit(body);
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * A Kotlin file's top-level `val ticket: SeasonTicket = …` / `val ticket = SeasonTicket()` →
+ * `FileAnalysis.moduleBindings`: a function of the file reads the name as a typed variable. The type is the one
+ * declared, else the class a plain constructor call initializes it with; a value of no stated type is no binding.
+ */
+export function kotlinModuleBindings(tree: { rootNode: Node }): ModuleBindingInfo[] {
+  const out: ModuleBindingInfo[] = [];
+  for (const member of tree.rootNode.namedChildren) {
+    if (member.type !== "property_declaration") continue;
+    const { name, type } = kotlinNameAndType(member);
+    if (!name) continue;
+    let written = type;
+    if (!written) {
+      // `val ticket = SeasonTicket()`: a capitalized plain callee constructs an instance of that class.
+      const eq = member.children.findIndex((c) => c.type === "=");
+      const init = eq >= 0 ? member.children[eq + 1] : undefined;
+      const callee = init?.type === "call_expression" ? init.children[0] : undefined;
+      if (callee?.type === "simple_identifier" && /^[A-Z]/.test(callee.text)) written = callee.text;
+    }
+    if (!written) continue;
+    const mods = member.namedChildren.find((c) => c.type === "modifiers")?.text ?? "";
+    out.push({ name, type: written, line: member.startPosition.row + 1, exported: !/\bprivate\b/.test(mods) });
+  }
+  return out;
 }

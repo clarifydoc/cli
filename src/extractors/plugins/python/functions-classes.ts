@@ -20,7 +20,7 @@ import {
   resultChainText,
   type MethodSource,
 } from "./di.js";
-import { functionValueFlow, moduleFlowOf, selfAssignedAttributes } from "./value-flow.js";
+import { functionValueFlow, moduleAssignedNames, moduleFlowOf, rebindingNamesOf, selfAssignedAttributes } from "./value-flow.js";
 
 /**
  * Annotated class attributes whose value is an ORM column/relationship call.
@@ -78,6 +78,8 @@ export class PythonExtractor extends FunctionClassExtractor {
   private moduleHeld: ReadonlySet<string> = new Set();
   /** Names the file's imports bind from the standard library or an external package (value-flow: library calls). */
   private moduleExternal: ReadonlySet<string> = new Set();
+  /** Names the file's own module-level statements assign (a function's own binding of one is recorded: `FunctionInfo.boundNames`). */
+  private moduleNames: ReadonlySet<string> = new Set();
   /** The file being extracted mentions `lambda` (the only gate a named lambda needs). */
   private hasLambda = false;
 
@@ -94,10 +96,12 @@ export class PythonExtractor extends FunctionClassExtractor {
     const flow = moduleFlowOf(tree.rootNode, sourceText);
     this.moduleHeld = flow.held;
     this.moduleExternal = flow.external;
+    this.moduleNames = moduleAssignedNames(tree.rootNode);
     this.hasLambda = sourceText.includes("lambda");
     try {
       return super.extractFunctions(tree, sourceText);
     } finally {
+      this.moduleNames = new Set();
       this.hasLambda = false;
       this.aliases = new Map();
       this.moduleHeld = new Set();
@@ -108,11 +112,13 @@ export class PythonExtractor extends FunctionClassExtractor {
   override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
     this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
     this.moduleHeld = moduleFlowOf(tree.rootNode, sourceText).held;
+    this.moduleNames = moduleAssignedNames(tree.rootNode);
     try {
       const classes = super.extractClasses(tree, sourceText);
       if (sourceText.includes(".register(")) applyVirtualSubclasses(tree.rootNode, classes);
       return classes;
     } finally {
+      this.moduleNames = new Set();
       this.aliases = new Map();
       this.moduleHeld = new Set();
     }
@@ -276,6 +282,16 @@ export class PythonExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
     };
+    // A module-level name the body rebinds (an assignment, loop target, `with … as`, import, `global`) is not what
+    // its reads see: the linker never types a call on it by the module's binding.
+    if (body && this.moduleNames.size > 0) {
+      const mentioned = [...this.moduleNames].filter((n) => bodyText.includes(n) && new RegExp(`(?<![\\w.])${n}\\b`).test(bodyText));
+      if (mentioned.length > 0) {
+        const rebound = rebindingNamesOf(body);
+        const own = mentioned.filter((n) => rebound.has(n));
+        if (own.length > 0) fn.boundNames = own;
+      }
+    }
     // A URL helper (`def clubs_slug(slug): return f"{prefix}/clubs/{slug}"`): the path it returns,
     // its parameters as `{name}`, a module's value as a `${…}` hole.
     const template = body ? returnedUrl(body) : null;

@@ -1545,6 +1545,13 @@ export interface FunctionInfo {
    */
   untypedLocals?: string[];
   /**
+   * Module-level names (the file's own statements assign them) this function binds in its own scope — an assignment,
+   * loop or `with … as` target, import, nested definition — or takes `global`/`nonlocal` to assign, whether or not
+   * it types them. Where a manifest's `moduleLocalsInScope` lets a function read the module's typed bindings, the
+   * linker never reads such a name through the module's binding: what the body reads is not known to be it.
+   */
+  boundNames?: string[];
+  /**
    * The locals whose members the object the function returns spreads
    * (`const crud = useSquadCrud(); return { ...crud, benchAll }` → `["crud"]`):
    * a member of theirs is one the function hands back, found through the

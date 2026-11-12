@@ -590,7 +590,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // and variable aliases (const userStore = useUserStore())
     const topLevelCalls = extractTopLevelCalls(tree, language);
 
-    if (topLevelCalls.length > 0) {
+    // A module that only declares typed variables (`let ticket: SeasonTicket;`) has no statement to run, yet its
+    // functions read those names (where the manifest's `moduleLocalsInScope` says they do): the pseudo-function is
+    // made for its locals too.
+    const topLocals = hooks?.topLevelLocalTypes?.(tree, sourceText);
+    if (topLevelCalls.length > 0 || (topLocals && topLocals.length > 0 && pluginFor(language)?.moduleLocalsInScope)) {
       const setupFn: FunctionInfo = {
         name: "<setup>",
         params: [],
@@ -602,7 +606,6 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         line: 1,
         endLine: 1,
       };
-      const topLocals = hooks?.topLevelLocalTypes?.(tree, sourceText);
       if (topLocals && topLocals.length > 0) setupFn.localTypes = topLocals;
       analysis.functions.unshift(setupFn);
     }

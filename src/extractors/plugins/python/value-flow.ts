@@ -110,6 +110,36 @@ export function boundNamesOf(body: Node | null, params: readonly ParamInfo[]): {
   return { locals, globals, nonlocals };
 }
 
+/**
+ * The names a function body rebinds in its own scope or reaches for through `global`/`nonlocal` and may
+ * assign: every assignment, loop or `with … as` target, walrus, import, nested `def`/class, each `global` or
+ * `nonlocal` name. A module-level binding such a name stands for is not what the body's reads of it see.
+ */
+export function rebindingNamesOf(body: Node | null): Set<string> {
+  const names = new Set<string>();
+  const walk = (node: Node): void => {
+    for (const n of node.namedChildren) {
+      switch (n.type) {
+        case "function_definition": case "class_definition": { const id = n.childForFieldName("name"); if (id) names.add(id.text); continue; }
+        case "assignment": case "augmented_assignment": case "for_statement": case "for_in_clause": targetNames(n.childForFieldName("left"), names); break;
+        case "named_expression": targetNames(n.childForFieldName("name"), names); break;
+        case "as_pattern": targetNames(n.childForFieldName("alias")?.namedChild(0) ?? n.childForFieldName("alias"), names); break;
+        case "global_statement": case "nonlocal_statement": for (const c of n.namedChildren) names.add(c.text); break;
+        case "import_statement": case "import_from_statement":
+          for (const spec of n.namedChildren) {
+            const bound = spec.type === "aliased_import" ? spec.childForFieldName("alias") : spec.type === "dotted_name" ? spec : null;
+            if (bound) names.add(bound.text.split(".")[0]!);
+          }
+          break;
+        default: break;
+      }
+      walk(n);
+    }
+  };
+  if (body) walk(body);
+  return names;
+}
+
 /** What the module's own statements bind: names assigned at module level, never defs, classes or imports. */
 export function moduleAssignedNames(root: Node): Set<string> {
   const names = new Set<string>();
