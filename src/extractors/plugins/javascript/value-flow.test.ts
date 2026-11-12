@@ -213,6 +213,24 @@ describe("value-flow (js): a toast action stored by a store method and read back
   });
 });
 
+describe("value-flow (js): a module name another function declares as a local", () => {
+  const files = {
+    "src/decoys.ts": decoy,
+    "src/club.ts": [
+      "function save() { return 1; }",
+      "function load() { return 2; }",
+      "let current: (() => void) | null = null;",
+      "export function init() { current = load; }",
+      "export function a() { const current = save; current(); }",
+      "export function b() { current?.(); }",
+      "",
+    ].join("\n"),
+  };
+  it("keeps the local's value in its function and the module's in the other", async () => {
+    expect(flow(buildSymbolLinks(await analyzeAll(files)))).toEqual(["a@5 current -> src/club.ts::save", "b@6 current -> src/club.ts::load"]);
+  });
+});
+
 describe("value-flow (js): nothing held", () => {
   it("states no link for a parameter nothing passes a function to", async () => {
     const links = buildSymbolLinks(await analyzeAll({
