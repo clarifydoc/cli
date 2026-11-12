@@ -27,6 +27,7 @@ import { PytestFixtureResolver } from "./pytest-fixtures.js";
 import { pythonRequestSchema } from "./request-schema.js";
 import { pythonReachability, extractPythonPathReferences } from "./reachability.js";
 import { extractPythonDiBindings, pythonTopLevelLocalTypes } from "./di.js";
+import { moduleFlowOf } from "./value-flow.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 import { pythonTaint } from "./taint.js";
 import { pythonGrpcStub, pythonGrpcService } from "../shared/grpc-stubs.js";
@@ -215,6 +216,8 @@ export const pythonMeta: LanguagePluginMeta = {
     topLevelLocalTypes: (tree, sourceText) => pythonTopLevelLocalTypes(tree.rootNode, sourceText),
     // Module and class string constants another module's URL or route reads (see module-values.ts).
     moduleValues: (tree) => extractPythonModuleValues(tree),
+    // How function values travel through the module's own statements (see value-flow.ts).
+    moduleValueFlow: (tree, sourceText) => moduleFlowOf(tree.rootNode, sourceText).facts,
     entryPoints: (tree, sourceText) => [...extractPythonEntryPoints(tree, sourceText), ...extractPythonScheduledJobs(tree, sourceText)],
   },
   calls: pythonCallHooks,

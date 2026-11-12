@@ -20,6 +20,7 @@ import {
   resultChainText,
   type MethodSource,
 } from "./di.js";
+import { functionValueFlow, moduleFlowOf, selfAssignedAttributes } from "./value-flow.js";
 
 /**
  * Annotated class attributes whose value is an ORM column/relationship call.
@@ -73,33 +74,78 @@ export class PythonExtractor extends FunctionClassExtractor {
    * `extractFunctions`/`extractClasses`, which run synchronously per file.
    */
   private aliases: ReadonlyMap<string, string> = new Map();
+  /** Module-level names the file's own statements bind (value-flow: a bare call of one runs a held value). */
+  private moduleHeld: ReadonlySet<string> = new Set();
+  /** The file being extracted mentions `lambda` (the only gate a named lambda needs). */
+  private hasLambda = false;
+
+  /** Value-flow facts of one parsed `def`, once its class (`heldFields`) is known. */
+  private attachValueFlow(p: ParsedFunction, selfName: string | null, heldFields: ReadonlySet<string>): void {
+    // A test's or a fixture's parameters are what pytest injects by name (`use_settings(API_HOST=…)` runs the fixture).
+    const injected = /^test(?:_|[A-Z]|$)/.test(p.fn.name) || p.fn.decorators.some((d) => FIXTURE_DECORATOR.test(d.trim()));
+    const facts = functionValueFlow(p.node, p.fn.params, { selfName, heldFields, moduleHeld: this.moduleHeld, injected });
+    if (facts) p.fn.valueFlow = facts;
+  }
 
   override extractFunctions(tree: Tree, sourceText: string): FunctionInfo[] {
     this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
+    this.moduleHeld = moduleFlowOf(tree.rootNode, sourceText).held;
+    this.hasLambda = sourceText.includes("lambda");
     try {
       return super.extractFunctions(tree, sourceText);
     } finally {
+      this.hasLambda = false;
       this.aliases = new Map();
+      this.moduleHeld = new Set();
     }
   }
 
   override extractClasses(tree: Tree, sourceText: string): ClassInfo[] {
     this.aliases = new Map([...annotatedAliases(tree.rootNode, sourceText), ...typeVarBounds(tree.rootNode, sourceText)]);
+    this.moduleHeld = moduleFlowOf(tree.rootNode, sourceText).held;
     try {
       const classes = super.extractClasses(tree, sourceText);
       if (sourceText.includes(".register(")) applyVirtualSubclasses(tree.rootNode, classes);
       return classes;
     } finally {
       this.aliases = new Map();
+      this.moduleHeld = new Set();
     }
   }
 
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
-    for (const parsed of this.parseFunctionsIn(node)) functions.push(parsed.fn);
+    for (const parsed of this.parseFunctionsIn(node)) {
+      this.attachValueFlow(parsed, null, new Set());
+      functions.push(parsed.fn);
+    }
     // A `def` nested in a function (a decorator's `wrapper`, a scheduler's `async def loop()`, a
     // paginating helper) is a function of its own: its calls are in no enclosing body, so without
     // it they were in none. Reported under its own name, never exported.
     if (NESTED_DEF.test(node.text)) this.collectNestedFunctions(node, false, functions);
+    // `on_ready = lambda: refresh()` at module level is a function bound to a name: its calls are its own.
+    if (node.type === "module" && this.hasLambda) this.collectNamedLambdas(node, functions);
+  }
+
+  private collectNamedLambdas(root: Node, functions: FunctionInfo[]): void {
+    for (const stmt of root.namedChildren) {
+      const assignment = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+      const left = assignment?.type === "assignment" ? assignment.childForFieldName("left") : null;
+      const right = assignment?.childForFieldName("right");
+      if (!assignment || left?.type !== "identifier" || right?.type !== "lambda") continue;
+      if (functions.some((f) => f.name === left.text)) continue;
+      const params = right.childForFieldName("parameters");
+      functions.push({
+        name: left.text,
+        params: params ? pythonParams(params, this.aliases) : [],
+        returnType: null,
+        isAsync: false,
+        isExported: !left.text.startsWith("_"),
+        decorators: [],
+        calls: extractCalls(right.childForFieldName("body"), "python"),
+        line: stmt.startPosition.row + 1,
+        endLine: stmt.endPosition.row + 1,
+      });
+    }
   }
 
   /**
@@ -115,6 +161,7 @@ export class PythonExtractor extends FunctionClassExtractor {
       if (def) {
         if (inFunction || inBlock) {
           const parsed = this.parsePythonFunction(def);
+          this.attachValueFlow(parsed, null, new Set());
           if (inFunction) parsed.fn.isExported = false;
           if (child !== def) parsed.fn.decorators = child.namedChildren.filter((c) => c.type === "decorator").map((d) => d.text.replace(/^@/, ""));
           functions.push(parsed.fn);
@@ -335,6 +382,12 @@ export class PythonExtractor extends FunctionClassExtractor {
     if (body) {
       const parsed = this.parseFunctionsIn(body);
       for (const p of parsed) methods.push(p.fn);
+      // Value flow: `self.<attr>` the class assigns (that no method shadows) is a field a call may run.
+      const receivers = parsed.map((p) => ({ p, selfName: instanceParam(p, true) }));
+      const methodNames = new Set(methods.map((m) => m.name));
+      const held = selfAssignedAttributes(receivers.map(({ p, selfName }) => ({ body: p.node.childForFieldName("body"), selfName })));
+      for (const attr of methodNames) held.delete(attr);
+      for (const { p, selfName } of receivers) this.attachValueFlow(p, selfName, held);
       if (isEnum) collectEnumMembers(body, name, properties);
       else {
         collectAnnotatedAttributes(body, properties);
@@ -479,9 +532,12 @@ function returnedConstruction(returned: Node | null, returnType: string | null):
 /** A type that holds a class, not an instance: `type[Club]`, `Type[ModelType]`, `typing.Type[T]`. */
 const CLASS_TYPED = /^(?:typing\.)?[Tt]ype\s*\[/;
 
-/** The instance parameter of a method (`self`), or null for a static/class method. */
-function instanceParam(p: ParsedFunction): string | null {
-  if (p.fn.decorators.some((d) => /^(?:staticmethod|classmethod)$/.test(d.trim()))) return null;
+/**
+ * The instance parameter of a method (`self`), or null for a static/class method. `withClass`: a class method's
+ * `cls` too (value flow reads both as the class's own members).
+ */
+function instanceParam(p: ParsedFunction, withClass = false): string | null {
+  if (p.fn.decorators.some((d) => (withClass ? /^staticmethod$/ : /^(?:staticmethod|classmethod)$/).test(d.trim()))) return null;
   const first = p.node.childForFieldName("parameters")?.namedChild(0);
   return first?.type === "identifier" ? first.text : null;
 }
