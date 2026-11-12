@@ -135,3 +135,52 @@ describe("C++ constructors", () => {
   });
 });
 
+
+// A held lambda states every name its body calls; core counts the project functions among them.
+const lambdaCapCpp = (n: number): string => {
+  const defs = ["kickOff", "halfTime", "fullTime", "extraTime", "penalties"].slice(0, n);
+  return `#include <functional>
+#include <algorithm>
+${defs.map((d) => `void ${d}() {}`).join("\n")}
+
+class Referee {
+public:
+    void arm() {
+        hook_ = [this] {
+            printf("go");
+            std::sort(v_.begin(), v_.end());
+            log_line("x");
+            ${defs.map((d) => `${d}();`).join("\n            ")}
+        };
+    }
+    void blow() { hook_(); }
+private:
+    std::function<void()> hook_;
+};
+`;
+};
+const lambdaDecoyCpp = `static void kickOff() {}
+static void halfTime() {}
+static void fullTime() {}
+static void extraTime() {}
+static void penalties() {}
+void unrelated() { kickOff(); halfTime(); fullTime(); extraTime(); penalties(); }
+`;
+const lambdaLinks = (n: number): string[] =>
+  buildSymbolLinks([read(lambdaCapCpp(n), "src/referee.cpp"), read(lambdaDecoyCpp, "src/decoy.cpp")])
+    .filter((l) => l.strategy === "value-flow")
+    .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
+    .sort();
+
+describe("C++ held lambda cap is counted by core over project functions", () => {
+  it("four project functions among library calls all link", () => {
+    const found = lambdaLinks(4);
+    for (const d of ["kickOff", "halfTime", "fullTime", "extraTime"]) expect(found).toContain(`hook_ -> src/referee.cpp::${d}`);
+    expect(found.filter((l) => l.includes("src/decoy.cpp"))).toEqual([]);
+  });
+  it("five project functions link nothing", () => {
+    const found = lambdaLinks(5);
+    expect(found.filter((l) => l.startsWith("hook_"))).toEqual([]);
+    expect(found.filter((l) => l.includes("src/decoy.cpp"))).toEqual([]);
+  });
+});

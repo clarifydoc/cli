@@ -574,7 +574,9 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     }
     // A lambda held: the project functions its body calls.
     if (LAMBDA.test(e)) {
-      lambdaSeeds(e, off, (fn) => s.out.push({ kind: "seed", to, fn, line }));
+      const lam = lineOf(starts, off);
+      const lambda = `${lam}:${off - starts[lam - 1]!}`;
+      lambdaSeeds(e, off, (fn) => s.out.push({ kind: "seed", to, fn, line, lambda }));
       return;
     }
     // `std::bind(&Club::save, this)`, `std::mem_fn(&Club::save)`.
@@ -654,7 +656,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
       if (segs.length === 1 && !NOT_A_CALL.has(segs[0]!)) names.add(segs[0]!);
       else if (segs.length === 2 && segs[0] === "this") names.add(`this.${segs[1]}`);
       else if (segs.length === 2 && /^[A-Z]/.test(segs[0]!) && text.slice(site.leaf - 2, site.leaf) === "::") names.add(segs.join("."));
-      if (names.size > 4) return;
+      if (names.size > 16) return;
     }
     for (const n of names) add(n);
   };
