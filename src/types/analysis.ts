@@ -283,6 +283,8 @@ export interface DataAccessGraph {
 
 /** Per-file analysis result */
 export interface FileAnalysis {
+  /** Value-flow facts of the file's module-level code (see `ValueFlowFact`); omitted when it states none. */
+  moduleValueFlow?: ValueFlowFact[];
   filePath: string;
   language: Language;
   frameworks: string[];
@@ -1051,6 +1053,34 @@ export interface ParamInfo {
  */
 export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 
+/**
+ * A place a function value can sit, as a plugin names it for the value-flow solver: a local, a parameter or a
+ * module name (`name`), optionally one member of it (`this.onSave` is `{ name: "this", member: "onSave" }`;
+ * `this`/`self` is the receiver). An element of a list or map is the member `"[]"`; a literal key is that key.
+ */
+export interface ValueCell {
+  name: string;
+  member?: string;
+}
+
+/**
+ * One step of how a function value travels, stated by a plugin without resolving anything (the solver in
+ * core/value-flow.ts joins them). Lines are 1-based; `call` is `CallInfo.name` of a call on that line.
+ */
+export type ValueFlowFact =
+  /** `to` holds the function named `fn` as written (`save`, `this.save`, `Club::save`, a held pseudo-name). */
+  | { kind: "seed"; to: ValueCell; fn: string; line: number }
+  /** `to` is assigned what `from` holds. */
+  | { kind: "copy"; from: ValueCell; to: ValueCell; line: number }
+  /** `from` is passed as written argument `index` (0-based) of the call. */
+  | { kind: "arg"; call: string; line: number; index: number; from: ValueCell }
+  /** `to` receives what the call returns. */
+  | { kind: "result"; call: string; line: number; to: ValueCell }
+  /** The function returns what `from` holds. */
+  | { kind: "return"; from: ValueCell; line: number }
+  /** The call runs whatever `cell` holds. */
+  | { kind: "invoke"; cell: ValueCell; call: string; line: number };
+
 export interface CallInfo {
   name: string;
   kind: "cross-file" | "database" | "api-call" | "internal";
@@ -1387,6 +1417,8 @@ export interface ParamColumn {
 export interface FunctionInfo {
   name: string;
   params: ParamInfo[];
+  /** How function values travel inside this function (see `ValueFlowFact`). Omitted when it states none. */
+  valueFlow?: ValueFlowFact[];
   /**
    * Takes further arguments `params` does not list (Python `*args` /
    * `**kwargs`, which are no parameters a caller names). Omitted otherwise.
@@ -3585,6 +3617,11 @@ export type SymbolLinkStrategy =
   | "unique-global-blind"
   /** Linked to a generic type argument's class (`_context.Set<Account>()`). */
   | "type-argument"
+  /**
+   * The call runs a function value the solver (core/value-flow.ts) followed from where it was named, through
+   * locals, parameters, fields, lists and returns, to the cell the call invokes. Never EXTRACTED.
+   */
+  | "value-flow"
   // ── Outer pipeline (symbol-linker.ts `buildSymbolLinks`) ──
   /** Frontend route → the component file its handler names. */
   | "route-component"

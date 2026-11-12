@@ -126,6 +126,10 @@ export function dropVendoredFacts(analyses: FileAnalysis[]): Set<string> {
     a.dataSources = [];
     a.dataMutations = [];
     if (a.entityRelations) a.entityRelations = [];
+    // A library's function values are no edge of the project's.
+    delete a.moduleValueFlow;
+    for (const f of a.functions) delete f.valueFlow;
+    for (const c of a.classes) for (const m of c.methods) delete m.valueFlow;
   }
   return vendored;
 }

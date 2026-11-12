@@ -190,6 +190,7 @@ export const SYMBOL_LINK_STRATEGIES: readonly string[] = [
   "dispatch",
   "di-binding",
   "route-override",
+  "value-flow",
 ];
 
 /** Wire alphabet for `SymbolLink.relation`, 1-based like the strategies. Append only. */

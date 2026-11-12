@@ -96,6 +96,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   proxyRules: "optional",
   generatedClients: "optional",
   taintFacts: "optional",
+  moduleValueFlow: "optional",
 };
 
 export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {

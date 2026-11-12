@@ -35,3 +35,5 @@ Types for runtime-registered extractor plugins — `CaptureResult` for tree-sitt
 - **Extend `ProjectAnalysis` with optional fields** so old outputs continue to load. All advanced analysis fields (`healthScore`, `patterns`, etc.) are `?` optional.
 - **`CallInfo.kind`** has exactly 4 values — don't add new ones without updating `classifyCalls()` in [../extractors/shared/call-graph.ts](../extractors/shared/call-graph.ts).
 - **Never break existing fields.** Rename via deprecation: add the new field, keep the old one as a computed alias, plan removal later.
+
+- **`ValueFlowFact`** (`FunctionInfo.valueFlow`, `FileAnalysis.moduleValueFlow`, both optional) is how a plugin tells the value-flow solver where a function value travels: `seed` (a cell holds a function named as written), `copy`, `arg` (a cell passed as written argument `index` of the call — `CallInfo.name` on that line), `result`, `return`, `invoke` (the call runs what a cell holds). Cells are `{ name, member? }`; the plugin never resolves a name, a type or an import — core does, in [../core/value-flow.ts](../core/value-flow.ts).

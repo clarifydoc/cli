@@ -27,6 +27,7 @@ import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js
 import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { isTestFile } from "./test-file-detector.js";
+import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
 import { buildImportDirectoryResolver, packageRootLookup, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
@@ -130,6 +131,7 @@ export function buildSymbolLinks(
     importedProjectsCache: new Map(),
     projectStemsCache: new Map(),
     importedStemsCache: new Map(),
+    invokeSites: hasValueFlowFacts(analyses) ? valueFlowInvokeSites(analyses) : undefined,
   };
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
@@ -456,6 +458,9 @@ export function buildSymbolLinks(
     links.length = kept;
     links.push(...handed);
   }
+
+  // Function values followed through locals, parameters, fields, lists and returns to the call that runs them.
+  links.push(...valueFlowLinks(links, ctx));
 
   abstractDispatchLinks(links, ctx);
 
@@ -2085,6 +2090,11 @@ interface LinkContext {
   extensions?: Map<string, ExtensionDef[]>;
   /** Lazy: file → its analysis. */
   analysisAt?: Map<string, FileAnalysis>;
+  /**
+   * Call sites a plugin states run a held function value (`ValueFlowFact` invoke, `callSiteKey`): the name tiers
+   * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
+   */
+  invokeSites?: Set<string>;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
    * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
@@ -4193,6 +4203,54 @@ function shadowedLocally(analysis: FileAnalysis, sourceSymbol: string, name: str
 const GUESSING_STRATEGIES: ReadonlySet<SymbolLinkStrategy> = new Set(["unique-global", "unique-global-blind", "type-argument"]);
 
 /**
+ * The value-flow pass: the solver in value-flow.ts, fed the facts plugins state, with the linker's own name
+ * resolution (no guessing), type lookup and import resolution behind it.
+ */
+function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolLink[] {
+  if (!ctx.invokeSites) return [];
+  const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const NAME = /^[\w$]+$/;
+  return solveValueFlow({
+    analyses: ctx.analyses,
+    links,
+    resolveSeed(file, symbol, name, line) {
+      const analysis = analysisAt.get(file);
+      if (!analysis) return null;
+      // A held in-place function (`<toast.action@17>`) is the file's own function of that name.
+      const own = analysis.functions.find((f) => f.name === name);
+      if (own && name.startsWith("<")) return { file, symbol: own.name, line: own.line };
+      const head = name.split(/[.:]/)[0]!;
+      let call: CallInfo = { name, kind: "internal", target: null, line, passed: "argument" };
+      const imported = NAME.test(head) ? analysis.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined)) : undefined;
+      if (imported) call = { ...call, kind: "cross-file", target: imported.source };
+      const link = resolvePassedName(file, symbol, call, analysis, ctx);
+      return link ? { file: link.targetFile, symbol: link.targetSymbol, line: link.targetLine } : null;
+    },
+    classOfType(file, type) {
+      const language = ctx.languageOf.get(file) as Language | undefined;
+      const name = language ? receiverTypeName(type, language) : null;
+      if (!name) return null;
+      const located = locateClass(ctx, name, file, ctx.projectOf.get(file) ?? "root");
+      return located ? { file: located, name } : null;
+    },
+    parentOf(file, name) {
+      const parent = parentClassOf(ctx, name, file);
+      return parent ? { file: parent.parentFile, name: parent.parentClass } : null;
+    },
+    classAt: (file, name) => ctx.classAt.get(memberKey(file, name)),
+    importedBinding(file, name) {
+      const analysis = analysisAt.get(file);
+      const imp = analysis?.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(name) || i.aliases?.[name] !== undefined));
+      if (!analysis || !imp) return null;
+      const files = importFiles(ctx, imp, file);
+      if (files.length !== 1) return null;
+      return { file: files[0]!, name: imp.aliases?.[name] ?? name, namespace: imp.isNamespace === true };
+    },
+    isTest: (file) => testFileAt(ctx, file),
+  });
+}
+
+/**
  * A name handed on (`register(onSave)`, `onClick={saveClub}`) links as `passes`, and only
  * when it resolved without guessing to something that can run: a function, a method or a
  * class (a component). A value — an imported constant array, a module object — is no edge.
@@ -4658,6 +4716,7 @@ function resolveCallToDefinition(
   ctx: LinkContext,
   reference = false,
 ): SymbolLink | null {
+  if (ctx.invokeSites?.has(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) && !call.passed) return null;
   const link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");
