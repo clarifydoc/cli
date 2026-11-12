@@ -1138,6 +1138,12 @@ export const dartSpec: RegexLangSpec = {
       isAsync: (line) => /\basync\b/.test(line),
     },
     {
+      // A library's own top-level getter, at column 0: `FlagService get flagService { … }` / `get pit => Pit();`.
+      pattern: new RegExp(String.raw`^(?:(?!(?:${STMT_KEYWORDS})\b)[A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??\s+)?get\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{)`),
+      isExported: (_line, name) => !name.startsWith("_"),
+      isAsync: () => false,
+    },
+    {
       pattern: DART_FUNCTION_WRAPPED,
       isExported: (_line, name) => !name.startsWith("_"),
       isAsync: (line, lines, i) => dartAsyncAfterParams(lines, i, line),

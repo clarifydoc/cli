@@ -92,13 +92,21 @@ function extensionBlocks(lines: string[]): ExtensionBlock[] {
 /** The type an `on` clause extends: a type parameter is its bound, and an unbounded one states nothing. */
 function receiverOf(on: string, typeParams: string | undefined): string | null {
   const bare = on.replace(/\?$/, "").trim();
-  if (!typeParams || !/^[A-Za-z_$][\w$]*$/.test(bare)) return on;
+  if (!typeParams) return on;
+  const bounds = new Map<string, string | null>();
   for (const param of splitTopLevel(typeParams)) {
     const p = /^\s*([A-Za-z_$][\w$]*)\s*(?:extends\s+(.+?))?\s*$/s.exec(param);
-    if (p?.[1] !== bare) continue;
-    return p[2] && !/^Object\??$|^dynamic$/.test(p[2].trim()) ? p[2].trim() : null;
+    if (p) bounds.set(p[1]!, p[2] && !/^Object\??$|^dynamic$/.test(p[2].trim()) ? p[2].trim() : null);
   }
-  return on;
+  if (/^[A-Za-z_$][\w$]*$/.test(bare)) return bounds.has(bare) ? bounds.get(bare)! : on;
+  // `List<T extends Club>`: the collection of the bound (`List<Club>`), so its element can be matched; one of an
+  // unbounded parameter holds anything, and names no element (`List`).
+  const generic = /^([A-Za-z_$][\w$.]*)\s*<(.*)>(\??)$/s.exec(on.trim());
+  if (!generic) return on;
+  const args = splitTopLevel(generic[2]!).map((a) => a.trim());
+  if (!args.some((a) => bounds.has(a))) return on;
+  if (args.some((a) => bounds.has(a) && bounds.get(a) === null)) return `${generic[1]}${generic[3]}`;
+  return `${generic[1]}<${args.map((a) => (bounds.has(a) ? bounds.get(a)! : a)).join(", ")}>${generic[3]}`;
 }
 
 /** `T extends Map<K, V>, K` split on its top-level commas. */

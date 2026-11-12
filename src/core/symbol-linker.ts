@@ -2088,6 +2088,8 @@ interface LinkContext {
   facadeFiles?: Map<string, string[]>;
   /** Lazy: extension method name → definitions with their receiver type. */
   extensions?: Map<string, ExtensionDef[]>;
+  /** Lazy: extension method name → the extensions on a collection of one element type (`on List<Club>`). */
+  collectionExtensions?: Map<string, CollectionExtensionDef[]>;
   /** Lazy: file → its analysis. */
   analysisAt?: Map<string, FileAnalysis>;
   /**
@@ -6576,6 +6578,7 @@ function resolveThroughDeclaredType(
   const branches: InjectionPoint[] = [];
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false, branches);
   if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
+  if (branches.length === 0) return collectionExtensionLink(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, leafName, mkLink);
   if (branches.length < 2) return null;
   // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`)
   // whose every branch reaches ONE method — a base both classes inherit it from: that body runs
@@ -8599,6 +8602,82 @@ function extensionMethodFor(
   if (hits.length !== 1) return null;
   const hit = hits[0]!;
   return { file: hit.file, symbol: hit.symbol, line: hit.line };
+}
+
+/** An extension method whose receiver is a collection of `element` (a builtin collection names no project class). */
+interface CollectionExtensionDef extends ExtensionDef {
+  /** The element type the collection holds (`List<Club>` → `Club`). */
+  element: string;
+  /** The collection's own name as written (`List`, `Iterable`). */
+  collection: string;
+}
+
+/** The project type a declared collection holds, as `receiverTypeName` spells it (`List<Club>` → `Club`). */
+function collectionElementName(type: string | null | undefined, language: string): string | null {
+  const element = pluginFor(language as Language)?.collectionElementOf?.((type ?? "").trim());
+  return element ? receiverTypeName(element, language as Language) : null;
+}
+
+/** Every method of an extension on a collection (`extension on List<Club>`) by name, with the element it takes. */
+function buildCollectionExtensionIndex(analyses: FileAnalysis[]): Map<string, CollectionExtensionDef[]> {
+  const out = new Map<string, CollectionExtensionDef[]>();
+  for (const a of analyses) {
+    if (!pluginFor(a.language)?.collectionElementOf) continue;
+    const visit = (fn: FileAnalysis["functions"][number], symbol: string): void => {
+      const recv = fn.params.find((p) => p.isReceiver);
+      const element = recv ? collectionElementName(recv.type, a.language) : null;
+      if (!recv || !element) return;
+      const list = out.get(fn.name) ?? [];
+      list.push({ file: a.filePath, symbol, line: fn.line, receiver: "", element, collection: recv.type?.replace(/[<?].*$/s, "").trim() ?? "", language: a.language });
+      out.set(fn.name, list);
+    };
+    for (const fn of a.functions) visit(fn, fn.name);
+    for (const cls of a.classes) for (const m of cls.methods) visit(m, `${cls.name}.${m.name}`);
+  }
+  return out;
+}
+
+/**
+ * A call on a collection typed as written (`List<Club> clubs`, a parameter, local or field of the caller's class):
+ * the one extension on a collection of that element type, the receiver's own collection preferred among several
+ * (an extension on `Iterable<Club>` answers a `List<Club>`). Null when none or several are left — an extension on
+ * another element's collection (`List<Player>`) is never one.
+ */
+function collectionExtensionLink(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  receiver: readonly ChainSegment[],
+  method: string,
+  mkLink: MkLink,
+): SymbolLink | null {
+  if (receiver.length === 0 || receiver.length > 2 || receiver.some((r) => r.call || r.ctor)) return null;
+  ctx.collectionExtensions ??= buildCollectionExtensionIndex(ctx.analyses);
+  const candidates = ctx.collectionExtensions.get(method)?.filter((d) => sameTypeSpace(sourceFile, analysis.language, d.file, d.language));
+  if (!candidates?.length) return null;
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  const field = (name: string): string | null | undefined =>
+    consumer ? ctx.classAt.get(memberKey(sourceFile, consumer))?.properties.find((p) => nameKey(analysis.language, p.name) === nameKey(analysis.language, name))?.type : null;
+  let written: string | null | undefined;
+  if (receiver.length === 2) {
+    if (!SELF_HEADS.has(receiver[0]!.name)) return null;
+    written = field(receiver[1]!.name);
+  } else {
+    const key = nameKey(analysis.language, receiver[0]!.name);
+    const local = callable?.localTypes?.filter((l) => nameKey(analysis.language, l.name) === key);
+    if (local?.length) written = local.length === 1 ? local[0]!.type : null;
+    else written = callable?.params.find((p) => nameKey(analysis.language, p.name) === key)?.type ?? field(receiver[0]!.name);
+  }
+  const element = collectionElementName(written, analysis.language);
+  if (!element) return null;
+  let defs = candidates.filter((d) => d.element === element);
+  if (defs.length > 1) {
+    const own = (written ?? "").replace(/[<?].*$/s, "").trim();
+    defs = defs.filter((d) => d.collection === own);
+  }
+  return defs.length === 1 ? mkLink(defs[0]!.file, defs[0]!.symbol, defs[0]!.line, "INFERRED", "injection") : null;
 }
 
 /**
