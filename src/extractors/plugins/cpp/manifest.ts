@@ -28,11 +28,13 @@ export function cppReadingVariant(relativePath: string, mix: Readonly<Record<str
 
 /**
  * The element types a `std::pair<Club, Player>` / `std::tuple<…>` return states, in order, for a structured binding
- * (`auto [club, player] = pairOf();`). Null for any other type.
+ * (`auto [club, player] = pairOf();`). A map's key and value type are the same two positions (an iterator over it
+ * reads `it->first` and `it->second` there). Null for any other type.
  */
 export function cppTupleElements(returnType: string): string[] | null {
-  const m = /^(?:const\s+)?(?:std\s*::\s*)?(?:pair|tuple)\s*<([\s\S]+)>\s*[&]*$/.exec(returnType.trim());
+  const m = /^(?:const\s+)?(?:std\s*::\s*)?(?:pair|tuple|map|multimap|unordered_map|unordered_multimap)\s*<([\s\S]+)>\s*[&]*$/.exec(returnType.trim());
   if (!m) return null;
+  const isMap = /(?:map)\s*</.test(returnType.slice(0, returnType.indexOf("<") + 1));
   const out: string[] = [];
   let depth = 0;
   let start = 0;
@@ -46,7 +48,7 @@ export function cppTupleElements(returnType: string): string[] | null {
       start = i + 1;
     }
   }
-  return out.every(Boolean) ? out : null;
+  return out.every(Boolean) ? (isMap ? out.slice(0, 2) : out) : null;
 }
 
 export const cppManifest: LanguagePluginManifest = {

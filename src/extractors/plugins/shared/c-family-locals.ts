@@ -50,7 +50,7 @@ export function extractCFamilyLocalTypes(
   bodyLines: readonly string[],
   params: readonly ParamInfo[],
   /** C++: the element a declared container type states (`vector<Club>` → `Club`); unset where there is no range-for. */
-  elementOf?: (type: string) => string | null,
+  elementOf?: (type: string, as?: "iterated" | "dereferenced") => string | null,
 ): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
@@ -60,13 +60,13 @@ export function extractCFamilyLocalTypes(
   const aliasBinds = new Map<string, number>();
   const code: string[] = [];
   // `for (auto& p : <source>)`: what the loop variable is the element of, settled once every declaration is read.
-  const ranges: Array<{ name: string; source: string }> = [];
+  const ranges: Array<{ name: string; source: string; iterator?: { call: string | undefined } }> = [];
   // Every name's bindings in text order: an alias of a name bound more than once takes the one before it.
   const flow = new AliasFlow();
   const record = (d: Declared, outside = false): void => {
     flow.bind(d.name, d.rangeOver === undefined && d.alias === undefined && d.from === undefined ? d.type : null, outside);
     if (d.alias !== undefined) flow.alias(d.name, d.alias);
-    if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver }); return; }
+    if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver, ...(d.iterator ? { iterator: { call: d.from } } : {}) }); return; }
     if (d.alias !== undefined) {
       (aliasFroms.get(d.name) ?? aliasFroms.set(d.name, new Set()).get(d.name)!).add(d.alias);
       aliasBinds.set(d.name, (aliasBinds.get(d.name) ?? 0) + 1);
@@ -119,7 +119,13 @@ export function extractCFamilyLocalTypes(
   // A range-for over a name typed as a container takes its element; over a call or a field it is the linker's to read.
   const elementFroms = new Map<string, Set<string>>();
   const rangeUnknown = new Set<string>();
-  for (const { name, source } of ranges) {
+  const iterators = new Set<string>();
+  let joined: string | null = null;
+  const bodyText = (): string => (joined ??= bodyLines.join("\n"));
+  // The call an iterator local is initialized from, per container name: `from` of its `iterator` entry.
+  const iteratorCalls = new Map<string, string>();
+  for (const { name, source, iterator } of ranges) {
+    if (iterator) iterators.add(name);
     const text = source.replace(/;?\s*$/, "").replace(/\s*->\s*/g, ".").replace(/^\*+/, "").trim();
     let element: string | null = null;
     let from: string | null = null;
@@ -127,15 +133,21 @@ export function extractCFamilyLocalTypes(
       const param = params.find((p) => p.name === text);
       const types = seen.get(text);
       const declared = param ? cFamilyTypeName(param.type ?? "") : types?.size === 1 && !unknown.has(text) && !fromCalls.has(text) ? [...types][0]! : null;
-      element = declared ? elementOf!(declared) : null;
+      element = declared ? elementOf!(declared, iterator ? "iterated" : undefined) : null;
       // A name the body does not declare is a field of the class: read off its declaration.
       if (!element && !param && !seen.has(text) && !unknown.has(text) && !fromCalls.has(text)) from = text;
     } else if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(text)) from = text;
     else from = initializerCall(text);
     if (element && !PRIMITIVES.has(element)) {
       (seen.get(name) ?? seen.set(name, new Set()).get(name)!).add(element);
-    } else if (from) (elementFroms.get(name) ?? elementFroms.set(name, new Set()).get(name)!).add(from);
-    else rangeUnknown.add(name);
+    } else if (from) {
+      (elementFroms.get(name) ?? elementFroms.set(name, new Set()).get(name)!).add(from);
+      if (iterator?.call) iteratorCalls.set(`${name}\u0000${from}`, iterator.call);
+    } else if (iterator?.call) {
+      // Over a name the body declares that is no collection (`repo.find(2)` on a project class): an ordinary call.
+      const calls = fromCalls.get(name) ?? fromCalls.set(name, new Set()).get(name)!;
+      calls.add(`\u0000${iterator.call}`);
+    } else rangeUnknown.add(name);
   }
   for (const name of rangeUnknown) unknown.add(name);
   // Names the body declares whose binding at a call cannot be told.
@@ -145,7 +157,18 @@ export function extractCFamilyLocalTypes(
       untold.add(name);
       continue;
     }
-    for (const from of froms) out.push({ name, type: "", from, element: true });
+    for (const from of froms) {
+      const call = iteratorCalls.get(`${name}\u0000${from}`);
+      out.push(call ? { name, type: "", from: call, element: true, iterator: "iterated" } : { name, type: "", from, element: true });
+      // `(*it)->kick()` over pointers a field holds: named `it$deref`, the element's pointee.
+      if (call && new RegExp(`\\(\\s*\\*\\s*${name}\\s*\\)\\s*->`).test(bodyText())) {
+        out.push({ name: `${name}$deref`, type: "", from: call, element: true, iterator: "dereferenced" });
+      }
+      // A map's iterator: `it->first` / `it->second` are named `it$first` / `it$second` by the reading, typed by the key and value the field declares.
+      if (iterators.has(name) && new RegExp(`(?<![\\w.>$])${name}\\s*(?:->|\\.)\\s*(?:first|second)\\b`).test(bodyText())) {
+        out.push({ name: `${name}$first`, type: "", from, fromIndex: 0 }, { name: `${name}$second`, type: "", from, fromIndex: 1 });
+      }
+    }
   }
   for (const [name, calls] of fromCalls) {
     if (seen.has(name) || unknown.has(name) || params.some((p) => p.name === name)) {
@@ -204,7 +227,12 @@ interface Declared {
   fromIndex?: number;
   /** A range-for's source expression, when the variable's type is `auto` (the element of what it iterates). */
   rangeOver?: string;
+  /** `auto it = squad.begin();` / `.find(x)`: an iterator over what `rangeOver` names, so it holds that collection's element (and a map's `it->first`/`it->second`). */
+  iterator?: true;
 }
+
+/** `squad.begin()`, `this->squad.cbegin()`, `clubs.find(id)`: the member functions that return an iterator at an element of the receiver. */
+const ITERATOR_INIT = /^(?:this\s*->\s*)?(?!this\b)([A-Za-z_]\w*)\s*(?:\.|->)\s*(?:c?r?begin|find|lower_bound|upper_bound)\s*\([^()]*\)$/;
 
 /** The declarations one statement makes: `Crate a, *b = make(), c(3)` declares three; `needsInit` in a condition. */
 function declarations(statement: string, needsInit: boolean): Declared[] {
@@ -276,7 +304,9 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
     const value = init.slice(1).trim();
     const built = constructedType(value);
     if (built) return [{ name, type: built }];
+    const iterOver = ITERATOR_INIT.exec(value.replace(/;\s*$/, ""))?.[1];
     const from = initializerCall(value);
+    if (iterOver) return [{ name, type: null, rangeOver: iterOver, iterator: true, ...(from ? { from } : {}) }];
     if (from) return [{ name, type: null, from }];
     const alias = /^[*&]?\s*([A-Za-z_]\w*)$/.exec(value.replace(/;\s*$/, ""))?.[1];
     return alias && alias !== name && !NOT_A_TYPE.has(alias) && alias !== "nullptr" && alias !== "true" && alias !== "false" ? [{ name, type: null, alias }] : [{ name, type: null }];

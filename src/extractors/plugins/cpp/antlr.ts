@@ -47,7 +47,7 @@ import { defineCalls, leftOutCalls, tokenCalls, type CallOwner, type TokenKinds 
 import { readC } from "../c/antlr.js";
 import { cppSpec } from "./index.js";
 import { cppOverloadTypeKey } from "./arg-kinds.js";
-import { cppCollectionElement } from "./collection-element.js";
+import { cppCollectionElement, cppCollectionElementOf, cppMapTypes } from "./collection-element.js";
 
 /** How many calls deep a chain is named. */
 const CHAIN_DEPTH = 8;
@@ -421,7 +421,7 @@ function describe(seq: string, decl: DeclaratorContext | null, init?: string): D
   // A pointer states nothing the overloads compare but a C string.
   const key = pointer && base !== "string" ? "?" : base;
   // `auto it = squad.begin();`: an iterator over what `squad` holds.
-  const iterOf = /\bauto\b/.test(seq) && init ? /^=([A-Za-z_]\w*)(?:\.|->)c?begin\(\)$/.exec(init)?.[1] : undefined;
+  const iterOf = /\bauto\b/.test(seq) && init ? /^=(?:this->)?(?!this\b)([A-Za-z_]\w*)(?:\.|->)(?:c?r?begin|find|lower_bound|upper_bound)\([^()]*\)$/.exec(init)?.[1] : undefined;
   return { cls, key, text: seq, pointer, ...(iterOf ? { iterOf } : {}) };
 }
 
@@ -443,13 +443,37 @@ function elementClass(container: string): string | null {
 
 /** The class an iterator over a typed container reaches: `std::vector<Club>::iterator it`, `auto it = squad.begin()`. */
 function iteratorElement(d: Declared | undefined, scope: Scope): string | null {
+  const kind = iteratorKind(d, scope);
+  return kind?.text ? elementClass(kind.text) : null;
+}
+
+/**
+ * The container an iterator local walks: its type as written (`std::map<int, Club>::iterator`, or the declared type of
+ * the name `auto it = squad.begin()` was taken from), and whether that name is one this file does not declare — a
+ * field of the class a header declares, which the linker types.
+ */
+function iteratorKind(d: Declared | undefined, scope: Scope): { text: string | null; unresolved: boolean } | null {
   if (!d || d.pointer) return null;
   if (d.iterOf) {
     const container = lookupIn(scope, d.iterOf);
-    return container && !container.pointer ? elementClass(container.text) : null;
+    if (!container) return scope.owner ? { text: null, unresolved: true } : null;
+    return { text: container.pointer ? null : container.text, unresolved: false };
   }
   const m = /^(?:(?:const|typename)\s+)*(?:std::)?([a-z_]+<[\s\S]*>)::(?:const_|reverse_|const_reverse_)?iterator$/.exec(d.text.trim());
-  return m ? elementClass(m[1]!) : null;
+  return m ? { text: m[1]!, unresolved: false } : null;
+}
+
+/** `it->second.sign()` over an iterator of a map: the call on the value (or key) class the map's type states; over a header's field, on a name the linker types. */
+function pairMemberCall(named: PatternCallName, scope: Scope): PatternCallName | null {
+  const m = /^([A-Za-z_]\w*)\.(first|second)\.([A-Za-z_]\w*)$/.exec(named.name);
+  if (!m) return null;
+  const kind = iteratorKind(scope.locals.get(m[1]!), scope);
+  if (!kind) return null;
+  if (kind.unresolved) return { ...named, name: `${m[1]}$${m[2]}.${m[3]}` };
+  const pair = cppMapTypes(kind.text);
+  const cls = pair && (m[2] === "first" ? pair.key : pair.value);
+  const classed = cls ? classNamed(cls) : null;
+  return classed ? { ...named, name: `${classed}.${m[3]}`, receiverType: classed } : null;
 }
 
 const SMART_POINTER = /^(?:const\s+)?(?:std::)?(?:unique_ptr|shared_ptr)\s*<\s*(?:const\s+)?([A-Za-z_][\w:]*)\s*>$/;
@@ -732,18 +756,25 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
   // `*u` over a smart pointer or an iterator is what it points at, which the overloads compare.
   const deref = scope ? (name: string): string | null => wrappedPointee(lookupIn(scope, name), scope) : undefined;
   // The class the head of the chain is known to be (`it->`, `(*it).`, `std::next(it)->`): the head step then reads as that class.
-  let typed: { cls: string; deref: boolean; orig?: CalleeStep } | null = null;
+  let typed: { cls: string; deref: boolean; pointer?: boolean; orig?: CalleeStep } | null = null;
   // The element class of `std::next(it)`'s iterator, until the arrow that takes it.
   let advanced: string | null = null;
+  // `(*it)` over an iterator of a field a header declares: `(*it).m()` is `it.m`, `(*it)->m()` is the pointee's, named `it$deref`.
+  let aliased = false;
   for (const link of chain) {
     const kids = link.children;
     const first = kids[0];
     if (!(first instanceof PostfixExpressionContext)) {
       // `(*it).kick(`: the element an iterator or smart pointer reaches is the receiver's type, as `it->kick(` states it.
       const pointee = scope && derefHead(link, scope);
+      if (pointee && "alias" in pointee) {
+        steps.push({ kind: "id", name: pointee.alias, line: start.line, column: start.column });
+        aliased = true;
+        continue;
+      }
       if (pointee) {
-        typed = { cls: pointee, deref: true };
-        steps.push({ kind: "id", name: pointee, line: start.line, column: start.column });
+        typed = { cls: pointee.cls, deref: true, pointer: pointee.pointer };
+        steps.push({ kind: "id", name: pointee.cls, line: start.line, column: start.column });
         continue;
       }
       steps.push(...headSteps(link));
@@ -769,6 +800,8 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       const advance = scope && /^(?:::)?std::(?:next|prev)$/.test(first.getText())
         ? /^[A-Za-z_]\w*$/.exec(link.expressionList()?.initializerList().initializerClause()[0]?.getText() ?? "")?.[0] : undefined;
       if (advance) advanced = iteratorElement(lookupIn(scope!, advance), scope!);
+      // `it->second.sign(` over a map's iterator: the value class's own call.
+      if (named && scope && !typed) named = pairMemberCall(named, scope) ?? named;
       if (named) calls.push(withArguments(named, argumentsOf(link.expressionList(), stream, calleeTemplateArgs(first, text), deref)));
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
@@ -780,12 +813,15 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
           steps.length = 0;
           steps.push({ kind: "id", name: head, line: start.line, column: start.column });
         }
-      } else if (type === CPP14Lexer.Arrow && typed?.deref && steps.length === 1) {
-        // `(*it)->kick(`: the element is itself a pointer, which no name spells.
+      } else if (typed?.deref && steps.length === 1 && (type === CPP14Lexer.Arrow) !== !!typed.pointer) {
+        // `(*it)->kick(` over values, `(*it).kick(` over pointers: the element is itself a pointer, which no name spells.
+        // (A pointer element reached by `(*it)->` is the class it points at: the head stays typed.)
         typed = null;
         steps[0] = { kind: "other", bare: false };
       }
       advanced = null;
+      if (aliased && type === CPP14Lexer.Arrow && steps.length === 1 && steps[0]!.kind === "id") steps[0] = { ...steps[0]!, name: `${steps[0]!.name}$deref` };
+      aliased = false;
       // `p->kick(` is `p.kick`, as `p.kick(` is: the linker types `p` through its declaration, a field's or a local's.
       // A member after `->` on what no name spells (`(*it)->kick(`, `this->kick(`) is named alone, as the patterns read it.
       if (type === CPP14Lexer.Arrow && steps.at(-1)?.kind === "other") steps.push({ kind: "other", bare: true });
@@ -806,12 +842,22 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
 }
 
 /** The class `(*it)` is over an iterator, a smart pointer or a pointer, when the link is exactly that parenthesized dereference. */
-function derefHead(link: PostfixExpressionContext, scope: Scope): string | null {
+function derefHead(link: PostfixExpressionContext, scope: Scope): { cls: string; pointer: boolean } | { alias: string } | null {
   const primary = link.children[0];
   if (!(primary instanceof PrimaryExpressionContext) || primary.idExpression()) return null;
   const m = /^\(\*([A-Za-z_]\w*)\)$/.exec(primary.getText());
   if (!m) return null;
-  return m[1] === "this" ? scope.owner : pointeeOf(lookupIn(scope, m[1]!), scope);
+  if (m[1] === "this") return scope.owner ? { cls: scope.owner, pointer: false } : null;
+  const d = lookupIn(scope, m[1]!);
+  const pointee = pointeeOf(d, scope);
+  if (pointee) return { cls: pointee, pointer: false };
+  const kind = iteratorKind(d, scope);
+  // `auto it = boots.begin()` over a field a header declares: `(*it)` is read as `it`, whose element the linker types.
+  if (kind?.unresolved) return { alias: m[1]! };
+  // An iterator over pointers (`vector<Boot*>`, `vector<unique_ptr<Boot>>`): only `(*it)->` reaches the pointee.
+  const element = kind?.text ? cppCollectionElementOf(kind.text) : null;
+  const cls = element?.pointer ? classNamed(element.name) : null;
+  return cls ? { cls, pointer: true } : null;
 }
 
 /**

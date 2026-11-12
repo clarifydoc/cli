@@ -1502,6 +1502,10 @@ export interface FunctionInfo {
    * `element`: the name is bound by a loop or comprehension over `from` (a call, or a field read — `self.clubs`,
    * `repo.all()`): it holds the element of the collection type that call or field declares (the manifest's
    * `collectionElementOf`).
+   * `iterator`: with `element`, `from` is the call that returned an iterator (`clubs.begin()`, `clubs.find(id)`): the name holds the element of the
+   * collection that call is made on, and when that is no collection (a project's own `find`), what the call is declared to return. `iterated`: the
+   * name is what the iterator is (`it->kick()`, `(*it).kick()`); `dereferenced`: what `(*it)->kick()` reaches (the plugin's `collectionElementOf` is
+   * asked which element each reading accepts).
    * `destructured`: the name is a member destructured from that call's result (`const { actions } = useClubData()`,
    * `from` = `useClubData().actions`); only the argument pass reads it — to find the factory a local handed to a
    * composable came from — and no receiver is typed by it.
@@ -1516,7 +1520,7 @@ export interface FunctionInfo {
    * or a callback that runs first (a controller's `before_action`). The linker reads it as any local; the plugin's
    * project pass reads the marker to hand a callback's fields on to the functions it runs before.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true; member?: true; field?: true; aliasOf?: string }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; aliasOf?: string }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

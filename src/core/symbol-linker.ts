@@ -6985,7 +6985,7 @@ function initializerPoint(
   sourceFile: string,
   sourceSymbol: string,
   consumer: string,
-  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true; destructured?: true; member?: true },
+  local: { from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true },
   depth: number,
 ): InjectionPoint | null {
   if (!local.from || local.destructured || depth >= MAX_INITIALIZER_DEPTH) return null;
@@ -7001,7 +7001,17 @@ function initializerPoint(
   if (local.fromIndex !== undefined || local.element) {
     // A tuple unpacking (`a, b = repo.load()`) or a loop over a collection (`for c in self.clubs`): the element of
     // the declared type the call returns or the field states — read off the declaration, never inferred.
-    const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+    let chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+    // `iterator`: `from` is the call that returned an iterator (`clubs.begin()`, `clubs.find(id)`), so the element is
+    // that of the collection it is called on — and when that is no collection, the call is an ordinary one.
+    if (local.iterator) {
+      const onCollection = chain && chain.length >= 2 && chain.length <= MAX_RECEIVER_CHAIN + 1 ? chain.slice(0, -1) : null;
+      const held = onCollection ? chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, onCollection, depth) : null;
+      const heldPlugin = held ? pluginFor((ctx.languageOf.get(held.file) ?? "") as Language) : undefined;
+      const element = held ? heldPlugin?.collectionElementOf?.(held.type.trim(), local.iterator) : null;
+      if (held && element) return returnedPoint(ctx, element, held.file, { typeName: "", typeFile: null, consumer });
+      return initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, { from: local.from }, depth + 1);
+    }
     if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
     const declared = chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth);
     if (!declared) return null;

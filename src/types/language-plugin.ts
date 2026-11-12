@@ -1531,9 +1531,10 @@ export interface LanguagePluginManifest {
   /**
    * The element a declared collection type states (`Club[]`, `list[Club]`, `List<Club>`, `[]*Club` → `Club`), or null
    * for any other type. Reads the declared type of a field or a call's result for a loop variable
-   * (`localTypes[].element`); whether the element is a project class is the linker's call.
+   * (`localTypes[].element`); whether the element is a project class is the linker's call. `as` (an iterator local, `localTypes[].iterator`): the
+   * element the iterator itself is (`iterated`) or the one its dereference reaches through a pointer (`dereferenced`); unset, a loop variable's.
    */
-  collectionElementOf?(type: string): string | null;
+  collectionElementOf?(type: string, as?: "iterated" | "dereferenced"): string | null;
   /**
    * An import puts the imported file's top-level functions in scope without
    * naming them — PowerShell dot-sourcing / `Import-Module`, Bash `source`:
