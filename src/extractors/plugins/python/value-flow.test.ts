@@ -583,3 +583,32 @@ describe("Python value flow", () => {
     });
   });
 });
+
+describe("Python value flow: a factory returns its own nested function (real-repo FP)", () => {
+  it("links the call of a factory's result to the function nested in that factory, not a namesake in another", async () => {
+    const analyses = await analyzeAll({
+        "signals.py": [
+          "def save_club():",
+          "    pass",
+          "",
+          "def make_save_handler():",
+          "    def _handler(club):",
+          "        save_club()",
+          "    return _handler",
+          "",
+          "def make_transfer_handler():",
+          "    def _handler(club):",
+          "        save_club()",
+          "    return _handler",
+          "",
+          "def fire():",
+          "    handler = make_transfer_handler()",
+          "    handler(1)",
+          "",
+        ].join("\n"),
+    });
+    const fire = buildSymbolLinks(analyses).filter((l) => l.strategy === "value-flow" && l.sourceSymbol === "fire");
+    // The `_handler` nested in make_transfer_handler (line 10), never make_save_handler's (line 5).
+    expect(fire.map((l) => `${l.callName} -> ${l.targetSymbol}:${l.targetLine}`)).toEqual(["handler -> _handler:10"]);
+  });
+});

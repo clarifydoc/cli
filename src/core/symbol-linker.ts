@@ -4219,6 +4219,13 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       // A held in-place function (`<toast.action@17>`) is the file's own function of that name.
       const own = analysis.functions.find((f) => f.name === name);
       if (own && name.startsWith("<")) return { file, symbol: own.name, line: own.line };
+      // A function nested in the seeding one (`def make(): def _handler(): …; return _handler`) is that one, never a
+      // namesake nested in another function of the file.
+      const host = NAME.test(name) ? findEnclosingCallable(analysis, symbol) : null;
+      if (host) {
+        const nested = analysis.functions.filter((f) => f.name === name && f.line > host.line && f.endLine <= host.endLine);
+        if (nested.length === 1) return { file, symbol: nested[0]!.name, line: nested[0]!.line };
+      }
       const head = name.split(/[.:]/)[0]!;
       let call: CallInfo = { name, kind: "internal", target: null, line, passed: "argument" };
       const imported = NAME.test(head) ? analysis.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined)) : undefined;

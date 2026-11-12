@@ -451,7 +451,8 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   };
 
   const targetId = (t: Target): number => {
-    const key = `${t.file}\0${t.symbol}`;
+    // Keyed by line too: two nested functions of one name in a file (`_handler` in two factories) are two targets.
+    const key = `${t.file}\0${t.symbol}\0${t.line}`;
     let id = targetIds.get(key);
     if (id === undefined) { id = targets.length; targetIds.set(key, id); targets.push(t); }
     return id;
