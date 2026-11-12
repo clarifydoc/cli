@@ -1075,11 +1075,16 @@ export interface ValueCell {
  * One step of how a function value travels, stated by a plugin without resolving anything (the solver in
  * core/value-flow.ts joins them). Lines are 1-based; `call` is `CallInfo.name` of a call on that line.
  */
+/**
+ * `lambda` (on a seed or copy): the facts one held lambda states share this id, unique within the function (its
+ * `line:col`). Core counts the project functions they resolve to plus the copies, and drops the whole group above four,
+ * so a plugin states every name the body calls and a library's name, resolving to nothing, never counts.
+ */
 export type ValueFlowFact =
   /** `to` holds the function named `fn` as written (`save`, `this.save`, `Club::save`, a held pseudo-name). */
-  | { kind: "seed"; to: ValueCell; fn: string; line: number }
+  | { kind: "seed"; to: ValueCell; fn: string; line: number; lambda?: string }
   /** `to` is assigned what `from` holds. */
-  | { kind: "copy"; from: ValueCell; to: ValueCell; line: number }
+  | { kind: "copy"; from: ValueCell; to: ValueCell; line: number; lambda?: string }
   /**
    * `from` is passed as written argument `index` (0-based) of the call; `name` instead says which formal a named
    * argument (`Btn(onPressed: save)`) binds, `index` then being unused (-1).

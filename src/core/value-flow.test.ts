@@ -392,3 +392,53 @@ describe("value-flow: a call the facts cannot follow keeps the links it had (rea
     expect(linksOf([model, editor], "SquadEditor.onOpen")).toEqual(["this.selectionModel.apply -> src/squad/selection.ts::SelectionModel.apply"]);
   });
 });
+
+describe("value-flow: a held lambda stands for at most four project functions, counted once resolved", () => {
+  // `run(cb)` runs what it is handed; `go` hands it a lambda whose body calls the names below.
+  const runner = file("src/run/runner.ts", {
+    functions: [fn("run", 1, { params: [param("cb")], valueFlow: [{ kind: "invoke", cell: { name: "cb" }, call: "cb", line: 2 }], calls: [call("cb", 2, { boundLocally: true })] })],
+    exports: exp("run"),
+  });
+  const decoy = file("src/other/decoys.ts", { functions: [fn("kickOff", 1)], exports: exp("kickOff") });
+  const page = (names: string[], extra: ValueFlowFact[] = []) =>
+    file("src/pages/MatchPage.ts", {
+      imports: [imp("../run/runner", ["run"])],
+      functions: [
+        fn("kickOff", 1), fn("closeMatch", 3), fn("saveScore", 5), fn("notifyFans", 7), fn("refreshTable", 9),
+        fn("go", 20, {
+          calls: [call("run", 25, { kind: "cross-file", target: "../run/runner" })],
+          valueFlow: [
+            ...names.map((n): ValueFlowFact => ({ kind: "seed", to: { name: "<arg@25>" }, fn: n, line: 25, lambda: "25:8" })),
+            ...extra,
+            { kind: "arg", call: "run", line: 25, index: 0, from: { name: "<arg@25>" } },
+          ],
+        }),
+      ],
+    });
+  const targets = (analyses: FileAnalysis[]): string[] => flowLinks(analyses).map((l) => l.split(" -> ")[1]!);
+
+  it("counts only names that resolve: three project functions and three library names link the three", () => {
+    const links = targets([runner, decoy, page(["kickOff", "closeMatch", "saveScore", "json.dumps", "log.info", "sleep"])]);
+    expect(links).toEqual(["src/pages/MatchPage.ts::closeMatch", "src/pages/MatchPage.ts::kickOff", "src/pages/MatchPage.ts::saveScore"]);
+  });
+
+  it("states nothing for five project functions", () => {
+    expect(targets([runner, decoy, page(["kickOff", "closeMatch", "saveScore", "notifyFans", "refreshTable"])])).toEqual([]);
+  });
+
+  it("counts the held values the lambda runs toward the four", () => {
+    const copies: ValueFlowFact[] = [{ kind: "copy", from: { name: "onDone" }, to: { name: "<arg@25>" }, line: 25, lambda: "25:8" }];
+    expect(targets([runner, decoy, page(["kickOff", "closeMatch", "saveScore"], copies)])).toHaveLength(3);
+    expect(targets([runner, decoy, page(["kickOff", "closeMatch", "saveScore", "notifyFans"], copies)])).toEqual([]);
+  });
+
+  it("leaves facts without a lambda id as they were: five plain seeds still link", () => {
+    const plain = page([]);
+    const go = plain.functions.find((f) => f.name === "go")!;
+    go.valueFlow = [
+      ...["kickOff", "closeMatch", "saveScore", "notifyFans", "refreshTable"].map((n): ValueFlowFact => ({ kind: "seed", to: { name: "<arg@25>" }, fn: n, line: 25 })),
+      { kind: "arg", call: "run", line: 25, index: 0, from: { name: "<arg@25>" } },
+    ];
+    expect(targets([runner, decoy, plain])).toHaveLength(5);
+  });
+});

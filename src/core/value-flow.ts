@@ -21,6 +21,8 @@ import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, V
 const MAX_TARGETS = 32;
 /** Up to this many targets an invoke is INFERRED; above it, AMBIGUOUS. */
 const INFERRED_TARGETS = 4;
+/** A lambda held in a value stands for at most this many project functions (and held values it runs); more, and it stands for none. */
+const LAMBDA_TARGETS = 4;
 /** Propagation steps allowed per run (plus a share per fact). */
 const BASE_BUDGET = 2_000_000;
 const BUDGET_PER_FACT = 200;
@@ -467,13 +469,33 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     invokeKeys.add(id);
     (invokesAt.get(cell) ?? invokesAt.set(cell, []).get(cell)!).push(inv);
   };
+  // A held lambda's facts share a `lambda` id: it stands for the project functions its body calls, counted here once
+  // resolved (a library's name resolves to nothing and never counts), and for none when they and the held values it
+  // runs are more than LAMBDA_TARGETS.
+  const seedTargets = new Map<ValueFlowFact, Target | null>();
+  const droppedLambdas = new Set<string>();
+  for (const s of scopes) {
+    const groups = new Map<string, { targets: Set<string>; copies: number }>();
+    for (const f of s.facts) {
+      if ((f.kind !== "seed" && f.kind !== "copy") || f.lambda === undefined) continue;
+      const g = groups.get(f.lambda) ?? groups.set(f.lambda, { targets: new Set(), copies: 0 }).get(f.lambda)!;
+      if (f.kind === "copy") { g.copies++; continue; }
+      const t = host.resolveSeed(s.file, s.symbol, f.fn, f.line);
+      seedTargets.set(f, t);
+      if (t) g.targets.add(`${t.file}\0${t.symbol}\0${t.line}`);
+    }
+    for (const [id, g] of groups) if (g.targets.size + g.copies > LAMBDA_TARGETS) droppedLambdas.add(`${s.file}\0${s.symbol}\0${id}`);
+  }
+  const dropped = (s: Scope, f: ValueFlowFact): boolean =>
+    (f.kind === "seed" || f.kind === "copy") && f.lambda !== undefined && droppedLambdas.has(`${s.file}\0${s.symbol}\0${f.lambda}`);
   for (const s of scopes) {
     for (const f of s.facts) {
+      if (dropped(s, f)) continue;
       switch (f.kind) {
         case "seed": {
           const to = cellOf(s, f.to);
           if (to === null) break;
-          const t = host.resolveSeed(s.file, s.symbol, f.fn, f.line);
+          const t = seedTargets.has(f) ? seedTargets.get(f)! : host.resolveSeed(s.file, s.symbol, f.fn, f.line);
           if (t) addTarget(to, targetId(t));
           break;
         }
