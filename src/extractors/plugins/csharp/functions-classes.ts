@@ -12,6 +12,8 @@ import {
 import { extractCalls } from "../../shared/call-graph.js";
 import { csharpArgKinds, typeCsharpVariableArgs } from "./arg-kinds.js";
 import { csharpElementFacts } from "./element-types.js";
+import { classValueContext, csharpFieldInitFacts, csharpValueFlow, fileDelegateNames } from "./value-flow.js";
+import type { ClassValueContext } from "./value-flow.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -31,6 +33,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
    */
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
     this.scope = new FileScopeNodes(node);
+    this.valueCtx = null;
+    this.fileDelegates = fileDelegateNames(node);
     try {
       for (const stmt of node.namedChildren) {
         if (stmt.type !== "global_statement") continue;
@@ -39,18 +43,25 @@ export class CSharpExtractor extends FunctionClassExtractor {
       }
     } finally {
       this.scope = null;
+      this.fileDelegates = null;
     }
   }
 
   /** The file being extracted's declaration/assignment nodes (one query per file). */
   private scope: FileScopeNodes | null = null;
+  /** The delegate types of the file being extracted, when it says anything about delegates (else null: no value-flow facts). */
+  private fileDelegates: Set<string> | null = null;
+  /** What the class being extracted declares (for its members' value-flow facts). */
+  private valueCtx: ClassValueContext | null = null;
 
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
     this.scope = new FileScopeNodes(node);
+    this.fileDelegates = fileDelegateNames(node);
     try {
       this.extractCsharpClasses(node, classes);
     } finally {
       this.scope = null;
+      this.fileDelegates = null;
     }
   }
 
@@ -129,6 +140,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
       });
     }
 
+    this.valueCtx = body && this.fileDelegates ? classValueContext(body, this.fileDelegates) : null;
+    let ctorHost: FunctionInfo | null = methods[0] ?? null; // the primary constructor, when there is one
     if (body) {
       for (const member of body.children) {
         if (member.type === "method_declaration" || member.type === "constructor_declaration") {
@@ -136,6 +149,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
           // parameters are the injection points, their bodies make calls.
           const fn = this.parseCsharpMethod(member);
           methods.push(fn);
+          if (member.type === "constructor_declaration" && !ctorHost && !this.hasModifier(member, "static")) ctorHost = fn;
           if (member.type === "constructor_declaration") {
             noteKeyedAssignments(this.assignmentsIn(member.childForFieldName("body")), keyedParams(fn.params), fieldKeys);
           }
@@ -215,6 +229,16 @@ export class CSharpExtractor extends FunctionClassExtractor {
         }
       }
     }
+
+    // A field's delegate initializer (`Action _onClose = Close;`) runs in a constructor: stated as the first one's facts.
+    if (body && this.valueCtx) {
+      const initFacts = csharpFieldInitFacts(body, this.valueCtx);
+      // The first instance constructor (or the primary one), else the first member with a body: a class with
+      // none has no constructor to run them, and the cell is the class's whichever member states it.
+      const host = ctorHost ?? methods[0];
+      if (initFacts.length > 0 && host) host.valueFlow = [...initFacts, ...(host.valueFlow ?? [])];
+    }
+    this.valueCtx = null;
 
     for (const g of generatedProperties) if (!properties.some((q) => q.name === g.name)) properties.push(g);
     for (const prop of properties) {
@@ -375,6 +399,10 @@ export class CSharpExtractor extends FunctionClassExtractor {
       fn.calls = [...own, ...fn.calls];
     }
     typeCsharpVariableArgs(fn.calls, params, body ?? chain ?? null);
+    if (this.fileDelegates && body) {
+      const flow = csharpValueFlow(body, params, returnType, this.valueCtx);
+      if (flow.length > 0) fn.valueFlow = flow;
+    }
     return fn;
   }
 
