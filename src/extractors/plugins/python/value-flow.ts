@@ -233,10 +233,12 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
     return key !== null && container.member === undefined && container.name !== "self" ? { cell: container, key } : { cell: container };
   };
 
-  const seed = (to: ValueCell, fn: string, line: number): void => { facts.push({ kind: "seed", to, fn, line }); };
-  const copy = (from: ValueCell, to: ValueCell, line: number): void => {
+  const seed = (to: ValueCell, fn: string, line: number, lambda?: string): void => {
+    facts.push(lambda === undefined ? { kind: "seed", to, fn, line } : { kind: "seed", to, fn, line, lambda });
+  };
+  const copy = (from: ValueCell, to: ValueCell, line: number, lambda?: string): void => {
     if (from.name === to.name && from.member === to.member) return;
-    facts.push({ kind: "copy", from, to, line });
+    facts.push(lambda === undefined ? { kind: "copy", from, to, line } : { kind: "copy", from, to, line, lambda });
   };
 
   /** Whether a bare name may be a function the project declares or imports (not a builtin or a receiver). */
@@ -248,7 +250,7 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
   /**
    * A lambda that lands in `to` stands for the functions its body calls (it has no function of its own): each
    * project function it calls is a seed, a call of a name that holds a value a copy. A call on one of its own
-   * parameters, on a local or on something the plugin cannot spell, and a body calling more than four names, state nothing.
+   * parameters, on a local or on something the plugin cannot spell, and a body calling more than sixteen names, state nothing; every fact carries the lambda's id so core counts its project targets (at most four).
    */
   const lambdaInto = (lambda: Node, to: ValueCell, line: number): void => {
     const own = new Set<string>();
@@ -289,9 +291,11 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
         } else if (!isLocal(obj.text) && maybeFunctionName(obj.text) && !isExternal(obj.text)) seeds.add(callee.text);
       }
     }
-    if (seeds.size + copies.size > 4) return;
-    for (const fn of seeds) seed(to, fn, line);
-    for (const from of copies.values()) copy(from, to, line);
+    // Core counts the project functions the group resolves to and drops it above four; this bound only limits output.
+    if (seeds.size + copies.size > 16) return;
+    const id = `${lambda.startPosition.row + 1}:${lambda.startPosition.column}`;
+    for (const fn of seeds) seed(to, fn, line, id);
+    for (const from of copies.values()) copy(from, to, line, id);
   };
 
   /** Everything `expr` may hold flows into `to`. */

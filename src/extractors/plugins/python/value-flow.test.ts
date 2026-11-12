@@ -469,6 +469,54 @@ describe("Python value flow", () => {
       expect(links.filter((l) => l.startsWith("many.py::run_"))).toEqual([]);
     });
 
+    it("links four project functions when the body also calls names that resolve to no project function", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "mixed.py": [
+          "def a(): pass",
+          "def b(): pass",
+          "def c(): pass",
+          "def d(): pass",
+          "",
+          "def run(cb):",
+          "    cb()",
+          "",
+          "def go(thing):",
+          "    run(lambda: (a(), b(), thing.x(), c(), unknown_one(), d(), unknown_two()))",
+          "",
+        ].join("\n"),
+      }));
+      expect(links.filter((l) => l.startsWith("mixed.py::run"))).toEqual([
+        "mixed.py::run@7 cb -> mixed.py::a",
+        "mixed.py::run@7 cb -> mixed.py::b",
+        "mixed.py::run@7 cb -> mixed.py::c",
+        "mixed.py::run@7 cb -> mixed.py::d",
+      ]);
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
+    it("links nothing when five project functions are called, whatever else the body names", async () => {
+      const links = flowLinks(await analyzeAll({
+        ...DECOY,
+        "five.py": [
+          "def a(): pass",
+          "def b(): pass",
+          "def c(): pass",
+          "def d(): pass",
+          "def e(): pass",
+          "",
+          "def run(cb):",
+          "    cb()",
+          "",
+          "def go(thing):",
+          "    run(lambda: (a(), b(), thing.x(), c(), unknown_one(), d(), e()))",
+          "",
+        ].join("\n"),
+      }));
+      expect(links.filter((l) => l.startsWith("five.py::run"))).toEqual([]);
+      expect(links.some((l) => l.includes("decoy.py"))).toBe(false);
+    });
+
     it("keeps four names", async () => {
       const links = flowLinks(await analyzeAll({
         "four.py": [
@@ -559,8 +607,8 @@ describe("Python value flow", () => {
       it("still counts a project module imported relatively or as a project package toward the cap", async () => {
         const files = (names: string) => ({
           ...DECOY,
-          "league/__init__.py": "",
-          "league/table.py": "def refresh_table():\n    pass\n",
+          "league/__init__.py": "def a():\n    pass\n\ndef c():\n    pass\n",
+          "league/table.py": "def refresh_table():\n    pass\n\ndef b():\n    pass\n\ndef d():\n    pass\n",
           "lib.py": [
             "from . import league",
             "from league import table",
@@ -576,7 +624,7 @@ describe("Python value flow", () => {
             "",
           ].join("\n"),
         });
-        // Four names plus a fifth: the project modules' calls are counted (a library's would not be), so the cap is passed.
+        // Four project functions plus a fifth: core counts what the names resolve to (a library's would not count), so the cap is passed.
         expect(flowLinks(await analyzeAll(files("league.a(), table.b(), league.c(), table.d(), save_club()")))).toEqual([]);
         expect(flowLinks(await analyzeAll(files("league.a(), table.b(), save_club()")))).toContain("lib.py::run@8 cb -> lib.py::save_club");
       });
