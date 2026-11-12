@@ -677,3 +677,21 @@ describe("dartSpec — `$` in identifiers and barrel exports", () => {
     expect(rows(`export 'src/club.dart' show Club, Match;\n`)).toEqual(["Club src/club.dart", "Match src/club.dart"]);
   });
 });
+
+describe("Flutter closure handlers — a call through a class's static field (real-repo FP)", () => {
+  it("names `Garage.instance.park()` in a closure from the class head, never `instance.park` with its head cut", async () => {
+    const { extractWithRegex } = await import("../../../core/regex-extractor.js");
+    const src = `class ParkButton extends StatelessWidget {
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onDoubleTap: () async => Garage.instance.park(),
+      child: Text('Park'),
+    );
+  }
+}`;
+    const a = extractWithRegex(src, "lib/park_button.dart", "dart");
+    const calls = a.functions.find((f) => f.name === "<onDoubleTap@4>")?.calls ?? [];
+    expect(calls.map((c) => c.name)).toContain("Garage.instance.park");
+    expect(calls.some((c) => c.name === "instance.park")).toBe(false);
+  });
+});

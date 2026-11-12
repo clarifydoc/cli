@@ -214,3 +214,25 @@ describe("Swift body bindings", () => {
     );
   });
 });
+
+describe("Swift reader — `Self.` before a static member (real-repo FP)", () => {
+  it("names `Self.registry.remove` as the own member `registry.remove`, its receiver not cut", () => {
+    const fns = readSwift(
+      "final class Garage {\n    private static let registry = BayRegistry()\n    func close(id: Int) {\n        Self.registry.remove(bay: id)\n    }\n}\n",
+    ).functions;
+    const call = fns.find((f) => f.name === "close")!.calls.find((c) => c.name === "registry.remove");
+    expect(call).toBeDefined();
+    expect(call!.receiverCut).toBeUndefined();
+  });
+});
+
+describe("regex call scan — an own head before a path (real-repo FP)", () => {
+  it("reads `Self.registry.remove(` and `self.repo.find(` without cutting their receiver", async () => {
+    const { extractCallsFromBody } = await import("../shared/regex-base.js");
+    const calls = extractCallsFromBody(["        Self.registry.remove(bay: id)", "        self.repo.find(id)", "        club.league.relegate()"], 0, 3, ["//"]);
+    const cut = (n: string) => calls.find((c) => c.name === n)?.receiverCut ?? false;
+    expect(cut("registry.remove")).toBe(false);
+    expect(cut("repo.find")).toBe(false);
+    expect(cut("league.relegate")).toBe(true);
+  });
+});

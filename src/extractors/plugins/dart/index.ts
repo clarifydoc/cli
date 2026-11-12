@@ -212,6 +212,16 @@ const STATIC_CHAIN_CALL: CallPattern = {
 };
 
 /**
+ * A call through a class's static field (`Garage.instance.park(`, `Garage.shared.config.load(`): named from the class
+ * head, as the tree-sitter reader names it, so the linker types the field from its class. The baseline would read
+ * `instance.park` alone, a name the caller does not bind.
+ */
+const STATIC_FIELD_CALL: CallPattern = {
+  pattern: /(?<![\w$.])([A-Z][\w$]*(?:\s*\.\s*[a-z_$][\w$]*){1,2})\s*[!?]?\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/,
+  buildName: (m) => ({ name: `${m[1]!.replace(/\s+/g, "")}.${m[2]}`, leafName: m[2]! }),
+};
+
+/**
  * A call of a name with a `$` in it (`make$Club()`, `repo.load$All()`): the baseline matcher's `\w` stops at the
  * `$` and would read the tail (`Club(`) as the callee.
  */
@@ -1253,7 +1263,7 @@ export const dartSpec: RegexLangSpec = {
 
   extractClasses: (lines, fns) => extractDartClasses(lines, fns),
 
-  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL, DOLLAR_NAME_CALL],
+  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL, STATIC_FIELD_CALL, DOLLAR_NAME_CALL],
   extractLocalTypes: extractDartLocalTypes,
   extractDiBindings: (lines) => extractDartDiBindings(lines),
 

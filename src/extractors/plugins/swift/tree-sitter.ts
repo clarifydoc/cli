@@ -236,6 +236,8 @@ function stepsOf(node: TSNode): CalleeStep[] {
       return [...inner, callStep(inner)];
     }
     default:
+      // `Self.registry.remove(` reads the class's own static member, as `self.` reads an instance one.
+      if (node.text === "Self") return [idStep("Self", node)];
       return [{ kind: "other", bare: /literal$/.test(node.type) }];
   }
 }

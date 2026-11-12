@@ -1214,7 +1214,10 @@ export function extractCallsFromBody(
       const name = m[1].replace(/[?!]\./, ".");
       const shortName = name.includes(".") ? name.split(".").pop()! : name;
       // `club.league.relegate(` read from `league`: the receiver goes on before the name the match starts with.
-      const cut = name.includes(".") && m.index > 0 && line[m.index - 1] === ".";
+      // A path from the object's own head (`self.repo.find(`, `Self.registry.remove(`) is the own member's, as the
+      // parsers name it: no cut.
+      const ownHead = /(?:^|[^\w$.])(?:self|this|Self)\s*\.$/.test(line.slice(0, m.index));
+      const cut = name.includes(".") && m.index > 0 && line[m.index - 1] === "." && !ownHead;
       add(name, shortName, i + 1, m.index + offset, cut ? { receiverCut: true } : undefined);
     }
   };

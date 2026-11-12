@@ -79,7 +79,7 @@ export function nameCall(steps: readonly CalleeStep[], chainDepth: number, optio
 }
 
 /** Heads naming the caller's own instance: `self.repo.find(` stays `repo.find`, as every scan names it. */
-const OWN_HEADS: ReadonlySet<string> = new Set(["self", "this", "super"]);
+const OWN_HEADS: ReadonlySet<string> = new Set(["self", "this", "super", "Self"]);
 
 /**
  * `nameCall` with `paths`: the receiver spelled from its head — names joined by dots, a call's result as its
