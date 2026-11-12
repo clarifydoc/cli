@@ -12,6 +12,7 @@ import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
+import { contractHandlerObjects } from "./contract-handlers.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
 import {
@@ -1644,6 +1645,30 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
       if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
       functions.push(fn);
+    }
+    // The handlers a Node RPC server is given in place (`createServer(ClubService, { getClub() {…} })`): each a function of its own.
+    for (const o of contractHandlerObjects(tree, sourceText)) {
+      for (const m of o.members) {
+        if (m.fn) {
+          const fn = this.parseJsArrowOrExpr(m.name, m.fn, false);
+          // It closes over the functions it is written in, as a held function does.
+          const captured = this.capturedTypes(m.fn, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
+          if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+          functions.push({ ...fn, line: m.line });
+        } else if (m.handedName) {
+          functions.push({
+            name: m.name,
+            params: [],
+            returnType: null,
+            isAsync: false,
+            isExported: false,
+            decorators: [],
+            calls: [{ name: m.handedName, kind: "internal", target: null, line: m.line, column: m.at.startPosition.column, passed: "argument" }],
+            line: m.line,
+            endLine: m.at.endPosition.row + 1,
+          });
+        }
+      }
     }
     return functions;
   }

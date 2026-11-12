@@ -19,6 +19,7 @@ import { extractGraphqlCodeFirst, mayDefineGraphqlCode } from "./graphql-code-fi
 import { extractInlineSdlRoutes } from "./graphql-sdl-inline.js";
 import { mayDeclareReactNavigation, visitReactNavigationScreen, visitStaticNavigator } from "./react-navigation.js";
 import { extractGrpcJsServices } from "./grpc-server.js";
+import { contractMembersAt } from "../contract-handlers.js";
 import { mayDeclareAzureFunctions, visitAzureFunction } from "./azure-functions.js";
 import { extractNodeHttpRoutes, mayDispatchByHand } from "./node-http.js";
 import { applyPrefixScopes, collectPluginPrefixes, mayDeclareRouteObjects, mayRegisterPlugins, visitRouteObjects } from "./fastify-hapi.js";
@@ -118,8 +119,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (mayDispatchByHand(sourceText)) extractNodeHttpRoutes(tree.rootNode, routeObjects);
 
     // grpc-js servers: the handlers `addService` registers per rpc.
-    const grpc = extractGrpcJsServices(sourceText);
-    if (facts) facts.push(...thriftHandlerFacts(sourceText, "js"));
+    const grpc = extractGrpcJsServices(sourceText, tree);
+    if (facts) facts.push(...thriftHandlerFacts(sourceText, "js", (offset) => contractMembersAt(tree, sourceText, offset)));
 
     return [...express, ...routeObjects, ...reactRouter, ...nestjs, ...vueRouter, ...tanstack, ...trpc, ...convex, ...navigation, ...graphql, ...grpc];
   },

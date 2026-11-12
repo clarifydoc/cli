@@ -14,6 +14,7 @@ import { loadedMemberCall } from "./loaded-members.js";
 import { requiredSource } from "./imports-exports.js";
 import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
 import { heldFunction } from "./held-functions.js";
+import { contractFunction } from "./contract-handlers.js";
 import { libraryObjectMembers } from "./library-callbacks.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
@@ -131,7 +132,8 @@ export const javascriptCallHooks: CallExtractionHooks = {
     }
   },
 
-  heldFunction,
+  // A callback, or a handler an RPC server is given in place (`createServer(ClubService, { getClub() {…} })`): a function of its own.
+  heldFunction: (node) => heldFunction(node) ?? contractFunction(node),
 
   // `ACTIONS[kind]()`, `ACTIONS["save"]()` on a dispatch map the file declares.
   // A call on a module loaded in place is the module's own member, read where the body is scanned; a

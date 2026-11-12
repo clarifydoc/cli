@@ -1,4 +1,6 @@
+import type { Tree } from "web-tree-sitter";
 import type { RouteInfo } from "../../../../types/analysis.js";
+import { contractHandlerObjects } from "../contract-handlers.js";
 
 /**
  * A grpc-js server's handlers: `server.addService(pkg.league.MatchService.service,
@@ -11,9 +13,31 @@ import type { RouteInfo } from "../../../../types/analysis.js";
  */
 const ADD_SERVICE_RE = /\.addService\s*\(\s*(?:[\w$]+\.)*([A-Z]\w*)\.service\s*,\s*\{/g;
 
-export function extractGrpcJsServices(sourceText: string): RouteInfo[] {
+export function extractGrpcJsServices(sourceText: string, tree?: Tree): RouteInfo[] {
   if (!sourceText.includes(".addService")) return [];
   const out: RouteInfo[] = [];
+  if (tree) {
+    // Read from the parse: a handler written in place is a function of its own, one named is handed on
+    // (contract-handlers.ts), and the row sits on that function.
+    for (const o of contractHandlerObjects(tree, sourceText)) {
+      if (o.kind !== "grpc") continue;
+      for (const m of o.members) {
+        const rpc = m.key[0]!.toUpperCase() + m.key.slice(1);
+        out.push({
+          path: `${o.service}#${rpc}`,
+          httpMethod: null,
+          kind: "api",
+          handler: m.name,
+          contract: { type: o.service, method: rpc },
+          prefixUnresolved: `contract:${o.service}`,
+          calls: [],
+          middleware: [],
+          line: o.line,
+        });
+      }
+    }
+    return out;
+  }
   for (const m of sourceText.matchAll(ADD_SERVICE_RE)) {
     const service = m[1]!;
     const open = m.index! + m[0].length - 1;

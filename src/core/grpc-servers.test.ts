@@ -84,7 +84,7 @@ class TrainingReferees(BaseReferees):
 `,
   "tickets/package.json": `{"name":"tickets","dependencies":{"@grpc/grpc-js":"^1.10.0"}}`,
   "tickets/server.js": `const grpc = require("@grpc/grpc-js");
-const { buyTicketHandler } = require("./buy");
+const Tickets = require("./buy");
 
 const server = new grpc.Server();
 server.addService(leaguePackage.league.TicketService.service, {
@@ -154,8 +154,9 @@ describe("gRPC services through protoc's generated bases", () => {
       "route:POST /league.TableService/GetTable -> tableServer.GetTable",
       "route:POST /league.TicketService/BuyTicket -> route:USE TicketService#BuyTicket",
     ]);
-    // The grpc-js row runs its handler.
-    expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "route:USE TicketService#BuyTicket").map((l) => l.targetSymbol)).toContain("buyTicketHandler");
+    // The grpc-js row runs its member's function, which hands on to the handler the member names.
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "route:USE TicketService#BuyTicket").map((l) => l.targetSymbol)).toContain("addService.buyTicket");
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "addService.buyTicket").map((l) => `${l.targetSymbol} ${l.relation}`)).toEqual(["buyTicketHandler passes"]);
   });
 
   it("refuse an rpc two subclasses of the servicer implement, never a function of the same name", () => {

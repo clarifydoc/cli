@@ -28,7 +28,7 @@ export interface ThriftHandlerFact {
   /** Node: the variable holding an object-literal handler (`const handler = { getClub() {…} }`), whose functions are `handler.getClub`. */
   holder?: string;
   /** Node: the methods of an object literal written in the call itself, with their lines. */
-  methods?: Array<{ name: string; line: number }>;
+  methods?: Array<{ name: string; line: number; handler?: string }>;
 }
 
 type Dialect = "go" | "python" | "js";
@@ -102,7 +102,12 @@ function literalMethods(literal: string, firstLine: number): Array<{ name: strin
 const ARG = String.raw`((?:[^(),]|\((?:[^()]|\([^()]*\))*\))+)`;
 
 /** The `thrift-handler` facts a file's text states. */
-export function thriftHandlerFacts(sourceText: string, dialect: Dialect): RouteFact[] {
+export function thriftHandlerFacts(
+  sourceText: string,
+  dialect: Dialect,
+  /** Node: the members of the object literal starting at an offset, as the parse reads them (null: read the text). */
+  literalAt?: (offset: number) => Array<{ name: string; line: number; handler?: string }> | null,
+): RouteFact[] {
   const re =
     dialect === "go" ? new RegExp(String.raw`\bNew([A-Z]\w*)Processor(?:WithOptions)?\(\s*${ARG}`, "g")
     : dialect === "python" ? new RegExp(String.raw`\b([A-Z]\w*)\.Processor\(\s*${ARG}`, "g")
@@ -124,7 +129,7 @@ export function thriftHandlerFacts(sourceText: string, dialect: Dialect): RouteF
       if (m[2]![lead] === "{") {
         const literal = balancedBraces(text, argAt + lead);
         const first = text.slice(0, argAt + lead).split("\n").length;
-        const methods = literal ? literalMethods(literal, first) : [];
+        const methods = literal ? (literalAt?.(argAt + lead) ?? literalMethods(literal, first)) : [];
         if (methods.length) out.push({ kind: THRIFT_HANDLER, line, data: { service: m[1]!, handler: "", methods } satisfies ThriftHandlerFact });
         continue;
       }
@@ -174,11 +179,11 @@ export const thriftHandlers: RouteResolver = {
         const methods = [...types.values()][0]!;
         if (fact.methods || fact.holder) {
           // An object literal: its members are the rpcs' handlers, the held ones as functions `<holder>.<method>`.
-          const members = fact.methods ?? a.functions.filter((x) => x.name.startsWith(`${fact.holder}.`) && !x.name.slice(fact.holder!.length + 1).includes(".")).map((x) => ({ name: x.name.slice(fact.holder!.length + 1), line: x.line }));
+          const members: Array<{ name: string; line: number; handler?: string }> = fact.methods ?? a.functions.filter((x) => x.name.startsWith(`${fact.holder}.`) && !x.name.slice(fact.holder!.length + 1).includes(".")).map((x) => ({ name: x.name.slice(fact.holder!.length + 1), line: x.line }));
           for (const method of methods) {
             const own = members.filter((x) => sameName(x.name, method));
             if (own.length !== 1) continue;
-            const handler = fact.holder ? `${fact.holder}.${own[0]!.name}` : `createServer.${own[0]!.name}`;
+            const handler = fact.holder ? `${fact.holder}.${own[0]!.name}` : (own[0]!.handler ?? `createServer.${own[0]!.name}`);
             if (a.routes.some((r) => r.contract?.type === fact.service && r.contract.method === method && r.handler === handler)) continue;
             a.routes.push({
               path: `${fact.service}#${method}`,
