@@ -49,6 +49,7 @@ import { DomBindingResolver } from "./dom-binding-resolver.js";
 import { JobEventResolver } from "./job-events.js";
 import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
+import { moduleValueFlowOf } from "./value-flow.js";
 import { vuePreprocess } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { astroPreprocess } from "./astro-hooks.js";
@@ -279,6 +280,7 @@ function astHooks(language: Language): AstExtractorHooks {
     domBindings: extractDomBindings,
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
+    moduleValueFlow: moduleValueFlowOf,
     attributeReads: extractAttributeReads,
     browserNavigations: extractBrowserNavigations,
     appMount: extractAppMount,

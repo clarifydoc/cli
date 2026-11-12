@@ -5,13 +5,14 @@ import type { Node, Tree } from "web-tree-sitter";
 import { renderUrlExpr } from "./url-expr.js";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
-import type { CallInfo, RouteParamInfo } from "../../../types/analysis.js";
+import type { CallInfo, RouteParamInfo, ValueFlowFact } from "../../../types/analysis.js";
 import { getVisibility, extractJsDecorators, stripQuotes } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
+import { fieldValueFlow, valueFlowOf } from "./value-flow.js";
 import { contractHandlerObjects } from "./contract-handlers.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
@@ -98,14 +99,17 @@ function finishBody(
   ctx: ScanContext,
   params: readonly ParamInfo[] = [],
   skip?: (node: Node) => boolean,
-): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]>; returnedFrom?: string[] } {
+): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]>; returnedFrom?: string[]; valueFlow?: ValueFlowFact[] } {
   const scan = scanBody(body, paramNames, ctx, params, skip);
   const returnedMembers = returnedMembersOf(body);
   // A concise arrow returns its body.
   const returnedFrom = body && body.type !== "statement_block" ? resultChains(body, []) : scan.returnedFrom;
   calls.push(...scan.extraCalls);
+  const flow = valueFlowOf(body, params, skip);
+  if (flow) calls.push(...flow.extraCalls);
   return {
     calls,
+    ...(flow?.facts.length ? { valueFlow: flow.facts } : {}),
     ...(scan.localTypes.length > 0 ? { localTypes: scan.localTypes } : {}),
     ...(scan.returnedSpreads.length > 0 ? { returnedSpreads: scan.returnedSpreads } : {}),
     ...(returnedMembers ? { returnedMembers } : {}),
@@ -2192,7 +2196,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
+    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     const derivedLocals = composableLocals(node, returnedMembers);
     return {
       name,
@@ -2205,6 +2209,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
+      ...(valueFlow ? { valueFlow } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
@@ -2260,7 +2265,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
     const responses = responsesOf(params, body);
-    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
+    const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
     return {
       name,
@@ -2273,6 +2278,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       line: funcNode.startPosition.row + 1,
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
+      ...(valueFlow ? { valueFlow } : {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
@@ -2778,7 +2784,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // `static getCollectionResource() { return "albums"; }`: a resource method naming its path segment.
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
-          const { calls, localTypes, returnedSpreads, returnedFrom } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
+          const { calls, localTypes, returnedSpreads, returnedFrom, valueFlow } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
           methods.push({
             name: methodName,
             params,
@@ -2790,6 +2796,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
             ...(localTypes ? { localTypes } : {}),
+            ...(valueFlow ? { valueFlow } : {}),
             ...(returnedSpreads ? { returnedSpreads } : {}),
             ...(returnedFrom && !returnType ? { returnedFrom } : {}),
             ...urlTemplateRecord(templates, stripped),
@@ -2899,6 +2906,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       break;
     }
 
+    this.classValueFlow(body, methods, properties, extendsName);
+
     // An abstract class with nothing BUT abstract members is an interface in
     // all but name (the Angular/NestJS DI-token idiom `abstract class Logger
     // { abstract write(m): void }`): no behaviour of its own, implemented by
@@ -2925,6 +2934,41 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...knownFieldValues(fieldValues),
       ...(superArgs && superArgs.length > 0 ? { superArgs } : {}),
     };
+  }
+
+  /**
+   * Value flow across a class's members: a field initializer holding a function (`onSave = this.save.bind(this)`,
+   * `handlers = [save]`) is stated on the constructor (else the first method), and a call `this.x()` of a field the
+   * class stores a value in, that is no method of its own, runs what the field holds.
+   */
+  private classValueFlow(body: Node | null, methods: FunctionInfo[], properties: readonly PropertyInfo[], extendsName: string | null | undefined): void {
+    if (!body || methods.length === 0) return;
+    const holder = methods.find((m) => m.name === "constructor") ?? methods[0]!;
+    for (const member of body.children) {
+      if (member.type !== "public_field_definition" && member.type !== "field_definition") continue;
+      if (member.children.some((c) => c.type === "static")) continue;
+      const name = member.childForFieldName(member.type === "field_definition" ? "property" : "name")?.text;
+      const facts = name ? fieldValueFlow(name, member.childForFieldName("value")) : [];
+      if (facts.length > 0) holder.valueFlow = [...(holder.valueFlow ?? []), ...facts];
+    }
+    const stored = new Set<string>();
+    for (const m of methods) {
+      for (const f of m.valueFlow ?? []) {
+        if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.name === "this" && f.to.member !== undefined) stored.add(f.to.member);
+      }
+    }
+    if (stored.size === 0) return;
+    const own = new Set(methods.map((m) => m.name));
+    for (const m of methods) {
+      for (const c of m.calls) {
+        if (!c.name.startsWith("this.") || c.passed || c.read) continue;
+        const member = c.name.slice(5);
+        if (!stored.has(member) || (own.has(member) && !member.includes("."))) continue;
+        // A subclass may be calling a method its base declares: only a field the class itself declares is the class's.
+        if (extendsName && !properties.some((p) => p.name === member.split(".")[0])) continue;
+        (m.valueFlow ??= []).push({ kind: "invoke", cell: { name: "this", member }, call: c.name, line: c.line });
+      }
+    }
   }
 
   /**

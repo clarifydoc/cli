@@ -4716,7 +4716,8 @@ function resolveCallToDefinition(
   ctx: LinkContext,
   reference = false,
 ): SymbolLink | null {
-  if (ctx.invokeSites?.has(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) && !call.passed) return null;
+  // A call on a local a project factory made (`CallInfo.via`) keeps its factory link beside the value-flow one.
+  if (ctx.invokeSites?.has(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) && !call.passed && !call.via) return null;
   const link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");

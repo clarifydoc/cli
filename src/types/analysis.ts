@@ -1061,6 +1061,12 @@ export type Confidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 export interface ValueCell {
   name: string;
   member?: string;
+  /**
+   * The file's own module-level binding `name`, written from inside a function that does not declare it
+   * (`current = fn` in a function, `current` a top-level `let`): the cell is the module's even though the
+   * fact sits in a function's list, and the function's other facts keep their own locals.
+   */
+  module?: boolean;
 }
 
 /**

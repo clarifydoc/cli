@@ -148,7 +148,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       for (const p of s.fn?.params ?? []) set.add(p.name);
       for (const l of s.fn?.localTypes ?? []) set.add(l.name);
       for (const f of s.facts) {
-        if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined) set.add(f.to.name);
+        if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined && !f.to.module) set.add(f.to.name);
       }
     }
     boundCache.set(s, set);
@@ -161,6 +161,15 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     const set = new Set<string>();
     for (const f of s.facts) if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined) set.add(f.to.name);
     moduleBound.set(s.file, set);
+  }
+  // A function's write to a module name it does not declare (`ValueCell.module`) binds that name for the whole file.
+  for (const s of scopes) {
+    for (const f of s.facts) {
+      if ((f.kind !== "seed" && f.kind !== "copy" && f.kind !== "result") || !f.to.module) continue;
+      let set = moduleBound.get(s.file);
+      if (!set) moduleBound.set(s.file, (set = new Set()));
+      set.add(f.to.name);
+    }
   }
 
   /** The innermost enclosing top-level function that binds `name` (a closure reads its parent's locals). */
@@ -211,6 +220,11 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
 
   const cellOf = (s: Scope, cell: ValueCell): number | null => {
     const { name, member } = cell;
+    if (cell.module) {
+      // The file's own module binding (never an imported one), whatever the function binds.
+      if (moduleBound.get(s.file)?.has(name)) return cellOfKey(`M\0${s.file}\0${name}${member === undefined ? "" : `.${member}`}`);
+      return null;
+    }
     if (member === undefined) {
       const base = baseOf(s, name);
       if (!base) return null;

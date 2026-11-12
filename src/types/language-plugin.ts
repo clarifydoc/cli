@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type {
+  ValueFlowFact,
   ClassInfo,
   EntryPointInfo,
   Language,
@@ -778,6 +779,8 @@ export interface AstExtractorHooks {
   instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
   moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
+  /** The file's module-level value-flow facts → `FileAnalysis.moduleValueFlow` (see `ValueFlowFact`). */
+  moduleValueFlow?(tree: Tree, sourceText: string): ValueFlowFact[];
   /** URL-holding markup attributes the file's scripts read → `FileAnalysis.attributeReads`. */
   attributeReads?(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }>;
   /** Pages a browser driver opens by address (`page.goto`, `cy.visit`) → `FileAnalysis.browserNavigations`. */
