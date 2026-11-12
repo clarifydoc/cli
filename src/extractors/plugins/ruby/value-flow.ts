@@ -28,7 +28,8 @@ function statementsOf(code: readonly string[], from: number, to: number): Array<
   let cur: { text: string; line: number; offsets: number[] } | null = null;
   let depth = 0;
   for (let i = from; i < to && i < code.length; i++) {
-    const raw = (code[i] ?? "").replace(/\s+#.*$/, "").replace(/^\s*#.*$/, "");
+    // Comments are already blanked in the code lines; a `#` left is inside a string (`"#{id}"`).
+    const raw = code[i] ?? "";
     if (!cur && raw.trim() === "") continue;
     if (!cur) cur = { text: "", line: i + 1, offsets: [] };
     cur.offsets.push(cur.text.length);
@@ -40,7 +41,7 @@ function statementsOf(code: readonly string[], from: number, to: number): Array<
       else if ("([{".includes(ch)) depth++;
       else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
     }
-    if (depth > 0 || /[,\\]$|\|\||&&$/.test(raw.trim())) continue;
+    if (depth > 0 || /[,\\]$|\|\|$|&&$/.test(raw.trim())) continue;
     out.push(cur);
     cur = null;
   }
@@ -125,8 +126,17 @@ class Reader {
 
   /** What an expression holds. */
   valuesOf(expr: string, line: number, into: Values = { cells: [], seeds: [], results: [] }): Values {
-    const e = expr.trim().replace(/\s+(?:if|unless)\s+.*$/, "");
+    let e = expr.trim();
+    // A trailing `if`/`unless` modifier, never one inside a string literal.
+    if (!/["']/.test(e)) e = e.replace(/\s+(?:if|unless)\s+.*$/, "");
     if (e === "") return into;
+    // `flag ? a : b` holds either branch.
+    const tern = /^[^?]+?\s\?\s+(.+?)\s+:\s+(.+)$/.exec(e);
+    if (tern && !/["']/.test(e.split("?")[0]!)) {
+      this.valuesOf(tern[1]!, line, into);
+      this.valuesOf(tern[2]!, line, into);
+      return into;
+    }
     const alternatives = splitTop(e, "||");
     if (alternatives.length > 1) {
       for (const part of alternatives) this.valuesOf(part, line, into);
@@ -142,8 +152,10 @@ class Reader {
     const cell = this.cellOf(e);
     if (cell) { into.cells.push(cell); return into; }
     // `Foo.make(1)`, `obj.make`, `make(1)`: what the call returns.
-    const call = /^((?:@?[A-Za-z_]\w*(?:::\w+)*\.)?[a-z_]\w*[?!]?)\s*(?:\(.*\))?$/.exec(e);
-    if (call && !KEYWORDS.has(call[1]!) && !(this.locals.has(call[1]!) && !call[1]!.includes("."))) {
+    const call = /^((?:@?[A-Za-z_]\w*(?:::\w+)*\.)?[a-z_]\w*[?!]?)\s*(\(.*\))?$/.exec(e);
+    // The parenthesis must close at the very end: `f(a) + g(b)` is no call result.
+    const closed = !call?.[2] || balanced(e, e.indexOf("(") + 1, "(", ")")?.end === e.length - 1;
+    if (call && closed && !KEYWORDS.has(call[1]!) && !(this.locals.has(call[1]!) && !call[1]!.includes("."))) {
       into.results.push({ call: this.label(call[1]!), line });
     }
     return into;

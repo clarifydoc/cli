@@ -138,8 +138,8 @@ class Reader {
         return into;
       case "conditional_expression": {
         const parts = n.namedChildren;
-        // `c ? a : b` has the branches last; the short `c ?: b` has one.
-        for (const p of parts.slice(1)) this.valuesOf(p, into);
+        // `c ? a : b` has the branches last; the short `c ?: b` has the condition (it may be the result) and one.
+        for (const p of parts.length === 2 ? parts : parts.slice(1)) this.valuesOf(p, into);
         return into;
       }
       case "binary_expression": {
@@ -291,7 +291,9 @@ class Reader {
       this.shadow.push(names);
       pushed = true;
     }
-    if (n.type === "assignment_expression") {
+    // A closure's own statements (its returns, its locals) are not the function around it's.
+    const inClosure = this.shadow.length > 0;
+    if (n.type === "assignment_expression" && !inClosure) {
       const left = n.childForFieldName("left") ?? n.namedChildren[0];
       const right = n.childForFieldName("right") ?? n.namedChildren[1];
       if (left && right && right.type !== "assignment_expression") this.assign(this.targetsOf(left), right, lineOf(n));
@@ -303,7 +305,7 @@ class Reader {
         const to = this.cellOf(valueVar);
         if (src && to) this.facts.push({ kind: "copy", from: src, to, line: lineOf(n) });
       }
-    } else if (n.type === "return_statement") {
+    } else if (n.type === "return_statement" && !inClosure) {
       const value = n.namedChildren[0];
       if (value) {
         const v = this.valuesOf(value);
