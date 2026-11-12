@@ -611,20 +611,71 @@ export function collectLocalTypes(
     (aliasFroms.get(name) ?? aliasFroms.set(name, new Set()).get(name)!).add(head);
   };
   /**
+   * Where each name is bound in the body (assignment, augmented assignment, walrus, `for` target, `as` alias), in
+   * text order, with the fact an assignment states (null when the source does not state one). Read lazily: only an
+   * alias inside a loop asks.
+   */
+  let bindSites: Map<string, Array<{ pos: number; fact: Fact | null }>> | undefined;
+  const sitesOf = (name: string): Array<{ pos: number; fact: Fact | null }> => {
+    if (!bindSites) {
+      const sites = new Map<string, Array<{ pos: number; fact: Fact | null }>>();
+      bindSites = sites;
+      const add = (n: string, pos: number, fact: Fact | null): void => {
+        (sites.get(n) ?? sites.set(n, []).get(n)!).push({ pos, fact });
+      };
+      for (const n of body.descendantsOfType(["assignment", "augmented_assignment", "named_expression", "for_statement", "as_pattern"])) {
+        // Another scope's names (a nested function, a lambda, a class body) are not this body's bindings.
+        let nested = false;
+        for (let p = n.parent; p && p.id !== body.id; p = p.parent) if (p.type === "lambda" || NESTED_SCOPES.has(p.type)) nested = true;
+        if (nested) continue;
+        if (n.type === "assignment" || n.type === "augmented_assignment") {
+          const left = n.childForFieldName("left");
+          const right = n.childForFieldName("right");
+          // Only a value that states its own type counts: a plain name's fact depends on where it is read.
+          const stated = n.type === "assignment" && right && right.type !== "identifier" ? valueFact(right, scope) : null;
+          if (left?.type === "identifier") add(left.text, n.startIndex, stated);
+          else boundNames(left, (b) => add(b, n.startIndex, null));
+        } else if (n.type === "named_expression") {
+          const nm = n.childForFieldName("name");
+          if (nm) add(nm.text, n.startIndex, null);
+        } else if (n.type === "as_pattern") boundNames(n.childForFieldName("alias"), (b) => add(b, n.startIndex, null));
+        else boundNames(n.childForFieldName("left"), (b) => add(b, n.startIndex, null));
+      }
+    }
+    return bindSites.get(name) ?? [];
+  };
+  /**
+   * `q = p` inside a loop: the loop's back edge brings every binding of `p` in the loop body to `q`, so when `p` is
+   * bound again after the alias in the same body, `q` is typed only when that binding states the same type.
+   */
+  const reboundLater = (head: string, at: Node, agrees: ValueFact): boolean => {
+    for (let p = at.parent; p && p.id !== body.id; p = p.parent) {
+      if (p.type !== "for_statement" && p.type !== "while_statement") continue;
+      for (const s of sitesOf(head)) {
+        if (s.pos <= at.startIndex || s.pos >= p.endIndex) continue;
+        const f = s.fact;
+        if (!f || f === NONE || f === UNKNOWN || !sameFact(f, agrees)) return true;
+      }
+    }
+    return false;
+  };
+  /** An assignment's value as a fact: a plain name another binding of which follows in the same loop states nothing. */
+  const flowFact = (value: Node, at: Node): Fact => {
+    const fact = valueFact(value, scope);
+    return value.type === "identifier" && fact !== UNKNOWN && fact !== NONE && reboundLater(value.text, at, fact) ? UNKNOWN : fact;
+  };
+  /**
    * `q = p` where `p` is bound more than once: `q` takes the type of the binding of `p` nearest before it, when that
-   * binding states a plain type and sits in a block still open at the alias, and the alias is in no loop. Otherwise
-   * `q` stays an alias of `p` (which the linker types only when `p` is bound once).
+   * binding states a plain type and sits in a block still open at the alias, and `p` is not bound again later in a
+   * loop the alias is in (see `reboundLater`). Otherwise `q` stays an alias of `p` (which the linker types only when
+   * `p` is bound once).
    */
   const aliasAt = (name: string, head: string, at: Node): void => {
     const last = table.lastBinding(head);
     if (last?.fact?.type && !last.fact.qualifier && table.bindCount(head) >= 2 && !paramNames.has(head)) {
       let open = false;
-      let looped = false;
-      for (let p = at.parent; p; p = p.parent) {
-        if (p.id === last.block) open = true;
-        if (p.type === "for_statement" || p.type === "while_statement") looped = true;
-      }
-      if (open && !looped) {
+      for (let p = at.parent; p; p = p.parent) if (p.id === last.block) open = true;
+      if (open && !reboundLater(head, at, last.fact)) {
         table.assign(name, last.fact);
         return;
       }
@@ -754,7 +805,7 @@ export function collectLocalTypes(
           const target = node.childForFieldName("name");
           const value = node.childForFieldName("value");
           if (target?.type === "identifier") {
-            const fact = value ? valueFact(value, scope) : UNKNOWN;
+            const fact = value ? flowFact(value, node) : UNKNOWN;
             if (!(fact === UNKNOWN && value?.type === "identifier" && value.text !== target.text)) table.assign(target.text, fact);
             const call = fact === UNKNOWN && value ? initializerCall(value) : null;
             if (fact !== UNKNOWN) {
@@ -830,7 +881,7 @@ export function collectLocalTypes(
         return;
       }
       classValued.delete(name);
-      const fact = right ? valueFact(right, scope) : UNKNOWN;
+      const fact = right ? flowFact(right, stmt) : UNKNOWN;
       if (!(fact === UNKNOWN && right?.type === "identifier" && right.text !== name)) table.assign(name, fact);
       if (fact !== UNKNOWN) {
         // A construction beside a call: the two disagree and neither types it.

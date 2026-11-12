@@ -88,6 +88,40 @@ def neg_py_nested_before(c):
     q = p
     q.train()
 
+
+def py_loop_untouched(items):
+    p = Garage()
+    p = Player()
+    for g in items:
+        q = p
+        q.train()
+
+
+def py_loop_agree(items):
+    p = Garage()
+    p = Player()
+    for g in items:
+        q = p
+        p = Player()
+        q.train()
+
+
+def neg_py_loop_later(items):
+    p = Player()
+    for g in items:
+        q = p
+        p = Garage()
+        q.train()
+
+
+def neg_py_while_later(n):
+    p = Player()
+    while n:
+        q = p
+        p = Garage()
+        q.train()
+        n -= 1
+
 `,
   "php/flow.php": `<?php
 class Player { public function train(): void {} }
@@ -109,6 +143,45 @@ function negPhpNestedBefore(bool $c): void {
     if ($c) { $p = new Player(); }
     $q = $p;
     $q->train();
+}
+function phpParamBefore(Garage $c): void {
+    $a = $c;
+    $c = new Player();
+    $a->train();
+}
+function phpParamAfter(Garage $c): void {
+    $c = new Player();
+    $b = $c;
+    $b->train();
+}
+function phpParamLoopAgree(Player $c, array $items): void {
+    foreach ($items as $i) {
+        $a = $c;
+        $c = new Player();
+        $a->train();
+    }
+}
+function negPhpParamLoop(Garage $c, array $items): void {
+    foreach ($items as $i) {
+        $a = $c;
+        $c = new Player();
+        $a->train();
+    }
+}
+function negPhpVariadic(Garage ...$c): void {
+    $a = $c;
+    $c = new Player();
+    $a->train();
+}
+function negPhpScalarParam(int $c): void {
+    $a = $c;
+    $c = new Player();
+    $a->train();
+}
+function negPhpParamNested(Garage $c, bool $f): void {
+    if ($f) { $c = new Player(); }
+    $a = $c;
+    $a->train();
 }
 function negPhpLoop(array $items): void {
     $p = new Player();
@@ -222,13 +295,18 @@ describe("alias flow order and four-call chains", () => {
 
   it("leaves an alias untyped when the head's binding before it is nested, untyped or in a loop", () => {
     expect(links.filter((l) => /^neg/.test(l))).toEqual([]);
-    expect(links.filter((l) => l.includes("Garage.train") && !l.startsWith("py_"))).toEqual([]);
+    expect(links.filter((l) => l.includes("Garage.train") && !/^(py_|phpParamBefore)/.test(l))).toEqual([]);
   });
 
   it("follows flow order for aliases in Python, PHP, Rust and C++", () => {
     expect(links).toContain("py_after_reassign -> Player.train");
     expect(links).toContain("py_alias_before_reassign -> Garage.train");
     expect(links).toContain("phpAfterReassign -> Player.train");
+    expect(links).toContain("py_loop_untouched -> Player.train");
+    expect(links).toContain("py_loop_agree -> Player.train");
+    expect(links).toContain("phpParamBefore -> Garage.train");
+    expect(links).toContain("phpParamAfter -> Player.train");
+    expect(links).toContain("phpParamLoopAgree -> Player.train");
     expect(links).toContain("rs_after_reassign -> Player.train");
     expect(links).toContain("rs_shadowed -> Player.train");
     expect(links).toContain("cppAfterReassign -> Player.train");

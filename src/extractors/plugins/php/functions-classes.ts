@@ -681,6 +681,9 @@ const PHP_BLOCKS: ReadonlySet<string> = new Set([
   "while_statement", "do_statement", "switch_block", "case_statement", "default_statement", "try_statement", "catch_clause",
   "finally_clause", "match_block", "match_conditional_expression", "match_default_expression", "conditional_expression",
 ]);
+/** Declared parameter types that name no class. */
+const PHP_SCALAR_TYPES: ReadonlySet<string> = new Set(["int", "float", "string", "bool", "array", "iterable", "callable", "object", "mixed", "null", "void", "self", "static", "parent", "false", "true", "never"]);
+
 const PHP_LOOPS: ReadonlySet<string> = new Set(["for_statement", "foreach_statement", "while_statement", "do_statement"]);
 
 /** Whether the text binds `$name` other than by a plain assignment: a `foreach` target, a `catch` variable, `global`/`static`, a `list()`/`[...]` target, a reference. */
@@ -723,15 +726,22 @@ function extractLocalTypes(
   const otherAssigned = new Set<string>();
   // Flow order: each name's writes in text order (a stated type, or null), and where each alias was written, so an
   // alias of a name written more than once takes the write before it when that one states a type.
-  const writes = new Map<string, Array<{ type: string | null; block: number }>>();
-  const aliasSites = new Map<string, Array<{ head: string; type: string | null; inLoop: boolean }>>();
+  const writes = new Map<string, Array<{ type: string | null; block: number; pos: number }>>();
+  // `loopEnds`: where each loop the alias sits in ends, to tell a head written again later in the same loop.
+  const aliasSites = new Map<string, Array<{ head: string; type: string | null; at: number; loopEnds: number[] }>>();
   const blockOf = (n: Node): number => {
     for (let p = n.parent; p; p = p.parent) if (p.id === body.id || PHP_BLOCKS.has(p.type)) return p.id;
     return body.id;
   };
   const write = (n: Node, name: string, type: string | null): void => {
-    (writes.get(name) ?? writes.set(name, []).get(name)!).push({ type, block: blockOf(n) });
+    (writes.get(name) ?? writes.set(name, []).get(name)!).push({ type, block: blockOf(n), pos: n.startIndex });
   };
+  // A parameter is the head's first write: bound on entry, in the body's own block, typed by its declaration.
+  for (const p of params) {
+    // A variadic parameter is an array in the body, whatever its element type says.
+    const t = p.variadic ? undefined : /^\??\\?([A-Za-z_][\w\\]*)$/.exec(p.type ?? "")?.[1];
+    writes.set(p.name, [{ type: t && !PHP_SCALAR_TYPES.has(t.toLowerCase()) ? t : null, block: body.id, pos: -1 }]);
+  }
   const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
     if (!name || seen.has(name)) return;
     if (!type && !qualifier) {
@@ -797,13 +807,13 @@ function extractLocalTypes(
           const headWrites = writes.get(aliasHead);
           const last = headWrites?.[headWrites.length - 1];
           let open = false;
-          let inLoop = false;
+          const loopEnds: number[] = [];
           for (let p: Node | null = n.parent; p; p = p.parent) {
             if (last && p.id === last.block) open = true;
-            if (PHP_LOOPS.has(p.type)) inLoop = true;
+            if (PHP_LOOPS.has(p.type)) loopEnds.push(p.endIndex);
             if (p.id === body.id) break;
           }
-          (aliasSites.get(name) ?? aliasSites.set(name, []).get(name)!).push({ head: aliasHead, type: last && open ? last.type : null, inLoop });
+          (aliasSites.get(name) ?? aliasSites.set(name, []).get(name)!).push({ head: aliasHead, type: last && open ? last.type : null, at: n.startIndex, loopEnds });
           write(n, name, null);
         } else {
           otherAssigned.add(name);
@@ -861,7 +871,10 @@ function extractLocalTypes(
       // rebound by a `foreach`, `catch`, `list()` or reference).
       if (sites.length === 1 && (writes.get(head)?.length ?? 0) >= 2) {
         const site = sites[0]!;
-        if (site.type && !site.inLoop && !rebinds(body.text, head)) out.push({ name, type: site.type });
+        // In a loop, the back edge also brings a write of the head after the alias in that body: typed only when it
+        // states the same type.
+        const later = (writes.get(head) ?? []).some((w) => w.pos > site.at && site.loopEnds.some((end) => w.pos < end) && w.type !== site.type);
+        if (site.type && !later && !rebinds(body.text, head)) out.push({ name, type: site.type });
         continue;
       }
       out.push({ name, type: "", aliasOf: head });
