@@ -15,7 +15,7 @@
  * on to every cell, argument and invoke it feeds, so a catch-all holder never fabricates edges. A work budget
  * bounds the whole run; past it nothing is emitted.
  */
-import type { ClassInfo, FileAnalysis, FunctionInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
+import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
 
 /** At most this many functions a cell may hold before it is poisoned. */
 const MAX_TARGETS = 32;
@@ -26,6 +26,8 @@ const BASE_BUDGET = 2_000_000;
 const BUDGET_PER_FACT = 200;
 
 const RECEIVER_NAMES = new Set(["this", "self"]);
+/** A cell name standing for the file's own module binding named by `member`: how a function writes a global it does not declare. */
+export const MODULE_CELL = "<module>";
 const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "new"];
 
 /** What the solver asks of the linker (callbacks, so this module imports nothing of it). */
@@ -182,6 +184,17 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   }
 
   /** The innermost enclosing top-level function that binds `name` (a closure reads its parent's locals). */
+  /** The innermost enclosing top-level function that binds `name` (a closure reads its parent's locals). */
+  // A function that writes a module binding it does not declare (`{ name: "<module>", member: "handler" }`) binds it for the file.
+  for (const s of scopes) {
+    for (const f of s.facts) {
+      const to = f.kind === "seed" || f.kind === "copy" || f.kind === "result" ? f.to : null;
+      if (to?.name !== MODULE_CELL || !to.member) continue;
+      const set = moduleBound.get(s.file) ?? moduleBound.set(s.file, new Set()).get(s.file)!;
+      set.add(to.member);
+    }
+  }
+
   const enclosingBinder = (s: Scope, name: string): Scope | null => {
     if (!s.fn || s.cls || s.symbol === "<setup>") return null;
     let best: Scope | null = null;
@@ -240,6 +253,26 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     return null;
   };
 
+  /** The class a root of a field path stands for: the receiver's, a typed local's or parameter's, or a class named as written. */
+  const ownerOf = (s: Scope, root: string): { file: string; name: string } | null => {
+    if (RECEIVER_NAMES.has(root)) return s.cls ? { file: s.file, name: s.cls.name } : null;
+    if (baseOf(s, root)) {
+      const type = typeOfName(s, root);
+      return type ? host.classOfType(s.file, type) : null;
+    }
+    return host.classOfType(s.file, root);
+  };
+  /** The class a property of `owner` (or its bases) is declared to hold. */
+  const propertyOwner = (owner: { file: string; name: string }, property: string): { file: string; name: string } | null => {
+    let cur: { file: string; name: string } | null = owner;
+    for (let depth = 0; cur && depth < 16; depth++) {
+      const found: PropertyInfo | undefined = host.classAt(cur.file, cur.name)?.properties.find((p) => p.name === property);
+      if (found) return found.type ? host.classOfType(cur.file, found.type) : null;
+      cur = host.parentOf(cur.file, cur.name);
+    }
+    return null;
+  };
+
   const cellOf = (s: Scope, cell: ValueCell): number | null => {
     const { name, member } = cell;
     if (cell.module) {
@@ -247,6 +280,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       if (moduleBound.get(s.file)?.has(name)) return cellOfKey(`M\0${s.file}\0${name}${member === undefined ? "" : `.${member}`}`);
       return null;
     }
+    if (name === MODULE_CELL) return member === undefined ? null : cellOfKey(`M\0${s.file}\0${member}`);
     if (member === undefined) {
       const base = baseOf(s, name);
       if (!base) return null;
@@ -256,11 +290,22 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       if (s.cls) return fieldCell(s.file, s.cls.name, member);
       return cellOfKey(`L\0${s.file}\0${s.symbol}\0${name}.${member}`);
     }
+    // A field path (`c.ops` + member `sign`): each step is the declared type of the property before it.
+    if (name.includes(".")) {
+      const [root, ...path] = name.split(".");
+      let owner = ownerOf(s, root!);
+      for (const step of path) {
+        if (!owner) return null;
+        owner = propertyOwner(owner, step);
+      }
+      return owner ? fieldCell(owner.file, owner.name, member) : null;
+    }
     const base = baseOf(s, name);
     if (!base) {
-      // A property of the enclosing class (or a base's) the plugin says is read by its bare name (`widget.onSave`): its type owns the member.
+      // A property of the enclosing class (or a base's) the plugin says is read by its bare name (`widget.onSave`): its type owns the member;
+      // otherwise an unbound name that is a project class: the member is that class's own (`Club.handler`, a struct type's table).
       const type = cell.field && s.cls ? propertyTypeOf(s.file, s.cls.name, name) : null;
-      const owner = type ? host.classOfType(s.file, type) : null;
+      const owner = type ? host.classOfType(s.file, type) : cell.field ? null : host.classOfType(s.file, name);
       return owner ? fieldCell(owner.file, owner.name, member) : null;
     }
     if (base.kind === "module") {

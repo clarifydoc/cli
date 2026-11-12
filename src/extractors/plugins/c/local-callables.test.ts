@@ -52,6 +52,8 @@ describe("C locals and parameters a body calls", () => {
     expect(links).toEqual([
       "drive@13 stall -> src/engine.c::stall",
       "drive@13 start -> src/engine.c::start",
+      // The local holds `start` (value flow), which is the function it is called as.
+      "tune@9 stall -> src/engine.c::start",
     ]);
   });
 });

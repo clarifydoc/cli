@@ -4228,7 +4228,8 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
     },
     classOfType(file, type) {
       const language = ctx.languageOf.get(file) as Language | undefined;
-      const name = language ? receiverTypeName(type, language) : null;
+      // An elaborated type (`const struct club_ops *`) names its class once the keywords are off.
+      const name = language ? receiverTypeName(type.replace(/\b(?:struct|union|enum|class|const|volatile)\s+/g, ""), language) : null;
       if (!name) return null;
       const located = locateClass(ctx, name, file, ctx.projectOf.get(file) ?? "root");
       return located ? { file: located, name } : null;

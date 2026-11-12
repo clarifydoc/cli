@@ -91,6 +91,7 @@ export function extractWithRegex(
   }
   const setup = topLevelSetup(lines, analysis, spec, filePath, parsed);
   if (setup) analysis.functions.unshift(setup);
+  spec.extractValueFlow?.(lines, analysis);
   const pathRefs = spec.extractPathReferences?.(lines);
   if (pathRefs && pathRefs.length > 0) analysis.pathReferences = pathRefs;
   const diBindings = spec.extractDiBindings?.(lines, filePath);

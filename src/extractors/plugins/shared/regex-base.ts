@@ -331,6 +331,11 @@ export interface RegexLangSpec {
    * Runs only for the line-scan reading (no parse); `code` is the file's lines with comments and strings blanked.
    */
   markLocalCalls?: (code: readonly string[], fns: readonly FunctionInfo[]) => void;
+  /**
+   * States how function values travel in the file (`FunctionInfo.valueFlow`, `FileAnalysis.moduleValueFlow`) from the
+   * finished analysis: its functions, methods, calls, locals and classes are all set when this runs.
+   */
+  extractValueFlow?: (lines: readonly string[], analysis: FileAnalysis) => void;
   extractLocalTypes?: (bodyLines: string[], fn: { name: string; params: ParamInfo[] }) => NonNullable<FunctionInfo["localTypes"]>;
   /**
    * The parameters of the function declared at `lines[i]`, for a language whose signature is not `name(a, b)`

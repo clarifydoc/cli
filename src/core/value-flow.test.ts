@@ -304,3 +304,44 @@ describe("value-flow: receiver offset", () => {
     expect(flowLinks([club, clubs, decoy, plug])).toEqual(["league/club.py::Club.register@3 cb -> league/api.py::save_club"]);
   });
 });
+
+describe("value-flow: a type's members, field paths and module writes", () => {
+  const handlers = file("src/ops.c", {
+    language: "c",
+    functions: [fn("club_sign", 1), fn("rival_sign", 2)],
+    classes: [
+      cls("club_ops", 10, [], [{ name: "sign" }]),
+      cls("rival_ops", 20, [], [{ name: "sign" }]),
+      cls("club", 30, [], [{ name: "ops", type: "struct club_ops" }]),
+    ],
+    moduleValueFlow: [
+      { kind: "seed", to: { name: "club_ops", member: "sign" }, fn: "club_sign", line: 5 },
+      { kind: "seed", to: { name: "rival_ops", member: "sign" }, fn: "rival_sign", line: 6 },
+    ],
+  });
+
+  it("an unbound class name states the members every value of that type shares; a field path walks property types", () => {
+    const user = file("src/use.c", {
+      language: "c",
+      functions: [fn("by_club", 1, {
+        params: [param("c", "struct club")],
+        calls: [call("sign", 2)],
+        valueFlow: [{ kind: "invoke", cell: { name: "c.ops", member: "sign" }, call: "sign", line: 2 }],
+      })],
+    });
+    expect(flowLinks([handlers, user])).toEqual(["src/use.c::by_club@2 sign -> src/ops.c::club_sign"]);
+  });
+
+  it("a function writes a module binding it does not declare through the `<module>` cell", () => {
+    const unit = file("src/hook.c", {
+      language: "c",
+      functions: [
+        fn("on_kick", 1),
+        fn("set_hook", 5, { params: [param("cb")], valueFlow: [{ kind: "copy", from: { name: "cb" }, to: { name: "<module>", member: "g_hook" }, line: 6 }] }),
+        fn("wire", 10, { calls: [call("set_hook", 11)], valueFlow: [{ kind: "seed", to: { name: "$a" }, fn: "on_kick", line: 11 }, { kind: "arg", call: "set_hook", line: 11, index: 0, from: { name: "$a" } }] }),
+        fn("fire", 15, { valueFlow: [{ kind: "invoke", cell: { name: "g_hook" }, call: "g_hook", line: 16 }], calls: [call("g_hook", 16)] }),
+      ],
+    });
+    expect(flowLinks([unit])).toEqual(["src/hook.c::fire@16 g_hook -> src/hook.c::on_kick"]);
+  });
+});
