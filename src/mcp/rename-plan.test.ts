@@ -193,9 +193,38 @@ describe("clarifydoc_rename_plan — a Rails-shaped project analyzed here", () =
     dir = mkdtempSync(join(tmpdir(), "clarifydoc-rename-rails-"));
     const files: Record<string, string> = {
       "Gemfile": "source 'https://rubygems.org'\ngem 'rails', '7.1.0'\n",
-      "config/routes.rb": ["Rails.application.routes.draw do", "  get 'clubs', to: 'clubs#index'", "  resources :players", "end", ""].join("\n"),
-      "app/controllers/clubs_controller.rb": ["class ClubsController < ApplicationController", "  def index", "    render json: []", "  end", "end", ""].join("\n"),
+      "config/routes.rb": [
+        "Rails.application.routes.draw do",
+        "  get 'clubs', to: 'clubs#index'",
+        "  resources :players",
+        "  resources :coaches, only: [:index, :show]",
+        "  post 'transfers' => 'clubs#create'",
+        "  controller :clubs do",
+        "    get 'archive', action: :archive",
+        "  end",
+        "  get 'rosters', to: 'rosters#index'",
+        "  resources :stadiums, only: [:index], path: 'index'",
+        "end",
+        "",
+      ].join("\n"),
+      "app/controllers/clubs_controller.rb": [
+        "class ClubsController < ApplicationController",
+        "  def index",
+        "    render json: []",
+        "  end",
+        "  def create",
+        "    render json: {}",
+        "  end",
+        "  def archive",
+        "    render json: []",
+        "  end",
+        "end",
+        "",
+      ].join("\n"),
       "app/controllers/players_controller.rb": ["class PlayersController < ApplicationController", "  def show", "    render json: {}", "  end", "end", ""].join("\n"),
+      "app/controllers/coaches_controller.rb": ["class CoachesController < ApplicationController", "  def index", "    render json: []", "  end", "  def show", "    render json: {}", "  end", "end", ""].join("\n"),
+      "app/controllers/rosters_controller.rb": ["class RostersController < ApplicationController", "  def index", "    render json: []", "  end", "end", ""].join("\n"),
+      "app/controllers/stadiums_controller.rb": ["class StadiumsController < ApplicationController", "  def index", "    render json: []", "  end", "end", ""].join("\n"),
     };
     for (const [name, text] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, name)), { recursive: true });
@@ -215,14 +244,34 @@ describe("clarifydoc_rename_plan — a Rails-shaped project analyzed here", () =
     expect((await registrationSpan(new Sources(dir), "config/routes.rb", 3, "show")).why).toMatch(/does not spell `show`/);
   });
 
-  // The analysis moves a Rails route onto the controller method it names, so the plan sees the definition and no
-  // registration line: the route is "own" (its link source is the method's line), and nothing is listed or refused.
-  it("plans the definition alone when the analysis anchors the route on the method", async () => {
-    for (const [symbol, file] of [["index", "app/controllers/clubs_controller.rb"], ["show", "app/controllers/players_controller.rb"]] as const) {
-      const text = await ask({ symbol, file, to: "renamed" });
-      expect(text).toContain("## Definition");
-      expect(text).not.toContain("## Route registrations");
-      expect(text).not.toMatch(/config\/routes\.rb/);
-    }
+  const spanTexts = (text: string): string[] =>
+    [...text.matchAll(/^- (config\/routes\.rb):(\d+):(\d+)-(\d+)/gm)].map(([, f, l, c, e]) => readFileSync(join(dir, f!), "utf-8").split("\n")[Number(l) - 1]!.slice(Number(c) - 1, Number(e) - 1) + `@${l}`);
+
+  it("lists the routes.rb spans that name a controller action, in strings and as symbols", async () => {
+    const text = await ask({ symbol: "index", file: "app/controllers/clubs_controller.rb", to: "list" });
+    expect(text).toContain("## Route registrations (1)");
+    expect(spanTexts(text)).toEqual(["index@2"]);
+    expect(spanTexts(await ask({ symbol: "create", file: "app/controllers/clubs_controller.rb", to: "make" }))).toEqual(["create@5"]);
+    const arch = await ask({ symbol: "archive", file: "app/controllers/clubs_controller.rb", to: "old" });
+    expect(spanTexts(arch)).toEqual(["archive@7"]);
+  });
+
+  it("lists the symbol in an `only:` list, and leaves a same-named action of another controller alone", async () => {
+    const text = await ask({ symbol: "index", file: "app/controllers/coaches_controller.rb", to: "list" });
+    expect(spanTexts(text)).toEqual(["index@4"]);
+    expect(text).not.toMatch(/routes\.rb:[29]:/);
+    const rosters = await ask({ symbol: "index", file: "app/controllers/rosters_controller.rb", to: "list" });
+    expect(spanTexts(rosters)).toEqual(["index@9"]);
+  });
+
+  it("refuses a `resources` line that names no action", async () => {
+    const text = await ask({ symbol: "show", file: "app/controllers/players_controller.rb", to: "renamed" });
+    expect(text).toContain("Refused");
+    expect(text).toMatch(/config\/routes\.rb:3 — route registration of GET \/players\/:id: .*does not spell `show`/);
+  });
+
+  it("picks the symbol over a path option that reads the same", async () => {
+    const stadium = await ask({ symbol: "index", file: "app/controllers/stadiums_controller.rb", to: "list" });
+    expect(stadium).toContain("- config/routes.rb:10:32-37");
   });
 });

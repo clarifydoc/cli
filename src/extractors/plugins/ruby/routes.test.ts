@@ -421,3 +421,10 @@ describe("rubySpec.extractRoutes — helper names (`as:`)", () => {
     expect(out.map((r) => `${r.path} ${r.name}`)).toEqual(["/clubs teams", "/clubs/:id team", "/clubs/new new_team", "/clubs/:id/edit edit_team"]);
   });
 });
+
+describe("routes.rb: a `controller :name do` block", () => {
+  it("serves the actions its verbs name from that controller, and closes with its `end`", () => {
+    const out = routes(draw(`  controller :clubs do\n    get 'archive', action: :archive\n    get :roster\n  end\n  get 'cups', to: 'cups#index'`));
+    expect(out.map(sig)).toEqual(["GET /archive -> ClubsController#archive", "GET /roster -> ClubsController#roster", "GET /cups -> CupsController#index"]);
+  });
+});

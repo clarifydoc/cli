@@ -1731,6 +1731,12 @@ export const rubySpec: RegexLangSpec = {
         pushBlock(p === "/" ? "" : p, null, module ? railsModule(module) : null);
         continue;
       }
+      // `controller :clubs do … end`: the routes inside are that controller's actions, at the enclosing path.
+      const controllerBlock = line.match(/^controller\s+(?::|['"])([\w/]+)['"]?/);
+      if (controllerBlock && opensDoBlock) {
+        pushBlock("", null, null, { base: currentPrefix(), controllerClass: railsControllerClass(controllerBlock[1]!, currentModules()), memberPath: "" });
+        continue;
+      }
       // Devise: `authenticate :user do … end` / `authenticated :admin do … end`
       // — every route inside requires that scope to be signed in.
       const deviseMatch = line.match(/^(authenticated?)\s+:(\w+)/);

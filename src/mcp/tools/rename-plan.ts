@@ -316,6 +316,33 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
     else registered.push({ span: r.span, inString: !!r.inString });
   }
 
+  // Routes a resolver moved onto this handler keep their declaration line (`RouteInfo.registeredAt`): the
+  // name is written there too, as a symbol or inside the string that names the handler.
+  const declaredAt = new Map<string, { file: string; line: number; route: string }>();
+  for (const r of summary.routeMap ?? []) {
+    if (!r.registeredAt || r.filePath !== def.file || r.line !== def.line) continue;
+    declaredAt.set(`${r.registeredAt.file}:${r.registeredAt.line}`, { ...r.registeredAt, route: `${r.httpMethod ?? "USE"} ${r.path}` });
+  }
+  for (const [key, d] of declaredAt) {
+    // A line the route-link pass above already handled is listed or refused there.
+    if (seen.has(key) || registeredLines.has(key)) continue;
+    registeredLines.add(key);
+    const where = loc(d.file, d.line);
+    const r = await registrationSpan(sources, d.file, d.line, name);
+    if (!r.span) {
+      refuse(where, `route registration of ${d.route}: ${r.why}`);
+      continue;
+    }
+    const before = ((await sources.lines(d.file))?.[d.line - 1] ?? "").slice(0, r.span.col - 1);
+    // Written as the handler's name (`clubs#index`, `[:index]`, `action: :index`), not as a path or option value that merely reads the same.
+    const optionValue = /\b(?:as|path|name|module|controller|on|constraints)\s*(?::|=>)\s*:?['"]?$/.test(before);
+    if (optionValue || (!/[#:]$/.test(before) && !/\b(?:action|handler)\s*(?::|=>)\s*['"]$/.test(before))) {
+      refuse(where, `route registration of ${d.route}: \`${name}\` on that line is not written as the handler's name`);
+      continue;
+    }
+    registered.push({ span: r.span, inString: !!r.inString });
+  }
+
   // Imports, exports and re-exports that name it.
   const around: string[] = [];
   const files = [...new Set([def.file, ...callerFiles, ...importers])].sort(byOrdinal);

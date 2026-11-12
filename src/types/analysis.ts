@@ -1838,6 +1838,12 @@ export interface RouteFilter {
 }
 
 export interface RouteInfo {
+  /**
+   * Where the route was declared, when a resolver moved the row onto the handler it names (a Rails
+   * `config/routes.rb` line anchored on the controller action): `line` is then the handler's, and this
+   * is the registration's own file and line — what a rename of the handler must also edit.
+   */
+  registeredAt?: { file: string; line: number };
   path: string;
   httpMethod: string | null;
   kind: "frontend" | "api";

@@ -145,6 +145,7 @@ export const railsRouteAnchor: RouteResolver = {
         }
         const list = moved.get(target) ?? [];
         const row = withController(r, action.fn, guessOf.get(r.handler!));
+        row.registeredAt = { file: a.filePath, line: r.line };
         // An action runs its `before_action` filters first: what they load
         // (`@match ||= Current.league.matches.find_by!(…)`) is the
         // action's data too.
