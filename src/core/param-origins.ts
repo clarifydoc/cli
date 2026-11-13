@@ -209,6 +209,13 @@ export function computeParamOrigins(input: {
     switch (o.kind) {
       case "param": {
         const at = caller ? caller.fn.params.findIndex((p) => p.name === o.name) : -1;
+        // A callback written in place (a held function: `mutationFn: (body) => add(gameId, body)`) sees its writer's
+        // parameters: the one the name binds is the function around the callback's own lines.
+        if (caller && at < 0 && depth < MAX_DEPTH && caller.fn.name.startsWith("<") && caller.fn.name !== "<setup>") {
+          const writer = innermost(site.file, caller.fn.line);
+          const outer = writer ? writer.fn.params.findIndex((p) => p.name === o.name) : -1;
+          if (writer && outer >= 0) return walk(writer, outer, wholeField, depth + 1, seen, hops, v, conf, out);
+        }
         if (!caller || at < 0 || depth >= MAX_DEPTH) return unknown();
         return walk(caller, at, wholeField, depth + 1, seen, hops, v, conf, out);
       }

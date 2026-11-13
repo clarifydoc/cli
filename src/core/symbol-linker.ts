@@ -4420,6 +4420,11 @@ function spreadMember(
  * `items[].run` (a member of whichever object of a declared array, `CallInfo.returnedAs` `items[].run`).
  */
 const MAP_CALL = /^([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*)|\[\](?:\.([A-Za-z_$][\w$]*))?)$/;
+/**
+ * A call through a member path of a holder (`header.column.toggleSorting`): joined only to an entry held under exactly
+ * that path in the caller's own file (`returnedAs: "header.column.toggleSorting"`), never to an imported map.
+ */
+const DEEP_MEMBER_CALL = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)$/;
 /** The holder a map entry's `returnedAs` names: `ACTIONS` of `ACTIONS.save`, `items` of `items[].run`. */
 const holderOf = (returnedAs: string): string => /^[^.[]*/.exec(returnedAs)![0];
 
@@ -4460,7 +4465,7 @@ function dispatchMapCall(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null | undefined {
-  if (!MAP_CALL.test(call.name)) return undefined;
+  if (!MAP_CALL.test(call.name) && !(DEEP_MEMBER_CALL.test(call.name) && mapHoldersOf(analysis).has(call.name.slice(0, call.name.indexOf("."))))) return undefined;
   // A map entry whose value leads back to the call being resolved names no function: it draws no edge.
   const inFlight = (ctx.mapCallsInFlight ??= new Set());
   const key = `${sourceFile}\0${sourceSymbol}\0${call.name}`;
@@ -4480,13 +4485,15 @@ function dispatchMapCallOnce(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null | undefined {
-  const m = MAP_CALL.exec(call.name)!;
+  const m = MAP_CALL.exec(call.name) ?? DEEP_MEMBER_CALL.exec(call.name)!;
   if (!mapHoldersOf(analysis).has(m[1]!)) return importedDispatchMapCall(sourceFile, sourceSymbol, call, m[1]!, m[2] ?? (m[3] !== undefined ? `[].${m[3]}` : undefined), analysis, ctx);
   const [, holder, key, element] = m;
   // `ACTIONS.save` names one key; `items[].run` the member of every object of the array; `ACTIONS[]` any key.
   const named = key !== undefined ? `${holder}.${key}` : element !== undefined ? `${holder}[].${element}` : undefined;
+  // A member path (`header.column.toggleSorting`) names only what a library runs from a derived local.
+  const deep = !MAP_CALL.test(call.name);
   const held = (calls: readonly CallInfo[] | undefined) =>
-    (calls ?? []).filter((c) => c.passed === "property" && (named !== undefined ? c.returnedAs === named : c.returnedAs?.startsWith(`${holder}.`)));
+    (calls ?? []).filter((c) => c.passed === "property" && (!deep || c.libraryOption) && (named !== undefined ? c.returnedAs === named : c.returnedAs?.startsWith(`${holder}.`)));
   const caller = findEnclosingCallable(analysis, sourceSymbol);
   const bindsHolder = sourceSymbol !== "<setup>" && (caller?.params.some((p) => p.name === holder || (/^[{[]/.test(p.name) && bindsName(p.name, holder!))) || caller?.localTypes?.some((l) => l.name === holder));
   let scoped: Array<{ scope: string; entry: CallInfo }> = held(caller?.calls).map((entry) => ({ scope: sourceSymbol, entry }));

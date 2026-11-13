@@ -3394,6 +3394,11 @@ export interface FunctionPropBinding {
   line: number;
   /** The import the component comes from, when the SCRIPT hands it the callback (`open(ConfirmBox, { onConfirm })`) and no tag names it. */
   importSource?: string;
+  /**
+   * The module the handler is imported from, when it is not one of the file's own functions (a project dispatch map
+   * handed down as a prop, `{ save: saveClub }` with `saveClub` imported): the function is the module's export of `name`.
+   */
+  handlerImport?: { source: string; name: string };
 }
 
 /** A function a component's `<slot>` outlet hands its content (`FileAnalysis.slotFunctions`). */

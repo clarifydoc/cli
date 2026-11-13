@@ -465,7 +465,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
     // `bound`: the function a Vue template's inline prop function is extracted as.
-    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string; line: number }>>>();
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string; handlerImport?: { source: string; name: string }; line: number }>>>();
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
         (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event)),
@@ -475,7 +475,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
       if (els.length === 0 && !parent.functionProps?.length && renamed.length === 0) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      const bind = (line: number, component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string) => {
+      const bind = (line: number, component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string, handlerImport?: { source: string; name: string }) => {
         const src = importSource ?? subByKey.get(tagKey(component));
         let childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
         // A component the parent's own file declares (`const FollowButton = props => …`, beside its user): keyed by the pair.
@@ -483,7 +483,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (!childFile || !byPath.has(childFile.split("\u0000")[0]!)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
         const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
-        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}), line });
+        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}), ...(handlerImport ? { handlerImport } : {}), line });
       };
       for (const el of els) {
         const bound = propFunctionName(el.component!, el.event, el.line);
@@ -508,7 +508,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         bind(pb.line, pb.component, pb.prop, propName, undefined, undefined, creators.length === 1 ? creators[0]!.name : undefined);
       }
       // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
-      for (const fp of parent.functionProps ?? []) bind(fp.line, fp.component, fp.prop, fp.handler, undefined, fp.importSource);
+      for (const fp of parent.functionProps ?? []) bind(fp.line, fp.component, fp.prop, fp.handler, undefined, fp.importSource, undefined, fp.handlerImport);
     }
     if (bindings.size === 0) return [];
 
@@ -525,6 +525,14 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (span && !hits.some((h) => h.file === lib!.filePath)) hits.push({ file: lib!.filePath, span });
       }
       return hits.length === 1 ? hits[0]! : null;
+    };
+
+    /** The function a module the parent imports exports under `name`. */
+    const importedExport = (parent: FileAnalysis, from: { source: string; name: string }): { file: string; span: SymbolSpan } | null => {
+      const file = resolveTarget(from.source, parent.filePath, filePathMap);
+      const lib = file ? byPath.get(file.split("\u0000")[0]!) : undefined;
+      const span = lib ? spans(lib).find((sp) => sp.symbol === from.name) : undefined;
+      return lib && span ? { file: lib.filePath, span } : null;
     };
 
     /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props — with the binding site on the child's own tag. */
@@ -555,7 +563,10 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (!name) continue;
         const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
         const fromMixin = own ? null : scopeMember(b.parent, name);
+        // A function the file imports, held in a dispatch map it hands down (`{ save: saveClub }`).
+        const imported = own || fromMixin || !b.handlerImport ? null : importedExport(b.parent, b.handlerImport);
         if (own) out.push({ file: b.parent.filePath, span: own, usage });
+        else if (imported) out.push({ file: imported.file, span: imported.span, usage });
         else if (fromMixin) out.push({ file: fromMixin.file, span: fromMixin.span, usage });
         // A prop of the parent handed on (`onConfirm={handleRelease}`, `handleRelease` the parent's own destructured prop),
         // under the name the parent takes it by (`{ onRelease: handleRelease }` hands on `onRelease`).

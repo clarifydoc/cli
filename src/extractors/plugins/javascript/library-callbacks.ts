@@ -30,7 +30,25 @@ interface LibraryObject {
    * feature setter whose own `on…Change` the call leaves out).
    */
   fallback?: { option: string; methods: readonly string[] };
+  /**
+   * Methods of the objects the library's own results hand out (`table.getHeaderGroups()` → headers → `header.column`):
+   * member path (`column`, `row`) → option → the methods that run it (`header.column.toggleSorting()` runs
+   * `onSortingChange`). Held under `holder.<path>.<method>`; a local read off the holder (a loop variable) is a name for it.
+   */
+  members?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>;
 }
+
+/** TanStack Table's column and row methods that hand an updater to a state feature's `on…Change` option. */
+const TABLE_MEMBERS: NonNullable<LibraryObject["members"]> = {
+  column: {
+    onSortingChange: ["toggleSorting", "clearSorting", "getToggleSortingHandler"],
+    onColumnVisibilityChange: ["toggleVisibility", "getToggleVisibilityHandler"],
+  },
+  row: {
+    onRowSelectionChange: ["toggleSelected", "getToggleSelectedHandler"],
+    onExpandedChange: ["toggleExpanded", "getToggleExpandedHandler"],
+  },
+};
 
 /** A TanStack Table state feature's setter and reset (`setSorting`, `resetSorting`), plus the methods built on them. */
 const tableFeature = (feature: string, ...more: string[]): string[] => [`set${feature}`, `reset${feature}`, ...more];
@@ -56,6 +74,14 @@ export const LIBRARY_OBJECTS: readonly LibraryObject[] = [
       onGroupingChange: tableFeature("Grouping"),
     },
     fallback: { option: "onStateChange", methods: ["setState", "reset"] },
+    // Its columns, headers, cells and rows: `header.column.toggleSorting()` runs the table's `onSortingChange` too.
+    members: TABLE_MEMBERS,
+  },
+  {
+    // TanStack Query: `mutation.mutate(x)` / `mutateAsync(x)` call the `mutationFn` the hook was given.
+    packages: /^@tanstack\/(?:react|vue|solid|svelte|angular|preact)-query$|^react-query$/,
+    factories: new Set(["useMutation", "createMutation", "injectMutation"]),
+    runs: { mutationFn: ["mutate", "mutateAsync"] },
   },
 ];
 
@@ -88,6 +114,11 @@ function importsOf(tree: Tree): Map<string, { imported: string; source: string }
     }
   }
   return memoImports;
+}
+
+/** The module and exported name a file's top-level named import binds a local name to, or null. */
+export function importedBinding(tree: Tree, local: string): { imported: string; source: string } | null {
+  return importsOf(tree).get(local) ?? null;
 }
 
 /** A call building a library object: its factory as the package exports it and the options object it writes. */
@@ -128,13 +159,16 @@ export function statedCallbacks(built: LibraryObjectCall): Array<{ option: strin
   }
   const written = new Set(stated.map((s) => s.option));
   const out: Array<{ option: string; value: Node; methods: readonly string[] }> = [];
+  /** The member methods an option runs, as `column.toggleSorting`. */
+  const memberMethods = (wanted: (option: string) => boolean): string[] =>
+    Object.entries(library.members ?? {}).flatMap(([path, byOption]) => Object.entries(byOption).filter(([option]) => wanted(option)).flatMap(([, methods]) => methods.map((m) => `${path}.${m}`)));
   for (const s of stated) {
     const own = library.runs[s.option];
-    if (own) out.push({ ...s, methods: own });
+    if (own) out.push({ ...s, methods: [...own, ...memberMethods((option) => option === s.option)] });
     else if (library.fallback?.option === s.option) {
       // What runs the fallback: its own methods, and every setter whose own option is not written.
       const unclaimed = Object.entries(library.runs).filter(([option]) => !written.has(option)).flatMap(([, methods]) => methods);
-      out.push({ ...s, methods: [...library.fallback.methods, ...unclaimed] });
+      out.push({ ...s, methods: [...library.fallback.methods, ...unclaimed, ...memberMethods((option) => !written.has(option))] });
     }
   }
   return out;
@@ -242,6 +276,121 @@ export function libraryObjectProps(bindings: readonly FunctionPropBinding[], mem
     for (const m of membersOf(b.handler) ?? []) out.push({ component: b.component, prop: `${b.prop}.${m.method}`, handler: m.name, line: b.line });
   }
   return out;
+}
+
+/**
+ * The names a library object's members are called by when read off a local derived from the holder: a loop variable
+ * over what the holder hands out (`for (const header of headerGroup.headers)`, `.map((header) => …)`). A member held
+ * as `column.toggleSorting` is called `header.column.toggleSorting()` on a header or cell and `column.toggleSorting()`
+ * on the column itself, so both spellings are the local's.
+ */
+export function derivedMemberKeys(local: string, method: string): string[] {
+  const dot = method.indexOf(".");
+  return dot < 0 ? [] : [`${local}.${method}`, `${local}.${method.slice(dot + 1)}`];
+}
+
+/** Iteration methods whose callback parameter is one element of the receiver. */
+const ITERATORS: ReadonlySet<string> = new Set(["map", "forEach", "flatMap", "filter", "find", "some", "every"]);
+
+/** The identifier an expression starts from: `table` of `table.getHeaderGroups()`, `headerGroup` of `headerGroup.headers`. */
+function rootIdentifier(n: Node | null | undefined): string | null {
+  let at = unwrap(n);
+  for (let hop = 0; at && hop < 12; hop++) {
+    if (at.type === "identifier") return at.text;
+    if (at.type === "call_expression") at = unwrap(at.childForFieldName("function"));
+    else if (at.type === "member_expression" || at.type === "subscript_expression") at = unwrap(at.childForFieldName("object"));
+    else if (at.type === "await_expression") at = unwrap(at.namedChild(0));
+    else return null;
+  }
+  return null;
+}
+
+/** The element a callback of an iteration method takes, and the root identifier of what it iterates: `rows.map((row) => …)`. */
+function iterationOf(fn: Node): { param: string; root: string; call: Node } | null {
+  if (!FUNCTION_VALUES.has(fn.type) || fn.parent?.type !== "arguments") return null;
+  const call = fn.parent.parent;
+  const callee = call?.type === "call_expression" ? call.childForFieldName("function") : null;
+  if (callee?.type !== "member_expression" || !ITERATORS.has(callee.childForFieldName("property")?.text ?? "")) return null;
+  if (fn.parent.namedChildren.find((a) => a?.type !== "comment")?.id !== fn.id) return null;
+  const root = rootIdentifier(callee.childForFieldName("object"));
+  const single = fn.childForFieldName("parameter");
+  const first = single ?? fn.childForFieldName("parameters")?.namedChildren.find((p) => p?.type !== "comment") ?? null;
+  const id = first?.type === "identifier" ? first : first?.childForFieldName("pattern");
+  return root && id?.type === "identifier" && call ? { param: id.text, root, call } : null;
+}
+
+/**
+ * The locals a block derives from a library object by iterating what it hands out — the callbacks of
+ * `table.getHeaderGroups().map((group) => group.headers.map((header) => …))` name `group` and `header` —, in source order.
+ */
+export function derivedLocalsIn(scope: Node, holder: string): string[] {
+  const roots = new Set([holder]);
+  const out: string[] = [];
+  for (const fn of scope.descendantsOfType(["arrow_function", "function_expression"])) {
+    const it = fn ? iterationOf(fn) : null;
+    if (it && roots.has(it.root) && !roots.has(it.param)) {
+      roots.add(it.param);
+      out.push(it.param);
+    }
+  }
+  return out;
+}
+
+/**
+ * The library object a name is derived from where markup or script uses it: the callback parameter an iteration over
+ * the holder's results binds (`headers.map((header) => <Cell header={header} />)`) — its holder's members.
+ */
+export function derivedObjectAt(
+  site: Node,
+  name: string,
+  heldName: (fn: Node) => string | null,
+  namesFunction: (site: Node, name: string) => boolean,
+): LibraryObjectMember[] | null {
+  for (let p = site.parent, hops = 0; p && hops < 200; p = p.parent, hops++) {
+    const it = iterationOf(p);
+    if (!it || it.param !== name) continue;
+    return libraryObjectAt(it.call, it.root, heldName, namesFunction) ?? derivedObjectAt(it.call, it.root, heldName, namesFunction);
+  }
+  return null;
+}
+
+/**
+ * The locals a Vue template derives from the library objects its script holds: `v-for="header in headerGroup.headers"`
+ * with `headerGroup` from `table.getHeaderGroups()` — local → the holder.
+ */
+export function derivedTemplateLocals(template: string, holders: ReadonlySet<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!template.includes("v-for")) return out;
+  for (const m of template.matchAll(/\bv-for\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    const loop = /^\s*\(?\s*([A-Za-z_$][\w$]*)\s*(?:,[^)]*)?\)?\s+(?:in|of)\s+([\s\S]*)$/.exec(m[1] ?? m[2] ?? "");
+    const root = /^\s*([A-Za-z_$][\w$]*)/.exec(loop?.[2] ?? "")?.[1];
+    if (!loop || !root) continue;
+    const holder = holders.has(root) ? root : out.get(root);
+    if (holder && !holders.has(loop[1]!)) out.set(loop[1]!, holder);
+  }
+  return out;
+}
+
+/**
+ * Hold a library object's member callbacks under the locals a template derives from it too: each record held under
+ * `table.column.toggleSorting` is held again under `header.column.toggleSorting` and `header.toggleSorting` for every
+ * local derived from `table` (`derivedTemplateLocals`), where the template's calls are made.
+ */
+export function addDerivedLibraryMembers(functions: ReadonlyArray<{ calls: CallInfo[] }>, locals: ReadonlyMap<string, string>): void {
+  if (locals.size === 0) return;
+  for (const fn of functions) {
+    const more: CallInfo[] = [];
+    for (const c of fn.calls) {
+      if (c.passed !== "property" || !c.libraryOption || !c.returnedAs) continue;
+      const dot = c.returnedAs.indexOf(".");
+      const holder = c.returnedAs.slice(0, dot);
+      for (const [local, from] of locals) {
+        if (from !== holder) continue;
+        for (const key of derivedMemberKeys(local, c.returnedAs.slice(dot + 1))) more.push({ ...c, returnedAs: key });
+      }
+    }
+    fn.calls.push(...more);
+  }
 }
 
 function keyText(key: Node | null | undefined): string | null {

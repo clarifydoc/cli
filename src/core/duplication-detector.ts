@@ -141,6 +141,23 @@ function shapesOf(fn: { name: string; calls: { name: string; kind: string }[] },
   return calls.length >= MIN_SHAPE_CALLS ? calls.map((c) => callShape(c, entity)) : null;
 }
 
+/** The held name of an option callback written in place (`<useMutation:mutationFn@4>`, `<ConfirmBox:onConfirm@14>`). */
+const OPTION_CALLBACK = /^<[\w$]+:[\w$]+@\d+>$/;
+
+/**
+ * A function stands for the option callbacks it writes in place and hands on (`CallInfo.passed: "argument"` of a held
+ * function, named `<useMutation:mutationFn@4>`): their calls are its own, at the place it hands them on. Two hooks
+ * built the same way are as alike as when the callback's body was theirs.
+ */
+function withHeldCalls(a: FileAnalysis): FileAnalysis {
+  const held = new Map<string, FileAnalysis["functions"][0]["calls"]>();
+  for (const fn of a.functions) if (OPTION_CALLBACK.test(fn.name)) held.set(fn.name, fn.calls);
+  if (held.size === 0) return a;
+  const inlined = (calls: FileAnalysis["functions"][0]["calls"], depth: number): FileAnalysis["functions"][0]["calls"] =>
+    calls.flatMap((c) => (c.passed === "argument" && depth < 3 && held.has(c.name) ? inlined(held.get(c.name)!, depth + 1) : [c]));
+  return { ...a, functions: a.functions.map((fn) => (fn.calls.some((c) => c.passed === "argument" && held.has(c.name)) ? { ...fn, calls: inlined(fn.calls, 0) } : fn)) };
+}
+
 /**
  * Detect duplicate functions across files.
  */
@@ -153,9 +170,9 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   // COPIES of authored functions, so every source function would pair with
   // its own build output.
   const vendored = vendoredMinoritySet(analyses);
-  const authored = analyses.filter(
-    (a) => !a.minified && !vendored.has(a.filePath) && !isTestFile(a.filePath, a.language),
-  );
+  const authored = analyses
+    .filter((a) => !a.minified && !vendored.has(a.filePath) && !isTestFile(a.filePath, a.language))
+    .map(withHeldCalls);
 
   // ── Name-based duplication ──
   const fnByName = new Map<string, { filePath: string; line: number; fn: FileAnalysis["functions"][0] }[]>();

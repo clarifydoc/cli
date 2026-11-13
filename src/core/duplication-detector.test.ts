@@ -111,6 +111,24 @@ describe("detectDuplicates — structural duplicates by shape", () => {
     expect(g?.occurrences.map((o) => o.similarity)).toEqual([100, 100]);
   });
 
+  it("counts the callbacks a hook writes in place and hands on as its own calls (mutation hooks)", () => {
+    // `useSaveClub` hands `<useMutation:mutationFn@8>` on; the calls of the callback are the hook's shape.
+    const hook = (name: string, held: string, api: string, line: number) => [
+      { ...fn(name, ["useQueryClient", "useMutation"], { line, span: 9 }), calls: [
+        { name: "useQueryClient", kind: "cross-file" },
+        { name: "useMutation", kind: "cross-file" },
+        { name: held, kind: "internal", passed: "argument" },
+        { name: "client.invalidateQueries", kind: "cross-file" },
+      ] },
+      { ...fn(held, [], { line: line + 2, span: 2 }), calls: [{ name: api, kind: "cross-file" }, { name: "toast", kind: "cross-file" }] },
+    ];
+    const groups = detectDuplicates([
+      file("queries/clubs.ts", hook("useSaveClub", "<useMutation:mutationFn@8>", "ClubsAPI.save", 5)),
+      file("queries/players.ts", hook("useSavePlayer", "<useMutation:mutationFn@9>", "PlayersAPI.save", 6)),
+    ]);
+    expect(groups.find((x) => x.kind === "structural")?.functionName).toBe("useSaveClub, useSavePlayer");
+  });
+
   it("does not pair functions whose shared calls are only builtin members", () => {
     const groups = detectDuplicates([
       file("kit/colours.ts", [fn("kitKind", ["[HOME, AWAY].includes", "[THIRD].includes"])]),

@@ -1,7 +1,8 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
-import { libraryObjectAt } from "./library-callbacks.js";
+import { derivedMemberKeys, derivedObjectAt, libraryObjectAt } from "./library-callbacks.js";
+import { dispatchMapAt } from "./dispatch-map-props.js";
 import { heldFunction } from "./held-functions.js";
 import { namesFunction } from "./member-values.js";
 
@@ -63,6 +64,18 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
       const library = expr?.type === "identifier" ? libraryObjectAt(attr, expr.text, heldFunction, namesFunction) : null;
       for (const m of library ?? []) out.push({ component: tag, prop: `${name.text}.${m.method}`, handler: m.name, line: attr.startPosition.row + 1 });
       if (library) continue;
+      // `<HeaderCell header={header} />` inside `table.getHeaderGroups().map(…)`: the child's `header.column.toggleSorting()` runs the table's `onSortingChange`.
+      const derived = expr?.type === "identifier" && ITERATION.test(sourceText) ? derivedObjectAt(attr, expr.text, heldFunction, namesFunction) : null;
+      for (const m of derived ?? []) {
+        for (const key of derivedMemberKeys(name.text, m.method)) out.push({ component: tag, prop: key, handler: m.name, line: attr.startPosition.row + 1 });
+      }
+      if (derived) continue;
+      // `<ClubTable actions={ACTIONS} />` with `const ACTIONS = { save: saveClub }`: the child's `actions.save()` runs it.
+      const held = expr?.type === "identifier" ? dispatchMapAt(attr, expr.text, namesFunction) : null;
+      for (const h of held ?? []) {
+        out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1, ...(h.handlerImport ? { handlerImport: h.handlerImport } : {}) });
+      }
+      if (held) continue;
       // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
       const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
       if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });
@@ -70,6 +83,9 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
   }
   return out;
 }
+
+/** Whether a file iterates anything (a derived local is an iteration's parameter). */
+const ITERATION = /\.(?:map|forEach|flatMap|filter|find|some|every)\(/;
 
 /** A function named by an identifier or `this.member`, as written. */
 function handedFunction(n: Node | null): string | null {
