@@ -62,8 +62,20 @@ export function extractHumaRoutes(lines: string[], facts?: RouteFact[], closureC
     const column = brace - (text.lastIndexOf("\n", brace - 1) + 1);
     return closureCalls(row + 1, lineAt(at + arg.trim().length - 1), { line: row, column: column + 1 });
   };
+  // The top-level function declaring the call at `offset`: the last `func` at a line start before it, a method
+  // by its receiver's type too (`(*Club).Register` and `(*Car).Register` are two registrars).
+  const funcStarts = [...text.matchAll(/^func\s+(?:\(\s*\w*\s*\*?\s*(\w+)[^)]*\)\s*)?([A-Za-z_]\w*)/gm)].map((m) => ({ at: m.index!, name: m[1] ? `${m[1]}.${m[2]}` : m[2]! }));
+  const registrarAt = (offset: number): string | undefined => {
+    let found: string | undefined;
+    for (const f of funcStarts) {
+      if (f.at > offset) break;
+      found = f.name;
+    }
+    return found;
+  };
   const push = (method: string, path: string, handlerArg: string, offset: number, end: number): void => {
     const inline = /^func\s*\(/.test(handlerArg.trim());
+    const registrar = registrarAt(offset);
     routes.push({
       path,
       httpMethod: method,
@@ -73,6 +85,7 @@ export function extractHumaRoutes(lines: string[], facts?: RouteFact[], closureC
       middleware: [],
       line: lineAt(offset),
       owner: HUMA_OWNER,
+      ...(registrar ? { registrar } : {}),
       prefixUnresolved: "base:huma",
     });
   };

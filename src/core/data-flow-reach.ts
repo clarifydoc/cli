@@ -583,8 +583,19 @@ export function computeDataFlows(
 
   // Route symbols that link to something: the handler the linker resolved, the calls of an inline body.
   const linkedRoutes = new Set<string>();
+  const linksFrom = new Map<string, SymbolLink[]>();
+  // The middleware a route names (`RouteInfo.middlewareCalls`): a link to one says nothing about the route's handler.
+  const middlewareOf = new Map<string, Set<string>>();
+  for (const r of routes) {
+    const names = r.middlewareCalls?.filter((n) => n !== r.handler);
+    if (r.kind === "api" && names?.length) middlewareOf.set(keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`), new Set(names));
+  }
   for (const l of symbolLinks) {
-    if (l.sourceSymbol.startsWith("route:") && l.relation !== "reference" && !l.navigational) linkedRoutes.add(keyOf(l.sourceFile, l.sourceSymbol));
+    if (l.sourceSymbol.startsWith("route:") && l.relation !== "reference" && !l.navigational) {
+      const k = keyOf(l.sourceFile, l.sourceSymbol);
+      if (!middlewareOf.get(k)?.has(l.callName)) linkedRoutes.add(k);
+      (linksFrom.get(k) ?? linksFrom.set(k, []).get(k)!).push(l);
+    }
   }
 
   const seen = new Set<string>();
@@ -606,37 +617,51 @@ export function computeDataFlows(
     // reach summary already carried the effects, one lookup away.
     let key: string | null = null;
     const synthetic = keyOf(route.filePath, `route:${route.httpMethod ?? "USE"} ${route.path}`);
-    if (reachByKey.has(synthetic)) {
+    // The functions this route's middleware resolved to: a flow whose witness leaves the route through one
+    // is reached by the middleware, not the handler.
+    const mwTargets = new Set<string>();
+    for (const l of linksFrom.get(synthetic) ?? []) if (middlewareOf.get(synthetic)?.has(l.callName)) mwTargets.add(keyOf(l.targetFile, l.targetSymbol));
+    // Its symbol links only to middleware: the handler is judged as if the route had no links, and what the
+    // middleware reaches is added to it below.
+    const mwOnly = mwTargets.size > 0 && !linkedRoutes.has(synthetic);
+    if (reachByKey.has(synthetic) && (!mwOnly || reachByKey.get(synthetic)!.effects.some((e) => e.distance === 0))) {
       key = synthetic;
     } else if (linkedRoutes.has(synthetic)) {
       // The route's symbol links to what it runs — its resolved handler, its
       // inline body's calls — and none of that reaches data: neither does the
       // route. The function around its line registers it (a `main` that also
       // runs migrations and crons) and is no part of a request.
-      continue;
+      key = null;
     } else if (!route.handler && (route.calls?.length ?? 0) > 0) {
       // A route carrying its own body's calls (an inline closure among several
       // a registrar declares) reaches what those calls reach, or nothing: the
       // function around its line is the registrar, not its handler.
-      continue;
+      key = null;
     } else {
       const at = innermostAt(spans, route.line);
       if (at) {
         // Never the function registering the route: only the one it is declared on.
-        if (!declaredOn(at, route.handler, route.line)) continue;
-        key = keyOf(route.filePath, at.symbol);
+        key = declaredOn(at, route.handler, route.line) ? keyOf(route.filePath, at.symbol) : null;
       } else if (route.handler) {
         const local = byName(spans, route.handler);
         if (local.length >= 1) key = keyOf(route.filePath, local[0]!.symbol);
         else key = globalLookup(route.handler);
       }
     }
-    if (!key) continue;
-    const r = reachByKey.get(key);
-    if (!r) continue;
+    const r = key ? reachByKey.get(key) : undefined;
+    const mwReach = mwOnly && key !== synthetic ? reachByKey.get(synthetic) : undefined;
+    if (!r && !mwReach) continue;
 
     const entryLabel = `${route.httpMethod ?? ""} ${route.path}`.trim();
-    for (const e of r.effects) {
+    const isViaMiddleware = (k: string, e: ReachedEffect): boolean => {
+      const hop = viaOf(k, e).via?.[1];
+      return !!hop && mwTargets.has(keyOf(hop.file, hop.symbol));
+    };
+    // The handler's reach first, then what its middleware reaches (only a middleware-only symbol is read for it).
+    const sources: Array<{ k: string; effects: ReachedEffect[] }> = [];
+    if (r && key) sources.push({ k: key, effects: r.effects });
+    if (mwReach) sources.push({ k: synthetic, effects: mwReach.effects.filter((e) => isViaMiddleware(synthetic, e)) });
+    for (const { k, effects } of sources) for (const e of effects) {
       const dk = `${route.filePath} ${entryLabel} ${e.kind} ${e.resource}`;
       if (seen.has(dk)) continue;
       seen.add(dk);
@@ -648,7 +673,8 @@ export function computeDataFlows(
         resource: e.resource,
         distance: e.distance,
         confidence: e.confidence,
-        ...viaOf(key, e),
+        ...viaOf(k, e),
+        ...(mwTargets.size > 0 && isViaMiddleware(k, e) ? { viaMiddleware: true } : {}),
       });
     }
   }

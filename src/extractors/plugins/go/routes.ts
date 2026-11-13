@@ -265,6 +265,21 @@ function classifyGuard(raw: string): GuardAttr {
   return { text, policies: [callee] };
 }
 
+/**
+ * The functions a route's middleware texts name: `auth.SessionRequired(db)` → `auth.SessionRequired`, a bare
+ * `authRequired` → itself. An inline closure, a conversion and a value that is no name are left out.
+ */
+function middlewareCallees(texts: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const text of texts) {
+    const m = /^([A-Za-z_][\w.]*)\s*(\(|$)/.exec(text.trim());
+    const name = m?.[1];
+    if (!name || name === "func" || NOT_A_FUNCTION.has(name) || TRANSPARENT_WRAPPERS.has(name) || out.includes(name)) continue;
+    out.push(name);
+  }
+  return out;
+}
+
 function isAuthGuard(g: GuardAttr): boolean {
   return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
 }
@@ -431,6 +446,12 @@ function closureSpan(lines: readonly string[], row: number): { row: number; colu
  */
 export type ClosureCalls = (startRow: number, endRow: number, inline: { line: number; column: number }) => CallInfo[];
 
+/** `{ middlewareCalls }` when the texts name a function, else nothing (the field is optional). */
+function middlewareNames(texts: readonly string[]): { middlewareCalls?: string[] } {
+  const names = middlewareCallees(texts);
+  return names.length > 0 ? { middlewareCalls: names } : {};
+}
+
 export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCalls?: ClosureCalls): RouteInfo[] {
   const routes: RouteInfo[] = [];
   // Echo's `Group.Add` writes `g.prefix + path`: a path without a leading slash is glued to the group's
@@ -475,6 +496,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       handler: handler || null,
       calls: [],
       middleware: [...inherited, ...own].map((g) => g.text),
+      ...middlewareNames([...inherited, ...own].map((g) => g.text)),
       line,
       // Registered on the function's router parameter: the path is relative to wherever it is passed.
       ...(recv && routerVars.get(recv) && currentFn ? { owner: `fn:${currentFn}` } : {}),
@@ -914,6 +936,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const own = after.args.filter((a) => !STRING_RE.test(a)).map(classifyGuard);
       if (own.length > 0) {
         route.middleware.push(...own.map((g) => g.text));
+        Object.assign(route, middlewareNames(route.middleware));
         const auth = buildAuth(first.inherited.filter(isAuthGuard), [...first.own, ...own].filter(isAuthGuard));
         if (auth) route.auth = auth;
       }

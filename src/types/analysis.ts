@@ -2027,6 +2027,13 @@ export interface RouteInfo {
    */
   middleware: string[];
   /**
+   * The functions the route's middleware names, as written at the registration (`auth.SessionRequired`, from
+   * `r.Group("/api", auth.SessionRequired(db))`): each is the middleware itself or the factory building it. The
+   * symbol linker resolves them like a handler, so what the middleware reads at request time joins the route's
+   * flows (`DataFlowPath.viaMiddleware`). Router-level ones (`Use`, a group's) are listed on every route they guard.
+   */
+  middlewareCalls?: string[];
+  /**
    * API routes, with a coverage report: the lines the tests ran in the handler and the functions it calls
    * (three calls deep), over the functions the report counts. `covered: 0` is a route no test runs.
    */
@@ -2096,6 +2103,12 @@ export interface RouteInfo {
    * prefix to one router's routes when a file declares several.
    */
   owner?: string;
+  /**
+   * The function whose body declares the route, when a registrar function declares it on an API it is handed
+   * (Huma operations). Two registrars in one project declaring the same method and path keep two rows
+   * (`routeIdentityKey`), each with its own calls: one's call never joins the other's row.
+   */
+  registrar?: string;
   /**
    * An outer prefix exists but could not be resolved, and `path` is only the
    * known tail of what a caller requests. The value names why: `base:X` (an
@@ -3947,6 +3960,8 @@ export interface DataFlowPath {
    * written before it was recorded.
    */
   via?: FlowHop[];
+  /** The route reaches this effect through its middleware, not its handler (`RouteInfo.middlewareCalls`). */
+  viaMiddleware?: boolean;
   /** How much this flow matters when something goes wrong (flow-criticality.ts). Absent on older artifacts. */
   criticality?: FlowCriticality;
 }

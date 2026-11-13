@@ -419,6 +419,15 @@ export function buildSymbolLinks(
         if (specLink) links.push(specLink);
       }
 
+      // Link route → the middleware that runs before its handler (`RouteInfo.middlewareCalls`): the function
+      // named, or the factory building it, resolved as a handler is. What it reads at request time is the
+      // route's; the registrar around it is not, so the link leaves the route's own symbol.
+      for (const name of route.middlewareCalls ?? []) {
+        if (name === route.handler) continue;
+        const mw = resolveCallToDefinition(sourceFile, sourceSymbol, { name, kind: "internal", target: null, line: route.line }, analysis, ctx, true);
+        if (mw) links.push(mw);
+      }
+
       // Link route → functions it calls. Its body (a lambda or closure written
       // inside a method) sees that method's fields, parameters and typed locals,
       // so its calls resolve in the method's scope and are the route's.
