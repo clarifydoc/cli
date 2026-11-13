@@ -21,6 +21,8 @@ export function contextValues(tree: Tree, sourceText: string): ContextValue[] {
     if (n.type === "call_expression") {
       const found = contextValueOf(n);
       if (found) out.push(found);
+      const typed = typedContextValue(n);
+      if (typed) out.push(typed);
     } else if (n.type === "variable_declarator") {
       readDestructuring(n, destructured);
     }
@@ -70,6 +72,52 @@ function contextValueOf(call: Node): ContextValue | null {
   if (holder?.type !== "variable_declarator" || holder.childForFieldName("value")?.id !== call.id) return null;
   const local = holder.childForFieldName("name");
   return local?.type === "identifier" ? { kind: "inject", key, name: local.text, line } : null;
+}
+
+/**
+ * The value a key hands on, by type: `provide(LeagueKey, useLeague())` — the factory called —, `provide(LeagueKey, league)` — a
+ * local the file types — and `const league = inject(LeagueKey)`. The key is a literal or an identifier (an imported symbol,
+ * `keyRef`); the project pass resolves an identifier to the declaration it names, so two modules' `Key` stay two keys.
+ */
+const WRAPPERS: ReadonlySet<string> = new Set(["non_null_expression", "as_expression", "satisfies_expression", "parenthesized_expression"]);
+/** Where Vue's `provide`/`inject` come from; a project helper of the same name is none of them. */
+const VUE_SOURCE = /^(?:vue|@vue\/[\w-]+|@vueuse\/[\w-]+|#imports|nuxt\/app|#app)$/;
+
+function typedContextValue(call: Node): ContextValue | null {
+  const callee = call.childForFieldName("function")?.text;
+  if (callee !== "provide" && callee !== "inject") return null;
+  if (importedFromElsewhere(call.tree.rootNode, callee)) return null;
+  const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+  const literal = literalKey(args[0]);
+  const ref = !literal && args[0]?.type === "identifier" ? args[0].text : null;
+  const key = literal || ref;
+  if (!key) return null;
+  const line = call.startPosition.row + 1;
+  const keyed = ref ? { keyRef: true as const } : {};
+  if (callee === "provide") {
+    const value = args[1];
+    if (args.length !== 2 || !value) return null;
+    if (value.type === "identifier") return { kind: "provide-typed", key, ...keyed, name: value.text, line };
+    const fn = value.type === "call_expression" ? value.childForFieldName("function") : null;
+    return fn?.type === "identifier" ? { kind: "provide-typed", key, ...keyed, name: fn.text, factory: true, line } : null;
+  }
+  // `inject(Key)!`, `inject(Key) as League`: the declarator holds the wrapper.
+  let held: Node = call;
+  while (held.parent && WRAPPERS.has(held.parent.type)) held = held.parent;
+  const holder = held.parent;
+  if (holder?.type !== "variable_declarator" || holder.childForFieldName("value")?.id !== held.id) return null;
+  const local = holder.childForFieldName("name");
+  return local?.type === "identifier" ? { kind: "inject-typed", key, ...keyed, name: local.text, line } : null;
+}
+
+/** Whether the file imports `name` from a module that is not Vue's. */
+function importedFromElsewhere(root: Node, name: string): boolean {
+  for (const stmt of root.namedChildren) {
+    if (stmt?.type !== "import_statement") continue;
+    const source = stmt.childForFieldName("source")?.text.slice(1, -1) ?? "";
+    if (!VUE_SOURCE.test(source) && stmt.descendantsOfType("identifier").some((id) => id?.text === name)) return true;
+  }
+  return false;
 }
 
 /** `'transferPlayer'`, `"transferPlayer"`, `` `transferPlayer` `` (no substitution). */

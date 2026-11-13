@@ -461,6 +461,8 @@ export interface FileAnalysis {
    */
   contextValues?: ContextValue[];
   propBindings?: PropBinding[];
+  /** Props a component's watchers re-run on, and the locals a Vue parent binds them to (`prop-flows.ts`). */
+  propFlows?: PropFlows;
   /**
    * Functions the file's markup hands a child component by name as a prop
    * (Vue `:on-confirm="confirmDeletion"`, `:update-selected="setSelected"`):
@@ -3203,7 +3205,16 @@ export interface SubComponentInfo {
 
 /** A value provided to descendant components under `key`, or injected from an ancestor (`FileAnalysis.contextValues`). */
 export interface ContextValue {
-  kind: "provide" | "inject";
+  /**
+   * `provide`/`inject`: a function handed on or taken under a literal key. `provide-typed`/`inject-typed`: the value's
+   * TYPE travels — `provide(LeagueKey, useLeague())` (`name` the factory called, `factory`; or the local holding it)
+   * and `const league = inject(LeagueKey)` (`name` the local) — under a literal or an identifier key (`keyRef`).
+   */
+  kind: "provide" | "inject" | "provide-typed" | "inject-typed";
+  /** The key is an identifier (an imported symbol), not a literal: the project pass resolves it to the declaration. */
+  keyRef?: true;
+  /** `provide-typed`: `name` is a factory called in place (`useLeague()`), not a local. */
+  factory?: true;
   /** The literal key (`transferPlayer`). */
   key: string;
   /** For a provide, the function handed on (`onTransferPlayer`); for an inject, the local holding it. */
@@ -3272,6 +3283,29 @@ export interface PropBinding {
   transform?: string;
   /** The bound value is derived from the origin (`:club-id="club.id"`, `club` read off a store by a prop): `CallArgOrigin.derivation`. */
   derivation?: ValueStep[];
+}
+
+/**
+ * How a prop's value moves between components (`FileAnalysis.propFlows`). `watchers`: the child's callbacks that read
+ * `props.<prop>` (a `watch` source, a `watchEffect` body) and so run when a parent changes the value. `bindings`: a
+ * Vue parent's tag binding a prop straight to one of its own locals (`<ClubList :query="passedQuery" />`), with the
+ * functions of the parent writing that local (`passedQuery.value = x`).
+ */
+export interface PropFlows {
+  watchers?: Array<{
+    prop: string;
+    function: string;
+    line: number;
+    /** The callback is a function of its own only for this reason: the function that registers it (`<setup>`) runs it, as it ran before it was split out. */
+    registeredBy?: { function: string; hook: string };
+  }>;
+  bindings?: Array<{
+    component: string;
+    prop: string;
+    line: number;
+    local: string;
+    writes: Array<{ function: string; line: number; spelling: string }>;
+  }>;
 }
 
 /** A function a component's markup hands a child by name as a prop (`FileAnalysis.functionProps`). */

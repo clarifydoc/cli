@@ -135,7 +135,7 @@ function vueBindings(tree: Tree, raw: string): PropBinding[] {
 }
 
 /** The attributes of a tag from `from` to its `>`, quoted values kept whole. */
-function attributesAfter(text: string, from: number): Array<{ name: string; value: string; offset: number }> {
+export function attributesAfter(text: string, from: number): Array<{ name: string; value: string; offset: number }> {
   const out: Array<{ name: string; value: string; offset: number }> = [];
   const re = /\s*([^\s=/>"']+)(?:\s*=\s*("([^"]*)"|'([^']*)'))?|\s*\/?>/gy;
   re.lastIndex = from;

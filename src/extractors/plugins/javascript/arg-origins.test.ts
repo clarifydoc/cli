@@ -250,10 +250,11 @@ function load() {
     // The record spread in stands for each property the callback reads.
     expect(await originsOf(src, "load", "update.mutateAsync")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" }, derivation: [{ ...returned, field: "value" }] }]);
     // A watch callback's parameter is the watched value; a source of unknown origin leaves it a parameter.
-    expect(await originsOf(src, "follow", "loadPlayer")).toEqual([{ index: 0, origin: { kind: "prop", name: "playerId" } }]);
+    // (A watcher reading a prop is a function of its own, `<watch@line>`, run when a parent changes the value.)
+    expect(await originsOf(src, "<watch@8>", "loadPlayer")).toEqual([{ index: 0, origin: { kind: "prop", name: "playerId" } }]);
     expect(await originsOf(src, "follow", "loadSquad")).toEqual([{ index: 0, origin: { kind: "param", name: "s", index: 0 } }]);
     // An array of sources: each element of the destructured parameter is its own; one of unknown origin is none.
-    expect(await originsOf(src, "follow", "loadKit")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" } }]);
+    expect(await originsOf(src, "<watch@10>", "loadKit")).toEqual([{ index: 0, origin: { kind: "prop", name: "clubId" } }]);
   });
 
   it("states which returned locals of a composable derive from which parameter", async () => {

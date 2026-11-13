@@ -719,6 +719,8 @@ export interface AstExtractorHooks {
   componentSubscriptions?(tree: Tree, sourceText: string): import("./analysis.js").ComponentSubscription[];
   /** Values provided to descendant components by key, and injected from ancestors: `FileAnalysis.contextValues`. */
   contextValues?(tree: Tree, sourceText: string): import("./analysis.js").ContextValue[];
+  /** Props a component's watchers re-run on and the locals a parent binds them to: `FileAnalysis.propFlows`. */
+  propFlows?(tree: Tree, sourceText: string, rawSource: string, filePath: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): import("./analysis.js").PropFlows | null;
   /** Calls on an app-wide event bus, and calls of functions that may wrap a listener: `FileAnalysis.busEvents`. */
   busEvents?(tree: Tree, sourceText: string): import("./analysis.js").BusEventSite[];
   /**

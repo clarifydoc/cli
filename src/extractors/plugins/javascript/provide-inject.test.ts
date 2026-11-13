@@ -16,7 +16,7 @@ function onSignPlayer(player) {
   transferPlayer(player);
 }`;
     const tree = await parseSource(src, "typescript" as never, "Squad.vue");
-    expect(contextValues(tree, src)).toEqual([
+    expect(contextValues(tree, src).filter((v) => !v.kind.endsWith("-typed"))).toEqual([
       { kind: "inject", key: "transferPlayer", name: "transferPlayer", line: 2 },
       { kind: "inject", key: "releasePlayer", name: "releasePlayer", line: 3 },
       { kind: "provide", key: "signPlayer", name: "onSignPlayer", line: 5 },
@@ -31,7 +31,7 @@ const { signPlayer, release: releasePlayer } = useSquadActions();
 provide('signPlayer', signPlayer);
 provide('releasePlayer', releasePlayer);`;
     const tree = await parseSource(src, "typescript" as never, "Squad.vue");
-    expect(contextValues(tree, src)).toEqual([
+    expect(contextValues(tree, src).filter((v) => !v.kind.endsWith("-typed"))).toEqual([
       { kind: "provide", key: "signPlayer", name: "signPlayer", line: 4, from: "useSquadActions", member: "signPlayer" },
       { kind: "provide", key: "releasePlayer", name: "releasePlayer", line: 5, from: "useSquadActions", member: "release" },
     ]);

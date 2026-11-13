@@ -818,6 +818,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols);
       analysis.functions.push(fn);
     }
+    if (hooks?.propFlows) {
+      const flowFns = [...analysis.functions.filter((f) => f.name !== "<setup>"), ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine })))];
+      const flows = hooks.propFlows(tree, sourceText, rawSource, file.relativePath, flowFns);
+      if (flows) analysis.propFlows = flows;
+    }
     if (hooks?.reactiveCells) {
       const named = [
         ...analysis.functions.filter((f) => f.name !== "<setup>"),

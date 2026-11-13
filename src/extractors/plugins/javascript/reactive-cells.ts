@@ -65,7 +65,11 @@ export interface CellFacts {
   held: Map<number, string>;
   /** Options API watcher callbacks (`watch: { page() {…} }`): callback node id → the function's name. */
   optionNames: Map<number, string>;
+  propTriggers?: PropTrigger[];
 }
+
+/** A watcher whose source reads a prop of the component (`watch(() => props.query, …)`): a parent's write to the bound value runs it. */
+export interface PropTrigger { props: string[]; hook: string; callback: Node | null; callee: string | null; at: Node; /** Held only because it reads a prop: the project pass reaches it from the function that sets it up. */ heldHere?: true }
 
 let memoTree: Tree | null = null;
 let memo: CellFacts | null = null;
@@ -76,13 +80,86 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   if (tree === memoTree) return memo!;
   memoTree = tree;
   const text = tree.rootNode.text;
-  memo = withOptionsApi(tree, read(tree, text), text);
+  memo = withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text);
   return memo;
 }
 
 /** The function name of an Options API watcher callback (`watch: { page() {…} }`), null for any other node. */
 export function optionsWatcherName(node: Node): string | null {
   return reactiveCellsOf(node.tree).optionNames.get(node.id) ?? null;
+}
+
+/**
+ * Watchers reading the component's own props. The cell is the parent's, so nothing in this file writes it: a callback
+ * written in place is held all the same (its own function, `<watch@12>`), and the trigger is kept for the project pass
+ * that joins a parent's binding to it (`FileAnalysis.propFlows`).
+ */
+function withPropWatchers(tree: Tree, facts: CellFacts, text: string): CellFacts {
+  if (!/\bdefineProps\b/.test(text) || !/\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text)) return facts;
+  const sources = importSources(tree.rootNode);
+  const aliases = new Set<string>();
+  const destructured = new Map<string, string>();
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    if (!d) continue;
+    let value = d.childForFieldName("value");
+    // `withDefaults(defineProps<…>(), {…})`
+    if (value?.type === "call_expression" && value.childForFieldName("function")?.text === "withDefaults") value = argumentsOf(value)[0] ?? null;
+    if (value?.type !== "call_expression" || value.childForFieldName("function")?.text !== "defineProps") continue;
+    const name = d.childForFieldName("name");
+    if (name?.type === "identifier") aliases.add(name.text);
+    else if (name?.type === "object_pattern") {
+      for (const p of name.namedChildren) {
+        if (p?.type === "shorthand_property_identifier_pattern") destructured.set(p.text, p.text);
+        else if (p?.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier") destructured.set(p.childForFieldName("value")!.text, p.childForFieldName("key")?.text ?? "");
+      }
+    }
+  }
+  if (aliases.size === 0 && destructured.size === 0) return facts;
+  const propsRead = (expr: Node | null): string[] => {
+    const out = new Set<string>();
+    const visit = (n: Node): void => {
+      if (n.type === "member_expression" && n.childForFieldName("object")?.type === "identifier" && aliases.has(n.childForFieldName("object")!.text)) {
+        const prop = n.childForFieldName("property")?.text;
+        if (prop) out.add(prop);
+      } else if (n.type === "identifier" && destructured.has(n.text) && !(n.parent?.type === "member_expression" && n.parent.childForFieldName("property")?.id === n.id)) {
+        out.add(destructured.get(n.text)!);
+      }
+      for (const c of n.namedChildren) if (c) visit(c);
+    };
+    if (expr) visit(expr);
+    return [...out];
+  };
+  const fromVue = (name: string): boolean => {
+    const src = sources.get(name);
+    return src === undefined || VUE_SOURCES.test(src);
+  };
+  const found: PropTrigger[] = [];
+  for (const n of tree.rootNode.descendantsOfType("call_expression")) {
+    const callee = n?.childForFieldName("function");
+    if (!n || callee?.type !== "identifier" || !fromVue(callee.text)) continue;
+    const args = argumentsOf(n);
+    if (VUE_WATCH.has(callee.text) && args.length >= 2) {
+      const sourceNodes = args[0]!.type === "array" ? args[0]!.namedChildren : [args[0]];
+      const read = sourceNodes.flatMap((s) => (s && (s.type === "arrow_function" || s.type === "function_expression" || s.type === "function") ? propsRead(s.childForFieldName("body")) : []));
+      if (read.length > 0) found.push({ props: read, hook: callee.text, ...callbackOf(args[1]!), at: n });
+    } else if (VUE_EFFECT.has(callee.text) && args[0]) {
+      const read = propsRead(getterOf(args[0]));
+      if (read.length > 0) found.push({ props: read, hook: callee.text, ...callbackOf(args[0]), at: n });
+    }
+  }
+  if (found.length === 0) return facts;
+  const held = new Map(facts.held);
+  const used = new Map<string, number>();
+  for (const name of held.values()) used.set(name.replace(/#\d+>$/, ">"), (used.get(name.replace(/#\d+>$/, ">")) ?? 0) + 1);
+  for (const t of found) {
+    if (!t.callback || held.has(t.callback.id)) continue;
+    const base = `<${t.hook}@${t.callback.startPosition.row + 1}>`;
+    const n = (used.get(base) ?? 0) + 1;
+    used.set(base, n);
+    held.set(t.callback.id, n > 1 ? base.replace(/>$/, `#${n}>`) : base);
+    t.heldHere = true;
+  }
+  return { ...facts, held, propTriggers: found };
 }
 
 /** The held name of a watcher callback written in place whose cell the file writes, else null. */

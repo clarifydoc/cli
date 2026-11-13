@@ -11,6 +11,7 @@ import { componentSubscriptions } from "./component-subscriptions.js";
 import { reactiveCells } from "./reactive-cells.js";
 import { withSubjectTriggers } from "./rxjs-subjects.js";
 import { contextValues } from "./provide-inject.js";
+import { JsContextTypeResolver, JsPropFlowResolver, propFlows } from "./prop-flows.js";
 import { busEvents, JsEventBusResolver } from "./bus-events.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
@@ -261,6 +262,7 @@ function astHooks(language: Language): AstExtractorHooks {
     componentSubscriptions,
     reactiveCells,
     contextValues,
+    propFlows,
     busEvents,
     externalTemplate: (sourceText) => extractAngularTemplateUrl(sourceText),
     customElements: (sourceText) => extractCustomElements(sourceText),
@@ -300,7 +302,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsContextTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
