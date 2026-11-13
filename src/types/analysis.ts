@@ -3609,7 +3609,28 @@ export interface ScreenComponentInfo {
   /** True for a component rendered in a loop (Vue `v-for`, or an enclosing
    *  `v-for`). Drives the loop badge in the screen's component tree. */
   repeated?: boolean;
+  /**
+   * Where the component sits when the screen states a place but no size: an
+   * auto-sized label or editor, or a non-visual component's place on the
+   * design surface (a data set's icon). `position` stays null.
+   */
+  origin?: { left: number; top: number };
+  /** What the screen itself constrains the control to, as declared (a spin edit's 1–100, a field's length, read-only). */
+  constraints?: ScreenConstraints;
   line: number;
+}
+
+export interface ScreenConstraints {
+  min?: string;
+  max?: string;
+  maxLength?: number;
+  required?: boolean;
+  readOnly?: boolean;
+  disabled?: boolean;
+  /** A display or edit format (`###`, `dd-mm-yyyy`). */
+  format?: string;
+  /** An input mask. */
+  mask?: string;
 }
 
 /**

@@ -7,6 +7,7 @@ import type {
   InteractiveElementInfo,
   ScreenComponentCategory,
   ScreenComponentInfo,
+  ScreenConstraints,
   ScreenInfo,
 } from "../types/analysis.js";
 import { createEmptyAnalysis } from "../types/analysis.js";
@@ -94,6 +95,17 @@ const VISUAL_PROPS = new Set([
 // signal on a Delphi dataset, so missing it hid both the UPDATE data access and
 // the table's writable column list.
 const DB_LIST_PROP_RE = /^(SQL|SelectSQL|ModifySQL|UpdateSQL|InsertSQL|DeleteSQL|RefreshSQL|CommandText)\.Strings$/;
+
+/**
+ * What a control is bound to on its screen: the action a button runs, the
+ * field an editor or a grid column shows, and the DevExpress `DataBinding.`
+ * spelling of the same. Recorded as the component's bindings only — a
+ * `DataSource = x` on a data-aware control is a data link as well.
+ */
+/** Properties that constrain what a field accepts, on the control or its `Properties` (DevExpress) or as a field's own (`Required`). */
+const CONSTRAINT_RE = /^(?:Properties\.)?(MinValue|MaxValue|MaxLength|ReadOnly|Required|DisplayFormat|EditFormat|EditMask|Enabled)$/;
+
+const UI_BINDING_RE = /^(?:DataBinding\.(DataField|FieldName|DataSource)|(Action|DataField|FieldName))$/;
 
 /** Scalar properties that name the table / statement directly. */
 const DB_SCALAR_PROPS = new Set(["TableName", "CommandText"]);
@@ -218,6 +230,12 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
     dataLinks: { prop: string; target: string; line: number }[];
     /** DB-shaped properties (TableName, SQL.Strings, …) with their lines. */
     dbProps: { prop: string; value: string; line: number }[];
+    /** What a control shows or runs (`Action`, `DataField`, `DataBinding.FieldName`, …): its screen bindings, never a data source. */
+    uiBindings: { prop: string; target: string }[];
+    /** Constraint properties as written (`Properties.MaxValue`, `MaxLength`, `ReadOnly`, …), keyed by their last segment. */
+    constraintProps: Map<string, string>;
+    /** Events set on a sub-object (`Properties.OnValidate`): the screen shows them; they are not the form's own handlers. */
+    subEvents: string[];
     parentIndex: number | null;
   }
 
@@ -311,6 +329,9 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
         events: [],
         dataLinks: [],
         dbProps: [],
+        uiBindings: [],
+        constraintProps: new Map(),
+        subEvents: [],
         parentIndex: parentIdx,
       };
 
@@ -357,6 +378,12 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
       if (DB_SCALAR_PROPS.has(propName)) {
         current.dbProps.push({ prop: propName, value: stripQuotes(propValue), line: lineNum });
       }
+      const constraint = CONSTRAINT_RE.exec(propName);
+      if (constraint) current.constraintProps.set(constraint[1]!.toLowerCase(), propValue.trim());
+      const subEvent = /^\w+(?:\.\w+)*\.(On[A-Z]\w*)$/.exec(propName);
+      if (subEvent && /^[A-Za-z_]\w*$/.test(propValue.trim())) current.subEvents.push(subEvent[1]!);
+      const uiBinding = UI_BINDING_RE.exec(propName);
+      if (uiBinding) current.uiBindings.push({ prop: (uiBinding[1] ?? uiBinding[2])!, target: stripQuotes(propValue.trim()) });
 
       // Event handlers: OnClick = btnAddClick. The handler is a method name —
       // `OneOnRow = True` or `OnlyNumbers = False` are properties, not events.
@@ -536,13 +563,43 @@ export function parseDfm(source: string, filePath: string): FileAnalysis {
 // ─── Screen tree builder ──────────────────────────────────────────────────
 
 /** Strip Delphi string quotes: 'Hello' → Hello */
+/** The constraints a control's properties declare; null when it declares none. */
+function constraintsOf(props: Map<string, string>): ScreenConstraints | null {
+  if (props.size === 0) return null;
+  const num = (v: string | undefined) => (v === undefined || !/^-?[\d.]+(?:[eE][-+]?\d+)?$/.test(v) ? undefined : String(Number(v)));
+  const flag = (v: string | undefined) => (v === undefined ? undefined : /^true$/i.test(v));
+  const out: ScreenConstraints = {};
+  const min = num(props.get("minvalue"));
+  const max = num(props.get("maxvalue"));
+  // DevExpress leaves MinValue = MaxValue = 0 for "no limit".
+  if (min !== undefined && max !== undefined && !(min === "0" && max === "0")) Object.assign(out, { min, max });
+  else if (max !== undefined && max !== "0") out.max = max;
+  const maxLength = Number(props.get("maxlength"));
+  if (Number.isFinite(maxLength) && maxLength > 0) out.maxLength = maxLength;
+  if (flag(props.get("required"))) out.required = true;
+  if (flag(props.get("readonly"))) out.readOnly = true;
+  if (props.get("enabled") !== undefined && flag(props.get("enabled")) === false) out.disabled = true;
+  const format = props.get("displayformat") ?? props.get("editformat");
+  if (format !== undefined && stripQuotes(format)) out.format = stripQuotes(format);
+  const mask = props.get("editmask");
+  if (mask !== undefined && stripQuotes(mask)) out.mask = stripQuotes(mask);
+  return Object.keys(out).length ? out : null;
+}
+
+/** A Pascal string literal as written in a form: quoted parts, `''` for a quote, `#229` / `#$E5` for a character. */
+const PASCAL_STRING_RE = /^(?:'(?:[^']|'')*'|#\$[0-9a-fA-F]+|#\d+)+$/;
+
+/** A property's value as text: a Pascal string literal decoded, anything else (an identifier, a number) as written. */
 function stripQuotes(s: string): string {
-  return s.replace(/^'(.*)'$/, "$1");
+  if (!PASCAL_STRING_RE.test(s)) return s.replace(/^'(.*)'$/, "$1");
+  return s.replace(/'((?:[^']|'')*)'|#\$([0-9a-fA-F]+)|#(\d+)/g, (_m, quoted: string | undefined, hex: string | undefined, dec: string | undefined) =>
+    quoted !== undefined ? quoted.replace(/''/g, "'") : String.fromCodePoint(parseInt(hex ?? dec!, hex ? 16 : 10)),
+  );
 }
 
 function buildScreenInfo(
-  rootObject: { name: string; type: string; line: number; propValues: Map<string, string>; events: { event: string }[]; dataLinks: { prop: string; target: string }[]; parentIndex: number | null },
-  allObjects: { name: string; type: string; line: number; propValues: Map<string, string>; events: { event: string }[]; dataLinks: { prop: string; target: string }[]; parentIndex: number | null }[],
+  rootObject: { name: string; type: string; line: number; propValues: Map<string, string>; events: { event: string }[]; dataLinks: { prop: string; target: string }[]; uiBindings: { prop: string; target: string }[]; constraintProps: Map<string, string>; subEvents: string[]; parentIndex: number | null },
+  allObjects: { name: string; type: string; line: number; propValues: Map<string, string>; events: { event: string }[]; dataLinks: { prop: string; target: string }[]; uiBindings: { prop: string; target: string }[]; constraintProps: Map<string, string>; subEvents: string[]; parentIndex: number | null }[],
   filePath: string,
 ): ScreenInfo {
   // Build children map: parentIndex → child objects
@@ -567,6 +624,8 @@ function buildScreenInfo(
     const height = parseInt(pv.get("Height") ?? "", 10);
     const hasPosition = !isNaN(left) && !isNaN(top) && !isNaN(width) && !isNaN(height);
 
+    const origin = !hasPosition && !isNaN(left) && !isNaN(top) ? { left, top } : null;
+    const constraints = constraintsOf(obj.constraintProps);
     const rawCaption = pv.get("Caption") ?? pv.get("Text") ?? pv.get("TextHint") ?? null;
     const caption = rawCaption ? stripQuotes(rawCaption) : null;
 
@@ -583,8 +642,10 @@ function buildScreenInfo(
       align: pv.get("Align") ?? null,
       visible: pv.get("Visible") !== "False",
       children,
-      events: obj.events.map((e) => e.event),
-      dataBindings: obj.dataLinks.map((d) => `${d.prop}=${d.target}`),
+      events: [...obj.events.map((e) => e.event), ...obj.subEvents],
+      dataBindings: [...obj.dataLinks, ...obj.uiBindings].map((d) => `${d.prop}=${d.target}`),
+      ...(origin ? { origin } : {}),
+      ...(constraints ? { constraints } : {}),
       line: obj.line,
     };
   }

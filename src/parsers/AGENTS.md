@@ -46,7 +46,13 @@ Parses Vue Single File Components — splits into `<script>`, `<template>`, `<st
 
 ## dfm-parser.ts
 
-Delphi form file parser (`.dfm`). Not tree-sitter — uses a custom recursive-descent parser for Delphi's form object notation. Produces `ScreenInfo` with nested `ScreenComponentInfo` tree.
+Delphi form file parser (`.dfm`). Not tree-sitter — uses a custom recursive-descent parser for Delphi's form object notation. Produces `ScreenInfo` with nested `ScreenComponentInfo` tree. A caption is a Pascal string literal decoded (`'caf'#233' squad'` → `café squad`, `''` → `'`). A
+component's `dataBindings` add what it shows or runs to its data links: `Action=`, `DataField=` / `FieldName=` and
+the DevExpress `DataBinding.` spellings (screen bindings only, never data sources). `origin` is a place stated without
+a size (an auto-sized control, or a non-visual component's place on the design surface); `constraints` are what the
+form holds a field to (`MinValue`/`MaxValue`, `MaxLength`, `ReadOnly`, `Required`, `Enabled = False`, formats and
+masks, on the control or its `Properties.`); an event set on a sub-object (`Properties.OnValidate`) is among the
+component's `events`, never an interactive element.
 
 `normalize-source.ts` is the text every front end parses (BOM dropped, `\r\n`/`\r` as `\n`), so its lines are the
 ones `splitLines` counts.
