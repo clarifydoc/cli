@@ -66,7 +66,12 @@ export interface CellFacts {
   /** Options API watcher callbacks (`watch: { page() {…} }`): callback node id → the function's name. */
   optionNames: Map<number, string>;
   propTriggers?: PropTrigger[];
+  /** Callbacks written in place on a member of an injected project service (`this.leagueSvc.changes$.pipe(…).subscribe(cb)`), held so a `.next` in another class can run them. */
+  subjectListens?: SubjectListen[];
 }
+
+/** A subscription on `via.field` — a member of a service the class holds as `via` — whose callback is held as its own function. */
+export interface SubjectListen { callback: Node; hook: string; via: string; field: string; at: Node; cls: Node }
 
 /** A watcher whose source reads a prop of the component (`watch(() => props.query, …)`): a parent's write to the bound value runs it. */
 export interface PropTrigger { props: string[]; hook: string; callback: Node | null; callee: string | null; at: Node; /** Held only because it reads a prop: the project pass reaches it from the function that sets it up. */ heldHere?: true }
@@ -80,8 +85,93 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   if (tree === memoTree) return memo!;
   memoTree = tree;
   const text = tree.rootNode.text;
-  memo = withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text);
+  memo = withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text), text);
   return memo;
+}
+
+function ownerClass(n: Node): Node | null {
+  for (let p = n.parent; p; p = p.parent) if (CLASSES.has(p.type)) return p;
+  return null;
+}
+
+/** Whether a node sits in a class's constructor (where a parameter is a bare name). */
+export function inConstructor(n: Node): boolean {
+  for (let p = n.parent; p; p = p.parent) if (p.type === "method_definition") return p.childForFieldName("name")?.text === "constructor";
+  return false;
+}
+
+/** The type a class member holding a service names, by member name: constructor parameters, typed fields, `inject(T)` fields. */
+export function memberTypes(cls: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  const simple = (t: Node | null | undefined): string | null => {
+    const text = t?.text.replace(/^:\s*/, "").trim() ?? "";
+    return /^[A-Za-z_$][\w$]*$/.test(text) ? text : null;
+  };
+  for (const p of cls.descendantsOfType(["required_parameter", "optional_parameter"])) {
+    if (p?.parent?.parent?.type !== "method_definition" || p.parent.parent.childForFieldName("name")?.text !== "constructor" || ownerClass(p)?.id !== cls.id) continue;
+    const name = p.childForFieldName("pattern") ?? p.childForFieldName("name");
+    const type = simple(p.childForFieldName("type"));
+    if (name?.type === "identifier" && type) out.set(name.text, type);
+  }
+  for (const d of cls.descendantsOfType(["public_field_definition", "field_definition"])) {
+    if (!d) continue;
+    const name = (d.childForFieldName("name") ?? d.childForFieldName("property"))?.text;
+    if (!name || ownerClass(d)?.id !== cls.id) continue;
+    let type = simple(d.childForFieldName("type"));
+    const value = d.childForFieldName("value");
+    if (!type && value?.type === "call_expression" && value.childForFieldName("function")?.text === "inject") {
+      const arg = argumentsOf(value)[0];
+      type = arg?.type === "identifier" ? arg.text : null;
+    }
+    if (type) out.set(name, type);
+  }
+  return out;
+}
+
+/** Imports a subject-holding service can hardly come from: the framework and the observable library. */
+const FRAMEWORK_SOURCE = /^(?:@angular\/|rxjs(?:\/|$))/;
+
+function withSubjectListeners(tree: Tree, facts: CellFacts, text: string): CellFacts {
+  if (!text.includes(".subscribe(") || !/\b(?:Injectable|Component|Directive|Pipe|NgModule)\b|\binject\s*\(/.test(text)) return facts;
+  const sources = importSources(tree.rootNode);
+  const declaredHere = new Set(tree.rootNode.descendantsOfType(["class_declaration", "abstract_class_declaration"]).map((c) => c?.childForFieldName("name")?.text ?? ""));
+  const found: SubjectListen[] = [];
+  const typesOf = new Map<number, Map<string, string>>();
+  for (const n of tree.rootNode.descendantsOfType("call_expression")) {
+    if (!n) continue;
+    const chain = subscribeChain(n);
+    if (!chain) continue;
+    // `this.leagueSvc.changes$` or, in a constructor, `leagueSvc.changes$`.
+    const root = chain.root;
+    if (root.type !== "member_expression") continue;
+    const holder = root.childForFieldName("object");
+    const via = holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this" ? holder.childForFieldName("property")?.text : holder?.type === "identifier" && inConstructor(n) ? holder.text : null;
+    const fieldName = root.childForFieldName("property")?.text;
+    const cls = ownerClass(n);
+    if (!via || !fieldName || !cls) continue;
+    const types = typesOf.get(cls.id) ?? typesOf.set(cls.id, memberTypes(cls)).get(cls.id)!;
+    const type = types.get(via);
+    const source = type ? sources.get(type) : undefined;
+    // A service imported from the project, or declared in this file; never the framework's or the observable library's.
+    if (!type || (source ? FRAMEWORK_SOURCE.test(source) : !declaredHere.has(type))) continue;
+    const first = callbackOf(argumentsOf(n)[0]).callback;
+    const sub = first && first.descendantsOfType("call_expression").length > 0 ? first : null;
+    for (const cb of [...chain.operatorCallbacks.map((c) => ({ c, hook: "pipe" })), ...(sub ? [{ c: sub, hook: "subscribe" }] : [])]) {
+      found.push({ callback: cb.c, hook: cb.hook, via, field: fieldName, at: n, cls });
+    }
+  }
+  if (found.length === 0) return facts;
+  const held = new Map(facts.held);
+  const used = new Map<string, number>();
+  for (const name of held.values()) used.set(name.replace(/#\d+>$/, ">"), (used.get(name.replace(/#\d+>$/, ">")) ?? 0) + 1);
+  for (const l of found) {
+    if (held.has(l.callback.id)) continue;
+    const base = `<${l.hook}@${l.callback.startPosition.row + 1}>`;
+    const n = (used.get(base) ?? 0) + 1;
+    used.set(base, n);
+    held.set(l.callback.id, n > 1 ? base.replace(/>$/, `#${n}>`) : base);
+  }
+  return { ...facts, held, subjectListens: found };
 }
 
 /** The function name of an Options API watcher callback (`watch: { page() {…} }`), null for any other node. */
@@ -210,7 +300,7 @@ function innermost(functions: ReadonlyArray<{ name: string; line: number; endLin
 function read(tree: Tree, text: string): CellFacts {
   const vue = /\b(?:ref|shallowRef|reactive|shallowReactive|computed|customRef|defineModel|toRef|useVModel|use(?:Local|Session)?Storage|useRoute)\s*(?:<[^>]*>)?\s*\(/.test(text) && /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const react = /\buse(?:Layout|Insertion)?Effect\s*\(/.test(text) && /\buseState\b/.test(text);
-  const angular = /\beffect\s*\(/.test(text) && /\b(?:signal|model|linkedSignal)\s*(?:<[^>]*>)?\s*\(/.test(text);
+  const angular = /\b(?:effect|toObservable)\s*\(/.test(text) && /\b(?:signal|model|linkedSignal)\s*(?:<[^>]*>)?\s*\(/.test(text);
   if (!vue && !react && !angular) return EMPTY;
   const sources = importSources(tree.rootNode);
   const isFrom = (name: string, lib: RegExp, autoImported: boolean): boolean => {
@@ -425,6 +515,20 @@ function read(tree: Tree, text: string): CellFacts {
       if (callee?.type !== "member_expression") continue;
       const method = callee.childForFieldName("property")?.text ?? "";
       const obj = callee.childForFieldName("object");
+      // `toObservable(this.clubId).pipe(switchMap(() => this.load())).subscribe(cb)`: a write of the signal runs the
+      // operators' callbacks and the subscriber's.
+      if (angular && method === "subscribe" && isFrom("toObservable", /^@angular\/core\/rxjs-interop$/, false)) {
+        const cls = classOf(n);
+        const watched = cls ? toObservableSource(n, cls) : null;
+        const f = cls && watched ? field(cls, watched.signal) : undefined;
+        if (f && watched && f.kind !== "state") {
+          const cells = new Set([f.key, ...(f.reads ?? [])]);
+          for (const cb of watched.chain.operatorCallbacks) triggers.push({ cells, hook: "pipe", callback: cb, callee: null, at: n });
+          const sub = callbackOf(argumentsOf(n)[0]);
+          if (sub.callback) triggers.push({ cells, hook: "subscribe", callback: sub.callback, callee: null, at: n });
+        }
+        continue;
+      }
       if (react && obj?.type === "identifier" && obj.text === "React" && REACT_EFFECT.has(method)) {
         const args = argumentsOf(n);
         if (args.length >= 2) triggers.push({ cells: depCells(args[1]!), hook: method, ...callbackOf(args[0]), at: n });
@@ -734,6 +838,47 @@ function routeCell(at: Node, byScope: Map<number, Map<string, Cell>>): Cell | un
     if (route) return route;
   }
   return undefined;
+}
+
+/**
+ * The shape of `<source>.pipe(op(() => …), …).subscribe(cb)`: the receiver the operators hang on (a member chain or a
+ * call), and the callbacks written in place — each operator call's function arguments that make a call themselves.
+ */
+export function subscribeChain(subscribe: Node): { root: Node; operatorCallbacks: Node[] } | null {
+  const callee = subscribe.childForFieldName("function");
+  if (callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "subscribe") return null;
+  let recv = callee.childForFieldName("object");
+  const operatorCallbacks: Node[] = [];
+  while (recv?.type === "call_expression") {
+    const c = recv.childForFieldName("function");
+    if (c?.type !== "member_expression" || c.childForFieldName("property")?.text !== "pipe") break;
+    for (const op of argumentsOf(recv)) {
+      if (op.type !== "call_expression") continue;
+      for (const a of argumentsOf(op)) if ((a.type === "arrow_function" || a.type === "function_expression") && a.descendantsOfType("call_expression").length > 0) operatorCallbacks.push(a);
+    }
+    recv = c.childForFieldName("object");
+  }
+  return recv ? { root: recv, operatorCallbacks } : null;
+}
+
+/**
+ * The signal name an Angular subscription listens to through `toObservable(this.sig)` — in place, or through a
+ * field of the class holding it (`clubs$ = toObservable(this.clubId)`) — with the chain it hangs off.
+ */
+function toObservableSource(subscribe: Node, cls: Node): { signal: string; chain: NonNullable<ReturnType<typeof subscribeChain>> } | null {
+  const chain = subscribeChain(subscribe);
+  if (!chain) return null;
+  let root: Node | null = chain.root;
+  if (root.type === "member_expression" && root.childForFieldName("object")?.type === "this") {
+    const name = root.childForFieldName("property")?.text;
+    const decl = cls.descendantsOfType(["public_field_definition", "field_definition"]).find((d) => d && (d.childForFieldName("name") ?? d.childForFieldName("property"))?.text === name);
+    root = decl?.childForFieldName("value") ?? null;
+  }
+  if (root?.type !== "call_expression" || root.childForFieldName("function")?.text !== "toObservable") return null;
+  const source = argumentsOf(root)[0];
+  if (source?.type !== "member_expression" || source.childForFieldName("object")?.type !== "this") return null;
+  const signal = source.childForFieldName("property")?.text;
+  return signal ? { signal, chain } : null;
 }
 
 function within(n: Node, outer: Node): boolean {

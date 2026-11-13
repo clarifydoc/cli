@@ -489,6 +489,14 @@ export interface FileAnalysis {
    */
   busEvents?: BusEventSite[];
   /**
+   * Observable subjects a service class holds and who feeds or listens to them across classes: the subjects a
+   * class declares, each `.next` on one (its own, or one held by a service the class has injected), each
+   * subscription written in place on a service's member, and the declared types of the class members that
+   * name those services. The subject resolver joins a `next` to the listeners of the same subject of the
+   * same service class.
+   */
+  subjectFlows?: SubjectFlows;
+  /**
    * Reactive cells the file writes and the callbacks re-run when one changes: a Vue
    * `ref` written in a handler and the `watch`/`watchEffect` reading it, a React
    * `useState` setter and the `useEffect` listing the state among its deps, an
@@ -3382,6 +3390,21 @@ export interface BusEventSite {
   /** The named function the site sits in, when its event or handler is one of that function's parameters. */
   within?: string;
   line: number;
+}
+
+/**
+ * `FileAnalysis.subjectFlows`. `via` is the member of the class that holds the service (`leagueSvc` in
+ * `this.leagueSvc.changes$.next(c)`); absent, the subject is the class's own (`this.changes$.next(c)`).
+ */
+export interface SubjectFlows {
+  /** A subject member a class declares (`changes$ = new Subject<Club>()`); `observes` names the subject an `asObservable()` member exposes. */
+  subjects?: Array<{ class: string; field: string; observes?: string }>;
+  /** A `.next` on a subject, in the named function the call sits in. */
+  nexts?: Array<{ function: string; class: string; field: string; via?: string; line: number }>;
+  /** A subscription written in place on a service's member, whose callback is the named (held) function. */
+  listens?: Array<{ function: string; class: string; field: string; via: string; line: number }>;
+  /** class → member → declared type name, for the members that hold a service (constructor parameter properties, typed fields, `inject(T)`). */
+  types?: Record<string, Record<string, string>>;
 }
 
 /** One app-wide instance member a file installs (`FileAnalysis.globalMembers`). */
