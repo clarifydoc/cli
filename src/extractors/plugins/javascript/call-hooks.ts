@@ -10,6 +10,7 @@ import { enclosingFunctionNode, FUNCTION_NODE, paramNames } from "../../shared/n
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs } from "./vuex.js";
+import { recordIndexOrigin } from "./dispatch-maps.js";
 import { loadedMemberCall } from "./loaded-members.js";
 import { requiredSource } from "./imports-exports.js";
 import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
@@ -209,6 +210,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   receiverTypeOf: (node) => receiverTypeOfCall(node) ?? signalReceiverTypeOfCall(node),
   boundAt: boundAtSite,
   argsOf: handedArgs,
+  indexOriginOf: (node, name) => (name.includes("[]") ? recordIndexOrigin(node.childForFieldName("function") ?? node) : null),
   argOriginsOf,
 };
 
@@ -262,6 +264,12 @@ function handedArgs(node: Node): string[] | null {
   const leaf = fn?.type === "identifier" ? fn.text : fn?.type === "member_expression" ? fn.childForFieldName("property")?.text ?? "" : "";
   if (SENDER.test(leaf) && !BARE_SENDER.has(leaf) && args[0]!.type === "string" && EVENT_NAME.test(args[0]!.text)) {
     return args.map((a, i) => (i === 0 ? a.text : ""));
+  }
+  // `store.dispatch(ACTIONS.FETCH_CLUBS)`, `dispatch(LOAD_CLUBS)` naming the action by a constant the file does not
+  // declare: the name as written, for the Vuex pass to read in the module that does.
+  if (leaf === "dispatch" && args[0]!.type !== "string" && /^(?:[A-Za-z_$][\w$]*(?:\.[\w$]+)+|[A-Z][A-Z0-9_]*)$/.test(args[0]!.text) && !/^(?:this|props)\b/.test(args[0]!.text) && dispatchKeyOf(node) === null) {
+    const head = args[0]!.text.split(".")[0]!;
+    if (!enclosingParams(node).has(head)) return args.map((a, i) => (i === 0 ? a.text : ""));
   }
   if (fn?.type !== "identifier") return null;
   let params: Set<string> | null = null;

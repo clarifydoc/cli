@@ -7,6 +7,8 @@ import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { jsxFunctionProps, propBindings } from "./prop-bindings.js";
+import { extractStringConstants } from "./string-constants.js";
+import { recordChoice } from "./record-choice.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
 import { reactiveCells } from "./reactive-cells.js";
 import { withSubjectTriggers } from "./rxjs-subjects.js";
@@ -282,6 +284,7 @@ function astHooks(language: Language): AstExtractorHooks {
     domBindings: extractDomBindings,
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
+    stringConstants: extractStringConstants,
     moduleValueFlow: moduleValueFlowOf,
     attributeReads: extractAttributeReads,
     browserNavigations: extractBrowserNavigations,
@@ -315,6 +318,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   entities,
   dispatchResolvers,
   routeResolvers,
+  recordChoice,
   autoImports: nuxtAutoImports,
   // .vue/.svelte/.astro files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
@@ -348,6 +352,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   entities,
   dispatchResolvers,
   routeResolvers,
+  recordChoice,
   autoImports: nuxtAutoImports,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.

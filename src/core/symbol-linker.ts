@@ -20,7 +20,7 @@ import {
   type ModuleBindingInfo,
 } from "../types/analysis.js";
 import { reactiveTriggerLinks } from "./reactive-triggers.js";
-import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, StructuralMatch } from "../types/language-plugin.js";
+import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, RecordChoice, StructuralMatch } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -2105,6 +2105,8 @@ interface LinkContext {
   collectionExtensions?: Map<string, CollectionExtensionDef[]>;
   /** Lazy: file → its analysis. */
   analysisAt?: Map<string, FileAnalysis>;
+  /** Lazy, per language: what its plugin says the users of a component pick of a record read at run time (`recordChoice`). */
+  recordChoices?: Map<string, RecordChoice | null>;
   /**
    * Call sites a plugin states run a held function value (`ValueFlowFact` invoke, `callSiteKey`): the name tiers
    * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
@@ -4560,6 +4562,7 @@ function recordCall(
     return [];
   };
   let name = call.name;
+  let indexOrigin = call.indexOrigin;
   if (!RECORD_CALL.test(name)) {
     if (!name.includes(".")) return undefined;
     // `actions.createOne()` on `const actions = stores[props.kind].actions`.
@@ -4568,13 +4571,22 @@ function recordCall(
     const held = localsNamed(head);
     if (held.length !== 1 || held[0]!.type || !held[0]!.from || !RECORD_CALL.test(held[0]!.from)) return undefined;
     name = `${held[0]!.from}${name.slice(head.length)}`;
+    indexOrigin ??= held[0]!.indexOrigin;
   }
   const [, holder, rest] = RECORD_CALL.exec(name)!;
   if (!rest || caller?.params.some((p) => p.name === holder)) return undefined;
   const entries = localsNamed(`${holder}[]`).filter((l) => !l.type && l.from);
   if (entries.length === 0) return undefined;
+  // The key is a value the component's users bind (a prop): the entries they pick, each kept to its binding sites.
+  let chosen: Map<string, Array<{ file: string; line: number }>> | null = null;
+  if (indexOrigin && entries.every((e) => e.key)) {
+    const recordChoices = (ctx.recordChoices ??= new Map());
+    if (!recordChoices.has(analysis.language)) recordChoices.set(analysis.language, pluginFor(analysis.language)?.recordChoice?.(ctx.analyses) ?? null);
+    chosen = recordChoices.get(analysis.language)?.(sourceFile, indexOrigin, entries.map((e) => e.key!)) ?? null;
+  }
   const out: SymbolLink[] = [];
   for (const entry of entries) {
+    if (chosen && !chosen.has(entry.key!)) continue;
     // As a call on a local the entry's call initialized: `stores[].actions.createOne` made through `useClubStore`'s module.
     const factory = FACTORY_CALL.exec(entry.from!)?.[1];
     const head = factory?.split(".")[0];
@@ -4584,11 +4596,18 @@ function recordCall(
     RECORD_ENTRY_CALLS.add(synth);
     const link = resolveCallToDefinition(sourceFile, sourceSymbol, synth, analysis, ctx);
     if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) continue;
-    if (out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol)) continue;
+    const same = out.find((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol);
+    if (same) {
+      // Two keys held the same store: the sites that bound either are its usages.
+      const more = chosen?.get(entry.key!)?.filter((u) => !same.viaUsage?.some((v) => v.file === u.file && v.line === u.line));
+      if (same.viaUsage && more?.length) same.viaUsage = [...same.viaUsage, ...more];
+      continue;
+    }
     // The factory standing in for a member it could not name stays one, as on a local: `handedClientLinks`
     // replaces it with the member of the client the factory hands its helper (`useStore("club", api.clubs)`).
     const viaFactory = link.strategy === "factory-via";
-    out.push({ ...link, sourceSymbol, sourceLine: call.line, callName: call.name, confidence: "INFERRED", ...(viaFactory ? {} : { strategy: "dispatch:object-map" as const, relation: "dispatch" as const }) });
+    const usage = chosen?.get(entry.key!);
+    out.push({ ...link, sourceSymbol, sourceLine: call.line, callName: call.name, confidence: "INFERRED", ...(usage?.length ? { viaUsage: usage } : {}), ...(viaFactory ? {} : { strategy: "dispatch:object-map" as const, relation: "dispatch" as const }) });
   }
   if (out.length === 0) return null;
   ctx.extraLinks.push(...out.slice(1));

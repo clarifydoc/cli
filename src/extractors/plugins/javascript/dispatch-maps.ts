@@ -1,4 +1,6 @@
 import type { Node } from "web-tree-sitter";
+import type { CallArgOrigin } from "../../../types/analysis.js";
+import { expressionOrigin } from "./arg-origins.js";
 
 /** A plain or dotted name (`saveClub`, `clubs.loadLatest`), never an `undefined`/`null`-like literal. */
 const NAMED_VALUE = /^(?!undefined$|null$|true$|false$)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
@@ -150,7 +152,7 @@ function runtimeIndex(index: Node | null): boolean {
  * any key. A lookup in it at run time (`stores[props.kind]`) is the result of whichever call the key picks:
  * the linker fans a call on it out to each (`localTypes` `stores[]`, one entry per call).
  */
-export function recordEntries(declarator: Node): { holder: string; calls: Node[] } | null {
+export function recordEntries(declarator: Node): { holder: string; calls: Node[]; keys: Array<string | null> } | null {
   if (declarator.type !== "variable_declarator") return null;
   const decl = declarator.parent;
   if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
@@ -159,9 +161,11 @@ export function recordEntries(declarator: Node): { holder: string; calls: Node[]
   while (value && TYPE_WRAPPERS.has(value.type)) value = value.namedChildren[0] ?? null;
   if (name?.type !== "identifier" || value?.type !== "object") return null;
   const calls: Node[] = [];
+  const keys: Array<string | null> = [];
   for (const member of value.namedChildren) {
     if (member.type === "comment") continue;
     if (member.type !== "pair") return null;
+    keys.push(entryKey(member.childForFieldName("key")));
     let held = member.childForFieldName("value");
     while (held && TYPE_WRAPPERS.has(held.type)) held = held.namedChildren[0] ?? null;
     if (held?.type !== "call_expression") return null;
@@ -169,7 +173,38 @@ export function recordEntries(declarator: Node): { holder: string; calls: Node[]
     if ((callee?.type !== "identifier" && callee?.type !== "member_expression") || !NAMED_VALUE.test(callee.text)) return null;
     calls.push(held);
   }
-  return calls.length > 0 ? { holder: name.text, calls } : null;
+  return calls.length > 0 ? { holder: name.text, calls, keys } : null;
+}
+
+/**
+ * The key a record entry is held under, as `LocalType.key` spells it: a quoted literal (`club: …`, `'club': …` →
+ * `'club'`) or the module-level name a computed key reads (`[Kind.Club]: …` → `Kind.Club`). Null for any other key.
+ */
+function entryKey(key: Node | null): string | null {
+  if (!key) return null;
+  if (key.type === "property_identifier" || key.type === "identifier") return `'${key.text}'`;
+  if (key.type === "string") return key.text.length > 2 ? `'${key.text.slice(1, -1)}'` : null;
+  if (key.type === "computed_property_name") {
+    const inner = key.namedChildren[0];
+    if (inner?.type === "string") return inner.text.length > 2 ? `'${inner.text.slice(1, -1)}'` : null;
+    return inner && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(inner.text) ? inner.text : null;
+  }
+  return null;
+}
+
+/**
+ * Where the key of a read off a record of call results comes from (`stores[props.kind].actions` → the prop `kind`):
+ * `LocalType.indexOrigin` / `CallInfo.indexOrigin`. Only a prop, plain: the origin a component's users can name.
+ */
+export function recordIndexOrigin(node: Node): CallArgOrigin["origin"] | null {
+  let cur: Node | null = node;
+  while (cur?.type === "member_expression") cur = cur.childForFieldName("object");
+  if (cur?.type !== "subscript_expression") return null;
+  const holder = cur.childForFieldName("object");
+  if (holder?.type !== "identifier" || !recordHolders(cur).has(holder.text)) return null;
+  const index = cur.childForFieldName("index");
+  const found = index ? expressionOrigin(index) : null;
+  return found && !found.transform && !found.derivation && found.origin.kind === "prop" ? found.origin : null;
 }
 
 let recordsTree: Node["tree"] | null = null;

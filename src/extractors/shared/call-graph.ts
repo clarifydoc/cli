@@ -184,6 +184,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   const argOriginsOf = hooks.argOriginsOf;
   const argKindsOf = hooks.argKindsOf;
   const withSubjectsOf = hooks.withSubjectsOf;
+  const indexOriginOf = hooks.indexOriginOf;
   const nested = NESTED_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const anonymous = ANONYMOUS_SCOPE_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const named = NAMED_BINDING_BY_LANGUAGE.get(language) ?? DEFAULT_NAMED_BINDING;
@@ -212,6 +213,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     argOrigins?: CallArgOrigin[] | null;
     argKinds?: string[] | null;
     withSubjects?: string[] | null;
+    indexOrigin?: CallArgOrigin["origin"] | null;
     stated?: boolean;
     mapMember?: boolean;
     /** The plugin's per-site answer (`CallExtractionHooks.boundAt`); absent = the function-wide set decides. */
@@ -275,6 +277,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
       if (name) {
         push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
         if (withSubjectsOf) candidates[candidates.length - 1]!.withSubjects = withSubjectsOf(node);
+        if (indexOriginOf) candidates[candidates.length - 1]!.indexOrigin = indexOriginOf(node, name);
         if (hooks?.statedMember?.(node, name)) candidates[candidates.length - 1]!.stated = true;
         else if (isNoise(name) && hooks?.importedMapMember?.(node, name)) {
           candidates[candidates.length - 1]!.stated = true;
@@ -347,7 +350,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     // A name handed on is its own claim beside a call of it (`save()` and `register(save)`).
     // A dispatch map's value is one claim per key it is held under (`{ save: saveClub, store: saveClub }`).
     const seenKeyBase = c.passed ? `${c.name}\0passed${c.passed === "property" ? `\0${c.returnedAs}` : ""}` : c.read ? `${c.name}\0read` : c.key ? `${c.name}\0${c.key}` : c.args ? `${c.name}\0(${c.args.join(",")})${typed}`
-      : c.argOrigins?.length ? `${c.name}\0@${c.line}:${c.column}`
+      : c.argOrigins?.length || c.indexOrigin ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // A site its own block binds the name of is another claim than one the module's name reaches.
     const seenKey = c.bound ? `${seenKeyBase}\0bound` : seenKeyBase;
@@ -368,6 +371,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
     if (c.argKinds) call.argKinds = c.argKinds;
     if (c.withSubjects) call.withSubjects = c.withSubjects;
+    if (c.indexOrigin) call.indexOrigin = c.indexOrigin;
     if (c.key) {
       call.key = c.key;
       seen.add(seenKey);

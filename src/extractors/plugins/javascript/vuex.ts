@@ -281,6 +281,22 @@ export class VuexDispatchResolver implements DispatchResolver {
       if (m.file.storeShapes?.namespaced?.some((n) => n === m.exported || n === localName(m.file, m.exported))) namespacedFiles.add(m.file);
     }
 
+    // Whether any store names an action by a constant: the whole-name lookup below is only worth making then.
+    const hasComputedActions = analyses.some((a) => a.functions.some((f) => COMPUTED_ACTION.test(f.name)));
+
+    /** The action a module file (or a file it imports) declares under a constant whose value `test` accepts. */
+    const computedAction = (mod: FileAnalysis, test: (value: string) => boolean): Hit | null => {
+      for (const f of filesOf(mod)) {
+        if (f !== mod && registered.has(f.filePath)) continue;
+        for (const fn of f.functions) {
+          const ref = COMPUTED_ACTION.exec(fn.name)?.[1];
+          const value = ref ? constantValue(f, ref, ctx) : null;
+          if (value !== null && test(value)) return { file: f, fn };
+        }
+      }
+      return null;
+    };
+
     /** The `actions.<act>` a module file defines, there or in a file it imports. */
     const literalAction = (mod: FileAnalysis, act: string): Hit | null => {
       // A module file it imports (to register under `modules:`) holds that module's actions, not its own.
@@ -289,6 +305,9 @@ export class VuexDispatchResolver implements DispatchResolver {
         const fn = f.functions.find((x) => x.name === `actions.${act}` || x.name.endsWith(`.actions.${act}`));
         if (fn) return { file: f, fn };
       }
+      // `[ACTIONS.FETCH_CLUBS]() {…}`: an action named by a constant, read in the module that declares it.
+      const named = computedAction(mod, (v) => v === act);
+      if (named) return named;
       // `actions = { …, ...readActions }`: the object an import names (`export const readActions = {…}`,
       // or the file's `export default {…}`), or one the file declares itself.
       for (const f of filesOf(mod)) {
@@ -356,6 +375,12 @@ export class VuexDispatchResolver implements DispatchResolver {
       const parts = key.split("/").filter(Boolean);
       const act = parts.pop();
       if (!act) return [];
+      // `[FETCH_CLUBS]() {…}` with `FETCH_CLUBS = 'clubs/fetch'` in a store that is not namespaced: the whole name is the action's.
+      const whole = parts.length > 0 && hasComputedActions ? distinct(among.flatMap((root) => [root, ...(trees.get(root)?.values() ?? [])].map((m) => {
+        const file = "exported" in m ? m.file : m;
+        return namespacedFiles.has(file) ? null : computedAction(file, (v) => v === key);
+      }))) : [];
+      if (whole.length > 0) return whole;
       if (parts.length === 0) {
         // Un-namespaced: a root action, or one of a module that is not namespaced.
         const files = new Set<FileAnalysis>();
@@ -461,8 +486,14 @@ export class VuexDispatchResolver implements DispatchResolver {
           if (!call.key) {
             // The action a prop names: one link per name a user binds, kept to that user (`viaUsage`).
             const prop = !call.passed && !call.read && /(?:^|\.)dispatch$/.test(call.name) ? propNamedAction(call) : null;
-            if (!prop) continue;
-            propKeys ??= propLiterals(analyses, filePathMap, byPath);
+            if (!prop) {
+              // `store.dispatch(ACTIONS.FETCH_CLUBS)`: the constant another file declares.
+              const ref = !call.passed && !call.read && /(?:^|\.)dispatch$/.test(call.name) ? call.args?.[0] : undefined;
+              const named = ref ? constantValue(a, ref, ctx) : null;
+              if (named) emit(named);
+              continue;
+            }
+            propKeys ??= propLiterals(analyses, filePathMap, byPath, ctx);
             for (const [key, usage] of propKeys(a.filePath, prop)) emit(key, usage);
             continue;
           }
@@ -478,7 +509,7 @@ export class VuexDispatchResolver implements DispatchResolver {
 }
 
 /** Where a user binds a prop of the component: its file and the tag's line (`SymbolLink.viaUsage`). */
-type Usage = { file: string; line: number };
+export type Usage = { file: string; line: number };
 
 /** The prop a dispatch names its action by: `dispatch(props.fetchKey)`, `this.$store.dispatch(this.actionName, …)`. */
 function propNamedAction(call: CallInfo): string | null {
@@ -491,7 +522,7 @@ function propNamedAction(call: CallInfo): string | null {
  * child file + prop → name → the binding sites. A user handing on a prop of its own (`:fetch-key="fetchKey"`)
  * hands on what its own users bind, four levels up, kept to the binding on the child's tag.
  */
-function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>, byPath: Map<string, FileAnalysis>): (child: string, prop: string) => Map<string, Usage[]> {
+export function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>, byPath: Map<string, FileAnalysis>, ctx: FactoryContext): (child: string, prop: string) => Map<string, Usage[]> {
   const globals = globalComponentFiles(analyses, filePathMap);
   const autoImported = autoImportedComponents(analyses);
   const bound = new Map<string, Array<{ parent: string; binding: PropBinding }>>();
@@ -500,7 +531,7 @@ function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>
     const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
     for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
     for (const b of parent.propBindings) {
-      if (b.origin.kind !== "literal" && b.origin.kind !== "prop") continue;
+      if (b.origin.kind !== "literal" && b.origin.kind !== "prop" && b.origin.kind !== "constant") continue;
       const src = subByKey.get(tagKey(b.component));
       const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
       if (!child || !byPath.has(child)) continue;
@@ -515,8 +546,11 @@ function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>
     for (const { parent, binding } of bound.get(k) ?? []) {
       const usage = via ?? { file: parent, line: binding.line };
       if (binding.origin.kind === "prop") walk(parent, binding.origin.name, depth + 1, seen, out, usage);
-      else if (binding.origin.kind === "literal") {
-        const list = out.get(binding.origin.value) ?? out.set(binding.origin.value, []).get(binding.origin.value)!;
+      else if (binding.origin.kind === "literal" || binding.origin.kind === "constant") {
+        // A constant (`:kind="Kind.Club"`) is the value the module declaring it gives.
+        const value = binding.origin.kind === "literal" ? binding.origin.value : constantValue(byPath.get(parent)!, binding.origin.ref, ctx);
+        if (value === null) continue;
+        const list = out.get(value) ?? out.set(value, []).get(value)!;
         if (!list.some((u) => u.file === usage.file && u.line === usage.line)) list.push(usage);
       }
     }
@@ -541,6 +575,56 @@ function commonDirs(a: string, b: string): number {
   let i = 0;
   while (i < x.length && i < y.length && x[i] === y[i]) i++;
   return i;
+}
+
+/** An action declared under a constant: `actions.[ACTIONS.FETCH_CLUBS]` (`functions-classes.ts` `actionKeyName`). */
+const COMPUTED_ACTION = /(?:^|\.)actions\.\[([^\]]+)\]$/;
+
+/**
+ * The string a module-level name stands for, read where it is declared (`FileAnalysis.stringConstants`): in `file`
+ * itself, else in the module its head is imported from — a named import, an alias, a namespace import
+ * (`types.ACTIONS.FETCH_CLUBS`) — followed through re-exports. Null when the name is not a plain constant of a
+ * project module; two same-named constants of other modules are never mixed up, the import chooses.
+ */
+export function constantValue(file: FileAnalysis, ref: string, ctx: FactoryContext, depth = 0): string | null {
+  const own = file.stringConstants?.[ref];
+  if (own !== undefined) return own;
+  if (depth > 3) return null;
+  const dot = ref.indexOf(".");
+  const head = dot < 0 ? ref : ref.slice(0, dot);
+  const rest = dot < 0 ? "" : ref.slice(dot + 1);
+  const imp = file.imports.find((i) => !i.isType && !i.executes && i.specifiers.includes(head));
+  if (!imp) return null;
+  const path = resolveTarget(imp.source, file.filePath, ctx.filePathMap);
+  const target = path ? ctx.byPath.get(path) : undefined;
+  if (!target) return null;
+  let key: string;
+  if (imp.isNamespace) {
+    if (!rest) return null;
+    key = rest;
+  } else {
+    const exported = imp.aliases?.[head] ?? (imp.isDefault ? "default" : head);
+    key = rest ? `${exported}.${rest}` : exported;
+  }
+  return declaredConstant(target, key, ctx, depth + 1);
+}
+
+/** `key` in `file`'s own constants, else behind one of its re-exports. */
+function declaredConstant(file: FileAnalysis, key: string, ctx: FactoryContext, depth: number): string | null {
+  const own = file.stringConstants?.[key];
+  if (own !== undefined) return own;
+  if (depth > 3) return null;
+  const head = key.includes(".") ? key.slice(0, key.indexOf(".")) : key;
+  const rest = key.includes(".") ? key.slice(key.indexOf(".")) : "";
+  for (const e of file.exports) {
+    if (!e.source || (e.name !== head && e.name !== "*")) continue;
+    const path = resolveTarget(e.source, file.filePath, ctx.filePathMap);
+    const target = path ? ctx.byPath.get(path) : undefined;
+    if (!target) continue;
+    const found = declaredConstant(target, e.name === "*" ? key : `${e.sourceName ?? head}${rest}`, ctx, depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 /** A local name for an exported one: `export default createStore` → createStore. */

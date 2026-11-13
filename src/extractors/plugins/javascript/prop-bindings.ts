@@ -26,6 +26,11 @@ export function propBindings(tree: Tree, sourceText: string, rawSource: string, 
           if (name?.type !== "property_identifier" || value?.type !== "jsx_expression") continue;
           const expr = value.namedChild(0);
           const found = expr ? expressionOrigin(expr) : null;
+          // `kind={Kind.Club}`: a constant another module declares.
+          if (!found && expr && /^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(expr.text) && importsName(tree, expr.text)) {
+            out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: { kind: "constant", ref: expr.text } });
+            continue;
+          }
           if (!found || found.origin.kind === "literal") continue;
           out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: found.origin, ...(found.transform ? { transform: found.transform } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
         }
@@ -127,11 +132,24 @@ function vueBindings(tree: Tree, raw: string): PropBinding[] {
       const chain = wrapped ? wrapped[2]! : value;
       if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(chain)) continue;
       const found = templateValueOrigin(anchor, chain.split("."), declared);
+      // `:kind="Kind.Club"`: a constant (an enum member) the script imports.
+      if (!found && !wrapped && importsName(tree, chain)) {
+        out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: { kind: "constant", ref: chain } });
+        continue;
+      }
       if (!found || found.origin.kind === "literal") continue;
       out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: found.origin, ...(wrapped ? { transform: wrapped[1]! } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
     }
   }
   return out;
+}
+
+/** Whether the file imports the name a member chain starts with (`Kind` of `Kind.Club`). */
+function importsName(tree: Tree, chain: string): boolean {
+  // A member of an enum or a map (`Kind.Club`) or an UPPER_SNAKE constant: not a component or a function handed on.
+  if (!chain.includes(".") && !/^[A-Z][A-Z0-9_]*$/.test(chain)) return false;
+  const head = chain.split(".")[0]!;
+  return tree.rootNode.namedChildren.some((n) => n?.type === "import_statement" && !/^import\s+type\b/.test(n.text) && n.descendantsOfType("identifier").some((id) => id?.text === head));
 }
 
 /** The attributes of a tag from `from` to its `>`, quoted values kept whole. */

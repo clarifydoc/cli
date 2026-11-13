@@ -461,6 +461,13 @@ export interface LanguageComplexitySpec {
  * all it needs from a language to know how to sequence a node, because every
  * language it targets is structured the same way underneath.
  */
+/** `LanguagePluginMeta.recordChoice`'s answer for one read: entry key → where the users bind it (file and tag line). */
+export type RecordChoice = (
+  file: string,
+  index: import("./analysis.js").CallArgOrigin["origin"],
+  keys: readonly string[],
+) => Map<string, Array<{ file: string; line: number }>> | null;
+
 export type ControlFlowRole =
   /** Holds a statement sequence (`statement_block`, `block`). */
   | "block"
@@ -781,6 +788,8 @@ export interface AstExtractorHooks {
   instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */
   moduleValues?(tree: Tree, sourceText: string): Record<string, string>;
+  /** Plain string constants a module defines at its top level, by name (`LOAD_CLUBS`, `ACTIONS.FETCH_CLUBS`) → `FileAnalysis.stringConstants`. */
+  stringConstants?(tree: Tree, sourceText: string): Record<string, string>;
   /** The file's module-level value-flow facts → `FileAnalysis.moduleValueFlow` (see `ValueFlowFact`). */
   moduleValueFlow?(tree: Tree, sourceText: string): ValueFlowFact[];
   /** URL-holding markup attributes the file's scripts read → `FileAnalysis.attributeReads`. */
@@ -1086,6 +1095,11 @@ export interface CallExtractionHooks {
    * (the output keeps them). Sets `CallInfo.args`.
    */
   argsOf?(node: Node): string[] | null;
+  /**
+   * For a call on a record of call results read at a key known only at run time (`stores[props.kind].actions.createOne()`),
+   * where that key comes from, or null. Called for every call node: bail out cheaply. Sets `CallInfo.indexOrigin`.
+   */
+  indexOriginOf?(node: Node, name: string): import("./analysis.js").CallArgOrigin["origin"] | null;
   /**
    * How many arguments the call passes (a trailing lambda counts): in a
    * language with overloading the linker picks the overload whose arity
@@ -2152,6 +2166,14 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * analyses it sees, and its `priority` fixes cross-plugin output order.
    */
   dispatchResolvers?: readonly DispatchResolver[];
+  /**
+   * Which entries of a record of call results a component reads at run time (`stores[props.kind]`, entries
+   * `LocalType.key`) its users pick: built once per project from the analyses, then asked per read with the file, the
+   * origin of the key (`CallInfo.indexOrigin`) and the entries' keys. Answers, for each entry the users' bindings
+   * select, the binding sites (`SymbolLink.viaUsage`); null when it cannot tell (an entry key it cannot read, no
+   * binding naming an entry) — the read then reaches every entry.
+   */
+  recordChoice?(analyses: readonly FileAnalysis[]): RecordChoice;
   /**
    * Names a framework puts in scope without an import line (Nuxt's
    * `composables/` and `utils/` exports): a project pass, run once before the

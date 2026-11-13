@@ -197,10 +197,10 @@ describe("a store or action chosen at run time, end to end", () => {
     expect(from("src/components/MappedClub.vue", "loadSquad")).toEqual(["src/store/modules/squad.js#actions.fetchPlayers INFERRED"]);
   });
 
-  it("fans a call on a record of stores read at run time out to each store the record holds, never the decoy", () => {
-    const both = (member: string) => [`src/composables/use-club-store.ts#actions.${member} INFERRED`, `src/composables/use-player-store.ts#actions.${member} INFERRED`];
-    expect(from("src/components/PlayerPicker.vue", "createDirect")).toEqual(both("createOne"));
-    expect(from("src/components/PlayerPicker.vue", "createItem")).toEqual(both("createOne"));
-    expect(from("src/components/PlayerPicker.vue", "refreshAll")).toEqual(both("refresh"));
+  it("reaches only the store of the kind the one user binds (`kind=\"player\"`), kept to that binding, never the others", () => {
+    const player = (member: string) => [`src/composables/use-player-store.ts#actions.${member} INFERRED via src/pages/SquadPage.vue:5`];
+    expect(from("src/components/PlayerPicker.vue", "createDirect")).toEqual(player("createOne"));
+    expect(from("src/components/PlayerPicker.vue", "createItem")).toEqual(player("createOne"));
+    expect(from("src/components/PlayerPicker.vue", "refreshAll")).toEqual(player("refresh"));
   });
 });

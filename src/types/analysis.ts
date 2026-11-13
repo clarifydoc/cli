@@ -418,6 +418,9 @@ export interface FileAnalysis {
    * `const QString kTable = QStringLiteral("x")`). Project-level enrichment
    * resolves macro-valued dataSource targets/entities through the union of
    * these maps (a DAO's table macro is usually defined in its header).
+   * JS/TS report their top-level string constants and string enum members here too
+   * (`ACTIONS.FETCH_CLUBS`, `Kind.Club`): a plugin's own pass reads a name another
+   * module declares through the import chain (a Vuex action named by a constant).
    * Omitted when empty.
    */
   stringConstants?: Record<string, string>;
@@ -1243,6 +1246,11 @@ export interface CallInfo {
    */
   argOrigins?: CallArgOrigin[];
   /**
+   * On a call on a record of call results read at a key known only at run time (`stores[props.kind].actions.createOne()`):
+   * where that key comes from, for a project pass to narrow the entries the call may reach (`LocalType.key`).
+   */
+  indexOrigin?: CallArgOrigin["origin"];
+  /**
    * The framework calls the callee with the route's parameters by name (a
    * FastAPI `Depends(get_club)` in a handler's signature): its parameter
    * named like a route parameter receives that value. On a route's calls, and
@@ -1283,6 +1291,11 @@ export interface CallArgOrigin {
   index: number;
   origin:
     | { kind: "literal"; value: string }
+    /**
+     * A module-level name the value is (`Kind.Club` of `:kind="Kind.Club"`, an enum member or a string constant),
+     * as written: the plugin resolves it across files where the module that declares it is known. A prop binding only.
+     */
+    | { kind: "constant"; ref: string }
     /** The calling function's own parameter (`index` among its parameters). */
     | { kind: "param"; name: string; index: number }
     /** A route parameter or query-string value of the current URL, by name. */
@@ -1537,8 +1550,14 @@ export interface FunctionInfo {
    * `club.x`), typed for this function by what assigns it before the body reads it: the function's own assignment,
    * or a callback that runs first (a controller's `before_action`). The linker reads it as any local; the plugin's
    * project pass reads the marker to hand a callback's fields on to the functions it runs before.
+   *
+   * On an entry of a record of call results (`name` ends `[]`, one entry per call), `key`: the key the record holds
+   * the entry under, as written — a quoted literal (`'club'`; a bare identifier key is the literal) or a
+   * module-level name (`Kind.Club` of `[Kind.Club]: useClubStore()`). On a local read off such a record,
+   * `indexOrigin`: where the key the read picks the entry by comes from (`stores[props.kind].actions` — a prop),
+   * which a project pass may narrow to the entries the component's users bind (`LanguagePluginMeta.recordChoice`).
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; aliasOf?: string }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"] }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

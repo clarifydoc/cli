@@ -28,7 +28,7 @@ import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, js
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { optionsWatchers } from "./reactive-cells.js";
 import { loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
-import { recordEntries, recordMemberChain } from "./dispatch-maps.js";
+import { recordEntries, recordIndexOrigin, recordMemberChain } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
@@ -427,11 +427,12 @@ function scanBody(
     const value = eq >= 0 ? declarator[eq + 1] ?? null : null;
     const chain = value?.type === "subscript_expression" || value?.type === "member_expression" ? recordMemberChain(value) : null;
     if (!chain) return bound;
+    const indexOrigin = value ? recordIndexOrigin(value) : null;
     for (const p of pattern.namedChildren) {
       const local = p.type === "shorthand_property_identifier_pattern" ? p.text : p.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier" ? p.childForFieldName("value")!.text : null;
       const member = p.type === "shorthand_property_identifier_pattern" ? p.text : p.childForFieldName("key")?.text;
       if (!local || !member || !/^[\w$]+$/.test(member)) continue;
-      const entry = { local: { name: local, type: "", from: `${chain}.${member}` }, annotated: false };
+      const entry = { local: { name: local, type: "", from: `${chain}.${member}`, ...(indexOrigin ? { indexOrigin } : {}) }, annotated: false };
       const list = bindings.get(local);
       if (list) list.push(entry);
       else bindings.set(local, [entry]);
@@ -632,10 +633,11 @@ function scanBody(
           }
           // A record of call results (`const stores = { [Kind.Club]: useClubStore(), … }`): under `stores[]`, each call.
           const record = recordEntries(node);
-          for (const call of record?.calls ?? []) {
+          for (const [i, call] of (record?.calls ?? []).entries()) {
             const from = callChainText(call, "typescript");
             if (!from) continue;
-            const entry = { local: { name: `${name.text}[]`, type: "", from }, annotated: false };
+            const key = record?.keys[i];
+            const entry = { local: { name: `${name.text}[]`, type: "", from, ...(key ? { key } : {}) }, annotated: false };
             const held = bindings.get(entry.local.name);
             if (held) held.push(entry);
             else bindings.set(entry.local.name, [entry]);
@@ -725,7 +727,7 @@ function scanBody(
       if (!list.every((b) => b!.local.from)) continue;
       const seen = new Set<string>();
       for (const b of list) {
-        const id = `${b!.local.from}|${b!.local.awaited}|${b!.local.element}`;
+        const id = `${b!.local.from}|${b!.local.awaited}|${b!.local.element}|${b!.local.key ?? ""}`;
         if (!seen.has(id)) (seen.add(id), localTypes.push(b!.local));
       }
       continue;
@@ -815,7 +817,11 @@ function initializerLocal(value: Node, name: string): { local: LocalType; annota
   let from: string | null = null;
   if (expr?.type === "call_expression") from = callChainText(expr, "typescript");
   // `stores[props.kind].actions` off a record of call results: `stores[].actions`, whichever entry the key picks.
-  else if ((expr?.type === "subscript_expression" || (expr?.type === "member_expression" && expr.text.includes("["))) && !awaited && recordMemberChain(expr)) from = recordMemberChain(expr);
+  else if ((expr?.type === "subscript_expression" || (expr?.type === "member_expression" && expr.text.includes("["))) && !awaited && recordMemberChain(expr)) {
+    from = recordMemberChain(expr);
+    const indexOrigin = expr ? recordIndexOrigin(expr) : null;
+    if (indexOrigin) return { local: { name, type: "", from: from!, indexOrigin }, annotated: false };
+  }
   else if (expr?.type === "member_expression" && !awaited) {
     const object = expr.childForFieldName("object");
     const property = expr.childForFieldName("property");
@@ -1529,6 +1535,18 @@ function objectKeyName(key: Node | null): string | null {
     return /^[A-Za-z_$][\w$]*$/.test(text) ? text : null;
   }
   return null;
+}
+
+/**
+ * The name an action is declared under: its key, or — for a computed key naming a constant (`[ACTIONS.FETCH_CLUBS]() {…}`,
+ * `[LOAD_STAFF]: …`) — the name written in brackets (`[ACTIONS.FETCH_CLUBS]`), which the Vuex pass reads in the module
+ * that declares the constant. Null for any other key.
+ */
+function actionKeyName(key: Node | null): string | null {
+  const plain = objectKeyName(key);
+  if (plain || key?.type !== "computed_property_name") return plain;
+  const inner = key.namedChildren[0];
+  return inner && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(inner.text) ? `[${inner.text}]` : null;
 }
 
 /**
@@ -2479,7 +2497,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const value = pair.childForFieldName("value");
         const actions = value?.type === "object" ? value : value ? returnedObject(value) : null;
         for (const member of actions?.namedChildren ?? []) {
-          const key = member.type === "method_definition" ? objectKeyName(member.childForFieldName("name")) : member.type === "pair" ? objectKeyName(member.childForFieldName("key")) : null;
+          const key = member.type === "method_definition" ? actionKeyName(member.childForFieldName("name")) : member.type === "pair" ? actionKeyName(member.childForFieldName("key")) : null;
           if (!key) continue;
           // `k: async function k() {…}` / `k: async ({ commit }) => {…}`: a function written as the entry's value.
           const written = member.type === "pair" ? member.childForFieldName("value") : null;
@@ -2511,9 +2529,11 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
       return fn;
     };
+    const isActions = prefix !== null && /(?:^|\.)actions$/.test(prefix);
+    const keyName = isActions ? actionKeyName : objectKeyName;
     for (const member of obj.namedChildren) {
       if (member.type === "pair") {
-        const key = objectKeyName(member.childForFieldName("key"));
+        const key = keyName(member.childForFieldName("key"));
         const value = unwrapValue(member.childForFieldName("value"));
         if (!key || !value) continue;
         const name = prefix ? `${prefix}.${key}` : key;
@@ -2527,7 +2547,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           for (const arg of objectAssignArgs(value)) if (arg.type === "object") this.extractObjectMembers(name, arg, functions, isExported, depth + 1);
         }
       } else if (member.type === "method_definition") {
-        const key = objectKeyName(member.childForFieldName("name"));
+        const key = keyName(member.childForFieldName("name"));
         if (!key) continue;
         const fn = this.parseJsFunction(member, isExported);
         fn.name = prefix ? `${prefix}.${key}` : key;
