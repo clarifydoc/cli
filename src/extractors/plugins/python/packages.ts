@@ -20,11 +20,13 @@ export const pypiPackages: readonly KnownPackageRule[] = [
   // ── ORM ──
   { names: ["sqlalchemy", "tortoise-orm", "peewee", "pony"], category: "orm" },
   // ── Database drivers ──
-  { names: ["psycopg2", "psycopg2-binary", "pymysql", "pymongo", "redis-py"], category: "database" },
+  { names: ["psycopg2", "psycopg2-binary", "pymysql", "pymongo", "redis", "redis-py"], category: "database" },
   // ── HTTP ──
   { names: ["requests", "httpx", "urllib3", "aiohttp-client"], category: "http" },
+  // ── RPC (`grpcio` installs the `grpc` module) ──
+  { names: ["grpcio", "grpc", "grpcio-tools"], category: "grpc" },
   // ── Auth ──
-  { names: ["pyjwt", "passlib", "authlib", "python-jose"], category: "auth" },
+  { names: ["pyjwt", "jwt", "passlib", "authlib", "python-jose", "jose"], category: "auth" },
   // ── Validation ──
   { names: ["pydantic", "marshmallow", "cerberus"], category: "validation" },
   // ── Logging ──

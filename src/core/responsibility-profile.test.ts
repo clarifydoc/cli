@@ -51,6 +51,12 @@ describe("classifyImportSource by the importing language's ecosystems", () => {
     expect(classifyImportSource("azure.cosmos", scope)?.category).toBe("cloud");
   });
 
+  it("classifies Python's own import names whose distribution differs (`grpc` from grpcio, `redis`, `jwt`)", () => {
+    expect(classifyImportSource("grpc", scope, "python")?.category).toBe("grpc");
+    expect(classifyImportSource("redis", scope, "python")?.category).toBe("database");
+    expect(classifyImportSource("jwt", scope, "python")?.category).toBe("auth");
+  });
+
   it("keeps TypeScript and JavaScript on one npm table, and out of Python's", () => {
     expect(classifyImportSource("axios", scope, "typescript")?.category).toBe("http");
     expect(classifyImportSource("axios", scope, "javascript")?.category).toBe("http");
