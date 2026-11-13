@@ -1,5 +1,6 @@
 import { convexDbAccess, convexReference } from "./convex-data.js";
 import { namesConvex } from "./routes/convex.js";
+import { DYNAMO_FILE_RE, dynamoAccess } from "./dynamodb.js";
 import { responseReadsOf, type BodyStyle } from "./response-reads.js";
 import { resolveRtkHooks } from "./rtk-query.js";
 import { resolveKubbClientCalls } from "./kubb.js";
@@ -705,6 +706,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private trpcClient: boolean | null = null;
   /** The file names Convex (its server module, generated API or client package). */
   private convexFile: boolean | null = null;
+  private dynamoFile: boolean | null = null;
   /** Names the file's Kysely queries give their common table expressions. */
   private kyselyCtes: Set<string> | null = null;
   /** Names the file binds to a SQL template tag (see `sqlTagNames`), read on first need. */
@@ -881,6 +883,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.mq = null;
     this.trpcClient = null;
     this.convexFile = null;
+    this.dynamoFile = null;
     this.kyselyCtes = null;
     this.sqlTags = null;
     this.rtk = null;
@@ -1627,6 +1630,24 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
           line: node.startPosition.row + 1,
         }));
+        return;
+      }
+    }
+
+    // DynamoDB: `docClient.get({ TableName }).promise()`, `ddb.send(new GetCommand({ TableName }))`.
+    if ((node.type === "call_expression" || node.type === "new_expression") && (this.dynamoFile ??= DYNAMO_FILE_RE.test(this.sourceText))) {
+      const ddb = dynamoAccess(node, this.sourceText);
+      if (ddb) {
+        sources.push(this.ds({
+          kind: "database",
+          name: ddb.name,
+          target: ddb.table ?? null,
+          ...(ddb.table ? { entity: ddb.table } : {}),
+          ...(ddb.env ? { envRef: ddb.env } : {}),
+          line: node.startPosition.row + 1,
+          access: ddb.access,
+        }));
+        // The row is the whole statement: the generic matchers below must not read `get`/`put` as ORM verbs.
         return;
       }
     }

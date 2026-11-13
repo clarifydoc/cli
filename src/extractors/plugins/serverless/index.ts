@@ -2,6 +2,7 @@ import type { EntryPointInfo, RouteAuthInfo, RouteInfo } from "../../../types/an
 import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractDaprSubscriptions } from "./dapr.js";
+import { extractLambdaEnv } from "./environment.js";
 
 /**
  * Serverless routes, read from the deployment descriptor that declares them:
@@ -266,6 +267,7 @@ export const serverlessSpec: RegexLangSpec = {
   lineCommentPrefixes: ["#"],
   extractRoutes: (lines, _classes, _filePath, _functions, facts) => {
     extractDaprSubscriptions(lines, facts);
+    extractLambdaEnv(lines, facts);
     return extractServerlessRoutes(lines);
   },
   extractEntryPoints: (lines) => extractServerlessEntryPoints(lines),

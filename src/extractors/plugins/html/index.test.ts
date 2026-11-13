@@ -173,10 +173,20 @@ describe("HTML interactive-element extraction", () => {
       { element: "button", event: "click", handler: "search", line: 2, caption: "Go", request: { method: "GET", target: "/search" } },
       { element: "button", event: "click", handler: "post_cars_delete", line: 3, caption: "Delete", request: { method: "POST", target: "/cars/delete" } },
       { element: "button", event: "onclick", handler: "check", line: 4, caption: "Check" }, // its own handler runs first
-      // no action: the page posts to itself, which names no route
-      { element: "form", event: "submit", handler: null, line: 6 },
-      { element: "button", event: "click", handler: null, line: 6, caption: "Save" },
+      // no action: the page posts to itself — marked for core, which knows the route that renders it
+      { element: "form", event: "submit", handler: null, line: 6, ownViewPost: true },
+      { element: "button", event: "click", handler: null, line: 6, caption: "Save", ownViewPost: true },
     ]);
+  });
+
+  it("marks a POST form with an empty action as posting to its own page, never a GET form or one naming a target another way", () => {
+    const own = (html: string) => els(html).filter((e) => e.element === "form").map((e) => !!e.ownViewPost);
+    expect(own(`<form action="" method="POST"><button>Save</button></form>`)).toEqual([true]);
+    expect(own(`<form method="get"><button>Find</button></form>`)).toEqual([false]);
+    expect(own(`<form method="post" action="{{ url_for('save') }}"><button>Save</button></form>`)).toEqual([false]);
+    expect(own(`<form method="post" th:action="@{/save}"><button>Save</button></form>`)).toEqual([false]);
+    expect(own(`<form method="post" hx-post="/save"><button>Save</button></form>`)).toEqual([false]);
+    expect(own(`<form method="post" action="/save"><button>Save</button></form>`)).toEqual([false]);
   });
 
   it("skips checkbox/radio/hidden inputs (filter/state noise, not actions)", () => {

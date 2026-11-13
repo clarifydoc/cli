@@ -171,7 +171,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   const readAbove = new Set(elements.map((e) => e.line));
   const markup = source.replace(TAGS[dialect], (m) => m.replace(/[^\n]/g, " "));
   for (const el of extractHtmlInteractiveElements(markup.split("\n"))) {
-    if ((el.element === "form" || el.element === "link") && (el.handler === null || readAbove.has(el.line))) continue; // read above
+    if ((el.element === "form" || el.element === "link") && ((el.handler === null && !el.ownViewPost) || readAbove.has(el.line))) continue; // read above
     elements.push(el);
   }
   elements.sort((a, b) => a.line - b.line);

@@ -15,15 +15,17 @@ import type { FileAnalysis } from "../../../types/analysis.js";
  * Targets that are not paths (a route helper, `Ctl#action`) are left to the
  * plugin's resolver.
  */
-export function materializeElementRequests(analysis: FileAnalysis): void {
+export function materializeElementRequests(analysis: FileAnalysis, only?: ReadonlySet<unknown>): FileAnalysis["dataSources"] {
   const named = new Set(analysis.functions.map((f) => f.name));
   const sent = new Set<string>();
+  const added: FileAnalysis["dataSources"] = [];
   for (const el of analysis.interactiveElements) {
+    if (only && !only.has(el)) continue;
     if (!el.request || !el.handler || !el.request.target.startsWith("/")) continue;
     const key = `${el.handler} ${el.request.method} ${el.request.target}`;
     if (sent.has(key)) continue;
     sent.add(key);
-    analysis.dataSources.push({
+    const row: FileAnalysis["dataSources"][number] = {
       kind: "api-call",
       // A verb the scripts reading the attribute decide later: no verb yet.
       name: el.request.method ? `${el.request.method} ${el.request.target}` : el.request.target,
@@ -31,7 +33,9 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
       ...(el.request.attribute ? { urlAttribute: el.request.attribute } : {}),
       calls: [],
       line: el.line,
-    });
+    };
+    analysis.dataSources.push(row);
+    added.push(row);
     if (named.has(el.handler)) continue;
     named.add(el.handler);
     analysis.functions.push({
@@ -46,6 +50,7 @@ export function materializeElementRequests(analysis: FileAnalysis): void {
       endLine: el.line,
     });
   }
+  return added;
 }
 
 /** An expression naming the application's base URL or path, as templates spell it. */

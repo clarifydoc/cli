@@ -2645,6 +2645,13 @@ export interface DataSourceInfo {
    */
   targetRef?: string;
   /**
+   * For `database`: the table is whatever this environment variable holds
+   * (`TableName: process.env.CLUBS_TABLE`). `target`/`entity` stay empty until a
+   * deployment descriptor that runs this code states the variable (a serverless
+   * `environment`, a SAM `Environment.Variables`); one no descriptor sets names no table.
+   */
+  envRef?: string;
+  /**
    * For queue kinds: the message broker the destination lives on (`amqp`,
    * `kafka`, `sqs`, `bullmq`, `celery`, `redis`, `mqtt`, `socket.io`, `dapr`, …),
    * lower-case. Absent when the extractor cannot tell; a destination name alone
@@ -3397,6 +3404,12 @@ export interface InteractiveElementInfo {
    * one (`core/attribute-requests.ts`).
    */
   request?: { method: string; target: string; attribute?: string };
+  /**
+   * A server-rendered `<form method="post">` with no `action` (or `action=""`), or a submit control in one:
+   * the browser posts to the URL the page was served from. `request` stays empty until core, which knows
+   * the route that renders this page (`ScreenInfo.renderedBy`), sets it to a POST at that route's path.
+   */
+  ownViewPost?: true;
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
   /**

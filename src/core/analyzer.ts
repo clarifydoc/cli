@@ -40,6 +40,7 @@ import { attachServerRedirects } from "./server-redirects.js";
 import { buildScreenFlow } from "./screen-flow.js";
 import { joinTestNavigations, pagePartsOf } from "./test-navigations.js";
 import { linkRenderedViews } from "./rendered-views.js";
+import { linkOwnViewPosts } from "./own-view-posts.js";
 import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
 import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
@@ -1289,6 +1290,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // template, a urlconf include, a router registration whose handler class
   // lives elsewhere. Before mounts, so a resolver may emit mounts to compose.
   const resolvedRouteCount = reconcileProjectRoutes(allAnalyses, projectContext);
+  // A table named by an environment variable no deployment descriptor settled (`DataSourceInfo.envRef`)
+  // names no table: no row, rather than an access to nothing in particular.
+  for (const a of allAnalyses) if (a.dataSources.some((ds) => ds.envRef)) a.dataSources = a.dataSources.filter((ds) => !ds.envRef);
   if (resolvedRouteCount > 0 && verbose) {
     progress.detail(`  routes resolved across files: ${resolvedRouteCount}`);
   }
@@ -1564,6 +1568,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Server-rendered pages: the template a route's handler renders by name is the page it serves.
   const renderedViews = linkRenderedViews(allRoutes, allAnalyses, allScreens, symbolLinks, (f) => rawSources.get(f));
   if (renderedViews > 0) progress.detail(`  Routes rendering a template: ${renderedViews}`);
+  // A POST form with no action posts to the page's own URL: the route rendering the page.
+  allApiCalls.push(...linkOwnViewPosts(allScreens, allAnalyses));
   // Where a server route sends the browser on to, and the navigation map that follows it.
   const serverRedirects = attachServerRedirects(allRoutes, allAnalyses, symbolLinks, (f) => rawSources.get(f));
   if (serverRedirects > 0) progress.detail(`  Routes redirecting: ${serverRedirects}`);

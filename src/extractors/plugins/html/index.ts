@@ -333,7 +333,18 @@ function innerText(markup: string[], line: number, from: number, tag: string): s
 }
 
 /** The form a submit control sits in. */
-interface OpenForm { method: string; request?: ElementRequest }
+interface OpenForm { method: string; request?: ElementRequest; ownViewPost?: true }
+
+/** A POST form that names no URL — no `action` attribute, or an empty one — posts to the page it is on. */
+function postsToOwnView(attrs: string, method: string): boolean {
+  if (method !== "POST") return false;
+  const action = exactAttr(attrs, "action");
+  // A value a template expression filled in (blanked to spaces by now) is a URL, whatever it is.
+  if (action !== "" && action !== undefined) return false;
+  // Another attribute that names the target (`th:action`, `asp-action`, `:action`) or hands the submit to
+  // client code (htmx, Livewire, Vue and Alpine submit handlers) leaves it to its own reader.
+  return !/(?:^|\s)(?:(?:th:|asp-|v-bind:|:)action|asp-[\w-]+|hx-[\w-]+|wire:submit[^\s=]*|[@:]submit[^\s=]*|v-on:submit[^\s=]*|x-on:submit[^\s=]*)(?:\s*=|\s|$)/i.test(attrs);
+}
 
 /**
  * The page's controls, links and inline handlers. Every `<a href>` is a click
@@ -386,8 +397,10 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
 
       if (tag === "form") {
         const request = formRequest(attrs);
-        forms.push({ method: (exactAttr(attrs, "method") ?? "GET").toUpperCase(), request });
-        const el: InteractiveElementInfo = { element: "form", event: inline?.event ?? "submit", handler: inline?.handler ?? id, line: ln };
+        const method = (exactAttr(attrs, "method") ?? "GET").toUpperCase();
+        const own = !request && !inline && postsToOwnView(attrs, method);
+        forms.push({ method, request, ...(own ? { ownViewPost: true as const } : {}) });
+        const el: InteractiveElementInfo = { element: "form", event: inline?.event ?? "submit", handler: inline?.handler ?? id, line: ln, ...(own ? { ownViewPost: true as const } : {}) };
         add(inline ? el : withRequest(el, request));
         continue;
       }
@@ -396,7 +409,9 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       if ((tag === "button" && type === "submit") || (tag === "input" && (type === "submit" || type === "image"))) {
         const form = forms[forms.length - 1];
         const request = formRequest(attrs, "formaction", "formmethod", form?.method) ?? form?.request;
-        const el: InteractiveElementInfo = { element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption };
+        // Its own `formaction` names a URL; otherwise the form's own-view post is the control's.
+        const own = !request && !inline && !!form?.ownViewPost && !/(?:^|\s)formaction\s*=/i.test(attrs);
+        const el: InteractiveElementInfo = { element: "button", event: inline?.event ?? "click", handler: inline?.handler ?? id, line: ln, ...caption, ...(own ? { ownViewPost: true as const } : {}) };
         add(inline ? el : withRequest(el, request));
         continue;
       }
