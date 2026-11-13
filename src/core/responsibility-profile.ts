@@ -8,7 +8,7 @@ import type {
   WorkflowRole,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
-import { classifyKnownPackage, type KnownPackageEntry } from "../extractors/registry.js";
+import { classifyKnownPackage, importPackageNamesFor, importPackageScopeOf, type KnownPackageEntry } from "../extractors/registry.js";
 import { spansOf, innermostAt } from "./api-route-symbol-links.js";
 
 /**
@@ -93,9 +93,21 @@ const RELATIVE_IMPORT_RE = /^(\.|\/|~|@\/)/;
  * and finally the trailing path segment (`gorm.io/gorm` → `gorm`). Returns the
  * first hit; relative and alias imports are never classified.
  */
-export function classifyImportSource(source: string, scope?: ReadonlySet<Language>): KnownPackageEntry | undefined {
+export function classifyImportSource(source: string, scope?: ReadonlySet<Language>, language?: Language): KnownPackageEntry | undefined {
   const s = source.trim();
   if (!s || RELATIVE_IMPORT_RE.test(s)) return undefined;
+  // An import is a package of its own language's ecosystems: only their tables classify it.
+  if (language) {
+    scope = importPackageScopeOf(language, scope);
+    const byName = classifyImportSource(s, scope);
+    if (byName) return byName;
+    // A language whose import names are not its distribution names (`importPackageNames`).
+    for (const name of importPackageNamesFor(language, s)) {
+      const hit = classifyKnownPackage(name, scope);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
   const lower = s.toLowerCase();
 
   const direct = classifyKnownPackage(lower, scope);
@@ -214,7 +226,7 @@ export function buildResponsibilityProfiles(analyses: readonly FileAnalysis[], s
     for (const imp of a.imports) {
       const root = externalRoot(imp.source);
       if (root) externals.add(root);
-      const entry = classifyImportSource(imp.source, scope);
+      const entry = classifyImportSource(imp.source, scope, a.language);
       const kind = entry ? CATEGORY_BOUNDARY[entry.category] : undefined;
       if (!kind) continue;
       // One import row per (boundary, package root) keeps a file that imports

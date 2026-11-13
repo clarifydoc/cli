@@ -5,7 +5,7 @@ import { djangoTestSetupRuns } from "./django/test-setup.js";
 import { pythonTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
-import { pypiPackageManager } from "./package-manifests.js";
+import { distributionNamesOfImport, pypiPackageManager } from "./package-manifests.js";
 import { pythonStandardImport } from "./standard-library.js";
 import { resolvePythonImport } from "./module-resolver.js";
 import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
@@ -53,6 +53,7 @@ export const pythonManifest: LanguagePluginManifest = {
   family: "python",
   packageManagers: [pypiPackageManager],
   packageEcosystems: ["pypi"],
+  importPackageNames: distributionNamesOfImport,
   parsing: "tree-sitter",
   extensions: [".py", ".pyw"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.

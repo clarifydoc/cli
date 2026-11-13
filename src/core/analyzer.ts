@@ -74,6 +74,7 @@ import {
   ensureLanguagesLoaded,
   pluginScopeOf,
   classifyKnownPackage,
+  importPackageScopeOf,
   pluginFor,
   manifestFor,
   PARTIAL_PREFIX_BY_LANGUAGE,
@@ -3892,6 +3893,7 @@ export function buildComponentGraph(
     for (const cls of a.classes ?? []) {
       for (const m of cls.methods ?? []) addCallLeaves(m.calls);
     }
+    const fileScope = importPackageScopeOf(a.language, packageScope);
     const dirImports = importsNameDirectories(a.language);
     const usedLeaves = dirImports ? new Set([...usedNames].map((n) => n.slice(n.lastIndexOf(".") + 1))) : usedNames;
 
@@ -3974,8 +3976,8 @@ export function buildComponentGraph(
         EXTERNAL_NAMESPACE_ROOT_RE.test(imp.source) ||
         isExternalPackage(imp.source) ||
         isStandardImport(a.filePath, imp.source, (p) => byPath.has(p)) ||
-        classifyKnownPackage(imp.source, packageScope) !== undefined ||
-        classifyKnownPackage(packageRoot, packageScope) !== undefined;
+        classifyKnownPackage(imp.source, fileScope) !== undefined ||
+        classifyKnownPackage(packageRoot, fileScope) !== undefined;
       if (isExternal) continue;
       // A package of the repository its rewrite (step 1b) did not reach: which
       // file it means is unknown, and a namesake elsewhere is a decoy.

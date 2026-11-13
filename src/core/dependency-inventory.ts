@@ -13,6 +13,7 @@ import type {
 import type { DeclaredPackage, PackageManifestSpec } from "../types/language-plugin.js";
 import {
   classifyKnownPackage,
+  ecosystemPackageScopeOf,
   packageEcosystemsFor,
   packageKeyOf,
   packageRegistryOf,
@@ -214,7 +215,7 @@ export async function collectExternalPackages(
         }
         continue;
       }
-      const { category } = classify(raw.name, scope);
+      const { category } = classify(raw.name, ecosystemPackageScopeOf(raw.ecosystem, scope));
       byKey.set(key, { ...raw, category });
     }
   }
@@ -429,7 +430,7 @@ export function deriveFrameworksFromPackages(packages: readonly ExternalPackage[
   const byId = new Map<string, FrameworkDetection>();
   for (const pkg of packages) {
     if (pkg.local !== undefined) continue; // this repository's own package is no framework
-    const known = classify(pkg.name, scope);
+    const known = classify(pkg.name, ecosystemPackageScopeOf(pkg.ecosystem, scope));
     if (!known.framework) continue;
     const strong = (pkg.scope === "prod" || pkg.scope === "peer") && pkg.used !== false;
     const detection: FrameworkDetection = {

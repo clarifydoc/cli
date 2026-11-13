@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildResponsibilityProfiles, classifyImportSource } from "./responsibility-profile.js";
+import { pluginScopeOf } from "../extractors/registry.js";
 import { createEmptyAnalysis, type DataSourceInfo, type FileAnalysis, type Language } from "../types/analysis.js";
 
 const imp = (source: string, line = 1) => ({ source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line });
@@ -29,6 +30,43 @@ describe("classifyImportSource", () => {
     expect(classifyImportSource("./db")).toBeUndefined();
     expect(classifyImportSource("@/services/api")).toBeUndefined();
     expect(classifyImportSource("../utils")).toBeUndefined();
+  });
+});
+
+describe("classifyImportSource by the importing language's ecosystems", () => {
+  // A polyglot analysis: every one of these plugins is loaded.
+  const scope = pluginScopeOf(["python", "csharp", "typescript", "javascript"]);
+
+  it("names a Python import by its distribution (dots to dashes), though the table lists the distribution", () => {
+    expect(classifyImportSource("azure.storage.blob", scope, "python")?.category).toBe("cloud");
+    expect(classifyImportSource("azure.storage.blob.aio", scope, "python")?.category).toBe("cloud");
+    expect(classifyImportSource("azure.cosmos", scope, "python")).toBeUndefined();
+  });
+
+  it("never lets another ecosystem's rule classify the import (a C# `Azure.` prefix is no Python package)", () => {
+    // Decoy: the C# table's `^azure\\.` rule covers `azure.cosmos` for a C# file only.
+    expect(classifyImportSource("Azure.Storage.Blobs", scope, "csharp")?.category).toBe("cloud");
+    expect(classifyImportSource("azure.cosmos", scope, "csharp")?.category).toBe("cloud");
+    expect(classifyImportSource("azure.cosmos", scope, "python")).toBeUndefined();
+    expect(classifyImportSource("azure.cosmos", scope)?.category).toBe("cloud");
+  });
+
+  it("keeps TypeScript and JavaScript on one npm table, and out of Python's", () => {
+    expect(classifyImportSource("axios", scope, "typescript")?.category).toBe("http");
+    expect(classifyImportSource("axios", scope, "javascript")?.category).toBe("http");
+    expect(classifyImportSource("axios", scope, "python")).toBeUndefined();
+  });
+
+  it("classifies a file's imports in buildResponsibilityProfiles by its own language", () => {
+    const py = file("app/blobs.py", "python", (f) => f.imports.push(imp("azure.storage.blob"), imp("azure.cosmos")));
+    const cs = file("App/Cosmos.cs", "csharp", (f) => f.imports.push(imp("Azure.Cosmos")));
+    const profiles = buildResponsibilityProfiles([py, cs], scope);
+    expect(profiles.map((p) => [p.filePath, p.boundaries])).toEqual([
+      ["App/Cosmos.cs", ["cloud"]],
+      ["app/blobs.py", ["cloud"]],
+    ]);
+    // Only the blob import is a Python package; `azure.cosmos` is not, whatever the C# table says.
+    expect(profiles[1]!.evidence.map((e) => e.name)).toEqual(["azure.storage.blob"]);
   });
 });
 

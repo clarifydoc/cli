@@ -274,6 +274,19 @@ function distributionOfImport(source: string): string {
   return IMPORT_DISTRIBUTIONS[head] ?? head.toLowerCase().replace(/_/g, "-");
 }
 
+/**
+ * The distribution names a dotted import may be listed under, longest first: `cloudvendor.storage.blob.aio` →
+ * `cloudvendor-storage-blob-aio`, `cloudvendor-storage-blob`, `cloudvendor-storage`, then the single-key answer of
+ * {@link distributionOfImport}. Distributions are named by dashes where imports use dots.
+ */
+export function distributionNamesOfImport(source: string): string[] {
+  const parts = source.split(".").filter(Boolean);
+  const out: string[] = [];
+  for (let n = parts.length; n >= 2; n--) out.push(parts.slice(0, n).join("-").toLowerCase().replace(/_/g, "-"));
+  out.push(distributionOfImport(source));
+  return [...new Set(out)];
+}
+
 export const pypiPackageManager: PackageManagerSpec = {
   ecosystem: "pypi",
   manifests: [

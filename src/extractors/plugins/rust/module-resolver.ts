@@ -6,6 +6,7 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  * defines it:
  *   - `crate::a::b`   — under the importing crate's `src/` (its `lib.rs` / `main.rs`
  *     directory): `a/b.rs` or `a/b/mod.rs`;
+ *     A file under a crate's `tests/`, `benches/` or `examples/` is in a crate of its own: `crate::` is that directory;
  *   - `self::x`, `super::x` — beside / above the importing module;
  *   - `other_crate::m` — a workspace crate whose directory is named so
  *     (`-` for `_`): `other-crate/src/m.rs`;
@@ -32,14 +33,14 @@ export function resolveRustImport(importingFile: string, source: string, specifi
   if (segs.length === 0) return null;
   // `self` alone is the importing module itself; `mod tools;` names its child `tools`.
   if (segs.length === 1 && segs[0] === "self") {
-    const child = specifier ? exactModuleFile(selfDirOf(importingFile), [specifier], ctx) : null;
+    const child = specifier ? exactModuleFile(selfDirOf(importingFile, ctx), [specifier], ctx) : null;
     return child ?? importingFile;
   }
   let base = moduleDirOf(importingFile, segs[0]!, ctx);
   let rest = segs.slice(1);
   // Neither a path keyword nor a crate: a child module of the importing one (`pub use club_sql::*` in `persistence/mod.rs`).
   if (base === null) {
-    base = selfDirOf(importingFile);
+    base = selfDirOf(importingFile, ctx);
     rest = segs;
     if (!ctx.files.has(join(base, `${segs[0]}.rs`)) && !ctx.files.has(join(base, `${segs[0]}/mod.rs`))) return null;
   }
@@ -74,25 +75,38 @@ export function resolveRustImport(importingFile: string, source: string, specifi
 /** The directory a path's first segment starts from; null when it names no project crate. */
 function moduleDirOf(importingFile: string, head: string, ctx: ImportResolveContext): string | null {
   if (head === "crate") return crateSrcOf(importingFile, ctx);
-  if (head === "self" || head === "super") return selfDirOf(importingFile);
+  if (head === "self" || head === "super") return selfDirOf(importingFile, ctx);
   // A sibling module named outright from the crate root (2018 edition paths in a `mod.rs`/`lib.rs`).
   return workspaceCrate(head, ctx);
 }
 
-/** The `src/` directory of the crate the file belongs to: the nearest ancestor holding `lib.rs` or `main.rs`. */
+/** Cargo's directories of extra crates, each file directly inside one a crate root of its own. */
+const TARGET_DIRS: ReadonlySet<string> = new Set(["tests", "benches", "examples"]);
+const lastSegment = (dir: string): string => dir.slice(dir.lastIndexOf("/") + 1);
+
+/**
+ * The `src/` directory of the crate the file belongs to: the nearest ancestor holding `lib.rs` or `main.rs`. Under
+ * `tests/`, `benches/` or `examples/` it is that directory unless the nearest such ancestor is a crate's `src/`
+ * (a `src/tests/` module folder): `tests/<x>.rs` is a crate of its own whose `mod support;` and
+ * `use crate::support::auth` name `tests/support/...`, never another crate's file.
+ */
 function crateSrcOf(file: string, ctx: ImportResolveContext): string | null {
   let dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
+  let target: string | undefined;
   for (;;) {
-    if (ctx.files.has(join(dir, "lib.rs")) || ctx.files.has(join(dir, "main.rs"))) return dir;
-    if (dir === "") return null;
+    if (target === undefined && TARGET_DIRS.has(lastSegment(dir))) target = dir;
+    if (ctx.files.has(join(dir, "lib.rs")) || ctx.files.has(join(dir, "main.rs"))) return target !== undefined && lastSegment(dir) !== "src" ? target : dir;
+    if (dir === "") return target ?? null;
     dir = dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "";
   }
 }
 
 /** The directory a file's own child modules live in: `a/b.rs` → `a/b`, `a/mod.rs` / `lib.rs` → `a`. */
-function selfDirOf(file: string): string {
+function selfDirOf(file: string, ctx: ImportResolveContext): string {
   const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
   const base = file.slice(file.lastIndexOf("/") + 1).replace(/\.rs$/, "");
+  // A crate root under `tests/` (`tests/kit.rs`): its child modules sit beside it, as a `main.rs`'s do.
+  if (TARGET_DIRS.has(lastSegment(dir)) && crateSrcOf(file, ctx) === dir) return dir;
   return base === "mod" || base === "lib" || base === "main" ? dir : join(dir, base);
 }
 

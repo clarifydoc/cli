@@ -1823,6 +1823,13 @@ export interface LanguagePluginManifest {
    */
   packageEcosystems?: readonly PackageEcosystem[];
   /**
+   * The package names an import source may be listed under in this language's registry, most specific first —
+   * for a language whose import names differ from its distribution names (`cloudvendor.storage.blob` is the
+   * distribution `cloudvendor-storage-blob`). Core tries each against the known-package tables of the importing
+   * language's ecosystems. Leaf code: reads only its argument.
+   */
+  importPackageNames?(source: string): readonly string[];
+  /**
    * How this language's programs are told where other services are: the
    * configuration files they read, the expressions that read them, and how an
    * environment variable addresses a configuration key. Core's call-origin

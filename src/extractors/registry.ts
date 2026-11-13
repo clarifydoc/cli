@@ -911,6 +911,49 @@ export function classifyKnownPackage(name: string, scope?: ReadonlySet<Language>
   return undefined;
 }
 
+/** `scope` narrowed to the plugins whose languages share a registry with `registries` (and `language` itself). */
+function scopeSharingRegistries(registries: ReadonlySet<PackageEcosystem>, language: Language | undefined, scope: ReadonlySet<Language>): ReadonlySet<Language> {
+  const out = new Set<Language>();
+  for (const l of scope) {
+    if (l === language || packageEcosystemsFor(l).some((e) => registries.has(packageRegistryOf(e)))) out.add(l);
+  }
+  return out;
+}
+
+const ecosystemScopes = new WeakMap<ReadonlySet<Language>, Map<string, ReadonlySet<Language>>>();
+
+function cachedScope(scope: ReadonlySet<Language>, key: string, build: () => ReadonlySet<Language>): ReadonlySet<Language> {
+  const bySet = ecosystemScopes.get(scope) ?? ecosystemScopes.set(scope, new Map()).get(scope)!;
+  let hit = bySet.get(key);
+  if (!hit) bySet.set(key, (hit = build()));
+  return hit;
+}
+
+/**
+ * The plugins whose known-package tables name what a file of `language` imports: its own and those of the
+ * languages sharing a registry with it (TypeScript/JavaScript, C#/VB/F#, Java/Kotlin/Scala), within `scope`.
+ * A rule of another ecosystem never classifies the import — a C# `Azure.` prefix is no Python package. A
+ * language that states no ecosystem (a template or markup language importing its host's packages) and an
+ * analysis with no `scope` are not narrowed: `scope` is returned as given.
+ */
+export function importPackageScopeOf(language: Language, scope?: ReadonlySet<Language>): ReadonlySet<Language> | undefined {
+  if (!scope) return scope;
+  const registries = new Set(packageEcosystemsFor(language).map(packageRegistryOf));
+  if (registries.size === 0) return scope;
+  return cachedScope(scope, `lang:${language}`, () => scopeSharingRegistries(registries, language, scope));
+}
+
+/** The same for a declared package of `ecosystem`: the plugins whose languages import from that registry. */
+export function ecosystemPackageScopeOf(ecosystem: PackageEcosystem, scope?: ReadonlySet<Language>): ReadonlySet<Language> | undefined {
+  if (!scope) return scope;
+  return cachedScope(scope, `eco:${ecosystem}`, () => scopeSharingRegistries(new Set([packageRegistryOf(ecosystem)]), undefined, scope));
+}
+
+/** The names an import of `language` may be listed under in its registry (`importPackageNames`); none when the plugin has no mapping. */
+export function importPackageNamesFor(language: Language, source: string): readonly string[] {
+  return MANIFEST_BY_LANGUAGE.get(language)?.importPackageNames?.(source) ?? [];
+}
+
 // ─── Security rules ──────────────────────────────────────────────────────
 
 /**

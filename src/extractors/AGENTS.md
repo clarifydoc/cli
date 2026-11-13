@@ -74,7 +74,11 @@ framework import hints, `frameworks.ts` rules, `activationFiles`,
 `dispatchLanguages`, `docComments` (from `shared/doc-comment-specs.ts`),
 and the plugin's package managers (`packageManagers` —
 manifest parsers + how an import names a package, from `package-manifests.ts`
-— and `packageEcosystems`, the ecosystems the language imports from).
+— and `packageEcosystems`, the ecosystems the language imports from; `importPackageNames`, the distribution
+names an import may be listed under — Python's dotted `azure.storage.blob` → `azure-storage-blob`). Known-package
+tables answer by ecosystem: an import is classified only by the plugins sharing a registry with the importing
+language (`importPackageScopeOf`), a declared package by those of its own (`ecosystemPackageScopeOf`) — a C# `Azure.`
+rule never classifies a Python import.
 The registry imports every manifest EAGERLY and builds the module-scope
 constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
 `ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
