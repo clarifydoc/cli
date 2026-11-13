@@ -6883,13 +6883,19 @@ function heldValuePoint(ctx: LinkContext, file: string, def: SymbolDef, at: { an
  * `return new ClubApi()`, `return useClubApi()`): one class, when every return types the same one. An async
  * function's result is that class only awaited. A library's object (`return useI18n()`) types nothing.
  */
-function statedResultPoint(ctx: LinkContext, file: string, def: SymbolDef | undefined, consumer: string, awaited: boolean): InjectionPoint | null {
+function statedResultPoint(ctx: LinkContext, file: string, def: SymbolDef | undefined, consumer: string, awaited: boolean, receiver: InjectionPoint | null = null): InjectionPoint | null {
   if (!def || def.returnType || def.declaredReturn) return null;
   const at = functionOfDef(ctx, file, def);
   if (!at?.fn.returnedFrom?.length || (at.fn.isAsync && !awaited)) return null;
   let typed: InjectionPoint | null = null;
   for (const returned of at.fn.returnedFrom) {
-    const p = heldValuePoint(ctx, file, def, at, /[(.]/.test(returned) ? { from: returned } : { local: returned }, consumer);
+    // `this` (a fluent method's `return this`) is the receiver the method was called on — a subclass inheriting the
+    // method keeps its own type — else the class declaring it.
+    const p: InjectionPoint | null = returned === "this"
+      ? receiver?.typeFile
+        ? { typeName: receiver.typeName, typeFile: receiver.typeFile, member: "", consumer, container: false, ...(receiver.classSide ? { classSide: true } : {}) }
+        : at.owner && ctx.classAt.has(memberKey(file, at.owner)) ? { typeName: at.owner, typeFile: file, member: "", consumer, container: false } : null
+      : heldValuePoint(ctx, file, def, at, /[(.]/.test(returned) ? { from: returned } : { local: returned }, consumer);
     if (!p || (typed && (typed.typeFile !== p.typeFile || typed.typeName !== p.typeName))) return null;
     typed = p;
   }
@@ -7325,7 +7331,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
   }
   if (!hit) return frameworkSelfMember(ctx, point, method);
   const def = symbolIn(ctx, hit.file, hit.symbol);
-  const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited);
+  const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
   // class-level methods answer next.
   return next && def?.classLevel && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;

@@ -218,6 +218,10 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
   declaring no return type states what each `return` is (`FunctionInfo.returnedFrom`: `new ClubApi()`, `useClubApi()`,
   a local's name); the linker types both as it types a local's initializer, in the factory's own scope, so
   `const { clubs } = useLeague(); clubs.getAll()` lands on `ClubApi.getAll`. A library's object types nothing.
+  `return await x()` states what `return x()` does (an async function's result types only for a caller that awaits
+  it), and `return this` states the bare name `this`: the linker types it as the receiver the method was called on
+  (`new YouthQuery().withLeague(a).limit(5).fetch()` stays on the subclass that inherits the fluent base method),
+  else the class declaring the method; `return this.sub` states nothing.
   A returned ref or computed whose value derives from a parameter is stated as `FunctionInfo.derivedLocals` (a
   computed lookup keyed by it, or a ref every assignment of which is a lookup or a function's result for it — a
   `watch` callback's first parameter being the watched value); a call site reading the member (`const { club } =

@@ -167,11 +167,13 @@ function resultChainText(value: Node | null, names: boolean): string | null {
 
 /** `into` with the chain each arm of a returned value is (`FunctionInfo.returnedFrom`); null when one is none. */
 function resultChains(value: Node | null, into: string[]): string[] | null {
-  while (value && VALUE_WRAPPERS.has(value.type)) value = value.namedChild(0);
+  // `return await useClubApi()` hands back what the awaited call does (the caller awaits the async function).
+  while (value && (VALUE_WRAPPERS.has(value.type) || value.type === "await_expression")) value = value.namedChild(0);
   if (value?.type === "ternary_expression") {
     return resultChains(value.childForFieldName("consequence"), into) && resultChains(value.childForFieldName("alternative"), into);
   }
-  const chain = resultChainText(value, true);
+  // A fluent method's `return this` is the receiver itself, stated as the bare name `this`.
+  const chain = value?.type === "this" ? "this" : resultChainText(value, true);
   if (!chain) return null;
   if (!into.includes(chain)) into.push(chain);
   return into;
