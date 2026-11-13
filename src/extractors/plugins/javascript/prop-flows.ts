@@ -116,10 +116,10 @@ export interface TypedValue {
   id: string;
 }
 
-type Files = { byPath: Map<string, FileAnalysis>; filePathMap: Map<string, string> };
+export type Files = { byPath: Map<string, FileAnalysis>; filePathMap: Map<string, string> };
 
 /** The file declaring a class or function: `file` itself, or the module its import of `name` resolves to (under the exported name). */
-function homeOf(file: FileAnalysis, name: string, kind: "class" | "function", files: Files): { file: FileAnalysis; name: string } | null {
+export function homeOf(file: FileAnalysis, name: string, kind: "class" | "function", files: Files): { file: FileAnalysis; name: string } | null {
   const declares = (a: FileAnalysis, n: string) => (kind === "class" ? a.classes.some((c) => c.name === n) : a.functions.some((f) => f.name === n));
   if (declares(file, name)) return { file, name };
   const imp = file.imports.find((i) => i.specifiers.includes(name));

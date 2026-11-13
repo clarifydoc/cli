@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
+import { withStoreWatchers, type StoreTrigger } from "./store-reads.js";
 
 /**
  * Reactive cells a component writes and the callbacks a write re-runs — the trigger a click
@@ -22,20 +23,20 @@ import { sameCell } from "../../../core/reactive-triggers.js";
  * (`watch(query, loadPlayers)`) triggers that function.
  */
 
-const SCOPES: ReadonlySet<string> = new Set(["function_declaration", "generator_function_declaration", "function_expression", "function", "arrow_function", "method_definition", "generator_function"]);
+export const SCOPES: ReadonlySet<string> = new Set(["function_declaration", "generator_function_declaration", "function_expression", "function", "arrow_function", "method_definition", "generator_function"]);
 const CLASSES: ReadonlySet<string> = new Set(["class_declaration", "class", "abstract_class_declaration"]);
 /** Calls returning a cell: Vue's refs, a `defineModel` two-way prop, a ref onto a member, VueUse's stored refs. */
 const VUE_CELLS: ReadonlySet<string> = new Set(["ref", "shallowRef", "customRef", "reactive", "shallowReactive", "computed", "defineModel", "toRef", "useVModel", "useStorage", "useLocalStorage", "useSessionStorage", "useTemplateRef"]);
-const VUE_SOURCES = /^(?:vue|@vue\/[\w-]+|@vueuse\/[\w-]+|#imports|nuxt\/app|#app)$/;
+export const VUE_SOURCES = /^(?:vue|@vue\/[\w-]+|@vueuse\/[\w-]+|#imports|nuxt\/app|#app)$/;
 /** Watchers taking a source and a callback (`watch(src, cb)`), and those whose callback reads its own sources. */
-const VUE_WATCH = new Set(["watch", "watchDebounced", "watchThrottled", "watchImmediate", "watchDeep", "watchOnce", "watchPausable", "watchIgnorable", "watchTriggerable", "whenever", "debouncedWatch", "throttledWatch", "pausableWatch", "ignorableWatch"]);
-const VUE_EFFECT = new Set(["watchEffect", "watchPostEffect", "watchSyncEffect"]);
+export const VUE_WATCH = new Set(["watch", "watchDebounced", "watchThrottled", "watchImmediate", "watchDeep", "watchOnce", "watchPausable", "watchIgnorable", "watchTriggerable", "whenever", "debouncedWatch", "throttledWatch", "pausableWatch", "ignorableWatch"]);
+export const VUE_EFFECT = new Set(["watchEffect", "watchPostEffect", "watchSyncEffect"]);
 const REACT_EFFECT = new Set(["useEffect", "useLayoutEffect", "useInsertionEffect"]);
 const REACT_DERIVED = new Set(["useMemo", "useCallback"]);
 const REACT_SOURCES = /^(?:react|preact\/hooks|preact\/compat)$/;
 const ANGULAR_CELLS = new Set(["signal", "computed", "model", "linkedSignal"]);
 /** Array, Set and Map members that change the collection they are called on. */
-const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin", "set", "add", "delete", "clear"]);
+export const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin", "set", "add", "delete", "clear"]);
 
 interface Cell {
   key: string;
@@ -53,9 +54,9 @@ interface Write { cell: string; node: Node; spelling: string; falsy?: boolean }
 interface Trigger { cells: Set<string>; hook: string; callback: Node | null; callee: string | null; at: Node; immediate?: boolean }
 
 /** A value only a switch-off writes: `false`, `null`, `undefined`, an empty string, `0`. */
-const FALSY = /^(?:false|null|undefined|''|""|``|0)$/;
+export const FALSY = /^(?:false|null|undefined|''|""|``|0)$/;
 /** Watchers that run their callback only when the source turns truthy (VueUse `whenever`). */
-const TRUTHY_ONLY = new Set(["whenever"]);
+export const TRUTHY_ONLY = new Set(["whenever"]);
 /** A ref's type argument naming a DOM node: what it holds is never made reactive. */
 const DOM_TYPE = /\b(?:HTML\w*Element|SVG\w*Element|Element|Node|Document|Window)\b/;
 
@@ -68,6 +69,8 @@ export interface CellFacts {
   propTriggers?: PropTrigger[];
   /** Callbacks written in place on a member of an injected project service (`this.leagueSvc.changes$.pipe(…).subscribe(cb)`), held so a `.next` in another class can run them. */
   subjectListens?: SubjectListen[];
+  /** Watchers reading state a store holds (`watch(() => store.filters.league, …)`): the project pass joins them to the actions writing it. */
+  storeTriggers?: StoreTrigger[];
 }
 
 /** A subscription on `via.field` — a member of a service the class holds as `via` — whose callback is held as its own function. */
@@ -85,7 +88,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   if (tree === memoTree) return memo!;
   memoTree = tree;
   const text = tree.rootNode.text;
-  memo = withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text), text);
+  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text), text), text);
   return memo;
 }
 
@@ -238,18 +241,28 @@ function withPropWatchers(tree: Tree, facts: CellFacts, text: string): CellFacts
     }
   }
   if (found.length === 0) return facts;
-  const held = new Map(facts.held);
-  const used = new Map<string, number>();
-  for (const name of held.values()) used.set(name.replace(/#\d+>$/, ">"), (used.get(name.replace(/#\d+>$/, ">")) ?? 0) + 1);
-  for (const t of found) {
-    if (!t.callback || held.has(t.callback.id)) continue;
-    const base = `<${t.hook}@${t.callback.startPosition.row + 1}>`;
-    const n = (used.get(base) ?? 0) + 1;
-    used.set(base, n);
-    held.set(t.callback.id, n > 1 ? base.replace(/>$/, `#${n}>`) : base);
-    t.heldHere = true;
-  }
+  const held = holdCallbacks(facts.held, found);
+  for (const t of found) if (t.callback && !facts.held.has(t.callback.id)) t.heldHere = true;
   return { ...facts, held, propTriggers: found };
+}
+
+/**
+ * Holds each callback written in place that is not held yet — a watcher whose source another file feeds: its own
+ * function, `<hook@row>`, `#n` after the first of one name.
+ */
+export function holdCallbacks(held: ReadonlyMap<number, string>, found: ReadonlyArray<{ hook: string; callback: Node | null }>): Map<number, string> {
+  const out = new Map(held);
+  const used = new Map<string, number>();
+  const base = (name: string) => name.replace(/#\d+>$/, ">");
+  for (const name of out.values()) used.set(base(name), (used.get(base(name)) ?? 0) + 1);
+  for (const t of found) {
+    if (!t.callback || out.has(t.callback.id)) continue;
+    const name = `<${t.hook}@${t.callback.startPosition.row + 1}>`;
+    const n = (used.get(name) ?? 0) + 1;
+    used.set(name, n);
+    out.set(t.callback.id, n > 1 ? name.replace(/>$/, `#${n}>`) : name);
+  }
+  return out;
 }
 
 /** The held name of a watcher callback written in place whose cell the file writes, else null. */
@@ -288,7 +301,7 @@ export function reactiveCells(tree: Tree, _sourceText: string, functions: Readon
 }
 
 /** The innermost declared function holding a line: the narrowest, then the last to start. */
-function innermost(functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, line: number): string | null {
+export function innermost(functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, line: number): string | null {
   let best: { name: string; line: number; endLine: number } | null = null;
   for (const f of functions) {
     if (f.line > line || f.endLine < line) continue;
@@ -594,7 +607,7 @@ function cellPath(key: string, path: readonly string[]): string {
  * member. `deep` when what is read is called on or measured (`items.value.filter(…)`, `items.value.length`,
  * `items.value[0]`) — that reads its contents; `returned` when it is all a getter's body is (`() => x.value`).
  */
-function readPath(id: Node): { path: string[]; deep: boolean; returned: boolean } {
+export function readPath(id: Node): { path: string[]; deep: boolean; returned: boolean } {
   const path: string[] = [];
   let n: Node = id;
   let deep = false;
@@ -618,12 +631,12 @@ function readPath(id: Node): { path: string[]; deep: boolean; returned: boolean 
 }
 
 /** A watch options object asking for `deep: true` (or a depth). */
-function isDeep(options: Node | undefined): boolean {
+export function isDeep(options: Node | undefined): boolean {
   return isOption(options, "deep");
 }
 
 /** An options object setting `name` to anything but `false`. */
-function isOption(options: Node | undefined, name: string): boolean {
+export function isOption(options: Node | undefined, name: string): boolean {
   if (options?.type !== "object") return false;
   return options.namedChildren.some((p) => p?.type === "pair" && optionKey(p.childForFieldName("key")) === name && p.childForFieldName("value")?.text !== "false");
 }
@@ -881,16 +894,16 @@ function toObservableSource(subscribe: Node, cls: Node): { signal: string; chain
   return signal ? { signal, chain } : null;
 }
 
-function within(n: Node, outer: Node): boolean {
+export function within(n: Node, outer: Node): boolean {
   return n.startIndex >= outer.startIndex && n.endIndex <= outer.endIndex;
 }
 
-function argumentsOf(call: Node): Node[] {
+export function argumentsOf(call: Node): Node[] {
   return (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a): a is Node => !!a && a.type !== "comment");
 }
 
 /** The function a getter argument is: `() => a.value + b.value`, `computed({ get: () => … })`. */
-function getterOf(arg: Node | undefined): Node | null {
+export function getterOf(arg: Node | undefined): Node | null {
   if (!arg) return null;
   if (arg.type === "arrow_function" || arg.type === "function_expression" || arg.type === "function") return arg.childForFieldName("body");
   if (arg.type === "object") {
@@ -903,14 +916,14 @@ function getterOf(arg: Node | undefined): Node | null {
 }
 
 /** A watcher's callback: written in place, or a function the file declares (`watch(query, loadPlayers)`). */
-function callbackOf(arg: Node | undefined): { callback: Node | null; callee: string | null } {
+export function callbackOf(arg: Node | undefined): { callback: Node | null; callee: string | null } {
   if (arg && (arg.type === "arrow_function" || arg.type === "function_expression" || arg.type === "function")) return { callback: arg, callee: null };
   if (arg?.type === "identifier") return { callback: null, callee: arg.text };
   return { callback: null, callee: null };
 }
 
 /** Local name → module, for every name the file's top level imports. */
-function importSources(root: Node): Map<string, string> {
+export function importSources(root: Node): Map<string, string> {
   const out = new Map<string, string>();
   for (const stmt of root.namedChildren) {
     if (stmt?.type !== "import_statement") continue;

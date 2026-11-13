@@ -11,6 +11,7 @@ import { extractStringConstants } from "./string-constants.js";
 import { recordChoice } from "./record-choice.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
 import { reactiveCells } from "./reactive-cells.js";
+import { JsStoreWatchResolver, storeWatch } from "./store-watch.js";
 import { withSubjectTriggers } from "./rxjs-subjects.js";
 import { contextValues } from "./provide-inject.js";
 import { JsContextTypeResolver, JsPropFlowResolver, propFlows } from "./prop-flows.js";
@@ -264,6 +265,7 @@ function astHooks(language: Language): AstExtractorHooks {
     functionProps: jsxFunctionProps,
     componentSubscriptions,
     reactiveCells,
+    storeWatch,
     contextValues,
     propFlows,
     busEvents,
@@ -307,7 +309,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsContextTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

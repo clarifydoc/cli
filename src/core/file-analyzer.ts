@@ -830,6 +830,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const subjects = hooks.subjectFlows(tree, sourceText, flowFns);
       if (subjects) analysis.subjectFlows = subjects;
     }
+    if (hooks?.storeWatch) {
+      const storeFns = [...analysis.functions.filter((f) => f.name !== "<setup>"), ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine })))];
+      const store = hooks.storeWatch(tree, sourceText, storeFns);
+      if (store) analysis.storeWatch = store;
+    }
     if (hooks?.reactiveCells) {
       const named = [
         ...analysis.functions.filter((f) => f.name !== "<setup>"),

@@ -467,6 +467,11 @@ export interface FileAnalysis {
   /** Props a component's watchers re-run on, and the locals a Vue parent binds them to (`prop-flows.ts`). */
   propFlows?: PropFlows;
   /**
+   * Store state a callback watches (`watch(() => store.filters.league, …)`) and the store actions writing state
+   * (`this.filters.league = x`): the join across files, by the store the factory names, is the plugin's resolver.
+   */
+  storeWatch?: StoreWatch;
+  /**
    * Functions the file's markup hands a child component by name as a prop
    * (Vue `:on-confirm="confirmDeletion"`, `:update-selected="setSelected"`):
    * one of the file's own functions, or an `on…` name it passes on from its
@@ -3321,6 +3326,32 @@ export interface PropBinding {
   transform?: string;
   /** The bound value is derived from the origin (`:club-id="club.id"`, `club` read off a store by a prop): `CallArgOrigin.derivation`. */
   derivation?: ValueStep[];
+}
+
+/**
+ * Reactive store state across files (`FileAnalysis.storeWatch`). `watchers`, in the file watching: a callback that
+ * re-runs when the state it reads changes — each read names the store factory as written (`useClubStore`) and the
+ * path below the store (`filters.league`; `picked*` read through, as `ReactiveCells` spells it). `writes`, in the
+ * file declaring a store: a function writing a state member (`path` below the store, `""` for all of it) of the store
+ * class its binding returns (`store`, `ClubStore`).
+ */
+export interface StoreWatch {
+  watchers?: Array<{
+    reads: Array<{ factory: string; path: string }>;
+    function: string;
+    line: number;
+    immediate?: boolean;
+    /** It runs only when the value turns truthy (VueUse `whenever`): a switch-off write never runs it. */
+    truthyOnly?: boolean;
+  }>;
+  writes?: Array<{
+    store: string;
+    path: string;
+    function: string;
+    line: number;
+    spelling: string;
+    falsy?: boolean;
+  }>;
 }
 
 /**

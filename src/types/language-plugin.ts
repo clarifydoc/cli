@@ -722,6 +722,8 @@ export interface AstExtractorHooks {
    * given the functions extracted so far so a write is named by the function it sits in.
    */
   reactiveCells?(tree: Tree, sourceText: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): import("./analysis.js").ReactiveCells | null;
+  /** Store state the file's watchers read and the store actions writing state: `FileAnalysis.storeWatch`. */
+  storeWatch?(tree: Tree, sourceText: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): import("./analysis.js").StoreWatch | null;
   /** Outputs of components the code opens and subscribes to: `FileAnalysis.componentSubscriptions`. */
   componentSubscriptions?(tree: Tree, sourceText: string): import("./analysis.js").ComponentSubscription[];
   /** Values provided to descendant components by key, and injected from ancestors: `FileAnalysis.contextValues`. */

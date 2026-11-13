@@ -1562,7 +1562,7 @@ function actionKeyName(key: Node | null): string | null {
  * to return it, so the linker types `const store = useClubStore()` like any
  * factory's product and resolves `store.load()` on that class.
  */
-interface PiniaStore {
+export interface PiniaStore {
   binding: string;
   className: string;
   /** The option store's options object. */
@@ -1571,7 +1571,7 @@ interface PiniaStore {
   setup: Node | null;
 }
 
-function piniaStoreOf(decl: Node): PiniaStore | null {
+export function piniaStoreOf(decl: Node): PiniaStore | null {
   const name = decl.childForFieldName("name");
   const value = decl.childForFieldName("value");
   if (name?.type !== "identifier" || value?.type !== "call_expression") return null;
