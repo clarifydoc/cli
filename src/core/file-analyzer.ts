@@ -841,7 +841,13 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
       ];
       const cells = hooks.reactiveCells(tree, sourceText, named);
-      if (cells && cells.triggers.length > 0 && (cells.writes.length > 0 || cells.triggers.some((t) => t.immediate))) analysis.reactiveCells = cells;
+      if (cells && cells.triggers.length > 0 && (cells.writes.length > 0 || cells.triggers.some((t) => t.immediate))) {
+        analysis.reactiveCells = cells;
+        // The component's own pseudo-function, where the template's writes and an Options API `immediate` run sit.
+        if (cells.component && !analysis.functions.some((f) => f.name === "<setup>")) {
+          analysis.functions.unshift({ name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 1 });
+        }
+      }
     }
 
     // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route

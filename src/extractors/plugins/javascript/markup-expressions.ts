@@ -1,5 +1,7 @@
 import { astroFrontmatter } from "../../../parsers/astro-sfc.js";
 import { projectCalleeIn } from "./markup-calls.js";
+import { templateScopes } from "./template-scopes.js";
+import { encodeTargets, templateTargets } from "./template-targets.js";
 
 /**
  * The expressions a Vue or Svelte template evaluates when it renders — `{{ label(club) }}`,
@@ -12,19 +14,61 @@ import { projectCalleeIn } from "./markup-calls.js";
  * nothing a project could define is left out.
  */
 export function withMarkupExpressions(raw: string, blanked: string, kind: "vue" | "svelte" | "astro"): string {
-  const spans = kind === "vue" ? vueExpressions(raw) : kind === "astro" ? astroExpressions(raw) : svelteExpressions(raw);
+  const vueTemplate = kind === "vue" ? templateText(raw, true) : "";
+  const spans = kind === "vue" ? [...vueExpressions(vueTemplate), ...vueTemplateWrites(vueTemplate)] : kind === "astro" ? astroExpressions(raw) : svelteExpressions(raw);
   let out = blanked;
   // Back to front: a replacement changes the columns after it, never the lines.
-  for (const { start, end, expr } of spans.sort((a, b) => b.start - a.start)) {
-    if (!projectCalleeIn(expr)) continue;
+  for (const { start, end, expr, mark } of spans.sort((a, b) => b.start - a.start)) {
+    if (!mark && !projectCalleeIn(expr)) continue;
     // Only in the template: the blanked text is blank there (a script keeps its own text).
     if (!/^\s*$/.test(out.slice(start, end))) continue;
-    out = `${out.slice(0, start)};(${decodeEntities(expr)});${out.slice(end)}`;
+    // A statement that spans lines keeps them (after the comment), so the lines below do not move.
+    const text = mark ? mark + out.slice(start, end).replace(/[^\n\r]/g, "") : `;(${decodeEntities(expr)});`;
+    out = `${out.slice(0, start)}${text}${out.slice(end)}`;
   }
   return out;
 }
 
-interface Span { start: number; end: number; expr: string }
+interface Span { start: number; end: number; expr: string; /** Written in place of the statement: a comment the reactive-cell reader finds. */ mark?: string }
+
+/** The comment a template write leaves in the parsed text: what the reactive-cell reader looks for. */
+export const TEMPLATE_WRITE_MARK = "/*tpl-write ";
+
+/** An expression that may change a value: an assignment, an increment, a collection mutator. */
+const WRITES = /(?<![=!<>])(?:[-+*\/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?![=>])|\+\+|--|\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|delete|clear)\s*\(/;
+
+/**
+ * The inline statements a template runs that write the component's state: `@click="page = 2"`,
+ * `@click="filters.league = 3"`, `@input="showAll = !showAll"`, `v-model="query"` (the user's input writes it).
+ * Each leaves a block comment at its place (`TEMPLATE_WRITE_MARK`, then the names it writes — `encodeTargets`) —
+ * never the statement: the script's own cells and watchers are read from the parsed text, a statement there would
+ * alias or declare names, and its calls and strings would be read by every text scan. A name the template binds
+ * below the element (a `v-for` variable, a slot parameter) is not the component's and is left out.
+ */
+function vueTemplateWrites(t: string): Span[] {
+  if (!t.includes("@") && !t.includes("v-on:") && !t.includes("v-model")) return [];
+  const scopes = templateScopes(t);
+  const spans: Span[] = [];
+  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g;
+  for (const tag of t.matchAll(tagRegex)) {
+    const attrs = tag[2] ?? "";
+    if (!attrs.includes("@") && !attrs.includes("v-on:") && !attrs.includes("v-model")) continue;
+    const attrsStart = tag.index! + 1 + tag[1]!.length;
+    const bound = new Set((scopes.get(tag.index!) ?? []).flatMap((s) => s.names));
+    for (const m of attrs.matchAll(/(?:^|\s)(@[\w:.-]+|v-on:[\w:.-]+|v-model(?::[\w-]+)?(?:\.\w+)*)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+      const model = m[1]!.startsWith("v-model");
+      let expr = decodeEntities((m[3] ?? m[4] ?? "").replace(/\s+/g, " ").trim());
+      // `v-model="query"` is the assignment `query = $event` the input's change runs.
+      if (model && expr) expr = `${expr} = $event`;
+      if (!expr || (!model && !WRITES.test(expr))) continue;
+      const targets = encodeTargets(templateTargets(expr, bound));
+      if (!targets) continue;
+      const start = attrsStart + m.index! + m[0].length - m[2]!.length;
+      spans.push({ start, end: start + m[2]!.length, expr, mark: `${TEMPLATE_WRITE_MARK}${targets} */` });
+    }
+  }
+  return spans;
+}
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
 /** One pass, so a decoded `&` never starts another entity (`&amp;lt;` is `&lt;`, not `<`). */
@@ -45,8 +89,7 @@ function templateText(raw: string, vue: boolean): string {
   return t;
 }
 
-function vueExpressions(raw: string): Span[] {
-  const t = templateText(raw, true);
+function vueExpressions(t: string): Span[] {
   const spans: Span[] = [];
   for (const m of t.matchAll(/\{\{([\s\S]*?)\}\}/g)) spans.push({ start: m.index!, end: m.index! + m[0].length, expr: m[1]! });
   // Bound attributes: `:msg`, `v-bind:x`, `v-if`, `v-else-if`, `v-show`, `v-html`, `v-text`, `v-for` — never `@x`/`v-on`, `v-model`, a slot's parameters.

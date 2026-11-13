@@ -3293,6 +3293,12 @@ export interface ReactiveCells {
    * it also runs once when the component is set up (`{ immediate: true }`, `watchEffect`), written to or not.
    */
   triggers: Array<{ cells: string[]; function: string; line: number; truthyOnly?: boolean; immediate?: boolean }>;
+  /**
+   * The file is a component whose `<setup>` the facts name: a write the template runs (`@click="page = 2"`,
+   * `v-model="query"`) is the `<setup>`'s, and so is the run of an Options API watcher's `immediate` call. The
+   * analyzer gives such a file the pseudo-function when nothing else did.
+   */
+  component?: true;
 }
 
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */

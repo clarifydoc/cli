@@ -2,6 +2,8 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { withStoreWatchers, type StoreTrigger } from "./store-reads.js";
+import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
+import { decodeTargets, type TemplateTarget } from "./template-targets.js";
 
 /**
  * Reactive cells a component writes and the callbacks a write re-runs — the trigger a click
@@ -50,7 +52,8 @@ interface Cell {
   reads?: Set<string>;
 }
 
-interface Write { cell: string; node: Node; spelling: string; falsy?: boolean }
+/** A write: the statement's node, or — for a statement the template runs (`template`) — its line alone; the component's `<setup>` stands for it. */
+interface Write { cell: string; node: Node | null; spelling: string; falsy?: boolean; line?: number; template?: true }
 interface Trigger { cells: Set<string>; hook: string; callback: Node | null; callee: string | null; at: Node; immediate?: boolean }
 
 /** A value only a switch-off writes: `false`, `null`, `undefined`, an empty string, `0`. */
@@ -88,7 +91,8 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   if (tree === memoTree) return memo!;
   memoTree = tree;
   const text = tree.rootNode.text;
-  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text), text), text), text), text);
+  const template = templateWritesOf(tree, text);
+  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text);
   return memo;
 }
 
@@ -277,10 +281,13 @@ export function reactiveCells(tree: Tree, _sourceText: string, functions: Readon
   const declared = new Set(functions.map((f) => f.name));
   const out: ReactiveCells = { writes: [], triggers: [] };
   const triggerFns = new Set<string>();
+  /** Indexes into `out.triggers` of an Options API watcher run at setup. */
+  const optionsImmediate = new Set<number>();
   for (const t of facts.triggers) {
     const name = t.callback ? facts.held.get(t.callback.id) ?? facts.optionNames.get(t.callback.id) : t.callee && declared.has(t.callee) ? t.callee : undefined;
     if (!name || !declared.has(name)) continue;
     triggerFns.add(name);
+    if (t.immediate && t.callback && facts.optionNames.has(t.callback.id)) optionsImmediate.add(out.triggers.length);
     out.triggers.push({ cells: [...t.cells].sort(), function: name, line: t.at.startPosition.row + 1, ...(TRUTHY_ONLY.has(t.hook) ? { truthyOnly: true } : {}), ...(t.immediate ? { immediate: true } : {}) });
   }
   if (out.triggers.length === 0) return null;
@@ -289,14 +296,17 @@ export function reactiveCells(tree: Tree, _sourceText: string, functions: Readon
   const seen = new Set<string>();
   for (const w of facts.writes) {
     if (!watched.some((c) => sameCell(w.cell, c))) continue;
-    const line = w.node.startPosition.row + 1;
-    const fn = innermost(functions, line);
+    const line = w.line ?? w.node!.startPosition.row + 1;
+    // A statement the template runs is the component's own, which its `<setup>` stands for.
+    const fn = w.template ? "<setup>" : innermost(functions, line);
     if (!fn) continue;
     const id = `${w.cell}\0${fn}\0${line}`;
     if (seen.has(id)) continue;
     seen.add(id);
     out.writes.push({ cell: w.cell, function: fn, line, spelling: w.spelling, ...(w.falsy ? { falsy: true } : {}) });
   }
+  // The file's `<setup>` takes the template's writes and, in an Options API component, its `immediate` watchers.
+  if (out.writes.some((w) => w.function === "<setup>") || out.triggers.some((t, i) => t.immediate && optionsImmediate.has(i))) out.component = true;
   return out.writes.length > 0 || atSetup ? out : null;
 }
 
@@ -310,7 +320,29 @@ export function innermost(functions: ReadonlyArray<{ name: string; line: number;
   return best?.name ?? null;
 }
 
-function read(tree: Tree, text: string): CellFacts {
+/** What a statement the template runs writes (`@click="page = 2"`, `v-model="query"`), left in the parsed text as a comment by `withMarkupExpressions`. */
+interface TemplateStatement { line: number; targets: TemplateTarget[] }
+
+function templateWritesOf(tree: Tree, text: string): TemplateStatement[] {
+  if (!text.includes(TEMPLATE_WRITE_MARK)) return [];
+  const out: TemplateStatement[] = [];
+  for (const c of tree.rootNode.descendantsOfType("comment")) {
+    if (!c?.text.startsWith(TEMPLATE_WRITE_MARK)) continue;
+    const targets = decodeTargets(c.text.slice(TEMPLATE_WRITE_MARK.length, -2));
+    if (targets.length > 0) out.push({ line: c.startPosition.row + 1, targets });
+  }
+  return out;
+}
+
+/** The members of a cell a write lands in, as path steps: a computed member and a mutation are the elements (`[]`). */
+function stepsPath(rest: ReadonlyArray<string | null>, mutated: boolean): string[] {
+  const cut = rest.indexOf(null);
+  const path = (cut < 0 ? rest : rest.slice(0, cut)).map((x) => x ?? "[]");
+  if (cut >= 0 || mutated) path.push("[]");
+  return path;
+}
+
+function read(tree: Tree, text: string, template: readonly TemplateStatement[]): CellFacts {
   const vue = /\b(?:ref|shallowRef|reactive|shallowReactive|computed|customRef|defineModel|toRef|useVModel|use(?:Local|Session)?Storage|useRoute)\s*(?:<[^>]*>)?\s*\(/.test(text) && /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const react = /\buse(?:Layout|Insertion)?Effect\s*\(/.test(text) && /\buseState\b/.test(text);
   const angular = /\b(?:effect|toObservable)\s*\(/.test(text) && /\b(?:signal|model|linkedSignal)\s*(?:<[^>]*>)?\s*\(/.test(text);
@@ -485,10 +517,7 @@ function read(tree: Tree, text: string): CellFacts {
     else return null;
     // A shallow ref, or one holding a DOM node, changes only when its value is replaced.
     if (c.opaque && (rest.length > 0 || mutated)) return null;
-    const cut = rest.indexOf(null);
-    const path = (cut < 0 ? rest : rest.slice(0, cut)).map((x) => x ?? "[]");
-    if (cut >= 0 || mutated) path.push("[]");
-    return { cell: cellPath(c.key, path), spelling: c.name };
+    return { cell: cellPath(c.key, stepsPath(rest, mutated)), spelling: c.name };
   };
   for (const n of tree.rootNode.descendantsOfType(["assignment_expression", "augmented_assignment_expression", "update_expression", "call_expression"])) {
     if (!n) continue;
@@ -580,9 +609,23 @@ function read(tree: Tree, text: string): CellFacts {
     if (target) writes.push({ cell: target.cell, node: n, spelling: target.spelling, ...(FALSY.test(right) ? { falsy: true } : {}) });
   }
 
+  // What the template writes: a ref is read without `.value` there, and only what `<script setup>` declares at its top is in scope.
+  const top = byScope.get(tree.rootNode.id);
+  if (vue && top) {
+    for (const stmt of template) {
+      for (const t of stmt.targets) {
+        const c = top.get(t.root);
+        if (!c || (c.kind !== "ref" && c.kind !== "computed" && c.kind !== "reactive")) continue;
+        // A reactive object is changed through a member; a shallow ref or one holding a DOM node, only when replaced.
+        if ((c.kind === "reactive" && t.steps.length === 0 && !t.mutated) || (c.opaque && (t.steps.length > 0 || t.mutated))) continue;
+        writes.push({ cell: cellPath(c.key, stepsPath(t.steps, t.mutated)), node: null, line: stmt.line, template: true, spelling: c.name, ...(t.falsy ? { falsy: true } : {}) });
+      }
+    }
+  }
+
   // A callback is held when a write elsewhere can re-run it.
   const held = new Map<number, string>();
-  const written = (t: Trigger) => writes.some((w) => [...t.cells].some((c) => sameCell(w.cell, c)) && !(t.callback && within(w.node, t.callback)) && !(w.falsy && TRUTHY_ONLY.has(t.hook)));
+  const written = (t: Trigger) => writes.some((w) => [...t.cells].some((c) => sameCell(w.cell, c)) && !(t.callback && w.node && within(w.node, t.callback)) && !(w.falsy && TRUTHY_ONLY.has(t.hook)));
   for (const t of triggers) {
     if (t.cells.size === 0 || !t.callback || !written(t)) continue;
     held.set(t.callback.id, `<${t.hook}@${t.callback.startPosition.row + 1}>`);
@@ -762,7 +805,7 @@ function optionsObjects(tree: Tree): Node[] {
  * component's options object plus the name (`<line>:page`, members below it `<line>:filters.league`). An
  * `immediate: true` watcher runs when the component is set up.
  */
-function withOptionsApi(tree: Tree, base: CellFacts, text: string): CellFacts {
+function withOptionsApi(tree: Tree, base: CellFacts, text: string, template: readonly TemplateStatement[]): CellFacts {
   if (!text.includes("watch")) return base;
   const components = optionsObjects(tree);
   if (components.length === 0) return base;
@@ -825,6 +868,14 @@ function withOptionsApi(tree: Tree, base: CellFacts, text: string): CellFacts {
     const t = cellOfThis(left, false);
     const right = n.type === "assignment_expression" ? n.childForFieldName("right")?.text.trim() ?? "" : "";
     if (t) writes.push({ cell: t.cell, node: n, spelling: t.name, ...(FALSY.test(right) ? { falsy: true } : {}) });
+  }
+  // `@click="page = 2"`, `v-model="term"`: the template reads the component's data by bare name, `this.page`.
+  for (const stmt of template) {
+    for (const t of stmt.targets) {
+      for (const options of components) {
+        writes.push({ cell: cellPath(`${options.startPosition.row + 1}:${t.root}`, stepsPath(t.steps, t.mutated)), node: null, line: stmt.line, template: true, spelling: t.root, ...(t.falsy ? { falsy: true } : {}) });
+      }
+    }
   }
   return { writes, triggers, held: base.held, optionNames };
 }
