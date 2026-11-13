@@ -2710,6 +2710,8 @@ export interface DataSourceInfo {
    * "OrderCreatedEvent") — the business-level name of the event.
    */
   entity?: string;
+  /** `INFERRED` when `entity` rests on a name guess (a request attribute named like a model) rather than a stated fact. */
+  entityConfidence?: Confidence;
   /**
    * For `database`: the call is made on a variable holding one row
    * (`self.club1.save()`, `match.delete()`) whose model the plugin could not

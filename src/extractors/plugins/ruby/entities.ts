@@ -680,6 +680,7 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
   const ruby = analyses.filter((a) => a.language === "ruby");
   const models = new Map<string, string>(); // underscored → model name
   const associations = new Map<string, Set<string>>();
+  const ownerAssociations = new Map<string, Map<string, Set<string>>>(); // model → association → targets
   const scopes = new Map<string, Set<string>>(); // model name → the scopes it declares (`scope :x`, enum values)
   for (const a of ruby) {
     for (const cls of a.classes) {
@@ -692,6 +693,9 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
       const set = associations.get(rel.fromField) ?? new Set<string>();
       set.add(rel.toEntity.split("::").pop()!);
       associations.set(rel.fromField, set);
+      const owner = rel.fromEntity.split("::").pop()!;
+      const byOwner = ownerAssociations.get(owner) ?? ownerAssociations.set(owner, new Map()).get(owner)!;
+      (byOwner.get(rel.fromField) ?? byOwner.set(rel.fromField, new Set()).get(rel.fromField)!).add(rel.toEntity.split("::").pop()!);
     }
   }
   const modelNames = new Set(models.values());
@@ -728,6 +732,98 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
     return segments[segments.length - 2]!.replace(/^(?:@{1,2}|\$)/, "");
   };
 
+  interface Owner { a: FileAnalysis; cls: ClassInfo }
+  const byClassName = new Map<string, Owner>();
+  for (const a of ruby) for (const cls of a.classes) if (!byClassName.has(cls.name)) byClassName.set(cls.name, { a, cls });
+  const chainOf = (o: Owner): ClassInfo[] => {
+    const out: ClassInfo[] = [];
+    for (let c: ClassInfo | undefined = o.cls; c && !out.includes(c) && out.length < 8; ) {
+      out.push(c);
+      const sup = c.extends;
+      const scope = c.name.split("::").slice(0, -1);
+      let next: ClassInfo | undefined;
+      for (let k = scope.length; k >= 0 && !next; k--) next = sup ? byClassName.get([...scope.slice(0, k), sup].join("::"))?.cls : undefined;
+      c = next;
+    }
+    return out;
+  };
+
+  // `Current.<attr>`: the model the project's assignments say it holds (`Current.league =
+  // League.find(…)`, or a chain whose association names one), all agreeing — a conflicting
+  // pair types nothing. With no assignment stating one, an attribute named like a model
+  // (`Current.club` → Club) is that model, as a guess (`inferred`).
+  const currentStated = new Map<string, Set<string> | null>();
+  const currentAliases: Array<{ attr: string; cls: ClassInfo; ivar: string }> = [];
+  const viaChains: Array<{ attr: string; via: string; association: string }> = [];
+  const noteCurrent = (attr: string, entity: string | null) => {
+    const had = currentStated.get(attr);
+    if (had === null) return;
+    if (!entity) return void currentStated.set(attr, null);
+    (had ?? currentStated.set(attr, new Set()).get(attr)!).add(entity);
+  };
+  for (const a of ruby) {
+    for (const cls of a.classes) {
+      for (const [key, rhsAll] of Object.entries(cls.fieldValues ?? {})) {
+        if (!key.startsWith("Current.")) continue;
+        const attr = key.slice(8);
+        for (const rhs of rhsAll.split("\n")) {
+          const alias = /^@([a-z_]\w*)$/.exec(rhs)?.[1];
+          if (alias) {
+            currentAliases.push({ attr, cls, ivar: alias });
+            continue;
+          }
+          const head = rhs.replace(/\([^()]*\)/g, "").split(".");
+          const constant = /^[A-Z]/.test(head[0]!) ? head[0]!.replace(/^::/, "").split("::").pop()! : "";
+          // `League.find(…)` is a League; `League.find(…).api_token` is whatever that returns.
+          if (modelNames.has(constant) && head.length === 2) {
+            noteCurrent(attr, constant);
+            continue;
+          }
+          // `Current.league.clubs.find(…)`: the association after the typed attribute names the model
+          // (settled below, once every stated attribute is known).
+          if (head[0] === "Current" && head.length === 4) viaChains.push({ attr, via: head[1]!, association: head[2]! });
+          else noteCurrent(attr, null);
+        }
+      }
+    }
+  }
+  // `Current.club = @club`: typed where the class (or an ancestor) assigns `@club` a model constant or an association chain.
+  for (const { attr, cls, ivar } of currentAliases) {
+    const o = byClassName.get(cls.name);
+    if (!o) continue;
+    const found = new Set<string>();
+    for (const c of chainOf(o)) {
+      for (const rhs of (c.fieldValues?.[ivar] ?? "").split("\n").filter(Boolean)) {
+        const before = beforeOf(rhs);
+        const stated = before && /^[A-Z]/.test(before) && modelNames.has(before.replace(/^::/, "").split("::").pop()!) ? before.replace(/^::/, "").split("::").pop()! : null;
+        const entity = before ? stated ?? direct(before) : null;
+        if (entity) found.add(entity);
+      }
+      if (found.size > 0) break;
+    }
+    if (found.size === 1) noteCurrent(attr, [...found][0]!);
+  }
+  for (const { attr, via, association } of viaChains) noteCurrent(attr, ownerTarget(currentModel(via)?.model, association));
+  function ownerTarget(owner: string | undefined, association: string): string | null {
+    const targets = owner ? ownerAssociations.get(owner)?.get(association) : undefined;
+    return targets && targets.size === 1 ? [...targets][0]! : null;
+  }
+  function currentModel(attr: string): { model: string; inferred: boolean } | null {
+    const stated = currentStated.get(attr);
+    if (stated) return stated.size === 1 ? { model: [...stated][0]!, inferred: false } : null;
+    if (stated === null) return null;
+    const named = models.get(attr);
+    return named ? { model: named, inferred: true } : null;
+  }
+  /** `Current.<attr>.<association>…` → what the association is on the model the attribute holds. */
+  const scopedEntity = (chain: string): { entity: string; inferred: boolean } | null => {
+    const segments = chain.replace(/\([^()]*\)/g, "").split(".");
+    if (segments[0] !== "Current" || segments.length !== 4) return null;
+    const held = currentModel(segments[1]!);
+    const entity = ownerTarget(held?.model, segments[2]!);
+    return held && entity && modelNames.has(entity) ? { entity, inferred: held.inferred } : null;
+  };
+
   // First the rows an association or a model-named variable settles.
   const pending: Array<{ a: FileAnalysis; ds: DataSourceInfo; before: string }> = [];
   for (const a of ruby) {
@@ -743,6 +839,11 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
       }
       changed = true;
       if (models.size === 0) continue;
+      const scoped = scopedEntity(ds.name);
+      if (scoped) {
+        next.push({ ...ds, entity: scoped.entity, ...(scoped.inferred ? { entityConfidence: "INFERRED" as const } : {}) });
+        continue;
+      }
       const before = beforeOf(ds.name) ?? "";
       const entity = direct(before);
       if (entity) next.push({ ...ds, entity });
@@ -758,26 +859,11 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
   // such a method or chain holds it (`@agent = agents.find(id)` → User) — so
   // `@agent.update!` / `agents.find` in the controller and its subclasses are
   // User rows. A name settling to two models settles nothing.
-  interface Owner { a: FileAnalysis; cls: ClassInfo }
-  const byClassName = new Map<string, Owner>();
-  for (const a of ruby) for (const cls of a.classes) if (!byClassName.has(cls.name)) byClassName.set(cls.name, { a, cls });
   const ownerAt = (a: FileAnalysis, line: number): Owner | null => {
     for (const cls of a.classes) if (cls.methods.some((m) => line >= m.line && line <= m.endLine)) return { a, cls };
     return null;
   };
   const methodAt = (cls: ClassInfo, line: number) => cls.methods.find((m) => line >= m.line && line <= m.endLine);
-  const chainOf = (o: Owner): ClassInfo[] => {
-    const out: ClassInfo[] = [];
-    for (let c: ClassInfo | undefined = o.cls; c && !out.includes(c) && out.length < 8; ) {
-      out.push(c);
-      const sup = c.extends;
-      const scope = c.name.split("::").slice(0, -1);
-      let next: ClassInfo | undefined;
-      for (let k = scope.length; k >= 0 && !next; k--) next = sup ? byClassName.get([...scope.slice(0, k), sup].join("::"))?.cls : undefined;
-      c = next;
-    }
-    return out;
-  };
   const memo = new Map<ClassInfo, Map<string, string | null>>(); // class → name (method or ivar) → model
   const setMemo = (cls: ClassInfo, name: string, entity: string) => {
     const m = memo.get(cls) ?? memo.set(cls, new Map()).get(cls)!;
@@ -814,6 +900,16 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
             const typed = lookup(chainOf(o), alias);
             if (typed) found.add(typed);
             continue;
+          }
+          // `@member = member.reload` off a parameter a YARD `@param` / Sorbet `sig` types as a model.
+          const param = /^([a-z_]\w*)\.(?:reload|lock!|dup|itself)(?:\(\))?$/.exec(rhs)?.[1];
+          if (param) {
+            // Every method declaring that parameter must agree on its type.
+            const types = new Set(o.cls.methods.flatMap((m) => m.params).filter((p) => p.name === param).map((p) => p.type?.replace(/^::/, "").split("::").pop() ?? ""));
+            if (types.size === 1 && modelNames.has([...types][0]!)) {
+              found.add([...types][0]!);
+              continue;
+            }
           }
           const before = beforeOf(rhs);
           // A model constant states its own type (`@match = Match.find(…)`).

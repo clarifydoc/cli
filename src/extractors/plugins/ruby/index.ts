@@ -696,6 +696,9 @@ function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly Func
   }
 }
 
+/** `Current.league = League.find(…)`, `Current.club = @club`, `Current.club = Current.league.clubs.find(…)`: the attribute and its value. */
+const CURRENT_ASSIGN_RE = /(?<![\w.@$])Current\.([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])\s*(@[a-z_]\w*(?=\s*(?:if|unless|$))|(?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/;
+
 /** `@x = a.b(…)` / `@x ||= A.b.c(…)` inside a class's methods → `{ x: "a.b(…)" }`, several chains one per line. */
 function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, string> {
   const out: Record<string, string> = {};
@@ -708,6 +711,13 @@ function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, str
       // `@model ||= @match`: the variable is another variable's value, typed where that one is assigned.
       const alias = a ? null : /^\s*@([a-z_]\w*)\s*(?:\|\|)?=\s*(@[a-z_]\w*)\s*$/.exec(code);
       if (alias && !(out[alias[1]!] ?? "").split("\n").includes(alias[2]!)) out[alias[1]!] = out[alias[1]!] ? `${out[alias[1]!]}\n${alias[2]}` : alias[2]!;
+      // `Current.league = League.find(…)` / `Current.club = @club`: what the request's attribute holds,
+      // kept under `Current.<attr>` for the entity pass that types `Current.league.members.find`.
+      const cur = CURRENT_ASSIGN_RE.exec(code);
+      if (cur) {
+        const key = `Current.${cur[1]}`;
+        if (!(out[key] ?? "").split("\n").includes(cur[2]!)) out[key] = out[key] ? `${out[key]}\n${cur[2]}` : cur[2]!;
+      }
     }
   }
   return out;
