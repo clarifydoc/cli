@@ -27,6 +27,8 @@ export interface PatternCallName {
   receiverQualifier?: string;
   /** The name spells only the receiver's last names (`CallInfo.receiverCut`): `league.relegate` for `items[0].league.relegate(`. */
   receiverCut?: true;
+  /** The scan's name for a path named from an untyped head (`CallInfo.fallbackName`). */
+  fallbackName?: string;
   /** A bare name the function binds itself — a parameter or a local it calls (`CallInfo.boundLocally`). */
   boundLocally?: true;
   /** The name is handed on, not called here (`CallInfo.passed`): Qt's `&ClubWindow::saveClub` slot argument. */
@@ -137,11 +139,12 @@ export function recordPatternCalls(
       for (const b of bound.slice(at)) calls.push({ ...b, boundLocally: true });
       continue;
     }
-    const receiver = c.receiverType || c.receiverQualifier || c.receiverCut
+    const receiver = c.receiverType || c.receiverQualifier || c.receiverCut || c.fallbackName
       ? {
         ...(c.receiverType ? { receiverType: c.receiverType } : {}),
         ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}),
         ...(c.receiverCut ? { receiverCut: true } : {}),
+        ...(c.fallbackName ? { fallbackName: c.fallbackName } : {}),
       }
       : undefined;
     add(c.name, c.leafName, c.line, c.column, c.args ? { ...receiver, args: c.args } : receiver);

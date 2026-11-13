@@ -1075,7 +1075,7 @@ export type CallRecorder = (
   shortName: string,
   line: number,
   column: number,
-  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean; args?: CallArguments },
+  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean; args?: CallArguments; fallbackName?: string },
 ) => void;
 
 /**
@@ -1129,6 +1129,7 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
     seen.add(seenKey);
     const keep = (call: CallInfo): void => {
       if (receiver?.receiverCut) call.receiverCut = true;
+      if (receiver?.fallbackName) call.fallbackName = receiver.fallbackName;
       kept.set(seenKey, call);
       calls.push(call);
     };

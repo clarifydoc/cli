@@ -151,8 +151,10 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Go calls through a
     expect(targets("InitializerLocal").filter((t) => t.startsWith("x.League"))).toHaveLength(1);
   });
 
-  it("links nothing for a path whose head nothing types", () => {
-    expect(targets("UntypedPath").filter((t) => t.includes("Go"))).toEqual([]);
+  it("falls back to the path's two-name reading when nothing types the local's head (real-repo FP: `input.ColorOrder.Valid` off `input := m.meta.Input`)", () => {
+    // The two names guess the field's type by its name, as before paths were named from locals: the whole path names
+    // nothing here, so `B.Go` is the fallback (`CallInfo.fallbackName`), the link still named as written.
+    expect(targets("UntypedPath").filter((t) => t.includes("Go"))).toEqual(["z.A.B.Go -> api/league.go::B.Go"]);
   });
 
   it("gives a field or package value's method to no namesake class", () => {

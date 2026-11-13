@@ -16,7 +16,9 @@ const PATH_RE = /(?<![\w.)\]])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*\(/g;
  */
 export function withHeadPathNames(lines: readonly string[], fn: FunctionInfo, receiver: string | undefined, declared: ReadonlySet<string>): void {
   const heads = new Set(declared);
-  for (const p of fn.params) if (p.name !== "_") heads.add(p.name);
+  const typedHeads = new Set<string>();
+  for (const p of fn.params) if (p.name !== "_") { heads.add(p.name); typedHeads.add(p.name); }
+  if (receiver && receiver !== "_") typedHeads.add(receiver);
   if (receiver && receiver !== "_") heads.add(receiver);
   if (heads.size === 0) return;
   const renamed: CallInfo[] = [];
@@ -38,6 +40,8 @@ export function withHeadPathNames(lines: readonly string[], fn: FunctionInfo, re
     if (paths.size !== 1) continue;
     const [path] = [...paths];
     if (path === call.name) continue;
+    // A path from a local keeps its two-name reading as the fallback (`CallInfo.fallbackName`): a local states no type.
+    if (!typedHeads.has(path!.split(".")[0]!)) call.fallbackName = call.name;
     call.name = path!;
     delete call.receiverCut;
     renamed.push(call);

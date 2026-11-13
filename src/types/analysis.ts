@@ -1234,6 +1234,11 @@ export interface CallInfo {
    */
   receiverCut?: true;
   /**
+   * The name the scan gives a path whose head is a local nothing may type (`ColorOrder.Valid` for
+   * `input.ColorOrder.Valid` off `input := m.meta.Input`): the linker resolves it when the whole path finds nothing.
+   */
+  fallbackName?: string;
+  /**
    * The string a call dispatches by, when the callee routes on a name rather
    * than calling it (`store.dispatch('contacts/get')`). A dispatch resolver
    * joins it to the handler registered under that name. Set by the plugin's

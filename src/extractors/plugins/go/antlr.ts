@@ -350,7 +350,9 @@ function pathFromHead(segments: readonly CalleeSegment[], scope: CallScope | und
   const local = scope.locals.get(head.name)?.some(([line, column]) => head.line > line || (head.line === line && head.column >= column));
   if (!(scope.typed.has(head.name) || local) || (ids.length === 3 && head.name === scope.receiver)) return null;
   if (ids.some((s) => s.line !== head.line)) return null;
-  return { name: ids.map((s) => s.name).join("."), leafName: last.name, line: head.line, column: head.column };
+  // A local states no type the way a parameter does: its two-name reading stays the fallback (`CallInfo.fallbackName`).
+  const fallback = !scope.typed.has(head.name) ? patternCallName(segments, CHAIN_DEPTH)?.name : undefined;
+  return { name: ids.map((s) => s.name).join("."), leafName: last.name, line: head.line, column: head.column, ...(fallback ? { fallbackName: fallback } : {}) };
 }
 
 function collectCalls(root: ParserRuleContext, out: PatternCallName[], skip?: ReadonlySet<ParseTree>, scope?: CallScope): void {

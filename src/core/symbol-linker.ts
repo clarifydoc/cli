@@ -4768,7 +4768,14 @@ function resolveCallToDefinition(
   // A call on a local a project factory made (`CallInfo.via`) keeps its factory link beside the value-flow one.
   const invoke = !call.passed && !call.via ? ctx.invokeSites?.get(callSiteKey(sourceFile, sourceSymbol, call.line, call.name)) : undefined;
   if (invoke === "suppress") return null;
-  const link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  let link = resolveCallUnscoped(sourceFile, sourceSymbol, call, analysis, ctx, reference);
+  // A path named from a local whose type nothing states (`input.ColorOrder.Valid` off `input := m.meta.Input`) is
+  // resolved as the scan names it when its head types nothing (`CallInfo.fallbackName`).
+  if (!link && call.fallbackName) {
+    const { fallbackName, ...rest } = call;
+    link = resolveCallUnscoped(sourceFile, sourceSymbol, { ...rest, name: fallbackName }, analysis, ctx, reference);
+    if (link) link = { ...link, callName: call.name };
+  }
   if (invoke === "same-file" && link && link.targetFile !== sourceFile) return null;
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");
