@@ -2295,8 +2295,11 @@ export interface ForeignBindingRule {
    * The generator's attribute on a function (`wasm_bindgen`, `frb`): `required` when only functions carrying
    * it are bound; its `renameArgument` (`js_name = renewContract`) names the binding, its `skipArgument`
    * (`frb(ignore)`) leaves the function out. Only public functions are bound either way.
+   * `classes`: a type carrying the attribute is bound too (`#[wasm_bindgen] struct`), under its own name or its
+   * `renameArgument`, with the methods that carry it (a method of a `#[wasm_bindgen] impl` inherits it);
+   * `constructorArgument` flags the method that constructs it (`#[wasm_bindgen(constructor)]`).
    */
-  decorator?: { name: string; required: boolean; renameArgument?: string; skipArgument?: string };
+  decorator?: { name: string; required: boolean; renameArgument?: string; skipArgument?: string; classes?: boolean; constructorArgument?: string };
 }
 
 export interface PathArgCall {

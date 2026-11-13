@@ -198,7 +198,7 @@ function wasmPack(root: string, read: (path: string) => string | undefined, file
           outputExtension: ".js",
           single: true,
           rename: "same",
-          decorator: { name: "wasm_bindgen", required: true, renameArgument: "js_name", skipArgument: "skip" },
+          decorator: { name: "wasm_bindgen", required: true, renameArgument: "js_name", skipArgument: "skip", classes: true, constructorArgument: "constructor" },
         });
       }
     }

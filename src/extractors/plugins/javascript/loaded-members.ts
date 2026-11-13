@@ -113,8 +113,9 @@ export function moduleLoaders(root: Node): ReadonlyMap<string, string> {
  * the path it comes from. Null for any other call.
  */
 export function loadedMemberCall(call: Node): { source: string; name: string } | null {
-  if (call.type !== "call_expression") return null;
-  const callee = call.childForFieldName("function");
+  // `new (await import("./pkg")).SquadIndex(…)` constructs the module's class `SquadIndex`.
+  if (call.type !== "call_expression" && call.type !== "new_expression") return null;
+  const callee = call.childForFieldName(call.type === "new_expression" ? "constructor" : "function");
   if (callee?.type !== "member_expression") return null;
   const object = callee.childForFieldName("object");
   const property = callee.childForFieldName("property");
@@ -138,4 +139,50 @@ export function loadedDefaultSource(importCall: Node): string | null {
   const isDefaultRead = up.type === "member_expression" && up.childForFieldName("property")?.text === "default";
   const isLoaderBody = up.type === "arrow_function" || up.type === "return_statement";
   return isDefaultRead || isLoaderBody ? arg.text.slice(1, -1) : null;
+}
+
+const textMemo = new WeakMap<object, string>();
+
+/** The file's text, read from the tree once (each read crosses into WASM). */
+function treeText(tree: Node["tree"]): string {
+  let text = textMemo.get(tree);
+  if (text === undefined) {
+    text = tree.rootNode.text;
+    textMemo.set(tree, text);
+  }
+  return text;
+}
+
+/**
+ * Whether an `import("./x")` is the body of a module loader the file only awaits for its members
+ * (`const wasm = () => import("./pkg"); (await wasm()).f()`, `wasm().then((m) => m.f())`): the module is read
+ * through those members, so it is not also loaded for a default export. A loader the file also hands around
+ * unawaited (`component: loadClub`) stays one.
+ */
+export function isMemberLoaderBody(importCall: Node): boolean {
+  let fn: Node | null = importCall.parent;
+  while (fn && !LOADER_FUNCTIONS.has(fn.type)) {
+    if (NESTED_SCOPES.has(fn.type)) return false;
+    fn = fn.parent;
+  }
+  if (!fn) return false;
+  const holder = fn.type === "function_declaration" ? fn : fn.parent?.type === "variable_declarator" ? fn.parent : null;
+  const name = holder?.childForFieldName("name");
+  if (name?.type !== "identifier") return false;
+  const id = name.text.replace(/[$]/g, "\\$");
+  const text = treeText(importCall.tree);
+  // `(await load()).default` reads the module's default export: the loader is not member-only.
+  if (new RegExp(`await\\s+${id}\\s*\\(\\s*\\)\\s*\\)\\s*\\.default\\b`).test(text)) return false;
+  const members = new RegExp(`await\\s+${id}\\s*\\(\\s*\\)|(?<![\\w$.])${id}\\s*\\(\\s*\\)\\s*\\.then\\b`);
+  if (!members.test(text)) return false;
+  // Any other mention (not a declaration, not a call whose result is awaited or `.then`ed) hands the loader around.
+  const mention = new RegExp(`(?<![\\w$.])${id}(?![\\w$])`, "g");
+  for (const m of text.matchAll(mention)) {
+    const before = text.slice(Math.max(0, m.index - 12), m.index);
+    const after = text.slice(m.index + id.length);
+    if (/(?:const|let|var|function)\s+$/.test(before)) continue;
+    if (/^\s*\(\s*\)/.test(after) && (/await\s+$/.test(before) || /^\s*\(\s*\)\s*\.then\b/.test(after))) continue;
+    return false;
+  }
+  return true;
 }

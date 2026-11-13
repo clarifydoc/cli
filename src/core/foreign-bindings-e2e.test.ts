@@ -332,3 +332,195 @@ describe("a Rust library behind generated bindings, requesting through its own w
     ]);
   });
 });
+
+/**
+ * wasm-bindgen generated classes: a `#[wasm_bindgen] struct` with its `impl` (in the struct's file and in another),
+ * constructed and called from TypeScript through a loader thunk, a destructured load, named and namespace imports,
+ * a local typed by its construction and a field holding the promised instance. Decoys: a TypeScript class of the
+ * same name, one imported beside the wasm module, a namesake Rust type no attribute exports, an `impl` block
+ * without the attribute on the exported struct, and a same-named Rust function nothing exports.
+ */
+const CLASS_FILES: Record<string, string> = {
+  "squad/package.json": `{ "scripts": { "build": "wasm-pack build crate --target web --out-dir ../web/pkg" } }`,
+  "squad/crate/Cargo.toml": `[package]\nname = "squad-wasm"\n`,
+  "squad/crate/src/lib.rs": `use wasm_bindgen::prelude::*;
+
+mod scouting;
+
+#[wasm_bindgen]
+pub struct SquadIndex {
+    names: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl SquadIndex {
+    #[wasm_bindgen(constructor)]
+    pub fn new(names: Vec<String>) -> SquadIndex {
+        SquadIndex { names }
+    }
+
+    pub fn search(&self, q: &str) -> Vec<String> {
+        self.names.iter().filter(|n| n.contains(q)).cloned().collect()
+    }
+
+    #[wasm_bindgen(js_name = openPayload)]
+    pub fn open_payload_js(&self) -> String {
+        String::new()
+    }
+
+    pub fn create_empty() -> SquadIndex {
+        SquadIndex { names: vec![] }
+    }
+}
+
+impl SquadIndex {
+    pub fn rebuild(&self) {}
+}
+
+pub struct ScoutIndex {}
+
+impl ScoutIndex {
+    pub fn search(&self, q: &str) -> bool {
+        true
+    }
+}
+
+pub fn rank_squad(q: String) -> u32 {
+    1
+}
+`,
+  "squad/crate/src/scouting.rs": `use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+impl SquadIndex {
+    pub fn scout_report(&self) -> String {
+        String::new()
+    }
+}
+`,
+  "squad/web/src/lazy.ts": `const wasm = () => import("../pkg/squad_wasm");
+
+export async function findNew(names: string[]) {
+  const index = new (await wasm()).SquadIndex(names);
+  return index.search("x");
+}
+
+export async function findLoaded(names: string[]) {
+  const { SquadIndex } = await wasm();
+  const index = new SquadIndex(names);
+  index.openPayload();
+  return index.scout_report();
+}
+
+export async function viaThen() {
+  return wasm().then((m) => m.SquadIndex.create_empty());
+}
+
+export class Desk {
+  private index;
+  constructor() {
+    this.index = wasm().then((m) => new m.SquadIndex([]));
+  }
+  async lookup() {
+    return (await this.index).search("z");
+  }
+}
+`,
+  "squad/web/src/direct.ts": `import { SquadIndex } from "../pkg/squad_wasm";
+import * as squad from "../pkg/squad_wasm";
+
+export function direct() {
+  const index = new SquadIndex([]);
+  const other = new squad.SquadIndex([]);
+  other.search("w");
+  index.rebuild();
+  return index.search("q");
+}
+`,
+  "squad/web/src/local.ts": `export class SquadIndex {
+  search(q: string) {
+    return [q];
+  }
+}
+
+export function localSearch() {
+  const index = new SquadIndex();
+  return index.search("decoy");
+}
+`,
+  "squad/web/src/beside.ts": `import { SquadIndex } from "./local";
+import { rank_squad } from "../pkg/squad_wasm";
+
+export function beside() {
+  rank_squad("q");
+  const index = new SquadIndex();
+  return index.search("decoy");
+}
+`,
+  "squad/web/src/scout.ts": `import { ScoutIndex } from "../pkg/squad_wasm";
+
+export function scout() {
+  const index = new ScoutIndex();
+  return index.search("x");
+}
+`,
+};
+
+describe("wasm-bindgen generated classes", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-wasm-classes-"));
+    for (const [rel, text] of Object.entries(CLASS_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const links = (from: string) =>
+    (summary.symbolLinks ?? []).filter((l) => l.sourceFile === from && l.callName !== "wasm").map((l) => `${l.sourceLine} ${l.callName} → ${l.targetFile}::${l.targetSymbol}`).sort();
+  const LIB = "squad/crate/src/lib.rs";
+
+  it("joins constructions and method calls through a loader thunk to the Rust constructor and impl methods", () => {
+    expect(links("squad/web/src/lazy.ts")).toEqual(
+      [
+        `4 SquadIndex → ${LIB}::SquadIndex.new`,
+        `5 index.search → ${LIB}::SquadIndex.search`,
+        `10 SquadIndex → ${LIB}::SquadIndex.new`,
+        `11 index.openPayload → ${LIB}::SquadIndex.open_payload_js`,
+        `12 index.scout_report → squad/crate/src/scouting.rs::SquadIndex.scout_report`,
+        `16 m.SquadIndex.create_empty → ${LIB}::SquadIndex.create_empty`,
+        `22 m.SquadIndex → ${LIB}::SquadIndex.new`,
+        `25 (await this.index).search → ${LIB}::SquadIndex.search`,
+      ].sort(),
+    );
+  });
+
+  it("joins named and namespace imports, never a method the attribute does not export", () => {
+    expect(links("squad/web/src/direct.ts")).toEqual(
+      [
+        `5 SquadIndex → ${LIB}::SquadIndex.new`,
+        `6 squad.SquadIndex → ${LIB}::SquadIndex.new`,
+        `7 other.search → ${LIB}::SquadIndex.search`,
+        `9 index.search → ${LIB}::SquadIndex.search`,
+      ].sort(),
+    );
+  });
+
+  it("leaves a namesake class of the project and a type nothing exports alone", () => {
+    expect(links("squad/web/src/local.ts")).toEqual(["8 SquadIndex → squad/web/src/local.ts::SquadIndex", "9 index.search → squad/web/src/local.ts::SquadIndex.search"].sort());
+    expect(links("squad/web/src/beside.ts").filter((l) => l.includes("SquadIndex") || l.includes("index.search"))).toEqual(
+      ["1 SquadIndex → squad/web/src/local.ts::SquadIndex", "6 SquadIndex → squad/web/src/local.ts::SquadIndex", "7 index.search → squad/web/src/local.ts::SquadIndex.search"].sort(),
+    );
+    expect(links("squad/web/src/scout.ts").filter((l) => l.includes(LIB))).toEqual([]);
+  });
+
+  it("emits no phantom default call from the loader thunk", () => {
+    expect((summary.symbolLinks ?? []).filter((l) => l.callName === "default")).toEqual([]);
+  });
+});

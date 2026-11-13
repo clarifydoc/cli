@@ -1,3 +1,4 @@
+import { moduleLoaders } from "./loaded-members.js";
 import type { Node } from "web-tree-sitter";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { isBuiltinType } from "../../shared/builtin-types.js";
@@ -87,6 +88,9 @@ export function lastSegment(text: string): string {
  */
 export function constructedClass(node: Node | null): string | null {
   const expr = unwrapExpression(node, true);
+  // `loadModule().then((m) => new m.SquadIndex(…))`: the module loader's promise of an instance — the field holds
+  // the promise, and every read awaits it (`(await this.index).search()`).
+  if (expr?.type === "call_expression") return loadedThenConstruction(expr);
   if (expr?.type !== "new_expression") return null;
   const ctor = expr.childForFieldName("constructor");
   if (ctor?.type === "identifier") return ctor.text;
@@ -95,6 +99,19 @@ export function constructedClass(node: Node | null): string | null {
     return prop ? prop.text : null;
   }
   return null;
+}
+
+/** `loader().then((m) => new m.X())` where `loader` is a module loader of the file -> `Promise<X>`; else null. */
+function loadedThenConstruction(call: Node): string | null {
+  const callee = call.childForFieldName("function");
+  if (callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "then") return null;
+  const loader = callee.childForFieldName("object");
+  const loaderName = loader?.type === "call_expression" ? loader.childForFieldName("function") : null;
+  if (loaderName?.type !== "identifier" || !moduleLoaders(call.tree.rootNode).has(loaderName.text)) return null;
+  const arrow = call.childForFieldName("arguments")?.namedChildren.find((c) => c.type === "arrow_function" || c.type === "function_expression");
+  const body = arrow?.childForFieldName("body");
+  const built = body && body.type !== "statement_block" ? constructedClass(body) : null;
+  return built ? `Promise<${built}>` : null;
 }
 
 /** Calls that return their argument, typed as it was: Vue's reactivity wrappers. */

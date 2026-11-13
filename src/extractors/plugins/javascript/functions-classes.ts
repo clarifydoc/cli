@@ -27,7 +27,7 @@ import {
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { optionsWatchers } from "./reactive-cells.js";
-import { loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
+import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
 import { recordEntries, recordIndexOrigin, recordMemberChain } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 
@@ -568,7 +568,7 @@ function scanBody(
     // member call) are import facts or the member call below.
     if (type === "call_expression" && children[0]?.type === "import") {
       const source = loadedDefaultSource(node);
-      if (source && /^[./@~]/.test(source) && !seenImports.has(source)) {
+      if (source && /^[./@~]/.test(source) && !seenImports.has(source) && !isMemberLoaderBody(node)) {
         seenImports.add(source);
         extraCalls.push({ name: "default", kind: "cross-file", target: source, line: node.startPosition.row + 1, confidence: "EXTRACTED" });
       }
@@ -576,7 +576,7 @@ function scanBody(
 
     // `(await import("./rules")).promote()` / `require("./rules").promote()`: a call of the module's member, at its
     // path. (The import itself binds nothing here; `const { f } = await import()` is an import fact.)
-    if (type === "call_expression") {
+    if (type === "call_expression" || type === "new_expression") {
       const loaded = loadedMemberCall(node);
       if (loaded && /^[./@~]/.test(loaded.source) && !seenImports.has(`${loaded.source}\0${loaded.name}`)) {
         seenImports.add(`${loaded.source}\0${loaded.name}`);

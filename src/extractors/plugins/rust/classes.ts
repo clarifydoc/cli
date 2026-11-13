@@ -50,6 +50,7 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
     const head = declarationHead(lines, i);
     const impl = parseImplHead(head);
     const endLine = blockEndLine(lines, i, spec);
+    const bindingAttrs = implBindingAttributes(lines, i);
     if (impl) {
       const owner = owners.get(impl.type) ?? stubs.get(impl.type) ?? newStub(impl.type, i + 1, endLine, stubs);
       if (impl.trait && !owner.implements.includes(impl.trait)) owner.implements.push(impl.trait);
@@ -69,6 +70,7 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
           for (const fn of split) {
             owner.methods.push(fn);
             resolveGenerics(fn, lines, impl.bounds, impl.type, typeEnv);
+            inheritBindingAttributes(fn, bindingAttrs);
           }
           continue;
         }
@@ -81,6 +83,7 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
         attached.add(fn);
         owner.methods.push(fn);
         resolveGenerics(fn, lines, impl.bounds, impl.type, typeEnv);
+        inheritBindingAttributes(fn, bindingAttrs);
       }
     }
   }
@@ -92,6 +95,32 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
   }
   for (const cls of [...classes, ...stubs.values()]) cls.methods.sort((a, b) => a.line - b.line);
   return [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
+}
+
+/** Attributes on an `impl` that export every public method to another language (`#[wasm_bindgen] impl`, `#[uniffi::export] impl`). */
+const BINDING_ATTRIBUTE = /^(?:wasm_bindgen|uniffi::export)(?:\s*\(.*\))?$/s;
+
+/** The binding attributes written on the lines above the `impl` at line index `i`, as decorators read them (no `#[…]`). */
+function implBindingAttributes(lines: string[], i: number): string[] {
+  const out: string[] = [];
+  for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
+    const attr = /^\s*#\[(.*)\]\s*$/.exec(lines[j]!)?.[1]?.trim();
+    if (attr !== undefined) {
+      if (BINDING_ATTRIBUTE.test(attr)) out.push(attr);
+    } else if (lines[j]!.trim() !== "" && !/^\s*\/\//.test(lines[j]!)) break;
+  }
+  return out;
+}
+
+/**
+ * A method of a binding-attributed `impl` is exported by it: it carries the impl's attribute unless it names its own
+ * (`#[wasm_bindgen(constructor)]`), so the generator's rule sees it as bound.
+ */
+function inheritBindingAttributes(fn: FunctionInfo, attrs: readonly string[]): void {
+  for (const attr of attrs) {
+    const name = attr.replace(/\s*\(.*$/s, "");
+    if (!(fn.decorators ?? []).some((d) => d.replace(/\s*\(.*$/s, "") === name)) fn.decorators = [...(fn.decorators ?? []), name];
+  }
 }
 
 const IMPL_RE = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?impl\b/;

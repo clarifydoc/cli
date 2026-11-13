@@ -636,7 +636,9 @@ function dynamicBindings(importCall: Node): { specifiers: string[]; aliases: Rec
     const callback = up.parent.childForFieldName("arguments")?.namedChildren[0];
     if (callback && (callback.type === "arrow_function" || callback.type === "function_expression" || callback.type === "function")) {
       const params = callback.childForFieldName("parameters") ?? callback.childForFieldName("parameter");
-      return of(params?.type === "formal_parameters" ? params.namedChildren[0] : params);
+      const first = params?.type === "formal_parameters" ? params.namedChildren[0] : params;
+      // TypeScript wraps a parameter (`(m: Squad) =>`) in `required_parameter`, the name under `pattern`.
+      return of(first?.type === "required_parameter" || first?.type === "optional_parameter" ? first.childForFieldName("pattern") : first);
     }
   }
   return null;

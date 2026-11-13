@@ -238,4 +238,36 @@ impl PgRepo {
     const fns = extractFunctionsWithSpec(lines(`fn f() { let a = ConcRepo::new(); a.load(1); }`), rustSpec);
     expect(fns[0]!.localTypes).toEqual([{ name: "a", type: "ConcRepo" }]);
   });
+
+  it("hands the attribute of an exporting impl to each of its methods, and only that impl's", () => {
+    const a = analyze(`
+#[wasm_bindgen]
+pub struct SquadIndex {}
+
+#[wasm_bindgen]
+impl SquadIndex {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> SquadIndex { SquadIndex {} }
+    #[wasm_bindgen(js_name = openPayload)]
+    pub fn open_payload_js(&self) {}
+    pub fn search(&self) {}
+}
+
+impl SquadIndex {
+    pub fn local_only(&self) {}
+}
+
+/// Docs
+#[uniffi::export]
+impl SquadIndex {
+    pub fn rank(&self) {}
+}
+`);
+    const methods = byName(a.classes.find((c) => c.name === "SquadIndex")!.methods);
+    expect(methods["new"]!.decorators).toEqual(["wasm_bindgen(constructor)"]);
+    expect(methods["open_payload_js"]!.decorators).toEqual(["wasm_bindgen(js_name = openPayload)"]);
+    expect(methods["search"]!.decorators).toEqual(["wasm_bindgen"]);
+    expect(methods["local_only"]!.decorators ?? []).toEqual([]);
+    expect(methods["rank"]!.decorators).toEqual(["uniffi::export"]);
+  });
 });

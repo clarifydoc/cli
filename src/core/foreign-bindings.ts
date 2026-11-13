@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { FOREIGN_BINDING_READERS } from "../extractors/registry.js";
-import type { FileAnalysis, ForeignBindingRule, FunctionInfo, SubProject, SymbolLink } from "../types/analysis.js";
+import type { ClassInfo, FileAnalysis, ForeignBindingRule, FunctionInfo, SubProject, SymbolLink } from "../types/analysis.js";
 
 /**
  * Calls across a generated language bridge: a module a code generator writes
@@ -63,7 +63,29 @@ export function collectForeignBindingRules(projectRoot: string, subProjects: rea
 
 interface Bound {
   file: string;
-  fn: FunctionInfo;
+  symbol: string;
+  line: number;
+}
+
+/** A generated class (`#[wasm_bindgen] struct`): what constructing it runs, and the methods its `impl` exports. */
+interface BoundClass {
+  self: Bound;
+  ctor: Bound | null;
+  methods: Map<string, Bound | null>;
+}
+
+interface BoundModule {
+  rule: ForeignBindingRule;
+  names: Map<string, Bound | null>;
+  classes: Map<string, BoundClass | null>;
+}
+
+const sameBound = (a: Bound, b: Bound) => a.file === b.file && a.symbol === b.symbol && a.line === b.line;
+
+/** `map[name]` = `bound`, or null once two different declarations bind the name. */
+function setBound<T extends Bound | BoundClass>(map: Map<string, T | null>, name: string, bound: T, same: (a: T, b: T) => boolean): void {
+  const prior = map.get(name);
+  map.set(name, prior === undefined ? bound : prior && same(prior, bound) ? prior : null);
 }
 
 const camel = (name: string) => name.replace(/^_+/, "").replace(/_+([a-z0-9])/g, (_, c: string) => c.toUpperCase());
@@ -82,7 +104,7 @@ function decoratorArgs(written: string): { name: string; named: Map<string, stri
 }
 
 /** The name a rule binds a function under, or null when it binds none. */
-function boundName(fn: FunctionInfo, rule: ForeignBindingRule): string | null {
+function boundName(fn: Pick<FunctionInfo, "name" | "isExported" | "decorators">, rule: ForeignBindingRule): string | null {
   if (!fn.isExported) return null;
   const spec = rule.decorator;
   let rename: string | undefined;
@@ -96,6 +118,19 @@ function boundName(fn: FunctionInfo, rule: ForeignBindingRule): string | null {
   }
   if (rename) return rename;
   return rule.rename === "camel" ? camel(fn.name) : fn.name;
+}
+
+/** True when the function carries the generator's attribute with the constructor flag (`#[wasm_bindgen(constructor)]`). */
+function isConstructor(fn: Pick<FunctionInfo, "decorators">, rule: ForeignBindingRule): boolean {
+  const spec = rule.decorator;
+  if (!spec?.constructorArgument) return false;
+  return (fn.decorators ?? []).map(decoratorArgs).some((d) => d.name === spec.name && d.flags.has(spec.constructorArgument!));
+}
+
+/** The class a type names, without its generics or an async wrapper: `Promise<SquadIndex>`, `SquadIndex | null`, `w.SquadIndex`. */
+function typeLeaf(type: string): string | null {
+  const unwrapped = type.replace(/^\s*(?:Promise|Awaited)<(.*)>\s*$/s, "$1");
+  return /^\s*([\w$]+(?:\.[\w$]+)*)\s*(?:<.*>)?\s*(?:\|\s*(?:null|undefined)\s*)*$/s.exec(unwrapped)?.[1] ?? null;
 }
 
 /** The generated module (path without extension) each implementing file is written to under `rule`, or null. */
@@ -126,24 +161,71 @@ function normalize(path: string): string {
 }
 
 /**
+ * The classes a file declares that the generator binds (a `#[wasm_bindgen] struct`), each with its constructor and
+ * the methods carrying the attribute — those of the struct's `impl` blocks, in this file or another. A class's
+ * `impl` in a file apart from the struct (`ClassInfo.extension`) adds its methods to the class bound by that name.
+ */
+function bindClasses(a: FileAnalysis, rule: ForeignBindingRule, entry: BoundModule, extensions: boolean): void {
+  const methodsOf = (cls: ClassInfo, into: BoundClass): void => {
+    for (const m of cls.methods) {
+      const bound: Bound = { file: a.filePath, symbol: `${cls.name}.${m.name}`, line: m.line };
+      if (isConstructor(m, rule)) {
+        if (m.isExported) into.ctor = into.ctor === null ? bound : into.ctor;
+        continue;
+      }
+      const name = boundName(m, rule);
+      if (name) setBound(into.methods, name, bound, sameBound);
+    }
+  };
+  if (extensions) {
+    for (const cls of a.classes) {
+      if (!cls.extension) continue;
+      for (const bound of entry.classes.values()) if (bound && bound.self.symbol === cls.name && bound.self.file !== a.filePath) methodsOf(cls, bound);
+    }
+    return;
+  }
+  for (const cls of a.classes) {
+    if (cls.extension) continue;
+    const name = boundName(cls, rule);
+    if (!name) continue;
+    const bound: BoundClass = { self: { file: a.filePath, symbol: cls.name, line: cls.line }, ctor: null, methods: new Map() };
+    methodsOf(cls, bound);
+    setBound(entry.classes, name, bound, (x, y) => x.self.file === y.self.file && x.self.line === y.self.line);
+  }
+}
+
+/**
  * Links from each call through a bound module to the function it runs. A name two implementing files bind in
  * one module joins neither.
  */
 export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: readonly ForeignBindingRule[]): SymbolLink[] {
   if (rules.length === 0) return [];
   // module path → bound name → function (null when two bind it).
-  const modules = new Map<string, { rule: ForeignBindingRule; names: Map<string, Bound | null> }>();
+  const modules = new Map<string, BoundModule>();
   for (const rule of rules) {
     for (const a of analyses) {
       const mod = moduleOf(a.filePath, rule);
       if (mod === null) continue;
-      const entry = modules.get(mod) ?? modules.set(mod, { rule, names: new Map() }).get(mod)!;
+      const entry = modules.get(mod) ?? modules.set(mod, { rule, names: new Map(), classes: new Map() }).get(mod)!;
       for (const fn of a.functions) {
         const name = boundName(fn, rule);
-        if (!name) continue;
-        const prior = entry.names.get(name);
-        entry.names.set(name, prior === undefined ? { file: a.filePath, fn } : prior && prior.file === a.filePath && prior.fn === fn ? prior : null);
+        if (name) setBound(entry.names, name, { file: a.filePath, symbol: fn.name, line: fn.line }, sameBound);
       }
+      if (rule.decorator?.classes && rule.decorator.required) bindClasses(a, rule, entry, false);
+    }
+  }
+  // An `impl` apart from its struct's file, then the name each class answers to: its constructor, else the class.
+  for (const rule of rules) {
+    if (!rule.decorator?.classes || !rule.decorator.required) continue;
+    for (const a of analyses) {
+      const mod = moduleOf(a.filePath, rule);
+      if (mod !== null && a.classes.some((c) => c.extension)) bindClasses(a, rule, modules.get(mod)!, true);
+    }
+  }
+  for (const entry of modules.values()) {
+    for (const [name, cls] of entry.classes) {
+      const prior = entry.names.get(name);
+      entry.names.set(name, cls === null || prior !== undefined ? null : cls.ctor ?? cls.self);
     }
   }
   if (modules.size === 0) return [];
@@ -173,11 +255,18 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
     const prefixes = new Map<string, string>();
     const named = new Map<string, { mod: string; exported: string }>();
     const scopes: Array<{ mod: string; names?: string[]; except?: string[] }> = [];
+    // The modules this file imports, and the names its other imports bring in (a namesake class is theirs).
+    const boundMods = new Set<string>();
+    const foreignNames = new Set<string>();
     let bound = false;
     for (const imp of a.imports) {
       const mod = moduleNamed(a.filePath, imp.source);
-      if (!mod) continue;
+      if (!mod) {
+        for (const spec of imp.specifiers) foreignNames.add(spec);
+        continue;
+      }
       bound = true;
+      boundMods.add(mod);
       const names = modules.get(mod)!.names;
       if (imp.inScope) scopes.push({ mod, ...(imp.inScope.names ? { names: imp.inScope.names } : {}), ...(imp.inScope.except ? { except: imp.inScope.except } : {}) });
       for (const spec of imp.specifiers) {
@@ -195,14 +284,55 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
       const mod = moduleNamed(a.filePath, call.target);
       return mod ? modules.get(mod)!.names.get(call.name) ?? null : null;
     };
-    const own = new Set(a.functions.map((f) => f.name));
-    const target = (callName: string): Bound | null => {
-      const dot = callName.indexOf(".");
+    const own = new Set([...a.functions.map((f) => f.name), ...a.classes.filter((c) => !c.extension).map((c) => c.name)]);
+    /** The generated class a type names where this file reads it: imported by name, through a namespace, or the one a bound module it loads declares. */
+    const classNamed = (type: string | null | undefined): BoundClass | null => {
+      const leaf = type ? typeLeaf(type) : null;
+      if (!leaf) return null;
+      const dot = leaf.lastIndexOf(".");
       if (dot > 0) {
-        const mod = prefixes.get(callName.slice(0, dot));
-        const member = callName.slice(dot + 1);
-        return mod && !member.includes(".") ? modules.get(mod)!.names.get(member) ?? null : null;
+        const mod = prefixes.get(leaf.slice(0, dot));
+        return mod ? modules.get(mod)!.classes.get(leaf.slice(dot + 1)) ?? null : null;
       }
+      const hit = named.get(leaf);
+      if (hit) return modules.get(hit.mod)!.classes.get(hit.exported) ?? null;
+      if (own.has(leaf) || foreignNames.has(leaf)) return null;
+      const found = new Set<BoundClass>();
+      for (const mod of boundMods) {
+        const cls = modules.get(mod)!.classes.get(leaf);
+        if (cls) found.add(cls);
+      }
+      return found.size === 1 ? [...found][0]! : null;
+    };
+    /** The type a function states for a local or parameter (one type only). */
+    const typeOfLocal = (fn: FunctionInfo, name: string): string | null => {
+      const types = new Set<string>();
+      for (const l of fn.localTypes ?? []) if (l.name === name && l.type) types.add(l.type);
+      for (const p of fn.params ?? []) if (p.name === name && p.type) types.add(p.type);
+      return types.size === 1 ? [...types][0]! : null;
+    };
+    const target = (written: string, fn: FunctionInfo, owner: ClassInfo | null): Bound | null => {
+      // `(await this.index).search()`: the member of what a promised receiver settles to.
+      const awaited = /^\(await\s+([\w$]+(?:\.[\w$]+)*)\)\.([\w$]+)$/.exec(written);
+      const callName = awaited ? `${awaited[1]}.${awaited[2]}` : written;
+      const parts = callName.split(".");
+      if (parts.length === 2 || parts.length === 3) {
+        const [head, second, third] = parts as [string, string, string | undefined];
+        const mod = prefixes.get(head);
+        // `club.listClubs()` of a namespace import; `club.SquadIndex.create()` of one of its classes.
+        if (mod && third === undefined) return modules.get(mod)!.names.get(second) ?? null;
+        if (mod && third !== undefined) return modules.get(mod)!.classes.get(second)?.methods.get(third) ?? null;
+        if (third === undefined) {
+          // `SquadIndex.create()` (static) or `idx.search()` on a local the file types.
+          const hit = named.get(head);
+          const cls = hit ? classNamed(head) : classNamed(typeOfLocal(fn, head));
+          return cls?.methods.get(second) ?? null;
+        }
+        // `this.index.search()` on a field the class types.
+        if (head === "this" && owner) return classNamed(owner.properties.find((p) => p.name === second)?.type)?.methods.get(third) ?? null;
+        return null;
+      }
+      if (parts.length > 1) return null;
       const hit = named.get(callName);
       if (hit) return modules.get(hit.mod)!.names.get(hit.exported) ?? null;
       if (own.has(callName)) return null;
@@ -212,13 +342,13 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
         .filter((b): b is Bound => !!b);
       return found.length === 1 ? found[0]! : null;
     };
-    const callers: Array<{ symbol: string; fn: FunctionInfo }> = [
-      ...a.functions.map((fn) => ({ symbol: fn.name, fn })),
-      ...a.classes.flatMap((c) => c.methods.map((fn) => ({ symbol: `${c.name}.${fn.name}`, fn }))),
+    const callers: Array<{ symbol: string; fn: FunctionInfo; owner: ClassInfo | null }> = [
+      ...a.functions.map((fn) => ({ symbol: fn.name, fn, owner: null })),
+      ...a.classes.flatMap((c) => c.methods.map((fn) => ({ symbol: `${c.name}.${fn.name}`, fn, owner: c }))),
     ];
-    for (const { symbol, fn } of callers) {
+    for (const { symbol, fn, owner } of callers) {
       for (const call of fn.calls) {
-        const hit = loaded(call) ?? target(call.name);
+        const hit = loaded(call) ?? target(call.name, fn, owner);
         if (!hit) continue;
         links.push({
           sourceFile: a.filePath,
@@ -226,8 +356,8 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
           sourceLine: call.line,
           callName: call.name,
           targetFile: hit.file,
-          targetSymbol: hit.fn.name,
-          targetLine: hit.fn.line,
+          targetSymbol: hit.symbol,
+          targetLine: hit.line,
           confidence: "EXTRACTED",
           strategy: FOREIGN_BINDING_STRATEGY,
           relation: "calls",

@@ -63,4 +63,23 @@ describe("calls on a module loaded in place", () => {
       ["./cup", "relegate", false, 15],
     ]);
   });
+
+  it("a loader thunk read only through its members is no default import; one handed around stays", async () => {
+    const src = `
+      const wasm = () => import('./pkg/squad');
+      const Page = () => import('./pages/Squad.vue');
+      const loadTable = () => import('./table');
+      export async function a() { return new (await wasm()).SquadIndex([]); }
+      export function b() { return wasm().then((m) => new m.SquadIndex([])); }
+      export const routes = [{ component: loadTable }];
+      export async function c() { return (await loadTable()).standings(); }`;
+    const tree = await parseSource(src, "javascript" as any, "x.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    const defaults = (n: string) => fns.find((f) => f.name === n)!.calls.filter((c) => c.name === "default").map((c) => c.target);
+    expect(defaults("wasm")).toEqual([]);
+    expect(defaults("Page")).toEqual(["./pages/Squad.vue"]);
+    expect(defaults("loadTable")).toEqual(["./table"]);
+    const loaded = (n: string) => fns.find((f) => f.name === n)!.calls.filter((c) => c.kind === "cross-file").map((c) => [c.name, c.target]);
+    expect(loaded("a")).toEqual([["SquadIndex", "./pkg/squad"]]);
+  });
 });
