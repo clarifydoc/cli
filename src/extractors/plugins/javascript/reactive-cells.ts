@@ -50,7 +50,7 @@ interface Cell {
 }
 
 interface Write { cell: string; node: Node; spelling: string; falsy?: boolean }
-interface Trigger { cells: Set<string>; hook: string; callback: Node | null; callee: string | null; at: Node }
+interface Trigger { cells: Set<string>; hook: string; callback: Node | null; callee: string | null; at: Node; immediate?: boolean }
 
 /** A value only a switch-off writes: `false`, `null`, `undefined`, an empty string, `0`. */
 const FALSY = /^(?:false|null|undefined|''|""|``|0)$/;
@@ -59,18 +59,30 @@ const TRUTHY_ONLY = new Set(["whenever"]);
 /** A ref's type argument naming a DOM node: what it holds is never made reactive. */
 const DOM_TYPE = /\b(?:HTML\w*Element|SVG\w*Element|Element|Node|Document|Window)\b/;
 
-export interface CellFacts { writes: Write[]; triggers: Trigger[]; held: Map<number, string> }
+export interface CellFacts {
+  writes: Write[];
+  triggers: Trigger[];
+  held: Map<number, string>;
+  /** Options API watcher callbacks (`watch: { page() {…} }`): callback node id → the function's name. */
+  optionNames: Map<number, string>;
+}
 
 let memoTree: Tree | null = null;
 let memo: CellFacts | null = null;
-const EMPTY: CellFacts = { writes: [], triggers: [], held: new Map() };
+const EMPTY: CellFacts = { writes: [], triggers: [], held: new Map(), optionNames: new Map() };
 
 /** The cells, writes and triggers of a tree, read once per tree. */
 export function reactiveCellsOf(tree: Tree): CellFacts {
   if (tree === memoTree) return memo!;
   memoTree = tree;
-  memo = read(tree);
+  const text = tree.rootNode.text;
+  memo = withOptionsApi(tree, read(tree, text), text);
   return memo;
+}
+
+/** The function name of an Options API watcher callback (`watch: { page() {…} }`), null for any other node. */
+export function optionsWatcherName(node: Node): string | null {
+  return reactiveCellsOf(node.tree).optionNames.get(node.id) ?? null;
 }
 
 /** The held name of a watcher callback written in place whose cell the file writes, else null. */
@@ -81,17 +93,18 @@ export function reactiveCallbackName(node: Node): string | null {
 /** `FileAnalysis.reactiveCells`: each write named by the function it sits in, each trigger by its callback. */
 export function reactiveCells(tree: Tree, _sourceText: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): ReactiveCells | null {
   const facts = reactiveCellsOf(tree);
-  if (facts.held.size === 0 && !facts.triggers.some((t) => t.callee)) return null;
+  if (facts.held.size === 0 && facts.optionNames.size === 0 && !facts.triggers.some((t) => t.callee)) return null;
   const declared = new Set(functions.map((f) => f.name));
   const out: ReactiveCells = { writes: [], triggers: [] };
   const triggerFns = new Set<string>();
   for (const t of facts.triggers) {
-    const name = t.callback ? facts.held.get(t.callback.id) : t.callee && declared.has(t.callee) ? t.callee : undefined;
+    const name = t.callback ? facts.held.get(t.callback.id) ?? facts.optionNames.get(t.callback.id) : t.callee && declared.has(t.callee) ? t.callee : undefined;
     if (!name || !declared.has(name)) continue;
     triggerFns.add(name);
-    out.triggers.push({ cells: [...t.cells].sort(), function: name, line: t.at.startPosition.row + 1, ...(TRUTHY_ONLY.has(t.hook) ? { truthyOnly: true } : {}) });
+    out.triggers.push({ cells: [...t.cells].sort(), function: name, line: t.at.startPosition.row + 1, ...(TRUTHY_ONLY.has(t.hook) ? { truthyOnly: true } : {}), ...(t.immediate ? { immediate: true } : {}) });
   }
   if (out.triggers.length === 0) return null;
+  const atSetup = out.triggers.some((t) => t.immediate);
   const watched = out.triggers.flatMap((t) => t.cells);
   const seen = new Set<string>();
   for (const w of facts.writes) {
@@ -104,7 +117,7 @@ export function reactiveCells(tree: Tree, _sourceText: string, functions: Readon
     seen.add(id);
     out.writes.push({ cell: w.cell, function: fn, line, spelling: w.spelling, ...(w.falsy ? { falsy: true } : {}) });
   }
-  return out.writes.length > 0 ? out : null;
+  return out.writes.length > 0 || atSetup ? out : null;
 }
 
 /** The innermost declared function holding a line: the narrowest, then the last to start. */
@@ -117,8 +130,7 @@ function innermost(functions: ReadonlyArray<{ name: string; line: number; endLin
   return best?.name ?? null;
 }
 
-function read(tree: Tree): CellFacts {
-  const text = tree.rootNode.text;
+function read(tree: Tree, text: string): CellFacts {
   const vue = /\b(?:ref|shallowRef|reactive|shallowReactive|computed|customRef|defineModel|toRef|useVModel|use(?:Local|Session)?Storage|useRoute)\s*(?:<[^>]*>)?\s*\(/.test(text) && /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const react = /\buse(?:Layout|Insertion)?Effect\s*\(/.test(text) && /\buseState\b/.test(text);
   const angular = /\beffect\s*\(/.test(text) && /\b(?:signal|model|linkedSignal)\s*(?:<[^>]*>)?\s*\(/.test(text);
@@ -321,9 +333,10 @@ function read(tree: Tree): CellFacts {
         if (vue && VUE_WATCH.has(name) && isFrom(name, VUE_SOURCES, true) && args.length >= 2) {
           // `{ deep: true }` reads every source through.
           const cells = sourceCells(args[0]);
-          triggers.push({ cells: isDeep(args[2]) ? new Set([...cells].map((c) => c.replace(/\*?$/, "*"))) : cells, hook: name, ...callbackOf(args[1]!), at: n });
+          const immediate = name === "watchImmediate" || isOption(args[2], "immediate");
+          triggers.push({ cells: isDeep(args[2]) ? new Set([...cells].map((c) => c.replace(/\*?$/, "*"))) : cells, hook: name, ...callbackOf(args[1]!), at: n, ...(immediate ? { immediate } : {}) });
         } else if (vue && VUE_EFFECT.has(name) && isFrom(name, VUE_SOURCES, true) && args[0]) {
-          triggers.push({ cells: readsOf(getterOf(args[0]), null), hook: name, ...callbackOf(args[0]), at: n });
+          triggers.push({ cells: readsOf(getterOf(args[0]), null), hook: name, ...callbackOf(args[0]), at: n, immediate: true });
         } else if (react && REACT_EFFECT.has(name) && isFrom(name, REACT_SOURCES, false) && args.length >= 2) {
           triggers.push({ cells: depCells(args[1]!), hook: name, ...callbackOf(args[0]), at: n });
         } else if (angular && name === "effect" && isFrom(name, /^@angular\/core$/, false) && args[0]) {
@@ -387,7 +400,7 @@ function read(tree: Tree): CellFacts {
     taken.set(name, n);
     if (n > 1) held.set(id, name.replace(/>$/, `#${n}>`));
   }
-  return { writes, triggers: triggers.filter((t) => t.cells.size > 0 && (t.callback ? held.has(t.callback.id) : t.callee)), held };
+  return { writes, triggers: triggers.filter((t) => (t.cells.size > 0 || (t.immediate && t.callee)) && (t.callback ? held.has(t.callback.id) : t.callee)), held, optionNames: new Map() };
 }
 
 /** A cell and the members below it (`12:filters.league`). */
@@ -425,8 +438,201 @@ function readPath(id: Node): { path: string[]; deep: boolean; returned: boolean 
 
 /** A watch options object asking for `deep: true` (or a depth). */
 function isDeep(options: Node | undefined): boolean {
+  return isOption(options, "deep");
+}
+
+/** An options object setting `name` to anything but `false`. */
+function isOption(options: Node | undefined, name: string): boolean {
   if (options?.type !== "object") return false;
-  return options.namedChildren.some((p) => p?.type === "pair" && p.childForFieldName("key")?.text === "deep" && p.childForFieldName("value")?.text !== "false");
+  return options.namedChildren.some((p) => p?.type === "pair" && optionKey(p.childForFieldName("key")) === name && p.childForFieldName("value")?.text !== "false");
+}
+
+function optionKey(key: Node | null | undefined): string | null {
+  if (!key) return null;
+  if (key.type === "property_identifier" || key.type === "identifier") return key.text;
+  return key.type === "string" ? key.text.slice(1, -1) : null;
+}
+
+const FUNCTION_VALUES: ReadonlySet<string> = new Set(["arrow_function", "function_expression", "function"]);
+/** Keys only a component's options object carries, besides `watch`. */
+const OPTION_SIBLINGS = new Set(["data", "methods", "computed", "props", "setup", "created", "mounted", "components", "emits", "mixins", "template", "render"]);
+
+interface WatchCallback { node: Node | null; name: string; callee?: string }
+
+/**
+ * The callbacks of one `watch: { … }` member of an Options API component:
+ *
+ *   page() {}                         → a function named `page` (the key names it, as every option member is)
+ *   'filters.league'(n) {}            → `<watch@L>`
+ *   page: { handler() {}, immediate: true }, page: [fnA, 'method'], page: 'loadPlayers'
+ *
+ * `path` is the dotted path watched, `deep`/`immediate` the options of the object form. A string names a method
+ * (`callee`), not a function written in place.
+ */
+export interface Watch { member: Node; path: string; deep: boolean; immediate: boolean; callbacks: WatchCallback[] }
+
+/** The member names a component's other option groups declare (`methods`, `computed`): a watcher of the same name must not share their function name. */
+function ownMembers(options: Node): Set<string> {
+  const out = new Set<string>();
+  for (const m of options.namedChildren) {
+    const group = m?.type === "pair" ? optionKey(m.childForFieldName("key")) : null;
+    const value = m?.type === "pair" ? m.childForFieldName("value") : null;
+    if ((group !== "methods" && group !== "computed") || value?.type !== "object") continue;
+    for (const e of value.namedChildren) {
+      const k = optionKey(e?.type === "pair" ? e.childForFieldName("key") : e?.type === "method_definition" ? e.childForFieldName("name") : null);
+      if (k) out.add(k);
+    }
+  }
+  return out;
+}
+
+function watchOf(member: Node, taken: ReadonlySet<string>): Watch[] {
+  const key = optionKey(member.type === "pair" ? member.childForFieldName("key") : member.type === "method_definition" ? member.childForFieldName("name") : null);
+  if (!key || !/^[\w$]+(?:\.[\w$]+)*$/.test(key)) return [];
+  const named = /^[A-Za-z_$][\w$]*$/.test(key) && !taken.has(key);
+  const callbackOfNode = (n: Node, direct: boolean): WatchCallback | null => {
+    if (n.type === "method_definition" || FUNCTION_VALUES.has(n.type)) return { node: n, name: direct && named ? key : `<watch@${n.startPosition.row + 1}>` };
+    if (n.type === "string") return { node: null, name: "", callee: n.text.slice(1, -1) };
+    return null;
+  };
+  const out: Watch[] = [];
+  const spec = (value: Node, direct: boolean): void => {
+    if (value.type === "object") {
+      const callbacks: WatchCallback[] = [];
+      for (const p of value.namedChildren) {
+        if (!p || optionKey(p.type === "pair" ? p.childForFieldName("key") : p.type === "method_definition" ? p.childForFieldName("name") : null) !== "handler") continue;
+        const h = p.type === "pair" ? p.childForFieldName("value") : p;
+        const c = h && callbackOfNode(h, false);
+        if (c) callbacks.push(c);
+      }
+      if (callbacks.length > 0) out.push({ member, path: key, deep: isOption(value, "deep"), immediate: isOption(value, "immediate"), callbacks });
+    } else if (value.type === "array") {
+      for (const el of value.namedChildren) if (el) spec(el, false);
+    } else {
+      const c = callbackOfNode(value, direct);
+      if (c) out.push({ member, path: key, deep: false, immediate: false, callbacks: [c] });
+    }
+  };
+  if (member.type === "method_definition") out.push({ member, path: key, deep: false, immediate: false, callbacks: [{ node: member, name: named ? key : `<watch@${member.startPosition.row + 1}>` }] });
+  else {
+    const value = member.childForFieldName("value");
+    if (value) spec(value, true);
+  }
+  return out;
+}
+
+/**
+ * The watchers of an Options API component's `watch: { … }` group, with the function name each callback is
+ * declared under. Two callbacks starting on one line are told apart (`<watch@12#2>`), as held callbacks are.
+ */
+export function optionsWatchers(options: Node): Watch[] {
+  let group: Node | null = null;
+  for (const m of options.namedChildren) {
+    if (m?.type === "pair" && optionKey(m.childForFieldName("key")) === "watch" && m.childForFieldName("value")?.type === "object") group = m.childForFieldName("value");
+  }
+  if (!group) return [];
+  const taken = ownMembers(options);
+  const out = group.namedChildren.flatMap((m) => (m ? watchOf(m, taken) : []));
+  const seen = new Map<string, number>();
+  for (const w of out) {
+    for (const cb of w.callbacks) {
+      if (!cb.node) continue;
+      const n = (seen.get(cb.name) ?? 0) + 1;
+      seen.set(cb.name, n);
+      if (n > 1) cb.name = cb.name.replace(/>$/, `#${n}>`);
+    }
+  }
+  return out;
+}
+
+/** An Options API component's object (`export default { … }`, `defineComponent({ … })`) with a `watch` group. */
+function optionsObjects(tree: Tree): Node[] {
+  const out: Node[] = [];
+  for (const o of tree.rootNode.descendantsOfType("object")) {
+    if (!o) continue;
+    let watch = false;
+    let sibling = false;
+    for (const m of o.namedChildren) {
+      const k = optionKey(m?.type === "pair" ? m.childForFieldName("key") : m?.type === "method_definition" ? m.childForFieldName("name") : null);
+      if (k === "watch" && m?.type === "pair" && m.childForFieldName("value")?.type === "object") watch = true;
+      else if (k && OPTION_SIBLINGS.has(k)) sibling = true;
+    }
+    if (watch && sibling) out.push(o);
+  }
+  return out;
+}
+
+/**
+ * Options API watchers: `watch: { page() { … } }` re-runs when `this.page` is written (`this.page = n`, `this.page++`,
+ * `this.filters.league = id`, a mutator call under `deep`) in a function of the same component. A cell is the
+ * component's options object plus the name (`<line>:page`, members below it `<line>:filters.league`). An
+ * `immediate: true` watcher runs when the component is set up.
+ */
+function withOptionsApi(tree: Tree, base: CellFacts, text: string): CellFacts {
+  if (!text.includes("watch")) return base;
+  const components = optionsObjects(tree);
+  if (components.length === 0) return base;
+  const writes = [...base.writes];
+  const triggers = [...base.triggers];
+  const optionNames = new Map(base.optionNames);
+  const optionsIds = new Set(components.map((c) => c.id));
+  for (const options of components) {
+    const scope = options.startPosition.row + 1;
+    for (const w of optionsWatchers(options)) {
+      const cell = `${scope}:${w.path}${w.deep ? "*" : ""}`;
+      for (const cb of w.callbacks) {
+        if (cb.node) optionNames.set(cb.node.id, cb.name);
+        triggers.push({ cells: new Set([cell]), hook: "watch", callback: cb.node, callee: cb.callee ?? null, at: w.member, ...(w.immediate ? { immediate: true } : {}) });
+      }
+    }
+  }
+  // `this` is the component in an option member (a method, or a function value of the options object or one of
+  // its groups) and in an arrow inside one; any other function — a nested method, a plain function expression —
+  // has a `this` of its own.
+  const memberOf = (fn: Node): Node | null => {
+    const holder = fn.type === "method_definition" ? fn.parent : fn.parent?.type === "pair" ? fn.parent.parent : null;
+    if (holder?.type !== "object") return null;
+    if (optionsIds.has(holder.id)) return holder;
+    const group = holder.parent;
+    return group?.type === "pair" && group.parent && optionsIds.has(group.parent.id) ? group.parent : null;
+  };
+  const componentOf = (n: Node): Node | null => {
+    for (let p = n.parent; p; p = p.parent) {
+      if (p.type === "arrow_function") continue;
+      if (p.type === "method_definition" || p.type === "function_expression" || p.type === "function" || p.type === "function_declaration") return memberOf(p);
+    }
+    return null;
+  };
+  const cellOfThis = (target: Node | null, mutated: boolean): { cell: string; name: string } | null => {
+    let n = target;
+    const steps: Array<string | null> = [];
+    while (n && (n.type === "member_expression" || n.type === "subscript_expression")) {
+      steps.unshift(n.type === "member_expression" ? n.childForFieldName("property")?.text ?? null : null);
+      n = n.childForFieldName("object");
+    }
+    if (n?.type !== "this" || steps.length === 0 || steps[0] === null) return null;
+    const owner = target && componentOf(target);
+    if (!owner) return null;
+    const cut = steps.indexOf(null);
+    const path = (cut < 0 ? steps : steps.slice(0, cut)).map((x) => x ?? "[]");
+    if (cut >= 0 || mutated) path.push("[]");
+    return { cell: cellPath(`${owner.startPosition.row + 1}:${path[0]}`, path.slice(1)), name: steps[0] };
+  };
+  for (const n of tree.rootNode.descendantsOfType(["assignment_expression", "augmented_assignment_expression", "update_expression", "call_expression"])) {
+    if (!n) continue;
+    if (n.type === "call_expression") {
+      const callee = n.childForFieldName("function");
+      if (callee?.type !== "member_expression" || !MUTATORS.has(callee.childForFieldName("property")?.text ?? "")) continue;
+      const t = cellOfThis(callee.childForFieldName("object"), true);
+      if (t) writes.push({ cell: t.cell, node: n, spelling: t.name });
+      continue;
+    }
+    const left = n.type === "update_expression" ? n.childForFieldName("argument") : n.childForFieldName("left");
+    const t = cellOfThis(left, false);
+    const right = n.type === "assignment_expression" ? n.childForFieldName("right")?.text.trim() ?? "" : "";
+    if (t) writes.push({ cell: t.cell, node: n, spelling: t.name, ...(FALSY.test(right) ? { falsy: true } : {}) });
+  }
+  return { writes, triggers, held: base.held, optionNames };
 }
 
 /** `{ query }`, `{ query, name: route.name }`: a push that changes the query of the page it is on. */

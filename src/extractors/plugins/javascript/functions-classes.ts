@@ -26,6 +26,7 @@ import {
 } from "./di.js";
 import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
+import { optionsWatchers } from "./reactive-cells.js";
 import { loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
 import { recordEntries, recordMemberChain } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
@@ -2318,7 +2319,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const key = objectKeyName(member.childForFieldName("key"));
         const value = member.childForFieldName("value");
         if (!key || !value) continue;
-        if (VUE_FUNCTION_GROUPS.has(key) && value.type === "object") {
+        if (key === "watch" && value.type === "object") {
+          this.extractVueWatchers(options, functions);
+        } else if (VUE_FUNCTION_GROUPS.has(key) && value.type === "object") {
           this.extractObjectMembers(null, value, functions, false, MAX_NAMESPACE_DEPTH);
         } else if (VUE_HOOKS.has(key) && (value.type === "arrow_function" || value.type === "function_expression")) {
           functions.push(this.parseJsArrowOrExpr(key, value, false));
@@ -2332,6 +2335,26 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (key === "setup") {
           const body = member.childForFieldName("body");
           if (body) this.extractJsFunctions(body, functions, false);
+        }
+      }
+    }
+  }
+
+  /**
+   * The callbacks of a component's `watch: { … }` group: `page() {}` is a function named `page`; a dotted key
+   * (`'filters.league'(n) {}`), a `{ handler() {}, immediate: true }` object and the elements of an array are
+   * `<watch@line>` (`reactive-cells.ts` names them, since the same names tie a write to them).
+   */
+  private extractVueWatchers(options: Node, functions: FunctionInfo[]): void {
+    for (const w of optionsWatchers(options)) {
+      for (const cb of w.callbacks) {
+        if (!cb.node) continue;
+        if (cb.node.type === "method_definition") {
+          const fn = this.parseJsFunction(cb.node, false);
+          fn.name = cb.name;
+          functions.push(fn);
+        } else {
+          functions.push(this.parseJsArrowOrExpr(cb.name, cb.node, false));
         }
       }
     }

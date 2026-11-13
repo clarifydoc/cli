@@ -3235,9 +3235,10 @@ export interface ReactiveCells {
   }>;
   /**
    * A callback re-run when any of `cells` changes: its symbol, and the line it is written at. `truthyOnly`: it
-   * runs only when the value turns truthy (VueUse `whenever`), so a switch-off write never runs it.
+   * runs only when the value turns truthy (VueUse `whenever`), so a switch-off write never runs it. `immediate`:
+   * it also runs once when the component is set up (`{ immediate: true }`, `watchEffect`), written to or not.
    */
-  triggers: Array<{ cells: string[]; function: string; line: number; truthyOnly?: boolean }>;
+  triggers: Array<{ cells: string[]; function: string; line: number; truthyOnly?: boolean; immediate?: boolean }>;
 }
 
 /** An output of a component the code opened, subscribed to at `line` (`FileAnalysis.componentSubscriptions`). */

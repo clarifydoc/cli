@@ -19,6 +19,28 @@ export function reactiveTriggerLinks(analyses: readonly FileAnalysis[]): SymbolL
     for (const c of a.classes) for (const m of c.methods) lineOf.set(`${c.name}.${m.name}`, m.line);
     const triggers = cells.triggers.filter((t) => lineOf.has(t.function));
     const seen = new Set<string>();
+    // A watcher that runs when the component is set up (`immediate`) is run by the setup, whether or not
+    // anything writes the cell it watches.
+    if (lineOf.has("<setup>")) {
+      for (const t of triggers) {
+        if (!t.immediate || t.function === "<setup>") continue;
+        const id = `<setup>\0${t.line}\0${t.function}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push({
+          sourceFile: a.filePath,
+          sourceSymbol: "<setup>",
+          sourceLine: t.line,
+          callName: "immediate",
+          targetFile: a.filePath,
+          targetSymbol: t.function,
+          targetLine: lineOf.get(t.function)!,
+          confidence: "INFERRED",
+          strategy: "dispatch:reactive-trigger",
+          relation: "dispatch",
+        });
+      }
+    }
     for (const w of cells.writes) {
       if (!lineOf.has(w.function)) continue;
       for (const t of triggers) {

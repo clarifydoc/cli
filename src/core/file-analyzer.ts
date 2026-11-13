@@ -824,7 +824,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
       ];
       const cells = hooks.reactiveCells(tree, sourceText, named);
-      if (cells && cells.writes.length > 0 && cells.triggers.length > 0) analysis.reactiveCells = cells;
+      if (cells && cells.triggers.length > 0 && (cells.writes.length > 0 || cells.triggers.some((t) => t.immediate))) analysis.reactiveCells = cells;
     }
 
     // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
