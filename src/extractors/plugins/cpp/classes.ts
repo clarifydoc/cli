@@ -41,14 +41,18 @@ export const CLASS_PATTERN = new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)
  * declared in the file, a constructor/destructor (`X::X`, `X::~X`), or a
  * capitalized name the file does not open as a namespace.
  */
-export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
+export function extractCppClasses(sourceLines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
+  // `namespace league { struct Club { … }; }` on one line: the class pass reads the line without its wrapper.
+  const { lines, opened } = unwrapOneLineNamespaces(sourceLines);
   // `class Slice;` only says a class exists: its declaration is the header defining it, which a forward declaration
   // in every header that names it must not stand in for.
   const classes = extractClassesWithSpec(lines, spec).filter((cls) => !FORWARD_DECLARATION.test(lines[cls.line - 1] ?? "") && !USES_A_TYPE.test(lines[cls.line - 1] ?? ""));
   for (const cls of classes) addPureVirtualMethods(lines, cls, spec);
 
-  const namespaces = declaredNamespaces(lines);
-  const nsAt = namespacesByLine(lines);
+  const namespaces = declaredNamespaces(sourceLines);
+  const anonymousAt: boolean[] = [];
+  const nsAt = namespacesByLine(sourceLines, anonymousAt);
+  for (const [row, names] of opened) nsAt[row] = joinNamespaces(nsAt[row], names);
   qualifyNestedClasses(lines, classes, namespaces, nsAt);
   for (const cls of classes) {
     const head = lines[cls.line - 1] ?? "";
@@ -106,9 +110,202 @@ export function extractCppClasses(lines: string[], fns: FunctionInfo[], spec: Re
     }
   }
   const all = [...classes, ...stubs.values()].sort((a, b) => a.line - b.line);
+  // A class inside an anonymous namespace has internal linkage: no other file's `Worker` is it.
+  for (const cls of all) if (anonymousAt[cls.line - 1]) cls.fileLocal = true;
   nameTwinsByPath([...stubs.values()]);
   scopeNestedTypeNames(all, fns, lines);
+  untypeTemplateParameters(all, fns, lines);
   return all;
+}
+
+/** The type-parameter names of a template head's `<…>` text: `class Player, typename... Ts, int N` → Player, Ts. */
+export function templateParameterNames(params: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const c of params) {
+    if (c === "<" || c === "(") depth++;
+    else if ((c === ">" || c === ")") && depth > 0) depth--;
+    if (c === "," && depth === 0) { parts.push(current); current = ""; } else current += c;
+  }
+  parts.push(current);
+  // Only the name each parameter declares — never a `class X` inside a default argument; a template template parameter's own head is skipped.
+  return parts.flatMap((part) => {
+    const m = /^\s*(?:template\s*<(?:[^<>]|<[^<>]*>)*>\s*)?(?:typename|class)\s*(?:\.\.\.)?\s*(\w+)/.exec(part);
+    return m ? [m[1]!] : [];
+  });
+}
+
+/** The wrappers a type passes through to what it holds: a pointer's pointee, a container's element, a pair's members. */
+const TRANSPARENT_WRAPPER = /^(?:::)?(?:std::)?(?:unique_ptr|shared_ptr|weak_ptr|optional|vector|list|deque|array|set|multiset|unordered_set|initializer_list|reference_wrapper|atomic|map|multimap|unordered_map|pair|tuple|queue|stack|priority_queue|forward_list|variant)$|^(?:::)?std::span$/;
+
+/**
+ * Whether a type IS a template parameter, or reaches one through a transparent wrapper: judged on the type's head
+ * (`const T&`, `T*`, `T::value_type`, `unique_ptr<T>`, `vector<T>`), never on a mere mention — `Fixture<T>` and
+ * `Table<K, V>` are classes of the project, and a call on one is a call on that class.
+ */
+export function namesTemplateParameter(type: string, names: readonly string[]): boolean {
+  const t = type.replace(/\b(?:const|volatile|typename|struct|class)\b/g, " ").replace(/[&*]+|\.\.\.|\[[^\]]*\]/g, " ").trim();
+  const open = t.indexOf("<");
+  const head = (open < 0 ? t : t.slice(0, open)).replace(/\s+/g, "");
+  if (open >= 0 && TRANSPARENT_WRAPPER.test(head)) {
+    let depth = 0;
+    let current = "";
+    const args: string[] = [];
+    for (let i = open + 1; i < t.length; i++) {
+      const c = t[i]!;
+      if (c === "<" || c === "(") depth++;
+      else if ((c === ">" || c === ")") && depth-- === 0) break;
+      if (c === "," && depth === 0) { args.push(current); current = ""; } else current += c;
+    }
+    args.push(current);
+    return args.some((a) => namesTemplateParameter(a, names));
+  }
+  return names.includes(head.replace(/^::/, "").split("::")[0]!);
+}
+
+/** The template heads a file writes: where each ends, and the type parameters it binds. */
+interface TemplateHead { line: number; endLine: number; rest: string; names: string[] }
+
+function templateHeads(lines: readonly string[]): TemplateHead[] {
+  const heads: TemplateHead[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const start = /^\s*(?:export\s+)?template\s*</.exec(lines[i]!);
+    if (!start) continue;
+    let depth = 0;
+    let text = "";
+    for (let k = i; k < Math.min(lines.length, i + 16); k++) {
+      const line = k === i ? lines[k]!.slice(start[0].length - 1) : lines[k]!;
+      let closed = -1;
+      for (let c = 0; c < line.length && closed < 0; c++) {
+        if (line[c] === "<") depth++;
+        else if (line[c] === ">" && line[c - 1] !== "-" && --depth === 0) closed = c;
+      }
+      if (closed < 0) {
+        text += line.replace(/\/\/.*$/, "") + " ";
+        continue;
+      }
+      text += line.slice(0, closed + 1);
+      const names = templateParameterNames(text.slice(1, -1));
+      if (names.length > 0) heads.push({ line: i + 1, endLine: k + 1, rest: line.slice(closed + 1), names });
+      i = k;
+      break;
+    }
+  }
+  return heads;
+}
+
+/**
+ * A template's type parameters are no classes: in `template<class Player> void Run(Player& x)` or
+ * `template<class T> struct Box { void f(T& t); }` (and `template<class T> void Box<T>::f(T& t)`) the name stands
+ * for whatever the caller passes, never for a class of the file or the project that happens to share it. A
+ * parameter, local, return type or field whose type names one is left untyped, in the function the head
+ * precedes and in every function and field of the class it precedes. An explicit specialization
+ * (`template<> void Run<Player>(Player& x)`) binds nothing, and a name the head does not bind stays a class.
+ */
+function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly FunctionInfo[], lines: readonly string[]): void {
+  const heads = templateHeads(lines);
+  if (heads.length === 0) return;
+  const all = [...new Set([...fns, ...classes.flatMap((c) => c.methods)])].sort((a, b) => a.line - b.line);
+  const bodies = [...classes].sort((a, b) => a.line - b.line);
+  // Nothing but the declaration's own words stands between a head and what it binds: no `;`, `{` or `}`.
+  const bound = (head: TemplateHead, line: number, stop: RegExp): boolean => {
+    let text = head.endLine === line ? "" : head.rest + " ";
+    for (let k = head.endLine; k < line - 1; k++) text += lines[k]! + " ";
+    const at = head.endLine === line ? head.rest : lines[line - 1] ?? "";
+    const cut = at.search(stop);
+    text += cut < 0 ? at : at.slice(0, cut);
+    return !/[;{}]/.test(text.replace(/\/\/.*$/gm, ""));
+  };
+  // What the head's names type becomes untyped, and the call on it an unknown type's: the linker's unique-name guess
+  // must not pick the namesake class's member either.
+  const untype = (names: readonly string[], fn: FunctionInfo, fields: readonly string[] = []): void => {
+    const word = { test: (type: string) => namesTemplateParameter(type, names) };
+    const untyped = new Set(fn.untypedLocals);
+    for (const p of fn.params) {
+      if (p.type && word.test(p.type)) {
+        p.type = null;
+        untyped.add(p.name);
+      }
+    }
+    if (fn.returnType && word.test(fn.returnType)) fn.returnType = null;
+    for (const l of fn.localTypes ?? []) {
+      if (l.type && word.test(l.type)) {
+        l.type = "";
+        untyped.add(l.name);
+      }
+    }
+    // A field of the class template the function does not shadow.
+    for (const f of fields) if (!fn.params.some((p) => p.name === f) && !(fn.localTypes ?? []).some((l) => l.name === f)) untyped.add(f);
+    if (untyped.size > (fn.untypedLocals?.length ?? 0)) fn.untypedLocals = [...untyped];
+  };
+  for (const head of heads) {
+    const owner = bodies.find((c) => c.line >= head.endLine && /\b(?:class|struct)\b/.test(lines[c.line - 1] ?? "") && bound(head, c.line, /\b(?:class|struct)\b/));
+    if (owner) {
+      const word = { test: (type: string) => namesTemplateParameter(type, head.names) };
+      const fields: string[] = [];
+      for (const c of bodies) {
+        if (c.line < head.line || c.line > owner.endLine) continue;
+        for (const prop of c.properties) {
+          if (prop.type && word.test(prop.type)) {
+            prop.type = null;
+            fields.push(prop.name);
+          }
+        }
+      }
+      // A one-line body states its fields on no line of their own: read `T value;` off the text between members.
+      const text = lines.slice(owner.line - 1, owner.endLine).join("\n");
+      for (const m of text.matchAll(new RegExp(String.raw`(?<![\w:])(?:${head.names.join("|")})(?:\s*<[^;{}()]*>)?[\s*&]+(\w+)\s*(?:;|=[^;(){}]*;)`, "g"))) fields.push(m[1]!);
+      for (const fn of all) if (fn.line >= head.line && fn.line <= owner.endLine) untype(head.names, fn, fields);
+      continue;
+    }
+    const fn = all.find((f) => f.line >= head.endLine);
+    if (fn && bound(head, fn.line, /\(/)) untype(head.names, fn);
+  }
+}
+
+/**
+ * `namespace league { struct Club { void Play() {} }; }` written on one line: the class patterns are anchored at the
+ * line's start, so the line is read without its `namespace x {` openers and the `}` that close them (blanked, so
+ * every column stays), and `opened` says which namespaces enclose what is left (by 0-based row; an anonymous one is
+ * the empty name).
+ */
+function unwrapOneLineNamespaces(source: readonly string[]): { lines: string[]; opened: Map<number, string[]> } {
+  const opened = new Map<number, string[]>();
+  let lines: string[] | undefined;
+  for (let i = 0; i < source.length; i++) {
+    let line = source[i]!;
+    if (!line.includes("namespace")) continue;
+    const names: string[] = [];
+    for (let m: RegExpExecArray | null; (m = /^\s*(?:inline\s+)?namespace\s*([A-Za-z_][\w:]*)?\s*\{(?=\s*[^\s}])/.exec(line)); ) {
+      names.push(m[1] ?? "");
+      line = " ".repeat(m[0].length) + line.slice(m[0].length);
+    }
+    if (names.length === 0) continue;
+    // Each opener's `}` is the one the rest of the line leaves unmatched.
+    const code = blankStringLiterals(line, ["//"]);
+    let depth = 0;
+    let unmatched = 0;
+    const chars = line.split("");
+    for (let k = 0; k < code.length && unmatched < names.length; k++) {
+      if (code[k] === "{") depth++;
+      else if (code[k] === "}") {
+        if (depth > 0) depth--;
+        else { chars[k] = " "; unmatched++; }
+      }
+    }
+    lines ??= [...source];
+    lines[i] = chars.join("");
+    opened.set(i, names);
+  }
+  return { lines: lines ?? (source as string[]), opened };
+}
+
+/** The namespace `outer` (the one at the line's start) and the one-line wrappers `names` make together. */
+function joinNamespaces(outer: string | undefined, names: readonly string[]): string | undefined {
+  if (names.includes("")) return undefined;
+  const all = [...(outer ? outer.split("::") : []), ...names.flatMap((n) => n.split("::"))];
+  return all.length > 0 && all[0] !== "std" ? all.join("::") : undefined;
 }
 
 /**
@@ -314,9 +511,10 @@ const FORWARD_DECLARATION = /^\s*(?:template\s*<[^>]*>\s*)?(?:class|struct)\s+(?
 /**
  * The named namespace each line sits in, `league::util` for a line inside `namespace league { namespace util {`
  * (or `namespace league::util {`), `undefined` outside any. An anonymous namespace's functions are the file's own:
- * their lines name none, so no other file reaches them by a namespace. `std` is no project namespace.
+ * their lines name none, so no other file reaches them by a namespace; `anonymous`, when given, is filled with the
+ * lines inside one. `std` is no project namespace.
  */
-export function namespacesByLine(lines: readonly string[]): Array<string | undefined> {
+export function namespacesByLine(lines: readonly string[], anonymous?: boolean[]): Array<string | undefined> {
   const out: Array<string | undefined> = new Array(lines.length);
   if (!lines.some((l) => /\bnamespace\b/.test(l))) return out;
   const stack: Array<string | null> = [];
@@ -334,6 +532,7 @@ export function namespacesByLine(lines: readonly string[]): Array<string | undef
     const open = line.indexOf("/*");
     if (open >= 0) { line = line.slice(0, open); comment = true; }
     const names = stack.filter((n): n is string => n !== null && n !== "");
+    if (anonymous && stack.includes("")) anonymous[i] = true;
     if (!stack.includes("")) out[i] = names.length > 0 && names[0] !== "std" ? names.join("::") : undefined;
     const head = /^\s*(?:inline\s+)?namespace\s*([A-Za-z_][\w:]*)?\s*(\{)?/.exec(line);
     let at = 0;

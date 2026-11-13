@@ -23,6 +23,8 @@ const PRIMITIVES = new Set([
 const POINTER_FACTORIES = /^(?:std\s*::\s*)?(?:make_unique|make_shared|allocate_shared)\s*</;
 /** Casts whose result is their type argument. */
 const CASTS = /^(?:std\s*::\s*)?(?:static_cast|dynamic_cast|reinterpret_cast|const_cast|static_pointer_cast|dynamic_pointer_cast|qobject_cast)\s*</;
+/** A declaration of an alias inside a body: `using Al = Second;` (groups 2, 3) or `typedef Second Al;` (groups 4, 5). */
+const LOCAL_ALIAS = /^(\s*(?:[{}]\s*)*)(?:using\s+([A-Za-z_]\w*)\s*=\s*(?:typename\s+)?([^;{}]+);|typedef\s+((?:(?:const|struct|class)\s+)*[A-Za-z_][\w:]*)\s*[*&]?\s*([A-Za-z_]\w*)\s*;)/;
 /** Statements a body opens that hold a declaration in their parentheses: `for (Club* c : clubs)`, `catch (const Foul& f)`. */
 const HEADS = /\b(for|if|while|switch|catch)\s*\(/g;
 
@@ -63,7 +65,16 @@ export function extractCFamilyLocalTypes(
   const ranges: Array<{ name: string; source: string; iterator?: { call: string | undefined } }> = [];
   // Every name's bindings in text order: an alias of a name bound more than once takes the one before it.
   const flow = new AliasFlow();
+  // `using Al = Second;` / `typedef Second Al;` inside the body: the name stands for its type until the block closes,
+  // so a local declared `Al x;` is a `Second` whatever a file-level `Al` names.
+  const localAliases: Array<{ name: string; type: string; depth: number }> = [];
+  let depth = 0;
+  const mayAlias = bodyLines.some((l) => /\b(?:using|typedef)\b/.test(l));
   const record = (d: Declared, outside = false): void => {
+    if (d.type !== null && localAliases.length > 0) {
+      const alias = [...localAliases].reverse().find((a) => a.name === d.type);
+      if (alias) d = { ...d, type: alias.type };
+    }
     flow.bind(d.name, d.rangeOver === undefined && d.alias === undefined && d.from === undefined ? d.type : null, outside);
     if (d.alias !== undefined) flow.alias(d.name, d.alias);
     if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver, ...(d.iterator ? { iterator: { call: d.from } } : {}) }); return; }
@@ -83,8 +94,26 @@ export function extractCFamilyLocalTypes(
   };
 
   for (const raw of bodyLines) {
-    if (!/[A-Za-z_]\w*[\s*&>]+[*&\s]*[A-Za-z_[]/.test(raw)) continue;
+    if (!/[A-Za-z_]\w*[\s*&>]+[*&\s]*[A-Za-z_[]/.test(raw) && !(mayAlias && /[{}]/.test(raw))) continue;
     const line = blankStringLiterals(raw.replace(/\/\*.*?\*\//g, (c) => " ".repeat(c.length)), ["//"]);
+    // Block depth, and the aliases this line declares at it; those of a block this line closes end with it.
+    const alias = mayAlias ? LOCAL_ALIAS.exec(line) : null;
+    for (let at = 0; mayAlias && at < line.length; at++) {
+      if (alias && at === alias.index + alias[1]!.length) {
+        const name = alias[2] ?? alias[5]!;
+        const written = alias[3] ?? alias[4]!;
+        // An alias of an earlier one in scope is its target; one of a type no class names (`int`) still shadows the outer name.
+        const target = cFamilyTypeName(written) ?? written.trim();
+        const chained = [...localAliases].reverse().find((a) => a.name === target);
+        if (target && target !== name) localAliases.push({ name, type: chained?.type ?? target, depth });
+      }
+      if (line[at] === "{") depth++;
+      else if (line[at] === "}") {
+        depth--;
+        while (localAliases.length > 0 && localAliases[localAliases.length - 1]!.depth > depth) localAliases.pop();
+      }
+    }
+    if (!/[A-Za-z_]\w*[\s*&>]+[*&\s]*[A-Za-z_[]/.test(raw)) continue;
     // A statement's own head: `for (…)`'s declaration is read apart from the statement it controls. In a condition
     // only one with an initializer declares (`if (Club* c = find())`); `if (a < b && c > d)` compares.
     let rest = line;

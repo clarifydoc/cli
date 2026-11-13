@@ -1845,6 +1845,12 @@ export interface ClassInfo {
   extends: string | null;
   implements: string[];
   /**
+   * Static calls on this class run on an instance the container yields (a Laravel facade): for the
+   * `token` a registration binds (`bind('ledger', …)`), or the `type` it names — which the container
+   * builds, or a binding of that type says otherwise. Core resolves it through the registrations.
+   */
+  staticProxyOf?: { token?: string; type?: string };
+  /**
    * The class's own type parameters in order (`class Handler<TRequest, TKey>` →
    * `["TRequest", "TKey"]`): what lets a consumer substitute a subclass's
    * generic arguments (`class X : Handler<GetQuery, Guid>`) into what the base
@@ -1913,7 +1919,22 @@ export interface ClassInfo {
    * too; this keeps the lookup order a mixin language resolves members by.
    * Absent where the language has no mixins.
    */
-  mixins?: Array<{ name: string; kind: "include" | "prepend" | "extend" }>;
+  mixins?: Array<{
+    name: string;
+    kind: "include" | "prepend" | "extend";
+    /**
+     * Methods of this module the class does not take from it — a PHP trait conflict clause names
+     * the other module the winner (`A::stamp insteadof B` → `excludes: ["stamp"]` on `B`).
+     */
+    excludes?: string[];
+    /**
+     * Names the class knows this module's methods under: alias → the module's own method name
+     * (`B::stamp as logStamp` → `{ logStamp: "stamp" }` on `B`; an alias that names no module
+     * is recorded on every module the class uses). An alias is a lookup name of its own — it holds
+     * where the original is excluded.
+     */
+    aliases?: Record<string, string>;
+  }>;
   /**
    * The modules a module extends whatever includes it with, by full path (a Rails concern's
    * `ClassMethods`, from a `class_methods do` block or a `module ClassMethods` beside
@@ -1928,6 +1949,11 @@ export interface ClassInfo {
    * (Rust lets a crate implement its own trait for any type).
    */
   extension?: true;
+  /**
+   * Declared inside an anonymous namespace (C++): internal linkage, so only the declaring file names it, whatever
+   * a namesake in a header says. Absent otherwise.
+   */
+  fileLocal?: true;
 }
 
 /** A non-auth filter on a route (`RouteInfo.filters`). */

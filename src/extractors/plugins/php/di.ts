@@ -38,7 +38,7 @@ const LOOKUP_FUNCTIONS: ReadonlySet<string> = new Set(["app", "resolve"]);
 const PHP_DI_HELPERS: ReadonlySet<string> = new Set(["autowire", "create", "get", "factory"]);
 
 /** Cheap whole-file gate: any of these must appear before the tree is walked. */
-const BINDING_GATE = /->\s*(?:bind|singleton|scoped|instance|alias|setAlias|register|set)\w*\s*\(|::\s*(?:bind|singleton|scoped|instance)\w*\s*\(|\$(?:bindings|singletons)\b|#\[\s*\\?(?:[\w\\]+\\)?(?:AsAlias|Bind)\b|\b(?:autowire|create|factory)\s*\(/;
+const BINDING_GATE = /->\s*(?:bind|singleton|scoped|instance|alias|setAlias|register|set)\w*\s*\(|::\s*(?:bind|singleton|scoped|instance)\w*\s*\(|\$(?:bindings|singletons)\b|#\[\s*\\?(?:[\w\\]+\\)?(?:AsAlias|Bind)\b|\b(?:autowire|create|factory)\s*\(|['"]aliases['"]\s*=>|defaultAliases\s*\(/;
 
 /** `use App\Repo\SqlRepo as Repo;` → `Repo` → `SqlRepo`, so a registration names the real class. */
 export function useAliases(tree: Tree): Map<string, string> {
@@ -169,6 +169,10 @@ export function phpDiBindings(tree: Tree, sourceText: string): DiBinding[] {
       case "array_creation_expression":
         if (usesPhpDi) phpDiDefinitions(n);
         break;
+      case "array_element_initializer":
+        // config/app.php `'aliases' => ['Ledger' => App\Support\Ledger::class]`
+        if (/^['"]aliases['"]$/.test(n.namedChildren[0]?.text ?? "")) classAliases(n.namedChildren[1]);
+        break;
     }
     for (const c of n.children) visit(c);
   };
@@ -178,6 +182,12 @@ export function phpDiBindings(tree: Tree, sourceText: string): DiBinding[] {
     const method = n.childForFieldName("name")?.text ?? "";
     const args = argsOf(n);
     const recv = receiverText(n);
+
+    // Laravel 11 `Facade::defaultAliases()->merge([...])`
+    if (method === "merge" && /defaultAliases\(\)$/.test(recv)) {
+      classAliases(args[0]?.namedChildren[args[0].namedChildren.length - 1]);
+      return;
+    }
 
     if (method === "give" && args.length >= 1) {
       // when(C::class)->needs(I::class)->give(Impl::class | fn () => new Impl)
@@ -226,6 +236,23 @@ export function phpDiBindings(tree: Tree, sourceText: string): DiBinding[] {
       const impl = classOrId(args[1], aliases);
       if (!service || !impl || impl.isId) return;
       push({ service: service.name, implementation: impl.name, line: line(n), via: method });
+    }
+  };
+
+  /**
+   * A framework class alias (`'Ledger' => App\Support\Ledger::class`): the container resolves the short
+   * name to that class, so it registers the name — one per alias, except the framework's own.
+   */
+  const classAliases = (array: Node | undefined): void => {
+    if (array?.type !== "array_creation_expression") return;
+    for (const item of array.namedChildren.filter((c) => c.type === "array_element_initializer")) {
+      const [k, v] = item.namedChildren;
+      const service = classOrId(k, aliases);
+      const impl = classOrId(v, aliases);
+      if (!service?.isId || !impl || impl.isId || /^\\?Illuminate\\/.test(v?.namedChildren[0]?.text ?? "")) continue;
+      // The framework's own alias, imported by `use Illuminate\Support\Facades\Cache;`.
+      if (new RegExp(`\\buse\\s+\\\\?Illuminate\\\\[\\w\\\\]*\\\\${impl.name}\\s*;`).test(sourceText)) continue;
+      out.push({ service: service.name, implementation: impl.name, line: line(item), via: "alias" });
     }
   };
 

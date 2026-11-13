@@ -388,7 +388,10 @@ function pathCallName(callee: ParseTree): PatternCallName | null {
   if (names.length === 1) return call(leaf.name, leaf.name, leaf.token);
   const owner = names.at(-2)!;
   // `Self::new(` too: the patterns' `Type::f` rule reads `Self` as a type.
-  if (/^[A-Z]/.test(owner.name)) return call(`${owner.name}.${leaf.name}`, leaf.name, owner.token, owner.name);
+  // The module path written before the type stays on `receiverType` (`crate::garage::Garage`): it is what binds the type.
+  if (/^[A-Z]/.test(owner.name)) {
+    return call(`${owner.name}.${leaf.name}`, leaf.name, owner.token, [...names.slice(0, -2).map((n) => n.name), owner.name].join("::"));
+  }
   // `self::helper(` is the module's own function, by its name; so is a type built through a path (`core::NodeId(1)`).
   if ((names.length === 2 && owner.name === "self") || /^[A-Z]/.test(leaf.name)) return call(leaf.name, leaf.name, leaf.token);
   // A module path (`tools::wrench(`, `crate::garage::tools::spanner(`, `super::load(`) is named as written,
@@ -539,6 +542,7 @@ function macroCalls(tokens: Token[], owner: PatternCallName[]): void {
     const sep = tokens[j - 1];
     const prev = tokens[j - 2];
     let typeToken: Token | undefined = prev;
+    let typeIndex = j - 2;
     if (sep?.type === RustLexer.PATHSEP && prev?.type === RustLexer.GT) {
       // `Vec::<u8>::new(`: the type before the turbofish.
       let k = j - 2;
@@ -547,11 +551,15 @@ function macroCalls(tokens: Token[], owner: PatternCallName[]): void {
         else if (tokens[k]!.type === RustLexer.LT && --depth === 0) break;
       }
       typeToken = tokens[k - 1]?.type === RustLexer.PATHSEP ? tokens[k - 2] : undefined;
+      typeIndex = k - 2;
     }
     if (sep?.type === RustLexer.PATHSEP && typeToken) {
       const prev = typeToken;
       if ((NAME_TOKENS.has(prev.type) || prev.type === RustLexer.KW_SELFTYPE) && /^[A-Z]/.test(prev.text ?? "")) {
-        owner.push(call(`${prev.text}.${name}`, name, prev, prev.text ?? undefined));
+        // The module names written before the type (`crate::garage::Garage::new(`) bind it: kept on `receiverType`.
+        const path: string[] = [prev.text ?? ""];
+        for (let i = typeIndex; i >= 2 && tokens[i - 1]!.type === RustLexer.PATHSEP && /^[a-z_]\w*$/.test(tokens[i - 2]!.text ?? ""); i -= 2) path.unshift(tokens[i - 2]!.text!);
+        owner.push(call(`${prev.text}.${name}`, name, prev, path.join("::")));
       }
       else owner.push(call(name, name, leaf));
     } else if (sep?.type === RustLexer.DOT && prev) {

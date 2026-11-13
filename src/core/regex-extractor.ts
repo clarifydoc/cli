@@ -46,11 +46,19 @@ export function extractWithRegex(
   // from the top-level functions list to avoid double-counting.
   if (spec.extractClasses) {
     if (parsed) adoptParsedMembers(analysis.classes, analysis.functions);
-    const methodLines = new Set<number>();
+    const methodLines = new Map<number, Set<string>>();
     for (const cls of analysis.classes) {
-      for (const m of cls.methods) methodLines.add(m.line);
+      for (const m of cls.methods) (methodLines.get(m.line) ?? methodLines.set(m.line, new Set()).get(m.line)!).add(m.name);
     }
-    analysis.functions = analysis.functions.filter((fn) => !methodLines.has(fn.line));
+    // A line holding several functions (a one-line class beside a free function) drops only the members' names.
+    const perLine = new Map<number, number>();
+    for (const fn of analysis.functions) perLine.set(fn.line, (perLine.get(fn.line) ?? 0) + 1);
+    analysis.functions = analysis.functions.filter((fn) => {
+      const names = methodLines.get(fn.line);
+      if (!names) return true;
+      // Kept only beside a member of the same line it is plainly not (`struct A { void f() {} }; void g() {}`).
+      return perLine.get(fn.line)! > 1 && !names.has(fn.name) && analysis.functions.some((g) => g !== fn && g.line === fn.line && names.has(g.name));
+    });
   }
   analysis.imports = spec.extractImports ? spec.extractImports(lines) : extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
@@ -163,13 +171,14 @@ function addDeclarationCalls(lines: readonly string[], spec: RegexLangSpec, func
  * changes nothing.
  */
 function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): void {
-  const parsedAt = new Map<number, FunctionInfo>();
-  for (const fn of functions) parsedAt.set(fn.line, fn);
+  // Keyed by line AND name: a one-line class declares several members on one line.
+  const parsedAt = new Map<string, FunctionInfo>();
+  for (const fn of functions) parsedAt.set(`${fn.line}\0${fn.name}`, fn);
   const claimed = new Set<FunctionInfo>();
   for (const cls of classes) {
     for (const m of cls.methods) {
-      const fn = parsedAt.get(m.line);
-      if (!fn || fn.name !== m.name) continue;
+      const fn = parsedAt.get(`${m.line}\0${m.name}`);
+      if (!fn) continue;
       claimed.add(fn);
       if (fn === m) continue;
       m.calls = fn.calls;

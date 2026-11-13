@@ -35,6 +35,7 @@ export const phpManifest: LanguagePluginManifest = {
   caseInsensitiveCallables: true,
   // `require 'lib/db.php'` puts the included file's functions in scope.
   importsShareScope: true,
+  classNamesByEvidence: { separator: "\\" },
   grammar: { variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } } },
   testFilePatterns: [/(Test|TestCase)\.php$/],
   testSubjectAffixes: { suffixes: ["TestCase", "Test"] },

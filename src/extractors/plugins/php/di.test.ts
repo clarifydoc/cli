@@ -170,7 +170,25 @@ class Player extends Model implements Auth {
 }`);
     expect([cls!.extends, cls!.implements]).toEqual(["Model", ["Auth", "HasRoles", "Notifiable", "Sorts"]]);
     // A mixed-in trait is a member source, so the linker follows a typed receiver into it.
-    expect(cls!.mixins).toEqual([{ name: "HasRoles", kind: "include" }, { name: "Notifiable", kind: "include" }, { name: "Sorts", kind: "include" }]);
+    expect(cls!.mixins).toEqual([{ name: "HasRoles", kind: "include" }, { name: "Notifiable", kind: "include" }, { name: "Sorts", kind: "include", aliases: { order: "sort" } }]);
+  });
+
+  it("reads a trait conflict clause: `insteadof` excludes the loser's method, `as` adds an alias", async () => {
+    const [cls] = await classes(`<?php
+class Squad {
+  use Timestampable, Loggable, Scouted {
+    Timestampable::stamp insteadof Loggable, Scouted;
+    Loggable::stamp as logStamp;
+    Scouted::stamp as protected scoutStamp;
+    touch as protected;
+    stamp as private;
+  }
+}`);
+    expect(cls!.mixins).toEqual([
+      { name: "Timestampable", kind: "include" },
+      { name: "Loggable", kind: "include", excludes: ["stamp"], aliases: { logStamp: "stamp" } },
+      { name: "Scouted", kind: "include", excludes: ["stamp"], aliases: { scoutStamp: "stamp" } },
+    ]);
   });
 
   it("reads a method's return type from `@return` when it declares none", async () => {

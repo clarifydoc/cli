@@ -33,6 +33,7 @@ import {
   SelectionStatementContext,
   SimpleDeclarationContext,
   TemplateArgumentContext,
+  TemplateDeclarationContext,
   TryBlockContext,
   UnqualifiedIdContext,
 } from "../../../parsers/antlr/cpp/CPP14Parser.js";
@@ -46,6 +47,7 @@ import { blankAsm } from "../c/rewrites.js";
 import { defineCalls, leftOutCalls, tokenCalls, type CallOwner, type TokenKinds } from "../shared/token-calls.js";
 import { readC } from "../c/antlr.js";
 import { cppSpec } from "./index.js";
+import { namesTemplateParameter } from "./classes.js";
 import { cppOverloadTypeKey } from "./arg-kinds.js";
 import { cppCollectionElement, cppCollectionElementOf, cppMapTypes } from "./collection-element.js";
 
@@ -134,7 +136,7 @@ interface OperatorSite { calls: PatternCallName[]; type: string; name: string; l
 interface Declared { cls: string | false; key: string; text: string; pointer: boolean; iterOf?: string }
 
 /** What a function sees by name: its parameters and locals, then the fields of the class it belongs to. */
-interface Scope { locals: Map<string, Declared>; owner: string | null; fields: () => Map<string, Map<string, Declared>> }
+interface Scope { locals: Map<string, Declared>; owner: string | null; fields: () => Map<string, Map<string, Declared>>; templates?: string[] }
 
 /** A free `operator==(const Club&, int)` definition: the class of its first parameter and the overload key of its second. */
 interface FreeOperator { left: string; right: string | null }
@@ -201,7 +203,11 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       const name = declaredName(ctx.declarator(), text);
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
-      if (name) scopeOf(into).owner = enclosingClass(ctx);
+      if (name) {
+        scopeOf(into).owner = enclosingClass(ctx);
+        const bound = templateTypes(ctx);
+        if (bound) scopeOf(into).templates = bound;
+      }
       if (name?.text.startsWith("operator")) {
         const free = freeOperatorOf(ctx);
         if (free) (freeOperators.get(name.text) ?? freeOperators.set(name.text, []).get(name.text)!).push(free);
@@ -242,7 +248,9 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       // A parameter or a local the body may call (`auto kick = [](int x) { … };`, `std::function<int(int)> kick`).
       const bound = localBinding(ctx);
       if (bound) (bindings.get(calls) ?? bindings.set(calls, []).get(calls)!).push(bound);
-      for (const [name, declared] of declaredValues(ctx)) {
+      const templates = scopeOf(calls).templates;
+      for (const [name, stated] of declaredValues(ctx)) {
+        const declared = templates ? withoutTemplateTypes(stated, templates) : stated;
         const map = objects.get(calls) ?? objects.set(calls, new Map()).get(calls)!;
         scopeOf(calls).locals.set(name, declared);
         if (declared.cls) map.set(name, declared.cls);
@@ -528,17 +536,38 @@ function collectFields(root: ParseTree): Map<string, Map<string, Declared>> {
           for (const md of list.memberDeclarator()) {
             const decl = md.declarator();
             const id = decl && declaredIdentifier(decl);
-            if (decl && id && !declaresFunction(decl)) map.set(id.text ?? "", describe(specifierText(seq), decl));
+            if (decl && id && !declaresFunction(decl)) map.set(id.text ?? "", withoutTemplateTypes(describe(specifierText(seq), decl), templateTypes(ctx)));
           }
         } else {
           const name = specifierName(seq);
-          if (name) map.set(name.text ?? "", describe(specifierText(seq, 1), null));
+          if (name) map.set(name.text ?? "", withoutTemplateTypes(describe(specifierText(seq, 1), null), templateTypes(ctx)));
         }
       }
     }
     for (const child of ctx.children) stack.push(child);
   }
   return out;
+}
+
+/** The type parameters of the templates a declaration sits in: `template<class T> struct Box { T value; }`. */
+function templateTypes(ctx: ParserRuleContext): string[] | undefined {
+  const names: string[] = [];
+  for (let up = ctx.parent; up; up = up.parent) {
+    if (!(up instanceof TemplateDeclarationContext)) continue;
+    for (const p of up.templateParameterList().templateParameter()) {
+      const id = p.typeParameter()?.Identifier();
+      if (id) names.push(id.getText());
+    }
+  }
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * A template's type parameter is no class: a value whose type IS one (`T a`, `T&`, `unique_ptr<T>`, `vector<T>`) is of
+ * no class the project declares, whatever the project's own `T` is. `Fixture<T>` is a `Fixture`.
+ */
+function withoutTemplateTypes(d: Declared, templates: string[] | undefined): Declared {
+  return templates && namesTemplateParameter(d.text, templates) ? { cls: false, key: "?", text: "", pointer: false } : d;
 }
 
 /** The class a type spelled by a name stands for, its last name (`const league::Club&` → `Club`); null when it is no plain name. */
@@ -577,7 +606,7 @@ function freeOperatorOf(def: FunctionDefinitionContext): FreeOperator | null {
   const decl = first.declarator();
   if (decl && /[*\[]/.test(decl.getText())) return null;
   const type = valueTypeName(specifierText(first.declSpecifierSeq()!));
-  if (!type || NOT_A_CLASS.test(type)) return null;
+  if (!type || NOT_A_CLASS.test(type) || templateTypes(def)?.includes(type)) return null;
   // Only a binary operator is chosen by its second parameter's type; a unary one never matches an expression of two operands.
   const second = params.length === 2 && params[1]!.declSpecifierSeq() ? describe(specifierText(params[1]!.declSpecifierSeq()!), params[1]!.declarator()) : null;
   return { left: type, right: second ? second.key : null };

@@ -8,6 +8,7 @@ import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes
 import { extractPhpResponses } from "./responses.js";
 import { phpCollectionElement } from "./collection-element.js";
 import { extractPhpValueFlow } from "./value-flow.js";
+import { facadeProxyOf } from "./facades.js";
 
 /** A parameter that can receive a function value: untyped, or typed (also in a union) as one a callable travels as. */
 const CALLABLE_TYPE = /^\??(?:callable|Closure|array|string|iterable|mixed|object)$/i;
@@ -181,13 +182,17 @@ export class PhpExtractor extends FunctionClassExtractor {
         } else if (member.type === "use_declaration") {
           // `use HasRoles, Notifiable;` — a trait's methods are the class's own,
           // recorded as supertypes the way Ruby records an `include`.
+          const declared: string[] = [];
           for (const part of member.namedChildren) {
             if (part.type !== "name" && part.type !== "qualified_name") continue;
             const trait = part.text.replace(/.*\\/, "");
+            declared.push(trait);
             impls.push(trait);
             // A mixed-in trait is a member source the way `extends` is: the class's instances reach its methods.
             if (!mixins.some((m) => m.name === trait)) mixins.push({ name: trait, kind: "include" });
           }
+          const clauses = member.namedChildren.find((part) => part.type === "use_list");
+          if (clauses) applyTraitConflictClauses(clauses, mixins, declared);
         }
       }
     }
@@ -209,6 +214,7 @@ export class PhpExtractor extends FunctionClassExtractor {
     // exists, so this is safe for non-CI PHP.
     this.collectCiLoadedDeps(node, properties);
     this.collectFormRequestFields(extendsName, methods, body, properties);
+    const staticProxyOf = kind === "class" ? facadeProxyOf(node, extendsName, this.fileAliases) : undefined;
 
     return {
       name,
@@ -223,6 +229,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       kind,
       ...(node.children.some((c) => c.type === "abstract_modifier") ? { abstract: true as const } : {}),
       ...(mixins.length > 0 ? { mixins } : {}),
+      ...(staticProxyOf ? { staticProxyOf } : {}),
     };
   }
 
@@ -932,4 +939,37 @@ function conditionalBlocks(node: Node): Node[] {
     else if (c.type === "else_clause" || c.type === "else_if_clause") out.push(...conditionalBlocks(c));
   }
   return out;
+}
+
+const bareTrait = (written: string): string => written.trim().replace(/.*\\/, "");
+
+/**
+ * The conflict clauses of `use A, B { A::stamp insteadof B; B::stamp as logStamp; stamp as protected; }`
+ * onto the mixins the class's `use` recorded: `insteadof` takes the method from each trait it names
+ * as the loser, `as name` gives the class another name for a trait's method (a visibility-only
+ * `as protected` adds nothing a lookup needs). Read off each clause's text — the grammar wraps a
+ * comma list after `insteadof` in an ERROR node.
+ */
+function applyTraitConflictClauses(list: Node, mixins: NonNullable<ClassInfo["mixins"]>, declared: string[]): void {
+  const mixinOf = (written: string) => mixins.find((m) => m.name === bareTrait(written));
+  // Statement by statement from the list's text (comments dropped): the grammar splits a comma list
+  // after `insteadof` across an ERROR node, so the clause nodes alone lose its later traits.
+  const body = list.text.replace(/\/\*[\s\S]*?\*\/|\/\/.*|#.*/g, "").replace(/^\s*\{|\}\s*$/g, "");
+  for (const raw of body.split(";")) {
+    const text = raw.replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    if (text.includes(" insteadof ")) {
+      const m = /^[\w\\]+::(\w+) insteadof (.+)$/.exec(text);
+      if (!m) continue;
+      for (const loser of m[2]!.split(",")) {
+        const mixin = mixinOf(loser);
+        if (mixin && !(mixin.excludes ??= []).includes(m[1]!)) mixin.excludes.push(m[1]!);
+      }
+    } else {
+      const m = /^(?:([\w\\]+)::)?(\w+) as (?:(?:public|protected|private) )?(\w+)$/.exec(text);
+      if (!m || /^(public|protected|private)$/.test(m[3]!)) continue;
+      const targets = m[1] ? [mixinOf(m[1])] : mixins.filter((x) => declared.includes(x.name));
+      for (const mixin of targets) if (mixin) (mixin.aliases ??= {})[m[3]!] = m[2]!;
+    }
+  }
 }

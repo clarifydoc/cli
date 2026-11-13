@@ -24,7 +24,7 @@ interface Language {
 
 const LANGUAGES: Record<string, Language> = {
   c: { module: "/src/extractors/plugins/c/antlr.ts", export: "readC", extensions: [".c", ".h"], inputs: ["decls.c", "casts.c"] },
-  cpp: { module: "/src/extractors/plugins/cpp/antlr.ts", export: "readCpp", extensions: [".cpp", ".cc", ".cxx", ".hpp", ".cu"], inputs: ["init-forms.cpp", "plain-conditions.cpp"] },
+  cpp: { module: "/src/extractors/plugins/cpp/antlr.ts", export: "readCpp", extensions: [".cpp", ".cc", ".cxx", ".hpp", ".cu"], inputs: ["init-forms.cpp", "plain-conditions.cpp", "one-line-bodies.cpp"] },
   go: { module: "/src/extractors/plugins/go/antlr.ts", export: "readGo", extensions: [".go"], inputs: ["league.go"] },
   lua: { module: "/src/extractors/plugins/lua/antlr.ts", export: "readLua", extensions: [".lua"], inputs: ["keymap.lua", "gateway.lua"] },
   rust: { module: "/src/extractors/plugins/rust/antlr.ts", export: "readRust", extensions: [".rs"], inputs: ["league.rs"] },

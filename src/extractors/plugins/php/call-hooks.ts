@@ -52,7 +52,7 @@ export const phpCallHooks: CallExtractionHooks = {
         const scope = n.childForFieldName("scope");
         const name = n.childForFieldName("name");
         if (name) {
-          return scope ? `${scope.text.replace(/\\/g, "")}.${name.text}` : name.text;
+          return scope ? `${scope.text}.${name.text}` : name.text;
         }
       }
       return null;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSymbolLinks } from "./symbol-linker.js";
-import type { CallInfo, DiBinding, FileAnalysis, ParamInfo, PropertyInfo } from "../types/analysis.js";
+import type { CallInfo, ClassInfo, DiBinding, FileAnalysis, ParamInfo, PropertyInfo } from "../types/analysis.js";
 
 /**
  * Dependency-injection resolution in the linker: calls through injected
@@ -27,12 +27,14 @@ interface ClsOpts {
   implements?: string[];
   methods?: ReturnType<typeof method>[];
   properties?: PropertyInfo[];
+  mixins?: ClassInfo["mixins"];
 }
 const cls = (name: string, o: ClsOpts = {}): {
   name: string; kind: "class" | "interface"; extends: string | null; implements: string[];
   methods: ReturnType<typeof method>[]; properties: PropertyInfo[]; decorators: string[];
-  isExported: boolean; line: number; endLine: number; structural?: boolean;
+  isExported: boolean; line: number; endLine: number; structural?: boolean; mixins?: ClassInfo["mixins"];
 } => ({
+  ...(o.mixins ? { mixins: o.mixins } : {}),
   name,
   kind: o.kind ?? "class",
   extends: o.extends ?? null,
@@ -591,6 +593,25 @@ describe("symbol-linker — typed receivers", () => {
     const decoy = file("app/Team.php", [cls("Team", { methods: [method("roles", [], [], 3)] })], { language: "php" });
     const player = file("app/Player.php", [cls("Player", { implements: ["HasRoles"], methods: [method("can", [call("this.roles"), call("roles")], [], 5)] })], { language: "php" });
     expect(callsFrom(buildSymbolLinks([trait, decoy, player]), "app/Player.php").map((l) => [l.callName, l.targetSymbol])).toEqual([["this.roles", "HasRoles.roles"]]);
+  });
+
+  it("follows a trait conflict clause: the `insteadof` loser is skipped, an `as` alias reaches the loser's method (PHP)", () => {
+    const stamping = file("app/Timestampable.php", [cls("Timestampable", { methods: [method("stamp", [], [], 3), method("touch", [], [], 4)] })], { language: "php" });
+    const logging = file("app/Loggable.php", [cls("Loggable", { methods: [method("stamp", [], [], 3)] })], { language: "php" });
+    const squad = file("app/Squad.php", [cls("Squad", {
+      implements: ["Timestampable", "Loggable"],
+      mixins: [
+        { name: "Timestampable", kind: "include" },
+        { name: "Loggable", kind: "include", excludes: ["stamp"], aliases: { logStamp: "stamp" } },
+      ],
+      methods: [method("run", [call("this.stamp"), call("this.logStamp"), call("this.touch"), call("stamp")], [], 9)],
+    })], { language: "php" });
+    const out = callsFrom(buildSymbolLinks([stamping, logging, squad]), "app/Squad.php");
+    expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([
+      ["this.stamp", "Timestampable.stamp"],
+      ["this.logStamp", "Loggable.stamp"],
+      ["this.touch", "Timestampable.touch"],
+    ]);
   });
 
   it("finds `Outer::Inner.m` where Inner is declared nested inside Outer under its simple name", () => {

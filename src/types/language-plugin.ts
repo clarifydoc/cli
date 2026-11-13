@@ -1336,6 +1336,18 @@ export interface LanguagePluginManifest {
     nesting(classes: readonly ClassInfo[], line: number): string[];
   };
   /**
+   * A class called through its name (`Garage::park()`) is bound only through
+   * what the calling file states, for a language that looks class names up by
+   * namespace (PHP): a class declared in the same file, one an import names
+   * (`use App\Other\Garage;`, its alias, or a namespace prefix it names),
+   * one in the file's own declared namespace, or a fully qualified name
+   * (`\App\Other\Garage`). A namesake in another namespace is never the
+   * class, nor is a project class where the language would look for one that
+   * does not exist. `separator` joins a namespace's segments; the namespace of
+   * a file is `FileAnalysis.declaredNamespace`. Leaf code.
+   */
+  classNamesByEvidence?: { separator: string };
+  /**
    * Members a framework base class gives every subclass that return an
    * instance of the subclass, or a query that yields one (ActiveRecord `find`,
    * `find_by`, `where`, `first`): the linker types `club = Club.find(id)` and
@@ -1399,6 +1411,13 @@ export interface LanguagePluginManifest {
    * imported packages declaring it decide nothing.
    */
   nestedPackageLookup?: boolean;
+  /**
+   * An extension method (`ParamInfo.isReceiver`) links only from a file that has its declaring file in
+   * scope by this language's import rules: the same file, a `using` of its namespace (or `using static`
+   * of its class), its own or an enclosing namespace, a project-wide import, an imported project. Needs
+   * `importsNamePackages`. Without it extension functions link from anywhere in the type space.
+   */
+  extensionsNeedImport?: boolean;
   /**
    * The command that runs these tests with the language's usual runner — by
    * test function where the runner can filter by name, else by file. Null
@@ -1475,6 +1494,15 @@ export interface LanguagePluginManifest {
    * two such classes are different types and stay apart.
    */
   typesSpanFiles?: boolean;
+  /**
+   * A type named by a path call (`Garage::park()`, `Garage::new()`) is in scope only where the language says
+   * so: through an import (`use`, a glob, a re-export), the module path written before it
+   * (`crate::garage::Garage::park()`), or its own file. The linker then never binds such a call to a
+   * namesake or lone declaration elsewhere in the project that nothing in the file reaches — it
+   * leaves the call unlinked, and a link it does make is the class-name one. `separator` splits a written
+   * path (`CallInfo.receiverType`, `crate::garage::Garage`); `selfTypes` are the names that mean the caller's own type.
+   */
+  pathCallTypesNeedScope?: { separator: string; selfTypes: string[] };
   /**
    * How a structurally satisfied interface (`ClassInfo.structural`) is checked
    * beyond a method's name and parameter count — a language that demands

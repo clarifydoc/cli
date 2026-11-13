@@ -216,6 +216,12 @@ export interface RegexLangSpec {
    * Ruby's `def x; y; end` and `def f(a) g(a) end`. -1 when the line opens none.
    */
   inlineBodyColumn?: (line: string, from: number) => number;
+  /**
+   * A brace class written on one line (`struct Base { First actions; void Work() {} };`) holds its members on the
+   * header line, one declaration at a time: the line is cut into member declarations at its top-level `;` and
+   * `}` before the function and property patterns read them, so a field in front of a method no longer hides it.
+   */
+  splitHeaderLineMembers?: boolean;
   /** Pull the declared return type from a function-declaration line. Languages
    *  like Go (`func foo() Type`), Rust (`fn foo() -> Type`), or VB
    *  (`Function Foo() As Type`) need to override the default (null).
@@ -739,6 +745,14 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
           if (!lines[open]!.includes("{")) open = i;
         }
         const properties: PropertyInfo[] = extractPropertiesFromBody(lines.slice(open + 1, endLine), spec.propertyPatterns, spec);
+        // The fields of a class written on one line sit on its header line, after the `{`.
+        if (spec.splitHeaderLineMembers && endLine === i + 1 && resolveBlockStyle(spec) === "brace") {
+          const brace = lines[i]!.indexOf("{");
+          if (brace >= 0) {
+            const decls = headerLineSegments(lines[i]!, brace + 1).map((s) => " " + lines[i]!.slice(s.from, s.to).trim());
+            properties.push(...extractPropertiesFromBody(decls, spec.propertyPatterns, spec));
+          }
+        }
 
         const cls: ClassInfo = {
           name: m[1],
@@ -1242,7 +1256,7 @@ export function extractCallsFromBody(
 export function headerLineMethods(line: string, row: number, spec: RegexLangSpec): FunctionInfo[] {
   const open = line.indexOf("{");
   if (open < 0) return [];
-  const starts: Array<{ at: number; name: string; pat: (typeof spec.functionPatterns)[number] }> = [];
+  const starts: Array<{ at: number; to?: number; name: string; pat: (typeof spec.functionPatterns)[number] }> = [];
   for (let from = open + 1; from < line.length; ) {
     let best: { at: number; end: number; name: string; pat: (typeof spec.functionPatterns)[number] } | null = null;
     for (const pat of spec.functionPatterns) {
@@ -1255,8 +1269,25 @@ export function headerLineMethods(line: string, row: number, spec: RegexLangSpec
     starts.push(best);
     from = best.end;
   }
+  // A field in front of a method (`First actions; void Work() {}`) hides it from a line-anchored pattern: read each
+  // member declaration on its own.
+  if (spec.splitHeaderLineMembers) {
+    const bySegment: typeof starts = [];
+    for (const seg of headerLineSegments(line, open + 1)) {
+      const text = line.slice(seg.from, seg.to);
+      let hit: { at: number; name: string; pat: (typeof spec.functionPatterns)[number] } | null = null;
+      for (const pat of spec.functionPatterns) {
+        const m = text.match(pat.pattern);
+        if (!m || !m[1] || isControlFlowKeyword(m[1]) || m.index === undefined) continue;
+        const at = seg.from + m.index;
+        if (!hit || at < hit.at) hit = { at, name: m[1], pat };
+      }
+      if (hit) bySegment.push({ ...hit, to: seg.to });
+    }
+    if (bySegment.length >= starts.length) starts.splice(0, starts.length, ...bySegment);
+  }
   return starts.map((s, k) => {
-    const segment = line.slice(s.at, starts[k + 1]?.at ?? line.length);
+    const segment = line.slice(s.at, s.to ?? starts[k + 1]?.at ?? line.length);
     const inline = (spec.inlineBodyColumn ?? inlineBodyColumn)(segment, segment.indexOf(s.name) + s.name.length);
     const calls = inline >= 0
       ? extractCallsFromBody([segment], 1, 1, spec.lineCommentPrefixes, spec.callPatterns, { line: 0, column: inline }).map((c) => ({ ...c, line: row + 1 }))
@@ -1273,6 +1304,32 @@ export function headerLineMethods(line: string, row: number, spec: RegexLangSpec
       endLine: row + 1,
     };
   });
+}
+
+/**
+ * The member declarations of a class body written on one line, from just after its `{`: each ends at a top-level
+ * `;` or at the `}` that closes a body opened inside it (`void Work() {}`), and the cut stops at the class's own
+ * closing `}`. Offsets are into `line`.
+ */
+export function headerLineSegments(rawLine: string, from: number): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  // A `;` or `}` inside a string literal or a trailing comment cuts nothing (same length, so offsets hold).
+  const line = blankStringLiterals(rawLine, ["//"]);
+  let depth = 0;
+  let parens = 0;
+  let start = from;
+  for (let k = from; k < line.length; k++) {
+    const ch = line[k];
+    if (ch === "(" || ch === "[") parens++;
+    else if (ch === ")" || ch === "]") parens = Math.max(0, parens - 1);
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      if (depth === 0) break;
+      depth--;
+      if (depth === 0 && parens === 0) { out.push({ from: start, to: k + 1 }); start = k + 1; }
+    } else if (ch === ";" && depth === 0 && parens === 0) { out.push({ from: start, to: k + 1 }); start = k + 1; }
+  }
+  return out;
 }
 
 /** A compile-time conditional: its directive lines `start`…`end` and the live arms between them (0-based, inclusive). */

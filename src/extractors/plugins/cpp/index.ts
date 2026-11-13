@@ -34,7 +34,7 @@ const DIRECT_INIT_CALL: CallPattern = {
 
 /** A chain's head: a function or a `ns::Type::function` path — never the tail of a longer path, selector or `->`. */
 const CPP_CHAIN_HEAD = String.raw`(?<![\w.:>])((?:[A-Za-z_]\w*\s*::\s*)*[A-Za-z_]\w*)`;
-/** `drogon::app` → `app`, `Router::instance` → `Router.instance`: namespaces dropped, a type kept as the receiver. */
+/** `league::app` → `app`, `Router::instance` → `Router.instance`: namespaces dropped, a type kept as the receiver. */
 function cppChainHead(raw: string): string {
   const parts = raw.split(/\s*::\s*/);
   while (parts.length > 1 && !/^[A-Z]/.test(parts[0]!)) parts.shift();
@@ -45,7 +45,7 @@ function cppChainHead(raw: string): string {
 const NOT_A_STATEMENT = String.raw`(?!(?:if|while|for|switch|do|else|return|case|sizeof|catch|delete|new|throw|co_return|co_await|co_yield|static_assert|decltype|alignof|typeid)\b)`;
 /** Declaration specifiers before the return type. */
 const MODIFIERS = String.raw`(?:(?:static|inline|virtual|constexpr|consteval|explicit|friend|const|extern)\s+)*`;
-/** A qualified name's scopes: `drogon::orm::Mapper<T>::`. */
+/** A qualified name's scopes: `league::squad::Roster<T>::`. */
 const QUALIFIER = String.raw`(?:[A-Za-z_]\w*(?:<[^<>;()]*>)?::)*`;
 /** The defined name: an identifier, a destructor, an operator. */
 const NAME = String.raw`(?!(?:constexpr|consteval|requires|decltype|noexcept|alignas|static_assert)\b)(~?[A-Za-z_]\w*|operator\s*(?:\(\)|\[\]|[^\s\w(]+))`;
@@ -227,6 +227,9 @@ export const cppSpec: RegexLangSpec = {
 
   parseParam: parseCppParam,
   parseReturnType: parseCppReturnType,
+
+  // `struct Base { First actions; void Work() {} };`: the members are on the header line.
+  splitHeaderLineMembers: true,
 
   propertyPatterns: [
     {

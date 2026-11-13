@@ -130,9 +130,10 @@ export const rustSpec: RegexLangSpec = {
   callPatterns: [
     {
       // `\s*` around `::`: a blanked turbofish leaves spaces there (`Vec::<u8>::new(`).
-      pattern: /\b([A-Z]\w*)\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
+      // A module path written before the type (`crate::garage::Garage::park(`) is captured too: it binds the type.
+      pattern: /(?:(?<![\w:.])((?:[a-z_]\w*\s*::\s*)+))?\b([A-Z]\w*)\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       // The path names the type, so a noise-named associated function (`Invoice::open`, `Club::new`) is still kept.
-      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
+      buildName: (m) => ({ name: `${m[2]}.${m[3]}`, leafName: m[3]!, receiverType: `${(m[1] ?? "").replace(/\s+/g, "")}${m[2]}` }),
     },
     {
       pattern: /\bSelf::([a-zA-Z_]\w*)\s*\(/g,

@@ -141,3 +141,51 @@ describe("MSBuild <Using> items", () => {
     expect(await projectFileUsings(proj, ctx(`<Project><ItemGroup><Using Include="League.Shared"/></ItemGroup></Project>`))).toEqual(["League.Clubs", "League.Shared"]);
   });
 });
+
+describe("MSBuild implicit usings", () => {
+  const ctx = (props: string | null) => ({
+    fileName: "League.Web.csproj",
+    dirName: "League.Web",
+    readSibling: async (name: string) => (name === "Directory.Build.props" ? props : null),
+    readAncestors: async () => [],
+  });
+  const on = `<Project><PropertyGroup><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>`;
+
+  it("adds the Web SDK's global usings when ImplicitUsings is enabled, in the project or its props", async () => {
+    const own = await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><ImplicitUsings>true</ImplicitUsings></PropertyGroup></Project>`, ctx(null));
+    expect(own).toContain("Microsoft.Extensions.Hosting");
+    expect(own).toContain("System.Linq");
+    expect(await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.Web/9.0.0"></Project>`, ctx(on))).toEqual(own);
+  });
+
+  it("gives the base SDK only the System namespaces and the Worker SDK the hosting ones", async () => {
+    const base = await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk"></Project>`, ctx(on));
+    expect(base).toContain("System.Threading.Tasks");
+    expect(base).not.toContain("Microsoft.Extensions.Hosting");
+    const worker = await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.Worker"></Project>`, ctx(on));
+    expect(worker).toContain("Microsoft.Extensions.Hosting");
+    expect(worker).not.toContain("Microsoft.AspNetCore.Http");
+  });
+
+  it("adds nothing when disabled, unset, or the project's own value says no", async () => {
+    expect(await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.Web"></Project>`, ctx(null))).toEqual([]);
+    expect(await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><ImplicitUsings>disable</ImplicitUsings></PropertyGroup></Project>`, ctx(on))).toEqual([]);
+  });
+
+  it("ignores a conditional value and takes the last unconditional one", async () => {
+    const web = (body: string) => `<Project Sdk="Microsoft.NET.Sdk.Web">${body}</Project>`;
+    expect(await projectFileUsings(web(`<PropertyGroup Condition="'$(Configuration)'=='Debug'"><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>`), ctx(null))).toEqual([]);
+    const later = await projectFileUsings(web(`<PropertyGroup><ImplicitUsings>enable</ImplicitUsings></PropertyGroup><PropertyGroup><ImplicitUsings>disable</ImplicitUsings></PropertyGroup>`), ctx(null));
+    expect(later).toEqual([]);
+  });
+
+  it("applies <Using Include> and <Using Remove> over the SDK's list", async () => {
+    const out = await projectFileUsings(
+      `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><Using Include="League.Clubs" /><Using Remove="System.Net.Http" /></ItemGroup></Project>`,
+      ctx(on),
+    );
+    expect(out).toContain("League.Clubs");
+    expect(out).not.toContain("System.Net.Http");
+    expect(out).toContain("System.IO");
+  });
+});

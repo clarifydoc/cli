@@ -60,15 +60,62 @@ function msbuildUsings(text: string): string[] {
   return out;
 }
 
+const SDK_BASE = ["System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http", "System.Threading", "System.Threading.Tasks"];
+const SDK_HOSTING = ["Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging"];
+
 /**
- * The namespaces MSBuild imports into every file of a project: its own
- * `<Using Include>` items and those of the nearest `Directory.Build.props`
- * (beside the project file or above it), which every project below inherits.
+ * The namespaces the .NET SDK imports as global usings under `<ImplicitUsings>`, by SDK (the SDK's own
+ * `Microsoft.NET.Sdk.*.props`). Razor adds none of its own; the WebAssembly Blazor SDK adds its component
+ * namespaces. An SDK not listed (a custom one that does not wrap `Microsoft.NET.Sdk`) names nothing.
+ */
+const SDK_IMPLICIT_USINGS: Array<[sdk: RegExp, namespaces: string[]]> = [
+  [/^Microsoft\.NET\.Sdk\.Web$/i, [...SDK_BASE, "System.Net.Http.Json", "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing", ...SDK_HOSTING]],
+  [/^Microsoft\.NET\.Sdk\.Worker$/i, [...SDK_BASE, ...SDK_HOSTING]],
+  [/^Microsoft\.NET\.Sdk\.BlazorWebAssembly$/i, [...SDK_BASE, "System.Net.Http.Json", "Microsoft.AspNetCore.Components.Forms", "Microsoft.AspNetCore.Components.Routing", "Microsoft.AspNetCore.Components.Web", "Microsoft.AspNetCore.Components.Web.Virtualization", "Microsoft.AspNetCore.Components.WebAssembly.Http", "Microsoft.JSInterop"]],
+  [/^Microsoft\.NET\.Sdk(?:\.Razor)?$/i, SDK_BASE],
+];
+
+/** The SDK names a project file states (`Sdk="…"` on `<Project>`, `<Sdk Name>`, `<Import Sdk>`), without a `/version` suffix. */
+function sdkNames(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/<(?:Project|Import)\b[^>]*?\bSdk\s*=\s*"([^"]+)"|<Sdk\b[^>]*?\bName\s*=\s*"([^"]+)"/gi)) {
+    for (const name of (m[1] ?? m[2]!).split(";")) out.push(name.trim().replace(/\/[^/]*$/, ""));
+  }
+  return out;
+}
+
+/**
+ * `<ImplicitUsings>enable</ImplicitUsings>`: true/false for the last unconditional literal value the file sets,
+ * null when it says nothing (a `Condition` on the element or its group, or a `$(…)` value, is not a fact).
+ */
+function implicitUsingsSetting(text: string): boolean | null {
+  const unconditional = text.replace(/<PropertyGroup\b[^>]*\bCondition\s*=[^>]*>[\s\S]*?<\/PropertyGroup>/gi, "");
+  let value: string | undefined;
+  for (const m of unconditional.matchAll(/<ImplicitUsings\b([^>]*)>\s*([^<]*?)\s*<\/ImplicitUsings>/gi)) {
+    if (/\bCondition\s*=/i.test(m[1]!) || m[2]!.includes("$(")) continue;
+    value = m[2]!;
+  }
+  return value === undefined ? null : /^(?:enable|true)$/i.test(value);
+}
+
+function removedUsings(text: string): string[] {
+  return [...text.matchAll(/<Using\s+Remove\s*=\s*"([^"]+)"/gi)].map((m) => m[1]!);
+}
+
+/**
+ * The namespaces MSBuild imports into every file of a project: the SDK's implicit global usings when
+ * `<ImplicitUsings>` is enabled (the project's own value, else the nearest `Directory.Build.props`'s), its own
+ * `<Using Include>` items and those of the nearest `Directory.Build.props` (beside the project file or above it),
+ * which every project below inherits — minus every `<Using Remove>`.
  */
 export async function projectFileUsings(text: string, file: SelfNameContext): Promise<string[]> {
   if (!/\.(?:cs|vb)proj$/i.test(file.fileName)) return [];
   const props = (await file.readSibling("Directory.Build.props")) ?? (await file.readAncestors("Directory.Build.props"))[0] ?? "";
-  return [...new Set([...msbuildUsings(text), ...msbuildUsings(props)])];
+  const names = new Set(sdkNames(text));
+  const sdk = SDK_IMPLICIT_USINGS.find(([re]) => [...names].some((n) => re.test(n)));
+  const implicit = sdk && /\.csproj$/i.test(file.fileName) && (implicitUsingsSetting(text) ?? implicitUsingsSetting(props)) ? sdk[1] : [];
+  const removed = new Set([...removedUsings(text), ...removedUsings(props)]);
+  return [...new Set([...implicit, ...msbuildUsings(text), ...msbuildUsings(props)])].filter((n) => !removed.has(n));
 }
 
 /**

@@ -91,3 +91,41 @@ describe("C# namespace imports", () => {
     expect(linkOf("StandingsService.Load", "ids.Contains")).toBeNull();
   });
 });
+
+/** A typed receiver finds its extension method only through a namespace the caller has in scope. */
+describe("C# extension methods on a typed receiver", () => {
+  const files: Record<string, string> = {
+    "League.csproj": `<Project Sdk="Microsoft.NET.Sdk"></Project>\n`,
+    "Model/Club.cs": `namespace League.Model;\n\npublic class Club { public int Id; }\n`,
+    "Extensions/ClubExtensions.cs": `namespace League.Extensions;\n\npublic static class ClubExtensions\n{\n    public static int Score(this League.Model.Club c) => 3;\n}\n`,
+    "Web/WithUsing.cs": `using League.Model;\nusing League.Extensions;\n\nnamespace League.Web;\n\npublic class WithUsing\n{\n    public int Run() { Club club = new Club(); return club.Score(); }\n}\n`,
+    "Web/WithoutUsing.cs": `using League.Model;\n\nnamespace League.Web;\n\npublic class WithoutUsing\n{\n    public int Run() { Club club = new Club(); return club.Score(); }\n}\n`,
+    "Extensions/Inside.cs": `using League.Model;\n\nnamespace League.Extensions.Deep;\n\npublic class Inside\n{\n    public int Run() { Club club = new Club(); return club.Score(); }\n}\n`,
+  };
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-csharp-extscope-"));
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, "repo", rel)), { recursive: true });
+      await writeFile(join(dir, "repo", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "repo"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const targets = (symbol: string) =>
+    summary.symbolLinks.filter((l) => l.sourceSymbol === symbol && l.callName.endsWith("club.Score")).map((l) => l.targetFile);
+
+  it("links from a file that imports the namespace", () => {
+    expect(targets("WithUsing.Run")).toEqual(["Extensions/ClubExtensions.cs"]);
+  });
+  it("links from a file inside an enclosing namespace", () => {
+    expect(targets("Inside.Run")).toEqual(["Extensions/ClubExtensions.cs"]);
+  });
+  it("does not link from a file that does not import it", () => {
+    expect(targets("WithoutUsing.Run")).toEqual([]);
+  });
+});
